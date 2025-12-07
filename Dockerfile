@@ -34,7 +34,7 @@ ENV PYTHONPATH=/app
 
 
 
-COPY ./pyproject.toml ./uv.lock  /app/
+COPY ./pyproject.toml ./uv.lock ./alembic.ini  /app/
 
 COPY ./app /app/app
 COPY ./tests /app/tests
