@@ -4,6 +4,13 @@ ENV PYTHONUNBUFFERED=1
 
 WORKDIR /app/
 
+# Install system dependencies for barcode and OCR libraries
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends \
+    libzbar0 \
+    tesseract-ocr \
+    && rm -rf /var/lib/apt/lists/*
+
 # Install uv.
 COPY --from=ghcr.io/astral-sh/uv:latest /uv /bin/uv
 
