@@ -4,14 +4,114 @@ from fastapi import APIRouter, BackgroundTasks, File, HTTPException, Query, Uplo
 from sqlalchemy import select
 
 from app.config import settings
-from app.dependencies.database import DBSessionDep
+from app.dependencies.database import DBSessionDep, get_sessionmanager
 from app.models import Batch, BatchDocument, Document
 from app.schemas.batch import BatchCreate, BatchDocumentStatus, BatchReport, BatchResponse
 from app.services.batch_processor import batch_processor
+from app.services.id_extraction import id_extraction_service
 from app.services.storage import storage_service
 from app.utils import calculate_checksum
 
 router = APIRouter(prefix="/api/v1/batches", tags=["batches"])
+
+
+async def _process_batch_documents(batch_id: int) -> None:
+    """Background helper to process all documents in a batch sequentially."""
+    sessionmanager = get_sessionmanager()
+    async with sessionmanager.session() as session:
+        # Get batch
+        stmt = select(Batch).where(Batch.id == batch_id)
+        result = await session.execute(stmt)
+        batch = result.scalar_one_or_none()
+        if not batch:
+            return
+
+        # Update batch status
+        batch.status = "processing"
+        await session.commit()
+
+        # Get all batch documents
+        batch_doc_stmt = select(BatchDocument).where(BatchDocument.batch_id == batch_id)
+        result = await session.execute(batch_doc_stmt)
+        batch_documents = result.scalars().all()
+
+        processed_count = 0
+        failed_count = 0
+
+        # Process documents sequentially (similar to bulk upload approach)
+        for batch_doc in batch_documents:
+            try:
+                batch_doc.processing_status = "processing"
+                await session.commit()
+
+                # Get document
+                doc_stmt = select(Document).where(Document.id == batch_doc.document_id)
+                doc_result = await session.execute(doc_stmt)
+                document = doc_result.scalar_one_or_none()
+                if not document:
+                    batch_doc.processing_status = "failed"
+                    batch_doc.error_message = "Document not found"
+                    failed_count += 1
+                    await session.commit()
+                    continue
+
+                # Retrieve file
+                try:
+                    file_content = await storage_service.retrieve(document.file_path)
+                except FileNotFoundError:
+                    document.status = "error"
+                    batch_doc.processing_status = "failed"
+                    batch_doc.error_message = "File not found"
+                    failed_count += 1
+                    await session.commit()
+                    continue
+
+                # Extract ID
+                extraction_result = await id_extraction_service.extract_id(file_content, session, document.id)
+
+                # Update document
+                if extraction_result["is_valid"]:
+                    document.extracted_id = extraction_result["extracted_id"]
+                    document.extraction_method = extraction_result["method"]
+                    document.extraction_confidence = extraction_result["confidence"]
+                    document.school_id = extraction_result.get("school_id")
+                    document.subject_id = extraction_result.get("subject_id")
+                    document.test_type = extraction_result.get("test_type")
+                    document.sheet_number = extraction_result.get("sheet_number")
+                    document.status = "processed"
+                    batch_doc.processing_status = "completed"
+                    processed_count += 1
+                else:
+                    document.status = "error"
+                    batch_doc.processing_status = "failed"
+                    batch_doc.error_message = extraction_result.get("error_message", "Extraction failed")
+                    failed_count += 1
+
+                await session.commit()
+            except Exception as e:
+                # If processing fails, mark as error but continue with others
+                try:
+                    batch_doc.processing_status = "failed"
+                    batch_doc.error_message = str(e)
+                    failed_count += 1
+                    await session.commit()
+                except Exception:
+                    pass  # Continue even if marking as error fails
+
+        # Update batch status
+        batch.processed_files = processed_count
+        batch.failed_files = failed_count
+        if failed_count == 0:
+            batch.status = "completed"
+        elif processed_count == 0:
+            batch.status = "failed"
+        else:
+            batch.status = "completed"  # Partial success still counts as completed
+
+        from datetime import datetime
+
+        batch.completed_at = datetime.utcnow()
+        await session.commit()
 
 
 @router.post("", response_model=BatchResponse, status_code=status.HTTP_201_CREATED)
@@ -62,7 +162,7 @@ async def batch_upload(
         )
 
     # Validate and upload files
-    allowed_mime_types = ["application/pdf", "image/jpeg", "image/png", "image/tiff"]
+    allowed_mime_types = ["image/jpeg", "image/png"]
     uploaded_documents: list[Document] = []
 
     for file in files:
@@ -123,17 +223,8 @@ async def batch_upload(
     await session.commit()
     await session.refresh(db_batch)
 
-    # Trigger background extraction for all documents in the batch
-    from app.dependencies.database import get_sessionmanager
-
-    sessionmanager = get_sessionmanager()
-
-    async def process_batch_extraction():
-        async with sessionmanager.session() as new_session:
-            await batch_processor.process_batch(db_batch.id, new_session)
-
-    # Process extraction in background
-    background_tasks.add_task(process_batch_extraction)
+    # Trigger background extraction for all documents in the batch (using bulk upload pattern)
+    background_tasks.add_task(_process_batch_documents, db_batch.id)
 
     return BatchResponse.model_validate(db_batch)
 
@@ -175,17 +266,8 @@ async def process_batch(batch_id: int, background_tasks: BackgroundTasks, sessio
     if batch.status == "processing":
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Batch is already being processed")
 
-    # Get a new session manager for background task
-    from app.dependencies.database import get_sessionmanager
-
-    sessionmanager = get_sessionmanager()
-
-    async def process_with_new_session():
-        async with sessionmanager.session() as new_session:
-            await batch_processor.process_batch(batch_id, new_session)
-
-    # Process in background
-    background_tasks.add_task(process_with_new_session)
+    # Process in background (using bulk upload pattern)
+    background_tasks.add_task(_process_batch_documents, batch_id)
 
     return {"batch_id": batch_id, "status": "processing_started", "message": "Batch processing started"}
 
