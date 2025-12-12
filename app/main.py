@@ -6,7 +6,7 @@ import uvicorn
 from fastapi import FastAPI, status
 
 from app.dependencies.database import get_sessionmanager, initialize_db
-from app.routers import batches, documents, exams, schools, subjects
+from app.routers import batches, candidates, documents, exams, schools, subjects
 
 
 @asynccontextmanager
@@ -27,6 +27,7 @@ app.include_router(subjects.router)
 app.include_router(exams.router)
 app.include_router(documents.router)
 app.include_router(batches.router)
+app.include_router(candidates.router)
 
 
 @app.get("/", status_code=status.HTTP_200_OK)
