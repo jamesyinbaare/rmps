@@ -313,17 +313,35 @@ async def list_documents(
     session: DBSessionDep,
     page: int = Query(1, ge=1),
     page_size: int = Query(20, ge=1, le=100),
+    exam_id: int | None = Query(None),
+    school_id: int | None = Query(None),
+    subject_id: int | None = Query(None),
 ) -> DocumentListResponse:
-    """List documents with pagination."""
+    """List documents with pagination and optional filters."""
     offset = (page - 1) * page_size
 
-    # Get total count
+    # Build base query with filters
+    base_stmt = select(Document)
+    if exam_id is not None:
+        base_stmt = base_stmt.where(Document.exam_id == exam_id)
+    if school_id is not None:
+        base_stmt = base_stmt.where(Document.school_id == school_id)
+    if subject_id is not None:
+        base_stmt = base_stmt.where(Document.subject_id == subject_id)
+
+    # Get total count with same filters
     count_stmt = select(func.count(Document.id))
+    if exam_id is not None:
+        count_stmt = count_stmt.where(Document.exam_id == exam_id)
+    if school_id is not None:
+        count_stmt = count_stmt.where(Document.school_id == school_id)
+    if subject_id is not None:
+        count_stmt = count_stmt.where(Document.subject_id == subject_id)
     count_result = await session.execute(count_stmt)
     total = count_result.scalar() or 0
 
-    # Get documents
-    stmt = select(Document).offset(offset).limit(page_size).order_by(Document.uploaded_at.desc())
+    # Get documents with filters
+    stmt = base_stmt.offset(offset).limit(page_size).order_by(Document.uploaded_at.desc())
     result = await session.execute(stmt)
     documents = result.scalars().all()
 

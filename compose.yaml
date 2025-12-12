@@ -1,20 +1,23 @@
 services:
   fastapi-app:
-    build: .
+    build:
+      context: backend
     container_name: fastapi-app
     ports:
-     - "8000:80"
+      - "8000:80"
     env_file:
       - .env
     develop:
       watch:
         - action: sync
-          path: .
+          path: ./backend
           target: /app
           ignore:
-            - .venv/
+            - ./backend/.venv/
+            - .venv
         - action: rebuild
-          path: ./pyproject.toml
+          path: ./backend/pyproject.toml
+
     depends_on:
       postgres:
         condition: service_healthy
@@ -38,8 +41,7 @@ services:
       - POSTGRES_USER=${POSTGRES_USER?Variable not set}
       - POSTGRES_DB=${POSTGRES_DB?Variable not set}
     ports:
-     - "5432:5432"
-
+      - "5432:5432"
 
 volumes:
   icm_db_data:
