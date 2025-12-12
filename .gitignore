@@ -10,6 +10,7 @@ wheels/
 .venv
 .env
 env/
+.env*
 .mypy_cache
 .coverage
 htmlcov

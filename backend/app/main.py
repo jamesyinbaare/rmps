@@ -4,6 +4,7 @@ from typing import Any
 
 import uvicorn
 from fastapi import FastAPI, status
+from starlette.middleware.cors import CORSMiddleware
 
 from app.dependencies.database import get_sessionmanager, initialize_db
 from app.routers import batches, candidates, documents, exams, schools, subjects
@@ -20,6 +21,14 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 
 
 app = FastAPI(title="Document Tracking System", lifespan=lifespan)
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["http://localhost:3000", "http://127.0.0.1:3000"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 # Include routers
 app.include_router(schools.router)

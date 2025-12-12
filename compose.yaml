@@ -21,7 +21,29 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
-        restart: true
+    restart: always
+  frontend:
+    build:
+      context: frontend
+      dockerfile: Dockerfile
+    container_name: frontend-app
+    ports:
+      - "3000:3000"
+    environment:
+      - NEXT_PUBLIC_API_BASE_URL=http://localhost:8000
+    develop:
+      watch:
+        - action: sync
+          path: ./frontend
+          target: /app
+          ignore:
+            - ./frontend/.next/
+            - ./frontend/node_modules/
+        - action: rebuild
+          path: ./frontend/package.json
+    depends_on:
+      - fastapi-app
+    restart: always
   postgres:
     image: postgres:18
     restart: always
