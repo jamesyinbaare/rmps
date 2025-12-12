@@ -1,12 +1,12 @@
 from typing import Any
 
-from fastapi import APIRouter, BackgroundTasks, File, HTTPException, Query, UploadFile, status
+from fastapi import APIRouter, BackgroundTasks, File, Form, HTTPException, Query, UploadFile, status
 from fastapi.responses import StreamingResponse
 from sqlalchemy import func, select
 
 from app.config import settings
 from app.dependencies.database import DBSessionDep, get_sessionmanager
-from app.models import Document
+from app.models import Document, Exam
 from app.schemas.document import BulkUploadResponse, DocumentListResponse, DocumentResponse, DocumentUpdate
 from app.schemas.id_extraction import IDExtractionResponse
 from app.services.id_extraction import id_extraction_service
@@ -20,8 +20,18 @@ router = APIRouter(prefix="/api/v1/documents", tags=["documents"])
 async def upload_document(
     session: DBSessionDep,
     file: UploadFile = File(...),
+    exam_id: int = Form(...),
 ) -> DocumentResponse:
     """Upload a single document."""
+    # Validate exam exists
+    exam_stmt = select(Exam).where(Exam.id == exam_id)
+    exam_result = await session.execute(exam_stmt)
+    exam = exam_result.scalar_one_or_none()
+    if not exam:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Exam with id {exam_id} not found",
+        )
     # Validate file type
     allowed_mime_types = ["image/jpeg", "image/png"]
     if file.content_type not in allowed_mime_types:
@@ -68,6 +78,7 @@ async def upload_document(
         mime_type=file.content_type or "application/octet-stream",
         file_size=len(content),
         checksum=checksum,
+        exam_id=exam_id,
         status="pending",
     )
     session.add(db_document)
@@ -76,7 +87,9 @@ async def upload_document(
 
     # Extract ID synchronously (file content is already in memory)
     try:
-        extraction_result = await id_extraction_service.extract_id(content, session, db_document.id)
+        extraction_result = await id_extraction_service.extract_id(
+            content, session, db_document.id, db_document.exam_id
+        )
 
         # Update document with extraction results
         if extraction_result["is_valid"]:
@@ -86,6 +99,7 @@ async def upload_document(
             db_document.school_id = extraction_result.get("school_id")
             db_document.subject_id = extraction_result.get("subject_id")
             db_document.test_type = extraction_result.get("test_type")
+            db_document.subject_series = extraction_result.get("subject_series")
             db_document.sheet_number = extraction_result.get("sheet_number")
             db_document.status = "processed"
         else:
@@ -126,7 +140,9 @@ async def _extract_ids_for_documents(document_ids: list[int]) -> None:
                     continue
 
                 # Extract ID
-                extraction_result = await id_extraction_service.extract_id(file_content, session, document_id)
+                extraction_result = await id_extraction_service.extract_id(
+                    file_content, session, document_id, document.exam_id
+                )
 
                 # Update document with extraction results
                 if extraction_result["is_valid"]:
@@ -136,6 +152,7 @@ async def _extract_ids_for_documents(document_ids: list[int]) -> None:
                     document.school_id = extraction_result.get("school_id")
                     document.subject_id = extraction_result.get("subject_id")
                     document.test_type = extraction_result.get("test_type")
+                    document.subject_series = extraction_result.get("subject_series")
                     document.sheet_number = extraction_result.get("sheet_number")
                     document.status = "processed"
                 else:
@@ -162,8 +179,19 @@ async def bulk_upload_documents(
     session: DBSessionDep,
     background_tasks: BackgroundTasks,
     files: list[UploadFile] = File(...),
+    exam_id: int = Form(...),
 ) -> BulkUploadResponse:
     """Upload multiple documents and trigger background ID extraction."""
+    # Validate exam exists
+    exam_stmt = select(Exam).where(Exam.id == exam_id)
+    exam_result = await session.execute(exam_stmt)
+    exam = exam_result.scalar_one_or_none()
+    if not exam:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Exam with id {exam_id} not found",
+        )
+
     allowed_mime_types = ["image/jpeg", "image/png"]
 
     total = len(files)
@@ -216,6 +244,7 @@ async def bulk_upload_documents(
                 mime_type=file.content_type or "application/octet-stream",
                 file_size=len(content),
                 checksum=checksum,
+                exam_id=exam_id,
                 status="pending",
             )
             session.add(db_document)
@@ -367,7 +396,7 @@ async def extract_id(session: DBSessionDep, document_id: int) -> IDExtractionRes
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="File not found in storage")
 
     # Extract ID
-    extraction_result = await id_extraction_service.extract_id(file_content, session, document_id)
+    extraction_result = await id_extraction_service.extract_id(file_content, session, document_id, document.exam_id)
 
     # Update document with extraction results
     if extraction_result["is_valid"]:
@@ -377,6 +406,7 @@ async def extract_id(session: DBSessionDep, document_id: int) -> IDExtractionRes
         document.school_id = extraction_result.get("school_id")
         document.subject_id = extraction_result.get("subject_id")
         document.test_type = extraction_result.get("test_type")
+        document.subject_series = extraction_result.get("subject_series")
         document.sheet_number = extraction_result.get("sheet_number")
         document.status = "processed"
     else:
@@ -404,8 +434,21 @@ async def update_document_id(document_id: int, update: DocumentUpdate, session: 
         document.school_id = update.school_id
     if update.subject_id is not None:
         document.subject_id = update.subject_id
+    if update.exam_id is not None:
+        # Validate exam exists
+        exam_stmt = select(Exam).where(Exam.id == update.exam_id)
+        exam_result = await session.execute(exam_stmt)
+        exam = exam_result.scalar_one_or_none()
+        if not exam:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Exam with id {update.exam_id} not found",
+            )
+        document.exam_id = update.exam_id
     if update.test_type is not None:
         document.test_type = update.test_type
+    if update.subject_series is not None:
+        document.subject_series = update.subject_series
     if update.sheet_number is not None:
         document.sheet_number = update.sheet_number
     if update.extracted_id is not None:

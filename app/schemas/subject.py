@@ -6,7 +6,7 @@ from pydantic import BaseModel, Field
 class SubjectBase(BaseModel):
     """Base subject schema."""
 
-    code: str = Field(..., min_length=4, max_length=4)
+    code: str = Field(..., min_length=3, max_length=3)
     name: str = Field(..., min_length=1, max_length=255)
 
 

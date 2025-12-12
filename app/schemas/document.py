@@ -22,7 +22,9 @@ class DocumentUpdate(BaseModel):
 
     school_id: int | None = None
     subject_id: int | None = None
+    exam_id: int | None = None
     test_type: str | None = None
+    subject_series: str | None = None
     sheet_number: str | None = None
     extracted_id: str | None = None
     extraction_method: str | None = None
@@ -39,7 +41,9 @@ class DocumentResponse(DocumentBase):
     uploaded_at: datetime
     school_id: int | None
     subject_id: int | None
+    exam_id: int
     test_type: str | None
+    subject_series: str | None
     sheet_number: str | None
     extracted_id: str | None
     extraction_method: str | None

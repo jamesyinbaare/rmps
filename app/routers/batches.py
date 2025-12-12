@@ -1,11 +1,11 @@
 from typing import Any
 
-from fastapi import APIRouter, BackgroundTasks, File, HTTPException, Query, UploadFile, status
+from fastapi import APIRouter, BackgroundTasks, File, Form, HTTPException, Query, UploadFile, status
 from sqlalchemy import select
 
 from app.config import settings
 from app.dependencies.database import DBSessionDep, get_sessionmanager
-from app.models import Batch, BatchDocument, Document
+from app.models import Batch, BatchDocument, Document, Exam
 from app.schemas.batch import BatchCreate, BatchDocumentStatus, BatchReport, BatchResponse
 from app.services.batch_processor import batch_processor
 from app.services.id_extraction import id_extraction_service
@@ -67,7 +67,9 @@ async def _process_batch_documents(batch_id: int) -> None:
                     continue
 
                 # Extract ID
-                extraction_result = await id_extraction_service.extract_id(file_content, session, document.id)
+                extraction_result = await id_extraction_service.extract_id(
+                    file_content, session, document.id, document.exam_id
+                )
 
                 # Update document
                 if extraction_result["is_valid"]:
@@ -77,6 +79,7 @@ async def _process_batch_documents(batch_id: int) -> None:
                     document.school_id = extraction_result.get("school_id")
                     document.subject_id = extraction_result.get("subject_id")
                     document.test_type = extraction_result.get("test_type")
+                    document.subject_series = extraction_result.get("subject_series")
                     document.sheet_number = extraction_result.get("sheet_number")
                     document.status = "processed"
                     batch_doc.processing_status = "completed"
@@ -152,9 +155,20 @@ async def batch_upload(
     session: DBSessionDep,
     background_tasks: BackgroundTasks,
     files: list[UploadFile] = File(...),
+    exam_id: int = Form(...),
     batch_name: str | None = None,
 ) -> BatchResponse:
     """Upload multiple files and create a batch."""
+    # Validate exam exists
+    exam_stmt = select(Exam).where(Exam.id == exam_id)
+    exam_result = await session.execute(exam_stmt)
+    exam = exam_result.scalar_one_or_none()
+    if not exam:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Exam with id {exam_id} not found",
+        )
+
     if len(files) > settings.batch_max_files:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -202,6 +216,7 @@ async def batch_upload(
             mime_type=file.content_type or "application/octet-stream",
             file_size=len(content),
             checksum=checksum,
+            exam_id=exam_id,
             status="pending",
         )
         session.add(db_document)

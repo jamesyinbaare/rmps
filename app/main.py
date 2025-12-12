@@ -6,7 +6,7 @@ import uvicorn
 from fastapi import FastAPI, status
 
 from app.dependencies.database import get_sessionmanager, initialize_db
-from app.routers import batches, documents, schools, subjects
+from app.routers import batches, documents, exams, schools, subjects
 
 
 @asynccontextmanager
@@ -24,6 +24,7 @@ app = FastAPI(title="Document Tracking System", lifespan=lifespan)
 # Include routers
 app.include_router(schools.router)
 app.include_router(subjects.router)
+app.include_router(exams.router)
 app.include_router(documents.router)
 app.include_router(batches.router)
 

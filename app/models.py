@@ -27,12 +27,13 @@ class School(Base):
     # Many-to-many relationship with Subject
     subjects = relationship("Subject", secondary="school_subjects", back_populates="schools")
     documents = relationship("Document", back_populates="school")
+    candidates = relationship("Candidate", back_populates="school")
 
 
 class Subject(Base):
     __tablename__ = "subjects"
     id = Column(Integer, primary_key=True)
-    code = Column(String(4), unique=True, nullable=False, index=True)
+    code = Column(String(3), unique=True, nullable=False, index=True)
     name = Column(String(255), nullable=False)
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
@@ -40,6 +41,8 @@ class Subject(Base):
     # Many-to-many relationship with School
     schools = relationship("School", secondary="school_subjects", back_populates="subjects")
     documents = relationship("Document", back_populates="subject")
+    exam_subjects = relationship("ExamSubject", back_populates="subject")
+    subject_registrations = relationship("SubjectRegistration", back_populates="subject")
 
 
 # Association table for many-to-many relationship between School and Subject
@@ -64,7 +67,9 @@ class Document(Base):
     uploaded_at = Column(DateTime, default=datetime.utcnow, nullable=False)
     school_id = Column(Integer, ForeignKey("schools.id", ondelete="SET NULL"), nullable=True, index=True)
     subject_id = Column(Integer, ForeignKey("subjects.id", ondelete="SET NULL"), nullable=True, index=True)
+    exam_id = Column(Integer, ForeignKey("exams.id", ondelete="RESTRICT"), nullable=False, index=True)
     test_type = Column(String(1), nullable=True)  # 1 = Objectives Test, 2 = Essay
+    subject_series = Column(String(1), nullable=True)
     sheet_number = Column(String(2), nullable=True)
     extracted_id = Column(String(13), nullable=True, index=True)
     extraction_method = Column(String(20), nullable=True)  # barcode, ocr, manual
@@ -73,6 +78,7 @@ class Document(Base):
 
     school = relationship("School", back_populates="documents")
     subject = relationship("Subject", back_populates="documents")
+    exam = relationship("Exam", back_populates="documents")
     batch_documents = relationship("BatchDocument", back_populates="document")
 
 
@@ -100,3 +106,99 @@ class BatchDocument(Base):
 
     batch = relationship("Batch", back_populates="batch_documents")
     document = relationship("Document", back_populates="batch_documents")
+
+
+class Candidate(Base):
+    __tablename__ = "candidates"
+    id = Column(Integer, primary_key=True)
+    school_id = Column(Integer, ForeignKey("schools.id", ondelete="CASCADE"), nullable=False, index=True)
+    name = Column(String(255), nullable=False)
+    index_number = Column(String(50), unique=True, nullable=False, index=True)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+
+    school = relationship("School", back_populates="candidates")
+    exam_registrations = relationship("ExamRegistration", back_populates="candidate", cascade="all, delete-orphan")
+
+
+class Exam(Base):
+    __tablename__ = "exams"
+    id = Column(Integer, primary_key=True)
+    name = Column(String(255), nullable=False)
+    description = Column(Text, nullable=True)
+    year = Column(Integer, nullable=False)
+    series = Column(String(50), nullable=False)
+    number_of_series = Column(Integer, nullable=False, default=1)  # Number of groups (1-8, 1-4, etc.)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+
+    exam_subjects = relationship("ExamSubject", back_populates="exam", cascade="all, delete-orphan")
+    exam_registrations = relationship("ExamRegistration", back_populates="exam", cascade="all, delete-orphan")
+    documents = relationship("Document", back_populates="exam")
+
+
+class ExamSubject(Base):
+    __tablename__ = "exam_subjects"
+    id = Column(Integer, primary_key=True)
+    exam_id = Column(Integer, ForeignKey("exams.id", ondelete="CASCADE"), nullable=False, index=True)
+    subject_id = Column(Integer, ForeignKey("subjects.id", ondelete="CASCADE"), nullable=False, index=True)
+    mcq_percentage = Column(Float, nullable=False)
+    essay_percentage = Column(Float, nullable=False)
+    practical_percentage = Column(Float, nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+
+    exam = relationship("Exam", back_populates="exam_subjects")
+    subject = relationship("Subject", back_populates="exam_subjects")
+    __table_args__ = (UniqueConstraint("exam_id", "subject_id", name="uq_exam_subject"),)
+
+
+class ExamRegistration(Base):
+    __tablename__ = "exam_registrations"
+    id = Column(Integer, primary_key=True)
+    candidate_id = Column(Integer, ForeignKey("candidates.id", ondelete="CASCADE"), nullable=False, index=True)
+    exam_id = Column(Integer, ForeignKey("exams.id", ondelete="CASCADE"), nullable=False, index=True)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+
+    candidate = relationship("Candidate", back_populates="exam_registrations")
+    exam = relationship("Exam", back_populates="exam_registrations")
+    subject_registrations = relationship(
+        "SubjectRegistration", back_populates="exam_registration", cascade="all, delete-orphan"
+    )
+    __table_args__ = (UniqueConstraint("candidate_id", "exam_id", name="uq_candidate_exam"),)
+
+
+class SubjectRegistration(Base):
+    __tablename__ = "subject_registrations"
+    id = Column(Integer, primary_key=True)
+    exam_registration_id = Column(
+        Integer, ForeignKey("exam_registrations.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    subject_id = Column(Integer, ForeignKey("subjects.id", ondelete="CASCADE"), nullable=False, index=True)
+    series = Column(Integer, nullable=True)  # Group number (1 to exam.subject_series, or null)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+
+    exam_registration = relationship("ExamRegistration", back_populates="subject_registrations")
+    subject = relationship("Subject", back_populates="subject_registrations")
+    subject_score = relationship(
+        "SubjectScore", back_populates="subject_registration", uselist=False, cascade="all, delete-orphan"
+    )
+    __table_args__ = (UniqueConstraint("exam_registration_id", "subject_id", name="uq_exam_registration_subject"),)
+
+
+class SubjectScore(Base):
+    __tablename__ = "subject_scores"
+    id = Column(Integer, primary_key=True)
+    subject_registration_id = Column(
+        Integer, ForeignKey("subject_registrations.id", ondelete="CASCADE"), nullable=False, unique=True, index=True
+    )
+    mcq_raw_score = Column(Float, nullable=False)
+    essay_raw_score = Column(Float, nullable=False)
+    practical_raw_score = Column(Float, nullable=True)
+    total_score = Column(Float, nullable=False)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+
+    subject_registration = relationship("SubjectRegistration", back_populates="subject_score")

@@ -18,6 +18,7 @@ class IDExtractionResponse(BaseModel):
     subject_id: int | None
     school_code: str | None
     subject_code: str | None
+    subject_series: str | None
     test_type: str | None
     sheet_number: str | None
     error_message: str | None
@@ -29,6 +30,7 @@ class IDValidationResult(BaseModel):
     is_valid: bool
     school_code: str | None
     subject_code: str | None
+    subject_series: str | None
     test_type: str | None
     sheet_number: str | None
     error_message: str | None

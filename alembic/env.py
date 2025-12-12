@@ -30,7 +30,7 @@ target_metadata = Base.metadata
 # ... etc.
 env = settings.environment
 if env == "dev":
-    database_url = "postgresql+asyncpg://fastapi:fastapi@localhost:5432/icm_db" #settings.database_url
+    database_url = "postgresql+asyncpg://postgres:postgres@postgres:5432/icm_db" #settings.database_url
 elif env == "stg":
     db_pass = os.environ.get("DB_PASS", None)
     db_host = os.environ.get("DB_HOST", "stg-eu-west-2-academy")

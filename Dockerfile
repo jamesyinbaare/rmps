@@ -45,7 +45,7 @@ COPY ./pyproject.toml ./uv.lock ./alembic.ini  /app/
 
 COPY ./app /app/app
 COPY ./tests /app/tests
-
+COPY ./alembic /app/alembic
 # Copy the application into the container.
 
 

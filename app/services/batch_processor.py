@@ -65,6 +65,7 @@ class BatchProcessor:
                         document.school_id = extraction_result.get("school_id")
                         document.subject_id = extraction_result.get("subject_id")
                         document.test_type = extraction_result.get("test_type")
+                        document.subject_series = extraction_result.get("subject_series")
                         document.sheet_number = extraction_result.get("sheet_number")
                         document.status = "processed"
                         batch_doc.processing_status = "completed"

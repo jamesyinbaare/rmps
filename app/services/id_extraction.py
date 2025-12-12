@@ -28,6 +28,7 @@ class IDValidationResult:
         is_valid: bool,
         school_code: str | None = None,
         subject_code: str | None = None,
+        subject_series: str | None = None,
         test_type: str | None = None,
         sheet_number: str | None = None,
         error_message: str | None = None,
@@ -35,6 +36,7 @@ class IDValidationResult:
         self.is_valid = is_valid
         self.school_code = school_code
         self.subject_code = subject_code
+        self.subject_series = subject_series
         self.test_type = test_type
         self.sheet_number = sheet_number
         self.error_message = error_message
@@ -120,7 +122,7 @@ class IDValidator:
     def parse_id(extracted_id: str) -> IDValidationResult:
         """
         Parse 13-character ID into components.
-        Format: SCHOOL_CODE(6) + SUBJECT_CODE(4) + TEST_TYPE(1) + SHEET_NUMBER(2)
+        Format: SCHOOL_CODE(6) + SUBJECT_CODE(3) + SUBJECT_SERIES(1) + TEST_TYPE(1) + SHEET_NUMBER(2)
         """
         if not extracted_id or len(extracted_id) != 13:
             return IDValidationResult(
@@ -132,9 +134,24 @@ class IDValidator:
             return IDValidationResult(is_valid=False, error_message="ID must be alphanumeric")
 
         school_code = extracted_id[0:6]
-        subject_code = extracted_id[6:10]
+        subject_code = extracted_id[6:9]
+        subject_series = extracted_id[9:10]
         test_type = extracted_id[10:11]
         sheet_number = extracted_id[11:13]
+
+        # Validate subject series (1-9)
+        try:
+            series_num = int(subject_series)
+            if series_num < 1 or series_num > 9:
+                return IDValidationResult(
+                    is_valid=False,
+                    error_message=f"Subject series must be between 1 and 9, got {subject_series}",
+                )
+        except ValueError:
+            return IDValidationResult(
+                is_valid=False,
+                error_message=f"Subject series must be numeric, got {subject_series}",
+            )
 
         # Validate test type
         if test_type not in ["1", "2"]:
@@ -161,6 +178,7 @@ class IDValidator:
             is_valid=True,
             school_code=school_code,
             subject_code=subject_code,
+            subject_series=subject_series,
             test_type=test_type,
             sheet_number=sheet_number,
         )
@@ -211,10 +229,11 @@ class IDValidator:
         subject_id: int,
         test_type: str,
         sheet_number: str,
+        exam_id: int,
         exclude_document_id: int | None = None,
     ) -> tuple[bool, str | None]:
         """
-        Check for duplicate sheet number within same school+subject+test_type.
+        Check for duplicate sheet number within same school+subject+test_type+exam.
         Returns (is_duplicate, error_message).
         """
         stmt = select(Document).where(
@@ -222,6 +241,7 @@ class IDValidator:
             Document.subject_id == subject_id,
             Document.test_type == test_type,
             Document.sheet_number == sheet_number,
+            Document.exam_id == exam_id,
         )
         if exclude_document_id:
             stmt = stmt.where(Document.id != exclude_document_id)
@@ -231,7 +251,7 @@ class IDValidator:
         if existing:
             return (
                 True,
-                f"Sheet number {sheet_number} already exists for school+subject+test_type combination",
+                f"Sheet number {sheet_number} already exists for school+subject+test_type+exam combination",
             )
         return False, None
 
@@ -245,7 +265,7 @@ class IDExtractionService:
         self.validator = IDValidator()
 
     async def extract_id(
-        self, image_data: bytes, session: AsyncSession, document_id: int | None = None
+        self, image_data: bytes, session: AsyncSession, document_id: int | None = None, exam_id: int | None = None
     ) -> dict[str, Any]:
         """
         Extract ID from image using barcode with OCR fallback.
@@ -307,18 +327,38 @@ class IDExtractionService:
         result = await session.execute(subject_stmt)
         subject = result.scalar_one()
 
-        # Check for duplicate sheet number
-        is_duplicate, dup_error = await self.validator.check_duplicate_sheet(
-            session, school.id, subject.id, validation_result.test_type, validation_result.sheet_number, document_id
-        )
-        if is_duplicate:
-            return {
-                "extracted_id": extracted_id,
-                "method": method,
-                "confidence": confidence,
-                "is_valid": False,
-                "error_message": dup_error,
-            }
+        # Get exam_id: prefer parameter, otherwise query from document if document_id is provided
+        exam_id_to_check = exam_id
+        if exam_id_to_check is None and document_id is not None:
+            doc_stmt = select(Document).where(Document.id == document_id)
+            doc_result = await session.execute(doc_stmt)
+            document = doc_result.scalar_one_or_none()
+            if document:
+                exam_id_to_check = document.exam_id
+
+        # Skip duplicate check if exam_id cannot be determined
+        if exam_id_to_check is None:
+            # Cannot check for duplicates without exam_id, continue with extraction
+            pass
+        else:
+            # Check for duplicate sheet number
+            is_duplicate, dup_error = await self.validator.check_duplicate_sheet(
+                session,
+                school.id,
+                subject.id,
+                validation_result.test_type,
+                validation_result.sheet_number,
+                exam_id_to_check,
+                document_id,
+            )
+            if is_duplicate:
+                return {
+                    "extracted_id": extracted_id,
+                    "method": method,
+                    "confidence": confidence,
+                    "is_valid": False,
+                    "error_message": dup_error,
+                }
 
         # Check confidence threshold
         if confidence < settings.min_confidence_threshold:
@@ -339,6 +379,7 @@ class IDExtractionService:
             "subject_id": subject.id,
             "school_code": validation_result.school_code,
             "subject_code": validation_result.subject_code,
+            "subject_series": validation_result.subject_series,
             "test_type": validation_result.test_type,
             "sheet_number": validation_result.sheet_number,
             "error_message": None,
