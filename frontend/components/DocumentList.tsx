@@ -47,23 +47,27 @@ export function DocumentList({
 
         // Fetch all schools
         let schoolPage = 1;
-        while (true) {
+        let schoolHasMore = true;
+        while (schoolHasMore) {
           const schools = await listSchools(schoolPage, 100);
           schools.forEach((school: School) => {
             schoolMap.set(school.id, school.name);
           });
-          if (schools.length < 100) break;
+          // If we got fewer than 100, we're done. Also add a safety limit.
+          schoolHasMore = schools.length === 100 && schoolPage < 100;
           schoolPage++;
         }
 
         // Fetch all subjects
         let subjectPage = 1;
-        while (true) {
+        let subjectHasMore = true;
+        while (subjectHasMore) {
           const subjects = await listSubjects(subjectPage, 100);
           subjects.forEach((subject: Subject) => {
             subjectMap.set(subject.id, subject.name);
           });
-          if (subjects.length < 100) break;
+          // If we got fewer than 100, we're done. Also add a safety limit.
+          subjectHasMore = subjects.length === 100 && subjectPage < 100;
           subjectPage++;
         }
 

@@ -38,9 +38,11 @@ export function Sidebar() {
       icon: Home,
       submenu: [
         { href: "/documents", label: "All files", icon: Files },
+        { href: "/folders", label: "Folders", icon: Folder },
         { href: "/documents?filter=recent", label: "Recent", icon: Clock },
         { href: "/documents?filter=starred", label: "Starred", icon: Star },
         { href: "/documents?filter=shared", label: "Shared", icon: Share2 },
+
       ],
     },
     {
@@ -66,45 +68,75 @@ export function Sidebar() {
     (item) => item.href.toLowerCase().replace(/[^a-z0-9]/g, "") === selectedMenu
   );
 
+  // Determine which menu item should be selected based on current pathname
+  useEffect(() => {
+    // Find which menu item matches the current pathname
+    for (const item of menuItems) {
+      if (item.submenu) {
+        // Check if any submenu item matches
+        const matchingSubmenu = item.submenu.find((sub) => {
+          if (sub.href === "/") {
+            return pathname === "/";
+          }
+          return pathname?.startsWith(sub.href.split("?")[0]);
+        });
+        if (matchingSubmenu) {
+          const menuKey = item.href.toLowerCase().replace(/[^a-z0-9]/g, "");
+          if (selectedMenu !== menuKey) {
+            setSelectedMenu(menuKey);
+          }
+          return;
+        }
+      } else {
+        // Check if main menu item matches
+        if (isActive(item.href)) {
+          const menuKey = item.href.toLowerCase().replace(/[^a-z0-9]/g, "");
+          if (selectedMenu !== menuKey) {
+            setSelectedMenu(menuKey);
+          }
+          return;
+        }
+      }
+    }
+  }, [pathname]);
+
   // Check screen size and set submenu visibility
   useEffect(() => {
     const checkScreenSize = () => {
       const isSmallScreen = window.innerWidth < 768; // md breakpoint
       setIsMobile(isSmallScreen);
-      // Open submenu by default on medium+ screens if Home is selected
-      if (!isSmallScreen && selectedMenu === "home" && selectedMenuItem?.submenu) {
-        setSubmenuVisible(true);
-      } else if (isSmallScreen) {
+      if (isSmallScreen) {
         setSubmenuVisible(false);
       }
+      // On desktop, maintain the current submenuVisible state (don't reset it)
     };
 
     checkScreenSize();
     window.addEventListener("resize", checkScreenSize);
     return () => window.removeEventListener("resize", checkScreenSize);
-  }, [selectedMenu, selectedMenuItem]);
+  }, []);
 
   const handleMenuClick = (item: MenuItem) => {
     if (item.submenu && item.submenu.length > 0) {
       const menuKey = item.href.toLowerCase().replace(/[^a-z0-9]/g, "");
       setSelectedMenu(menuKey);
-      // Open submenu on medium+ screens, close on mobile
-      if (!isMobile) {
-        setSubmenuVisible(true);
-      } else {
+      // Maintain submenu visibility state - don't change it when switching menus
+      // Only close on mobile
+      if (isMobile) {
         setSubmenuVisible(false);
       }
     } else {
       setSelectedMenu(null);
-      setSubmenuVisible(false);
+      // Don't change submenuVisible for menus without submenu - keep the shared container state
     }
   };
 
   // Responsive sidebar width: narrow on mobile, wider on desktop
   // Main menu:submenu ratio is 1:3 (64px:192px = 256px total)
+  // The submenu container is shared, so width depends on submenuVisible (to prevent layout shift)
   const sidebarWidth = isMobile
     ? "w-16" // Icon-only on mobile (64px)
-    : submenuVisible && selectedMenuItem?.submenu
+    : submenuVisible
     ? "w-64" // 64px main (w-16) + 192px submenu (w-48) = 256px total (w-64)
     : "w-16"; // Just main menu on desktop (64px)
 
@@ -158,20 +190,10 @@ export function Sidebar() {
                 </div>
               );
             })}
-
-            {/* Folders Section */}
-            <div className="mt-6">
-              <button className={cn(
-                "flex w-full flex-col items-center justify-center gap-1 rounded-md px-2 py-2.5 text-xs hover:bg-sidebar-accent hover:text-sidebar-accent-foreground"
-              )}>
-                <Folder className="h-4 w-4 shrink-0" />
-                <span className={cn("text-center text-[10px] leading-tight", isMobile && "hidden")}>Folders</span>
-              </button>
-            </div>
           </nav>
 
-          {/* Submenu Toggle Button */}
-          {!isMobile && selectedMenuItem?.submenu && (
+          {/* Submenu Toggle Button - Always show when not mobile to maintain consistent layout */}
+          {!isMobile && (
             <div className="flex items-center justify-center border-t border-sidebar-border px-2 py-2 shrink-0">
               <Button
                 variant="ghost"
@@ -190,29 +212,33 @@ export function Sidebar() {
           )}
         </div>
 
-        {/* Submenu - Hidden on mobile, 3 units (192px) - 1:3 ratio with main menu */}
-        {!isMobile && submenuVisible && selectedMenuItem?.submenu && (
+        {/* Submenu - Shared container for all menus, always visible when submenuVisible is true to prevent layout shift */}
+        {!isMobile && submenuVisible && (
           <div className="flex w-48 flex-col border-l border-sidebar-border">
             <div className="h-16 shrink-0 border-b border-sidebar-border" />
-            <nav className="flex-1 overflow-y-auto px-2 py-4">
-              {selectedMenuItem.submenu.map((subItem) => {
-                const SubIcon = subItem.icon;
-                const subActive = isActive(subItem.href);
-                return (
-                  <Link
-                    key={subItem.href}
-                    href={subItem.href}
-                    className={cn(
-                      "flex items-center gap-3 rounded-md px-3 py-2 text-sm transition-colors hover:bg-sidebar-accent hover:text-sidebar-accent-foreground",
-                      subActive && "bg-sidebar-accent text-sidebar-accent-foreground"
-                    )}
-                  >
-                    <SubIcon className="h-4 w-4" />
-                    <span>{subItem.label}</span>
-                  </Link>
-                );
-              })}
-            </nav>
+            {selectedMenuItem?.submenu ? (
+              <nav className="flex-1 overflow-y-auto px-2 py-4">
+                {selectedMenuItem.submenu.map((subItem) => {
+                  const SubIcon = subItem.icon;
+                  const subActive = isActive(subItem.href);
+                  return (
+                    <Link
+                      key={subItem.href}
+                      href={subItem.href}
+                      className={cn(
+                        "flex items-center gap-3 rounded-md px-3 py-2 text-sm transition-colors hover:bg-sidebar-accent hover:text-sidebar-accent-foreground",
+                        subActive && "bg-sidebar-accent text-sidebar-accent-foreground"
+                      )}
+                    >
+                      <SubIcon className="h-4 w-4" />
+                      <span>{subItem.label}</span>
+                    </Link>
+                  );
+                })}
+              </nav>
+            ) : (
+              <div className="flex-1" />
+            )}
           </div>
         )}
       </div>

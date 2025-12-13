@@ -112,3 +112,156 @@ export async function listSubjects(page = 1, pageSize = 100): Promise<Subject[]>
   const response = await fetch(`${API_BASE_URL}/api/v1/subjects?${params.toString()}`);
   return handleResponse<Subject[]>(response);
 }
+
+/**
+ * Get exams that have at least one document
+ */
+export async function getExamsWithDocuments(): Promise<Exam[]> {
+  const examsMap = new Map<number, Exam>();
+  let page = 1;
+  let hasMore = true;
+
+  // Fetch all exams
+  while (hasMore) {
+    const examsData = await listExams(page, 100);
+    examsData.items.forEach((exam) => {
+      examsMap.set(exam.id, exam);
+    });
+    hasMore = page < examsData.total_pages;
+    page++;
+  }
+
+  // Get all documents to find which exams have documents
+  const documentsResponse = await listDocuments({ page: 1, page_size: 100 });
+  const examIdsWithDocs = new Set<number>();
+  documentsResponse.items.forEach((doc) => {
+    examIdsWithDocs.add(doc.exam_id);
+  });
+
+  // Paginate through all documents to get complete list
+  if (documentsResponse.total_pages > 1) {
+    let docPage = 2;
+    while (docPage <= documentsResponse.total_pages) {
+      const moreDocs = await listDocuments({ page: docPage, page_size: 100 });
+      moreDocs.items.forEach((doc) => {
+        examIdsWithDocs.add(doc.exam_id);
+      });
+      docPage++;
+    }
+  }
+
+  // Return only exams that have documents
+  return Array.from(examIdsWithDocs)
+    .map((examId) => examsMap.get(examId))
+    .filter((exam): exam is Exam => exam !== undefined)
+    .sort((a, b) => a.name.localeCompare(b.name));
+}
+
+/**
+ * Get schools for an exam that have documents
+ */
+export async function getSchoolsForExam(examId: number): Promise<School[]> {
+  const schoolsMap = new Map<number, School>();
+  let page = 1;
+  let hasMore = true;
+
+  // Fetch all schools
+  while (hasMore) {
+    const schools = await listSchools(page, 100);
+    schools.forEach((school) => {
+      schoolsMap.set(school.id, school);
+    });
+    hasMore = schools.length === 100;
+    page++;
+  }
+
+  // Get documents for this exam
+  const documentsResponse = await listDocuments({ exam_id: examId, page: 1, page_size: 100 });
+  const schoolIdsWithDocs = new Set<number>();
+  documentsResponse.items.forEach((doc) => {
+    if (doc.school_id) {
+      schoolIdsWithDocs.add(doc.school_id);
+    }
+  });
+
+  // Paginate through all documents for this exam
+  if (documentsResponse.total_pages > 1) {
+    let docPage = 2;
+    while (docPage <= documentsResponse.total_pages) {
+      const moreDocs = await listDocuments({ exam_id: examId, page: docPage, page_size: 100 });
+      moreDocs.items.forEach((doc) => {
+        if (doc.school_id) {
+          schoolIdsWithDocs.add(doc.school_id);
+        }
+      });
+      docPage++;
+    }
+  }
+
+  // Return only schools that have documents for this exam
+  return Array.from(schoolIdsWithDocs)
+    .map((schoolId) => schoolsMap.get(schoolId))
+    .filter((school): school is School => school !== undefined)
+    .sort((a, b) => a.name.localeCompare(b.name));
+}
+
+/**
+ * Get subjects for an exam and school combination that have documents
+ */
+export async function getSubjectsForExamAndSchool(
+  examId: number,
+  schoolId: number
+): Promise<Subject[]> {
+  const subjectsMap = new Map<number, Subject>();
+  let page = 1;
+  let hasMore = true;
+
+  // Fetch all subjects
+  while (hasMore) {
+    const subjects = await listSubjects(page, 100);
+    subjects.forEach((subject) => {
+      subjectsMap.set(subject.id, subject);
+    });
+    hasMore = subjects.length === 100;
+    page++;
+  }
+
+  // Get documents for this exam and school
+  const documentsResponse = await listDocuments({
+    exam_id: examId,
+    school_id: schoolId,
+    page: 1,
+    page_size: 100,
+  });
+  const subjectIdsWithDocs = new Set<number>();
+  documentsResponse.items.forEach((doc) => {
+    if (doc.subject_id) {
+      subjectIdsWithDocs.add(doc.subject_id);
+    }
+  });
+
+  // Paginate through all documents for this exam and school
+  if (documentsResponse.total_pages > 1) {
+    let docPage = 2;
+    while (docPage <= documentsResponse.total_pages) {
+      const moreDocs = await listDocuments({
+        exam_id: examId,
+        school_id: schoolId,
+        page: docPage,
+        page_size: 100,
+      });
+      moreDocs.items.forEach((doc) => {
+        if (doc.subject_id) {
+          subjectIdsWithDocs.add(doc.subject_id);
+        }
+      });
+      docPage++;
+    }
+  }
+
+  // Return only subjects that have documents for this exam and school
+  return Array.from(subjectIdsWithDocs)
+    .map((subjectId) => subjectsMap.get(subjectId))
+    .filter((subject): subject is Subject => subject !== undefined)
+    .sort((a, b) => a.name.localeCompare(b.name));
+}
