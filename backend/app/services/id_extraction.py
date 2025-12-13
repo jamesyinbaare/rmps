@@ -227,18 +227,20 @@ class IDValidator:
         session: AsyncSession,
         school_id: int,
         subject_id: int,
+        subject_series: str,
         test_type: str,
         sheet_number: str,
         exam_id: int,
         exclude_document_id: int | None = None,
     ) -> tuple[bool, str | None]:
         """
-        Check for duplicate sheet number within same school+subject+test_type+exam.
+        Check for duplicate sheet number within same school+subject+subject_series+test_type+exam.
         Returns (is_duplicate, error_message).
         """
         stmt = select(Document).where(
             Document.school_id == school_id,
             Document.subject_id == subject_id,
+            Document.subject_series == subject_series,
             Document.test_type == test_type,
             Document.sheet_number == sheet_number,
             Document.exam_id == exam_id,
@@ -251,7 +253,7 @@ class IDValidator:
         if existing:
             return (
                 True,
-                f"Sheet number {sheet_number} already exists for school+subject+test_type+exam combination",
+                f"Sheet number {sheet_number} already exists for school+subject+subject_series+test_type+exam combination",
             )
         return False, None
 
@@ -346,6 +348,7 @@ class IDExtractionService:
                 session,
                 school.id,
                 subject.id,
+                validation_result.subject_series,
                 validation_result.test_type,
                 validation_result.sheet_number,
                 exam_id_to_check,
