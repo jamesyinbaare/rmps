@@ -9,9 +9,17 @@ interface FileListItemProps {
   document: Document;
   onDownload?: (document: Document) => void;
   onSelect?: (document: Document) => void;
+  schoolName?: string;
+  subjectName?: string;
 }
 
-export function FileListItem({ document, onDownload, onSelect }: FileListItemProps) {
+export function FileListItem({
+  document,
+  onDownload,
+  onSelect,
+  schoolName,
+  subjectName,
+}: FileListItemProps) {
   const getFileIcon = (mimeType: string) => {
     if (mimeType.startsWith("image/")) {
       return Image;
@@ -26,7 +34,7 @@ export function FileListItem({ document, onDownload, onSelect }: FileListItemPro
 
   return (
     <div
-      className="group flex items-center gap-4 border-b border-border px-6 py-3 transition-colors hover:bg-accent/50 cursor-pointer"
+      className="group flex items-center gap-4 border-b border-border py-3 transition-colors hover:bg-accent/50 cursor-pointer"
       onClick={() => onSelect?.(document)}
     >
       {/* File Icon */}
@@ -36,20 +44,25 @@ export function FileListItem({ document, onDownload, onSelect }: FileListItemPro
 
       {/* File Info */}
       <div className="flex-1 min-w-0">
-        <p className="truncate text-sm font-medium">{document.file_name}</p>
+        <p className="truncate text-sm font-medium">
+          {document.extracted_id || document.file_name}
+        </p>
         <p className="text-xs text-muted-foreground">
           {formatFileSize(document.file_size)} • {formatDate(document.uploaded_at)}
         </p>
       </div>
 
       {/* Metadata */}
-      <div className="hidden shrink-0 text-right text-sm text-muted-foreground md:block">
-        <div>{document.exam_id}</div>
-        <div className="text-xs">{document.school_id || "-"}</div>
+      <div className="hidden shrink-0 text-left text-sm text-muted-foreground md:block min-w-[200px]">
+        <div className="text-xs truncate min-w-[200px]" title={schoolName || "-"}>
+          {schoolName ? (schoolName.length > 35 ? `${schoolName.substring(0, 35)}...` : schoolName) : "-"}
+        </div>
       </div>
 
-      <div className="hidden shrink-0 text-right text-sm text-muted-foreground md:block">
-        <div>{document.subject_id || "-"}</div>
+      <div className="hidden shrink-0 text-left text-sm text-muted-foreground md:block min-w-[200px] ml-10">
+        <div className="text-xs truncate min-w-[200px]" title={subjectName || "-"}>
+          {subjectName || "-"}
+        </div>
       </div>
 
       {/* Actions */}

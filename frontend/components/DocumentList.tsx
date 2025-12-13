@@ -1,9 +1,10 @@
 "use client";
 
+import { useState, useEffect } from "react";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
-import { downloadDocument } from "@/lib/api";
-import type { Document } from "@/types/document";
+import { downloadDocument, listSchools, listSubjects } from "@/lib/api";
+import type { Document, School, Subject } from "@/types/document";
 import { File } from "lucide-react";
 import { FileGrid } from "./FileGrid";
 import { FileListItem } from "./FileListItem";
@@ -27,6 +28,57 @@ export function DocumentList({
   viewMode = "grid",
   onSelect,
 }: DocumentListProps) {
+  const [schoolMap, setSchoolMap] = useState<Map<number, string>>(new Map());
+  const [subjectMap, setSubjectMap] = useState<Map<number, string>>(new Map());
+  const [lookupLoading, setLookupLoading] = useState(true);
+
+  // Fetch lookup data for schools and subjects
+  useEffect(() => {
+    const fetchLookupData = async () => {
+      if (viewMode !== "list") {
+        setLookupLoading(false);
+        return;
+      }
+
+      try {
+        setLookupLoading(true);
+        const schoolMap = new Map<number, string>();
+        const subjectMap = new Map<number, string>();
+
+        // Fetch all schools
+        let schoolPage = 1;
+        while (true) {
+          const schools = await listSchools(schoolPage, 100);
+          schools.forEach((school: School) => {
+            schoolMap.set(school.id, school.name);
+          });
+          if (schools.length < 100) break;
+          schoolPage++;
+        }
+
+        // Fetch all subjects
+        let subjectPage = 1;
+        while (true) {
+          const subjects = await listSubjects(subjectPage, 100);
+          subjects.forEach((subject: Subject) => {
+            subjectMap.set(subject.id, subject.name);
+          });
+          if (subjects.length < 100) break;
+          subjectPage++;
+        }
+
+        setSchoolMap(schoolMap);
+        setSubjectMap(subjectMap);
+      } catch (error) {
+        console.error("Failed to fetch lookup data:", error);
+      } finally {
+        setLookupLoading(false);
+      }
+    };
+
+    fetchLookupData();
+  }, [viewMode]);
+
   const handleDownload = async (doc: Document) => {
     try {
       const blob = await downloadDocument(doc.id);
@@ -68,9 +120,9 @@ export function DocumentList({
       );
     }
     return (
-      <div className="divide-y divide-border">
+      <div className="divide-y divide-border px-6 pt-6">
         {[1, 2, 3, 4, 5].map((i) => (
-          <div key={i} className="flex items-center gap-4 px-6 py-3">
+          <div key={i} className="flex items-center gap-4 py-3">
             <Skeleton className="h-10 w-10 rounded" />
             <div className="space-y-2 flex-1">
               <Skeleton className="h-4 w-[250px]" />
@@ -97,10 +149,34 @@ export function DocumentList({
       {viewMode === "grid" ? (
         <FileGrid documents={documents} onDownload={handleDownload} onSelect={onSelect} />
       ) : (
-        <div className="divide-y divide-border">
-          {documents.map((doc) => (
-            <FileListItem key={doc.id} document={doc} onDownload={handleDownload} onSelect={onSelect} />
-          ))}
+        <div>
+          {/* Table Header */}
+          <div className="hidden md:flex items-center gap-4 border-b border-border sticky top-0 bg-background z-10 px-6 pt-6 pb-3">
+            <div className="w-10 shrink-0" /> {/* Icon spacer */}
+            <div className="flex-1 min-w-0 text-left">
+              <div className="text-sm font-medium">File Name</div>
+            </div>
+            <div className="hidden shrink-0 text-left text-sm text-muted-foreground md:block max-w-[200px]">
+              <div className="text-xs truncate min-w-[200px]">School</div>
+            </div>
+            <div className="hidden shrink-0 text-left text-sm text-muted-foreground md:block max-w-[200px] ml-8">
+              <div className="text-xs truncate min-w-[200px]">Subject</div>
+            </div>
+            <div className="w-10 shrink-0" /> {/* Actions spacer */}
+          </div>
+          {/* Table Rows */}
+          <div className="divide-y divide-border px-6">
+            {documents.map((doc) => (
+              <FileListItem
+                key={doc.id}
+                document={doc}
+                onDownload={handleDownload}
+                onSelect={onSelect}
+                schoolName={doc.school_id ? schoolMap.get(doc.school_id) : undefined}
+                subjectName={doc.subject_id ? subjectMap.get(doc.subject_id) : undefined}
+              />
+            ))}
+          </div>
         </div>
       )}
 
