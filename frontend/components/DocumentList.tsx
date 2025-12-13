@@ -1,21 +1,12 @@
 "use client";
 
 import { Button } from "@/components/ui/button";
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "@/components/ui/table";
-import { Badge } from "@/components/ui/badge";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { downloadDocument } from "@/lib/api";
-import { formatFileSize, formatDate } from "@/lib/utils";
 import type { Document } from "@/types/document";
-import { Download, File } from "lucide-react";
+import { File } from "lucide-react";
+import { FileGrid } from "./FileGrid";
+import { FileListItem } from "./FileListItem";
 
 interface DocumentListProps {
   documents: Document[];
@@ -23,6 +14,8 @@ interface DocumentListProps {
   currentPage: number;
   totalPages: number;
   onPageChange: (page: number) => void;
+  viewMode?: "grid" | "list";
+  onSelect?: (document: Document) => void;
 }
 
 export function DocumentList({
@@ -31,14 +24,25 @@ export function DocumentList({
   currentPage,
   totalPages,
   onPageChange,
+  viewMode = "grid",
+  onSelect,
 }: DocumentListProps) {
-  const handleDownload = async (documentId: number, fileName: string) => {
+  const handleDownload = async (doc: Document) => {
     try {
-      const blob = await downloadDocument(documentId);
+      const blob = await downloadDocument(doc.id);
       const url = window.URL.createObjectURL(blob);
       const a = document.createElement("a");
       a.href = url;
-      a.download = fileName;
+
+      // Use extracted_id as filename if available, otherwise use file_name
+      let downloadFilename = doc.file_name;
+      if (doc.extracted_id) {
+        // Extract file extension from original filename
+        const fileExtension = doc.file_name.split('.').pop();
+        downloadFilename = fileExtension ? `${doc.extracted_id}.${fileExtension}` : doc.extracted_id;
+      }
+
+      a.download = downloadFilename;
       document.body.appendChild(a);
       a.click();
       window.URL.revokeObjectURL(url);
@@ -49,134 +53,82 @@ export function DocumentList({
     }
   };
 
-  const getStatusBadge = (status: string) => {
-    const variants: Record<string, "default" | "secondary" | "destructive"> = {
-      pending: "secondary",
-      processed: "default",
-      error: "destructive",
-    };
-
-    return (
-      <Badge variant={variants[status] || "default"}>
-        {status.charAt(0).toUpperCase() + status.slice(1)}
-      </Badge>
-    );
-  };
-
   if (loading) {
+    if (viewMode === "grid") {
+      return (
+        <div className="grid grid-cols-2 gap-4 p-6 xl:grid-cols-7">
+          {[1, 2, 3, 4, 5, 6].map((i) => (
+            <div key={i} className="flex flex-col items-center rounded-lg border border-border bg-card p-4">
+              <Skeleton className="h-20 w-20 rounded mb-3" />
+              <Skeleton className="h-4 w-full mb-2" />
+              <Skeleton className="h-3 w-2/3" />
+            </div>
+          ))}
+        </div>
+      );
+    }
     return (
-      <Card>
-        <CardHeader>
-          <CardTitle>Documents</CardTitle>
-          <CardDescription>Loading documents...</CardDescription>
-        </CardHeader>
-        <CardContent>
-          <div className="space-y-4">
-            {[1, 2, 3, 4, 5].map((i) => (
-              <div key={i} className="flex items-center space-x-4">
-                <Skeleton className="h-12 w-12 rounded" />
-                <div className="space-y-2 flex-1">
-                  <Skeleton className="h-4 w-[250px]" />
-                  <Skeleton className="h-4 w-[200px]" />
-                </div>
-              </div>
-            ))}
+      <div className="divide-y divide-border">
+        {[1, 2, 3, 4, 5].map((i) => (
+          <div key={i} className="flex items-center gap-4 px-6 py-3">
+            <Skeleton className="h-10 w-10 rounded" />
+            <div className="space-y-2 flex-1">
+              <Skeleton className="h-4 w-[250px]" />
+              <Skeleton className="h-3 w-[200px]" />
+            </div>
           </div>
-        </CardContent>
-      </Card>
+        ))}
+      </div>
     );
   }
 
   if (documents.length === 0) {
     return (
-      <Card>
-        <CardHeader>
-          <CardTitle>Documents</CardTitle>
-          <CardDescription>No documents found</CardDescription>
-        </CardHeader>
-        <CardContent>
-          <div className="flex flex-col items-center justify-center py-12 text-center">
-            <File className="h-12 w-12 text-gray-400 mb-4" />
-            <p className="text-gray-500">No documents match the current filters.</p>
-          </div>
-        </CardContent>
-      </Card>
+      <div className="flex flex-col items-center justify-center py-24 text-center">
+        <File className="h-16 w-16 text-muted-foreground mb-4" />
+        <p className="text-lg font-medium mb-2">No documents found</p>
+        <p className="text-sm text-muted-foreground">No documents match the current filters.</p>
+      </div>
     );
   }
 
   return (
-    <Card>
-      <CardHeader>
-        <CardTitle>Documents</CardTitle>
-        <CardDescription>List of uploaded documents</CardDescription>
-      </CardHeader>
-      <CardContent>
-        <div className="rounded-md border">
-          <Table>
-            <TableHeader>
-              <TableRow>
-                <TableHead>File Name</TableHead>
-                <TableHead>Size</TableHead>
-                <TableHead>Uploaded At</TableHead>
-                <TableHead>Status</TableHead>
-                <TableHead>Exam ID</TableHead>
-                <TableHead>School ID</TableHead>
-                <TableHead>Subject ID</TableHead>
-                <TableHead className="text-right">Actions</TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {documents.map((doc) => (
-                <TableRow key={doc.id}>
-                  <TableCell className="font-medium">{doc.file_name}</TableCell>
-                  <TableCell>{formatFileSize(doc.file_size)}</TableCell>
-                  <TableCell>{formatDate(doc.uploaded_at)}</TableCell>
-                  <TableCell>{getStatusBadge(doc.status)}</TableCell>
-                  <TableCell>{doc.exam_id}</TableCell>
-                  <TableCell>{doc.school_id || "-"}</TableCell>
-                  <TableCell>{doc.subject_id || "-"}</TableCell>
-                  <TableCell className="text-right">
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      onClick={() => handleDownload(doc.id, doc.file_name)}
-                    >
-                      <Download className="h-4 w-4 mr-2" />
-                      Download
-                    </Button>
-                  </TableCell>
-                </TableRow>
-              ))}
-            </TableBody>
-          </Table>
+    <div className="flex flex-col">
+      {viewMode === "grid" ? (
+        <FileGrid documents={documents} onDownload={handleDownload} onSelect={onSelect} />
+      ) : (
+        <div className="divide-y divide-border">
+          {documents.map((doc) => (
+            <FileListItem key={doc.id} document={doc} onDownload={handleDownload} onSelect={onSelect} />
+          ))}
         </div>
+      )}
 
-        {totalPages > 1 && (
-          <div className="flex items-center justify-between mt-4">
-            <p className="text-sm text-gray-600">
-              Page {currentPage} of {totalPages}
-            </p>
-            <div className="flex gap-2">
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={() => onPageChange(currentPage - 1)}
-                disabled={currentPage === 1}
-              >
-                Previous
-              </Button>
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={() => onPageChange(currentPage + 1)}
-                disabled={currentPage === totalPages}
-              >
-                Next
-              </Button>
-            </div>
+      {totalPages > 1 && (
+        <div className="flex items-center justify-between border-t border-border px-6 py-4">
+          <p className="text-sm text-muted-foreground">
+            Page {currentPage} of {totalPages}
+          </p>
+          <div className="flex gap-2">
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => onPageChange(currentPage - 1)}
+              disabled={currentPage === 1}
+            >
+              Previous
+            </Button>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => onPageChange(currentPage + 1)}
+              disabled={currentPage === totalPages}
+            >
+              Next
+            </Button>
           </div>
-        )}
-      </CardContent>
-    </Card>
+        </div>
+      )}
+    </div>
   );
 }

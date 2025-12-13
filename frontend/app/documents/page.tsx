@@ -3,10 +3,12 @@
 import { useState, useEffect, useCallback } from "react";
 import { DocumentUpload } from "@/components/DocumentUpload";
 import { DocumentList } from "@/components/DocumentList";
-import { DocumentFilters } from "@/components/DocumentFilters";
-import { listDocuments } from "@/lib/api";
+import { DocumentViewer } from "@/components/DocumentViewer";
+import { CompactFilters } from "@/components/CompactFilters";
+import { DashboardLayout } from "@/components/DashboardLayout";
+import { TopBar } from "@/components/TopBar";
+import { listDocuments, downloadDocument } from "@/lib/api";
 import type { Document, DocumentFilters as DocumentFiltersType } from "@/types/document";
-import { Toaster } from "@/components/ui/sonner";
 
 export default function DocumentsPage() {
   const [documents, setDocuments] = useState<Document[]>([]);
@@ -19,6 +21,9 @@ export default function DocumentsPage() {
   const [totalPages, setTotalPages] = useState(1);
   const [currentPage, setCurrentPage] = useState(1);
   const [total, setTotal] = useState(0);
+  const [viewMode, setViewMode] = useState<"grid" | "list">("grid");
+  const [uploadOpen, setUploadOpen] = useState(false);
+  const [selectedDocument, setSelectedDocument] = useState<Document | null>(null);
 
   const loadDocuments = useCallback(async () => {
     setLoading(true);
@@ -53,39 +58,107 @@ export default function DocumentsPage() {
     loadDocuments();
   };
 
+  const handleDocumentSelect = (doc: Document) => {
+    setSelectedDocument(doc);
+  };
+
+  const handleCloseViewer = () => {
+    setSelectedDocument(null);
+  };
+
+  const handleDownload = async (doc: Document) => {
+    try {
+      const blob = await downloadDocument(doc.id);
+      const url = window.URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+
+      // Use extracted_id as filename if available, otherwise use file_name
+      let downloadFilename = doc.file_name;
+      if (doc.extracted_id) {
+        // Extract file extension from original filename
+        const fileExtension = doc.file_name.split('.').pop();
+        downloadFilename = fileExtension ? `${doc.extracted_id}.${fileExtension}` : doc.extracted_id;
+      }
+
+      a.download = downloadFilename;
+      document.body.appendChild(a);
+      a.click();
+      window.URL.revokeObjectURL(url);
+      document.body.removeChild(a);
+    } catch (error) {
+      console.error("Failed to download document:", error);
+      alert("Failed to download document. Please try again.");
+    }
+  };
+
   return (
-    <div className="container mx-auto py-8 space-y-6">
-      <div>
-        <h1 className="text-3xl font-bold tracking-tight">Document Management</h1>
-        <p className="text-muted-foreground mt-2">
-          Upload and manage examination documents. Filter by examination, school, or subject.
-        </p>
+    <DashboardLayout title="All files">
+      <div className="flex flex-1 flex-col overflow-hidden">
+        <TopBar
+          title="All files"
+          onUploadClick={() => setUploadOpen(true)}
+          onNewFolderClick={() => {
+            // TODO: Implement new folder functionality
+          }}
+          viewMode={viewMode}
+          onViewModeChange={setViewMode}
+          filters={<CompactFilters filters={filters} onFiltersChange={handleFiltersChange} />}
+        />
+        <div className="flex flex-1 overflow-hidden relative">
+          {/* Main Content Area */}
+          <main className={`flex-1 overflow-y-auto transition-all ${selectedDocument ? 'md:w-1/2 2xl:w-3/5' : 'w-full'}`}>
+            <DocumentUpload
+              open={uploadOpen}
+              onOpenChange={setUploadOpen}
+              onUploadSuccess={handleUploadSuccess}
+            />
+
+            {error && (
+              <div className="mx-6 mt-4 rounded-lg bg-destructive/10 border border-destructive/20 p-4 text-destructive">
+                {error}
+              </div>
+            )}
+
+            <DocumentList
+              documents={documents}
+              loading={loading}
+              currentPage={currentPage}
+              totalPages={totalPages}
+              onPageChange={handlePageChange}
+              viewMode={viewMode}
+              onSelect={handleDocumentSelect}
+            />
+
+            {!loading && total > 0 && (
+              <div className="px-6 py-4 text-sm text-muted-foreground text-center border-t border-border">
+                Showing {documents.length} of {total} document{total !== 1 ? "s" : ""}
+              </div>
+            )}
+          </main>
+
+          {/* Backdrop for small screens */}
+          {selectedDocument && (
+            <div
+              className="fixed inset-0 bg-black/50 z-40 md:hidden"
+              onClick={handleCloseViewer}
+            />
+          )}
+
+          {/* Document Viewer - Responsive Sizing */}
+          {selectedDocument && (
+            <>
+              <div className="fixed inset-0 z-50 md:relative md:z-auto md:w-1/2 2xl:w-2/5 flex flex-col">
+                <DocumentViewer
+                  document={selectedDocument}
+                  onClose={handleCloseViewer}
+                  onDownload={handleDownload}
+                />
+              </div>
+            </>
+          )}
+        </div>
       </div>
-
-      <DocumentUpload onUploadSuccess={handleUploadSuccess} />
-
-      <DocumentFilters filters={filters} onFiltersChange={handleFiltersChange} />
-
-      {error && (
-        <div className="rounded-lg bg-destructive/10 border border-destructive/20 p-4 text-destructive">
-          {error}
-        </div>
-      )}
-
-      <DocumentList
-        documents={documents}
-        loading={loading}
-        currentPage={currentPage}
-        totalPages={totalPages}
-        onPageChange={handlePageChange}
-      />
-
-      {!loading && total > 0 && (
-        <div className="text-sm text-muted-foreground text-center">
-          Showing {documents.length} of {total} document{total !== 1 ? "s" : ""}
-        </div>
-      )}
-
-    </div>
+    </DashboardLayout>
   );
 }

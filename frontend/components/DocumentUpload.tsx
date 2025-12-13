@@ -2,7 +2,13 @@
 
 import { useState, useRef, useEffect } from "react";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Progress } from "@/components/ui/progress";
 import {
@@ -18,10 +24,12 @@ import type { Exam } from "@/types/document";
 import { Upload, File } from "lucide-react";
 
 interface DocumentUploadProps {
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
   onUploadSuccess?: () => void;
 }
 
-export function DocumentUpload({ onUploadSuccess }: DocumentUploadProps) {
+export function DocumentUpload({ open, onOpenChange, onUploadSuccess }: DocumentUploadProps) {
   const [exams, setExams] = useState<Exam[]>([]);
   const [selectedExamId, setSelectedExamId] = useState<string>("");
   const [files, setFiles] = useState<File[]>([]);
@@ -129,6 +137,7 @@ export function DocumentUpload({ onUploadSuccess }: DocumentUploadProps) {
         fileInputRef.current.value = "";
       }
       onUploadSuccess?.();
+      onOpenChange(false);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to upload files");
     } finally {
@@ -138,12 +147,13 @@ export function DocumentUpload({ onUploadSuccess }: DocumentUploadProps) {
   };
 
   return (
-    <Card>
-      <CardHeader>
-        <CardTitle>Upload Documents</CardTitle>
-        <CardDescription>Upload JPEG or PNG image files for document processing</CardDescription>
-      </CardHeader>
-      <CardContent className="space-y-4">
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="max-w-2xl">
+        <DialogHeader>
+          <DialogTitle>Upload Documents</DialogTitle>
+          <DialogDescription>Upload JPEG or PNG image files for document processing</DialogDescription>
+        </DialogHeader>
+        <div className="space-y-4">
         <div>
           <label className="text-sm font-medium">Examination *</label>
           <Select value={selectedExamId} onValueChange={setSelectedExamId} disabled={uploading}>
@@ -234,10 +244,11 @@ export function DocumentUpload({ onUploadSuccess }: DocumentUploadProps) {
           </Alert>
         )}
 
-        <Button onClick={handleUpload} disabled={uploading || files.length === 0 || !selectedExamId} className="w-full">
-          {uploading ? "Uploading..." : `Upload ${files.length} file${files.length !== 1 ? "s" : ""}`}
-        </Button>
-      </CardContent>
-    </Card>
+          <Button onClick={handleUpload} disabled={uploading || files.length === 0 || !selectedExamId} className="w-full">
+            {uploading ? "Uploading..." : `Upload ${files.length} file${files.length !== 1 ? "s" : ""}`}
+          </Button>
+        </div>
+      </DialogContent>
+    </Dialog>
   );
 }
