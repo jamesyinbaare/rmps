@@ -1,7 +1,9 @@
 from datetime import datetime
 
 from sqlalchemy import (
+    Boolean,
     Column,
+    Date,
     DateTime,
     Float,
     ForeignKey,
@@ -26,6 +28,8 @@ class School(Base):
 
     # Many-to-many relationship with Subject
     subjects = relationship("Subject", secondary="school_subjects", back_populates="schools")
+    # Many-to-many relationship with Programme
+    programmes = relationship("Programme", secondary="school_programmes", back_populates="schools")
     documents = relationship("Document", back_populates="school")
     candidates = relationship("Candidate", back_populates="school")
 
@@ -40,6 +44,8 @@ class Subject(Base):
 
     # Many-to-many relationship with School
     schools = relationship("School", secondary="school_subjects", back_populates="subjects")
+    # Many-to-many relationship with Programme
+    programmes = relationship("Programme", secondary="programme_subjects", back_populates="subjects")
     documents = relationship("Document", back_populates="subject")
     exam_subjects = relationship("ExamSubject", back_populates="subject")
     subject_registrations = relationship("SubjectRegistration", back_populates="subject")
@@ -53,6 +59,29 @@ school_subjects = Table(
     Column("subject_id", Integer, ForeignKey("subjects.id", ondelete="CASCADE"), primary_key=True),
     Column("created_at", DateTime, default=datetime.utcnow, nullable=False),
     UniqueConstraint("school_id", "subject_id", name="uq_school_subject"),
+)
+
+
+# Association table for many-to-many relationship between Programme and Subject
+programme_subjects = Table(
+    "programme_subjects",
+    Base.metadata,
+    Column("programme_id", Integer, ForeignKey("programmes.id", ondelete="CASCADE"), primary_key=True),
+    Column("subject_id", Integer, ForeignKey("subjects.id", ondelete="CASCADE"), primary_key=True),
+    Column("is_core", Boolean, nullable=False, default=True),
+    Column("created_at", DateTime, default=datetime.utcnow, nullable=False),
+    UniqueConstraint("programme_id", "subject_id", name="uq_programme_subject"),
+)
+
+
+# Association table for many-to-many relationship between School and Programme
+school_programmes = Table(
+    "school_programmes",
+    Base.metadata,
+    Column("school_id", Integer, ForeignKey("schools.id", ondelete="CASCADE"), primary_key=True),
+    Column("programme_id", Integer, ForeignKey("programmes.id", ondelete="CASCADE"), primary_key=True),
+    Column("created_at", DateTime, default=datetime.utcnow, nullable=False),
+    UniqueConstraint("school_id", "programme_id", name="uq_school_programme"),
 )
 
 
@@ -108,16 +137,36 @@ class BatchDocument(Base):
     document = relationship("Document", back_populates="batch_documents")
 
 
+class Programme(Base):
+    __tablename__ = "programmes"
+    id = Column(Integer, primary_key=True)
+    name = Column(String(255), nullable=False)
+    code = Column(String(50), unique=True, nullable=False, index=True)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+
+    # Many-to-many relationship with Subject
+    subjects = relationship("Subject", secondary="programme_subjects", back_populates="programmes")
+    # Many-to-many relationship with School
+    schools = relationship("School", secondary="school_programmes", back_populates="programmes")
+    # One-to-many relationship with Candidate
+    candidates = relationship("Candidate", back_populates="programme")
+
+
 class Candidate(Base):
     __tablename__ = "candidates"
     id = Column(Integer, primary_key=True)
     school_id = Column(Integer, ForeignKey("schools.id", ondelete="CASCADE"), nullable=False, index=True)
+    programme_id = Column(Integer, ForeignKey("programmes.id", ondelete="SET NULL"), nullable=True, index=True)
     name = Column(String(255), nullable=False)
     index_number = Column(String(50), unique=True, nullable=False, index=True)
+    date_of_birth = Column(Date, nullable=True)
+    gender = Column(String(20), nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
 
     school = relationship("School", back_populates="candidates")
+    programme = relationship("Programme", back_populates="candidates")
     exam_registrations = relationship("ExamRegistration", back_populates="candidate", cascade="all, delete-orphan")
 
 

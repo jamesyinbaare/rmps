@@ -7,6 +7,7 @@ from app.models import (
     Exam,
     ExamRegistration,
     ExamSubject,
+    Programme,
     School,
     Subject,
     SubjectRegistration,
@@ -39,6 +40,14 @@ async def create_candidate(candidate: CandidateCreate, session: DBSessionDep) ->
     if not school:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="School not found")
 
+    # Check if programme exists (if provided)
+    if candidate.programme_id is not None:
+        programme_stmt = select(Programme).where(Programme.id == candidate.programme_id)
+        programme_result = await session.execute(programme_stmt)
+        programme = programme_result.scalar_one_or_none()
+        if not programme:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Programme not found")
+
     # Check if index_number already exists
     index_stmt = select(Candidate).where(Candidate.index_number == candidate.index_number)
     index_result = await session.execute(index_stmt)
@@ -53,6 +62,9 @@ async def create_candidate(candidate: CandidateCreate, session: DBSessionDep) ->
         school_id=candidate.school_id,
         name=candidate.name,
         index_number=candidate.index_number,
+        date_of_birth=candidate.date_of_birth,
+        gender=candidate.gender,
+        programme_id=candidate.programme_id,
     )
     session.add(db_candidate)
     await session.commit()
@@ -66,19 +78,24 @@ async def list_candidates(
     page: int = Query(1, ge=1),
     page_size: int = Query(20, ge=1, le=100),
     school_id: int | None = Query(None),
+    programme_id: int | None = Query(None),
 ) -> CandidateListResponse:
-    """List candidates with pagination and optional school filter."""
+    """List candidates with pagination and optional school/programme filters."""
     offset = (page - 1) * page_size
 
-    # Build query with optional school filter
+    # Build query with optional filters
     base_stmt = select(Candidate)
     if school_id is not None:
         base_stmt = base_stmt.where(Candidate.school_id == school_id)
+    if programme_id is not None:
+        base_stmt = base_stmt.where(Candidate.programme_id == programme_id)
 
     # Get total count
     count_stmt = select(func.count(Candidate.id))
     if school_id is not None:
         count_stmt = count_stmt.where(Candidate.school_id == school_id)
+    if programme_id is not None:
+        count_stmt = count_stmt.where(Candidate.programme_id == programme_id)
     count_result = await session.execute(count_stmt)
     total = count_result.scalar() or 0
 
@@ -128,6 +145,14 @@ async def update_candidate(
         if not school:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="School not found")
 
+    # Check if programme exists (if updating programme_id)
+    if candidate_update.programme_id is not None:
+        programme_stmt = select(Programme).where(Programme.id == candidate_update.programme_id)
+        programme_result = await session.execute(programme_stmt)
+        programme = programme_result.scalar_one_or_none()
+        if not programme:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Programme not found")
+
     # Check if index_number already exists (if updating index_number)
     if candidate_update.index_number is not None and candidate_update.index_number != candidate.index_number:
         index_stmt = select(Candidate).where(Candidate.index_number == candidate_update.index_number)
@@ -145,6 +170,12 @@ async def update_candidate(
         candidate.name = candidate_update.name
     if candidate_update.index_number is not None:
         candidate.index_number = candidate_update.index_number
+    if candidate_update.date_of_birth is not None:
+        candidate.date_of_birth = candidate_update.date_of_birth
+    if candidate_update.gender is not None:
+        candidate.gender = candidate_update.gender
+    if candidate_update.programme_id is not None:
+        candidate.programme_id = candidate_update.programme_id
 
     await session.commit()
     await session.refresh(candidate)

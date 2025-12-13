@@ -4,7 +4,8 @@ from fastapi import APIRouter, HTTPException, Query, status
 from sqlalchemy import delete, func, insert, select
 
 from app.dependencies.database import DBSessionDep
-from app.models import Document, School, Subject, school_subjects
+from app.models import Document, Programme, School, Subject, school_programmes, school_subjects
+from app.schemas.programme import SchoolProgrammeAssociation
 from app.schemas.school import (
     SchoolCreate,
     SchoolResponse,
@@ -283,3 +284,87 @@ async def get_subject_statistics_for_school(school_id: int, subject_id: int, ses
         documents_by_test_type=documents_by_test_type,
         sheet_sequence_gaps=sequence_gaps,
     )
+
+
+# School-Programme Association Endpoints
+
+
+@router.get("/{school_id}/programmes", response_model=list[Any])
+async def list_school_programmes(school_id: int, session: DBSessionDep) -> list[Any]:
+    """List programmes for a school."""
+    stmt = select(School).where(School.id == school_id)
+    result = await session.execute(stmt)
+    school = result.scalar_one_or_none()
+    if not school:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="School not found")
+
+    # Get programmes via association
+    programme_stmt = (
+        select(Programme)
+        .join(school_programmes, Programme.id == school_programmes.c.programme_id)
+        .where(school_programmes.c.school_id == school_id)
+        .order_by(Programme.code)
+    )
+    programme_result = await session.execute(programme_stmt)
+    programmes = programme_result.scalars().all()
+
+    from app.schemas.programme import ProgrammeResponse
+
+    return [ProgrammeResponse.model_validate(programme) for programme in programmes]
+
+
+@router.post("/{school_id}/programmes/{programme_id}", status_code=status.HTTP_201_CREATED)
+async def associate_programme_with_school(
+    school_id: int, programme_id: int, session: DBSessionDep
+) -> SchoolProgrammeAssociation:
+    """Associate a programme with a school."""
+    # Check school exists
+    school_stmt = select(School).where(School.id == school_id)
+    result = await session.execute(school_stmt)
+    school = result.scalar_one_or_none()
+    if not school:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="School not found")
+
+    # Check programme exists
+    programme_stmt = select(Programme).where(Programme.id == programme_id)
+    result = await session.execute(programme_stmt)
+    programme = result.scalar_one_or_none()
+    if not programme:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Programme not found")
+
+    # Check if association already exists
+    assoc_stmt = select(school_programmes).where(
+        school_programmes.c.school_id == school_id, school_programmes.c.programme_id == programme_id
+    )
+    result = await session.execute(assoc_stmt)
+    existing = result.first()
+    if existing:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST, detail="Programme already associated with school"
+        )
+
+    # Create association
+    await session.execute(insert(school_programmes).values(school_id=school_id, programme_id=programme_id))
+    await session.commit()
+
+    return SchoolProgrammeAssociation(school_id=school_id, programme_id=programme_id)
+
+
+@router.delete("/{school_id}/programmes/{programme_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def remove_programme_association(school_id: int, programme_id: int, session: DBSessionDep) -> None:
+    """Remove programme association from school."""
+    # Check association exists
+    assoc_stmt = select(school_programmes).where(
+        school_programmes.c.school_id == school_id, school_programmes.c.programme_id == programme_id
+    )
+    result = await session.execute(assoc_stmt)
+    existing = result.first()
+    if not existing:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Programme association not found")
+
+    await session.execute(
+        delete(school_programmes).where(
+            school_programmes.c.school_id == school_id, school_programmes.c.programme_id == programme_id
+        )
+    )
+    await session.commit()

@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import date, datetime
 
 from pydantic import BaseModel, Field
 
@@ -9,6 +9,9 @@ class CandidateBase(BaseModel):
     school_id: int
     name: str = Field(..., min_length=1, max_length=255)
     index_number: str = Field(..., min_length=1, max_length=50)
+    date_of_birth: date | None = None
+    gender: str | None = Field(None, max_length=20)
+    programme_id: int | None = None
 
 
 class CandidateCreate(CandidateBase):
@@ -23,6 +26,9 @@ class CandidateUpdate(BaseModel):
     school_id: int | None = None
     name: str | None = Field(None, min_length=1, max_length=255)
     index_number: str | None = Field(None, min_length=1, max_length=50)
+    date_of_birth: date | None = None
+    gender: str | None = Field(None, max_length=20)
+    programme_id: int | None = None
 
 
 class CandidateResponse(CandidateBase):

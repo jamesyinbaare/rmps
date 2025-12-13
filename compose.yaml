@@ -17,11 +17,24 @@ services:
             - .venv
         - action: rebuild
           path: ./backend/pyproject.toml
-
+    restart: always
     depends_on:
       postgres:
         condition: service_healthy
-    restart: always
+        restart: true
+      prestart:
+        condition: service_completed_successfully
+
+  prestart:
+    build:
+      context: backend
+    env_file:
+      - .env
+    command: bash app/scripts/prestart.sh
+    depends_on:
+      postgres:
+        condition: service_healthy
+        restart: true
   frontend:
     build:
       context: frontend
