@@ -8,6 +8,12 @@ import type {
   School,
   Subject,
   ApiError,
+  Programme,
+  ProgrammeListResponse,
+  Candidate,
+  CandidateListResponse,
+  ExamRegistration,
+  SubjectRegistration,
 } from "@/types/document";
 
 export const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL || "http://localhost:8000";
@@ -102,6 +108,25 @@ export async function listSchools(page = 1, pageSize = 100): Promise<School[]> {
 
   const response = await fetch(`${API_BASE_URL}/api/v1/schools?${params.toString()}`);
   return handleResponse<School[]>(response);
+}
+
+export async function getSchoolById(id: number): Promise<School | null> {
+  // Backend uses school_code, so we need to fetch all schools and find by ID
+  // This is not ideal but works with the current API structure
+  let page = 1;
+  let hasMore = true;
+
+  while (hasMore) {
+    const schools = await listSchools(page, 100);
+    const school = schools.find((s) => s.id === id);
+    if (school) {
+      return school;
+    }
+    hasMore = schools.length === 100;
+    page++;
+  }
+
+  return null;
 }
 
 export async function listSubjects(page = 1, pageSize = 100): Promise<Subject[]> {
@@ -264,4 +289,239 @@ export async function getSubjectsForExamAndSchool(
     .map((subjectId) => subjectsMap.get(subjectId))
     .filter((subject): subject is Subject => subject !== undefined)
     .sort((a, b) => a.name.localeCompare(b.name));
+}
+
+// Programme API Functions
+
+export async function listProgrammes(page = 1, pageSize = 100): Promise<ProgrammeListResponse> {
+  const cappedPageSize = Math.min(pageSize, 100);
+  const params = new URLSearchParams();
+  params.append("page", page.toString());
+  params.append("page_size", cappedPageSize.toString());
+
+  const response = await fetch(`${API_BASE_URL}/api/v1/programmes?${params.toString()}`);
+  return handleResponse<ProgrammeListResponse>(response);
+}
+
+export async function getProgramme(id: number): Promise<Programme> {
+  const response = await fetch(`${API_BASE_URL}/api/v1/programmes/${id}`);
+  return handleResponse<Programme>(response);
+}
+
+export async function createProgramme(data: { name: string; code: string }): Promise<Programme> {
+  const response = await fetch(`${API_BASE_URL}/api/v1/programmes`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(data),
+  });
+  return handleResponse<Programme>(response);
+}
+
+export async function updateProgramme(
+  id: number,
+  data: { name?: string; code?: string }
+): Promise<Programme> {
+  const response = await fetch(`${API_BASE_URL}/api/v1/programmes/${id}`, {
+    method: "PUT",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(data),
+  });
+  return handleResponse<Programme>(response);
+}
+
+export async function deleteProgramme(id: number): Promise<void> {
+  const response = await fetch(`${API_BASE_URL}/api/v1/programmes/${id}`, {
+    method: "DELETE",
+  });
+  if (!response.ok) {
+    const error: ApiError = await response.json().catch(() => ({ detail: "An error occurred" }));
+    throw new Error(error.detail || `HTTP error! status: ${response.status}`);
+  }
+}
+
+// Candidate API Functions
+
+export async function listCandidates(
+  page = 1,
+  pageSize = 20,
+  schoolId?: number,
+  programmeId?: number
+): Promise<CandidateListResponse> {
+  const cappedPageSize = Math.min(pageSize, 100);
+  const params = new URLSearchParams();
+  params.append("page", page.toString());
+  params.append("page_size", cappedPageSize.toString());
+  if (schoolId !== undefined) {
+    params.append("school_id", schoolId.toString());
+  }
+  if (programmeId !== undefined) {
+    params.append("programme_id", programmeId.toString());
+  }
+
+  const response = await fetch(`${API_BASE_URL}/api/v1/candidates?${params.toString()}`);
+  return handleResponse<CandidateListResponse>(response);
+}
+
+export async function getCandidate(id: number): Promise<Candidate> {
+  const response = await fetch(`${API_BASE_URL}/api/v1/candidates/${id}`);
+  return handleResponse<Candidate>(response);
+}
+
+export async function createCandidate(data: {
+  school_id: number;
+  name: string;
+  index_number: string;
+  date_of_birth?: string | null;
+  gender?: string | null;
+  programme_id?: number | null;
+}): Promise<Candidate> {
+  const response = await fetch(`${API_BASE_URL}/api/v1/candidates`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(data),
+  });
+  return handleResponse<Candidate>(response);
+}
+
+export async function updateCandidate(
+  id: number,
+  data: {
+    school_id?: number;
+    name?: string;
+    index_number?: string;
+    date_of_birth?: string | null;
+    gender?: string | null;
+    programme_id?: number | null;
+  }
+): Promise<Candidate> {
+  const response = await fetch(`${API_BASE_URL}/api/v1/candidates/${id}`, {
+    method: "PUT",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(data),
+  });
+  return handleResponse<Candidate>(response);
+}
+
+export async function deleteCandidate(id: number): Promise<void> {
+  const response = await fetch(`${API_BASE_URL}/api/v1/candidates/${id}`, {
+    method: "DELETE",
+  });
+  if (!response.ok) {
+    const error: ApiError = await response.json().catch(() => ({ detail: "An error occurred" }));
+    throw new Error(error.detail || `HTTP error! status: ${response.status}`);
+  }
+}
+
+// School Management API Functions
+
+export async function createSchool(data: { code: string; name: string }): Promise<School> {
+  const response = await fetch(`${API_BASE_URL}/api/v1/schools`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(data),
+  });
+  return handleResponse<School>(response);
+}
+
+export async function getSchoolByCode(code: string): Promise<School> {
+  const response = await fetch(`${API_BASE_URL}/api/v1/schools/${code}`);
+  return handleResponse<School>(response);
+}
+
+export async function updateSchool(code: string, data: { name?: string }): Promise<School> {
+  const response = await fetch(`${API_BASE_URL}/api/v1/schools/${code}`, {
+    method: "PUT",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(data),
+  });
+  return handleResponse<School>(response);
+}
+
+export async function deleteSchool(code: string): Promise<void> {
+  const response = await fetch(`${API_BASE_URL}/api/v1/schools/${code}`, {
+    method: "DELETE",
+  });
+  if (!response.ok) {
+    const error: ApiError = await response.json().catch(() => ({ detail: "An error occurred" }));
+    throw new Error(error.detail || `HTTP error! status: ${response.status}`);
+  }
+}
+
+export async function listSchoolProgrammes(schoolId: number): Promise<Programme[]> {
+  const response = await fetch(`${API_BASE_URL}/api/v1/schools/${schoolId}/programmes`);
+  return handleResponse<Programme[]>(response);
+}
+
+export async function associateProgrammeWithSchool(
+  schoolId: number,
+  programmeId: number
+): Promise<{ school_id: number; programme_id: number }> {
+  const response = await fetch(`${API_BASE_URL}/api/v1/schools/${schoolId}/programmes/${programmeId}`, {
+    method: "POST",
+  });
+  return handleResponse<{ school_id: number; programme_id: number }>(response);
+}
+
+export async function removeProgrammeFromSchool(schoolId: number, programmeId: number): Promise<void> {
+  const response = await fetch(`${API_BASE_URL}/api/v1/schools/${schoolId}/programmes/${programmeId}`, {
+    method: "DELETE",
+  });
+  if (!response.ok) {
+    const error: ApiError = await response.json().catch(() => ({ detail: "An error occurred" }));
+    throw new Error(error.detail || `HTTP error! status: ${response.status}`);
+  }
+}
+
+// Programme-School Association API Functions
+
+export async function listProgrammeSchools(programmeId: number): Promise<School[]> {
+  const response = await fetch(`${API_BASE_URL}/api/v1/programmes/${programmeId}/schools`);
+  return handleResponse<School[]>(response);
+}
+
+export async function associateSchoolWithProgramme(
+  programmeId: number,
+  schoolId: number
+): Promise<{ school_id: number; programme_id: number }> {
+  const response = await fetch(`${API_BASE_URL}/api/v1/programmes/${programmeId}/schools/${schoolId}`, {
+    method: "POST",
+  });
+  return handleResponse<{ school_id: number; programme_id: number }>(response);
+}
+
+export async function removeSchoolFromProgramme(programmeId: number, schoolId: number): Promise<void> {
+  const response = await fetch(`${API_BASE_URL}/api/v1/programmes/${programmeId}/schools/${schoolId}`, {
+    method: "DELETE",
+  });
+  if (!response.ok) {
+    const error: ApiError = await response.json().catch(() => ({ detail: "An error occurred" }));
+    throw new Error(error.detail || `HTTP error! status: ${response.status}`);
+  }
+}
+
+// Candidate Exam Registration API Functions
+
+export async function listCandidateExamRegistrations(candidateId: number): Promise<ExamRegistration[]> {
+  const response = await fetch(`${API_BASE_URL}/api/v1/candidates/${candidateId}/exams`);
+  return handleResponse<ExamRegistration[]>(response);
+}
+
+export async function listExamRegistrationSubjects(
+  candidateId: number,
+  examId: number
+): Promise<SubjectRegistration[]> {
+  const response = await fetch(`${API_BASE_URL}/api/v1/candidates/${candidateId}/exams/${examId}/subjects`);
+  return handleResponse<SubjectRegistration[]>(response);
 }

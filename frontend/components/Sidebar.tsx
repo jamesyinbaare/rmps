@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { usePathname } from "next/navigation";
+import { usePathname, useRouter } from "next/navigation";
 import { useState, useEffect } from "react";
 import {
   Home,
@@ -14,6 +14,11 @@ import {
   Grid3x3,
   PanelLeftClose,
   PanelLeftOpen,
+  Building2,
+  GraduationCap,
+  Users,
+  Plus,
+  Settings,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Button } from "./ui/button";
@@ -27,6 +32,7 @@ interface MenuItem {
 
 export function Sidebar() {
   const pathname = usePathname();
+  const router = useRouter();
   const [selectedMenu, setSelectedMenu] = useState<string | null>("home");
   const [submenuVisible, setSubmenuVisible] = useState(true); // Default to visible (will be adjusted by useEffect on mobile)
   const [isMobile, setIsMobile] = useState(false);
@@ -43,6 +49,26 @@ export function Sidebar() {
         { href: "/documents?filter=starred", label: "Starred", icon: Star },
         { href: "/documents?filter=shared", label: "Shared", icon: Share2 },
 
+      ],
+    },
+    {
+      href: "/schools",
+      label: "Schools",
+      icon: Building2,
+      submenu: [
+        { href: "/schools", label: "All Schools", icon: Building2 },
+        { href: "/schools/new", label: "New School", icon: Plus },
+        { href: "/schools/manage-programmes", label: "Manage Programmes", icon: Settings },
+      ],
+    },
+    {
+      href: "/programmes",
+      label: "Programmes",
+      icon: GraduationCap,
+      submenu: [
+        { href: "/programmes", label: "All Programmes", icon: GraduationCap },
+        { href: "/programmes/new", label: "New Programme", icon: Plus },
+        { href: "/programmes/manage-schools", label: "Manage Schools", icon: Settings },
       ],
     },
     {
@@ -120,6 +146,10 @@ export function Sidebar() {
     if (item.submenu && item.submenu.length > 0) {
       const menuKey = item.href.toLowerCase().replace(/[^a-z0-9]/g, "");
       setSelectedMenu(menuKey);
+      // Navigate to first submenu item when clicking any menu with submenu
+      if (item.submenu.length > 0) {
+        router.push(item.submenu[0].href);
+      }
       // Maintain submenu visibility state - don't change it when switching menus
       // Only close on mobile
       if (isMobile) {
