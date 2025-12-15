@@ -422,7 +422,12 @@ export async function deleteCandidate(id: number): Promise<void> {
 
 // School Management API Functions
 
-export async function createSchool(data: { code: string; name: string }): Promise<School> {
+export async function createSchool(data: {
+  code: string;
+  name: string;
+  region: string;
+  zone: string;
+}): Promise<School> {
   const response = await fetch(`${API_BASE_URL}/api/v1/schools`, {
     method: "POST",
     headers: {

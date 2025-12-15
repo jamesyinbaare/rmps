@@ -53,10 +53,59 @@ export interface ExamListResponse {
   total_pages: number;
 }
 
+export type SchoolRegion =
+  | "Ashanti Region"
+  | "Bono Region"
+  | "Bono East Region"
+  | "Ahafo Region"
+  | "Central Region"
+  | "Eastern Region"
+  | "Greater Accra Region"
+  | "Northern Region"
+  | "North East Region"
+  | "Savannah Region"
+  | "Upper East Region"
+  | "Upper West Region"
+  | "Volta Region"
+  | "Oti Region"
+  | "Western Region"
+  | "Western North Region";
+
+export type SchoolZone =
+  | "A"
+  | "B"
+  | "C"
+  | "D"
+  | "E"
+  | "F"
+  | "G"
+  | "H"
+  | "I"
+  | "J"
+  | "K"
+  | "L"
+  | "M"
+  | "N"
+  | "O"
+  | "P"
+  | "Q"
+  | "R"
+  | "S"
+  | "T"
+  | "U"
+  | "V"
+  | "W"
+  | "X"
+  | "Y"
+  | "Z";
+
 export interface School {
   id: number;
   code: string;
   name: string;
+  region: SchoolRegion;
+  zone: SchoolZone;
+  school_type: "private" | "public" | null;
   created_at: string;
   updated_at: string;
 }
@@ -120,10 +169,14 @@ export interface CandidateListResponse {
 export interface SubjectScore {
   id: number;
   subject_registration_id: number;
-  mcq_raw_score: number;
+  obj_raw_score: number | null;
   essay_raw_score: number;
-  practical_raw_score: number | null;
+  pract_raw_score: number | null;
+  obj_normalized: number | null;
+  essay_normalized: number | null;
+  pract_normalized: number | null;
   total_score: number;
+  document_id: number | null;
   created_at: string;
   updated_at: string;
 }

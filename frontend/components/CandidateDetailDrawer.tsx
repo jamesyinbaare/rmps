@@ -229,7 +229,9 @@ export function CandidateDetailDrawer({
                                     </TableCell>
                                     <TableCell className="text-right">
                                       {subjectReg.subject_score
-                                        ? subjectReg.subject_score.mcq_raw_score.toFixed(2)
+                                        ? subjectReg.subject_score.obj_raw_score !== null
+                                          ? subjectReg.subject_score.obj_raw_score.toFixed(2)
+                                          : "—"
                                         : "—"}
                                     </TableCell>
                                     <TableCell className="text-right">
@@ -239,8 +241,8 @@ export function CandidateDetailDrawer({
                                     </TableCell>
                                     <TableCell className="text-right">
                                       {subjectReg.subject_score
-                                        ? subjectReg.subject_score.practical_raw_score !== null
-                                          ? subjectReg.subject_score.practical_raw_score.toFixed(2)
+                                        ? subjectReg.subject_score.pract_raw_score !== null
+                                          ? subjectReg.subject_score.pract_raw_score.toFixed(2)
                                           : "—"
                                         : "—"}
                                     </TableCell>
