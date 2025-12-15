@@ -85,9 +85,21 @@ async def create_initial_data() -> None:
 
 async def create_schools(session) -> list[School]:
     """Create schools if they don't exist."""
+    from app.models import SchoolRegion, SchoolZone
+
     schools_data = [
-        {"code": "817006", "name": "Accra Technical Training Center"},
-        {"code": "817105", "name": "ST. Prospers College"},
+        {
+            "code": "817006",
+            "name": "Accra Technical Training Center",
+            "region": SchoolRegion.GREATER_ACCRA,
+            "zone": SchoolZone.A,
+        },
+        {
+            "code": "817105",
+            "name": "ST. Prospers College",
+            "region": SchoolRegion.GREATER_ACCRA,
+            "zone": SchoolZone.B,
+        },
     ]
 
     schools = []
@@ -97,7 +109,12 @@ async def create_schools(session) -> list[School]:
         existing = result.scalar_one_or_none()
 
         if not existing:
-            school = School(code=school_data["code"], name=school_data["name"])
+            school = School(
+                code=school_data["code"],
+                name=school_data["name"],
+                region=school_data["region"],
+                zone=school_data["zone"],
+            )
             session.add(school)
             schools.append(school)
         else:

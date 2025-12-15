@@ -15,8 +15,8 @@ class SchoolBase(BaseModel):
 class SchoolCreate(SchoolBase):
     """Schema for creating a school."""
 
-    region: SchoolRegion | None = None
-    zone: SchoolZone | None = None
+    region: SchoolRegion
+    zone: SchoolZone
     school_type: SchoolType | None = None
 
 
@@ -33,8 +33,8 @@ class SchoolResponse(SchoolBase):
     """Schema for school response."""
 
     id: int
-    region: SchoolRegion | None = None
-    zone: SchoolZone | None = None
+    region: SchoolRegion
+    zone: SchoolZone
     school_type: SchoolType | None = None
     created_at: datetime
     updated_at: datetime
