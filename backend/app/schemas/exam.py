@@ -54,17 +54,23 @@ class ExamSubjectCreate(BaseModel):
     """Schema for adding a subject to an exam."""
 
     subject_id: int
-    mcq_percentage: float = Field(..., ge=0.0, le=100.0)
-    essay_percentage: float = Field(..., ge=0.0, le=100.0)
-    practical_percentage: float | None = Field(None, ge=0.0, le=100.0)
+    obj_pct: float | None = Field(None, ge=0.0, le=100.0)
+    essay_pct: float | None = Field(None, ge=0.0, le=100.0)
+    pract_pct: float | None = Field(None, ge=0.0, le=100.0)
+    obj_max_score: float | None = Field(None, ge=0.0)
+    essay_max_score: float | None = Field(None, ge=0.0)
+    pract_max_score: float | None = Field(None, ge=0.0)
 
 
 class ExamSubjectUpdate(BaseModel):
     """Schema for updating exam subject percentages."""
 
-    mcq_percentage: float | None = Field(None, ge=0.0, le=100.0)
-    essay_percentage: float | None = Field(None, ge=0.0, le=100.0)
-    practical_percentage: float | None = Field(None, ge=0.0, le=100.0)
+    obj_pct: float | None = Field(None, ge=0.0, le=100.0)
+    essay_pct: float | None = Field(None, ge=0.0, le=100.0)
+    pract_pct: float | None = Field(None, ge=0.0, le=100.0)
+    obj_max_score: float | None = Field(None, ge=0.0)
+    essay_max_score: float | None = Field(None, ge=0.0)
+    pract_max_score: float | None = Field(None, ge=0.0)
 
 
 class ExamSubjectResponse(BaseModel):
@@ -75,9 +81,12 @@ class ExamSubjectResponse(BaseModel):
     subject_id: int
     subject_code: str
     subject_name: str
-    mcq_percentage: float
-    essay_percentage: float
-    practical_percentage: float | None
+    obj_pct: float | None
+    essay_pct: float | None
+    pract_pct: float | None
+    obj_max_score: float | None
+    essay_max_score: float | None
+    pract_max_score: float | None
     created_at: datetime
     updated_at: datetime
 

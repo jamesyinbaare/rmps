@@ -1,10 +1,12 @@
 from datetime import datetime
+import enum
 
 from sqlalchemy import (
     Boolean,
     Column,
     Date,
     DateTime,
+    Enum,
     Float,
     ForeignKey,
     Integer,
@@ -18,11 +20,67 @@ from sqlalchemy.orm import relationship
 from app.dependencies.database import Base
 
 
+class SchoolRegion(enum.Enum):
+    ASHANTI = "Ashanti Region"
+    BONO = "Bono Region"
+    BONO_EAST = "Bono East Region"
+    AHAFO = "Ahafo Region"
+    CENTRAL = "Central Region"
+    EASTERN = "Eastern Region"
+    GREATER_ACCRA = "Greater Accra Region"
+    NORTHERN = "Northern Region"
+    NORTH_EAST = "North East Region"
+    SAVANNAH = "Savannah Region"
+    UPPER_EAST = "Upper East Region"
+    UPPER_WEST = "Upper West Region"
+    VOLTA = "Volta Region"
+    OTI = "Oti Region"
+    WESTERN = "Western Region"
+    WESTERN_NORTH = "Western North Region"
+
+
+class SchoolZone(enum.Enum):
+    A = "A"
+    B = "B"
+    C = "C"
+    D = "D"
+    E = "E"
+    F = "F"
+    G = "G"
+    H = "H"
+    I = "I"
+    J = "J"
+    K = "K"
+    L = "L"
+    M = "M"
+    N = "N"
+    O = "O"
+    P = "P"
+    Q = "Q"
+    R = "R"
+    S = "S"
+    T = "T"
+    U = "U"
+    V = "V"
+    W = "W"
+    X = "X"
+    Y = "Y"
+    Z = "Z"
+
+
+class SchoolType(enum.Enum):
+    PRIVATE = "private"
+    PUBLIC = "public"
+
+
 class School(Base):
     __tablename__ = "schools"
     id = Column(Integer, primary_key=True)
     code = Column(String(6), unique=True, nullable=False, index=True)
     name = Column(String(255), nullable=False)
+    region = Column(Enum(SchoolRegion), nullable=True)
+    zone = Column(Enum(SchoolZone), nullable=True)
+    school_type = Column(Enum(SchoolType), nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
 
@@ -48,7 +106,6 @@ class Subject(Base):
     programmes = relationship("Programme", secondary="programme_subjects", back_populates="subjects")
     documents = relationship("Document", back_populates="subject")
     exam_subjects = relationship("ExamSubject", back_populates="subject")
-    subject_registrations = relationship("SubjectRegistration", back_populates="subject")
 
 
 # Association table for many-to-many relationship between School and Subject
@@ -191,14 +248,18 @@ class ExamSubject(Base):
     id = Column(Integer, primary_key=True)
     exam_id = Column(Integer, ForeignKey("exams.id", ondelete="CASCADE"), nullable=False, index=True)
     subject_id = Column(Integer, ForeignKey("subjects.id", ondelete="CASCADE"), nullable=False, index=True)
-    mcq_percentage = Column(Float, nullable=False)
-    essay_percentage = Column(Float, nullable=False)
-    practical_percentage = Column(Float, nullable=True)
+    obj_pct = Column(Float, nullable=True)
+    essay_pct = Column(Float, nullable=True)
+    pract_pct = Column(Float, nullable=True)
+    obj_max_score = Column(Float, nullable=True)
+    essay_max_score = Column(Float, nullable=True)
+    pract_max_score = Column(Float, nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
 
     exam = relationship("Exam", back_populates="exam_subjects")
     subject = relationship("Subject", back_populates="exam_subjects")
+    subject_registrations = relationship("SubjectRegistration", back_populates="exam_subject", cascade="all, delete-orphan")
     __table_args__ = (UniqueConstraint("exam_id", "subject_id", name="uq_exam_subject"),)
 
 
@@ -224,17 +285,17 @@ class SubjectRegistration(Base):
     exam_registration_id = Column(
         Integer, ForeignKey("exam_registrations.id", ondelete="CASCADE"), nullable=False, index=True
     )
-    subject_id = Column(Integer, ForeignKey("subjects.id", ondelete="CASCADE"), nullable=False, index=True)
+    exam_subject_id = Column(Integer, ForeignKey("exam_subjects.id", ondelete="CASCADE"), nullable=False, index=True)
     series = Column(Integer, nullable=True)  # Group number (1 to exam.subject_series, or null)
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
 
     exam_registration = relationship("ExamRegistration", back_populates="subject_registrations")
-    subject = relationship("Subject", back_populates="subject_registrations")
+    exam_subject = relationship("ExamSubject", back_populates="subject_registrations")
     subject_score = relationship(
         "SubjectScore", back_populates="subject_registration", uselist=False, cascade="all, delete-orphan"
     )
-    __table_args__ = (UniqueConstraint("exam_registration_id", "subject_id", name="uq_exam_registration_subject"),)
+    __table_args__ = (UniqueConstraint("exam_registration_id", "exam_subject_id", name="uq_exam_registration_exam_subject"),)
 
 
 class SubjectScore(Base):
@@ -243,10 +304,14 @@ class SubjectScore(Base):
     subject_registration_id = Column(
         Integer, ForeignKey("subject_registrations.id", ondelete="CASCADE"), nullable=False, unique=True, index=True
     )
-    mcq_raw_score = Column(Float, nullable=False)
+    obj_raw_score = Column(Float, nullable=True)
     essay_raw_score = Column(Float, nullable=False)
-    practical_raw_score = Column(Float, nullable=True)
+    pract_raw_score = Column(Float, nullable=True)
+    obj_normalized = Column(Float, nullable=True)
+    essay_normalized = Column(Float, nullable=True)
+    pract_normalized = Column(Float, nullable=True)
     total_score = Column(Float, nullable=False)
+    document_id = Column(Integer, nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
 

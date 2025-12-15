@@ -29,7 +29,13 @@ async def create_school(school: SchoolCreate, session: DBSessionDep) -> SchoolRe
             status_code=status.HTTP_400_BAD_REQUEST, detail=f"School with code {school.code} already exists"
         )
 
-    db_school = School(code=school.code, name=school.name)
+    db_school = School(
+        code=school.code,
+        name=school.name,
+        region=school.region,
+        zone=school.zone,
+        school_type=school.school_type,
+    )
     session.add(db_school)
     await session.commit()
     await session.refresh(db_school)
@@ -72,6 +78,12 @@ async def update_school(school_code: str, school_update: SchoolUpdate, session: 
 
     if school_update.name is not None:
         school.name = school_update.name
+    if school_update.region is not None:
+        school.region = school_update.region
+    if school_update.zone is not None:
+        school.zone = school_update.zone
+    if school_update.school_type is not None:
+        school.school_type = school_update.school_type
 
     await session.commit()
     await session.refresh(school)

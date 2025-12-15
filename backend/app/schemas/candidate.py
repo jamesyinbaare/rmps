@@ -85,9 +85,10 @@ class SubjectRegistrationResponse(BaseModel):
 
     id: int
     exam_registration_id: int
-    subject_id: int
-    subject_code: str
-    subject_name: str
+    exam_subject_id: int
+    subject_id: int  # Derived from exam_subject.subject_id
+    subject_code: str  # Derived from exam_subject.subject.code
+    subject_name: str  # Derived from exam_subject.subject.name
     series: int | None
     created_at: datetime
     updated_at: datetime
@@ -102,10 +103,14 @@ class SubjectScoreResponse(BaseModel):
 
     id: int
     subject_registration_id: int
-    mcq_raw_score: float
+    obj_raw_score: float | None
     essay_raw_score: float
-    practical_raw_score: float | None
+    pract_raw_score: float | None
+    obj_normalized: float | None = None
+    essay_normalized: float | None = None
+    pract_normalized: float | None = None
     total_score: float
+    document_id: int | None = None
     created_at: datetime
     updated_at: datetime
 

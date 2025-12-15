@@ -326,14 +326,14 @@ async def get_candidate_exam_registration(
 
 
 @router.post(
-    "/{candidate_id}/exams/{exam_id}/subjects/{subject_id}",
+    "/{candidate_id}/exams/{exam_id}/subjects/{exam_subject_id}",
     response_model=SubjectRegistrationResponse,
     status_code=status.HTTP_201_CREATED,
 )
 async def add_subject_to_exam_registration(
     candidate_id: int,
     exam_id: int,
-    subject_id: int,
+    exam_subject_id: int,
     subject_registration: SubjectRegistrationCreate,
     session: DBSessionDep,
 ) -> SubjectRegistrationResponse:
@@ -351,27 +351,26 @@ async def add_subject_to_exam_registration(
 
     exam_registration, exam = exam_reg_data
 
-    # Check subject exists
-    subject_stmt = select(Subject).where(Subject.id == subject_id)
-    subject_result = await session.execute(subject_stmt)
-    subject = subject_result.scalar_one_or_none()
-    if not subject:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Subject not found")
-
-    # Validate that subject exists in exam's ExamSubject list
-    exam_subject_stmt = select(ExamSubject).where(ExamSubject.exam_id == exam_id, ExamSubject.subject_id == subject_id)
+    # Check that ExamSubject exists and belongs to this exam
+    exam_subject_stmt = (
+        select(ExamSubject, Subject)
+        .join(Subject, ExamSubject.subject_id == Subject.id)
+        .where(ExamSubject.id == exam_subject_id, ExamSubject.exam_id == exam_id)
+    )
     exam_subject_result = await session.execute(exam_subject_stmt)
-    exam_subject = exam_subject_result.scalar_one_or_none()
-    if not exam_subject:
+    exam_subject_data = exam_subject_result.first()
+    if not exam_subject_data:
         raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Subject {subject.code} is not part of exam {exam.name}",
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Exam subject not found or does not belong to exam {exam.name}",
         )
+
+    exam_subject, subject = exam_subject_data
 
     # Check if subject already registered
     existing_stmt = select(SubjectRegistration).where(
         SubjectRegistration.exam_registration_id == exam_registration.id,
-        SubjectRegistration.subject_id == subject_id,
+        SubjectRegistration.exam_subject_id == exam_subject_id,
     )
     existing_result = await session.execute(existing_stmt)
     existing = existing_result.scalar_one_or_none()
@@ -391,7 +390,7 @@ async def add_subject_to_exam_registration(
     # Create subject registration
     db_subject_registration = SubjectRegistration(
         exam_registration_id=exam_registration.id,
-        subject_id=subject_id,
+        exam_subject_id=exam_subject_id,
         series=subject_registration.series,
     )
     session.add(db_subject_registration)
@@ -400,10 +399,14 @@ async def add_subject_to_exam_registration(
     # Automatically create SubjectScore with default values
     db_subject_score = SubjectScore(
         subject_registration_id=db_subject_registration.id,
-        mcq_raw_score=0.0,
+        obj_raw_score=None,
         essay_raw_score=0.0,
-        practical_raw_score=None,
+        pract_raw_score=None,
+        obj_normalized=None,
+        essay_normalized=None,
+        pract_normalized=None,
         total_score=0.0,
+        document_id=None,
     )
     session.add(db_subject_score)
     await session.commit()
@@ -416,7 +419,8 @@ async def add_subject_to_exam_registration(
     return SubjectRegistrationResponse(
         id=db_subject_registration.id,
         exam_registration_id=db_subject_registration.exam_registration_id,
-        subject_id=db_subject_registration.subject_id,
+        exam_subject_id=db_subject_registration.exam_subject_id,
+        subject_id=subject.id,
         subject_code=subject.code,
         subject_name=subject.name,
         series=db_subject_registration.series,
@@ -426,9 +430,9 @@ async def add_subject_to_exam_registration(
     )
 
 
-@router.delete("/{candidate_id}/exams/{exam_id}/subjects/{subject_id}", status_code=status.HTTP_204_NO_CONTENT)
+@router.delete("/{candidate_id}/exams/{exam_id}/subjects/{exam_subject_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def remove_subject_from_exam_registration(
-    candidate_id: int, exam_id: int, subject_id: int, session: DBSessionDep
+    candidate_id: int, exam_id: int, exam_subject_id: int, session: DBSessionDep
 ) -> None:
     """Remove subject from exam registration. SubjectScore will be automatically deleted via CASCADE."""
     # Check exam registration exists
@@ -443,7 +447,7 @@ async def remove_subject_from_exam_registration(
     # Check subject registration exists
     subject_reg_stmt = select(SubjectRegistration).where(
         SubjectRegistration.exam_registration_id == exam_registration.id,
-        SubjectRegistration.subject_id == subject_id,
+        SubjectRegistration.exam_subject_id == exam_subject_id,
     )
     subject_reg_result = await session.execute(subject_reg_stmt)
     subject_registration = subject_reg_result.scalar_one_or_none()
@@ -469,10 +473,11 @@ async def list_exam_registration_subjects(
     if not exam_registration:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Exam registration not found")
 
-    # Get subject registrations with subject details and scores
+    # Get subject registrations with exam_subject, subject details and scores
     subject_reg_stmt = (
-        select(SubjectRegistration, Subject, SubjectScore)
-        .join(Subject, SubjectRegistration.subject_id == Subject.id)
+        select(SubjectRegistration, ExamSubject, Subject, SubjectScore)
+        .join(ExamSubject, SubjectRegistration.exam_subject_id == ExamSubject.id)
+        .join(Subject, ExamSubject.subject_id == Subject.id)
         .outerjoin(SubjectScore, SubjectRegistration.id == SubjectScore.subject_registration_id)
         .where(SubjectRegistration.exam_registration_id == exam_registration.id)
         .order_by(Subject.code)
@@ -484,7 +489,8 @@ async def list_exam_registration_subjects(
         SubjectRegistrationResponse(
             id=subject_reg.id,
             exam_registration_id=subject_reg.exam_registration_id,
-            subject_id=subject_reg.subject_id,
+            exam_subject_id=subject_reg.exam_subject_id,
+            subject_id=subject.id,
             subject_code=subject.code,
             subject_name=subject.name,
             series=subject_reg.series,
@@ -492,5 +498,5 @@ async def list_exam_registration_subjects(
             updated_at=subject_reg.updated_at,
             subject_score=SubjectScoreResponse.model_validate(subject_score) if subject_score else None,
         )
-        for subject_reg, subject, subject_score in subject_registrations
+        for subject_reg, exam_subject, subject, subject_score in subject_registrations
     ]

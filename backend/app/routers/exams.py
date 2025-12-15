@@ -157,9 +157,12 @@ async def list_exam_subjects(exam_id: int, session: DBSessionDep) -> list[ExamSu
             subject_id=exam_subject.subject_id,
             subject_code=subject.code,
             subject_name=subject.name,
-            mcq_percentage=exam_subject.mcq_percentage,
-            essay_percentage=exam_subject.essay_percentage,
-            practical_percentage=exam_subject.practical_percentage,
+            obj_pct=exam_subject.obj_pct,
+            essay_pct=exam_subject.essay_pct,
+            pract_pct=exam_subject.pract_pct,
+            obj_max_score=exam_subject.obj_max_score,
+            essay_max_score=exam_subject.essay_max_score,
+            pract_max_score=exam_subject.pract_max_score,
             created_at=exam_subject.created_at,
             updated_at=exam_subject.updated_at,
         )
@@ -195,23 +198,27 @@ async def add_subject_to_exam(
     if existing:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Subject already added to this exam")
 
-    # Validate percentages sum to 100
-    total_percentage = exam_subject.mcq_percentage + exam_subject.essay_percentage
-    if exam_subject.practical_percentage is not None:
-        total_percentage += exam_subject.practical_percentage
-    if abs(total_percentage - 100.0) > 0.01:  # Allow small floating point differences
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Percentages must sum to 100. Current sum: {total_percentage}",
-        )
+    # Validate percentages sum to 100 if all are provided
+    if exam_subject.obj_pct is not None and exam_subject.essay_pct is not None:
+        total_percentage = exam_subject.obj_pct + exam_subject.essay_pct
+        if exam_subject.pract_pct is not None:
+            total_percentage += exam_subject.pract_pct
+        if abs(total_percentage - 100.0) > 0.01:  # Allow small floating point differences
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Percentages must sum to 100. Current sum: {total_percentage}",
+            )
 
     # Create exam subject
     db_exam_subject = ExamSubject(
         exam_id=exam_id,
         subject_id=exam_subject.subject_id,
-        mcq_percentage=exam_subject.mcq_percentage,
-        essay_percentage=exam_subject.essay_percentage,
-        practical_percentage=exam_subject.practical_percentage,
+        obj_pct=exam_subject.obj_pct,
+        essay_pct=exam_subject.essay_pct,
+        pract_pct=exam_subject.pract_pct,
+        obj_max_score=exam_subject.obj_max_score,
+        essay_max_score=exam_subject.essay_max_score,
+        pract_max_score=exam_subject.pract_max_score,
     )
     session.add(db_exam_subject)
     await session.commit()
@@ -223,9 +230,12 @@ async def add_subject_to_exam(
         subject_id=db_exam_subject.subject_id,
         subject_code=subject.code,
         subject_name=subject.name,
-        mcq_percentage=db_exam_subject.mcq_percentage,
-        essay_percentage=db_exam_subject.essay_percentage,
-        practical_percentage=db_exam_subject.practical_percentage,
+        obj_pct=db_exam_subject.obj_pct,
+        essay_pct=db_exam_subject.essay_pct,
+        pract_pct=db_exam_subject.pract_pct,
+        obj_max_score=db_exam_subject.obj_max_score,
+        essay_max_score=db_exam_subject.essay_max_score,
+        pract_max_score=db_exam_subject.pract_max_score,
         created_at=db_exam_subject.created_at,
         updated_at=db_exam_subject.updated_at,
     )
@@ -250,38 +260,45 @@ async def update_exam_subject(
     exam_subject, subject = exam_subject_data
 
     # Update percentages
-    mcq_percentage = (
-        exam_subject_update.mcq_percentage
-        if exam_subject_update.mcq_percentage is not None
-        else exam_subject.mcq_percentage
+    obj_pct = (
+        exam_subject_update.obj_pct
+        if exam_subject_update.obj_pct is not None
+        else exam_subject.obj_pct
     )
-    essay_percentage = (
-        exam_subject_update.essay_percentage
-        if exam_subject_update.essay_percentage is not None
-        else exam_subject.essay_percentage
+    essay_pct = (
+        exam_subject_update.essay_pct
+        if exam_subject_update.essay_pct is not None
+        else exam_subject.essay_pct
     )
-    practical_percentage = (
-        exam_subject_update.practical_percentage
-        if exam_subject_update.practical_percentage is not None
-        else exam_subject.practical_percentage
+    pract_pct = (
+        exam_subject_update.pract_pct
+        if exam_subject_update.pract_pct is not None
+        else exam_subject.pract_pct
     )
 
-    if exam_subject_update.mcq_percentage is not None:
-        exam_subject.mcq_percentage = exam_subject_update.mcq_percentage
-    if exam_subject_update.essay_percentage is not None:
-        exam_subject.essay_percentage = exam_subject_update.essay_percentage
-    if exam_subject_update.practical_percentage is not None:
-        exam_subject.practical_percentage = exam_subject_update.practical_percentage
+    if exam_subject_update.obj_pct is not None:
+        exam_subject.obj_pct = exam_subject_update.obj_pct
+    if exam_subject_update.essay_pct is not None:
+        exam_subject.essay_pct = exam_subject_update.essay_pct
+    if exam_subject_update.pract_pct is not None:
+        exam_subject.pract_pct = exam_subject_update.pract_pct
+    if exam_subject_update.obj_max_score is not None:
+        exam_subject.obj_max_score = exam_subject_update.obj_max_score
+    if exam_subject_update.essay_max_score is not None:
+        exam_subject.essay_max_score = exam_subject_update.essay_max_score
+    if exam_subject_update.pract_max_score is not None:
+        exam_subject.pract_max_score = exam_subject_update.pract_max_score
 
-    # Validate percentages sum to 100
-    total_percentage = mcq_percentage + essay_percentage
-    if practical_percentage is not None:
-        total_percentage += practical_percentage
-    if abs(total_percentage - 100.0) > 0.01:  # Allow small floating point differences
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Percentages must sum to 100. Current sum: {total_percentage}",
-        )
+    # Validate percentages sum to 100 if all are provided
+    if obj_pct is not None and essay_pct is not None:
+        total_percentage = obj_pct + essay_pct
+        if pract_pct is not None:
+            total_percentage += pract_pct
+        if abs(total_percentage - 100.0) > 0.01:  # Allow small floating point differences
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Percentages must sum to 100. Current sum: {total_percentage}",
+            )
 
     await session.commit()
     await session.refresh(exam_subject)
@@ -292,9 +309,12 @@ async def update_exam_subject(
         subject_id=exam_subject.subject_id,
         subject_code=subject.code,
         subject_name=subject.name,
-        mcq_percentage=exam_subject.mcq_percentage,
-        essay_percentage=exam_subject.essay_percentage,
-        practical_percentage=exam_subject.practical_percentage,
+        obj_pct=exam_subject.obj_pct,
+        essay_pct=exam_subject.essay_pct,
+        pract_pct=exam_subject.pract_pct,
+        obj_max_score=exam_subject.obj_max_score,
+        essay_max_score=exam_subject.essay_max_score,
+        pract_max_score=exam_subject.pract_max_score,
         created_at=exam_subject.created_at,
         updated_at=exam_subject.updated_at,
     )

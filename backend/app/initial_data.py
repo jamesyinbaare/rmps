@@ -374,13 +374,16 @@ async def create_exam_subjects(session, exams: list[Exam], subjects: list[Subjec
                 existing = result.scalar_one_or_none()
 
                 if not existing:
-                    # Typical percentages: 40% MCQ, 60% Essay
+                    # Typical percentages: 40% Objective, 60% Essay
                     exam_subject = ExamSubject(
                         exam_id=exam.id,
                         subject_id=subject.id,
-                        mcq_percentage=40.0,
-                        essay_percentage=60.0,
-                        practical_percentage=None,
+                        obj_pct=40.0,
+                        essay_pct=60.0,
+                        pract_pct=None,
+                        obj_max_score=None,
+                        essay_max_score=None,
+                        pract_max_score=None,
                     )
                     session.add(exam_subject)
 
@@ -444,16 +447,26 @@ async def create_subject_registrations(
         # Register for all core subjects
         for subject in subjects:
             if subject.code in core_subject_codes:
+                # Get the ExamSubject for this subject in this exam
+                exam_subject_stmt = select(ExamSubject).where(
+                    ExamSubject.exam_id == exam_reg.exam_id, ExamSubject.subject_id == subject.id
+                )
+                exam_subject_result = await session.execute(exam_subject_stmt)
+                exam_subject = exam_subject_result.scalar_one_or_none()
+
+                if not exam_subject:
+                    continue  # Skip if ExamSubject doesn't exist for this exam
+
                 stmt = select(SubjectRegistration).where(
                     SubjectRegistration.exam_registration_id == exam_reg.id,
-                    SubjectRegistration.subject_id == subject.id,
+                    SubjectRegistration.exam_subject_id == exam_subject.id,
                 )
                 result = await session.execute(stmt)
                 existing = result.scalar_one_or_none()
 
                 if not existing:
                     subject_reg = SubjectRegistration(
-                        exam_registration_id=exam_reg.id, subject_id=subject.id, series=None
+                        exam_registration_id=exam_reg.id, exam_subject_id=exam_subject.id, series=None
                     )
                     session.add(subject_reg)
                     subject_registrations.append(subject_reg)
@@ -473,16 +486,20 @@ async def create_subject_scores(
 
         if not existing:
             # Generate realistic scores
-            mcq_score = 35.0 + (subject_reg.id % 15)  # 35-50
+            obj_score = 35.0 + (subject_reg.id % 15)  # 35-50
             essay_score = 40.0 + (subject_reg.id % 20)  # 40-60
-            total_score = mcq_score + essay_score
+            total_score = obj_score + essay_score
 
             subject_score = SubjectScore(
                 subject_registration_id=subject_reg.id,
-                mcq_raw_score=mcq_score,
+                obj_raw_score=obj_score,
                 essay_raw_score=essay_score,
-                practical_raw_score=None,
+                pract_raw_score=None,
+                obj_normalized=None,
+                essay_normalized=None,
+                pract_normalized=None,
                 total_score=total_score,
+                document_id=None,
             )
             session.add(subject_score)
 

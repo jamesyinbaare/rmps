@@ -2,6 +2,8 @@ from datetime import datetime
 
 from pydantic import BaseModel, Field
 
+from app.models import SchoolRegion, SchoolType, SchoolZone
+
 
 class SchoolBase(BaseModel):
     """Base school schema."""
@@ -13,19 +15,27 @@ class SchoolBase(BaseModel):
 class SchoolCreate(SchoolBase):
     """Schema for creating a school."""
 
-    pass
+    region: SchoolRegion | None = None
+    zone: SchoolZone | None = None
+    school_type: SchoolType | None = None
 
 
 class SchoolUpdate(BaseModel):
     """Schema for updating a school."""
 
     name: str | None = Field(None, min_length=1, max_length=255)
+    region: SchoolRegion | None = None
+    zone: SchoolZone | None = None
+    school_type: SchoolType | None = None
 
 
 class SchoolResponse(SchoolBase):
     """Schema for school response."""
 
     id: int
+    region: SchoolRegion | None = None
+    zone: SchoolZone | None = None
+    school_type: SchoolType | None = None
     created_at: datetime
     updated_at: datetime
 
