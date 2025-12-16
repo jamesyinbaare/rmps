@@ -2,6 +2,7 @@ from typing import Any
 
 from fastapi import APIRouter, HTTPException, Query, status
 from sqlalchemy import func, select
+from sqlalchemy.exc import IntegrityError
 
 from app.dependencies.database import DBSessionDep
 from app.models import Document, Exam, ExamSubject, Subject
@@ -21,6 +22,23 @@ router = APIRouter(prefix="/api/v1/exams", tags=["exams"])
 @router.post("", response_model=ExamResponse, status_code=status.HTTP_201_CREATED)
 async def create_exam(exam: ExamCreate, session: DBSessionDep) -> ExamResponse:
     """Create a new exam."""
+    # Check if exam with same name, series, and year already exists
+    stmt = select(Exam).where(
+        Exam.name == exam.name,
+        Exam.series == exam.series,
+        Exam.year == exam.year,
+    )
+    result = await session.execute(stmt)
+    existing = result.scalar_one_or_none()
+    if existing:
+        # Get string values from enums for user-friendly error message
+        name_str = exam.name.value if hasattr(exam.name, 'value') else str(exam.name)
+        series_str = exam.series.value if hasattr(exam.series, 'value') else str(exam.series)
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Examination with name '{name_str}', series '{series_str}', and year {exam.year} already exists",
+        )
+
     db_exam = Exam(
         name=exam.name,
         description=exam.description,
@@ -29,9 +47,26 @@ async def create_exam(exam: ExamCreate, session: DBSessionDep) -> ExamResponse:
         number_of_series=exam.number_of_series,
     )
     session.add(db_exam)
-    await session.commit()
-    await session.refresh(db_exam)
-    return ExamResponse.model_validate(db_exam)
+    try:
+        await session.commit()
+        await session.refresh(db_exam)
+        return ExamResponse.model_validate(db_exam)
+    except IntegrityError as e:
+        await session.rollback()
+        # Check if it's a unique constraint violation
+        error_str = str(e.orig) if hasattr(e, 'orig') else str(e)
+        if "uq_exam_name_series_year" in error_str or "unique constraint" in error_str.lower() or "duplicate" in error_str.lower():
+            # Get string values from enums for user-friendly error message
+            name_str = exam.name.value if hasattr(exam.name, 'value') else str(exam.name)
+            series_str = exam.series.value if hasattr(exam.series, 'value') else str(exam.series)
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Examination with name '{name_str}', series '{series_str}', and year {exam.year} already exists",
+            )
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Failed to create examination due to database constraint violation",
+        )
 
 
 @router.get("", response_model=ExamListResponse)
@@ -92,6 +127,34 @@ async def update_exam(exam_id: int, exam_update: ExamUpdate, session: DBSessionD
     if not exam:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Exam not found")
 
+    # Determine the new values for name, series, and year
+    new_name = exam_update.name if exam_update.name is not None else exam.name
+    new_series = exam_update.series if exam_update.series is not None else exam.series
+    new_year = exam_update.year if exam_update.year is not None else exam.year
+
+    # Check if updating name, series, or year would create a duplicate
+    if (
+        (exam_update.name is not None and exam_update.name != exam.name)
+        or (exam_update.series is not None and exam_update.series != exam.series)
+        or (exam_update.year is not None and exam_update.year != exam.year)
+    ):
+        duplicate_stmt = select(Exam).where(
+            Exam.name == new_name,
+            Exam.series == new_series,
+            Exam.year == new_year,
+            Exam.id != exam_id,
+        )
+        duplicate_result = await session.execute(duplicate_stmt)
+        existing = duplicate_result.scalar_one_or_none()
+        if existing:
+            # Get string values from enums for user-friendly error message
+            name_str = new_name.value if hasattr(new_name, 'value') else str(new_name)
+            series_str = new_series.value if hasattr(new_series, 'value') else str(new_series)
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Examination with name '{name_str}', series '{series_str}', and year {new_year} already exists",
+            )
+
     if exam_update.name is not None:
         exam.name = exam_update.name
     if exam_update.description is not None:
@@ -103,9 +166,26 @@ async def update_exam(exam_id: int, exam_update: ExamUpdate, session: DBSessionD
     if exam_update.number_of_series is not None:
         exam.number_of_series = exam_update.number_of_series
 
-    await session.commit()
-    await session.refresh(exam)
-    return ExamResponse.model_validate(exam)
+    try:
+        await session.commit()
+        await session.refresh(exam)
+        return ExamResponse.model_validate(exam)
+    except IntegrityError as e:
+        await session.rollback()
+        # Check if it's a unique constraint violation
+        error_str = str(e.orig) if hasattr(e, 'orig') else str(e)
+        if "uq_exam_name_series_year" in error_str or "unique constraint" in error_str.lower() or "duplicate" in error_str.lower():
+            # Get string values from enums for user-friendly error message
+            name_str = new_name.value if hasattr(new_name, 'value') else str(new_name)
+            series_str = new_series.value if hasattr(new_series, 'value') else str(new_series)
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Examination with name '{name_str}', series '{series_str}', and year {new_year} already exists",
+            )
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Failed to update examination due to database constraint violation",
+        )
 
 
 @router.delete("/{exam_id}", status_code=status.HTTP_204_NO_CONTENT)
