@@ -4,9 +4,12 @@ import { useState, useEffect, useCallback } from "react";
 import { CandidateList } from "@/components/CandidateList";
 import { DashboardLayout } from "@/components/DashboardLayout";
 import { TopBar } from "@/components/TopBar";
+import { CandidateBulkUpload } from "@/components/CandidateBulkUpload";
 import { listCandidates, listSchools, listProgrammes } from "@/lib/api";
 import type { Candidate, School, Programme } from "@/types/document";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Button } from "@/components/ui/button";
+import { Upload } from "lucide-react";
 
 export default function CandidatesPage() {
   const [candidates, setCandidates] = useState<Candidate[]>([]);
@@ -21,6 +24,7 @@ export default function CandidatesPage() {
   const [selectedProgrammeId, setSelectedProgrammeId] = useState<number | undefined>(undefined);
   const [schools, setSchools] = useState<School[]>([]);
   const [programmes, setProgrammes] = useState<Programme[]>([]);
+  const [bulkUploadOpen, setBulkUploadOpen] = useState(false);
 
   // Load filter options
   useEffect(() => {
@@ -37,9 +41,19 @@ export default function CandidatesPage() {
           schoolPage++;
         }
 
-        const programmesData = await listProgrammes(1, 100);
+        // Fetch all programmes
+        const allProgrammesList: Programme[] = [];
+        let programmePage = 1;
+        let programmeHasMore = true;
+        while (programmeHasMore) {
+          const programmesData = await listProgrammes(programmePage, 100);
+          allProgrammesList.push(...programmesData.items);
+          programmeHasMore = programmePage < programmesData.total_pages;
+          programmePage++;
+        }
+
         setSchools(allSchoolsList);
-        setProgrammes(programmesData.items);
+        setProgrammes(allProgrammesList);
       } catch (err) {
         console.error("Failed to load filter options:", err);
       }
@@ -86,6 +100,11 @@ export default function CandidatesPage() {
     setCurrentPage(1); // Reset to first page when filter changes
   };
 
+  const handleBulkUploadSuccess = () => {
+    setBulkUploadOpen(false);
+    loadCandidates(); // Refresh the candidate list
+  };
+
   return (
     <DashboardLayout title="Candidates">
       <div className="flex flex-1 flex-col overflow-hidden">
@@ -121,6 +140,10 @@ export default function CandidatesPage() {
                   ))}
                 </SelectContent>
               </Select>
+              <Button onClick={() => setBulkUploadOpen(true)} variant="outline" className="ml-auto">
+                <Upload className="mr-2 h-4 w-4" />
+                Bulk Upload
+              </Button>
             </div>
           }
         />
@@ -147,6 +170,11 @@ export default function CandidatesPage() {
           )}
         </div>
       </div>
+      <CandidateBulkUpload
+        open={bulkUploadOpen}
+        onOpenChange={setBulkUploadOpen}
+        onUploadSuccess={handleBulkUploadSuccess}
+      />
     </DashboardLayout>
   );
 }

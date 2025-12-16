@@ -11,6 +11,7 @@ import type {
   Programme,
   ProgrammeListResponse,
   Candidate,
+  CandidateBulkUploadResponse,
   CandidateListResponse,
   ExamRegistration,
   SubjectRegistration,
@@ -343,6 +344,64 @@ export async function deleteProgramme(id: number): Promise<void> {
   }
 }
 
+// Programme Subject API Functions
+export interface ProgrammeSubject {
+  subject_id: number;
+  subject_code: string;
+  subject_name: string;
+  is_core: boolean;
+  created_at: string;
+}
+
+export async function listProgrammeSubjects(programmeId: number): Promise<ProgrammeSubject[]> {
+  const response = await fetch(`${API_BASE_URL}/api/v1/programmes/${programmeId}/subjects`);
+  return handleResponse<ProgrammeSubject[]>(response);
+}
+
+export async function addSubjectToProgramme(
+  programmeId: number,
+  subjectId: number,
+  isCore: boolean = true
+): Promise<{ programme_id: number; subject_id: number; is_core: boolean }> {
+  const response = await fetch(
+    `${API_BASE_URL}/api/v1/programmes/${programmeId}/subjects/${subjectId}?is_core=${isCore}`,
+    {
+      method: "POST",
+    }
+  );
+  return handleResponse<{ programme_id: number; subject_id: number; is_core: boolean }>(response);
+}
+
+export async function removeSubjectFromProgramme(
+  programmeId: number,
+  subjectId: number
+): Promise<void> {
+  const response = await fetch(
+    `${API_BASE_URL}/api/v1/programmes/${programmeId}/subjects/${subjectId}`,
+    {
+      method: "DELETE",
+    }
+  );
+  if (!response.ok) {
+    const error: ApiError = await response.json().catch(() => ({ detail: "An error occurred" }));
+    throw new Error(error.detail || `HTTP error! status: ${response.status}`);
+  }
+}
+
+export async function updateProgrammeSubject(
+  programmeId: number,
+  subjectId: number,
+  isCore: boolean
+): Promise<{ programme_id: number; subject_id: number; is_core: boolean }> {
+  const response = await fetch(
+    `${API_BASE_URL}/api/v1/programmes/${programmeId}/subjects/${subjectId}?is_core=${isCore}`,
+    {
+      method: "PUT",
+    }
+  );
+  return handleResponse<{ programme_id: number; subject_id: number; is_core: boolean }>(response);
+}
+
 // Candidate API Functions
 
 export async function listCandidates(
@@ -418,6 +477,18 @@ export async function deleteCandidate(id: number): Promise<void> {
     const error: ApiError = await response.json().catch(() => ({ detail: "An error occurred" }));
     throw new Error(error.detail || `HTTP error! status: ${response.status}`);
   }
+}
+
+export async function uploadCandidatesBulk(file: File, examId: number): Promise<CandidateBulkUploadResponse> {
+  const formData = new FormData();
+  formData.append("file", file);
+  formData.append("exam_id", examId.toString());
+
+  const response = await fetch(`${API_BASE_URL}/api/v1/candidates/bulk-upload`, {
+    method: "POST",
+    body: formData,
+  });
+  return handleResponse<CandidateBulkUploadResponse>(response);
 }
 
 // School Management API Functions

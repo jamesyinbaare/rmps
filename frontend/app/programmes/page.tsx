@@ -1,77 +1,160 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
-import { ProgrammeList } from "@/components/ProgrammeList";
+import { useState, useEffect } from "react";
+import { ProgrammeDataTable } from "@/components/ProgrammeDataTable";
 import { DashboardLayout } from "@/components/DashboardLayout";
 import { TopBar } from "@/components/TopBar";
-import { listProgrammes } from "@/lib/api";
+import { Button } from "@/components/ui/button";
+import { AddProgrammeDialog } from "@/components/AddProgrammeDialog";
+import { ProgrammeDetailDrawer } from "@/components/ProgrammeDetailDrawer";
+import { EditProgrammeModal } from "@/components/EditProgrammeModal";
+import { DeleteProgrammeDialog } from "@/components/DeleteProgrammeDialog";
+import { listProgrammes, getProgramme } from "@/lib/api";
 import type { Programme } from "@/types/document";
+import { Plus } from "lucide-react";
+import { toast } from "sonner";
 
 export default function ProgrammesPage() {
   const [programmes, setProgrammes] = useState<Programme[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [currentPage, setCurrentPage] = useState(1);
-  const [pageSize] = useState(20);
-  const [totalPages, setTotalPages] = useState(1);
-  const [total, setTotal] = useState(0);
-  const [viewMode, setViewMode] = useState<"grid" | "list">("grid");
+  const [addDialogOpen, setAddDialogOpen] = useState(false);
+  const [selectedProgramme, setSelectedProgramme] = useState<Programme | null>(null);
+  const [drawerOpen, setDrawerOpen] = useState(false);
+  const [editModalOpen, setEditModalOpen] = useState(false);
+  const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
+  const [programmeToDelete, setProgrammeToDelete] = useState<Programme | null>(null);
 
-  const loadProgrammes = useCallback(async () => {
+  // Load all programmes once (fetch in batches since backend limits page_size to 100)
+  const loadProgrammes = async () => {
     setLoading(true);
     setError(null);
     try {
-      const response = await listProgrammes(currentPage, pageSize);
-      setProgrammes(response.items);
-      setTotalPages(response.total_pages);
-      setTotal(response.total);
+      const allProgrammesList: Programme[] = [];
+      let page = 1;
+      let hasMore = true;
+
+      // Fetch programmes in batches of 100 (backend limit)
+      while (hasMore) {
+        const response = await listProgrammes(page, 100);
+        allProgrammesList.push(...response.items);
+        hasMore = page < response.total_pages;
+        page++;
+      }
+
+      setProgrammes(allProgrammesList);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to load programmes");
       console.error("Error loading programmes:", err);
     } finally {
       setLoading(false);
     }
-  }, [currentPage, pageSize]);
+  };
 
   useEffect(() => {
     loadProgrammes();
-  }, [loadProgrammes]);
+  }, []);
 
-  const handlePageChange = (page: number) => {
-    setCurrentPage(page);
+  const handleView = (programme: Programme) => {
+    setSelectedProgramme(programme);
+    setDrawerOpen(true);
+  };
+
+  const handleEdit = (programme: Programme) => {
+    setSelectedProgramme(programme);
+    setEditModalOpen(true);
+  };
+
+  const handleAddSuccess = () => {
+    setAddDialogOpen(false);
+    loadProgrammes();
+  };
+
+  const handleEditSuccess = async () => {
+    // Reload programmes to get updated data
+    await loadProgrammes();
+    // Refresh drawer if it's open - reload the selected programme
+    if (drawerOpen && selectedProgramme) {
+      try {
+        const updatedProgramme = await getProgramme(selectedProgramme.id);
+        setSelectedProgramme(updatedProgramme);
+      } catch (error) {
+        console.error("Error refreshing programme:", error);
+      }
+    }
+  };
+
+  const handleDelete = (programme: Programme) => {
+    setProgrammeToDelete(programme);
+    setDeleteDialogOpen(true);
+  };
+
+  const handleDeleteSuccess = () => {
+    loadProgrammes();
+    // Close drawer/modal if the deleted programme is selected
+    if (selectedProgramme?.id === programmeToDelete?.id) {
+      setDrawerOpen(false);
+      setEditModalOpen(false);
+      setSelectedProgramme(null);
+    }
+    setProgrammeToDelete(null);
   };
 
   return (
     <DashboardLayout title="Programmes">
       <div className="flex flex-1 flex-col overflow-hidden">
-        <TopBar
-          title="All Programmes"
-          viewMode={viewMode}
-          onViewModeChange={setViewMode}
-        />
-        <div className="flex-1 overflow-y-auto">
+        <TopBar title="All Programmes" />
+        <div className="flex-1 overflow-y-auto p-6">
+          <div className="mb-4 flex items-center justify-between">
+            <div />
+            <Button onClick={() => setAddDialogOpen(true)} className="gap-2">
+              <Plus className="h-4 w-4" />
+              Add New Programme
+            </Button>
+          </div>
+
           {error && (
-            <div className="mx-6 mt-4 rounded-lg bg-destructive/10 border border-destructive/20 p-4 text-destructive">
+            <div className="mb-4 rounded-lg bg-destructive/10 border border-destructive/20 p-4 text-destructive">
               {error}
             </div>
           )}
 
-          <ProgrammeList
+          <ProgrammeDataTable
             programmes={programmes}
             loading={loading}
-            currentPage={currentPage}
-            totalPages={totalPages}
-            onPageChange={handlePageChange}
-            viewMode={viewMode}
+            showSearch={true}
+            onView={handleView}
+            onEdit={handleEdit}
+            onDelete={handleDelete}
           />
-
-          {!loading && total > 0 && (
-            <div className="px-6 py-4 text-sm text-muted-foreground text-center border-t border-border">
-              Showing {programmes.length} of {total} programme{total !== 1 ? "s" : ""}
-            </div>
-          )}
         </div>
       </div>
+
+      <AddProgrammeDialog
+        open={addDialogOpen}
+        onOpenChange={setAddDialogOpen}
+        onSuccess={handleAddSuccess}
+      />
+
+      <ProgrammeDetailDrawer
+        programme={selectedProgramme}
+        open={drawerOpen}
+        onOpenChange={setDrawerOpen}
+      />
+
+      <EditProgrammeModal
+        programme={selectedProgramme}
+        open={editModalOpen}
+        onOpenChange={setEditModalOpen}
+        onSuccess={handleEditSuccess}
+      />
+
+      <DeleteProgrammeDialog
+        programme={programmeToDelete}
+        open={deleteDialogOpen}
+        onOpenChange={setDeleteDialogOpen}
+        onSuccess={handleDeleteSuccess}
+      />
     </DashboardLayout>
   );
 }

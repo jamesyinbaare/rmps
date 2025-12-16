@@ -62,13 +62,11 @@ export function Sidebar() {
       ],
     },
     {
-      href: "/programmes",
-      label: "Programmes",
-      icon: GraduationCap,
+      href: "/manage",
+      label: "Manage",
+      icon: Settings,
       submenu: [
-        { href: "/programmes", label: "All Programmes", icon: GraduationCap },
-        { href: "/programmes/new", label: "New Programme", icon: Plus },
-        { href: "/programmes/manage-schools", label: "Manage Schools", icon: Settings },
+        { href: "/programmes", label: "Programmes", icon: GraduationCap },
       ],
     },
     {

@@ -6,6 +6,7 @@ import { DashboardLayout } from "@/components/DashboardLayout";
 import { CandidateDataTable } from "@/components/CandidateDataTable";
 import { ProgrammeDataTable } from "@/components/ProgrammeDataTable";
 import { CandidateDetailDrawer } from "@/components/CandidateDetailDrawer";
+import { CandidateDialog } from "@/components/CandidateDialog";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import {
   listCandidates,
@@ -14,6 +15,8 @@ import {
   getSchoolById,
   listExams,
   listCandidateExamRegistrations,
+  listProgrammes,
+  listSchools,
 } from "@/lib/api";
 import type { School, Candidate, Programme, Exam, ExamRegistration } from "@/types/document";
 import { Building2, ArrowLeft, Search, X } from "lucide-react";
@@ -36,6 +39,8 @@ export default function SchoolDetailPage() {
   const [school, setSchool] = useState<School | null>(null);
   const [candidates, setCandidates] = useState<Candidate[]>([]);
   const [programmes, setProgrammes] = useState<Programme[]>([]);
+  const [allProgrammes, setAllProgrammes] = useState<Programme[]>([]);
+  const [allSchools, setAllSchools] = useState<School[]>([]);
   const [exams, setExams] = useState<Exam[]>([]);
   const [candidateExamMap, setCandidateExamMap] = useState<Map<number, number[]>>(new Map());
   const [loading, setLoading] = useState(true);
@@ -128,6 +133,50 @@ export default function SchoolDetailPage() {
 
     loadProgrammes();
   }, [schoolId]);
+
+  // Load all programmes for the form
+  useEffect(() => {
+    const loadAllProgrammes = async () => {
+      try {
+        const allProgrammesList: Programme[] = [];
+        let programmePage = 1;
+        let programmeHasMore = true;
+        while (programmeHasMore) {
+          const programmesData = await listProgrammes(programmePage, 100);
+          allProgrammesList.push(...programmesData.items);
+          programmeHasMore = programmePage < programmesData.total_pages;
+          programmePage++;
+        }
+        setAllProgrammes(allProgrammesList);
+      } catch (err) {
+        console.error("Failed to load all programmes:", err);
+      }
+    };
+
+    loadAllProgrammes();
+  }, []);
+
+  // Load all schools for the form
+  useEffect(() => {
+    const loadAllSchools = async () => {
+      try {
+        const allSchoolsList: School[] = [];
+        let schoolPage = 1;
+        let schoolHasMore = true;
+        while (schoolHasMore) {
+          const schools = await listSchools(schoolPage, 100);
+          allSchoolsList.push(...schools);
+          schoolHasMore = schools.length === 100;
+          schoolPage++;
+        }
+        setAllSchools(allSchoolsList);
+      } catch (err) {
+        console.error("Failed to load all schools:", err);
+      }
+    };
+
+    loadAllSchools();
+  }, []);
 
   // Load exams
   useEffect(() => {
@@ -287,106 +336,144 @@ export default function SchoolDetailPage() {
               <TabsTrigger value="programmes">Programmes</TabsTrigger>
             </TabsList>
 
-            <TabsContent value="candidates" className="mt-4">
-              {/* Filters and Search */}
-              <div className="mb-4 space-y-4">
-                <div className="flex flex-col sm:flex-row gap-4">
-                  {/* Filter by Examination */}
-                  <Select
-                    value={selectedExamId?.toString() || "all"}
-                    onValueChange={(value) =>
-                      setSelectedExamId(value === "all" ? undefined : parseInt(value))
-                    }
-                  >
-                    <SelectTrigger className="w-full sm:w-[200px]">
-                      <SelectValue placeholder="All Examinations" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="all">All Examinations</SelectItem>
-                      {exams.map((exam) => (
-                        <SelectItem key={exam.id} value={exam.id.toString()}>
-                          {exam.name} ({exam.year})
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
+            <TabsContent value="candidates" className="mt-16">
+              <div className="flex justify-center">
+                <div className="w-full max-w-6xl">
+                  {/* Filters and Search */}
+                  <div className="mb-6 space-y-4">
+                    <div className="flex items-center justify-between mb-4">
+                      <CandidateDialog
+                        schools={allSchools}
+                        programmes={allProgrammes}
+                        schoolId={schoolId || undefined}
+                        onSuccess={() => {
+                          // Reload candidates after successful creation
+                          const reloadCandidates = async () => {
+                            if (!schoolId) return;
+                            setCandidatesLoading(true);
+                            try {
+                              let allCandidates: Candidate[] = [];
+                              let page = 1;
+                              let hasMore = true;
 
-                  {/* Filter by Programme */}
-                  <Select
-                    value={selectedProgrammeId?.toString() || "all"}
-                    onValueChange={(value) =>
-                      setSelectedProgrammeId(value === "all" ? undefined : parseInt(value))
-                    }
-                  >
-                    <SelectTrigger className="w-full sm:w-[200px]">
-                      <SelectValue placeholder="All Programmes" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="all">All Programmes</SelectItem>
-                      {programmes.map((programme) => (
-                        <SelectItem key={programme.id} value={programme.id.toString()}>
-                          {programme.name}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
+                              while (hasMore) {
+                                const response = await listCandidates(page, 100, schoolId);
+                                allCandidates.push(...response.items);
+                                hasMore = page < response.total_pages;
+                                page++;
+                              }
 
-                  {/* Search by Index Number */}
-                  <div className="flex-1">
-                    <div className="relative">
-                      <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-                      <Input
-                        type="search"
-                        placeholder="Search by index number..."
-                        value={searchQuery}
-                        onChange={(e) => setSearchQuery(e.target.value)}
-                        className="pl-9"
+                              setCandidates(allCandidates);
+                            } catch (err) {
+                              console.error("Failed to reload candidates:", err);
+                            } finally {
+                              setCandidatesLoading(false);
+                            }
+                          };
+                          reloadCandidates();
+                        }}
                       />
-                      {searchQuery && (
+                    </div>
+                    <div className="flex flex-col sm:flex-row gap-4">
+                      {/* Filter by Examination */}
+                      <Select
+                        value={selectedExamId?.toString() || "all"}
+                        onValueChange={(value) =>
+                          setSelectedExamId(value === "all" ? undefined : parseInt(value))
+                        }
+                      >
+                        <SelectTrigger className="w-full sm:w-[200px]">
+                          <SelectValue placeholder="All Examinations" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="all">All Examinations</SelectItem>
+                          {exams.map((exam) => (
+                            <SelectItem key={exam.id} value={exam.id.toString()}>
+                              {exam.name} ({exam.year})
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+
+                      {/* Filter by Programme */}
+                      <Select
+                        value={selectedProgrammeId?.toString() || "all"}
+                        onValueChange={(value) =>
+                          setSelectedProgrammeId(value === "all" ? undefined : parseInt(value))
+                        }
+                      >
+                        <SelectTrigger className="w-full sm:w-[200px]">
+                          <SelectValue placeholder="All Programmes" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="all">All Programmes</SelectItem>
+                          {programmes.map((programme) => (
+                            <SelectItem key={programme.id} value={programme.id.toString()}>
+                              {programme.name}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+
+                      {/* Search by Index Number */}
+                      <div className="flex-1">
+                        <div className="relative">
+                          <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+                          <Input
+                            type="search"
+                            placeholder="Search by index number..."
+                            value={searchQuery}
+                            onChange={(e) => setSearchQuery(e.target.value)}
+                            className="pl-9"
+                          />
+                          {searchQuery && (
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              className="absolute right-1 top-1/2 -translate-y-1/2 h-7 w-7 p-0"
+                              onClick={() => setSearchQuery("")}
+                            >
+                              <X className="h-4 w-4" />
+                            </Button>
+                          )}
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Clear Filters Button */}
+                    {(selectedExamId !== undefined || selectedProgrammeId !== undefined || searchQuery) && (
+                      <div className="flex items-center gap-2">
                         <Button
                           variant="ghost"
                           size="sm"
-                          className="absolute right-1 top-1/2 -translate-y-1/2 h-7 w-7 p-0"
-                          onClick={() => setSearchQuery("")}
+                          onClick={() => {
+                            setSelectedExamId(undefined);
+                            setSelectedProgrammeId(undefined);
+                            setSearchQuery("");
+                          }}
+                          className="h-8"
                         >
-                          <X className="h-4 w-4" />
+                          <X className="h-4 w-4 mr-1" />
+                          Clear Filters
                         </Button>
-                      )}
-                    </div>
+                        <span className="text-sm text-muted-foreground">
+                          Showing {filteredCandidates.length} of {candidates.length} candidate{candidates.length !== 1 ? "s" : ""}
+                        </span>
+                      </div>
+                    )}
                   </div>
+
+                  {/* Table */}
+                  <CandidateDataTable
+                    candidates={filteredCandidates}
+                    loading={candidatesLoading}
+                    onSelect={(candidate) => {
+                      setSelectedCandidate(candidate);
+                      setDrawerOpen(true);
+                    }}
+                  />
                 </div>
-
-                {/* Clear Filters Button */}
-                {(selectedExamId !== undefined || selectedProgrammeId !== undefined || searchQuery) && (
-                  <div className="flex items-center gap-2">
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      onClick={() => {
-                        setSelectedExamId(undefined);
-                        setSelectedProgrammeId(undefined);
-                        setSearchQuery("");
-                      }}
-                      className="h-8"
-                    >
-                      <X className="h-4 w-4 mr-1" />
-                      Clear Filters
-                    </Button>
-                    <span className="text-sm text-muted-foreground">
-                      Showing {filteredCandidates.length} of {candidates.length} candidate{candidates.length !== 1 ? "s" : ""}
-                    </span>
-                  </div>
-                )}
               </div>
-
-              <CandidateDataTable
-                candidates={filteredCandidates}
-                loading={candidatesLoading}
-                onSelect={(candidate) => {
-                  setSelectedCandidate(candidate);
-                  setDrawerOpen(true);
-                }}
-              />
             </TabsContent>
 
             <TabsContent value="programmes" className="mt-4">

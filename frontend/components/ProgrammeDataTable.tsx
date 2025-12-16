@@ -5,6 +5,7 @@ import {
   ColumnDef,
   flexRender,
   getCoreRowModel,
+  getFilteredRowModel,
   getSortedRowModel,
   SortingState,
   useReactTable,
@@ -19,14 +20,19 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { Button } from "@/components/ui/button";
-import { GraduationCap, Trash2 } from "lucide-react";
+import { Input } from "@/components/ui/input";
+import { GraduationCap, Trash2, Search, X, Eye, Edit, Trash } from "lucide-react";
 import { toast } from "sonner";
 
 interface ProgrammeDataTableProps {
   programmes: Programme[];
   loading?: boolean;
-  schoolId: number;
+  schoolId?: number;
   onRemove?: (programmeId: number) => Promise<void>;
+  showSearch?: boolean;
+  onView?: (programme: Programme) => void;
+  onEdit?: (programme: Programme) => void;
+  onDelete?: (programme: Programme) => void;
 }
 
 export function ProgrammeDataTable({
@@ -34,8 +40,13 @@ export function ProgrammeDataTable({
   loading,
   schoolId,
   onRemove,
+  showSearch = true,
+  onView,
+  onEdit,
+  onDelete,
 }: ProgrammeDataTableProps) {
   const [sorting, setSorting] = useState<SortingState>([]);
+  const [globalFilter, setGlobalFilter] = useState("");
   const [removingId, setRemovingId] = useState<number | null>(null);
 
   const handleRemove = async (programmeId: number) => {
@@ -57,22 +68,42 @@ export function ProgrammeDataTable({
   };
 
   const columns = useMemo<ColumnDef<Programme>[]>(
-    () => [
-      {
-        accessorKey: "code",
-        header: "Code",
-        cell: ({ row }) => (
-          <div className="font-medium font-mono">{row.getValue("code")}</div>
-        ),
-      },
-      {
-        accessorKey: "name",
-        header: "Name",
-        cell: ({ row }) => (
-          <div className="font-medium">{row.getValue("name")}</div>
-        ),
-      },
-      {
+    () => {
+      const cols: ColumnDef<Programme>[] = [
+        {
+          accessorKey: "code",
+          header: "Code",
+          cell: ({ row }) => (
+            <div className="font-medium font-mono">{row.getValue("code")}</div>
+          ),
+        },
+        {
+          accessorKey: "name",
+          header: "Name",
+          cell: ({ row }) => (
+            <div className="font-medium">{row.getValue("name")}</div>
+          ),
+        },
+      ];
+
+      // Add Created date column if not in school context
+      if (!schoolId) {
+        cols.push({
+          accessorKey: "created_at",
+          header: "Created",
+          cell: ({ row }) => {
+            const date = new Date(row.getValue("created_at"));
+            return (
+              <div className="text-muted-foreground">
+                {date.toLocaleDateString()}
+              </div>
+            );
+          },
+        });
+      }
+
+      // Add Actions column
+      cols.push({
         id: "actions",
         header: "Actions",
         cell: ({ row }) => {
@@ -80,37 +111,96 @@ export function ProgrammeDataTable({
           const isRemoving = removingId === programme.id;
           return (
             <div className="flex items-center gap-2">
-              <Button
-                variant="ghost"
-                size="sm"
-                onClick={(e) => {
-                  e.stopPropagation();
-                  handleRemove(programme.id);
-                }}
-                disabled={isRemoving || !onRemove}
-                className="text-destructive hover:text-destructive hover:bg-destructive/10"
-              >
-                <Trash2 className="h-4 w-4 mr-1" />
-                {isRemoving ? "Removing..." : "Remove"}
-              </Button>
+              {onView && (
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    onView(programme);
+                  }}
+                  className="hover:bg-accent"
+                >
+                  <Eye className="h-4 w-4 mr-1" />
+                  View
+                </Button>
+              )}
+              {onEdit && (
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    onEdit(programme);
+                  }}
+                  className="hover:bg-accent"
+                >
+                  <Edit className="h-4 w-4 mr-1" />
+                  Edit
+                </Button>
+              )}
+              {onRemove && (
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    handleRemove(programme.id);
+                  }}
+                  disabled={isRemoving}
+                  className="text-destructive hover:text-destructive hover:bg-destructive/10"
+                >
+                  <Trash2 className="h-4 w-4 mr-1" />
+                  {isRemoving ? "Removing..." : "Remove"}
+                </Button>
+              )}
+              {onDelete && (
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    onDelete(programme);
+                  }}
+                  className="text-destructive hover:text-destructive hover:bg-destructive/10"
+                >
+                  <Trash className="h-4 w-4 mr-1" />
+                  Delete
+                </Button>
+              )}
             </div>
           );
         },
-      },
-    ],
-    [removingId, onRemove]
+      });
+
+      return cols;
+    },
+    [removingId, onRemove, schoolId, onView, onEdit, onDelete]
   );
 
   const table = useReactTable({
     data: programmes,
     columns,
     getCoreRowModel: getCoreRowModel(),
+    getFilteredRowModel: getFilteredRowModel(),
     getSortedRowModel: getSortedRowModel(),
     onSortingChange: setSorting,
+    onGlobalFilterChange: setGlobalFilter,
+    globalFilterFn: (row, columnId, filterValue) => {
+      const programme = row.original;
+      const searchValue = filterValue.toLowerCase();
+      return (
+        programme.code.toLowerCase().includes(searchValue) ||
+        programme.name.toLowerCase().includes(searchValue)
+      );
+    },
     state: {
       sorting,
+      globalFilter,
     },
   });
+
+  const filteredProgrammes = table.getFilteredRowModel().rows.map((row) => row.original);
 
   if (loading) {
     return (
@@ -126,15 +216,40 @@ export function ProgrammeDataTable({
         <GraduationCap className="h-16 w-16 text-muted-foreground mb-4" />
         <p className="text-lg font-medium mb-2">No programmes found</p>
         <p className="text-sm text-muted-foreground">
-          No programmes are associated with this school.
+          {schoolId
+            ? "No programmes are associated with this school."
+            : "No programmes match the current filters."}
         </p>
       </div>
     );
   }
 
   return (
-    <div className="rounded-md border">
-      <Table>
+    <div className="space-y-4">
+      {showSearch && (
+        <div className="relative">
+          <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+          <Input
+            type="search"
+            placeholder="Search by code or name..."
+            value={globalFilter}
+            onChange={(e) => setGlobalFilter(e.target.value)}
+            className="pl-9 pr-9"
+          />
+          {globalFilter && (
+            <Button
+              variant="ghost"
+              size="sm"
+              className="absolute right-1 top-1/2 h-6 w-6 -translate-y-1/2 p-0"
+              onClick={() => setGlobalFilter("")}
+            >
+              <X className="h-3 w-3" />
+            </Button>
+          )}
+        </div>
+      )}
+      <div className="rounded-md border">
+        <Table>
         <TableHeader>
           {table.getHeaderGroups().map((headerGroup) => (
             <TableRow key={headerGroup.id}>
@@ -193,6 +308,12 @@ export function ProgrammeDataTable({
           )}
         </TableBody>
       </Table>
+      </div>
+      {showSearch && globalFilter && filteredProgrammes.length === 0 && (
+        <div className="text-center py-8 text-muted-foreground">
+          No programmes match your search.
+        </div>
+      )}
     </div>
   );
 }

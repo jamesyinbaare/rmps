@@ -166,6 +166,19 @@ export interface CandidateListResponse {
   total_pages: number;
 }
 
+export interface CandidateBulkUploadError {
+  row_number: number;
+  error_message: string;
+  field: string | null;
+}
+
+export interface CandidateBulkUploadResponse {
+  total_rows: number;
+  successful: number;
+  failed: number;
+  errors: CandidateBulkUploadError[];
+}
+
 export interface SubjectScore {
   id: number;
   subject_registration_id: number;
