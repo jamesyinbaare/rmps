@@ -2,6 +2,8 @@ from datetime import datetime
 
 from pydantic import BaseModel, Field
 
+from app.models import SubjectType
+
 
 class ProgrammeBase(BaseModel):
     """Base programme schema."""
@@ -49,7 +51,7 @@ class ProgrammeSubjectAssociation(BaseModel):
 
     programme_id: int
     subject_id: int
-    is_core: bool = Field(..., description="True for core subject, False for elective subject")
+    subject_type: SubjectType = Field(..., description="Subject type: CORE or ELECTIVE")
 
 
 class ProgrammeSubjectResponse(BaseModel):
@@ -58,7 +60,7 @@ class ProgrammeSubjectResponse(BaseModel):
     subject_id: int
     subject_code: str
     subject_name: str
-    is_core: bool
+    subject_type: SubjectType
     created_at: datetime
 
     class Config:

@@ -4,7 +4,7 @@ from fastapi import APIRouter, HTTPException, Query, status
 from sqlalchemy import func, select
 
 from app.dependencies.database import DBSessionDep
-from app.models import Document, School, Subject, school_subjects
+from app.models import Document, Programme, School, Subject, programme_subjects, school_programmes
 from app.schemas.subject import SubjectCreate, SubjectResponse, SubjectStatistics, SubjectUpdate
 
 router = APIRouter(prefix="/api/v1/subjects", tags=["subjects"])
@@ -22,7 +22,11 @@ async def create_subject(subject: SubjectCreate, session: DBSessionDep) -> Subje
             status_code=status.HTTP_400_BAD_REQUEST, detail=f"Subject with code {subject.code} already exists"
         )
 
-    db_subject = Subject(code=subject.code, name=subject.name)
+    db_subject = Subject(
+        code=subject.code,
+        name=subject.name,
+        subject_type=subject.subject_type,
+    )
     session.add(db_subject)
     await session.commit()
     await session.refresh(db_subject)
@@ -63,6 +67,8 @@ async def update_subject(subject_id: int, subject_update: SubjectUpdate, session
 
     if subject_update.name is not None:
         subject.name = subject_update.name
+    if subject_update.subject_type is not None:
+        subject.subject_type = subject_update.subject_type
 
     await session.commit()
     await session.refresh(subject)
@@ -96,9 +102,12 @@ async def get_subject_statistics(subject_id: int, session: DBSessionDep) -> Subj
     doc_result = await session.execute(doc_count_stmt)
     total_documents = doc_result.scalar() or 0
 
-    # Count total schools offering this subject
-    school_count_stmt = select(func.count(school_subjects.c.school_id)).where(
-        school_subjects.c.subject_id == subject_id
+    # Count total schools offering this subject (through programmes)
+    school_count_stmt = (
+        select(func.count(func.distinct(school_programmes.c.school_id)))
+        .select_from(school_programmes)
+        .join(programme_subjects, school_programmes.c.programme_id == programme_subjects.c.programme_id)
+        .where(programme_subjects.c.subject_id == subject_id)
     )
     school_result = await session.execute(school_count_stmt)
     total_schools = school_result.scalar() or 0
@@ -169,11 +178,14 @@ async def list_schools_for_subject(subject_id: int, session: DBSessionDep) -> li
     if not subject:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Subject not found")
 
-    # Get schools via association
+    # Get schools through programmes
     school_stmt = (
         select(School)
-        .join(school_subjects, School.id == school_subjects.c.school_id)
-        .where(school_subjects.c.subject_id == subject_id)
+        .join(school_programmes, School.id == school_programmes.c.school_id)
+        .join(programme_subjects, school_programmes.c.programme_id == programme_subjects.c.programme_id)
+        .where(programme_subjects.c.subject_id == subject_id)
+        .distinct()
+        .order_by(School.code)
     )
     school_result = await session.execute(school_stmt)
     schools = school_result.scalars().all()

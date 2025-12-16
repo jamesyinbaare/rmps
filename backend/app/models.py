@@ -83,6 +83,11 @@ class ExamSeries(enum.Enum):
     NOV_DEC = "NOV/DEC"
 
 
+class SubjectType(enum.Enum):
+    CORE = "CORE"
+    ELECTIVE = "ELECTIVE"
+
+
 class School(Base):
     __tablename__ = "schools"
     id = Column(Integer, primary_key=True)
@@ -94,8 +99,6 @@ class School(Base):
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
 
-    # Many-to-many relationship with Subject
-    subjects = relationship("Subject", secondary="school_subjects", back_populates="schools")
     # Many-to-many relationship with Programme
     programmes = relationship("Programme", secondary="school_programmes", back_populates="schools")
     documents = relationship("Document", back_populates="school")
@@ -107,26 +110,14 @@ class Subject(Base):
     id = Column(Integer, primary_key=True)
     code = Column(String(3), unique=True, nullable=False, index=True)
     name = Column(String(255), nullable=False)
+    subject_type = Column(Enum(SubjectType), nullable=False)
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
 
-    # Many-to-many relationship with School
-    schools = relationship("School", secondary="school_subjects", back_populates="subjects")
     # Many-to-many relationship with Programme
     programmes = relationship("Programme", secondary="programme_subjects", back_populates="subjects")
     documents = relationship("Document", back_populates="subject")
     exam_subjects = relationship("ExamSubject", back_populates="subject")
-
-
-# Association table for many-to-many relationship between School and Subject
-school_subjects = Table(
-    "school_subjects",
-    Base.metadata,
-    Column("school_id", Integer, ForeignKey("schools.id", ondelete="CASCADE"), primary_key=True),
-    Column("subject_id", Integer, ForeignKey("subjects.id", ondelete="CASCADE"), primary_key=True),
-    Column("created_at", DateTime, default=datetime.utcnow, nullable=False),
-    UniqueConstraint("school_id", "subject_id", name="uq_school_subject"),
-)
 
 
 # Association table for many-to-many relationship between Programme and Subject
@@ -135,7 +126,6 @@ programme_subjects = Table(
     Base.metadata,
     Column("programme_id", Integer, ForeignKey("programmes.id", ondelete="CASCADE"), primary_key=True),
     Column("subject_id", Integer, ForeignKey("subjects.id", ondelete="CASCADE"), primary_key=True),
-    Column("is_core", Boolean, nullable=False, default=True),
     Column("created_at", DateTime, default=datetime.utcnow, nullable=False),
     UniqueConstraint("programme_id", "subject_id", name="uq_programme_subject"),
 )

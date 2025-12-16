@@ -4,7 +4,7 @@ from fastapi import APIRouter, HTTPException, Query, status
 from sqlalchemy import delete, func, insert, select
 
 from app.dependencies.database import DBSessionDep
-from app.models import Programme, School, Subject, programme_subjects, school_programmes
+from app.models import Programme, School, Subject, SubjectType, programme_subjects, school_programmes
 from app.schemas.programme import (
     ProgrammeCreate,
     ProgrammeListResponse,
@@ -137,7 +137,7 @@ async def list_programme_subjects(programme_id: int, session: DBSessionDep) -> l
 
     # Get subjects via association
     subject_stmt = (
-        select(Subject, programme_subjects.c.is_core, programme_subjects.c.created_at)
+        select(Subject, programme_subjects.c.created_at)
         .join(programme_subjects, Subject.id == programme_subjects.c.subject_id)
         .where(programme_subjects.c.programme_id == programme_id)
         .order_by(Subject.code)
@@ -150,10 +150,10 @@ async def list_programme_subjects(programme_id: int, session: DBSessionDep) -> l
             subject_id=subject.id,
             subject_code=subject.code,
             subject_name=subject.name,
-            is_core=is_core,
+            subject_type=subject.subject_type,
             created_at=created_at,
         )
-        for subject, is_core, created_at in subjects_data
+        for subject, created_at in subjects_data
     ]
 
 
@@ -166,7 +166,6 @@ async def associate_subject_with_programme(
     programme_id: int,
     subject_id: int,
     session: DBSessionDep,
-    is_core: bool = Query(True, description="True for core subject, False for elective subject"),
 ) -> ProgrammeSubjectAssociation:
     """Associate a subject with a programme."""
     # Check programme exists
@@ -196,11 +195,11 @@ async def associate_subject_with_programme(
 
     # Create association
     await session.execute(
-        insert(programme_subjects).values(programme_id=programme_id, subject_id=subject_id, is_core=is_core)
+        insert(programme_subjects).values(programme_id=programme_id, subject_id=subject_id)
     )
     await session.commit()
 
-    return ProgrammeSubjectAssociation(programme_id=programme_id, subject_id=subject_id, is_core=is_core)
+    return ProgrammeSubjectAssociation(programme_id=programme_id, subject_id=subject_id, subject_type=subject.subject_type)
 
 
 @router.put(
@@ -211,9 +210,9 @@ async def update_programme_subject_association(
     programme_id: int,
     subject_id: int,
     session: DBSessionDep,
-    is_core: bool = Query(..., description="True for core subject, False for elective subject"),
+    subject_type: SubjectType = Query(..., description="Subject type: CORE or ELECTIVE"),
 ) -> ProgrammeSubjectAssociation:
-    """Update the is_core flag for a programme-subject association."""
+    """Update the subject_type for a subject (affects all programmes)."""
     # Check association exists
     assoc_stmt = select(programme_subjects).where(
         programme_subjects.c.programme_id == programme_id, programme_subjects.c.subject_id == subject_id
@@ -223,19 +222,24 @@ async def update_programme_subject_association(
     if not existing:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Subject association not found")
 
-    # Update association
+    # Check subject exists
+    subject_stmt = select(Subject).where(Subject.id == subject_id)
+    result = await session.execute(subject_stmt)
+    subject = result.scalar_one_or_none()
+    if not subject:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Subject not found")
+
+    # Update subject's type (this affects all programmes)
     from sqlalchemy import update
 
     await session.execute(
-        update(programme_subjects)
-        .where(
-            programme_subjects.c.programme_id == programme_id, programme_subjects.c.subject_id == subject_id
-        )
-        .values(is_core=is_core)
+        update(Subject)
+        .where(Subject.id == subject_id)
+        .values(subject_type=subject_type)
     )
     await session.commit()
 
-    return ProgrammeSubjectAssociation(programme_id=programme_id, subject_id=subject_id, is_core=is_core)
+    return ProgrammeSubjectAssociation(programme_id=programme_id, subject_id=subject_id, subject_type=subject_type)
 
 
 @router.delete("/{programme_id}/subjects/{subject_id}", status_code=status.HTTP_204_NO_CONTENT)

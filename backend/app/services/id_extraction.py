@@ -9,7 +9,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
-from app.models import Document, School, Subject, school_subjects
+from app.models import Document, Programme, School, Subject, programme_subjects, school_programmes
 
 
 class ExtractionMethod(str, Enum):
@@ -208,16 +208,21 @@ class IDValidator:
         if not subject:
             return False, f"Subject with code {validation_result.subject_code} not found"
 
-        # Check school-subject association
-        association_stmt = select(school_subjects).where(
-            school_subjects.c.school_id == school.id, school_subjects.c.subject_id == subject.id
+        # Check if subject is available through school's programmes
+        association_stmt = (
+            select(programme_subjects.c.subject_id)
+            .select_from(programme_subjects)
+            .join(school_programmes, programme_subjects.c.programme_id == school_programmes.c.programme_id)
+            .where(school_programmes.c.school_id == school.id, programme_subjects.c.subject_id == subject.id)
+            .limit(1)
         )
         result = await session.execute(association_stmt)
         association = result.first()
         if not association:
             return (
                 False,
-                f"School {validation_result.school_code} does not have access to subject {validation_result.subject_code}",
+                f"School {validation_result.school_code} does not have access to subject {validation_result.subject_code} "
+                f"through any of its programmes",
             )
 
         return True, None

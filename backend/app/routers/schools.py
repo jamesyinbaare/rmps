@@ -4,13 +4,12 @@ from fastapi import APIRouter, HTTPException, Query, status
 from sqlalchemy import delete, func, insert, select
 
 from app.dependencies.database import DBSessionDep
-from app.models import Document, Programme, School, Subject, school_programmes, school_subjects
+from app.models import Document, Programme, School, Subject, programme_subjects, school_programmes
 from app.schemas.programme import SchoolProgrammeAssociation
 from app.schemas.school import (
     SchoolCreate,
     SchoolResponse,
     SchoolStatistics,
-    SchoolSubjectAssociation,
     SchoolUpdate,
 )
 
@@ -117,9 +116,12 @@ async def get_school_statistics(school_id: int, session: DBSessionDep) -> School
     doc_result = await session.execute(doc_count_stmt)
     total_documents = doc_result.scalar() or 0
 
-    # Count total subjects
-    subject_count_stmt = select(func.count(school_subjects.c.subject_id)).where(
-        school_subjects.c.school_id == school_id
+    # Count total subjects (derived through programmes)
+    subject_count_stmt = (
+        select(func.count(func.distinct(programme_subjects.c.subject_id)))
+        .select_from(programme_subjects)
+        .join(school_programmes, programme_subjects.c.programme_id == school_programmes.c.programme_id)
+        .where(school_programmes.c.school_id == school_id)
     )
     subject_result = await session.execute(subject_count_stmt)
     total_subjects = subject_result.scalar() or 0
@@ -145,18 +147,21 @@ async def get_school_statistics(school_id: int, session: DBSessionDep) -> School
 
 @router.get("/{school_id}/subjects", response_model=list[Any])
 async def list_school_subjects(school_id: int, session: DBSessionDep) -> list[Any]:
-    """List subjects for a school."""
+    """List subjects for a school (derived through programmes)."""
     stmt = select(School).where(School.id == school_id)
     result = await session.execute(stmt)
     school = result.scalar_one_or_none()
     if not school:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="School not found")
 
-    # Get subjects via association
+    # Get subjects through programmes
     subject_stmt = (
         select(Subject)
-        .join(school_subjects, Subject.id == school_subjects.c.subject_id)
-        .where(school_subjects.c.school_id == school_id)
+        .join(programme_subjects, Subject.id == programme_subjects.c.subject_id)
+        .join(school_programmes, programme_subjects.c.programme_id == school_programmes.c.programme_id)
+        .where(school_programmes.c.school_id == school_id)
+        .distinct()
+        .order_by(Subject.code)
     )
     subject_result = await session.execute(subject_stmt)
     subjects = subject_result.scalars().all()
@@ -164,61 +169,6 @@ async def list_school_subjects(school_id: int, session: DBSessionDep) -> list[An
     from app.schemas.subject import SubjectResponse
 
     return [SubjectResponse.model_validate(subject) for subject in subjects]
-
-
-@router.post("/{school_id}/subjects/{subject_id}", status_code=status.HTTP_201_CREATED)
-async def associate_subject_with_school(
-    school_id: int, subject_id: int, session: DBSessionDep
-) -> SchoolSubjectAssociation:
-    """Associate a subject with a school."""
-    # Check school exists
-    school_stmt = select(School).where(School.id == school_id)
-    result = await session.execute(school_stmt)
-    school = result.scalar_one_or_none()
-    if not school:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="School not found")
-
-    # Check subject exists
-    subject_stmt = select(Subject).where(Subject.id == subject_id)
-    result = await session.execute(subject_stmt)
-    subject = result.scalar_one_or_none()
-    if not subject:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Subject not found")
-
-    # Check if association already exists
-    assoc_stmt = select(school_subjects).where(
-        school_subjects.c.school_id == school_id, school_subjects.c.subject_id == subject_id
-    )
-    result = await session.execute(assoc_stmt)
-    existing = result.first()
-    if existing:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Subject already associated with school")
-
-    # Create association
-    await session.execute(insert(school_subjects).values(school_id=school_id, subject_id=subject_id))
-    await session.commit()
-
-    return SchoolSubjectAssociation(school_id=school_id, subject_id=subject_id)
-
-
-@router.delete("/{school_id}/subjects/{subject_id}", status_code=status.HTTP_204_NO_CONTENT)
-async def remove_subject_association(school_id: int, subject_id: int, session: DBSessionDep) -> None:
-    """Remove subject association from school."""
-    # Check association exists
-    assoc_stmt = select(school_subjects).where(
-        school_subjects.c.school_id == school_id, school_subjects.c.subject_id == subject_id
-    )
-    result = await session.execute(assoc_stmt)
-    existing = result.first()
-    if not existing:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Subject association not found")
-
-    await session.execute(
-        delete(school_subjects).where(
-            school_subjects.c.school_id == school_id, school_subjects.c.subject_id == subject_id
-        )
-    )
-    await session.commit()
 
 
 @router.get("/{school_id}/subjects/{subject_id}/statistics", response_model=Any)
@@ -238,13 +188,20 @@ async def get_subject_statistics_for_school(school_id: int, subject_id: int, ses
     if not subject:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Subject not found")
 
-    # Check association
-    assoc_stmt = select(school_subjects).where(
-        school_subjects.c.school_id == school_id, school_subjects.c.subject_id == subject_id
+    # Check if subject is available through school's programmes
+    assoc_stmt = (
+        select(programme_subjects.c.subject_id)
+        .select_from(programme_subjects)
+        .join(school_programmes, programme_subjects.c.programme_id == school_programmes.c.programme_id)
+        .where(school_programmes.c.school_id == school_id, programme_subjects.c.subject_id == subject_id)
+        .limit(1)
     )
     result = await session.execute(assoc_stmt)
     if not result.first():
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Subject not associated with school")
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Subject not available through any of the school's programmes"
+        )
 
     # Count documents for this school+subject
     doc_count_stmt = select(func.count(Document.id)).where(

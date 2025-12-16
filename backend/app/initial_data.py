@@ -17,9 +17,9 @@ from app.models import (
     Subject,
     SubjectRegistration,
     SubjectScore,
+    SubjectType,
     programme_subjects,
     school_programmes,
-    school_subjects,
 )
 
 
@@ -43,9 +43,6 @@ async def create_initial_data() -> None:
             print(f"Created {len(programmes)} programmes")
 
             # Create Associations
-            await create_school_subject_associations(session, schools, subjects)
-            print("Created school-subject associations")
-
             await create_school_programme_associations(session, schools, programmes)
             print("Created school-programme associations")
 
@@ -141,7 +138,17 @@ async def create_subjects(session) -> list[Subject]:
         existing = result.scalar_one_or_none()
 
         if not existing:
-            subject = Subject(code=subject_data["code"], name=subject_data["name"])
+            # Determine subject type based on code
+            # Subjects 701, 703, 704 are core in all programmes
+            # Subject 702 (Social Studies) is also core
+            # Subject 705 (Entrepreneurship) can be elective or core depending on programme
+            required_subject_codes = {"701", "702", "703", "704", "705"}
+            subject_type = SubjectType.CORE if (subject_data["code"] in required_subject_codes or subject_data["code"] == "702") else SubjectType.ELECTIVE
+            subject = Subject(
+                code=subject_data["code"],
+                name=subject_data["name"],
+                subject_type=subject_type,
+            )
             session.add(subject)
             subjects.append(subject)
         else:
@@ -176,24 +183,6 @@ async def create_programmes(session) -> list[Programme]:
     return programmes
 
 
-async def create_school_subject_associations(session, schools: list[School], subjects: list[Subject]) -> None:
-    """Create school-subject associations."""
-    for school in schools:
-        for subject in subjects:
-            stmt = select(school_subjects).where(
-                school_subjects.c.school_id == school.id, school_subjects.c.subject_id == subject.id
-            )
-            result = await session.execute(stmt)
-            existing = result.first()
-
-            if not existing:
-                await session.execute(
-                    insert(school_subjects).values(school_id=school.id, subject_id=subject.id)
-                )
-
-    await session.flush()
-
-
 async def create_school_programme_associations(
     session, schools: list[School], programmes: list[Programme]
 ) -> None:
@@ -218,10 +207,7 @@ async def create_school_programme_associations(
 async def create_programme_subject_associations(
     session, programmes: list[Programme], subjects: list[Subject]
 ) -> None:
-    """Create programme-subject associations with is_core flags."""
-    # Every programme automatically includes subjects 701, 703, and 704
-    required_subject_codes = {"701", "703", "704"}
-
+    """Create programme-subject associations."""
     for programme in programmes:
         for subject in subjects:
             stmt = select(programme_subjects).where(
@@ -232,13 +218,9 @@ async def create_programme_subject_associations(
             existing = result.first()
 
             if not existing:
-                # Subjects 701, 703, 704 are core in all programmes
-                # Subject 702 (Social Studies) is also core
-                # Subject 705 (Entrepreneurship) can be elective or core depending on programme
-                is_core = subject.code in required_subject_codes or subject.code == "702"
                 await session.execute(
                     insert(programme_subjects).values(
-                        programme_id=programme.id, subject_id=subject.id, is_core=is_core
+                        programme_id=programme.id, subject_id=subject.id
                     )
                 )
 

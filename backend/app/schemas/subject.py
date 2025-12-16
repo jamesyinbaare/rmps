@@ -2,6 +2,8 @@ from datetime import datetime
 
 from pydantic import BaseModel, Field
 
+from app.models import SubjectType
+
 
 class SubjectBase(BaseModel):
     """Base subject schema."""
@@ -13,19 +15,21 @@ class SubjectBase(BaseModel):
 class SubjectCreate(SubjectBase):
     """Schema for creating a subject."""
 
-    pass
+    subject_type: SubjectType = Field(..., description="Subject type: CORE or ELECTIVE")
 
 
 class SubjectUpdate(BaseModel):
     """Schema for updating a subject."""
 
     name: str | None = Field(None, min_length=1, max_length=255)
+    subject_type: SubjectType | None = Field(None, description="Subject type: CORE or ELECTIVE")
 
 
 class SubjectResponse(SubjectBase):
     """Schema for subject response."""
 
     id: int
+    subject_type: SubjectType
     created_at: datetime
     updated_at: datetime
 
