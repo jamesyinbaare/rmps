@@ -345,11 +345,13 @@ export async function deleteProgramme(id: number): Promise<void> {
 }
 
 // Programme Subject API Functions
+export type SubjectType = "CORE" | "ELECTIVE";
+
 export interface ProgrammeSubject {
   subject_id: number;
   subject_code: string;
   subject_name: string;
-  is_core: boolean;
+  subject_type: SubjectType;
   created_at: string;
 }
 
@@ -360,16 +362,15 @@ export async function listProgrammeSubjects(programmeId: number): Promise<Progra
 
 export async function addSubjectToProgramme(
   programmeId: number,
-  subjectId: number,
-  isCore: boolean = true
-): Promise<{ programme_id: number; subject_id: number; is_core: boolean }> {
+  subjectId: number
+): Promise<{ programme_id: number; subject_id: number; subject_type: SubjectType }> {
   const response = await fetch(
-    `${API_BASE_URL}/api/v1/programmes/${programmeId}/subjects/${subjectId}?is_core=${isCore}`,
+    `${API_BASE_URL}/api/v1/programmes/${programmeId}/subjects/${subjectId}`,
     {
       method: "POST",
     }
   );
-  return handleResponse<{ programme_id: number; subject_id: number; is_core: boolean }>(response);
+  return handleResponse<{ programme_id: number; subject_id: number; subject_type: SubjectType }>(response);
 }
 
 export async function removeSubjectFromProgramme(
@@ -391,15 +392,15 @@ export async function removeSubjectFromProgramme(
 export async function updateProgrammeSubject(
   programmeId: number,
   subjectId: number,
-  isCore: boolean
-): Promise<{ programme_id: number; subject_id: number; is_core: boolean }> {
+  subjectType: SubjectType
+): Promise<{ programme_id: number; subject_id: number; subject_type: SubjectType }> {
   const response = await fetch(
-    `${API_BASE_URL}/api/v1/programmes/${programmeId}/subjects/${subjectId}?is_core=${isCore}`,
+    `${API_BASE_URL}/api/v1/programmes/${programmeId}/subjects/${subjectId}?subject_type=${subjectType}`,
     {
       method: "PUT",
     }
   );
-  return handleResponse<{ programme_id: number; subject_id: number; is_core: boolean }>(response);
+  return handleResponse<{ programme_id: number; subject_id: number; subject_type: SubjectType }>(response);
 }
 
 // Candidate API Functions
@@ -600,4 +601,125 @@ export async function listExamRegistrationSubjects(
 ): Promise<SubjectRegistration[]> {
   const response = await fetch(`${API_BASE_URL}/api/v1/candidates/${candidateId}/exams/${examId}/subjects`);
   return handleResponse<SubjectRegistration[]>(response);
+}
+
+// Subject CRUD API Functions
+
+export async function getSubject(id: number): Promise<Subject> {
+  const response = await fetch(`${API_BASE_URL}/api/v1/subjects/${id}`);
+  return handleResponse<Subject>(response);
+}
+
+export async function createSubject(data: {
+  code: string;
+  name: string;
+  subject_type: "CORE" | "ELECTIVE";
+}): Promise<Subject> {
+  const response = await fetch(`${API_BASE_URL}/api/v1/subjects`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(data),
+  });
+  return handleResponse<Subject>(response);
+}
+
+export async function updateSubject(
+  id: number,
+  data: { name?: string; subject_type?: "CORE" | "ELECTIVE" }
+): Promise<Subject> {
+  const response = await fetch(`${API_BASE_URL}/api/v1/subjects/${id}`, {
+    method: "PUT",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(data),
+  });
+  return handleResponse<Subject>(response);
+}
+
+export async function deleteSubject(id: number): Promise<void> {
+  const response = await fetch(`${API_BASE_URL}/api/v1/subjects/${id}`, {
+    method: "DELETE",
+  });
+  if (!response.ok) {
+    const error: ApiError = await response.json().catch(() => ({ detail: "An error occurred" }));
+    throw new Error(error.detail || `HTTP error! status: ${response.status}`);
+  }
+}
+
+// Exam CRUD API Functions
+
+export async function getExam(id: number): Promise<Exam> {
+  const response = await fetch(`${API_BASE_URL}/api/v1/exams/${id}`);
+  return handleResponse<Exam>(response);
+}
+
+export async function createExam(data: {
+  name: string;
+  description?: string | null;
+  year: number;
+  series: string;
+  number_of_series: number;
+}): Promise<Exam> {
+  const response = await fetch(`${API_BASE_URL}/api/v1/exams`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(data),
+  });
+  return handleResponse<Exam>(response);
+}
+
+export async function updateExam(
+  id: number,
+  data: {
+    name?: string;
+    description?: string | null;
+    year?: number;
+    series?: string;
+    number_of_series?: number;
+  }
+): Promise<Exam> {
+  const response = await fetch(`${API_BASE_URL}/api/v1/exams/${id}`, {
+    method: "PUT",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(data),
+  });
+  return handleResponse<Exam>(response);
+}
+
+export async function deleteExam(id: number): Promise<void> {
+  const response = await fetch(`${API_BASE_URL}/api/v1/exams/${id}`, {
+    method: "DELETE",
+  });
+  if (!response.ok) {
+    const error: ApiError = await response.json().catch(() => ({ detail: "An error occurred" }));
+    throw new Error(error.detail || `HTTP error! status: ${response.status}`);
+  }
+}
+
+export interface ExamSubject {
+  id: number;
+  exam_id: number;
+  subject_id: number;
+  subject_code: string;
+  subject_name: string;
+  obj_pct: number | null;
+  essay_pct: number | null;
+  pract_pct: number | null;
+  obj_max_score: number | null;
+  essay_max_score: number | null;
+  pract_max_score: number | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export async function listExamSubjects(examId: number): Promise<ExamSubject[]> {
+  const response = await fetch(`${API_BASE_URL}/api/v1/exams/${examId}/subjects`);
+  return handleResponse<ExamSubject[]>(response);
 }

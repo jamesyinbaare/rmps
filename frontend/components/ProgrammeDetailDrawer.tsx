@@ -144,9 +144,9 @@ export function ProgrammeDetailDrawer({
                         <TableCell>{subject.subject_name}</TableCell>
                         <TableCell>
                           <Badge
-                            variant={subject.is_core ? "default" : "secondary"}
+                            variant={subject.subject_type === "CORE" ? "default" : "secondary"}
                           >
-                            {subject.is_core ? "Core" : "Elective"}
+                            {subject.subject_type === "CORE" ? "Core" : "Elective"}
                           </Badge>
                         </TableCell>
                       </TableRow>

@@ -114,9 +114,14 @@ export interface Subject {
   id: number;
   code: string;
   name: string;
+  subject_type: "CORE" | "ELECTIVE";
   created_at: string;
   updated_at: string;
 }
+
+export type ExamName = "Certificate II Examination" | "CBT";
+
+export type ExamSeries = "MAY/JUNE" | "NOV/DEC";
 
 export interface DocumentFilters {
   exam_id?: number;

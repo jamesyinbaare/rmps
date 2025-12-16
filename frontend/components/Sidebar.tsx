@@ -19,6 +19,8 @@ import {
   Users,
   Plus,
   Settings,
+  BookOpen,
+  ClipboardList,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Button } from "./ui/button";
@@ -67,6 +69,8 @@ export function Sidebar() {
       icon: Settings,
       submenu: [
         { href: "/programmes", label: "Programmes", icon: GraduationCap },
+        { href: "/subjects", label: "Subjects", icon: BookOpen },
+        { href: "/examinations", label: "Examinations", icon: ClipboardList },
       ],
     },
     {

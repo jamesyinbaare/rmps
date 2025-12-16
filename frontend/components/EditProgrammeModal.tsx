@@ -56,7 +56,6 @@ export function EditProgrammeModal({
   const [subjects, setSubjects] = useState<ProgrammeSubject[]>([]);
   const [allSubjects, setAllSubjects] = useState<Subject[]>([]);
   const [selectedSubjectId, setSelectedSubjectId] = useState<string>("");
-  const [isCore, setIsCore] = useState(true);
   const [loading, setLoading] = useState(false);
   const [subjectsLoading, setSubjectsLoading] = useState(false);
   const [removingId, setRemovingId] = useState<number | null>(null);
@@ -122,7 +121,7 @@ export function EditProgrammeModal({
 
     setLoading(true);
     try {
-      await addSubjectToProgramme(programme.id, subjectId, isCore);
+      await addSubjectToProgramme(programme.id, subjectId);
       toast.success("Subject added to programme");
       // Reload subjects
       const updatedSubjects = await listProgrammeSubjects(programme.id);
@@ -182,11 +181,12 @@ export function EditProgrammeModal({
     }
   };
 
-  const handleToggleCore = async (subjectId: number, currentIsCore: boolean) => {
+  const handleToggleCore = async (subjectId: number, currentSubjectType: "CORE" | "ELECTIVE") => {
     if (!programme) return;
 
     try {
-      await updateProgrammeSubject(programme.id, subjectId, !currentIsCore);
+      const newSubjectType = currentSubjectType === "CORE" ? "ELECTIVE" : "CORE";
+      await updateProgrammeSubject(programme.id, subjectId, newSubjectType);
       toast.success("Subject type updated");
       // Reload subjects
       const updatedSubjects = await listProgrammeSubjects(programme.id);
@@ -293,14 +293,6 @@ export function EditProgrammeModal({
                 </SelectContent>
               </Select>
               <Button
-                type="button"
-                variant={isCore ? "default" : "outline"}
-                onClick={() => setIsCore(!isCore)}
-                className="min-w-[100px]"
-              >
-                {isCore ? "Core" : "Elective"}
-              </Button>
-              <Button
                 onClick={handleAddSubject}
                 disabled={!selectedSubjectId || loading || availableSubjects.length === 0}
                 className="gap-2"
@@ -353,15 +345,15 @@ export function EditProgrammeModal({
                             onClick={() =>
                               handleToggleCore(
                                 subject.subject_id,
-                                subject.is_core
+                                subject.subject_type
                               )
                             }
                             className="h-auto p-0"
                           >
                             <Badge
-                              variant={subject.is_core ? "default" : "secondary"}
+                              variant={subject.subject_type === "CORE" ? "default" : "secondary"}
                             >
-                              {subject.is_core ? "Core" : "Elective"}
+                              {subject.subject_type === "CORE" ? "Core" : "Elective"}
                             </Badge>
                           </Button>
                         </TableCell>
