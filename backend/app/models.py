@@ -73,6 +73,16 @@ class SchoolType(enum.Enum):
     PUBLIC = "public"
 
 
+class ExamName(enum.Enum):
+    CERTIFICATE_II = "Certificate II Examination"
+    CBT = "CBT"
+
+
+class ExamSeries(enum.Enum):
+    MAY_JUNE = "MAY/JUNE"
+    NOV_DEC = "NOV/DEC"
+
+
 class School(Base):
     __tablename__ = "schools"
     id = Column(Integer, primary_key=True)
@@ -216,7 +226,7 @@ class Candidate(Base):
     school_id = Column(Integer, ForeignKey("schools.id", ondelete="CASCADE"), nullable=False, index=True)
     programme_id = Column(Integer, ForeignKey("programmes.id", ondelete="SET NULL"), nullable=True, index=True)
     name = Column(String(255), nullable=False)
-    index_number = Column(String(50), unique=True, nullable=False, index=True)
+    index_number = Column(String(50), nullable=False, index=True)
     date_of_birth = Column(Date, nullable=True)
     gender = Column(String(20), nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
@@ -230,10 +240,10 @@ class Candidate(Base):
 class Exam(Base):
     __tablename__ = "exams"
     id = Column(Integer, primary_key=True)
-    name = Column(String(255), nullable=False)
+    name = Column(Enum(ExamName), nullable=False)
     description = Column(Text, nullable=True)
     year = Column(Integer, nullable=False)
-    series = Column(String(50), nullable=False)
+    series = Column(Enum(ExamSeries), nullable=False)
     number_of_series = Column(Integer, nullable=False, default=1)  # Number of groups (1-8, 1-4, etc.)
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
@@ -241,6 +251,7 @@ class Exam(Base):
     exam_subjects = relationship("ExamSubject", back_populates="exam", cascade="all, delete-orphan")
     exam_registrations = relationship("ExamRegistration", back_populates="exam", cascade="all, delete-orphan")
     documents = relationship("Document", back_populates="exam")
+    __table_args__ = (UniqueConstraint("name", "series", "year", name="uq_exam_name_series_year"),)
 
 
 class ExamSubject(Base):
@@ -268,6 +279,7 @@ class ExamRegistration(Base):
     id = Column(Integer, primary_key=True)
     candidate_id = Column(Integer, ForeignKey("candidates.id", ondelete="CASCADE"), nullable=False, index=True)
     exam_id = Column(Integer, ForeignKey("exams.id", ondelete="CASCADE"), nullable=False, index=True)
+    index_number = Column(String(50), nullable=False, index=True)
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
 
@@ -276,7 +288,10 @@ class ExamRegistration(Base):
     subject_registrations = relationship(
         "SubjectRegistration", back_populates="exam_registration", cascade="all, delete-orphan"
     )
-    __table_args__ = (UniqueConstraint("candidate_id", "exam_id", name="uq_candidate_exam"),)
+    __table_args__ = (
+        UniqueConstraint("candidate_id", "exam_id", name="uq_candidate_exam"),
+        UniqueConstraint("index_number", "exam_id", name="uq_index_number_exam"),
+    )
 
 
 class SubjectRegistration(Base):

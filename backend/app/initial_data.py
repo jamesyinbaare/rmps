@@ -335,17 +335,19 @@ async def create_candidates(
 
 async def create_exams(session) -> list[Exam]:
     """Create exams if they don't exist."""
+    from app.models import ExamName, ExamSeries
+
     exams_data = [
         {
-            "name": "Certificate II Examination",
-            "series": "MAY/JUNE",
+            "name": ExamName.CERTIFICATE_II,
+            "series": ExamSeries.MAY_JUNE,
             "year": 2024,
             "number_of_series": 4,
         },
         {
-            "name": "Certificate II Examination",
-            "series": "NOV/DEC",
-            "year": 2023,
+            "name": ExamName.CERTIFICATE_II,
+            "series": ExamSeries.NOV_DEC,
+            "year": 2024,
             "number_of_series": 4,
         },
     ]
@@ -425,7 +427,9 @@ async def create_exam_registrations(
             existing = result.scalar_one_or_none()
 
             if not existing:
-                exam_reg = ExamRegistration(candidate_id=candidate.id, exam_id=exam_2024.id)
+                exam_reg = ExamRegistration(
+                    candidate_id=candidate.id, exam_id=exam_2024.id, index_number=candidate.index_number
+                )
                 session.add(exam_reg)
                 exam_registrations.append(exam_reg)
 
@@ -440,7 +444,9 @@ async def create_exam_registrations(
                 existing = result.scalar_one_or_none()
 
                 if not existing:
-                    exam_reg = ExamRegistration(candidate_id=candidate.id, exam_id=exam_2023.id)
+                    exam_reg = ExamRegistration(
+                        candidate_id=candidate.id, exam_id=exam_2023.id, index_number=candidate.index_number
+                    )
                     session.add(exam_reg)
                     exam_registrations.append(exam_reg)
 

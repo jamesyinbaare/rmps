@@ -118,5 +118,22 @@ class SubjectScoreResponse(BaseModel):
         from_attributes = True
 
 
+class CandidateBulkUploadError(BaseModel):
+    """Schema for bulk upload error details."""
+
+    row_number: int
+    error_message: str
+    field: str | None = None
+
+
+class CandidateBulkUploadResponse(BaseModel):
+    """Schema for bulk upload response."""
+
+    total_rows: int
+    successful: int
+    failed: int
+    errors: list[CandidateBulkUploadError]
+
+
 # Update forward references
 SubjectRegistrationResponse.model_rebuild()

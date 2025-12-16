@@ -1,4 +1,4 @@
-from fastapi import APIRouter, HTTPException, Query, status
+from fastapi import APIRouter, File, Form, HTTPException, Query, UploadFile, status
 from sqlalchemy import func, select
 
 from app.dependencies.database import DBSessionDep
@@ -14,6 +14,8 @@ from app.models import (
     SubjectScore,
 )
 from app.schemas.candidate import (
+    CandidateBulkUploadError,
+    CandidateBulkUploadResponse,
     CandidateCreate,
     CandidateListResponse,
     CandidateResponse,
@@ -22,6 +24,14 @@ from app.schemas.candidate import (
     SubjectRegistrationCreate,
     SubjectRegistrationResponse,
     SubjectScoreResponse,
+)
+from app.services.candidate_upload import (
+    CandidateUploadParseError,
+    CandidateUploadValidationError,
+    extract_subject_columns,
+    parse_candidate_row,
+    parse_upload_file,
+    validate_required_columns,
 )
 
 router = APIRouter(prefix="/api/v1/candidates", tags=["candidates"])
@@ -70,6 +80,223 @@ async def create_candidate(candidate: CandidateCreate, session: DBSessionDep) ->
     await session.commit()
     await session.refresh(db_candidate)
     return CandidateResponse.model_validate(db_candidate)
+
+
+@router.post("/bulk-upload", response_model=CandidateBulkUploadResponse, status_code=status.HTTP_200_OK)
+async def bulk_upload_candidates(
+    session: DBSessionDep, file: UploadFile = File(...), exam_id: int = Form(...)
+) -> CandidateBulkUploadResponse:
+    """Bulk upload candidates from Excel or CSV file."""
+    # Validate exam exists
+    exam_stmt = select(Exam).where(Exam.id == exam_id)
+    exam_result = await session.execute(exam_stmt)
+    exam = exam_result.scalar_one_or_none()
+    if not exam:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Exam not found")
+
+    # Read file content
+    file_content = await file.read()
+
+    # Parse file
+    try:
+        df = parse_upload_file(file_content, file.filename or "unknown")
+        validate_required_columns(df)
+    except (CandidateUploadParseError, CandidateUploadValidationError) as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+
+    # Extract subject columns
+    subject_columns = extract_subject_columns(df)
+
+    # Get exam subjects for validation
+    exam_subject_stmt = (
+        select(ExamSubject, Subject)
+        .join(Subject, ExamSubject.subject_id == Subject.id)
+        .where(ExamSubject.exam_id == exam_id)
+    )
+    exam_subject_result = await session.execute(exam_subject_stmt)
+    exam_subjects_data = exam_subject_result.all()
+    exam_subjects_by_code = {subject.code: (exam_subject, subject) for exam_subject, subject in exam_subjects_data}
+
+    # Process each row
+    total_rows = len(df)
+    successful = 0
+    failed = 0
+    errors: list[CandidateBulkUploadError] = []
+
+    for idx, row in df.iterrows():
+        row_number = int(idx) + 2  # +2 because Excel rows are 1-indexed and header is row 1
+        try:
+            # Parse row data
+            candidate_data = parse_candidate_row(row, subject_columns)
+
+            # Validate required fields
+            if not candidate_data["school_code"]:
+                errors.append(
+                    CandidateBulkUploadError(row_number=row_number, error_message="School code is required", field="school_code")
+                )
+                failed += 1
+                continue
+
+            if not candidate_data["name"]:
+                errors.append(
+                    CandidateBulkUploadError(row_number=row_number, error_message="Name is required", field="name")
+                )
+                failed += 1
+                continue
+
+            if not candidate_data["index_number"]:
+                errors.append(
+                    CandidateBulkUploadError(
+                        row_number=row_number, error_message="Index number is required", field="index_number"
+                    )
+                )
+                failed += 1
+                continue
+
+            # Lookup school by code
+            school_stmt = select(School).where(School.code == candidate_data["school_code"])
+            school_result = await session.execute(school_stmt)
+            school = school_result.scalar_one_or_none()
+            if not school:
+                errors.append(
+                    CandidateBulkUploadError(
+                        row_number=row_number,
+                        error_message=f"School with code '{candidate_data['school_code']}' not found",
+                        field="school_code",
+                    )
+                )
+                failed += 1
+                continue
+
+            # Lookup programme by code (if provided)
+            programme = None
+            if candidate_data["programme_code"]:
+                programme_stmt = select(Programme).where(Programme.code == candidate_data["programme_code"])
+                programme_result = await session.execute(programme_stmt)
+                programme = programme_result.scalar_one_or_none()
+                if not programme:
+                    errors.append(
+                        CandidateBulkUploadError(
+                            row_number=row_number,
+                            error_message=f"Programme with code '{candidate_data['programme_code']}' not found",
+                            field="programme_code",
+                        )
+                    )
+                    failed += 1
+                    continue
+
+            # Validate subject codes exist and are part of the exam
+            valid_subject_codes = []
+            for subject_code in candidate_data["subject_codes"]:
+                if subject_code not in exam_subjects_by_code:
+                    errors.append(
+                        CandidateBulkUploadError(
+                            row_number=row_number,
+                            error_message=f"Subject code '{subject_code}' not found in exam or not part of this exam",
+                            field="subject_code",
+                        )
+                    )
+                    failed += 1
+                    break
+                valid_subject_codes.append(subject_code)
+            else:
+                # Only continue if all subject codes were valid
+                if not valid_subject_codes:
+                    errors.append(
+                        CandidateBulkUploadError(
+                            row_number=row_number, error_message="At least one subject code is required", field="subject_code"
+                        )
+                    )
+                    failed += 1
+                    continue
+
+                # Check if (index_number, exam_id) already exists
+                existing_reg_stmt = select(ExamRegistration).where(
+                    ExamRegistration.index_number == candidate_data["index_number"],
+                    ExamRegistration.exam_id == exam_id,
+                )
+                existing_reg_result = await session.execute(existing_reg_stmt)
+                existing_reg = existing_reg_result.scalar_one_or_none()
+                if existing_reg:
+                    errors.append(
+                        CandidateBulkUploadError(
+                            row_number=row_number,
+                            error_message=f"Candidate with index number '{candidate_data['index_number']}' is already registered for this exam",
+                            field="index_number",
+                        )
+                    )
+                    failed += 1
+                    continue
+
+                # Find or create candidate (index_number can be reused across exams)
+                candidate_stmt = select(Candidate).where(
+                    Candidate.index_number == candidate_data["index_number"], Candidate.school_id == school.id
+                )
+                candidate_result = await session.execute(candidate_stmt)
+                candidate = candidate_result.scalar_one_or_none()
+
+                if not candidate:
+                    # Create new candidate
+                    candidate = Candidate(
+                        school_id=school.id,
+                        programme_id=programme.id if programme else None,
+                        name=candidate_data["name"],
+                        index_number=candidate_data["index_number"],
+                    )
+                    session.add(candidate)
+                    await session.flush()
+
+                # Create exam registration
+                exam_registration = ExamRegistration(
+                    candidate_id=candidate.id, exam_id=exam_id, index_number=candidate_data["index_number"]
+                )
+                session.add(exam_registration)
+                await session.flush()
+
+                # Create subject registrations
+                for subject_code in valid_subject_codes:
+                    exam_subject, subject = exam_subjects_by_code[subject_code]
+                    subject_registration = SubjectRegistration(
+                        exam_registration_id=exam_registration.id, exam_subject_id=exam_subject.id, series=None
+                    )
+                    session.add(subject_registration)
+                    await session.flush()
+
+                    # Create default subject score
+                    subject_score = SubjectScore(
+                        subject_registration_id=subject_registration.id,
+                        obj_raw_score=None,
+                        essay_raw_score=0.0,
+                        pract_raw_score=None,
+                        obj_normalized=None,
+                        essay_normalized=None,
+                        pract_normalized=None,
+                        total_score=0.0,
+                        document_id=None,
+                    )
+                    session.add(subject_score)
+
+                successful += 1
+
+        except Exception as e:
+            errors.append(
+                CandidateBulkUploadError(
+                    row_number=row_number, error_message=f"Unexpected error: {str(e)}", field=None
+                )
+            )
+            failed += 1
+            continue
+
+    # Commit all successful transactions
+    try:
+        await session.commit()
+    except Exception as e:
+        await session.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Failed to commit transactions: {str(e)}"
+        )
+
+    return CandidateBulkUploadResponse(total_rows=total_rows, successful=successful, failed=failed, errors=errors)
 
 
 @router.get("", response_model=CandidateListResponse)
@@ -221,19 +448,22 @@ async def register_candidate_for_exam(
     if not exam:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Exam not found")
 
-    # Check if registration already exists
+    # Check if registration already exists using (index_number, exam_id)
     existing_stmt = select(ExamRegistration).where(
-        ExamRegistration.candidate_id == candidate_id, ExamRegistration.exam_id == exam_id
+        ExamRegistration.index_number == candidate.index_number, ExamRegistration.exam_id == exam_id
     )
     existing_result = await session.execute(existing_stmt)
     existing = existing_result.scalar_one_or_none()
     if existing:
         raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST, detail="Candidate is already registered for this exam"
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Candidate with index number {candidate.index_number} is already registered for this exam",
         )
 
     # Create exam registration
-    db_exam_registration = ExamRegistration(candidate_id=candidate_id, exam_id=exam_id)
+    db_exam_registration = ExamRegistration(
+        candidate_id=candidate_id, exam_id=exam_id, index_number=candidate.index_number
+    )
     session.add(db_exam_registration)
     await session.commit()
     await session.refresh(db_exam_registration)
@@ -242,9 +472,9 @@ async def register_candidate_for_exam(
         id=db_exam_registration.id,
         candidate_id=db_exam_registration.candidate_id,
         exam_id=db_exam_registration.exam_id,
-        exam_name=exam.name,
+        exam_name=exam.name.value,
         exam_year=exam.year,
-        exam_series=exam.series,
+        exam_series=exam.series.value,
         created_at=db_exam_registration.created_at,
         updated_at=db_exam_registration.updated_at,
     )
@@ -275,9 +505,9 @@ async def list_candidate_exam_registrations(candidate_id: int, session: DBSessio
             id=exam_reg.id,
             candidate_id=exam_reg.candidate_id,
             exam_id=exam_reg.exam_id,
-            exam_name=exam.name,
+            exam_name=exam.name.value,
             exam_year=exam.year,
-            exam_series=exam.series,
+            exam_series=exam.series.value,
             created_at=exam_reg.created_at,
             updated_at=exam_reg.updated_at,
         )
@@ -314,9 +544,9 @@ async def get_candidate_exam_registration(
         id=exam_reg.id,
         candidate_id=exam_reg.candidate_id,
         exam_id=exam_reg.exam_id,
-        exam_name=exam.name,
+        exam_name=exam.name.value,
         exam_year=exam.year,
-        exam_series=exam.series,
+        exam_series=exam.series.value,
         created_at=exam_reg.created_at,
         updated_at=exam_reg.updated_at,
     )
@@ -362,7 +592,7 @@ async def add_subject_to_exam_registration(
     if not exam_subject_data:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Exam subject not found or does not belong to exam {exam.name}",
+            detail=f"Exam subject not found or does not belong to exam {exam.name.value}",
         )
 
     exam_subject, subject = exam_subject_data

@@ -2,14 +2,16 @@ from datetime import datetime
 
 from pydantic import BaseModel, Field
 
+from app.models import ExamName, ExamSeries
+
 
 class ExamBase(BaseModel):
     """Base exam schema."""
 
-    name: str = Field(..., min_length=1, max_length=255)
+    name: ExamName
     description: str | None = None
     year: int = Field(..., ge=1900, le=2100)
-    series: str = Field(..., min_length=1, max_length=50)
+    series: ExamSeries
     number_of_series: int = Field(1, ge=1, le=10)
 
 
@@ -22,10 +24,10 @@ class ExamCreate(ExamBase):
 class ExamUpdate(BaseModel):
     """Schema for updating an exam."""
 
-    name: str | None = Field(None, min_length=1, max_length=255)
+    name: ExamName | None = None
     description: str | None = None
     year: int | None = Field(None, ge=1900, le=2100)
-    series: str | None = Field(None, min_length=1, max_length=50)
+    series: ExamSeries | None = None
     number_of_series: int | None = Field(None, ge=1, le=10)
 
 
