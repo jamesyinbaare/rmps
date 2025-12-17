@@ -9,7 +9,7 @@ import { listCandidates, listSchools, listProgrammes } from "@/lib/api";
 import type { Candidate, School, Programme } from "@/types/document";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Button } from "@/components/ui/button";
-import { Upload } from "lucide-react";
+import { Upload, Grid3x3, List } from "lucide-react";
 
 export default function CandidatesPage() {
   const [candidates, setCandidates] = useState<Candidate[]>([]);
@@ -110,8 +110,6 @@ export default function CandidatesPage() {
       <div className="flex flex-1 flex-col overflow-hidden">
         <TopBar
           title="All Candidates"
-          viewMode={viewMode}
-          onViewModeChange={setViewMode}
           filters={
             <div className="flex items-center gap-4">
               <Select value={selectedSchoolId?.toString() || "all"} onValueChange={handleSchoolFilterChange}>
@@ -148,6 +146,27 @@ export default function CandidatesPage() {
           }
         />
         <div className="flex-1 overflow-y-auto">
+          {/* View Toggle */}
+          <div className="flex items-center justify-end px-6 py-4 border-b border-border">
+            <div className="flex items-center rounded-md border">
+              <Button
+                variant={viewMode === "grid" ? "secondary" : "ghost"}
+                size="icon-sm"
+                onClick={() => setViewMode("grid")}
+                className="rounded-r-none"
+              >
+                <Grid3x3 className="h-4 w-4" />
+              </Button>
+              <Button
+                variant={viewMode === "list" ? "secondary" : "ghost"}
+                size="icon-sm"
+                onClick={() => setViewMode("list")}
+                className="rounded-l-none"
+              >
+                <List className="h-4 w-4" />
+              </Button>
+            </div>
+          </div>
           {error && (
             <div className="mx-6 mt-4 rounded-lg bg-destructive/10 border border-destructive/20 p-4 text-destructive">
               {error}

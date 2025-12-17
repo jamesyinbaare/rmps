@@ -21,6 +21,7 @@ import {
   Settings,
   BookOpen,
   ClipboardList,
+  ClipboardCheck,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Button } from "./ui/button";
@@ -71,6 +72,14 @@ export function Sidebar() {
         { href: "/programmes", label: "Programmes", icon: GraduationCap },
         { href: "/subjects", label: "Subjects", icon: BookOpen },
         { href: "/examinations", label: "Examinations", icon: ClipboardList },
+      ],
+    },
+    {
+      href: "/scores",
+      label: "Scores",
+      icon: ClipboardCheck,
+      submenu: [
+        { href: "/scores/data-entry", label: "Data Entry", icon: ClipboardCheck },
       ],
     },
     {

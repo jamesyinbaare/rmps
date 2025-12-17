@@ -1,6 +1,7 @@
 "use client";
 
 import { useMemo, useState } from "react";
+import { useRouter } from "next/navigation";
 import {
   ColumnDef,
   flexRender,
@@ -40,6 +41,7 @@ export function ExamDataTable({
   onEdit,
   onDelete,
 }: ExamDataTableProps) {
+  const router = useRouter();
   const [sorting, setSorting] = useState<SortingState>([]);
   const [globalFilter, setGlobalFilter] = useState("");
 
@@ -49,9 +51,20 @@ export function ExamDataTable({
         {
           accessorKey: "name",
           header: "Name",
-          cell: ({ row }) => (
-            <div className="font-medium">{row.getValue("name")}</div>
-          ),
+          cell: ({ row }) => {
+            const exam = row.original;
+            return (
+              <button
+                onClick={(e) => {
+                  e.stopPropagation();
+                  router.push(`/examinations/${exam.id}`);
+                }}
+                className="font-medium text-left hover:text-primary hover:underline transition-colors"
+              >
+                {row.getValue("name")}
+              </button>
+            );
+          },
         },
         {
           accessorKey: "year",

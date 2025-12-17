@@ -15,6 +15,12 @@ import type {
   CandidateListResponse,
   ExamRegistration,
   SubjectRegistration,
+  ScoreDocumentFilters,
+  DocumentScoresResponse,
+  ScoreResponse,
+  ScoreUpdate,
+  BatchScoreUpdate,
+  BatchScoreUpdateResponse,
 } from "@/types/document";
 
 export const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL || "http://localhost:8000";
@@ -709,6 +715,7 @@ export interface ExamSubject {
   subject_id: number;
   subject_code: string;
   subject_name: string;
+  subject_type: "CORE" | "ELECTIVE";
   obj_pct: number | null;
   essay_pct: number | null;
   pract_pct: number | null;
@@ -722,4 +729,75 @@ export interface ExamSubject {
 export async function listExamSubjects(examId: number): Promise<ExamSubject[]> {
   const response = await fetch(`${API_BASE_URL}/api/v1/exams/${examId}/subjects`);
   return handleResponse<ExamSubject[]>(response);
+}
+
+export interface ExamSubjectUpdate {
+  obj_pct?: number | null;
+  essay_pct?: number | null;
+  pract_pct?: number | null;
+  obj_max_score?: number | null;
+  essay_max_score?: number | null;
+  pract_max_score?: number | null;
+}
+
+export async function updateExamSubject(
+  examId: number,
+  subjectId: number,
+  data: ExamSubjectUpdate
+): Promise<ExamSubject> {
+  const response = await fetch(`${API_BASE_URL}/api/v1/exams/${examId}/subjects/${subjectId}`, {
+    method: "PUT",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(data),
+  });
+  return handleResponse<ExamSubject>(response);
+}
+
+// Score-related API functions
+
+export async function getFilteredDocuments(
+  filters: ScoreDocumentFilters = {}
+): Promise<DocumentListResponse> {
+  const params = new URLSearchParams();
+  if (filters.exam_id) params.append("exam_id", filters.exam_id.toString());
+  if (filters.school_id) params.append("school_id", filters.school_id.toString());
+  if (filters.subject_id) params.append("subject_id", filters.subject_id.toString());
+  if (filters.test_type) params.append("test_type", filters.test_type);
+  if (filters.page) params.append("page", filters.page.toString());
+  if (filters.page_size) params.append("page_size", filters.page_size.toString());
+
+  const response = await fetch(`${API_BASE_URL}/api/v1/scores/documents?${params.toString()}`);
+  return handleResponse<DocumentListResponse>(response);
+}
+
+export async function getDocumentScores(documentId: string): Promise<DocumentScoresResponse> {
+  const response = await fetch(`${API_BASE_URL}/api/v1/scores/documents/${documentId}/scores`);
+  return handleResponse<DocumentScoresResponse>(response);
+}
+
+export async function updateScore(scoreId: number, data: ScoreUpdate): Promise<ScoreResponse> {
+  const response = await fetch(`${API_BASE_URL}/api/v1/scores/scores/${scoreId}`, {
+    method: "PUT",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(data),
+  });
+  return handleResponse<ScoreResponse>(response);
+}
+
+export async function batchUpdateScores(
+  documentId: string,
+  data: BatchScoreUpdate
+): Promise<BatchScoreUpdateResponse> {
+  const response = await fetch(`${API_BASE_URL}/api/v1/scores/documents/${documentId}/scores/batch`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(data),
+  });
+  return handleResponse<BatchScoreUpdateResponse>(response);
 }

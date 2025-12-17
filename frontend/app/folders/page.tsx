@@ -5,6 +5,8 @@ import { FolderBrowser } from "@/components/FolderBrowser";
 import { DashboardLayout } from "@/components/DashboardLayout";
 import { TopBar } from "@/components/TopBar";
 import { DocumentViewer } from "@/components/DocumentViewer";
+import { Button } from "@/components/ui/button";
+import { Grid3x3, List } from "lucide-react";
 import { downloadDocument } from "@/lib/api";
 import type { Document } from "@/types/document";
 import { Loader2 } from "lucide-react";
@@ -48,14 +50,32 @@ export default function FoldersPage() {
   return (
     <DashboardLayout title="Folders">
       <div className="flex flex-1 flex-col overflow-hidden">
-        <TopBar
-          title="Folders"
-          viewMode={viewMode}
-          onViewModeChange={setViewMode}
-        />
+        <TopBar title="Folders" />
         <div className="flex flex-1 overflow-hidden relative">
           {/* Main Content Area */}
           <main className={`flex-1 overflow-hidden transition-all ${selectedDocument ? 'md:w-1/2 2xl:w-3/5' : 'w-full'}`}>
+            {/* View Toggle */}
+            <div className="flex items-center justify-end px-6 py-4 border-b border-border">
+              <div className="flex items-center rounded-md border">
+                <Button
+                  variant={viewMode === "grid" ? "secondary" : "ghost"}
+                  size="icon-sm"
+                  onClick={() => setViewMode("grid")}
+                  className="rounded-r-none"
+                >
+                  <Grid3x3 className="h-4 w-4" />
+                </Button>
+                <Button
+                  variant={viewMode === "list" ? "secondary" : "ghost"}
+                  size="icon-sm"
+                  onClick={() => setViewMode("list")}
+                  className="rounded-l-none"
+                >
+                  <List className="h-4 w-4" />
+                </Button>
+              </div>
+            </div>
+
             <Suspense
               fallback={
                 <div className="flex items-center justify-center py-24">

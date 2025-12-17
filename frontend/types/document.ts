@@ -194,7 +194,7 @@ export interface SubjectScore {
   essay_normalized: number | null;
   pract_normalized: number | null;
   total_score: number;
-  document_id: number | null;
+  document_id: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -220,4 +220,63 @@ export interface ExamRegistration {
   exam_series: string;
   created_at: string;
   updated_at: string;
+}
+
+export interface ScoreResponse {
+  id: number;
+  subject_registration_id: number;
+  obj_raw_score: number | null;
+  essay_raw_score: number;
+  pract_raw_score: number | null;
+  obj_normalized: number | null;
+  essay_normalized: number | null;
+  pract_normalized: number | null;
+  total_score: number;
+  document_id: string | null;
+  created_at: string;
+  updated_at: string;
+  candidate_id: number;
+  candidate_name: string;
+  candidate_index_number: string;
+  subject_id: number;
+  subject_code: string;
+  subject_name: string;
+}
+
+export interface DocumentScoresResponse {
+  document_id: string;
+  scores: ScoreResponse[];
+}
+
+export interface ScoreUpdate {
+  obj_raw_score?: number | null;
+  essay_raw_score?: number | null;
+  pract_raw_score?: number | null;
+}
+
+export interface BatchScoreUpdateItem {
+  score_id?: number | null;
+  subject_registration_id: number;
+  obj_raw_score?: number | null;
+  essay_raw_score?: number | null;
+  pract_raw_score?: number | null;
+}
+
+export interface BatchScoreUpdate {
+  scores: BatchScoreUpdateItem[];
+}
+
+export interface BatchScoreUpdateResponse {
+  successful: number;
+  failed: number;
+  errors: Array<{ [key: string]: string }>;
+}
+
+export interface ScoreDocumentFilters {
+  exam_id?: number;
+  school_id?: number;
+  subject_id?: number;
+  test_type?: string;
+  page?: number;
+  page_size?: number;
 }

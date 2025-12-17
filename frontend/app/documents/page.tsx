@@ -1,12 +1,14 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import { DocumentUpload } from "@/components/DocumentUpload";
 import { DocumentList } from "@/components/DocumentList";
 import { DocumentViewer } from "@/components/DocumentViewer";
 import { CompactFilters } from "@/components/CompactFilters";
 import { DashboardLayout } from "@/components/DashboardLayout";
 import { TopBar } from "@/components/TopBar";
+import { Button } from "@/components/ui/button";
+import { Plus, ChevronDown, Upload, FolderPlus, Grid3x3, List } from "lucide-react";
 import { listDocuments, downloadDocument } from "@/lib/api";
 import type { Document, DocumentFilters as DocumentFiltersType } from "@/types/document";
 
@@ -24,6 +26,24 @@ export default function DocumentsPage() {
   const [viewMode, setViewMode] = useState<"grid" | "list">("grid");
   const [uploadOpen, setUploadOpen] = useState(false);
   const [selectedDocument, setSelectedDocument] = useState<Document | null>(null);
+  const [newMenuOpen, setNewMenuOpen] = useState(false);
+  const menuRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const handleClickOutside = (event: MouseEvent) => {
+      if (menuRef.current && !menuRef.current.contains(event.target as Node)) {
+        setNewMenuOpen(false);
+      }
+    };
+
+    if (newMenuOpen) {
+      document.addEventListener("mousedown", handleClickOutside);
+    }
+
+    return () => {
+      document.removeEventListener("mousedown", handleClickOutside);
+    };
+  }, [newMenuOpen]);
 
   const loadDocuments = useCallback(async () => {
     setLoading(true);
@@ -97,17 +117,73 @@ export default function DocumentsPage() {
       <div className="flex flex-1 flex-col overflow-hidden">
         <TopBar
           title="All files"
-          onUploadClick={() => setUploadOpen(true)}
-          onNewFolderClick={() => {
-            // TODO: Implement new folder functionality
-          }}
-          viewMode={viewMode}
-          onViewModeChange={setViewMode}
           filters={<CompactFilters filters={filters} onFiltersChange={handleFiltersChange} />}
         />
         <div className="flex flex-1 overflow-hidden relative">
           {/* Main Content Area */}
           <main className={`flex-1 overflow-y-auto transition-all ${selectedDocument ? 'md:w-1/2 2xl:w-3/5' : 'w-full'}`}>
+            {/* Action Buttons */}
+            <div className="flex items-center justify-between px-6 py-4 border-b border-border">
+              <div className="flex items-center gap-2">
+                {/* New Button with Dropdown */}
+                <div className="relative" ref={menuRef}>
+                  <Button
+                    variant="secondary"
+                    onClick={() => setNewMenuOpen(!newMenuOpen)}
+                    className="gap-2"
+                  >
+                    <Plus className="h-4 w-4" />
+                    New
+                    <ChevronDown className="h-4 w-4" />
+                  </Button>
+                  {newMenuOpen && (
+                    <div className="absolute left-0 top-full z-50 mt-1 w-48 rounded-md border bg-popover shadow-md">
+                      <button
+                        onClick={() => {
+                          setUploadOpen(true);
+                          setNewMenuOpen(false);
+                        }}
+                        className="flex w-full items-center gap-2 px-4 py-2 text-sm hover:bg-accent hover:text-accent-foreground"
+                      >
+                        <Upload className="h-4 w-4" />
+                        Upload files
+                      </button>
+                      <button
+                        onClick={() => {
+                          // TODO: Implement new folder functionality
+                          setNewMenuOpen(false);
+                        }}
+                        className="flex w-full items-center gap-2 px-4 py-2 text-sm hover:bg-accent hover:text-accent-foreground"
+                      >
+                        <FolderPlus className="h-4 w-4" />
+                        New folder
+                      </button>
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              {/* View Toggle */}
+              <div className="flex items-center rounded-md border">
+                <Button
+                  variant={viewMode === "grid" ? "secondary" : "ghost"}
+                  size="icon-sm"
+                  onClick={() => setViewMode("grid")}
+                  className="rounded-r-none"
+                >
+                  <Grid3x3 className="h-4 w-4" />
+                </Button>
+                <Button
+                  variant={viewMode === "list" ? "secondary" : "ghost"}
+                  size="icon-sm"
+                  onClick={() => setViewMode("list")}
+                  className="rounded-l-none"
+                >
+                  <List className="h-4 w-4" />
+                </Button>
+              </div>
+            </div>
+
             <DocumentUpload
               open={uploadOpen}
               onOpenChange={setUploadOpen}
