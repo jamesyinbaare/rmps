@@ -110,7 +110,7 @@ class SubjectScoreResponse(BaseModel):
     essay_normalized: float | None = None
     pract_normalized: float | None = None
     total_score: float
-    document_id: int | None = None
+    document_id: str | None = None
     created_at: datetime
     updated_at: datetime
 

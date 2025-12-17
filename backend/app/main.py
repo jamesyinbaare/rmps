@@ -7,7 +7,7 @@ from fastapi import FastAPI, status
 from starlette.middleware.cors import CORSMiddleware
 
 from app.dependencies.database import get_sessionmanager, initialize_db
-from app.routers import batches, candidates, documents, exams, programmes, schools, subjects
+from app.routers import batches, candidates, documents, exams, programmes, schools, scores, subjects
 
 
 @asynccontextmanager
@@ -38,6 +38,7 @@ app.include_router(documents.router)
 app.include_router(batches.router)
 app.include_router(candidates.router)
 app.include_router(programmes.router)
+app.include_router(scores.router)
 
 
 @app.get("/", status_code=status.HTTP_200_OK)

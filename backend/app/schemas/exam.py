@@ -2,7 +2,7 @@ from datetime import datetime
 
 from pydantic import BaseModel, Field
 
-from app.models import ExamName, ExamSeries
+from app.models import ExamName, ExamSeries, SubjectType
 
 
 class ExamBase(BaseModel):
@@ -83,6 +83,7 @@ class ExamSubjectResponse(BaseModel):
     subject_id: int
     subject_code: str
     subject_name: str
+    subject_type: SubjectType
     obj_pct: float | None
     essay_pct: float | None
     pract_pct: float | None

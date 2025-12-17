@@ -87,7 +87,7 @@ async def create_schools(session) -> list[School]:
     schools_data = [
         {
             "code": "817006",
-            "name": "Accra Technical Training Center",
+            "name": "Accra Technical Training Centre",
             "region": SchoolRegion.GREATER_ACCRA,
             "zone": SchoolZone.A,
         },
@@ -234,27 +234,203 @@ async def create_candidates(
     candidates_data = [
         {
             "school_code": "817006",
-            "name": "John Doe",
-            "index_number": "817006001",
-            "date_of_birth": date(2006, 5, 15),
-            "gender": "M",
-            "programme_code": "C60",
+            "name": "WISDOM ALORNYEKU",
+            "index_number": "006201250420",
+            "date_of_birth": None,
+            "gender": None,
+            "programme_code": None,
         },
         {
             "school_code": "817006",
-            "name": "Jane Smith",
-            "index_number": "817006002",
-            "date_of_birth": date(2007, 8, 22),
-            "gender": "F",
-            "programme_code": "C62",
+            "name": "EMMANUEL NORTEY",
+            "index_number": "006201250485",
+            "date_of_birth": None,
+            "gender": None,
+            "programme_code": None,
         },
         {
             "school_code": "817006",
-            "name": "Michael Johnson",
-            "index_number": "817006003",
-            "date_of_birth": date(2006, 3, 10),
-            "gender": "M",
-            "programme_code": "C42",
+            "name": "FESTUS AYITEY ARYEE",
+            "index_number": "006201250544",
+            "date_of_birth": None,
+            "gender": None,
+            "programme_code": None,
+        },
+        {
+            "school_code": "817006",
+            "name": "ESTHER DEELA TETTEH",
+            "index_number": "006201250722",
+            "date_of_birth": None,
+            "gender": None,
+            "programme_code": None,
+        },
+        {
+            "school_code": "817006",
+            "name": "SAMUEL OBENG ANSAH",
+            "index_number": "006208250273",
+            "date_of_birth": None,
+            "gender": None,
+            "programme_code": None,
+        },
+        {
+            "school_code": "817006",
+            "name": "NANA KWAKU AGYEMAN DUAH",
+            "index_number": "006211250608",
+            "date_of_birth": None,
+            "gender": None,
+            "programme_code": None,
+        },
+        {
+            "school_code": "817006",
+            "name": "MICHAEL AMARQUAYE",
+            "index_number": "006212250539",
+            "date_of_birth": None,
+            "gender": None,
+            "programme_code": None,
+        },
+        {
+            "school_code": "817006",
+            "name": "ISRAEL AGYEKU DANSO",
+            "index_number": "006221250027",
+            "date_of_birth": None,
+            "gender": None,
+            "programme_code": None,
+        },
+        {
+            "school_code": "817006",
+            "name": "EMMANUEL KWAKU ASAMOAH",
+            "index_number": "006221250120",
+            "date_of_birth": None,
+            "gender": None,
+            "programme_code": None,
+        },
+        {
+            "school_code": "817006",
+            "name": "AHMED MOHAMMED",
+            "index_number": "006221250458",
+            "date_of_birth": None,
+            "gender": None,
+            "programme_code": None,
+        },
+        {
+            "school_code": "817006",
+            "name": "KELVIN OWUSU GYAMFI",
+            "index_number": "006221250512",
+            "date_of_birth": None,
+            "gender": None,
+            "programme_code": None,
+        },
+        {
+            "school_code": "817006",
+            "name": "NANA AKUA MBRAH AMISSAH",
+            "index_number": "006221250708",
+            "date_of_birth": None,
+            "gender": None,
+            "programme_code": None,
+        },
+        {
+            "school_code": "817006",
+            "name": "CONSTANT YAO AGBOLI",
+            "index_number": "006231250222",
+            "date_of_birth": None,
+            "gender": None,
+            "programme_code": None,
+        },
+        {
+            "school_code": "817006",
+            "name": "FAMOUS KWASI KWAMIVIE",
+            "index_number": "006231250226",
+            "date_of_birth": None,
+            "gender": None,
+            "programme_code": None,
+        },
+        {
+            "school_code": "817006",
+            "name": "FAMOUS SENAYA",
+            "index_number": "006231250230",
+            "date_of_birth": None,
+            "gender": None,
+            "programme_code": None,
+        },
+        {
+            "school_code": "817006",
+            "name": "SAMUEL BONNAH",
+            "index_number": "006231250234",
+            "date_of_birth": None,
+            "gender": None,
+            "programme_code": None,
+        },
+        {
+            "school_code": "817006",
+            "name": "EUGENE AMOAKO SARPONG",
+            "index_number": "006231250238",
+            "date_of_birth": None,
+            "gender": None,
+            "programme_code": None,
+        },
+        {
+            "school_code": "817006",
+            "name": "BEATRICE AYERKOR ARMAH",
+            "index_number": "006231250242",
+            "date_of_birth": None,
+            "gender": None,
+            "programme_code": None,
+        },
+        {
+            "school_code": "817006",
+            "name": "EMMANUEL KORANTENG",
+            "index_number": "006231250246",
+            "date_of_birth": None,
+            "gender": None,
+            "programme_code": None,
+        },
+        {
+            "school_code": "817006",
+            "name": "PAULINA ODI DARKO",
+            "index_number": "006231250250",
+            "date_of_birth": None,
+            "gender": None,
+            "programme_code": None,
+        },
+        {
+            "school_code": "817006",
+            "name": "STACY DARKWA",
+            "index_number": "006231250259",
+            "date_of_birth": None,
+            "gender": None,
+            "programme_code": None,
+        },
+        {
+            "school_code": "817006",
+            "name": "KUKUA BREBA TETTEH",
+            "index_number": "006231250263",
+            "date_of_birth": None,
+            "gender": None,
+            "programme_code": None,
+        },
+        {
+            "school_code": "817006",
+            "name": "KELVIN KINGSLEY QUAYSON",
+            "index_number": "006231250267",
+            "date_of_birth": None,
+            "gender": None,
+            "programme_code": None,
+        },
+        {
+            "school_code": "817006",
+            "name": "NIMATU MUSTAPHA",
+            "index_number": "006231250271",
+            "date_of_birth": None,
+            "gender": None,
+            "programme_code": None,
+        },
+        {
+            "school_code": "817006",
+            "name": "DANIEL AZIZ AYANE",
+            "index_number": "006231250276",
+            "date_of_birth": None,
+            "gender": None,
+            "programme_code": None,
         },
         {
             "school_code": "817105",
@@ -289,18 +465,21 @@ async def create_candidates(
         existing = result.scalar_one_or_none()
 
         if not existing:
-            # Find school and programme
+            # Find school
             school_stmt = select(School).where(School.code == candidate_data["school_code"])
             school_result = await session.execute(school_stmt)
             school = school_result.scalar_one()
 
-            programme_stmt = select(Programme).where(Programme.code == candidate_data["programme_code"])
-            programme_result = await session.execute(programme_stmt)
-            programme = programme_result.scalar_one()
+            # Find programme if provided
+            programme = None
+            if candidate_data["programme_code"]:
+                programme_stmt = select(Programme).where(Programme.code == candidate_data["programme_code"])
+                programme_result = await session.execute(programme_stmt)
+                programme = programme_result.scalar_one()
 
             candidate = Candidate(
                 school_id=school.id,
-                programme_id=programme.id,
+                programme_id=programme.id if programme else None,
                 name=candidate_data["name"],
                 index_number=candidate_data["index_number"],
                 date_of_birth=candidate_data["date_of_birth"],
@@ -330,6 +509,12 @@ async def create_exams(session) -> list[Exam]:
             "name": ExamName.CERTIFICATE_II,
             "series": ExamSeries.NOV_DEC,
             "year": 2024,
+            "number_of_series": 4,
+        },
+        {
+            "name": ExamName.CERTIFICATE_II,
+            "series": ExamSeries.NOV_DEC,
+            "year": 2025,
             "number_of_series": 4,
         },
     ]
@@ -395,10 +580,42 @@ async def create_exam_registrations(
     session, candidates: list[Candidate], exams: list[Exam]
 ) -> list[ExamRegistration]:
     """Create exam registrations."""
+    from app.models import ExamName, ExamSeries
+
     exam_registrations = []
 
-    # Each candidate registered for at least one exam
+    # Get school 817006
+    school_817006_stmt = select(School).where(School.code == "817006")
+    school_817006_result = await session.execute(school_817006_stmt)
+    school_817006 = school_817006_result.scalar_one_or_none()
+
+    # Get Certificate II, NOV/DEC, 2025 exam
+    exam_2025_novdec = next(
+        (e for e in exams if e.year == 2025 and e.series == ExamSeries.NOV_DEC and e.name == ExamName.CERTIFICATE_II),
+        None
+    )
+
+    # Register all candidates from school 817006 for Certificate II, NOV/DEC, 2025
+    for candidate in candidates:
+        if school_817006 and candidate.school_id == school_817006.id and exam_2025_novdec:
+            stmt = select(ExamRegistration).where(
+                ExamRegistration.candidate_id == candidate.id, ExamRegistration.exam_id == exam_2025_novdec.id
+            )
+            result = await session.execute(stmt)
+            existing = result.scalar_one_or_none()
+
+            if not existing:
+                exam_reg = ExamRegistration(
+                    candidate_id=candidate.id, exam_id=exam_2025_novdec.id, index_number=candidate.index_number
+                )
+                session.add(exam_reg)
+                exam_registrations.append(exam_reg)
+
+    # Register other candidates for 2024 exams (existing logic)
     for idx, candidate in enumerate(candidates):
+        if school_817006 and candidate.school_id == school_817006.id:
+            continue  # Skip candidates from 817006 as they're already registered above
+
         # Register for the most recent exam (2024 MAY/JUNE)
         exam_2024 = next((e for e in exams if e.year == 2024), None)
         if exam_2024:
@@ -414,23 +631,6 @@ async def create_exam_registrations(
                 )
                 session.add(exam_reg)
                 exam_registrations.append(exam_reg)
-
-        # Some candidates also registered for 2023 exam
-        if idx % 2 == 0:  # Every other candidate
-            exam_2023 = next((e for e in exams if e.year == 2023), None)
-            if exam_2023:
-                stmt = select(ExamRegistration).where(
-                    ExamRegistration.candidate_id == candidate.id, ExamRegistration.exam_id == exam_2023.id
-                )
-                result = await session.execute(stmt)
-                existing = result.scalar_one_or_none()
-
-                if not existing:
-                    exam_reg = ExamRegistration(
-                        candidate_id=candidate.id, exam_id=exam_2023.id, index_number=candidate.index_number
-                    )
-                    session.add(exam_reg)
-                    exam_registrations.append(exam_reg)
 
     await session.flush()
     return exam_registrations
@@ -484,28 +684,62 @@ async def create_subject_scores(
     session, subject_registrations: list[SubjectRegistration]
 ) -> None:
     """Create subject scores for subject registrations."""
+    # Get subject 701
+    subject_701_stmt = select(Subject).where(Subject.code == "701")
+    subject_701_result = await session.execute(subject_701_stmt)
+    subject_701 = subject_701_result.scalar_one_or_none()
+
+    # Document ID for school 817006, subject 701
+    document_id_817006_701 = 8170067011101
+
     for subject_reg in subject_registrations:
         stmt = select(SubjectScore).where(SubjectScore.subject_registration_id == subject_reg.id)
         result = await session.execute(stmt)
         existing = result.scalar_one_or_none()
 
         if not existing:
-            # Generate realistic scores
-            obj_score = 35.0 + (subject_reg.id % 15)  # 35-50
-            essay_score = 40.0 + (subject_reg.id % 20)  # 40-60
-            total_score = obj_score + essay_score
+            # Check if this is subject 701 registration
+            exam_subject_stmt = select(ExamSubject).where(ExamSubject.id == subject_reg.exam_subject_id)
+            exam_subject_result = await session.execute(exam_subject_stmt)
+            exam_subject = exam_subject_result.scalar_one_or_none()
 
-            subject_score = SubjectScore(
-                subject_registration_id=subject_reg.id,
-                obj_raw_score=obj_score,
-                essay_raw_score=essay_score,
-                pract_raw_score=None,
-                obj_normalized=None,
-                essay_normalized=None,
-                pract_normalized=None,
-                total_score=total_score,
-                document_id=None,
+            # Check if this is for subject 701
+            is_subject_701 = (
+                subject_701
+                and exam_subject
+                and exam_subject.subject_id == subject_701.id
             )
+
+            if is_subject_701:
+                # Create empty scores with document_id for subject 701
+                subject_score = SubjectScore(
+                    subject_registration_id=subject_reg.id,
+                    obj_raw_score=None,
+                    essay_raw_score=0.0,  # Required field, set to 0.0 for empty
+                    pract_raw_score=None,
+                    obj_normalized=None,
+                    essay_normalized=None,
+                    pract_normalized=None,
+                    total_score=0.0,
+                    document_id=document_id_817006_701,
+                )
+            else:
+                # Generate realistic scores for other subjects
+                obj_score = 35.0 + (subject_reg.id % 15)  # 35-50
+                essay_score = 40.0 + (subject_reg.id % 20)  # 40-60
+                total_score = obj_score + essay_score
+
+                subject_score = SubjectScore(
+                    subject_registration_id=subject_reg.id,
+                    obj_raw_score=obj_score,
+                    essay_raw_score=essay_score,
+                    pract_raw_score=None,
+                    obj_normalized=None,
+                    essay_normalized=None,
+                    pract_normalized=None,
+                    total_score=total_score,
+                    document_id=None,
+                )
             session.add(subject_score)
 
     await session.flush()

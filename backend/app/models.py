@@ -316,7 +316,7 @@ class SubjectScore(Base):
     essay_normalized = Column(Float, nullable=True)
     pract_normalized = Column(Float, nullable=True)
     total_score = Column(Float, nullable=False)
-    document_id = Column(Integer, nullable=True)
+    document_id = Column(String(13), nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
 
