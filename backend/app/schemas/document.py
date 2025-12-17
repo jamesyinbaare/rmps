@@ -1,4 +1,5 @@
 from datetime import datetime
+from typing import Any
 
 from pydantic import BaseModel, Field
 
@@ -27,9 +28,9 @@ class DocumentUpdate(BaseModel):
     subject_series: str | None = None
     sheet_number: str | None = None
     extracted_id: str | None = None
-    extraction_method: str | None = None
-    extraction_confidence: float | None = None
-    status: str | None = None
+    id_extraction_method: str | None = None
+    id_extraction_confidence: float | None = None
+    id_extraction_status: str | None = None
 
 
 class DocumentResponse(DocumentBase):
@@ -46,9 +47,15 @@ class DocumentResponse(DocumentBase):
     subject_series: str | None
     sheet_number: str | None
     extracted_id: str | None
-    extraction_method: str | None
-    extraction_confidence: float | None
-    status: str
+    id_extraction_method: str | None
+    id_extraction_confidence: float | None
+    id_extraction_status: str
+    id_extracted_at: datetime | None = None
+    scores_extraction_data: dict[str, Any] | None = None
+    scores_extraction_status: str | None = None
+    scores_extraction_method: str | None = None
+    scores_extraction_confidence: float | None = None
+    scores_extracted_at: datetime | None = None
 
     class Config:
         from_attributes = True
@@ -72,3 +79,13 @@ class BulkUploadResponse(BaseModel):
     failed: int  # Failed uploads
     skipped: int  # Skipped files (duplicates, invalid, etc.)
     document_ids: list[int]  # IDs of successfully uploaded documents
+
+
+class ContentExtractionResponse(BaseModel):
+    """Schema for content extraction response."""
+
+    scores_extraction_data: dict[str, Any]
+    scores_extraction_method: str
+    scores_extraction_confidence: float
+    is_valid: bool
+    error_message: str | None = None

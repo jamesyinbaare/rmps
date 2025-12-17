@@ -10,7 +10,7 @@ from app.schemas.batch import BatchCreate, BatchDocumentStatus, BatchReport, Bat
 from app.services.batch_processor import batch_processor
 from app.services.id_extraction import id_extraction_service
 from app.services.storage import storage_service
-from app.utils import calculate_checksum
+from app.utils.file_utils import calculate_checksum
 
 router = APIRouter(prefix="/api/v1/batches", tags=["batches"])
 
@@ -59,7 +59,7 @@ async def _process_batch_documents(batch_id: int) -> None:
                 try:
                     file_content = await storage_service.retrieve(document.file_path)
                 except FileNotFoundError:
-                    document.status = "error"
+                    document.id_extraction_status = "error"
                     batch_doc.processing_status = "failed"
                     batch_doc.error_message = "File not found"
                     failed_count += 1
@@ -74,18 +74,19 @@ async def _process_batch_documents(batch_id: int) -> None:
                 # Update document
                 if extraction_result["is_valid"]:
                     document.extracted_id = extraction_result["extracted_id"]
-                    document.extraction_method = extraction_result["method"]
-                    document.extraction_confidence = extraction_result["confidence"]
+                    document.id_extraction_method = extraction_result["method"]
+                    document.id_extraction_confidence = extraction_result["confidence"]
                     document.school_id = extraction_result.get("school_id")
                     document.subject_id = extraction_result.get("subject_id")
                     document.test_type = extraction_result.get("test_type")
                     document.subject_series = extraction_result.get("subject_series")
                     document.sheet_number = extraction_result.get("sheet_number")
-                    document.status = "processed"
+                    document.id_extraction_status = "success"
+                    document.id_extracted_at = datetime.utcnow()
                     batch_doc.processing_status = "completed"
                     processed_count += 1
                 else:
-                    document.status = "error"
+                    document.id_extraction_status = "error"
                     batch_doc.processing_status = "failed"
                     batch_doc.error_message = extraction_result.get("error_message", "Extraction failed")
                     failed_count += 1
@@ -110,8 +111,6 @@ async def _process_batch_documents(batch_id: int) -> None:
             batch.status = "failed"
         else:
             batch.status = "completed"  # Partial success still counts as completed
-
-        from datetime import datetime
 
         batch.completed_at = datetime.utcnow()
         await session.commit()
@@ -217,7 +216,7 @@ async def batch_upload(
             file_size=len(content),
             checksum=checksum,
             exam_id=exam_id,
-            status="pending",
+            id_extraction_status="pending",
         )
         session.add(db_document)
         uploaded_documents.append(db_document)

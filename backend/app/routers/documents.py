@@ -1,3 +1,4 @@
+from datetime import datetime
 from typing import Any
 
 from fastapi import APIRouter, BackgroundTasks, File, Form, HTTPException, Query, UploadFile, status
@@ -7,11 +8,18 @@ from sqlalchemy import func, select
 from app.config import settings
 from app.dependencies.database import DBSessionDep, get_sessionmanager
 from app.models import Document, Exam
-from app.schemas.document import BulkUploadResponse, DocumentListResponse, DocumentResponse, DocumentUpdate
+from app.schemas.document import (
+    BulkUploadResponse,
+    ContentExtractionResponse,
+    DocumentListResponse,
+    DocumentResponse,
+    DocumentUpdate,
+)
 from app.schemas.id_extraction import IDExtractionResponse
+from app.services.content_extraction import content_extraction_service
 from app.services.id_extraction import id_extraction_service
 from app.services.storage import storage_service
-from app.utils import calculate_checksum
+from app.utils.file_utils import calculate_checksum
 
 router = APIRouter(prefix="/api/v1/documents", tags=["documents"])
 
@@ -79,7 +87,7 @@ async def upload_document(
         file_size=len(content),
         checksum=checksum,
         exam_id=exam_id,
-        status="pending",
+        id_extraction_status="pending",
     )
     session.add(db_document)
     await session.commit()
@@ -94,24 +102,25 @@ async def upload_document(
         # Update document with extraction results
         if extraction_result["is_valid"]:
             db_document.extracted_id = extraction_result["extracted_id"]
-            db_document.extraction_method = extraction_result["method"]
-            db_document.extraction_confidence = extraction_result["confidence"]
+            db_document.id_extraction_method = extraction_result["method"]
+            db_document.id_extraction_confidence = extraction_result["confidence"]
             db_document.school_id = extraction_result.get("school_id")
             db_document.subject_id = extraction_result.get("subject_id")
             db_document.test_type = extraction_result.get("test_type")
             db_document.subject_series = extraction_result.get("subject_series")
             db_document.sheet_number = extraction_result.get("sheet_number")
-            db_document.status = "processed"
+            db_document.id_extraction_status = "success"
+            db_document.id_extracted_at = datetime.utcnow()
         else:
-            db_document.extraction_method = extraction_result.get("method")
-            db_document.extraction_confidence = extraction_result.get("confidence", 0.0)
-            db_document.status = "error"
+            db_document.id_extraction_method = extraction_result.get("method")
+            db_document.id_extraction_confidence = extraction_result.get("confidence", 0.0)
+            db_document.id_extraction_status = "error"
 
         await session.commit()
         await session.refresh(db_document)
     except Exception:
         # If extraction fails, document is still saved but marked as error
-        db_document.status = "error"
+        db_document.id_extraction_status = "error"
         await session.commit()
         await session.refresh(db_document)
 
@@ -135,7 +144,7 @@ async def _extract_ids_for_documents(document_ids: list[int]) -> None:
                 try:
                     file_content = await storage_service.retrieve(document.file_path)
                 except FileNotFoundError:
-                    document.status = "error"
+                    document.id_extraction_status = "error"
                     await session.commit()
                     continue
 
@@ -147,18 +156,19 @@ async def _extract_ids_for_documents(document_ids: list[int]) -> None:
                 # Update document with extraction results
                 if extraction_result["is_valid"]:
                     document.extracted_id = extraction_result["extracted_id"]
-                    document.extraction_method = extraction_result["method"]
-                    document.extraction_confidence = extraction_result["confidence"]
+                    document.id_extraction_method = extraction_result["method"]
+                    document.id_extraction_confidence = extraction_result["confidence"]
                     document.school_id = extraction_result.get("school_id")
                     document.subject_id = extraction_result.get("subject_id")
                     document.test_type = extraction_result.get("test_type")
                     document.subject_series = extraction_result.get("subject_series")
                     document.sheet_number = extraction_result.get("sheet_number")
-                    document.status = "processed"
+                    document.id_extraction_status = "success"
+                    document.id_extracted_at = datetime.utcnow()
                 else:
-                    document.extraction_method = extraction_result.get("method")
-                    document.extraction_confidence = extraction_result.get("confidence", 0.0)
-                    document.status = "error"
+                    document.id_extraction_method = extraction_result.get("method")
+                    document.id_extraction_confidence = extraction_result.get("confidence", 0.0)
+                    document.id_extraction_status = "error"
 
                 await session.commit()
             except Exception:
@@ -168,7 +178,7 @@ async def _extract_ids_for_documents(document_ids: list[int]) -> None:
                     result = await session.execute(stmt)
                     document = result.scalar_one_or_none()
                     if document:
-                        document.status = "error"
+                        document.id_extraction_status = "error"
                         await session.commit()
                 except Exception:
                     pass  # Continue even if marking as error fails
@@ -245,7 +255,7 @@ async def bulk_upload_documents(
                 file_size=len(content),
                 checksum=checksum,
                 exam_id=exam_id,
-                status="pending",
+                id_extraction_status="pending",
             )
             session.add(db_document)
             new_documents.append(db_document)
@@ -419,23 +429,73 @@ async def extract_id(session: DBSessionDep, document_id: int) -> IDExtractionRes
     # Update document with extraction results
     if extraction_result["is_valid"]:
         document.extracted_id = extraction_result["extracted_id"]
-        document.extraction_method = extraction_result["method"]
-        document.extraction_confidence = extraction_result["confidence"]
+        document.id_extraction_method = extraction_result["method"]
+        document.id_extraction_confidence = extraction_result["confidence"]
         document.school_id = extraction_result.get("school_id")
         document.subject_id = extraction_result.get("subject_id")
         document.test_type = extraction_result.get("test_type")
         document.subject_series = extraction_result.get("subject_series")
         document.sheet_number = extraction_result.get("sheet_number")
-        document.status = "processed"
+        document.id_extraction_status = "success"
+        document.id_extracted_at = datetime.utcnow()
     else:
-        document.extraction_method = extraction_result.get("method")
-        document.extraction_confidence = extraction_result.get("confidence", 0.0)
-        document.status = "error"
+        document.id_extraction_method = extraction_result.get("method")
+        document.id_extraction_confidence = extraction_result.get("confidence", 0.0)
+        document.id_extraction_status = "error"
 
     await session.commit()
     await session.refresh(document)
 
     return IDExtractionResponse(**extraction_result)
+
+
+@router.post("/{document_id}/parse-content", response_model=ContentExtractionResponse)
+async def parse_content(
+    session: DBSessionDep,
+    document_id: int,
+    method: str | None = Query(None, description="Extraction method: 'ocr' or 'reducto'. If None, uses configured default"),
+) -> ContentExtractionResponse:
+    """Parse document content and extract full text and tables."""
+    stmt = select(Document).where(Document.id == document_id)
+    result = await session.execute(stmt)
+    document = result.scalar_one_or_none()
+    if not document:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Document not found")
+
+    # Retrieve file content
+    try:
+        file_content = await storage_service.retrieve(document.file_path)
+    except FileNotFoundError:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="File not found in storage")
+
+    # Extract content
+    extraction_result = await content_extraction_service.extract_content(
+        file_content, method=method, test_type=document.test_type
+    )
+
+    # Update document with extraction results
+    if extraction_result["is_valid"]:
+        document.scores_extraction_data = extraction_result["parsed_content"]
+        document.scores_extraction_method = extraction_result["parsing_method"]
+        document.scores_extraction_confidence = extraction_result["parsing_confidence"]
+        document.scores_extraction_status = "success"
+        document.scores_extracted_at = datetime.utcnow()
+    else:
+        document.scores_extraction_method = extraction_result.get("parsing_method")
+        document.scores_extraction_confidence = extraction_result.get("parsing_confidence", 0.0)
+        document.scores_extraction_status = "error"
+
+    await session.commit()
+    await session.refresh(document)
+
+    # Map internal result to response schema
+    return ContentExtractionResponse(
+        scores_extraction_data=extraction_result["parsed_content"],
+        scores_extraction_method=extraction_result["parsing_method"],
+        scores_extraction_confidence=extraction_result["parsing_confidence"],
+        is_valid=extraction_result["is_valid"],
+        error_message=extraction_result.get("error_message"),
+    )
 
 
 @router.patch("/{document_id}/id", response_model=DocumentResponse)
@@ -471,16 +531,16 @@ async def update_document_id(document_id: int, update: DocumentUpdate, session: 
         document.sheet_number = update.sheet_number
     if update.extracted_id is not None:
         document.extracted_id = update.extracted_id
-    if update.extraction_method is not None:
-        document.extraction_method = update.extraction_method
-    if update.extraction_confidence is not None:
-        document.extraction_confidence = update.extraction_confidence
-    if update.status is not None:
-        document.status = update.status
+    if update.id_extraction_method is not None:
+        document.id_extraction_method = update.id_extraction_method
+    if update.id_extraction_confidence is not None:
+        document.id_extraction_confidence = update.id_extraction_confidence
+    if update.id_extraction_status is not None:
+        document.id_extraction_status = update.id_extraction_status
 
     # If extracted_id is set manually, mark as manual
-    if update.extracted_id is not None and document.extraction_method != "manual":
-        document.extraction_method = "manual"
+    if update.extracted_id is not None and document.id_extraction_method != "manual":
+        document.id_extraction_method = "manual"
 
     await session.commit()
     await session.refresh(document)

@@ -266,13 +266,15 @@ async def bulk_upload_candidates(
                     subject_score = SubjectScore(
                         subject_registration_id=subject_registration.id,
                         obj_raw_score=None,
-                        essay_raw_score=0.0,
+                        essay_raw_score=None,  # Can be None (not entered), numeric string, or "A"/"AA"
                         pract_raw_score=None,
                         obj_normalized=None,
                         essay_normalized=None,
                         pract_normalized=None,
                         total_score=0.0,
-                        document_id=None,
+                        obj_document_id=None,
+                        essay_document_id=None,
+                        pract_document_id=None,
                     )
                     session.add(subject_score)
 
@@ -636,7 +638,9 @@ async def add_subject_to_exam_registration(
         essay_normalized=None,
         pract_normalized=None,
         total_score=0.0,
-        document_id=None,
+        obj_document_id=None,
+        essay_document_id=None,
+        pract_document_id=None,
     )
     session.add(db_subject_score)
     await session.commit()

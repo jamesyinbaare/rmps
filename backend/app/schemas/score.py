@@ -1,14 +1,28 @@
 from datetime import datetime
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
+
+from app.utils.score_utils import parse_score_value
 
 
 class ScoreUpdate(BaseModel):
     """Schema for updating raw scores."""
 
-    obj_raw_score: float | None = Field(None, ge=0.0, description="Objectives raw score")
-    essay_raw_score: float | None = Field(None, ge=0.0, description="Essay raw score")
-    pract_raw_score: float | None = Field(None, ge=0.0, description="Practical raw score")
+    obj_raw_score: str | None = Field(
+        None, description="Objectives score: numeric string (>=0), 'A'/'AA' (absent), or None (not entered)"
+    )
+    essay_raw_score: str | None = Field(
+        None, description="Essay score: numeric string (>=0), 'A'/'AA' (absent), or None (not entered)"
+    )
+    pract_raw_score: str | None = Field(
+        None, description="Practical score: numeric string (>=0), 'A'/'AA' (absent), or None (not entered)"
+    )
+
+    @field_validator("obj_raw_score", "essay_raw_score", "pract_raw_score")
+    @classmethod
+    def validate_score(cls, v: str | float | None) -> str | None:
+        """Validate and normalize score value."""
+        return parse_score_value(v)
 
 
 class ScoreResponse(BaseModel):
@@ -16,14 +30,16 @@ class ScoreResponse(BaseModel):
 
     id: int
     subject_registration_id: int
-    obj_raw_score: float | None
-    essay_raw_score: float
-    pract_raw_score: float | None
+    obj_raw_score: str | None
+    essay_raw_score: str | None
+    pract_raw_score: str | None
     obj_normalized: float | None = None
     essay_normalized: float | None = None
     pract_normalized: float | None = None
     total_score: float
-    document_id: str | None = None
+    obj_document_id: str | None = None
+    essay_document_id: str | None = None
+    pract_document_id: str | None = None
     created_at: datetime
     updated_at: datetime
     # Extended fields
@@ -50,9 +66,15 @@ class BatchScoreUpdateItem(BaseModel):
 
     score_id: int | None = None  # None if creating new score
     subject_registration_id: int
-    obj_raw_score: float | None = None
-    essay_raw_score: float | None = None
-    pract_raw_score: float | None = None
+    obj_raw_score: str | None = None
+    essay_raw_score: str | None = None
+    pract_raw_score: str | None = None
+
+    @field_validator("obj_raw_score", "essay_raw_score", "pract_raw_score")
+    @classmethod
+    def validate_score(cls, v: str | float | None) -> str | None:
+        """Validate and normalize score value."""
+        return parse_score_value(v)
 
 
 class BatchScoreUpdate(BaseModel):

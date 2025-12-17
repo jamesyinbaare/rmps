@@ -1,5 +1,5 @@
 from fastapi import APIRouter, HTTPException, Query, status
-from sqlalchemy import func, select
+from sqlalchemy import func, or_, select
 
 from app.dependencies.database import DBSessionDep
 from app.models import (
@@ -83,7 +83,8 @@ async def get_filtered_documents(
 async def get_document_scores(document_id: str, session: DBSessionDep) -> DocumentScoresResponse:
     """Get all scores for a specific document."""
     # Get all scores with document_id matching, join with related tables
-    # Note: document_id here refers to SubjectScore.document_id (string), not Document.id
+    # Note: document_id here refers to SubjectScore document_id fields (extracted_id string), not Document.id
+    # Query by any of the three document_id fields (obj, essay, or pract)
     stmt = (
         select(
             SubjectScore,
@@ -98,7 +99,13 @@ async def get_document_scores(document_id: str, session: DBSessionDep) -> Docume
         .join(Candidate, ExamRegistration.candidate_id == Candidate.id)
         .join(ExamSubject, SubjectRegistration.exam_subject_id == ExamSubject.id)
         .join(Subject, ExamSubject.subject_id == Subject.id)
-        .where(SubjectScore.document_id == document_id)
+        .where(
+            or_(
+                SubjectScore.obj_document_id == document_id,
+                SubjectScore.essay_document_id == document_id,
+                SubjectScore.pract_document_id == document_id,
+            )
+        )
         .order_by(Candidate.index_number)
     )
 
@@ -118,7 +125,9 @@ async def get_document_scores(document_id: str, session: DBSessionDep) -> Docume
                 essay_normalized=subject_score.essay_normalized,
                 pract_normalized=subject_score.pract_normalized,
                 total_score=subject_score.total_score,
-                document_id=subject_score.document_id,
+                obj_document_id=subject_score.obj_document_id,
+                essay_document_id=subject_score.essay_document_id,
+                pract_document_id=subject_score.pract_document_id,
                 created_at=subject_score.created_at,
                 updated_at=subject_score.updated_at,
                 candidate_id=candidate.id,
@@ -179,7 +188,9 @@ async def update_score(score_id: int, score_update: ScoreUpdate, session: DBSess
         essay_normalized=subject_score.essay_normalized,
         pract_normalized=subject_score.pract_normalized,
         total_score=subject_score.total_score,
-        document_id=subject_score.document_id,
+        obj_document_id=subject_score.obj_document_id,
+        essay_document_id=subject_score.essay_document_id,
+        pract_document_id=subject_score.pract_document_id,
         created_at=subject_score.created_at,
         updated_at=subject_score.updated_at,
         candidate_id=candidate.id,
@@ -196,7 +207,19 @@ async def batch_update_scores(
     document_id: str, batch_update: BatchScoreUpdate, session: DBSessionDep
 ) -> BatchScoreUpdateResponse:
     """Batch update/create scores for a document."""
-    # Note: document_id here refers to SubjectScore.document_id (string), not Document.id
+    # Note: document_id here refers to Document.extracted_id (string), not Document.id
+    # We need to determine which document_id field to use based on the document's test_type
+    # First, get the document to determine test_type
+    doc_stmt = select(Document).where(Document.extracted_id == document_id)
+    doc_result = await session.execute(doc_stmt)
+    document = doc_result.scalar_one_or_none()
+
+    if not document:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Document not found")
+
+    # Determine which document_id field to use based on test_type
+    # test_type="1" -> obj_document_id, test_type="2" -> essay_document_id, test_type="3" -> pract_document_id
+    test_type = document.test_type
 
     successful = 0
     failed = 0
@@ -222,8 +245,13 @@ async def batch_update_scores(
                 if score_item.pract_raw_score is not None:
                     subject_score.pract_raw_score = score_item.pract_raw_score
 
-                # Ensure document_id is set (already a string)
-                subject_score.document_id = document_id
+                # Set appropriate document_id field based on test_type
+                if test_type == "1":
+                    subject_score.obj_document_id = document_id
+                elif test_type == "2":
+                    subject_score.essay_document_id = document_id
+                elif test_type == "3":
+                    subject_score.pract_document_id = document_id
 
             else:
                 # Create new score
@@ -256,19 +284,27 @@ async def batch_update_scores(
                         existing_score.essay_raw_score = score_item.essay_raw_score
                     if score_item.pract_raw_score is not None:
                         existing_score.pract_raw_score = score_item.pract_raw_score
-                    existing_score.document_id = document_id  # Already a string
+                    # Set appropriate document_id field based on test_type
+                    if test_type == "1":
+                        existing_score.obj_document_id = document_id
+                    elif test_type == "2":
+                        existing_score.essay_document_id = document_id
+                    elif test_type == "3":
+                        existing_score.pract_document_id = document_id
                 else:
                     # Create new score
                     subject_score = SubjectScore(
                         subject_registration_id=score_item.subject_registration_id,
                         obj_raw_score=score_item.obj_raw_score,
-                        essay_raw_score=score_item.essay_raw_score or 0.0,
+                        essay_raw_score=score_item.essay_raw_score,  # Can be None, numeric string, or "A"/"AA"
                         pract_raw_score=score_item.pract_raw_score,
                         obj_normalized=None,
                         essay_normalized=None,
                         pract_normalized=None,
                         total_score=0.0,
-                        document_id=document_id,  # Already a string
+                        obj_document_id=document_id if test_type == "1" else None,
+                        essay_document_id=document_id if test_type == "2" else None,
+                        pract_document_id=document_id if test_type == "3" else None,
                     )
                     session.add(subject_score)
 

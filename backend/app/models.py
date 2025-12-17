@@ -10,6 +10,7 @@ from sqlalchemy import (
     Float,
     ForeignKey,
     Integer,
+    JSON,
     String,
     Table,
     Text,
@@ -158,9 +159,17 @@ class Document(Base):
     subject_series = Column(String(1), nullable=True)
     sheet_number = Column(String(2), nullable=True)
     extracted_id = Column(String(13), nullable=True, index=True)
-    extraction_method = Column(String(20), nullable=True)  # barcode, ocr, manual
-    extraction_confidence = Column(Float, nullable=True)  # 0.0 to 1.0
-    status = Column(String(20), default="pending", nullable=False)  # pending, processed, error
+    # ID extraction fields
+    id_extraction_method = Column(String(20), nullable=True)  # barcode, ocr, manual
+    id_extraction_confidence = Column(Float, nullable=True)  # 0.0 to 1.0
+    id_extraction_status = Column(String(20), default="pending", nullable=False)  # pending, success, error
+    id_extracted_at = Column(DateTime, nullable=True)
+    # Scores extraction fields
+    scores_extraction_data = Column(JSON, nullable=True)  # Stores extracted scores/content as JSON
+    scores_extraction_status = Column(String(20), default="pending", nullable=False)  # pending, success, error
+    scores_extraction_method = Column(String(20), nullable=True)  # ocr, reducto, manual
+    scores_extraction_confidence = Column(Float, nullable=True)  # 0.0 to 1.0
+    scores_extracted_at = Column(DateTime, nullable=True)
 
     school = relationship("School", back_populates="documents")
     subject = relationship("Subject", back_populates="documents")
@@ -309,14 +318,17 @@ class SubjectScore(Base):
     subject_registration_id = Column(
         Integer, ForeignKey("subject_registrations.id", ondelete="CASCADE"), nullable=False, unique=True, index=True
     )
-    obj_raw_score = Column(Float, nullable=True)
-    essay_raw_score = Column(Float, nullable=False)
-    pract_raw_score = Column(Float, nullable=True)
+    obj_raw_score = Column(String(10), nullable=True)  # Numeric string (>=0), "A"/"AA" (absent), or NULL (not entered)
+    essay_raw_score = Column(String(10), nullable=True)  # Numeric string (>=0), "A"/"AA" (absent), or NULL (not entered)
+    pract_raw_score = Column(String(10), nullable=True)  # Numeric string (>=0), "A"/"AA" (absent), or NULL (not entered)
     obj_normalized = Column(Float, nullable=True)
     essay_normalized = Column(Float, nullable=True)
     pract_normalized = Column(Float, nullable=True)
     total_score = Column(Float, nullable=False)
-    document_id = Column(String(13), nullable=True)
+    # Document IDs for each test type (storing Document.extracted_id)
+    obj_document_id = Column(String(13), nullable=True, index=True)  # Document extracted_id for objectives test
+    essay_document_id = Column(String(13), nullable=True, index=True)  # Document extracted_id for essay test
+    pract_document_id = Column(String(13), nullable=True, index=True)  # Document extracted_id for practicals test
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
 

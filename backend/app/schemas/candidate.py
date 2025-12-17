@@ -103,14 +103,16 @@ class SubjectScoreResponse(BaseModel):
 
     id: int
     subject_registration_id: int
-    obj_raw_score: float | None
-    essay_raw_score: float
-    pract_raw_score: float | None
+    obj_raw_score: str | None
+    essay_raw_score: str | None
+    pract_raw_score: str | None
     obj_normalized: float | None = None
     essay_normalized: float | None = None
     pract_normalized: float | None = None
     total_score: float
-    document_id: str | None = None
+    obj_document_id: str | None = None
+    essay_document_id: str | None = None
+    pract_document_id: str | None = None
     created_at: datetime
     updated_at: datetime
 

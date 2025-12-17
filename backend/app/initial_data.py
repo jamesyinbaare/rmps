@@ -689,8 +689,8 @@ async def create_subject_scores(
     subject_701_result = await session.execute(subject_701_stmt)
     subject_701 = subject_701_result.scalar_one_or_none()
 
-    # Document ID for school 817006, subject 701
-    document_id_817006_701 = 8170067011101
+    # Document ID for school 817006, subject 701 (extracted_id as string)
+    document_id_817006_701 = "8170067011101"
 
     for subject_reg in subject_registrations:
         stmt = select(SubjectScore).where(SubjectScore.subject_registration_id == subject_reg.id)
@@ -712,16 +712,17 @@ async def create_subject_scores(
 
             if is_subject_701:
                 # Create empty scores with document_id for subject 701
+                # Assuming this is for essay test (test_type="2") based on context
                 subject_score = SubjectScore(
                     subject_registration_id=subject_reg.id,
-                    obj_raw_score=None,
-                    essay_raw_score=0.0,  # Required field, set to 0.0 for empty
-                    pract_raw_score=None,
+                    obj_raw_score=None,  # Not entered yet
+                    essay_raw_score=None,  # Not entered yet (NULL means not entered)
+                    pract_raw_score=None,  # Not entered yet
                     obj_normalized=None,
                     essay_normalized=None,
                     pract_normalized=None,
                     total_score=0.0,
-                    document_id=document_id_817006_701,
+                    essay_document_id=document_id_817006_701,
                 )
             else:
                 # Generate realistic scores for other subjects
@@ -731,14 +732,16 @@ async def create_subject_scores(
 
                 subject_score = SubjectScore(
                     subject_registration_id=subject_reg.id,
-                    obj_raw_score=obj_score,
-                    essay_raw_score=essay_score,
-                    pract_raw_score=None,
+                    obj_raw_score=str(obj_score),  # Store as string
+                    essay_raw_score=str(essay_score),  # Store as string
+                    pract_raw_score=None,  # Not entered yet
                     obj_normalized=None,
                     essay_normalized=None,
                     pract_normalized=None,
-                    total_score=total_score,
-                    document_id=None,
+                    total_score=total_score,  # Keep as float for total_score
+                    obj_document_id=None,
+                    essay_document_id=None,
+                    pract_document_id=None,
                 )
             session.add(subject_score)
 

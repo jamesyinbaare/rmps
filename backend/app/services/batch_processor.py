@@ -1,4 +1,5 @@
 import asyncio
+from datetime import datetime
 from typing import Any
 
 from sqlalchemy import select
@@ -60,18 +61,19 @@ class BatchProcessor:
                     # Update document
                     if extraction_result["is_valid"]:
                         document.extracted_id = extraction_result["extracted_id"]
-                        document.extraction_method = extraction_result["method"]
-                        document.extraction_confidence = extraction_result["confidence"]
+                        document.id_extraction_method = extraction_result["method"]
+                        document.id_extraction_confidence = extraction_result["confidence"]
                         document.school_id = extraction_result.get("school_id")
                         document.subject_id = extraction_result.get("subject_id")
                         document.test_type = extraction_result.get("test_type")
                         document.subject_series = extraction_result.get("subject_series")
                         document.sheet_number = extraction_result.get("sheet_number")
-                        document.status = "processed"
+                        document.id_extraction_status = "success"
+                        document.id_extracted_at = datetime.utcnow()
                         batch_doc.processing_status = "completed"
                         processed_count += 1
                     else:
-                        document.status = "error"
+                        document.id_extraction_status = "error"
                         batch_doc.processing_status = "failed"
                         batch_doc.error_message = extraction_result.get("error_message", "Extraction failed")
                         failed_count += 1
@@ -96,8 +98,6 @@ class BatchProcessor:
             batch.status = "failed"
         else:
             batch.status = "completed"  # Partial success still counts as completed
-
-        from datetime import datetime
 
         batch.completed_at = datetime.utcnow()
         await session.commit()
