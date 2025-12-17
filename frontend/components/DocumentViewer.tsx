@@ -154,69 +154,38 @@ export function DocumentViewer({ document, onClose, onDownload }: DocumentViewer
   return (
     <div className="flex flex-col h-full bg-background border-l border-border">
       {/* Header with Document Details */}
-      <div className="flex-shrink-0 border-b border-border bg-card px-6 py-4">
-        <div className="flex items-start justify-between gap-4">
-          <div className="flex-1 min-w-0">
-            <div className="flex items-center gap-3 mb-2">
-              <h2 className="text-lg font-semibold truncate">{displayText}</h2>
-            </div>
-            <div className="flex flex-wrap items-center gap-4 text-sm text-muted-foreground">
-              <span>{fileType}</span>
-              <span>•</span>
-              <span>{formatFileSize(document.file_size)}</span>
-              <span>•</span>
-              <span>{formatDate(document.uploaded_at)}</span>
-            </div>
-            <div className="flex flex-wrap items-center gap-4 mt-2 text-xs text-muted-foreground">
-              {document.status && (
-                <>
-                  <span>Status: {document.status}</span>
-                </>
-              )}
-              {examName && (
-                <>
-                  <span>•</span>
-                  <span>Examination: {examName}</span>
-                </>
-              )}
-              {schoolName && (
-                <>
-                  <span>•</span>
-                  <span>School: {schoolName}</span>
-                </>
-              )}
-              {subjectName && (
-                <>
-                  <span>•</span>
-                  <span>Subject: {subjectName}</span>
-                </>
-              )}
-              {document.extraction_method && (
-                <>
-                  <span>•</span>
-                  <span>Extraction: {document.extraction_method}</span>
-                </>
-              )}
-            </div>
+      <div className="flex items-center justify-between border-b border-border px-4 py-3 shrink-0">
+        <div className="flex-1 min-w-0">
+          <h2 className="text-lg font-semibold truncate">{document.extracted_id || "-"}</h2>
+          <div className="flex items-center gap-4 mt-1 text-xs text-muted-foreground">
+            {schoolName && (
+              <span>School: {schoolName}</span>
+            )}
+            {subjectName && (
+              <>
+                {schoolName && <span>•</span>}
+                <span>Subject: {subjectName}</span>
+              </>
+            )}
           </div>
-          <div className="flex items-center gap-2 shrink-0">
-            <Button
-              variant="outline"
-              size="icon-sm"
-              onClick={handleDownload}
-              className="h-8 w-8"
-            >
-              <Download className="h-4 w-4" />
-            </Button>
-            <Button
-              variant="ghost"
-              size="icon-sm"
-              onClick={onClose}
-              className="h-8 w-8"
-            >
-              <X className="h-4 w-4" />
-            </Button>
-          </div>
+        </div>
+        <div className="flex items-center gap-2 shrink-0">
+          <Button
+            variant="outline"
+            size="icon-sm"
+            onClick={handleDownload}
+            className="h-8 w-8"
+          >
+            <Download className="h-4 w-4" />
+          </Button>
+          <Button
+            variant="ghost"
+            size="icon-sm"
+            onClick={onClose}
+            className="h-8 w-8"
+          >
+            <X className="h-4 w-4" />
+          </Button>
         </div>
       </div>
 

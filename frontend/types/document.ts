@@ -12,10 +12,16 @@ export interface Document {
   test_type: string | null;
   subject_series: string | null;
   sheet_number: string | null;
-  extracted_id: string | null;
-  extraction_method: string | null;
-  extraction_confidence: number | null;
-  status: string;
+  extracted_id: string | null; // The actual extracted ID value (13-character string)
+  id_extraction_method: string | null; // How the ID was extracted (barcode, ocr, manual)
+  id_extraction_confidence: number | null; // Confidence level (0.0 to 1.0)
+  id_extraction_status: string; // Status: pending, success, error
+  id_extracted_at: string | null; // When the ID was extracted
+  scores_extraction_data: Record<string, any> | null; // Extracted scores/content as JSON
+  scores_extraction_status: string | null; // Status: pending, success, error
+  scores_extraction_method: string | null; // How scores were extracted (ocr, reducto, manual)
+  scores_extraction_confidence: number | null; // Confidence level (0.0 to 1.0)
+  scores_extracted_at: string | null; // When scores were extracted
 }
 
 export interface DocumentListResponse {
@@ -187,14 +193,16 @@ export interface CandidateBulkUploadResponse {
 export interface SubjectScore {
   id: number;
   subject_registration_id: number;
-  obj_raw_score: number | null;
-  essay_raw_score: number;
-  pract_raw_score: number | null;
+  obj_raw_score: string | null; // Numeric string (>=0), "A"/"AA" (absent), or null (not entered)
+  essay_raw_score: string | null; // Numeric string (>=0), "A"/"AA" (absent), or null (not entered)
+  pract_raw_score: string | null; // Numeric string (>=0), "A"/"AA" (absent), or null (not entered)
   obj_normalized: number | null;
   essay_normalized: number | null;
   pract_normalized: number | null;
   total_score: number;
-  document_id: string | null;
+  obj_document_id: string | null;
+  essay_document_id: string | null;
+  pract_document_id: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -225,14 +233,16 @@ export interface ExamRegistration {
 export interface ScoreResponse {
   id: number;
   subject_registration_id: number;
-  obj_raw_score: number | null;
-  essay_raw_score: number;
-  pract_raw_score: number | null;
+  obj_raw_score: string | null; // Numeric string (>=0), "A"/"AA" (absent), or null (not entered)
+  essay_raw_score: string | null; // Numeric string (>=0), "A"/"AA" (absent), or null (not entered)
+  pract_raw_score: string | null; // Numeric string (>=0), "A"/"AA" (absent), or null (not entered)
   obj_normalized: number | null;
   essay_normalized: number | null;
   pract_normalized: number | null;
   total_score: number;
-  document_id: string | null;
+  obj_document_id: string | null;
+  essay_document_id: string | null;
+  pract_document_id: string | null;
   created_at: string;
   updated_at: string;
   candidate_id: number;
@@ -249,17 +259,17 @@ export interface DocumentScoresResponse {
 }
 
 export interface ScoreUpdate {
-  obj_raw_score?: number | null;
-  essay_raw_score?: number | null;
-  pract_raw_score?: number | null;
+  obj_raw_score?: string | null; // Numeric string (>=0), "A"/"AA" (absent), or null (not entered)
+  essay_raw_score?: string | null; // Numeric string (>=0), "A"/"AA" (absent), or null (not entered)
+  pract_raw_score?: string | null; // Numeric string (>=0), "A"/"AA" (absent), or null (not entered)
 }
 
 export interface BatchScoreUpdateItem {
   score_id?: number | null;
   subject_registration_id: number;
-  obj_raw_score?: number | null;
-  essay_raw_score?: number | null;
-  pract_raw_score?: number | null;
+  obj_raw_score?: string | null; // Numeric string (>=0), "A"/"AA" (absent), or null (not entered)
+  essay_raw_score?: string | null; // Numeric string (>=0), "A"/"AA" (absent), or null (not entered)
+  pract_raw_score?: string | null; // Numeric string (>=0), "A"/"AA" (absent), or null (not entered)
 }
 
 export interface BatchScoreUpdate {

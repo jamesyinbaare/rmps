@@ -230,19 +230,33 @@ export function CandidateDetailDrawer({
                                     <TableCell className="text-right">
                                       {subjectReg.subject_score
                                         ? subjectReg.subject_score.obj_raw_score !== null
-                                          ? subjectReg.subject_score.obj_raw_score.toFixed(2)
+                                          ? subjectReg.subject_score.obj_raw_score === "A" || subjectReg.subject_score.obj_raw_score === "AA"
+                                            ? subjectReg.subject_score.obj_raw_score
+                                            : !isNaN(parseFloat(subjectReg.subject_score.obj_raw_score))
+                                              ? parseFloat(subjectReg.subject_score.obj_raw_score).toFixed(2)
+                                              : subjectReg.subject_score.obj_raw_score
                                           : "—"
                                         : "—"}
                                     </TableCell>
                                     <TableCell className="text-right">
                                       {subjectReg.subject_score
-                                        ? subjectReg.subject_score.essay_raw_score.toFixed(2)
+                                        ? subjectReg.subject_score.essay_raw_score !== null
+                                          ? subjectReg.subject_score.essay_raw_score === "A" || subjectReg.subject_score.essay_raw_score === "AA"
+                                            ? subjectReg.subject_score.essay_raw_score
+                                            : !isNaN(parseFloat(subjectReg.subject_score.essay_raw_score))
+                                              ? parseFloat(subjectReg.subject_score.essay_raw_score).toFixed(2)
+                                              : subjectReg.subject_score.essay_raw_score
+                                          : "—"
                                         : "—"}
                                     </TableCell>
                                     <TableCell className="text-right">
                                       {subjectReg.subject_score
                                         ? subjectReg.subject_score.pract_raw_score !== null
-                                          ? subjectReg.subject_score.pract_raw_score.toFixed(2)
+                                          ? subjectReg.subject_score.pract_raw_score === "A" || subjectReg.subject_score.pract_raw_score === "AA"
+                                            ? subjectReg.subject_score.pract_raw_score
+                                            : !isNaN(parseFloat(subjectReg.subject_score.pract_raw_score))
+                                              ? parseFloat(subjectReg.subject_score.pract_raw_score).toFixed(2)
+                                              : subjectReg.subject_score.pract_raw_score
                                           : "—"
                                         : "—"}
                                     </TableCell>

@@ -29,8 +29,10 @@ export function ScoreEntryForm({ document, onClose }: ScoreEntryFormProps) {
   const [hasChanges, setHasChanges] = useState(false);
 
   // Determine which fields to show based on document.test_type
-  const showObjScore = document.test_type === "1" || document.test_type === null;
-  const showEssayScore = document.test_type === "2" || document.test_type === null;
+  // test_type "1" = Objectives, "2" = Essay, "3" = Practicals
+  const showObjScore = document.test_type === "1";
+  const showEssayScore = document.test_type === "2";
+  const showPractScore = document.test_type === "3";
 
   // Load scores for the document
   useEffect(() => {
@@ -66,17 +68,54 @@ export function ScoreEntryForm({ document, onClose }: ScoreEntryFormProps) {
   }, [document.id, document.extracted_id]);
 
   const handleScoreChange = (scoreId: number, field: keyof ScoreUpdate, value: string) => {
-    const numValue = value === "" ? null : parseFloat(value);
-    if (numValue !== null && (isNaN(numValue) || numValue < 0)) {
+    // Handle empty string as null (not entered)
+    if (value === "") {
+      setScoreValues((prev) => {
+        const updated = {
+          ...prev,
+          [scoreId]: {
+            ...prev[scoreId],
+            [field]: null,
+          },
+        };
+        return updated;
+      });
+      setHasChanges(true);
+      return;
+    }
+
+    // Normalize to uppercase for absence indicators
+    const normalizedValue = value.trim().toUpperCase();
+
+    // Check for absence indicators
+    if (normalizedValue === "A" || normalizedValue === "AA") {
+      setScoreValues((prev) => {
+        const updated = {
+          ...prev,
+          [scoreId]: {
+            ...prev[scoreId],
+            [field]: normalizedValue,
+          },
+        };
+        return updated;
+      });
+      setHasChanges(true);
+      return;
+    }
+
+    // Validate numeric input
+    const numValue = parseFloat(value);
+    if (isNaN(numValue) || numValue < 0) {
       return; // Invalid input
     }
 
+    // Store as string (numeric)
     setScoreValues((prev) => {
       const updated = {
         ...prev,
         [scoreId]: {
           ...prev[scoreId],
-          [field]: numValue,
+          [field]: value.trim(), // Keep as string
         },
       };
       return updated;
@@ -187,7 +226,9 @@ export function ScoreEntryForm({ document, onClose }: ScoreEntryFormProps) {
                   {showEssayScore && (
                     <TableHead className="w-[120px]">Essay</TableHead>
                   )}
-                  <TableHead className="w-[120px]">Practical</TableHead>
+                  {showPractScore && (
+                    <TableHead className="w-[120px]">Practical</TableHead>
+                  )}
                 </TableRow>
               </TableHeader>
               <TableBody>
@@ -210,14 +251,13 @@ export function ScoreEntryForm({ document, onClose }: ScoreEntryFormProps) {
                         <TableCell>
                           <Input
                             id={`obj-${score.id}`}
-                            type="number"
-                            step="0.01"
-                            min="0"
+                            type="text"
                             value={currentValues.obj_raw_score ?? ""}
                             onChange={(e) => handleScoreChange(score.id, "obj_raw_score", e.target.value)}
                             onBlur={() => handleSaveScore(score.id)}
                             className="h-8 w-full"
-                            placeholder="0.00"
+                            placeholder=""
+                            title="Enter numeric score (>=0), 'A' or 'AA' for absent, or leave empty for not entered"
                           />
                         </TableCell>
                       )}
@@ -225,30 +265,30 @@ export function ScoreEntryForm({ document, onClose }: ScoreEntryFormProps) {
                         <TableCell>
                           <Input
                             id={`essay-${score.id}`}
-                            type="number"
-                            step="0.01"
-                            min="0"
+                            type="text"
                             value={currentValues.essay_raw_score ?? ""}
                             onChange={(e) => handleScoreChange(score.id, "essay_raw_score", e.target.value)}
                             onBlur={() => handleSaveScore(score.id)}
                             className="h-8 w-full"
-                            placeholder="0.00"
+                            placeholder=""
+                            title="Enter numeric score (>=0), 'A' or 'AA' for absent, or leave empty for not entered"
                           />
                         </TableCell>
                       )}
-                      <TableCell>
-                        <Input
-                          id={`pract-${score.id}`}
-                          type="number"
-                          step="0.01"
-                          min="0"
-                          value={currentValues.pract_raw_score ?? ""}
-                          onChange={(e) => handleScoreChange(score.id, "pract_raw_score", e.target.value)}
-                          onBlur={() => handleSaveScore(score.id)}
-                          className="h-8 w-full"
-                          placeholder="0.00"
-                        />
-                      </TableCell>
+                      {showPractScore && (
+                        <TableCell>
+                          <Input
+                            id={`pract-${score.id}`}
+                            type="text"
+                            value={currentValues.pract_raw_score ?? ""}
+                            onChange={(e) => handleScoreChange(score.id, "pract_raw_score", e.target.value)}
+                            onBlur={() => handleSaveScore(score.id)}
+                            className="h-8 w-full"
+                            placeholder=""
+                            title="Enter numeric score (>=0), 'A' or 'AA' for absent, or leave empty for not entered"
+                          />
+                        </TableCell>
+                      )}
                     </TableRow>
                   );
                 })}

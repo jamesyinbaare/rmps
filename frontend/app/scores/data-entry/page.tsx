@@ -360,11 +360,11 @@ export default function ScoreDataEntryPage() {
                           </TableCell>
                           <TableCell>
                             <span className={`text-xs px-2 py-1 rounded ${
-                              doc.status === "processed" ? "bg-green-100 text-green-800" :
-                              doc.status === "error" ? "bg-red-100 text-red-800" :
+                              doc.id_extraction_status === "success" ? "bg-green-100 text-green-800" :
+                              doc.id_extraction_status === "error" ? "bg-red-100 text-red-800" :
                               "bg-yellow-100 text-yellow-800"
                             }`}>
-                              {doc.status}
+                              {doc.id_extraction_status}
                             </span>
                           </TableCell>
                         </TableRow>
