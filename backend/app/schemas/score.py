@@ -89,3 +89,39 @@ class BatchScoreUpdateResponse(BaseModel):
     successful: int
     failed: int
     errors: list[dict[str, str]]
+
+
+class CandidateScoreEntry(BaseModel):
+    """Candidate with score information for manual entry."""
+
+    candidate_id: int
+    candidate_name: str
+    candidate_index_number: str
+    subject_registration_id: int
+    subject_id: int
+    subject_code: str
+    subject_name: str
+    exam_id: int
+    exam_name: str
+    exam_year: int
+    exam_series: str
+    programme_id: int | None
+    programme_code: str | None
+    programme_name: str | None
+    score_id: int | None
+    obj_raw_score: str | None
+    essay_raw_score: str | None
+    pract_raw_score: str | None
+
+    class Config:
+        from_attributes = True
+
+
+class CandidateScoreListResponse(BaseModel):
+    """Response for candidate score list for manual entry."""
+
+    items: list[CandidateScoreEntry]
+    total: int
+    page: int
+    page_size: int
+    total_pages: int

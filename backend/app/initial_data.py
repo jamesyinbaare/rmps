@@ -7,7 +7,6 @@ from sqlalchemy import insert, select
 
 from app.dependencies.database import get_sessionmanager, initialize_db
 from app.models import (
-    Batch,
     Candidate,
     Exam,
     ExamRegistration,

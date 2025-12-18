@@ -25,7 +25,7 @@ class Settings(BaseSettings):
     # Duplicate detection settings
     reject_duplicate_files: bool = True  # If True, reject duplicates; If False, return existing document
     # Reducto API settings
-    reducto_enabled: bool = False
+    reducto_enabled: bool = True
     reducto_api_key: str | None = None
     reducto_api_url: str = "https://api.reducto.ai"
     reducto_extraction_prompt: str = (

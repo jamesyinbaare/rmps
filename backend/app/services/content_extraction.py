@@ -1,12 +1,17 @@
+import asyncio
 import io
+import logging
 from typing import Any
 
-import httpx
 import pytesseract
 from PIL import Image
+from reducto import Reducto
+from reducto.types.shared.v3_extract_response import V3ExtractResponse
 
 from app.config import settings
 from app.utils.score_utils import parse_score_value
+
+logger = logging.getLogger(__name__)
 
 
 class FullTextExtractor:
@@ -19,6 +24,7 @@ class FullTextExtractor:
         Returns (full_text, confidence) or (empty string, 0.0) if failed.
         """
         try:
+            logger.debug("Starting OCR full text extraction")
             image = Image.open(io.BytesIO(image_data))
 
             # Normalize image size before OCR for better consistency
@@ -30,8 +36,11 @@ class FullTextExtractor:
             text = pytesseract.image_to_string(resized, config="--psm 6")
             # Medium confidence for OCR text extraction
             confidence = 0.7
+            text_length = len(text)
+            logger.info(f"OCR full text extraction completed: extracted {text_length} characters, confidence={confidence:.2f}")
             return text, confidence
-        except Exception:
+        except Exception as e:
+            logger.error(f"OCR full text extraction failed: {e}", exc_info=True)
             return "", 0.0
 
 
@@ -45,6 +54,7 @@ class TableExtractor:
         Returns (tables, confidence) where tables is a list of table structures.
         """
         try:
+            logger.debug(f"Starting OCR table extraction (test_type={test_type})")
             image = Image.open(io.BytesIO(image_data))
 
             # Normalize image size before OCR
@@ -122,70 +132,120 @@ class TableExtractor:
 
             # Medium confidence for OCR table extraction
             confidence = 0.6 if rows else 0.0
+            num_rows = len(rows)
+            logger.info(f"OCR table extraction completed: extracted {num_rows} rows, confidence={confidence:.2f}")
             return tables, confidence
-        except Exception:
+        except Exception as e:
+            logger.error(f"OCR table extraction failed: {e}", exc_info=True)
             return [], 0.0
 
 
 class ReductoExtractor:
-    """Extract content using Reducto API."""
+    """Extract content using Reducto SDK."""
 
     def __init__(self):
         self.api_key = settings.reducto_api_key
-        self.api_url = settings.reducto_api_url
         self.enabled = settings.reducto_enabled
+        self._client: Reducto | None = None
+
+    def _get_client(self) -> Reducto:
+        """Get or create Reducto client instance."""
+        if self._client is None:
+            logger.debug("Initializing Reducto client")
+            self._client = Reducto(api_key=self.api_key)
+            logger.debug("Reducto client initialized")
+        return self._client
 
     async def extract(self, image_data: bytes, test_type: str | None = None) -> tuple[dict[str, Any], float]:
         """
-        Extract content from document using Reducto API.
+        Extract content from document using Reducto SDK.
         Returns (parsed_content, confidence) where parsed_content contains full_text and tables.
         """
-        if not self.enabled or not self.api_key:
+        if not self.enabled:
+            logger.warning("Reducto extraction is disabled")
+            return {"full_text": "", "tables": []}, 0.0
+
+        if not self.api_key:
+            logger.warning("Reducto API key is not configured")
             return {"full_text": "", "tables": []}, 0.0
 
         try:
-            async with httpx.AsyncClient(timeout=60.0) as client:
-                # Step 1: Upload document
-                upload_response = await client.post(
-                    f"{self.api_url}/upload",
-                    headers={"Authorization": f"Bearer {self.api_key}"},
-                    files={"file": ("document.jpg", image_data, "image/jpeg")},
-                )
-                upload_response.raise_for_status()
-                upload_data = upload_response.json()
-                document_id = upload_data.get("document_id")
+            logger.info(f"Starting Reducto extraction (test_type={test_type}, image_size={len(image_data)} bytes)")
+            client = self._get_client()
 
-                if not document_id:
-                    return {"full_text": "", "tables": []}, 0.0
+            # Step 1: Upload document from bytes
+            # Create a file-like object from bytes for the SDK
+            # Run SDK calls in executor since they may be synchronous
+            logger.debug("Uploading document to Reducto")
+            file_obj = io.BytesIO(image_data)
+            upload = await asyncio.to_thread(client.upload, file=file_obj)
+            logger.debug("Document uploaded successfully")
 
-                # Step 2: Parse document
-                parse_response = await client.post(
-                    f"{self.api_url}/parse",
-                    headers={"Authorization": f"Bearer {self.api_key}"},
-                    json={"document_id": document_id},
-                )
-                parse_response.raise_for_status()
-                parse_data = parse_response.json()
-                full_text = parse_data.get("markdown", "")
+            # Step 2: Build reducto:// URL from file_id
+            # The upload response contains a file_id. Build a reducto:// URL for input.
+            file_id = upload.file_id if hasattr(upload, "file_id") else upload.get("file_id") if isinstance(upload, dict) else None
+            if not file_id:
+                logger.error("Failed to get file_id from upload response")
+                return {"full_text": "", "tables": []}, 0.0
 
-                # Step 3: Extract structured data (if schema is configured)
-                tables = []
-                if settings.reducto_extraction_schema:
-                    extract_response = await client.post(
-                        f"{self.api_url}/extract",
-                        headers={"Authorization": f"Bearer {self.api_key}"},
-                        json={
-                            "document_id": document_id,
+            input_url = f"reducto://{file_id}"
+            logger.debug(f"Built input URL: {input_url}")
+
+            # Step 3: Extract structured data using Extract endpoint (which performs Parse first)
+            tables = []
+            full_text = ""
+
+            if settings.reducto_extraction_schema:
+                logger.debug("Extracting structured data with schema using Extract endpoint")
+                try:
+                    # Extract endpoint performs Parse first, then extracts specific data
+                    extract_result = await asyncio.to_thread(
+                        client.extract.run,
+                        input=input_url,
+                        instructions={
                             "schema": settings.reducto_extraction_schema,
-                            "prompt": settings.reducto_extraction_prompt,
+                            "system_prompt": settings.reducto_extraction_prompt,
                         },
+                        settings={"array_extract": True},
                     )
-                    extract_response.raise_for_status()
-                    extract_data = extract_response.json()
+                    logger.debug("Extract endpoint completed successfully")
 
-                    # Convert extracted data to table format
-                    # Reducto returns data matching the schema structure
-                    candidates = extract_data.get("candidates", [])
+                    # Extract endpoint returns V3ExtractResponse with result, usage, job_id, studio_link
+                    # result is Union[List[object], object] - typically a list of length 1 if chunking is disabled
+                    if isinstance(extract_result, V3ExtractResponse):
+                        result = extract_result.result
+                    else:
+                        # Fallback for other response types
+                        result = extract_result.result if hasattr(extract_result, "result") else extract_result
+
+                    # Handle result being a list (default: list of length 1) or a single object
+                    if isinstance(result, list):
+                        # Get the first element if it's a list (typical case when chunking is disabled)
+                        extract_data = result[0] if len(result) > 0 else {}
+                        logger.debug(f"Extract result is a list with {len(result)} element(s)")
+                    else:
+                        extract_data = result if isinstance(result, dict) else {}
+                        logger.debug("Extract result is a single object")
+
+                    # Log usage information if available
+                    if isinstance(extract_result, V3ExtractResponse):
+                        usage = extract_result.usage
+                        logger.debug(
+                            f"Extract usage: {usage.num_pages} pages, {usage.num_fields} fields, "
+                            f"credits={usage.credits}"
+                        )
+                        if extract_result.job_id:
+                            logger.debug(f"Extract job_id: {extract_result.job_id}")
+                        if extract_result.studio_link:
+                            logger.debug(f"Extract studio_link: {extract_result.studio_link}")
+
+                    # Extract performs Parse first, but full text is not directly in the Extract response
+                    # We would need to use Parse separately if we need the full markdown text
+                    # For now, full_text remains empty when using Extract endpoint
+
+                    candidates = extract_data.get("candidates", []) if isinstance(extract_data, dict) else []
+                    logger.debug(f"Extracted {len(candidates)} candidates from structured data")
+
                     if candidates:
                         # Transform candidates to rows format
                         rows = []
@@ -195,7 +255,8 @@ class ReductoExtractor:
                             try:
                                 # Parse and normalize score value (handles numeric, "A"/"AA", or None)
                                 raw_score = parse_score_value(score_value)
-                            except ValueError:
+                            except ValueError as e:
+                                logger.debug(f"Failed to parse score value '{score_value}': {e}")
                                 # Invalid format - set to None
                                 raw_score = None
 
@@ -223,8 +284,21 @@ class ReductoExtractor:
                                     },
                                 }
                             )
-                else:
-                    # If no schema, try to extract tables from markdown
+                            logger.debug(f"Created table with {len(rows)} rows and metadata")
+                    else:
+                        logger.warning("No candidates found in extracted data")
+                except Exception as e:
+                    logger.error(f"Failed to extract structured data with Extract endpoint: {e}", exc_info=True)
+                    # Continue with empty tables if extraction fails
+            else:
+                logger.debug("No extraction schema configured, using Parse endpoint for text extraction")
+                # If no schema, use Parse endpoint to get full text
+                try:
+                    parse_result = await asyncio.to_thread(client.parse.run, input=input_url)
+                    full_text = parse_result.get("markdown", "") if isinstance(parse_result, dict) else str(parse_result)
+                    logger.debug(f"Document parsed: extracted {len(full_text)} characters")
+
+                    # Try to extract tables from markdown
                     # This is a simplified implementation
                     lines = full_text.split("\n")
                     current_rows = []
@@ -264,17 +338,28 @@ class ReductoExtractor:
                                 "rows": current_rows,
                             }
                         )
+                except Exception as e:
+                    logger.error(f"Failed to parse document: {e}", exc_info=True)
+                    # Continue with empty full_text if parsing fails
 
-                parsed_content = {
-                    "full_text": full_text,
-                    "tables": tables,
-                }
+            parsed_content = {
+                "full_text": full_text,
+                "tables": tables,
+            }
 
-                # High confidence for Reducto API
-                confidence = 0.9 if full_text or tables else 0.0
-                return parsed_content, confidence
+            # High confidence for Reducto SDK
+            confidence = 0.9 if full_text or tables else 0.0
+            num_tables = len(tables)
+            total_rows = sum(len(table.get("rows", [])) for table in tables)
+            text_length = len(full_text)
+            logger.info(
+                f"Reducto extraction completed: {text_length} chars, {num_tables} tables, "
+                f"{total_rows} rows, confidence={confidence:.2f}"
+            )
+            return parsed_content, confidence
 
-        except Exception:
+        except Exception as e:
+            logger.error(f"Reducto extraction failed: {e}", exc_info=True)
             # Fallback to empty result
             return {"full_text": "", "tables": []}, 0.0
 
@@ -298,8 +383,14 @@ class ContentExtractionService:
         if method is None:
             if settings.reducto_enabled and settings.reducto_api_key:
                 method = "reducto"
+                logger.debug("Method not specified, using 'reducto' (configured default)")
             else:
                 method = "ocr"
+                logger.debug("Method not specified, using 'ocr' (configured default)")
+        else:
+            logger.debug(f"Using explicitly specified extraction method: {method}")
+
+        logger.info(f"Starting content extraction: method={method}, test_type={test_type}, image_size={len(image_data)} bytes")
 
         parsed_content = {"full_text": "", "tables": []}
         extraction_method = None
@@ -308,16 +399,13 @@ class ContentExtractionService:
 
         try:
             if method == "reducto":
-                # Try Reducto first
+                # Use Reducto exclusively
+                logger.debug("Using Reducto extraction method")
                 parsed_content, confidence = await self.reducto_extractor.extract(image_data, test_type)
                 extraction_method = "reducto"
-
-                # If Reducto fails or returns low confidence, fallback to OCR
-                if not parsed_content.get("full_text") and not parsed_content.get("tables"):
-                    method = "ocr"
-
-            if method == "ocr":
+            elif method == "ocr":
                 # Use OCR-based extraction
+                logger.debug("Using OCR extraction method")
                 full_text, text_confidence = await self.full_text_extractor.extract(image_data)
                 tables, table_confidence = await self.table_extractor.extract(image_data, test_type)
 
@@ -328,12 +416,29 @@ class ContentExtractionService:
                 extraction_method = "ocr"
                 # Average confidence of text and table extraction
                 confidence = (text_confidence + table_confidence) / 2 if table_confidence > 0 else text_confidence
+            else:
+                logger.warning(f"Unknown extraction method: {method}, falling back to OCR")
+                # Fallback to OCR for unknown methods
+                full_text, text_confidence = await self.full_text_extractor.extract(image_data)
+                tables, table_confidence = await self.table_extractor.extract(image_data, test_type)
+                parsed_content = {
+                    "full_text": full_text,
+                    "tables": tables,
+                }
+                extraction_method = "ocr"
+                confidence = (text_confidence + table_confidence) / 2 if table_confidence > 0 else text_confidence
 
             # Validate extraction result
             is_valid = bool(parsed_content.get("full_text") or parsed_content.get("tables"))
 
             if not is_valid:
                 error_message = "Failed to extract content from document"
+                logger.warning(f"Content extraction completed but result is invalid: method={extraction_method}, confidence={confidence:.2f}")
+            else:
+                logger.info(
+                    f"Content extraction completed successfully: method={extraction_method}, "
+                    f"confidence={confidence:.2f}, valid={is_valid}"
+                )
 
             return {
                 "parsed_content": parsed_content,
@@ -344,6 +449,7 @@ class ContentExtractionService:
             }
 
         except Exception as e:
+            logger.error(f"Content extraction failed with exception: {e}", exc_info=True)
             return {
                 "parsed_content": {"full_text": "", "tables": []},
                 "parsing_method": extraction_method,

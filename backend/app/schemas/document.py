@@ -41,6 +41,7 @@ class DocumentResponse(DocumentBase):
     checksum: str
     uploaded_at: datetime
     school_id: int | None
+    school_name: str | None = None  # School name from relationship
     subject_id: int | None
     exam_id: int
     test_type: str | None
@@ -89,3 +90,36 @@ class ContentExtractionResponse(BaseModel):
     scores_extraction_confidence: float
     is_valid: bool
     error_message: str | None = None
+
+
+class ReductoQueueRequest(BaseModel):
+    """Schema for queuing documents for Reducto extraction."""
+
+    document_ids: list[int] = Field(..., description="List of document IDs to queue for extraction")
+
+
+class DocumentQueueStatus(BaseModel):
+    """Schema for individual document queue status."""
+
+    document_id: int
+    queue_position: int | None = None
+    status: str
+
+
+class ReductoQueueResponse(BaseModel):
+    """Schema for Reducto queue response."""
+
+    queued_count: int
+    documents: list[DocumentQueueStatus]
+    queue_length: int
+
+
+class ReductoStatusResponse(BaseModel):
+    """Schema for Reducto extraction status response."""
+
+    document_id: int
+    scores_extraction_status: str | None
+    scores_extraction_method: str | None
+    scores_extraction_confidence: float | None
+    scores_extracted_at: datetime | None
+    queue_position: int | None = None

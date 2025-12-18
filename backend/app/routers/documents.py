@@ -12,12 +12,17 @@ from app.schemas.document import (
     BulkUploadResponse,
     ContentExtractionResponse,
     DocumentListResponse,
+    DocumentQueueStatus,
     DocumentResponse,
     DocumentUpdate,
+    ReductoQueueRequest,
+    ReductoQueueResponse,
+    ReductoStatusResponse,
 )
 from app.schemas.id_extraction import IDExtractionResponse
 from app.services.content_extraction import content_extraction_service
 from app.services.id_extraction import id_extraction_service
+from app.services.reducto_queue import reducto_queue_service
 from app.services.storage import storage_service
 from app.utils.file_utils import calculate_checksum
 
@@ -546,3 +551,69 @@ async def update_document_id(document_id: int, update: DocumentUpdate, session: 
     await session.refresh(document)
 
     return DocumentResponse.model_validate(document)
+
+
+@router.post("/queue-reducto-extraction", response_model=ReductoQueueResponse)
+async def queue_reducto_extraction(
+    request: ReductoQueueRequest, session: DBSessionDep
+) -> ReductoQueueResponse:
+    """Queue documents for Reducto extraction."""
+    document_statuses: list[DocumentQueueStatus] = []
+
+    for document_id in request.document_ids:
+        # Verify document exists
+        stmt = select(Document).where(Document.id == document_id)
+        result = await session.execute(stmt)
+        document = result.scalar_one_or_none()
+
+        if not document:
+            document_statuses.append(
+                DocumentQueueStatus(document_id=document_id, queue_position=None, status="not_found")
+            )
+            continue
+
+        # Enqueue document
+        reducto_queue_service.enqueue_document(document_id)
+
+        # Update document status to queued
+        document.scores_extraction_status = "queued"
+        await session.commit()
+
+        # Get queue position
+        queue_position = reducto_queue_service.get_document_queue_position(document_id)
+
+        document_statuses.append(
+            DocumentQueueStatus(
+                document_id=document_id, queue_position=queue_position, status="queued"
+            )
+        )
+
+    queue_status = reducto_queue_service.get_queue_status()
+
+    return ReductoQueueResponse(
+        queued_count=len([d for d in document_statuses if d.status == "queued"]),
+        documents=document_statuses,
+        queue_length=queue_status["queue_length"],
+    )
+
+
+@router.get("/{document_id}/reducto-status", response_model=ReductoStatusResponse)
+async def get_reducto_status(document_id: int, session: DBSessionDep) -> ReductoStatusResponse:
+    """Get Reducto extraction status for a document."""
+    stmt = select(Document).where(Document.id == document_id)
+    result = await session.execute(stmt)
+    document = result.scalar_one_or_none()
+
+    if not document:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Document not found")
+
+    queue_position = reducto_queue_service.get_document_queue_position(document_id)
+
+    return ReductoStatusResponse(
+        document_id=document_id,
+        scores_extraction_status=document.scores_extraction_status,
+        scores_extraction_method=document.scores_extraction_method,
+        scores_extraction_confidence=document.scores_extraction_confidence,
+        scores_extracted_at=document.scores_extracted_at,
+        queue_position=queue_position,
+    )

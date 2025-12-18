@@ -7,7 +7,8 @@ from fastapi import FastAPI, status
 from starlette.middleware.cors import CORSMiddleware
 
 from app.dependencies.database import get_sessionmanager, initialize_db
-from app.routers import batches, candidates, documents, exams, programmes, schools, scores, subjects
+from app.routers import candidates, documents, exams, programmes, schools, scores, subjects
+from app.services.reducto_queue import reducto_queue_service
 
 
 @asynccontextmanager
@@ -16,7 +17,11 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     # Startup: Initialize database
     sessionmanager = get_sessionmanager()
     async with initialize_db(sessionmanager):
+        # Start Reducto queue worker
+        reducto_queue_service.start_worker()
         yield
+        # Shutdown: Stop queue worker gracefully
+        await reducto_queue_service.stop_worker()
     # Shutdown handled by context manager
 
 
@@ -35,7 +40,6 @@ app.include_router(schools.router)
 app.include_router(subjects.router)
 app.include_router(exams.router)
 app.include_router(documents.router)
-app.include_router(batches.router)
 app.include_router(candidates.router)
 app.include_router(programmes.router)
 app.include_router(scores.router)

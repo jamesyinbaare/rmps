@@ -5,8 +5,10 @@ from app.dependencies.database import DBSessionDep
 from app.models import (
     Candidate,
     Document,
+    Exam,
     ExamRegistration,
     ExamSubject,
+    Programme,
     School,
     Subject,
     SubjectRegistration,
@@ -15,8 +17,9 @@ from app.models import (
 from app.schemas.document import DocumentListResponse, DocumentResponse
 from app.schemas.score import (
     BatchScoreUpdate,
-    BatchScoreUpdateItem,
     BatchScoreUpdateResponse,
+    CandidateScoreEntry,
+    CandidateScoreListResponse,
     DocumentScoresResponse,
     ScoreResponse,
     ScoreUpdate,
@@ -34,12 +37,13 @@ async def get_filtered_documents(
     school_id: int | None = Query(None),
     subject_id: int | None = Query(None),
     test_type: str | None = Query(None, description="1 = Objectives, 2 = Essay"),
+    extraction_status: str | None = Query(None, description="Filter by extraction status: pending, queued, processing, success, error"),
 ) -> DocumentListResponse:
-    """Get documents filtered by exam, school, subject, and test_type."""
+    """Get documents filtered by exam, school, subject, test_type, and extraction status."""
     offset = (page - 1) * page_size
 
-    # Build base query with filters
-    base_stmt = select(Document)
+    # Build base query with filters, join with School to get school name
+    base_stmt = select(Document, School.name).outerjoin(School, Document.school_id == School.id)
     if exam_id is not None:
         base_stmt = base_stmt.where(Document.exam_id == exam_id)
     if school_id is not None:
@@ -48,9 +52,11 @@ async def get_filtered_documents(
         base_stmt = base_stmt.where(Document.subject_id == subject_id)
     if test_type is not None:
         base_stmt = base_stmt.where(Document.test_type == test_type)
+    if extraction_status is not None:
+        base_stmt = base_stmt.where(Document.scores_extraction_status == extraction_status)
 
     # Get total count with same filters
-    count_stmt = select(func.count(Document.id))
+    count_stmt = select(func.count(Document.id)).select_from(Document)
     if exam_id is not None:
         count_stmt = count_stmt.where(Document.exam_id == exam_id)
     if school_id is not None:
@@ -59,6 +65,8 @@ async def get_filtered_documents(
         count_stmt = count_stmt.where(Document.subject_id == subject_id)
     if test_type is not None:
         count_stmt = count_stmt.where(Document.test_type == test_type)
+    if extraction_status is not None:
+        count_stmt = count_stmt.where(Document.scores_extraction_status == extraction_status)
 
     count_result = await session.execute(count_stmt)
     total = count_result.scalar() or 0
@@ -66,12 +74,19 @@ async def get_filtered_documents(
     # Get documents with filters
     stmt = base_stmt.offset(offset).limit(page_size).order_by(Document.uploaded_at.desc())
     result = await session.execute(stmt)
-    documents = result.scalars().all()
+    rows = result.all()
+
+    # Convert to DocumentResponse with school_name
+    document_responses = []
+    for document, school_name in rows:
+        doc_dict = DocumentResponse.model_validate(document).model_dump()
+        doc_dict["school_name"] = school_name
+        document_responses.append(DocumentResponse(**doc_dict))
 
     total_pages = (total + page_size - 1) // page_size if total > 0 else 0
 
     return DocumentListResponse(
-        items=[DocumentResponse.model_validate(doc) for doc in documents],
+        items=document_responses,
         total=total,
         page=page,
         page_size=page_size,
@@ -113,7 +128,7 @@ async def get_document_scores(document_id: str, session: DBSessionDep) -> Docume
     rows = result.all()
 
     scores = []
-    for subject_score, subject_reg, exam_reg, candidate, exam_subject, subject in rows:
+    for subject_score, subject_reg, _exam_reg, candidate, _exam_subject, subject in rows:
         scores.append(
             ScoreResponse(
                 id=subject_score.id,
@@ -307,6 +322,165 @@ async def batch_update_scores(
                         pract_document_id=document_id if test_type == "3" else None,
                     )
                     session.add(subject_score)
+
+            successful += 1
+        except Exception as e:
+            failed += 1
+            errors.append({"error": str(e)})
+
+    await session.commit()
+
+    return BatchScoreUpdateResponse(successful=successful, failed=failed, errors=errors)
+
+
+@router.get("/candidates", response_model=CandidateScoreListResponse)
+async def get_candidates_for_manual_entry(
+    session: DBSessionDep,
+    exam_id: int | None = Query(None),
+    programme_id: int | None = Query(None),
+    subject_id: int | None = Query(None),
+    page: int = Query(1, ge=1),
+    page_size: int = Query(20, ge=1, le=100),
+) -> CandidateScoreListResponse:
+    """Get candidates with existing scores for manual entry, filtered by exam, programme, and subject."""
+    offset = (page - 1) * page_size
+
+    # Build query to get candidates with existing SubjectScore records
+    # Join through: SubjectScore -> SubjectRegistration -> ExamRegistration -> Candidate
+    # Also join Exam, ExamSubject, Subject, and Programme
+    base_stmt = (
+        select(
+            Candidate,
+            SubjectRegistration,
+            SubjectScore,
+            ExamRegistration,
+            Exam,
+            ExamSubject,
+            Subject,
+            Programme,
+        )
+        .join(SubjectScore, SubjectScore.subject_registration_id == SubjectRegistration.id)
+        .join(ExamRegistration, SubjectRegistration.exam_registration_id == ExamRegistration.id)
+        .join(Candidate, ExamRegistration.candidate_id == Candidate.id)
+        .join(Exam, ExamRegistration.exam_id == Exam.id)
+        .join(ExamSubject, SubjectRegistration.exam_subject_id == ExamSubject.id)
+        .join(Subject, ExamSubject.subject_id == Subject.id)
+        .outerjoin(Programme, Candidate.programme_id == Programme.id)
+    )
+
+    # Apply filters
+    if exam_id is not None:
+        base_stmt = base_stmt.where(Exam.id == exam_id)
+    if programme_id is not None:
+        base_stmt = base_stmt.where(Candidate.programme_id == programme_id)
+    if subject_id is not None:
+        base_stmt = base_stmt.where(Subject.id == subject_id)
+
+    # Get total count - count distinct SubjectScore IDs with same filters
+    count_base_stmt = (
+        select(SubjectScore.id.distinct())
+        .select_from(SubjectScore)
+        .join(SubjectRegistration, SubjectScore.subject_registration_id == SubjectRegistration.id)
+        .join(ExamRegistration, SubjectRegistration.exam_registration_id == ExamRegistration.id)
+        .join(Candidate, ExamRegistration.candidate_id == Candidate.id)
+        .join(Exam, ExamRegistration.exam_id == Exam.id)
+        .join(ExamSubject, SubjectRegistration.exam_subject_id == ExamSubject.id)
+        .join(Subject, ExamSubject.subject_id == Subject.id)
+        .outerjoin(Programme, Candidate.programme_id == Programme.id)
+    )
+
+    # Apply same filters
+    if exam_id is not None:
+        count_base_stmt = count_base_stmt.where(Exam.id == exam_id)
+    if programme_id is not None:
+        count_base_stmt = count_base_stmt.where(Candidate.programme_id == programme_id)
+    if subject_id is not None:
+        count_base_stmt = count_base_stmt.where(Subject.id == subject_id)
+
+    count_stmt = select(func.count()).select_from(count_base_stmt.subquery())
+    count_result = await session.execute(count_stmt)
+    total = count_result.scalar() or 0
+
+    # Get paginated results
+    stmt = base_stmt.offset(offset).limit(page_size).order_by(Candidate.index_number)
+    result = await session.execute(stmt)
+    rows = result.all()
+
+    items = []
+    for candidate, subject_reg, subject_score, _exam_reg, exam, _exam_subject, subject, programme in rows:
+        items.append(
+            CandidateScoreEntry(
+                candidate_id=candidate.id,
+                candidate_name=candidate.name,
+                candidate_index_number=candidate.index_number,
+                subject_registration_id=subject_reg.id,
+                subject_id=subject.id,
+                subject_code=subject.code,
+                subject_name=subject.name,
+                exam_id=exam.id,
+                exam_name=exam.name.value,
+                exam_year=exam.year,
+                exam_series=exam.series.value,
+                programme_id=programme.id if programme else None,
+                programme_code=programme.code if programme else None,
+                programme_name=programme.name if programme else None,
+                score_id=subject_score.id,
+                obj_raw_score=subject_score.obj_raw_score,
+                essay_raw_score=subject_score.essay_raw_score,
+                pract_raw_score=subject_score.pract_raw_score,
+            )
+        )
+
+    total_pages = (total + page_size - 1) // page_size if total > 0 else 0
+
+    return CandidateScoreListResponse(
+        items=items,
+        total=total,
+        page=page,
+        page_size=page_size,
+        total_pages=total_pages,
+    )
+
+
+@router.post("/manual-entry/batch-update", response_model=BatchScoreUpdateResponse)
+async def batch_update_scores_manual_entry(
+    batch_update: BatchScoreUpdate, session: DBSessionDep
+) -> BatchScoreUpdateResponse:
+    """Batch update scores for manual entry (no document_id required)."""
+    successful = 0
+    failed = 0
+    errors: list[dict[str, str]] = []
+
+    for score_item in batch_update.scores:
+        try:
+            if score_item.score_id is None:
+                # Skip if no score_id - manual entry only updates existing scores
+                failed += 1
+                errors.append(
+                    {
+                        "subject_registration_id": str(score_item.subject_registration_id),
+                        "error": "Score ID required for manual entry",
+                    }
+                )
+                continue
+
+            # Update existing score
+            stmt = select(SubjectScore).where(SubjectScore.id == score_item.score_id)
+            result = await session.execute(stmt)
+            subject_score = result.scalar_one_or_none()
+
+            if not subject_score:
+                failed += 1
+                errors.append({"score_id": str(score_item.score_id), "error": "Score not found"})
+                continue
+
+            # Update fields
+            if score_item.obj_raw_score is not None:
+                subject_score.obj_raw_score = score_item.obj_raw_score
+            if score_item.essay_raw_score is not None:
+                subject_score.essay_raw_score = score_item.essay_raw_score
+            if score_item.pract_raw_score is not None:
+                subject_score.pract_raw_score = score_item.pract_raw_score
 
             successful += 1
         except Exception as e:
