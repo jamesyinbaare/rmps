@@ -7,6 +7,7 @@ export interface Document {
   checksum: string;
   uploaded_at: string;
   school_id: number | null;
+  school_name: string | null; // School name from relationship
   subject_id: number | null;
   exam_id: number;
   test_type: string | null;
@@ -287,6 +288,69 @@ export interface ScoreDocumentFilters {
   school_id?: number;
   subject_id?: number;
   test_type?: string;
+  extraction_status?: string; // Filter by extraction status: pending, queued, processing, success, error
   page?: number;
   page_size?: number;
+}
+
+export interface ReductoQueueRequest {
+  document_ids: number[];
+}
+
+export interface DocumentQueueStatus {
+  document_id: number;
+  queue_position: number | null;
+  status: string;
+}
+
+export interface ReductoQueueResponse {
+  queued_count: number;
+  documents: DocumentQueueStatus[];
+  queue_length: number;
+}
+
+export interface ReductoStatusResponse {
+  document_id: number;
+  scores_extraction_status: string | null;
+  scores_extraction_method: string | null;
+  scores_extraction_confidence: number | null;
+  scores_extracted_at: string | null;
+  queue_position: number | null;
+}
+
+export interface ManualEntryFilters {
+  exam_id?: number;
+  programme_id?: number;
+  subject_id?: number;
+  page?: number;
+  page_size?: number;
+}
+
+export interface CandidateScoreEntry {
+  candidate_id: number;
+  candidate_name: string;
+  candidate_index_number: string;
+  subject_registration_id: number;
+  subject_id: number;
+  subject_code: string;
+  subject_name: string;
+  exam_id: number;
+  exam_name: string;
+  exam_year: number;
+  exam_series: string;
+  programme_id: number | null;
+  programme_code: string | null;
+  programme_name: string | null;
+  score_id: number | null;
+  obj_raw_score: string | null;
+  essay_raw_score: string | null;
+  pract_raw_score: string | null;
+}
+
+export interface CandidateScoreListResponse {
+  items: CandidateScoreEntry[];
+  total: number;
+  page: number;
+  page_size: number;
+  total_pages: number;
 }

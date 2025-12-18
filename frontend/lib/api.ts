@@ -21,6 +21,10 @@ import type {
   ScoreUpdate,
   BatchScoreUpdate,
   BatchScoreUpdateResponse,
+  ReductoQueueResponse,
+  ReductoStatusResponse,
+  ManualEntryFilters,
+  CandidateScoreListResponse,
 } from "@/types/document";
 
 export const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL || "http://localhost:8000";
@@ -765,6 +769,7 @@ export async function getFilteredDocuments(
   if (filters.school_id) params.append("school_id", filters.school_id.toString());
   if (filters.subject_id) params.append("subject_id", filters.subject_id.toString());
   if (filters.test_type) params.append("test_type", filters.test_type);
+  if (filters.extraction_status) params.append("extraction_status", filters.extraction_status);
   if (filters.page) params.append("page", filters.page.toString());
   if (filters.page_size) params.append("page_size", filters.page_size.toString());
 
@@ -793,6 +798,55 @@ export async function batchUpdateScores(
   data: BatchScoreUpdate
 ): Promise<BatchScoreUpdateResponse> {
   const response = await fetch(`${API_BASE_URL}/api/v1/scores/documents/${documentId}/scores/batch`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(data),
+  });
+  return handleResponse<BatchScoreUpdateResponse>(response);
+}
+
+// Reducto Queue API Functions
+
+export async function queueReductoExtraction(
+  documentIds: number[]
+): Promise<ReductoQueueResponse> {
+  const response = await fetch(`${API_BASE_URL}/api/v1/documents/queue-reducto-extraction`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({ document_ids: documentIds }),
+  });
+  return handleResponse<ReductoQueueResponse>(response);
+}
+
+export async function getReductoStatus(documentId: number): Promise<ReductoStatusResponse> {
+  const response = await fetch(`${API_BASE_URL}/api/v1/documents/${documentId}/reducto-status`);
+  return handleResponse<ReductoStatusResponse>(response);
+}
+
+// Manual Entry API Functions
+
+export async function getCandidatesForManualEntry(
+  filters: ManualEntryFilters = {}
+): Promise<CandidateScoreListResponse> {
+  const params = new URLSearchParams();
+  if (filters.exam_id) params.append("exam_id", filters.exam_id.toString());
+  if (filters.programme_id) params.append("programme_id", filters.programme_id.toString());
+  if (filters.subject_id) params.append("subject_id", filters.subject_id.toString());
+  if (filters.page) params.append("page", filters.page.toString());
+  if (filters.page_size) params.append("page_size", filters.page_size.toString());
+
+  const response = await fetch(`${API_BASE_URL}/api/v1/scores/candidates?${params.toString()}`);
+  return handleResponse<CandidateScoreListResponse>(response);
+}
+
+export async function batchUpdateScoresForManualEntry(
+  data: BatchScoreUpdate
+): Promise<BatchScoreUpdateResponse> {
+  const response = await fetch(`${API_BASE_URL}/api/v1/scores/manual-entry/batch-update`, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",

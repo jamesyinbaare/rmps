@@ -80,6 +80,8 @@ export function Sidebar() {
       icon: ClipboardCheck,
       submenu: [
         { href: "/scores/data-entry", label: "Data Entry", icon: ClipboardCheck },
+        { href: "/scores/reducto-extraction", label: "Reducto Extraction", icon: ClipboardCheck },
+        { href: "/scores/manual-entry", label: "Manual Entry", icon: ClipboardCheck },
       ],
     },
     {
