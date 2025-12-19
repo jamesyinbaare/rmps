@@ -5,7 +5,7 @@ import { X, File, Image as ImageIcon, FileText, Download } from "lucide-react";
 import { Button } from "./ui/button";
 import type { Document, Exam, School, Subject } from "@/types/document";
 import { formatFileSize, formatDate } from "@/lib/utils";
-import { API_BASE_URL, downloadDocument, listExams, listSchools, listSubjects } from "@/lib/api";
+import { API_BASE_URL, downloadDocument, getExam, listSchools, listSubjects } from "@/lib/api";
 
 interface DocumentViewerProps {
   document: Document;
@@ -34,18 +34,8 @@ export function DocumentViewer({ document, onClose, onDownload }: DocumentViewer
         // Fetch exam name (with pagination)
         if (document.exam_id) {
           try {
-            let examPage = 1;
-            let examFound = false;
-            while (!examFound && examPage <= 10) { // Limit to 10 pages for safety
-              const examsData = await listExams(examPage, 100);
-              const exam = examsData.items.find((e: Exam) => e.id === document.exam_id);
-              if (exam) {
-                setExamName(exam.name);
-                examFound = true;
-              }
-              if (examPage >= examsData.total_pages) break;
-              examPage++;
-            }
+            const exam = await getExam(document.exam_id);
+            setExamName(exam.name);
           } catch (err) {
             console.error("Failed to fetch exam:", err);
           }

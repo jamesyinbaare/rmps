@@ -126,12 +126,15 @@ export interface Subject {
   updated_at: string;
 }
 
-export type ExamName = "Certificate II Examination" | "CBT";
+export type ExamType = "Certificate II Examination" | "CBT";
 
 export type ExamSeries = "MAY/JUNE" | "NOV/DEC";
 
 export interface DocumentFilters {
   exam_id?: number;
+  exam_type?: ExamType;
+  series?: ExamSeries;
+  year?: number;
   school_id?: number;
   subject_id?: number;
   page?: number;
@@ -285,6 +288,9 @@ export interface BatchScoreUpdateResponse {
 
 export interface ScoreDocumentFilters {
   exam_id?: number;
+  exam_type?: ExamType;
+  series?: ExamSeries;
+  year?: number;
   school_id?: number;
   subject_id?: number;
   test_type?: string;
@@ -320,6 +326,9 @@ export interface ReductoStatusResponse {
 
 export interface ManualEntryFilters {
   exam_id?: number;
+  exam_type?: ExamType;
+  series?: ExamSeries;
+  year?: number;
   programme_id?: number;
   subject_id?: number;
   page?: number;

@@ -19,7 +19,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { updateExam } from "@/lib/api";
-import type { Exam, ExamName, ExamSeries } from "@/types/document";
+import type { Exam, ExamType, ExamSeries } from "@/types/document";
 import { toast } from "sonner";
 
 interface EditExamModalProps {
@@ -37,7 +37,7 @@ export function EditExamModal({
 }: EditExamModalProps) {
   const [loading, setLoading] = useState(false);
   const [formData, setFormData] = useState({
-    name: "Certificate II Examination" as ExamName,
+    name: "Certificate II Examination" as ExamType,
     description: "",
     year: new Date().getFullYear(),
     series: "MAY/JUNE" as ExamSeries,
@@ -47,7 +47,7 @@ export function EditExamModal({
   useEffect(() => {
     if (exam) {
       setFormData({
-        name: exam.name as ExamName,
+        name: exam.name as ExamType,
         description: exam.description || "",
         year: exam.year,
         series: exam.series as ExamSeries,
@@ -106,7 +106,7 @@ export function EditExamModal({
     }));
   };
 
-  const handleNameChange = (value: ExamName) => {
+  const handleNameChange = (value: ExamType) => {
     setFormData((prev) => ({ ...prev, name: value }));
   };
 
@@ -117,7 +117,7 @@ export function EditExamModal({
   const handleCancel = () => {
     if (exam) {
       setFormData({
-        name: exam.name as ExamName,
+        name: exam.name as ExamType,
         description: exam.description || "",
         year: exam.year,
         series: exam.series as ExamSeries,

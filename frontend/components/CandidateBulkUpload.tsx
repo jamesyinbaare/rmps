@@ -18,7 +18,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Alert, AlertDescription } from "@/components/ui/alert";
-import { uploadCandidatesBulk, listExams } from "@/lib/api";
+import { uploadCandidatesBulk, getAllExams } from "@/lib/api";
 import type { Exam, CandidateBulkUploadResponse, CandidateBulkUploadError } from "@/types/document";
 import { Upload, FileX, CheckCircle2, XCircle, AlertCircle } from "lucide-react";
 import { toast } from "sonner";
@@ -42,15 +42,7 @@ export function CandidateBulkUpload({ open, onOpenChange, onUploadSuccess }: Can
     async function loadExams() {
       try {
         let allExams: Exam[] = [];
-        let page = 1;
-        let hasMore = true;
-
-        while (hasMore) {
-          const examsData = await listExams(page, 100);
-          allExams = [...allExams, ...(examsData.items || [])];
-          hasMore = page < examsData.total_pages;
-          page++;
-        }
+        allExams = await getAllExams();
 
         setExams(allExams);
       } catch (err) {

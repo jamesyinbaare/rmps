@@ -20,7 +20,7 @@ import {
 } from "@/components/ui/select";
 import { createExam } from "@/lib/api";
 import { toast } from "sonner";
-import type { ExamName, ExamSeries } from "@/types/document";
+import type { ExamType, ExamSeries } from "@/types/document";
 
 interface AddExamDialogProps {
   open: boolean;
@@ -35,7 +35,7 @@ export function AddExamDialog({
 }: AddExamDialogProps) {
   const [loading, setLoading] = useState(false);
   const [formData, setFormData] = useState({
-    name: "Certificate II Examination" as ExamName,
+    name: "Certificate II Examination" as ExamType,
     description: "",
     year: new Date().getFullYear(),
     series: "MAY/JUNE" as ExamSeries,
@@ -98,7 +98,7 @@ export function AddExamDialog({
     }));
   };
 
-  const handleNameChange = (value: ExamName) => {
+  const handleNameChange = (value: ExamType) => {
     setFormData((prev) => ({ ...prev, name: value }));
   };
 

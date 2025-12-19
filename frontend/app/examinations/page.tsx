@@ -9,7 +9,7 @@ import { AddExamDialog } from "@/components/AddExamDialog";
 import { ExamDetailDrawer } from "@/components/ExamDetailDrawer";
 import { EditExamModal } from "@/components/EditExamModal";
 import { DeleteExamDialog } from "@/components/DeleteExamDialog";
-import { listExams, getExam } from "@/lib/api";
+import { getAllExams, getExam } from "@/lib/api";
 import type { Exam } from "@/types/document";
 import { Plus } from "lucide-react";
 import { toast } from "sonner";
@@ -25,23 +25,12 @@ export default function ExaminationsPage() {
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
   const [examToDelete, setExamToDelete] = useState<Exam | null>(null);
 
-  // Load all exams once (fetch in batches since backend limits page_size to 100)
+  // Load all exams
   const loadExams = async () => {
     setLoading(true);
     setError(null);
     try {
-      const allExamsList: Exam[] = [];
-      let page = 1;
-      let hasMore = true;
-
-      // Fetch exams in batches of 100 (backend limit)
-      while (hasMore) {
-        const response = await listExams(page, 100);
-        allExamsList.push(...response.items);
-        hasMore = page < response.total_pages;
-        page++;
-      }
-
+      const allExamsList = await getAllExams();
       setExams(allExamsList);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to load examinations");

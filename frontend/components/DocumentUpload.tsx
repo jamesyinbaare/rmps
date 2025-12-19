@@ -19,7 +19,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Alert, AlertDescription } from "@/components/ui/alert";
-import { uploadDocument, bulkUploadDocuments, listExams } from "@/lib/api";
+import { uploadDocument, bulkUploadDocuments, getAllExams } from "@/lib/api";
 import type { Exam } from "@/types/document";
 import { Upload, File } from "lucide-react";
 
@@ -43,17 +43,8 @@ export function DocumentUpload({ open, onOpenChange, onUploadSuccess }: Document
   useEffect(() => {
     async function loadExams() {
       try {
-        // Fetch all exams by making multiple requests if needed
-        let allExams: Exam[] = [];
-        let page = 1;
-        let hasMore = true;
-
-        while (hasMore) {
-          const examsData = await listExams(page, 100);
-          allExams = [...allExams, ...(examsData.items || [])];
-          hasMore = page < examsData.total_pages;
-          page++;
-        }
+        // Fetch all exams
+        const allExams = await getAllExams();
 
         setExams(allExams);
       } catch (err) {

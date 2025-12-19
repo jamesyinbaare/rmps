@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useState, useRef } from "react";
 import {
   Select,
   SelectContent,
@@ -9,8 +9,8 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Button } from "@/components/ui/button";
-import { listExams, listSchools, listSubjects } from "@/lib/api";
-import type { Exam, School, Subject, DocumentFilters } from "@/types/document";
+import { getAllExams, listSchools, listSubjects, findExamId } from "@/lib/api";
+import type { Exam, School, Subject, DocumentFilters, ExamType, ExamSeries } from "@/types/document";
 import { X } from "lucide-react";
 
 interface CompactFiltersProps {
@@ -23,20 +23,23 @@ export function CompactFilters({ filters, onFiltersChange }: CompactFiltersProps
   const [schools, setSchools] = useState<School[]>([]);
   const [subjects, setSubjects] = useState<Subject[]>([]);
   const [loading, setLoading] = useState(true);
+  const [examType, setExamType] = useState<ExamType | undefined>();
+  const [examSeries, setExamSeries] = useState<ExamSeries | undefined>();
+  const [examYear, setExamYear] = useState<number | undefined>();
+  const prevValuesRef = useRef<{ examType?: ExamType; examSeries?: ExamSeries; examYear?: number }>({});
+  const filtersRef = useRef(filters);
+  const isUpdatingFromFiltersRef = useRef(false);
+
+  // Keep filters ref up to date
+  useEffect(() => {
+    filtersRef.current = filters;
+  }, [filters]);
 
   useEffect(() => {
     async function loadFilterOptions() {
       try {
         // Load exams
-        let allExams: Exam[] = [];
-        let examPage = 1;
-        let examHasMore = true;
-        while (examHasMore) {
-          const examsData = await listExams(examPage, 100);
-          allExams = [...allExams, ...(examsData.items || [])];
-          examHasMore = examPage < examsData.total_pages;
-          examPage++;
-        }
+        const allExams = await getAllExams();
 
         // Load schools
         let allSchools: School[] = [];
@@ -75,6 +78,137 @@ export function CompactFilters({ filters, onFiltersChange }: CompactFiltersProps
     loadFilterOptions();
   }, []);
 
+  // Reverse lookup exam_id or use exam_type, series, year from filters
+  useEffect(() => {
+    if (exams.length > 0 && !isUpdatingFromFiltersRef.current) {
+      let shouldUpdate = false;
+      let newExamType = examType;
+      let newExamSeries = examSeries;
+      let newExamYear = examYear;
+
+      // If exam_type, series, year are in filters, use them
+      if (filters.exam_type || filters.series || filters.year) {
+        if (filters.exam_type && filters.exam_type !== examType) {
+          newExamType = filters.exam_type;
+          shouldUpdate = true;
+        }
+        if (filters.series && filters.series !== examSeries) {
+          newExamSeries = filters.series;
+          shouldUpdate = true;
+        }
+        if (filters.year && filters.year !== examYear) {
+          newExamYear = filters.year;
+          shouldUpdate = true;
+        }
+      } else if (filters.exam_id && (!examType || !examSeries || !examYear)) {
+        // Fallback: if exam_id is set, reverse lookup
+        const exam = exams.find((e) => e.id === filters.exam_id);
+        if (exam) {
+          newExamType = exam.name as ExamType;
+          newExamSeries = exam.series as ExamSeries;
+          newExamYear = exam.year;
+          shouldUpdate = true;
+        }
+      } else if (!filters.exam_id && !filters.exam_type && !filters.series && !filters.year) {
+        // Clear selections when all filters are cleared
+        if (examType || examSeries || examYear) {
+          newExamType = undefined;
+          newExamSeries = undefined;
+          newExamYear = undefined;
+          shouldUpdate = true;
+        }
+      }
+
+      if (shouldUpdate) {
+        isUpdatingFromFiltersRef.current = true;
+        setExamType(newExamType);
+        setExamSeries(newExamSeries);
+        setExamYear(newExamYear);
+        // Reset flag after state updates complete
+        // Use requestAnimationFrame to ensure state updates have been processed
+        requestAnimationFrame(() => {
+          setTimeout(() => {
+            isUpdatingFromFiltersRef.current = false;
+          }, 0);
+        });
+      }
+    }
+  }, [filters.exam_id, filters.exam_type, filters.series, filters.year, exams]);
+
+  // Update filters when exam type, series, or year changes
+  useEffect(() => {
+    // Check if values have actually changed from previous render
+    const prev = prevValuesRef.current;
+    const hasChanged =
+      prev.examType !== examType ||
+      prev.examSeries !== examSeries ||
+      prev.examYear !== examYear;
+
+    if (!hasChanged) {
+      return; // No change, skip update
+    }
+
+    // Update ref immediately to prevent duplicate updates
+    prevValuesRef.current = { examType, examSeries, examYear };
+
+    // If we're updating from filters (reverse lookup), don't update filters again
+    if (isUpdatingFromFiltersRef.current) {
+      return;
+    }
+
+    const newExamType = examType && examType !== "all" ? examType : undefined;
+    const newSeries = examSeries && examSeries !== "all" ? examSeries : undefined;
+    const newYear = examYear || undefined;
+
+    const newFilters: DocumentFilters = { ...filtersRef.current };
+
+    // Set or clear exam_type, series, and year based on selections
+    // This allows progressive filtering: type only, type+series, or type+series+year
+    if (newExamType) {
+      newFilters.exam_type = newExamType;
+    } else {
+      delete newFilters.exam_type;
+      // If exam_type is cleared, also clear series and year
+      delete newFilters.series;
+      delete newFilters.year;
+    }
+
+    if (newSeries && newExamType) {
+      // Only set series if exam_type is also selected
+      newFilters.series = newSeries;
+    } else {
+      delete newFilters.series;
+      // If series is cleared, also clear year
+      delete newFilters.year;
+    }
+
+    if (newYear && newExamType && newSeries) {
+      // Only set year if both exam_type and series are selected
+      newFilters.year = newYear;
+    } else {
+      delete newFilters.year;
+    }
+
+    // If all three are selected, also set exam_id for backward compatibility
+    if (newExamType && newSeries && newYear && exams.length > 0) {
+      const foundExamId = findExamId(exams, newExamType, newSeries, newYear);
+      if (foundExamId) {
+        newFilters.exam_id = foundExamId;
+      } else {
+        delete newFilters.exam_id;
+      }
+    } else {
+      // Clear exam_id if not all three are selected
+      delete newFilters.exam_id;
+    }
+
+    newFilters.page = 1;
+
+    // Always call onFiltersChange when any selection changes
+    // The backend will handle partial filters correctly
+    onFiltersChange(newFilters);
+  }, [examType, examSeries, examYear, exams, onFiltersChange]);
+
   const handleFilterChange = (key: keyof DocumentFilters, value: string | undefined) => {
     const newFilters = { ...filters };
     if (value === undefined || value === "all" || value === "") {
@@ -92,25 +226,147 @@ export function CompactFilters({ filters, onFiltersChange }: CompactFiltersProps
 
   const hasActiveFilters = filters.exam_id || filters.school_id || filters.subject_id;
 
-  const selectedExam = exams.find((e) => e.id === filters.exam_id);
   const selectedSchool = schools.find((s) => s.id === filters.school_id);
   const selectedSubject = subjects.find((s) => s.id === filters.subject_id);
 
+  // Get available exam types from exams (unique types)
+  const availableExamTypes = Array.from(new Set(exams.map((e) => e.name as ExamType)));
+
+  // Get available series from exams
+  // If examType is selected, filter by that type; otherwise show all series that exist
+  const availableSeries = examType
+    ? Array.from(new Set(exams.filter((e) => e.name === examType).map((e) => e.series as ExamSeries)))
+    : Array.from(new Set(exams.map((e) => e.series as ExamSeries)));
+
+  // Get available years from exams
+  // Filter by examType and examSeries if they're selected
+  let filteredExamsForYears = exams;
+  if (examType) {
+    filteredExamsForYears = filteredExamsForYears.filter((e) => e.name === examType);
+  }
+  if (examSeries) {
+    filteredExamsForYears = filteredExamsForYears.filter((e) => e.series === examSeries);
+  }
+  const availableYears = Array.from(new Set(filteredExamsForYears.map((e) => e.year)))
+    .sort((a, b) => b - a);
+
+  const handleExamTypeChange = (value: string) => {
+    // Ensure we're not in "updating from filters" mode when user manually changes
+    isUpdatingFromFiltersRef.current = false;
+
+    if (value === "all" || value === "") {
+      setExamType(undefined);
+    } else {
+      setExamType(value as ExamType);
+      // Clear series and year when type changes if they're no longer valid
+      const newSeries = examSeries;
+      const newYear = examYear;
+      const validSeries = Array.from(new Set(exams.filter((e) => e.name === value).map((e) => e.series as ExamSeries)));
+      if (newSeries && !validSeries.includes(newSeries)) {
+        setExamSeries(undefined);
+      }
+      if (newYear) {
+        const validYears = Array.from(new Set(
+          exams
+            .filter((e) => e.name === value)
+            .filter((e) => !newSeries || e.series === newSeries)
+            .map((e) => e.year)
+        ));
+        if (!validYears.includes(newYear)) {
+          setExamYear(undefined);
+        }
+      }
+    }
+  };
+
+  const handleExamSeriesChange = (value: string) => {
+    // Ensure we're not in "updating from filters" mode when user manually changes
+    isUpdatingFromFiltersRef.current = false;
+
+    if (value === "all" || value === "") {
+      setExamSeries(undefined);
+    } else {
+      setExamSeries(value as ExamSeries);
+      // Clear year when series changes if it's no longer valid
+      if (examYear) {
+        const validYears = Array.from(new Set(
+          exams
+            .filter((e) => !examType || e.name === examType)
+            .filter((e) => e.series === value)
+            .map((e) => e.year)
+        ));
+        if (!validYears.includes(examYear)) {
+          setExamYear(undefined);
+        }
+      }
+    }
+  };
+
+  const handleExamYearChange = (value: string) => {
+    // Ensure we're not in "updating from filters" mode when user manually changes
+    isUpdatingFromFiltersRef.current = false;
+
+    if (value === "all" || value === "") {
+      setExamYear(undefined);
+    } else {
+      setExamYear(parseInt(value, 10));
+    }
+  };
+
   return (
     <div className="flex items-center gap-2">
+      {/* Examination Type */}
       <Select
-        value={filters.exam_id?.toString() || undefined}
-        onValueChange={(value) => handleFilterChange("exam_id", value === "all" ? undefined : value)}
+        value={examType || ""}
+        onValueChange={handleExamTypeChange}
         disabled={loading}
       >
         <SelectTrigger className="h-8 w-[140px]">
-          <SelectValue placeholder="Exam" />
+          <SelectValue placeholder="Exam Type" />
         </SelectTrigger>
         <SelectContent>
-          <SelectItem value="all">All examinations</SelectItem>
-          {exams.map((exam) => (
-            <SelectItem key={exam.id} value={exam.id.toString()}>
-              {exam.name} ({exam.year})
+          <SelectItem value="all">All types</SelectItem>
+          {availableExamTypes.map((type) => (
+            <SelectItem key={type} value={type}>
+              {type === "Certificate II Examination" ? "Certificate II" : type}
+            </SelectItem>
+          ))}
+        </SelectContent>
+      </Select>
+
+      {/* Examination Series */}
+      <Select
+        value={examSeries || ""}
+        onValueChange={handleExamSeriesChange}
+        disabled={loading || !examType}
+      >
+        <SelectTrigger className="h-8 w-[140px]">
+          <SelectValue placeholder="Series" />
+        </SelectTrigger>
+        <SelectContent>
+          <SelectItem value="all">All series</SelectItem>
+          {availableSeries.map((series) => (
+            <SelectItem key={series} value={series}>
+              {series}
+            </SelectItem>
+          ))}
+        </SelectContent>
+      </Select>
+
+      {/* Examination Year */}
+      <Select
+        value={examYear?.toString() || ""}
+        onValueChange={handleExamYearChange}
+        disabled={loading || !examType || !examSeries}
+      >
+        <SelectTrigger className="h-8 w-[120px]">
+          <SelectValue placeholder="Year" />
+        </SelectTrigger>
+        <SelectContent>
+          <SelectItem value="all">All years</SelectItem>
+          {availableYears.map((year) => (
+            <SelectItem key={year} value={year.toString()}>
+              {year}
             </SelectItem>
           ))}
         </SelectContent>

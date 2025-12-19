@@ -22,8 +22,8 @@ import {
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Badge } from "@/components/ui/badge";
-import { getFilteredDocuments, listExams, listSchools, listSubjects, queueReductoExtraction, getReductoStatus } from "@/lib/api";
-import type { Document, Exam, School, Subject, ScoreDocumentFilters } from "@/types/document";
+import { getFilteredDocuments, getAllExams, listSchools, listSubjects, queueReductoExtraction, getReductoStatus, findExamId } from "@/lib/api";
+import type { Document, Exam, School, Subject, ScoreDocumentFilters, ExamType, ExamSeries } from "@/types/document";
 import { Loader2, CheckCircle2, XCircle, Clock, Send } from "lucide-react";
 
 export default function ReductoExtractionPage() {
@@ -46,6 +46,11 @@ export default function ReductoExtractionPage() {
   const [subjects, setSubjects] = useState<Subject[]>([]);
   const [loadingFilters, setLoadingFilters] = useState(true);
 
+  // Exam filtering state (three-step: type, series, year)
+  const [examType, setExamType] = useState<ExamType | undefined>();
+  const [examSeries, setExamSeries] = useState<ExamSeries | undefined>();
+  const [examYear, setExamYear] = useState<number | undefined>();
+
   // Polling for status updates
   const [pollingInterval, setPollingInterval] = useState<NodeJS.Timeout | null>(null);
 
@@ -55,11 +60,11 @@ export default function ReductoExtractionPage() {
       setLoadingFilters(true);
       try {
         const [examsData, schoolsData, subjectsData] = await Promise.all([
-          listExams(1, 100),
+          getAllExams(),
           listSchools(1, 100),
           listSubjects(1, 100),
         ]);
-        setExams(examsData.items);
+        setExams(examsData);
         setSchools(schoolsData);
         setSubjects(subjectsData);
       } catch (err) {
@@ -106,6 +111,77 @@ export default function ReductoExtractionPage() {
     };
   }, [loadDocuments]);
 
+  // Update filters when exam type, series, or year changes
+  useEffect(() => {
+    const newFilters: ScoreDocumentFilters = { ...filters };
+
+    // Set or clear exam_type, series, and year based on selections
+    if (examType && examType !== "all") {
+      newFilters.exam_type = examType;
+    } else {
+      delete newFilters.exam_type;
+      delete newFilters.series;
+      delete newFilters.year;
+    }
+
+    if (examSeries && examSeries !== "all" && examType) {
+      newFilters.series = examSeries;
+    } else {
+      delete newFilters.series;
+      delete newFilters.year;
+    }
+
+    if (examYear && examType && examSeries) {
+      newFilters.year = examYear;
+    } else {
+      delete newFilters.year;
+    }
+
+    // If all three are selected, also set exam_id for backward compatibility
+    if (examType && examSeries && examYear && exams.length > 0) {
+      const foundExamId = findExamId(exams, examType, examSeries, examYear);
+      if (foundExamId) {
+        newFilters.exam_id = foundExamId;
+      } else {
+        delete newFilters.exam_id;
+      }
+    } else {
+      delete newFilters.exam_id;
+    }
+
+    newFilters.page = 1;
+    setFilters(newFilters);
+    setSelectedDocuments(new Set()); // Clear selection when filters change
+  }, [examType, examSeries, examYear, exams]);
+
+  // Reverse lookup: if filters have exam_type, series, year, populate local state
+  useEffect(() => {
+    if (exams.length > 0) {
+      if (filters.exam_type || filters.series || filters.year) {
+        if (filters.exam_type && filters.exam_type !== examType) {
+          setExamType(filters.exam_type);
+        }
+        if (filters.series && filters.series !== examSeries) {
+          setExamSeries(filters.series);
+        }
+        if (filters.year && filters.year !== examYear) {
+          setExamYear(filters.year);
+        }
+      } else if (filters.exam_id && (!examType || !examSeries || !examYear)) {
+        const exam = exams.find((e) => e.id === filters.exam_id);
+        if (exam) {
+          setExamType(exam.name as ExamType);
+          setExamSeries(exam.series as ExamSeries);
+          setExamYear(exam.year);
+        }
+      } else if (!filters.exam_id && !filters.exam_type && !filters.series && !filters.year) {
+        setExamType(undefined);
+        setExamSeries(undefined);
+        setExamYear(undefined);
+      }
+    }
+  }, [filters.exam_id, filters.exam_type, filters.series, filters.year, exams]);
+
   const handleFilterChange = (key: keyof ScoreDocumentFilters, value: number | string | undefined) => {
     setFilters((prev) => ({
       ...prev,
@@ -113,6 +189,33 @@ export default function ReductoExtractionPage() {
       page: 1, // Reset to first page when filter changes
     }));
     setSelectedDocuments(new Set()); // Clear selection when filters change
+  };
+
+  const handleExamTypeChange = (value: string) => {
+    if (value === "all" || value === "") {
+      setExamType(undefined);
+    } else {
+      setExamType(value as ExamType);
+      setExamSeries(undefined);
+      setExamYear(undefined);
+    }
+  };
+
+  const handleExamSeriesChange = (value: string) => {
+    if (value === "all" || value === "") {
+      setExamSeries(undefined);
+    } else {
+      setExamSeries(value as ExamSeries);
+      setExamYear(undefined);
+    }
+  };
+
+  const handleExamYearChange = (value: string) => {
+    if (value === "all" || value === "") {
+      setExamYear(undefined);
+    } else {
+      setExamYear(parseInt(value, 10));
+    }
   };
 
   const handleSelectDocument = (documentId: number) => {
@@ -220,23 +323,79 @@ export default function ReductoExtractionPage() {
               <CardTitle>Filters</CardTitle>
             </CardHeader>
             <CardContent>
-              <div className="grid grid-cols-1 md:grid-cols-5 gap-4">
+              <div className="grid grid-cols-1 md:grid-cols-7 gap-4">
                 <div>
-                  <label className="text-sm font-medium mb-2 block">Examination</label>
+                  <label className="text-sm font-medium mb-2 block">Exam Type</label>
                   <Select
-                    value={filters.exam_id?.toString() || undefined}
-                    onValueChange={(value) => handleFilterChange("exam_id", value && value !== "all" ? parseInt(value) : undefined)}
+                    value={examType || ""}
+                    onValueChange={handleExamTypeChange}
+                    disabled={loadingFilters}
                   >
                     <SelectTrigger>
-                      <SelectValue placeholder="All Examinations" />
+                      <SelectValue placeholder="All types" />
                     </SelectTrigger>
                     <SelectContent>
-                      <SelectItem value="all">All Examinations</SelectItem>
-                      {exams.map((exam) => (
-                        <SelectItem key={exam.id} value={exam.id.toString()}>
-                          {exam.name} {exam.year} {exam.series}
+                      <SelectItem value="all">All types</SelectItem>
+                      {Array.from(new Set(exams.map((e) => e.name as ExamType))).map((type) => (
+                        <SelectItem key={type} value={type}>
+                          {type === "Certificate II Examination" ? "Certificate II" : type}
                         </SelectItem>
                       ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+
+                <div>
+                  <label className="text-sm font-medium mb-2 block">Series</label>
+                  <Select
+                    value={examSeries || ""}
+                    onValueChange={handleExamSeriesChange}
+                    disabled={loadingFilters || !examType}
+                  >
+                    <SelectTrigger>
+                      <SelectValue placeholder="All series" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="all">All series</SelectItem>
+                      {Array.from(new Set(
+                        examType
+                          ? exams.filter((e) => e.name === examType).map((e) => e.series as ExamSeries)
+                          : exams.map((e) => e.series as ExamSeries)
+                      )).map((series) => (
+                        <SelectItem key={series} value={series}>
+                          {series}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+
+                <div>
+                  <label className="text-sm font-medium mb-2 block">Year</label>
+                  <Select
+                    value={examYear?.toString() || ""}
+                    onValueChange={handleExamYearChange}
+                    disabled={loadingFilters || !examType || !examSeries}
+                  >
+                    <SelectTrigger>
+                      <SelectValue placeholder="All years" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="all">All years</SelectItem>
+                      {Array.from(new Set(
+                        (() => {
+                          let filtered = exams;
+                          if (examType) filtered = filtered.filter((e) => e.name === examType);
+                          if (examSeries) filtered = filtered.filter((e) => e.series === examSeries);
+                          return filtered.map((e) => e.year);
+                        })()
+                      ))
+                        .sort((a, b) => b - a)
+                        .map((year) => (
+                          <SelectItem key={year} value={year.toString()}>
+                            {year}
+                          </SelectItem>
+                        ))}
                     </SelectContent>
                   </Select>
                 </div>

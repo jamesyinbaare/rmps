@@ -5,6 +5,8 @@ import type {
   BulkUploadResponse,
   Exam,
   ExamListResponse,
+  ExamType,
+  ExamSeries,
   School,
   Subject,
   ApiError,
@@ -55,6 +57,9 @@ export async function listDocuments(
 ): Promise<DocumentListResponse> {
   const params = new URLSearchParams();
   if (filters.exam_id) params.append("exam_id", filters.exam_id.toString());
+  if (filters.exam_type) params.append("exam_type", filters.exam_type);
+  if (filters.series) params.append("series", filters.series);
+  if (filters.year) params.append("year", filters.year.toString());
   if (filters.school_id) params.append("school_id", filters.school_id.toString());
   if (filters.subject_id) params.append("subject_id", filters.subject_id.toString());
   if (filters.page) params.append("page", filters.page.toString());
@@ -101,12 +106,21 @@ export async function downloadDocument(documentId: number): Promise<Blob> {
   return response.blob();
 }
 
-export async function listExams(page = 1, pageSize = 100): Promise<ExamListResponse> {
+export async function listExams(
+  examType: string,
+  series: string,
+  year: number,
+  page = 1,
+  pageSize = 100
+): Promise<ExamListResponse> {
   // Backend limits page_size to max 100, so cap it here
   const cappedPageSize = Math.min(pageSize, 100);
   const params = new URLSearchParams();
   params.append("page", page.toString());
   params.append("page_size", cappedPageSize.toString());
+  params.append("exam_type", examType);
+  params.append("series", series);
+  params.append("year", year.toString());
 
   const response = await fetch(`${API_BASE_URL}/api/v1/exams?${params.toString()}`);
   return handleResponse<ExamListResponse>(response);
@@ -150,23 +164,66 @@ export async function listSubjects(page = 1, pageSize = 100): Promise<Subject[]>
 }
 
 /**
- * Get exams that have at least one document
+ * Get all exams by fetching for all combinations of type, series, and year
+ * This is a helper function for components that need to list all available exams
  */
-export async function getExamsWithDocuments(): Promise<Exam[]> {
-  const examsMap = new Map<number, Exam>();
-  let page = 1;
-  let hasMore = true;
+export async function getAllExams(): Promise<Exam[]> {
+  const allExamsList: Exam[] = [];
+  const examTypes: ExamType[] = ["Certificate II Examination", "CBT"];
+  const series: ExamSeries[] = ["MAY/JUNE", "NOV/DEC"];
+  const currentYear = new Date().getFullYear();
+  // Fetch exams for current year and a few years around it
+  const years = [currentYear - 2, currentYear - 1, currentYear, currentYear + 1, currentYear + 2];
 
-  // Fetch all exams
-  while (hasMore) {
-    const examsData = await listExams(page, 100);
-    examsData.items.forEach((exam) => {
-      examsMap.set(exam.id, exam);
-    });
-    hasMore = page < examsData.total_pages;
-    page++;
+  // Fetch exams for all combinations
+  for (const examType of examTypes) {
+    for (const ser of series) {
+      for (const year of years) {
+        try {
+          let page = 1;
+          let hasMore = true;
+          while (hasMore) {
+            const response = await listExams(examType, ser, year, page, 100);
+            allExamsList.push(...response.items);
+            hasMore = page < response.total_pages;
+            page++;
+          }
+        } catch (err) {
+          // Skip if no exams found for this combination
+          continue;
+        }
+      }
+    }
   }
 
+  return allExamsList;
+}
+
+/**
+ * Find exam_id from exam_type, series, and year
+ * @param exams - Array of exams to search through
+ * @param examType - Examination type
+ * @param series - Examination series
+ * @param year - Examination year
+ * @returns exam_id if found, null otherwise
+ */
+export function findExamId(
+  exams: Exam[],
+  examType: ExamType,
+  series: ExamSeries,
+  year: number
+): number | null {
+  const exam = exams.find(
+    (e) => e.name === examType && e.series === series && e.year === year
+  );
+  return exam ? exam.id : null;
+}
+
+/**
+ * Get exams that have at least one document
+ * Fetches exam details by ID from documents since listExams now requires filters
+ */
+export async function getExamsWithDocuments(): Promise<Exam[]> {
   // Get all documents to find which exams have documents
   const documentsResponse = await listDocuments({ page: 1, page_size: 100 });
   const examIdsWithDocs = new Set<number>();
@@ -186,11 +243,20 @@ export async function getExamsWithDocuments(): Promise<Exam[]> {
     }
   }
 
-  // Return only exams that have documents
-  return Array.from(examIdsWithDocs)
-    .map((examId) => examsMap.get(examId))
-    .filter((exam): exam is Exam => exam !== undefined)
-    .sort((a, b) => a.name.localeCompare(b.name));
+  // Fetch exam details for each exam ID
+  const exams: Exam[] = [];
+  for (const examId of examIdsWithDocs) {
+    try {
+      const exam = await getExam(examId);
+      exams.push(exam);
+    } catch (error) {
+      // Skip if exam not found
+      continue;
+    }
+  }
+
+  // Return exams sorted by name
+  return exams.sort((a, b) => a.name.localeCompare(b.name));
 }
 
 /**
@@ -766,6 +832,9 @@ export async function getFilteredDocuments(
 ): Promise<DocumentListResponse> {
   const params = new URLSearchParams();
   if (filters.exam_id) params.append("exam_id", filters.exam_id.toString());
+  if (filters.exam_type) params.append("exam_type", filters.exam_type);
+  if (filters.series) params.append("series", filters.series);
+  if (filters.year) params.append("year", filters.year.toString());
   if (filters.school_id) params.append("school_id", filters.school_id.toString());
   if (filters.subject_id) params.append("subject_id", filters.subject_id.toString());
   if (filters.test_type) params.append("test_type", filters.test_type);
@@ -834,6 +903,9 @@ export async function getCandidatesForManualEntry(
 ): Promise<CandidateScoreListResponse> {
   const params = new URLSearchParams();
   if (filters.exam_id) params.append("exam_id", filters.exam_id.toString());
+  if (filters.exam_type) params.append("exam_type", filters.exam_type);
+  if (filters.series) params.append("series", filters.series);
+  if (filters.year) params.append("year", filters.year.toString());
   if (filters.programme_id) params.append("programme_id", filters.programme_id.toString());
   if (filters.subject_id) params.append("subject_id", filters.subject_id.toString());
   if (filters.page) params.append("page", filters.page.toString());

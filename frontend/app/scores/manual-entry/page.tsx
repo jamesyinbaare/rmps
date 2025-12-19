@@ -21,8 +21,8 @@ import {
 } from "@/components/ui/table";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
-import { getCandidatesForManualEntry, listExams, listProgrammes, listSubjects, batchUpdateScoresForManualEntry } from "@/lib/api";
-import type { Exam, Programme, Subject, ManualEntryFilters, CandidateScoreEntry, BatchScoreUpdateItem } from "@/types/document";
+import { getCandidatesForManualEntry, getAllExams, listProgrammes, listSubjects, batchUpdateScoresForManualEntry, findExamId } from "@/lib/api";
+import type { Exam, Programme, Subject, ManualEntryFilters, CandidateScoreEntry, BatchScoreUpdateItem, ExamType, ExamSeries } from "@/types/document";
 import { Loader2, Save } from "lucide-react";
 
 export default function ManualEntryPage() {
@@ -44,8 +44,10 @@ export default function ManualEntryPage() {
   const [subjects, setSubjects] = useState<Subject[]>([]);
   const [loadingFilters, setLoadingFilters] = useState(true);
 
-  // Selected exam for series
-  const [selectedExam, setSelectedExam] = useState<Exam | null>(null);
+  // Exam filtering state (three-step: type, series, year)
+  const [examType, setExamType] = useState<ExamType | undefined>();
+  const [examSeries, setExamSeries] = useState<ExamSeries | undefined>();
+  const [examYear, setExamYear] = useState<number | undefined>();
 
   // Score changes tracking - use score_id as key, but only track if score_id exists
   const [scoreChanges, setScoreChanges] = useState<Map<number, { obj?: string | null; essay?: string | null }>>(new Map());
@@ -56,11 +58,11 @@ export default function ManualEntryPage() {
       setLoadingFilters(true);
       try {
         const [examsData, programmesData, subjectsData] = await Promise.all([
-          listExams(1, 100),
+          getAllExams(),
           listProgrammes(1, 100),
           listSubjects(1, 100),
         ]);
-        setExams(examsData.items);
+        setExams(examsData);
         setProgrammes(programmesData.items);
         setSubjects(subjectsData);
       } catch (err) {
@@ -74,7 +76,8 @@ export default function ManualEntryPage() {
 
   // Load candidates
   const loadCandidates = useCallback(async () => {
-    if (!filters.exam_id) {
+    // Require at least exam_type or exam_id to load candidates
+    if (!filters.exam_id && !filters.exam_type) {
       setCandidates([]);
       setTotal(0);
       setTotalPages(0);
@@ -118,6 +121,33 @@ export default function ManualEntryPage() {
       [key]: value,
       page: 1, // Reset to first page when filter changes
     }));
+  };
+
+  const handleExamTypeChange = (value: string) => {
+    if (value === "all" || value === "") {
+      setExamType(undefined);
+    } else {
+      setExamType(value as ExamType);
+      setExamSeries(undefined);
+      setExamYear(undefined);
+    }
+  };
+
+  const handleExamSeriesChange = (value: string) => {
+    if (value === "all" || value === "") {
+      setExamSeries(undefined);
+    } else {
+      setExamSeries(value as ExamSeries);
+      setExamYear(undefined);
+    }
+  };
+
+  const handleExamYearChange = (value: string) => {
+    if (value === "all" || value === "") {
+      setExamYear(undefined);
+    } else {
+      setExamYear(parseInt(value, 10));
+    }
   };
 
   const handleScoreChange = (candidate: CandidateScoreEntry, field: "obj" | "essay", value: string) => {
@@ -199,20 +229,21 @@ export default function ManualEntryPage() {
               <CardTitle>Filters</CardTitle>
             </CardHeader>
             <CardContent>
-              <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+              <div className="grid grid-cols-1 md:grid-cols-5 gap-4">
                 <div>
-                  <label className="text-sm font-medium mb-2 block">Examination</label>
+                  <label className="text-sm font-medium mb-2 block">Exam Type</label>
                   <Select
-                    value={filters.exam_id?.toString() || ""}
-                    onValueChange={(value) => handleFilterChange("exam_id", value ? parseInt(value) : undefined)}
+                    value={examType || ""}
+                    onValueChange={handleExamTypeChange}
+                    disabled={loadingFilters}
                   >
                     <SelectTrigger>
-                      <SelectValue placeholder="Select Examination" />
+                      <SelectValue placeholder="Select Exam Type" />
                     </SelectTrigger>
                     <SelectContent>
-                      {exams.map((exam) => (
-                        <SelectItem key={exam.id} value={exam.id.toString()}>
-                          {exam.name} {exam.year} {exam.series}
+                      {Array.from(new Set(exams.map((e) => e.name as ExamType))).map((type) => (
+                        <SelectItem key={type} value={type}>
+                          {type === "Certificate II Examination" ? "Certificate II" : type}
                         </SelectItem>
                       ))}
                     </SelectContent>
@@ -220,12 +251,56 @@ export default function ManualEntryPage() {
                 </div>
 
                 <div>
-                  <label className="text-sm font-medium mb-2 block">Examination Series</label>
-                  <Input
-                    value={selectedExam ? `${selectedExam.series} ${selectedExam.year}` : ""}
-                    disabled
-                    placeholder="Auto-filled from Examination"
-                  />
+                  <label className="text-sm font-medium mb-2 block">Series</label>
+                  <Select
+                    value={examSeries || ""}
+                    onValueChange={handleExamSeriesChange}
+                    disabled={loadingFilters || !examType}
+                  >
+                    <SelectTrigger>
+                      <SelectValue placeholder="Select Series" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {Array.from(new Set(
+                        examType
+                          ? exams.filter((e) => e.name === examType).map((e) => e.series as ExamSeries)
+                          : exams.map((e) => e.series as ExamSeries)
+                      )).map((series) => (
+                        <SelectItem key={series} value={series}>
+                          {series}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+
+                <div>
+                  <label className="text-sm font-medium mb-2 block">Year</label>
+                  <Select
+                    value={examYear?.toString() || ""}
+                    onValueChange={handleExamYearChange}
+                    disabled={loadingFilters || !examType || !examSeries}
+                  >
+                    <SelectTrigger>
+                      <SelectValue placeholder="Select Year" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {Array.from(new Set(
+                        (() => {
+                          let filtered = exams;
+                          if (examType) filtered = filtered.filter((e) => e.name === examType);
+                          if (examSeries) filtered = filtered.filter((e) => e.series === examSeries);
+                          return filtered.map((e) => e.year);
+                        })()
+                      ))
+                        .sort((a, b) => b - a)
+                        .map((year) => (
+                          <SelectItem key={year} value={year.toString()}>
+                            {year}
+                          </SelectItem>
+                        ))}
+                    </SelectContent>
+                  </Select>
                 </div>
 
                 <div>

@@ -13,7 +13,7 @@ import {
   listSchoolProgrammes,
   removeProgrammeFromSchool,
   getSchoolById,
-  listExams,
+  getAllExams,
   listCandidateExamRegistrations,
   listProgrammes,
   listSchools,
@@ -182,17 +182,7 @@ export default function SchoolDetailPage() {
   useEffect(() => {
     const loadExams = async () => {
       try {
-        let allExams: Exam[] = [];
-        let page = 1;
-        let hasMore = true;
-
-        while (hasMore) {
-          const examsData = await listExams(page, 100);
-          allExams.push(...examsData.items);
-          hasMore = page < examsData.total_pages;
-          page++;
-        }
-
+        const allExams = await getAllExams();
         setExams(allExams);
       } catch (err) {
         console.error("Failed to load exams:", err);
