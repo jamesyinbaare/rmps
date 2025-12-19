@@ -5,7 +5,7 @@ from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 
 from app.dependencies.database import DBSessionDep
-from app.models import Document, Exam, ExamSubject, Subject
+from app.models import Document, Exam, ExamSubject, ExamType, ExamSeries, Subject
 from app.schemas.exam import (
     ExamCreate,
     ExamListResponse,
@@ -74,20 +74,26 @@ async def list_exams(
     session: DBSessionDep,
     page: int = Query(1, ge=1),
     page_size: int = Query(20, ge=1, le=100),
-    year: int | None = Query(None, ge=1900, le=2100),
+    exam_type: ExamType = Query(..., description="Examination type"),
+    series: ExamSeries = Query(..., description="Examination series"),
+    year: int = Query(..., ge=1900, le=2100, description="Examination year"),
 ) -> ExamListResponse:
-    """List exams with pagination and optional year filter."""
+    """List exams with pagination, filtering by examination type, series, and year."""
     offset = (page - 1) * page_size
 
-    # Build query with optional year filter
-    base_stmt = select(Exam)
-    if year is not None:
-        base_stmt = base_stmt.where(Exam.year == year)
+    # Build query with required filters
+    base_stmt = select(Exam).where(
+        Exam.name == exam_type,
+        Exam.series == series,
+        Exam.year == year,
+    )
 
     # Get total count
-    count_stmt = select(func.count(Exam.id))
-    if year is not None:
-        count_stmt = count_stmt.where(Exam.year == year)
+    count_stmt = select(func.count(Exam.id)).where(
+        Exam.name == exam_type,
+        Exam.series == series,
+        Exam.year == year,
+    )
     count_result = await session.execute(count_stmt)
     total = count_result.scalar() or 0
 

@@ -495,23 +495,23 @@ async def create_candidates(
 
 async def create_exams(session) -> list[Exam]:
     """Create exams if they don't exist."""
-    from app.models import ExamName, ExamSeries
+    from app.models import ExamType, ExamSeries
 
     exams_data = [
         {
-            "name": ExamName.CERTIFICATE_II,
+            "name": ExamType.CERTIFICATE_II,
             "series": ExamSeries.MAY_JUNE,
             "year": 2024,
             "number_of_series": 4,
         },
         {
-            "name": ExamName.CERTIFICATE_II,
+            "name": ExamType.CERTIFICATE_II,
             "series": ExamSeries.NOV_DEC,
             "year": 2024,
             "number_of_series": 4,
         },
         {
-            "name": ExamName.CERTIFICATE_II,
+            "name": ExamType.CERTIFICATE_II,
             "series": ExamSeries.NOV_DEC,
             "year": 2025,
             "number_of_series": 4,
@@ -579,7 +579,7 @@ async def create_exam_registrations(
     session, candidates: list[Candidate], exams: list[Exam]
 ) -> list[ExamRegistration]:
     """Create exam registrations."""
-    from app.models import ExamName, ExamSeries
+    from app.models import ExamType, ExamSeries
 
     exam_registrations = []
 
@@ -590,7 +590,7 @@ async def create_exam_registrations(
 
     # Get Certificate II, NOV/DEC, 2025 exam
     exam_2025_novdec = next(
-        (e for e in exams if e.year == 2025 and e.series == ExamSeries.NOV_DEC and e.name == ExamName.CERTIFICATE_II),
+        (e for e in exams if e.year == 2025 and e.series == ExamSeries.NOV_DEC and e.name == ExamType.CERTIFICATE_II),
         None
     )
 

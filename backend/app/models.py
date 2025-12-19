@@ -74,7 +74,7 @@ class SchoolType(enum.Enum):
     PUBLIC = "public"
 
 
-class ExamName(enum.Enum):
+class ExamType(enum.Enum):
     CERTIFICATE_II = "Certificate II Examination"
     CBT = "CBT"
 
@@ -239,7 +239,7 @@ class Candidate(Base):
 class Exam(Base):
     __tablename__ = "exams"
     id = Column(Integer, primary_key=True)
-    name = Column(Enum(ExamName), nullable=False)
+    name = Column(Enum(ExamType), nullable=False)
     description = Column(Text, nullable=True)
     year = Column(Integer, nullable=False)
     series = Column(Enum(ExamSeries), nullable=False)

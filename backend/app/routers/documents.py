@@ -7,7 +7,7 @@ from sqlalchemy import func, select
 
 from app.config import settings
 from app.dependencies.database import DBSessionDep, get_sessionmanager
-from app.models import Document, Exam
+from app.models import Document, Exam, ExamType, ExamSeries
 from app.schemas.document import (
     BulkUploadResponse,
     ContentExtractionResponse,
@@ -329,6 +329,9 @@ async def list_documents(
     page: int = Query(1, ge=1),
     page_size: int = Query(20, ge=1, le=100),
     exam_id: int | None = Query(None),
+    exam_type: ExamType | None = Query(None, description="Filter by examination type"),
+    series: ExamSeries | None = Query(None, description="Filter by examination series"),
+    year: int | None = Query(None, ge=1900, le=2100, description="Filter by examination year"),
     school_id: int | None = Query(None),
     subject_id: int | None = Query(None),
 ) -> DocumentListResponse:
@@ -336,18 +339,47 @@ async def list_documents(
     offset = (page - 1) * page_size
 
     # Build base query with filters
-    base_stmt = select(Document)
+    # If filtering by exam_type, series, or year (and not using exam_id), join with Exam table
+    if (exam_type is not None or series is not None or year is not None) and exam_id is None:
+        base_stmt = select(Document).join(Exam, Document.exam_id == Exam.id)
+    else:
+        base_stmt = select(Document)
+
+    # Apply filters
     if exam_id is not None:
         base_stmt = base_stmt.where(Document.exam_id == exam_id)
+
+    # Apply exam_type, series, year filters (these require the join above)
+    if exam_type is not None and exam_id is None:
+        base_stmt = base_stmt.where(Exam.name == exam_type)
+    if series is not None and exam_id is None:
+        base_stmt = base_stmt.where(Exam.series == series)
+    if year is not None and exam_id is None:
+        base_stmt = base_stmt.where(Exam.year == year)
+
     if school_id is not None:
         base_stmt = base_stmt.where(Document.school_id == school_id)
     if subject_id is not None:
         base_stmt = base_stmt.where(Document.subject_id == subject_id)
 
     # Get total count with same filters
-    count_stmt = select(func.count(Document.id))
+    if (exam_type is not None or series is not None or year is not None) and exam_id is None:
+        count_stmt = select(func.count(Document.id)).select_from(Document).join(Exam, Document.exam_id == Exam.id)
+    else:
+        count_stmt = select(func.count(Document.id))
+
+    # Apply filters
     if exam_id is not None:
         count_stmt = count_stmt.where(Document.exam_id == exam_id)
+
+    # Apply exam_type, series, year filters (these require the join above)
+    if exam_type is not None and exam_id is None:
+        count_stmt = count_stmt.where(Exam.name == exam_type)
+    if series is not None and exam_id is None:
+        count_stmt = count_stmt.where(Exam.series == series)
+    if year is not None and exam_id is None:
+        count_stmt = count_stmt.where(Exam.year == year)
+
     if school_id is not None:
         count_stmt = count_stmt.where(Document.school_id == school_id)
     if subject_id is not None:

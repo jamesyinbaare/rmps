@@ -7,7 +7,9 @@ from app.models import (
     Document,
     Exam,
     ExamRegistration,
+    ExamSeries,
     ExamSubject,
+    ExamType,
     Programme,
     School,
     Subject,
@@ -34,6 +36,9 @@ async def get_filtered_documents(
     page: int = Query(1, ge=1),
     page_size: int = Query(20, ge=1, le=100),
     exam_id: int | None = Query(None),
+    exam_type: ExamType | None = Query(None, description="Filter by examination type"),
+    series: ExamSeries | None = Query(None, description="Filter by examination series"),
+    year: int | None = Query(None, ge=1900, le=2100, description="Filter by examination year"),
     school_id: int | None = Query(None),
     subject_id: int | None = Query(None),
     test_type: str | None = Query(None, description="1 = Objectives, 2 = Essay"),
@@ -43,9 +48,25 @@ async def get_filtered_documents(
     offset = (page - 1) * page_size
 
     # Build base query with filters, join with School to get school name
+    # Also join with Exam if filtering by exam_type, series, or year
     base_stmt = select(Document, School.name).outerjoin(School, Document.school_id == School.id)
+
+    # Join with Exam table if filtering by exam_type, series, or year (and not using exam_id)
+    if (exam_type is not None or series is not None or year is not None) and exam_id is None:
+        base_stmt = base_stmt.join(Exam, Document.exam_id == Exam.id)
+
+    # Apply exam filters
     if exam_id is not None:
         base_stmt = base_stmt.where(Document.exam_id == exam_id)
+    else:
+        # Apply exam_type, series, year filters (these require the join above)
+        if exam_type is not None:
+            base_stmt = base_stmt.where(Exam.name == exam_type)
+        if series is not None:
+            base_stmt = base_stmt.where(Exam.series == series)
+        if year is not None:
+            base_stmt = base_stmt.where(Exam.year == year)
+
     if school_id is not None:
         base_stmt = base_stmt.where(Document.school_id == school_id)
     if subject_id is not None:
@@ -57,8 +78,23 @@ async def get_filtered_documents(
 
     # Get total count with same filters
     count_stmt = select(func.count(Document.id)).select_from(Document)
+
+    # Join with Exam table if filtering by exam_type, series, or year (and not using exam_id)
+    if (exam_type is not None or series is not None or year is not None) and exam_id is None:
+        count_stmt = count_stmt.join(Exam, Document.exam_id == Exam.id)
+
+    # Apply exam filters
     if exam_id is not None:
         count_stmt = count_stmt.where(Document.exam_id == exam_id)
+    else:
+        # Apply exam_type, series, year filters (these require the join above)
+        if exam_type is not None:
+            count_stmt = count_stmt.where(Exam.name == exam_type)
+        if series is not None:
+            count_stmt = count_stmt.where(Exam.series == series)
+        if year is not None:
+            count_stmt = count_stmt.where(Exam.year == year)
+
     if school_id is not None:
         count_stmt = count_stmt.where(Document.school_id == school_id)
     if subject_id is not None:
@@ -337,6 +373,9 @@ async def batch_update_scores(
 async def get_candidates_for_manual_entry(
     session: DBSessionDep,
     exam_id: int | None = Query(None),
+    exam_type: ExamType | None = Query(None, description="Filter by examination type"),
+    series: ExamSeries | None = Query(None, description="Filter by examination series"),
+    year: int | None = Query(None, ge=1900, le=2100, description="Filter by examination year"),
     programme_id: int | None = Query(None),
     subject_id: int | None = Query(None),
     page: int = Query(1, ge=1),
@@ -371,6 +410,14 @@ async def get_candidates_for_manual_entry(
     # Apply filters
     if exam_id is not None:
         base_stmt = base_stmt.where(Exam.id == exam_id)
+    else:
+        # Apply exam_type, series, year filters (these require the Exam join above)
+        if exam_type is not None:
+            base_stmt = base_stmt.where(Exam.name == exam_type)
+        if series is not None:
+            base_stmt = base_stmt.where(Exam.series == series)
+        if year is not None:
+            base_stmt = base_stmt.where(Exam.year == year)
     if programme_id is not None:
         base_stmt = base_stmt.where(Candidate.programme_id == programme_id)
     if subject_id is not None:
@@ -392,6 +439,14 @@ async def get_candidates_for_manual_entry(
     # Apply same filters
     if exam_id is not None:
         count_base_stmt = count_base_stmt.where(Exam.id == exam_id)
+    else:
+        # Apply exam_type, series, year filters (these require the Exam join above)
+        if exam_type is not None:
+            count_base_stmt = count_base_stmt.where(Exam.name == exam_type)
+        if series is not None:
+            count_base_stmt = count_base_stmt.where(Exam.series == series)
+        if year is not None:
+            count_base_stmt = count_base_stmt.where(Exam.year == year)
     if programme_id is not None:
         count_base_stmt = count_base_stmt.where(Candidate.programme_id == programme_id)
     if subject_id is not None:
