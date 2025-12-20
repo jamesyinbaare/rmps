@@ -11,7 +11,15 @@ import {
 } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { createProgramme } from "@/lib/api";
+import type { ExamType } from "@/types/document";
 import { toast } from "sonner";
 
 interface AddProgrammeDialogProps {
@@ -29,6 +37,7 @@ export function AddProgrammeDialog({
   const [formData, setFormData] = useState({
     code: "",
     name: "",
+    exam_type: undefined as ExamType | undefined,
   });
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -36,9 +45,13 @@ export function AddProgrammeDialog({
     setLoading(true);
 
     try {
-      await createProgramme(formData);
+      await createProgramme({
+        code: formData.code,
+        name: formData.name,
+        exam_type: formData.exam_type || null,
+      });
       toast.success("Programme created successfully");
-      setFormData({ code: "", name: "" });
+      setFormData({ code: "", name: "", exam_type: undefined });
       onSuccess?.();
       onOpenChange(false);
     } catch (error) {
@@ -57,7 +70,7 @@ export function AddProgrammeDialog({
   };
 
   const handleCancel = () => {
-    setFormData({ code: "", name: "" });
+    setFormData({ code: "", name: "", exam_type: undefined });
     onOpenChange(false);
   };
 
@@ -104,6 +117,27 @@ export function AddProgrammeDialog({
                 placeholder="Enter programme name"
                 disabled={loading}
               />
+            </div>
+
+            <div className="space-y-2">
+              <label htmlFor="exam_type" className="text-sm font-medium">
+                Programme Category
+              </label>
+              <Select
+                value={formData.exam_type || undefined}
+                onValueChange={(value) =>
+                  setFormData((prev) => ({ ...prev, exam_type: value as ExamType }))
+                }
+                disabled={loading}
+              >
+                <SelectTrigger id="exam_type">
+                  <SelectValue placeholder="Select examination type (optional)" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="Certificate II Examination">Certificate II Examination</SelectItem>
+                  <SelectItem value="CBT">CBT</SelectItem>
+                </SelectContent>
+              </Select>
             </div>
           </div>
           <DialogFooter>

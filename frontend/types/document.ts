@@ -149,6 +149,7 @@ export interface Programme {
   id: number;
   name: string;
   code: string;
+  exam_type: ExamType | null;
   created_at: string;
   updated_at: string;
 }

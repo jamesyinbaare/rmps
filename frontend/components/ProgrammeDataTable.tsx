@@ -22,6 +22,7 @@ import {
 } from "@/components/ui/table";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { Badge } from "@/components/ui/badge";
 import { GraduationCap, Trash2, Search, X, Trash } from "lucide-react";
 import { toast } from "sonner";
 
@@ -81,6 +82,22 @@ export function ProgrammeDataTable({
           cell: ({ row }) => (
             <div className="font-medium">{row.getValue("name")}</div>
           ),
+        },
+        {
+          accessorKey: "exam_type",
+          header: "Category",
+          cell: ({ row }) => {
+            const examType = row.getValue("exam_type") as string | null;
+            return (
+              <div>
+                {examType ? (
+                  <Badge variant="outline">{examType}</Badge>
+                ) : (
+                  <span className="text-muted-foreground text-sm italic">Not set</span>
+                )}
+              </div>
+            );
+          },
         },
       ];
 

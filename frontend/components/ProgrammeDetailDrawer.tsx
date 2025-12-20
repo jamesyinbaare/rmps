@@ -135,6 +135,14 @@ export function ProgrammeDetailDrawer({
                 <span className="text-sm font-medium">{programme.name}</span>
               </div>
               <div className="flex items-center gap-2">
+                <span className="text-sm text-muted-foreground">Category:</span>
+                {programme.exam_type ? (
+                  <Badge variant="outline">{programme.exam_type}</Badge>
+                ) : (
+                  <span className="text-sm text-muted-foreground italic">Not set</span>
+                )}
+              </div>
+              <div className="flex items-center gap-2">
                 <Calendar className="h-4 w-4 text-muted-foreground" />
                 <span className="text-sm text-muted-foreground">Created:</span>
                 <span className="text-sm font-medium">

@@ -30,7 +30,7 @@ import {
   type ProgrammeSubjectAssociationCreate,
   type ProgrammeSubjectAssociationUpdate,
 } from "@/lib/api";
-import type { Programme, Subject } from "@/types/document";
+import type { Programme, Subject, ExamType } from "@/types/document";
 import { toast } from "sonner";
 import { Plus, Trash2, Loader2 } from "lucide-react";
 import {
@@ -70,6 +70,7 @@ export function EditProgrammeModal({
   const [programmeData, setProgrammeData] = useState({
     code: "",
     name: "",
+    exam_type: undefined as ExamType | undefined,
   });
   const [savingProgramme, setSavingProgramme] = useState(false);
 
@@ -84,6 +85,7 @@ export function EditProgrammeModal({
       setProgrammeData({
         code: programme.code,
         name: programme.name,
+        exam_type: programme.exam_type || undefined,
       });
 
       setSubjectsLoading(true);
@@ -181,6 +183,7 @@ export function EditProgrammeModal({
       await updateProgramme(programme.id, {
         code: programmeData.code,
         name: programmeData.name,
+        exam_type: programmeData.exam_type || null,
       });
       toast.success("Programme updated successfully");
       // Don't close modal, just refresh data
@@ -325,6 +328,26 @@ export function EditProgrammeModal({
                   maxLength={255}
                   disabled={savingProgramme}
                 />
+              </div>
+              <div className="space-y-2">
+                <label htmlFor="edit-exam_type" className="text-sm font-medium">
+                  Programme Category
+                </label>
+                <Select
+                  value={programmeData.exam_type || undefined}
+                  onValueChange={(value) =>
+                    setProgrammeData((prev) => ({ ...prev, exam_type: value as ExamType }))
+                  }
+                  disabled={savingProgramme}
+                >
+                  <SelectTrigger id="edit-exam_type">
+                    <SelectValue placeholder="Select examination type (optional)" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="Certificate II Examination">Certificate II Examination</SelectItem>
+                    <SelectItem value="CBT">CBT</SelectItem>
+                  </SelectContent>
+                </Select>
               </div>
               <Button
                 type="button"

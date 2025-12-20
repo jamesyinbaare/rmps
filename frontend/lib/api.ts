@@ -385,7 +385,7 @@ export async function getProgramme(id: number): Promise<Programme> {
   return handleResponse<Programme>(response);
 }
 
-export async function createProgramme(data: { name: string; code: string }): Promise<Programme> {
+export async function createProgramme(data: { name: string; code: string; exam_type?: ExamType | null }): Promise<Programme> {
   const response = await fetch(`${API_BASE_URL}/api/v1/programmes`, {
     method: "POST",
     headers: {
@@ -398,7 +398,7 @@ export async function createProgramme(data: { name: string; code: string }): Pro
 
 export async function updateProgramme(
   id: number,
-  data: { name?: string; code?: string }
+  data: { name?: string; code?: string; exam_type?: ExamType | null }
 ): Promise<Programme> {
   const response = await fetch(`${API_BASE_URL}/api/v1/programmes/${id}`, {
     method: "PUT",
