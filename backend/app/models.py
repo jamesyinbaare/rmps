@@ -177,31 +177,6 @@ class Document(Base):
     batch_documents = relationship("BatchDocument", back_populates="document")
 
 
-class Batch(Base):
-    __tablename__ = "batches"
-    id = Column(Integer, primary_key=True)
-    name = Column(String(255), nullable=False)
-    status = Column(String(20), default="pending", nullable=False, index=True)  # pending, processing, completed, failed
-    total_files = Column(Integer, default=0, nullable=False)
-    processed_files = Column(Integer, default=0, nullable=False)
-    failed_files = Column(Integer, default=0, nullable=False)
-    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
-    completed_at = Column(DateTime, nullable=True)
-
-    batch_documents = relationship("BatchDocument", back_populates="batch", cascade="all, delete-orphan")
-
-
-class BatchDocument(Base):
-    __tablename__ = "batch_documents"
-    id = Column(Integer, primary_key=True)
-    batch_id = Column(Integer, ForeignKey("batches.id", ondelete="CASCADE"), nullable=False, index=True)
-    document_id = Column(Integer, ForeignKey("documents.id", ondelete="CASCADE"), nullable=False, index=True)
-    processing_status = Column(String(20), default="pending", nullable=False)  # pending, processing, completed, failed
-    error_message = Column(Text, nullable=True)
-
-    batch = relationship("Batch", back_populates="batch_documents")
-    document = relationship("Document", back_populates="batch_documents")
-
 
 class Programme(Base):
     __tablename__ = "programmes"
