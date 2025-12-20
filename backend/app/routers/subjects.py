@@ -3,9 +3,10 @@ from typing import Any
 from fastapi import APIRouter, File, HTTPException, Query, UploadFile, status
 from fastapi.responses import StreamingResponse
 from sqlalchemy import func, insert, select
+from sqlalchemy.exc import IntegrityError
 
 from app.dependencies.database import DBSessionDep
-from app.models import Document, Programme, School, Subject, programme_subjects, school_programmes
+from app.models import Document, Programme, School, Subject, SubjectType, programme_subjects, school_programmes
 from app.schemas.subject import (
     SubjectBulkUploadError,
     SubjectBulkUploadResponse,
@@ -38,8 +39,19 @@ async def create_subject(subject: SubjectCreate, session: DBSessionDep) -> Subje
             status_code=status.HTTP_400_BAD_REQUEST, detail=f"Subject with code {subject.code} already exists"
         )
 
+    # Check if original_code already exists
+    original_code_stmt = select(Subject).where(Subject.original_code == subject.original_code)
+    original_code_result = await session.execute(original_code_stmt)
+    existing_original = original_code_result.scalar_one_or_none()
+    if existing_original:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Subject with original_code {subject.original_code} already exists",
+        )
+
     db_subject = Subject(
         code=subject.code,
+        original_code=subject.original_code,
         name=subject.name,
         subject_type=subject.subject_type,
     )
@@ -100,6 +112,19 @@ async def update_subject(subject_id: int, subject_update: SubjectUpdate, session
 
     if subject_update.name is not None:
         subject.name = subject_update.name
+    if subject_update.original_code is not None:
+        # Check if original_code already exists (excluding current subject)
+        original_code_stmt = select(Subject).where(
+            Subject.original_code == subject_update.original_code, Subject.id != subject_id
+        )
+        original_code_result = await session.execute(original_code_stmt)
+        existing_original = original_code_result.scalar_one_or_none()
+        if existing_original:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Subject with original_code {subject_update.original_code} already exists",
+            )
+        subject.original_code = subject_update.original_code
     if subject_update.subject_type is not None:
         subject.subject_type = subject_update.subject_type
 
@@ -117,8 +142,28 @@ async def delete_subject(subject_id: int, session: DBSessionDep) -> None:
     if not subject:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Subject not found")
 
-    await session.delete(subject)
-    await session.commit()
+    try:
+        await session.delete(subject)
+        await session.commit()
+    except IntegrityError as e:
+        await session.rollback()
+        error_str = str(e.orig) if hasattr(e, 'orig') else str(e)
+        # Check if it's a foreign key constraint violation
+        if "foreign key constraint" in error_str.lower() or "violates foreign key constraint" in error_str.lower():
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Cannot delete subject because it is still referenced by other records (e.g., exam subjects, documents, or programme associations). Please remove these references first.",
+            )
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Failed to delete subject due to database constraint violation",
+        )
+    except Exception as e:
+        await session.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"An error occurred while deleting the subject: {str(e)}",
+        )
 
 
 @router.get("/{subject_id}/statistics", response_model=SubjectStatistics)
@@ -251,6 +296,9 @@ async def bulk_upload_subjects(
     successful = 0
     failed = 0
     errors: list[SubjectBulkUploadError] = []
+    # Track codes and original_codes within the batch for duplicate detection
+    batch_codes: set[str] = set()
+    batch_original_codes: set[str] = set()
 
     for idx, row in df.iterrows():
         row_number = int(idx) + 2  # +2 because Excel rows are 1-indexed and header is row 1
@@ -279,6 +327,39 @@ async def bulk_upload_subjects(
                 failed += 1
                 continue
 
+            if not subject_data["original_code"]:
+                errors.append(
+                    SubjectBulkUploadError(
+                        row_number=row_number, error_message="Original code is required", field="original_code"
+                    )
+                )
+                failed += 1
+                continue
+
+            # Check for duplicate codes within the batch
+            if subject_data["code"] in batch_codes:
+                errors.append(
+                    SubjectBulkUploadError(
+                        row_number=row_number,
+                        error_message=f"Duplicate code '{subject_data['code']}' found in upload batch",
+                        field="code",
+                    )
+                )
+                failed += 1
+                continue
+
+            # Check for duplicate original_codes within the batch
+            if subject_data["original_code"] in batch_original_codes:
+                errors.append(
+                    SubjectBulkUploadError(
+                        row_number=row_number,
+                        error_message=f"Duplicate original_code '{subject_data['original_code']}' found in upload batch",
+                        field="original_code",
+                    )
+                )
+                failed += 1
+                continue
+
             if not subject_data["name"]:
                 errors.append(
                     SubjectBulkUploadError(
@@ -299,7 +380,7 @@ async def bulk_upload_subjects(
                 failed += 1
                 continue
 
-            # Check if subject with code already exists
+            # Check if subject with code already exists in database
             existing_stmt = select(Subject).where(Subject.code == subject_data["code"])
             existing_result = await session.execute(existing_stmt)
             existing = existing_result.scalar_one_or_none()
@@ -309,6 +390,21 @@ async def bulk_upload_subjects(
                         row_number=row_number,
                         error_message=f"Subject with code '{subject_data['code']}' already exists",
                         field="code",
+                    )
+                )
+                failed += 1
+                continue
+
+            # Check if subject with original_code already exists in database
+            existing_original_stmt = select(Subject).where(Subject.original_code == subject_data["original_code"])
+            existing_original_result = await session.execute(existing_original_stmt)
+            existing_original = existing_original_result.scalar_one_or_none()
+            if existing_original:
+                errors.append(
+                    SubjectBulkUploadError(
+                        row_number=row_number,
+                        error_message=f"Subject with original_code '{subject_data['original_code']}' already exists",
+                        field="original_code",
                     )
                 )
                 failed += 1
@@ -336,31 +432,68 @@ async def bulk_upload_subjects(
             # Create subject
             db_subject = Subject(
                 code=subject_data["code"],
+                original_code=subject_data["original_code"],
                 name=subject_data["name"],
                 subject_type=subject_data["subject_type"],
             )
             session.add(db_subject)
             await session.flush()  # Flush to get ID but don't commit yet
 
-            # Associate with programme if programme_code was provided and validated
-            if programme:
-                # Check if association already exists
-                assoc_stmt = select(programme_subjects).where(
-                    programme_subjects.c.programme_id == programme.id,
-                    programme_subjects.c.subject_id == db_subject.id,
+            # Track codes and original_codes in batch for duplicate detection
+            batch_codes.add(subject_data["code"])
+            batch_original_codes.add(subject_data["original_code"])
+
+            # Handle subject-programme associations based on subject type
+            if subject_data["subject_type"] == SubjectType.CORE:
+                # For CORE subjects: auto-associate with all existing programmes
+                # (ignore programme_code if provided, but it was already validated)
+                all_programmes_stmt = select(Programme)
+                all_programmes_result = await session.execute(all_programmes_stmt)
+                all_programmes = all_programmes_result.scalars().all()
+
+                # Get existing associations for this subject to avoid duplicates
+                existing_assoc_stmt = select(programme_subjects.c.programme_id).where(
+                    programme_subjects.c.subject_id == db_subject.id
                 )
-                assoc_result = await session.execute(assoc_stmt)
-                existing_assoc = assoc_result.first()
-                if not existing_assoc:
-                    # Create association
-                    await session.execute(
-                        insert(programme_subjects).values(
-                            programme_id=programme.id,
-                            subject_id=db_subject.id,
-                            is_compulsory=None,  # Default values, can be updated later
-                            choice_group_id=None,
+                existing_assoc_result = await session.execute(existing_assoc_stmt)
+                existing_programme_ids = {row[0] for row in existing_assoc_result.all()}
+
+                # Create associations with all programmes, setting is_compulsory=True
+                associations_to_create = []
+                for prog in all_programmes:
+                    if prog.id not in existing_programme_ids:
+                        associations_to_create.append(
+                            {
+                                "programme_id": prog.id,
+                                "subject_id": db_subject.id,
+                                "is_compulsory": True,  # Core subjects are compulsory by default
+                                "choice_group_id": None,
+                            }
                         )
+
+                # Batch insert associations
+                if associations_to_create:
+                    await session.execute(insert(programme_subjects).values(associations_to_create))
+            else:
+                # For ELECTIVE subjects: use existing behavior (optional programme_code)
+                if programme:
+                    # Check if association already exists
+                    assoc_stmt = select(programme_subjects).where(
+                        programme_subjects.c.programme_id == programme.id,
+                        programme_subjects.c.subject_id == db_subject.id,
                     )
+                    assoc_result = await session.execute(assoc_stmt)
+                    existing_assoc = assoc_result.first()
+                    if not existing_assoc:
+                        # Create association
+                        await session.execute(
+                            insert(programme_subjects).values(
+                                programme_id=programme.id,
+                                subject_id=db_subject.id,
+                                is_compulsory=None,  # Default values, can be updated later
+                                choice_group_id=None,
+                            )
+                        )
 
             successful += 1
 

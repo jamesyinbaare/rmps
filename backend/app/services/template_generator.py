@@ -35,7 +35,8 @@ def generate_subject_template() -> bytes:
         Bytes of Excel file
     """
     data = {
-        "code": ["MAT", "ENG", "SCI"],
+        "code": ["301", "302", "701"],
+        "original_code": ["C30-1-01", "C30-1-02", "C701"],
         "name": ["Mathematics", "English", "Science"],
         "subject_type": ["CORE", "CORE", "ELECTIVE"],
         "programme_code": ["PROG01", "PROG01", ""],

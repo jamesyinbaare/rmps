@@ -71,7 +71,7 @@ def validate_required_columns(df: pd.DataFrame) -> None:
     Raises:
         SubjectUploadValidationError: If required columns are missing
     """
-    required_columns = {"code", "name", "subject_type"}
+    required_columns = {"code", "original_code", "name", "subject_type"}
     df_columns = set(df.columns.str.lower().str.strip())
 
     missing_columns = required_columns - df_columns
@@ -92,6 +92,7 @@ def parse_subject_row(row: pd.Series) -> dict[str, Any]:
     Returns:
         Dictionary with parsed subject data:
         - code: str
+        - original_code: str
         - name: str
         - subject_type: SubjectType
         - programme_code: str | None (optional)
@@ -101,6 +102,7 @@ def parse_subject_row(row: pd.Series) -> dict[str, Any]:
 
     # Extract required fields
     code = str(row_dict.get("code", "")).strip()
+    original_code = str(row_dict.get("original_code", "")).strip()
     name = str(row_dict.get("name", "")).strip()
     subject_type_str = str(row_dict.get("subject_type", "")).strip().upper()
 
@@ -120,6 +122,7 @@ def parse_subject_row(row: pd.Series) -> dict[str, Any]:
 
     return {
         "code": code,
+        "original_code": original_code,
         "name": name,
         "subject_type": subject_type,
         "programme_code": programme_code,

@@ -9,6 +9,7 @@ class SubjectBase(BaseModel):
     """Base subject schema."""
 
     code: str = Field(..., min_length=3, max_length=3)
+    original_code: str = Field(..., min_length=1, max_length=50)
     name: str = Field(..., min_length=1, max_length=255)
 
 
@@ -22,6 +23,7 @@ class SubjectUpdate(BaseModel):
     """Schema for updating a subject."""
 
     name: str | None = Field(None, min_length=1, max_length=255)
+    original_code: str | None = Field(None, min_length=1, max_length=50)
     subject_type: SubjectType | None = Field(None, description="Subject type: CORE or ELECTIVE")
 
 

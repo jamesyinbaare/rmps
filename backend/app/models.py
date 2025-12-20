@@ -110,6 +110,7 @@ class Subject(Base):
     __tablename__ = "subjects"
     id = Column(Integer, primary_key=True)
     code = Column(String(3), unique=True, nullable=False, index=True)
+    original_code = Column(String(50), unique=True, nullable=False, index=True)
     name = Column(String(255), nullable=False)
     subject_type = Column(Enum(SubjectType), nullable=False)
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
