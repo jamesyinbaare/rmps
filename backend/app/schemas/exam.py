@@ -8,7 +8,7 @@ from app.models import ExamType, ExamSeries, SubjectType
 class ExamBase(BaseModel):
     """Base exam schema."""
 
-    name: ExamType
+    exam_type: ExamType
     description: str | None = None
     year: int = Field(..., ge=1900, le=2100)
     series: ExamSeries
@@ -24,7 +24,7 @@ class ExamCreate(ExamBase):
 class ExamUpdate(BaseModel):
     """Schema for updating an exam."""
 
-    name: ExamType | None = None
+    exam_type: ExamType | None = None
     description: str | None = None
     year: int | None = Field(None, ge=1900, le=2100)
     series: ExamSeries | None = None

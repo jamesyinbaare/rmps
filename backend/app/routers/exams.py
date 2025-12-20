@@ -22,9 +22,9 @@ router = APIRouter(prefix="/api/v1/exams", tags=["exams"])
 @router.post("", response_model=ExamResponse, status_code=status.HTTP_201_CREATED)
 async def create_exam(exam: ExamCreate, session: DBSessionDep) -> ExamResponse:
     """Create a new exam."""
-    # Check if exam with same name, series, and year already exists
+    # Check if exam with same exam_type, series, and year already exists
     stmt = select(Exam).where(
-        Exam.name == exam.name,
+        Exam.exam_type == exam.exam_type,
         Exam.series == exam.series,
         Exam.year == exam.year,
     )
@@ -32,15 +32,15 @@ async def create_exam(exam: ExamCreate, session: DBSessionDep) -> ExamResponse:
     existing = result.scalar_one_or_none()
     if existing:
         # Get string values from enums for user-friendly error message
-        name_str = exam.name.value if hasattr(exam.name, 'value') else str(exam.name)
+        exam_type_str = exam.exam_type.value if hasattr(exam.exam_type, 'value') else str(exam.exam_type)
         series_str = exam.series.value if hasattr(exam.series, 'value') else str(exam.series)
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Examination with name '{name_str}', series '{series_str}', and year {exam.year} already exists",
+            detail=f"Examination with type '{exam_type_str}', series '{series_str}', and year {exam.year} already exists",
         )
 
     db_exam = Exam(
-        name=exam.name,
+        exam_type=exam.exam_type,
         description=exam.description,
         year=exam.year,
         series=exam.series,
@@ -55,13 +55,13 @@ async def create_exam(exam: ExamCreate, session: DBSessionDep) -> ExamResponse:
         await session.rollback()
         # Check if it's a unique constraint violation
         error_str = str(e.orig) if hasattr(e, 'orig') else str(e)
-        if "uq_exam_name_series_year" in error_str or "unique constraint" in error_str.lower() or "duplicate" in error_str.lower():
+        if "uq_exam_exam_type_series_year" in error_str or "unique constraint" in error_str.lower() or "duplicate" in error_str.lower():
             # Get string values from enums for user-friendly error message
-            name_str = exam.name.value if hasattr(exam.name, 'value') else str(exam.name)
+            exam_type_str = exam.exam_type.value if hasattr(exam.exam_type, 'value') else str(exam.exam_type)
             series_str = exam.series.value if hasattr(exam.series, 'value') else str(exam.series)
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail=f"Examination with name '{name_str}', series '{series_str}', and year {exam.year} already exists",
+                detail=f"Examination with type '{exam_type_str}', series '{series_str}', and year {exam.year} already exists",
             )
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -83,14 +83,14 @@ async def list_exams(
 
     # Build query with required filters
     base_stmt = select(Exam).where(
-        Exam.name == exam_type,
+        Exam.exam_type == exam_type,
         Exam.series == series,
         Exam.year == year,
     )
 
     # Get total count
     count_stmt = select(func.count(Exam.id)).where(
-        Exam.name == exam_type,
+        Exam.exam_type == exam_type,
         Exam.series == series,
         Exam.year == year,
     )
@@ -133,19 +133,19 @@ async def update_exam(exam_id: int, exam_update: ExamUpdate, session: DBSessionD
     if not exam:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Exam not found")
 
-    # Determine the new values for name, series, and year
-    new_name = exam_update.name if exam_update.name is not None else exam.name
+    # Determine the new values for exam_type, series, and year
+    new_exam_type = exam_update.exam_type if exam_update.exam_type is not None else exam.exam_type
     new_series = exam_update.series if exam_update.series is not None else exam.series
     new_year = exam_update.year if exam_update.year is not None else exam.year
 
-    # Check if updating name, series, or year would create a duplicate
+    # Check if updating exam_type, series, or year would create a duplicate
     if (
-        (exam_update.name is not None and exam_update.name != exam.name)
+        (exam_update.exam_type is not None and exam_update.exam_type != exam.exam_type)
         or (exam_update.series is not None and exam_update.series != exam.series)
         or (exam_update.year is not None and exam_update.year != exam.year)
     ):
         duplicate_stmt = select(Exam).where(
-            Exam.name == new_name,
+            Exam.exam_type == new_exam_type,
             Exam.series == new_series,
             Exam.year == new_year,
             Exam.id != exam_id,
@@ -154,15 +154,15 @@ async def update_exam(exam_id: int, exam_update: ExamUpdate, session: DBSessionD
         existing = duplicate_result.scalar_one_or_none()
         if existing:
             # Get string values from enums for user-friendly error message
-            name_str = new_name.value if hasattr(new_name, 'value') else str(new_name)
+            exam_type_str = new_exam_type.value if hasattr(new_exam_type, 'value') else str(new_exam_type)
             series_str = new_series.value if hasattr(new_series, 'value') else str(new_series)
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail=f"Examination with name '{name_str}', series '{series_str}', and year {new_year} already exists",
+                detail=f"Examination with type '{exam_type_str}', series '{series_str}', and year {new_year} already exists",
             )
 
-    if exam_update.name is not None:
-        exam.name = exam_update.name
+    if exam_update.exam_type is not None:
+        exam.exam_type = exam_update.exam_type
     if exam_update.description is not None:
         exam.description = exam_update.description
     if exam_update.year is not None:
@@ -180,13 +180,13 @@ async def update_exam(exam_id: int, exam_update: ExamUpdate, session: DBSessionD
         await session.rollback()
         # Check if it's a unique constraint violation
         error_str = str(e.orig) if hasattr(e, 'orig') else str(e)
-        if "uq_exam_name_series_year" in error_str or "unique constraint" in error_str.lower() or "duplicate" in error_str.lower():
+        if "uq_exam_exam_type_series_year" in error_str or "unique constraint" in error_str.lower() or "duplicate" in error_str.lower():
             # Get string values from enums for user-friendly error message
-            name_str = new_name.value if hasattr(new_name, 'value') else str(new_name)
+            exam_type_str = new_exam_type.value if hasattr(new_exam_type, 'value') else str(new_exam_type)
             series_str = new_series.value if hasattr(new_series, 'value') else str(new_series)
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail=f"Examination with name '{name_str}', series '{series_str}', and year {new_year} already exists",
+                detail=f"Examination with type '{exam_type_str}', series '{series_str}', and year {new_year} already exists",
             )
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -451,9 +451,9 @@ async def get_exam_statistics(exam_id: int, session: DBSessionDep) -> dict[str, 
 
     return {
         "exam_id": exam.id,
-        "exam_name": exam.name,
+        "exam_type": exam.exam_type.value if hasattr(exam.exam_type, 'value') else str(exam.exam_type),
         "exam_year": exam.year,
-        "exam_series": exam.series,
+        "exam_series": exam.series.value if hasattr(exam.series, 'value') else str(exam.series),
         "total_documents": total_documents,
         "total_subjects": total_subjects,
         "documents_by_status": documents_by_status,

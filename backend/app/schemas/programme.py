@@ -52,6 +52,8 @@ class ProgrammeSubjectAssociation(BaseModel):
     programme_id: int
     subject_id: int
     subject_type: SubjectType = Field(..., description="Subject type: CORE or ELECTIVE")
+    is_compulsory: bool | None = Field(None, description="True for compulsory core subjects, False for optional core subjects, NULL for electives")
+    choice_group_id: int | None = Field(None, description="Groups optional core subjects together. Subjects in the same group require selecting exactly one")
 
 
 class ProgrammeSubjectResponse(BaseModel):
@@ -61,10 +63,41 @@ class ProgrammeSubjectResponse(BaseModel):
     subject_code: str
     subject_name: str
     subject_type: SubjectType
+    is_compulsory: bool | None = Field(None, description="True for compulsory core subjects, False for optional core subjects, NULL for electives")
+    choice_group_id: int | None = Field(None, description="Groups optional core subjects together. Subjects in the same group require selecting exactly one")
     created_at: datetime
 
     class Config:
         from_attributes = True
+
+
+class ProgrammeSubjectAssociationCreate(BaseModel):
+    """Schema for creating a programme-subject association."""
+
+    is_compulsory: bool | None = Field(None, description="True for compulsory core subjects, False for optional core subjects, NULL for electives")
+    choice_group_id: int | None = Field(None, description="Groups optional core subjects together. Subjects in the same group require selecting exactly one")
+
+
+class ProgrammeSubjectAssociationUpdate(BaseModel):
+    """Schema for updating a programme-subject association."""
+
+    is_compulsory: bool | None = Field(None, description="True for compulsory core subjects, False for optional core subjects, NULL for electives")
+    choice_group_id: int | None = Field(None, description="Groups optional core subjects together. Subjects in the same group require selecting exactly one")
+
+
+class SubjectChoiceGroup(BaseModel):
+    """Schema for a choice group of optional core subjects."""
+
+    choice_group_id: int
+    subjects: list[ProgrammeSubjectResponse]
+
+
+class ProgrammeSubjectRequirements(BaseModel):
+    """Schema for programme subject requirements."""
+
+    compulsory_core: list[ProgrammeSubjectResponse] = Field(default_factory=list, description="Compulsory core subjects")
+    optional_core_groups: list[SubjectChoiceGroup] = Field(default_factory=list, description="Optional core subject choice groups")
+    electives: list[ProgrammeSubjectResponse] = Field(default_factory=list, description="Elective subjects")
 
 
 class SchoolProgrammeAssociation(BaseModel):

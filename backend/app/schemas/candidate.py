@@ -137,5 +137,16 @@ class CandidateBulkUploadResponse(BaseModel):
     errors: list[CandidateBulkUploadError]
 
 
+class SubjectRequirementsValidationResponse(BaseModel):
+    """Schema for subject requirements validation response."""
+
+    is_valid: bool
+    exam_series: str
+    is_applicable: bool = Field(description="True if validation rules apply (MAY/JUNE), False for NOV/DEC")
+    errors: list[str] = Field(default_factory=list, description="List of validation error messages")
+    programme_id: int | None = None
+    programme_name: str | None = None
+
+
 # Update forward references
 SubjectRegistrationResponse.model_rebuild()

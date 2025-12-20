@@ -127,6 +127,8 @@ programme_subjects = Table(
     Base.metadata,
     Column("programme_id", Integer, ForeignKey("programmes.id", ondelete="CASCADE"), primary_key=True),
     Column("subject_id", Integer, ForeignKey("subjects.id", ondelete="CASCADE"), primary_key=True),
+    Column("is_compulsory", Boolean, nullable=True, comment="True for compulsory core subjects, False for optional core subjects, NULL for electives"),
+    Column("choice_group_id", Integer, nullable=True, index=True, comment="Groups optional core subjects together. Subjects in the same group require selecting exactly one"),
     Column("created_at", DateTime, default=datetime.utcnow, nullable=False),
     UniqueConstraint("programme_id", "subject_id", name="uq_programme_subject"),
 )
@@ -174,7 +176,6 @@ class Document(Base):
     school = relationship("School", back_populates="documents")
     subject = relationship("Subject", back_populates="documents")
     exam = relationship("Exam", back_populates="documents")
-    batch_documents = relationship("BatchDocument", back_populates="document")
 
 
 
@@ -214,7 +215,7 @@ class Candidate(Base):
 class Exam(Base):
     __tablename__ = "exams"
     id = Column(Integer, primary_key=True)
-    name = Column(Enum(ExamType), nullable=False)
+    exam_type = Column(Enum(ExamType), nullable=False)
     description = Column(Text, nullable=True)
     year = Column(Integer, nullable=False)
     series = Column(Enum(ExamSeries), nullable=False)
@@ -225,7 +226,7 @@ class Exam(Base):
     exam_subjects = relationship("ExamSubject", back_populates="exam", cascade="all, delete-orphan")
     exam_registrations = relationship("ExamRegistration", back_populates="exam", cascade="all, delete-orphan")
     documents = relationship("Document", back_populates="exam")
-    __table_args__ = (UniqueConstraint("name", "series", "year", name="uq_exam_name_series_year"),)
+    __table_args__ = (UniqueConstraint("exam_type", "series", "year", name="uq_exam_exam_type_series_year"),)
 
 
 class ExamSubject(Base):

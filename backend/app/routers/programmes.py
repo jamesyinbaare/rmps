@@ -10,9 +10,13 @@ from app.schemas.programme import (
     ProgrammeListResponse,
     ProgrammeResponse,
     ProgrammeSubjectAssociation,
+    ProgrammeSubjectAssociationCreate,
+    ProgrammeSubjectAssociationUpdate,
+    ProgrammeSubjectRequirements,
     ProgrammeSubjectResponse,
     ProgrammeUpdate,
     SchoolProgrammeAssociation,
+    SubjectChoiceGroup,
 )
 
 router = APIRouter(prefix="/api/v1/programmes", tags=["programmes"])
@@ -137,7 +141,12 @@ async def list_programme_subjects(programme_id: int, session: DBSessionDep) -> l
 
     # Get subjects via association
     subject_stmt = (
-        select(Subject, programme_subjects.c.created_at)
+        select(
+            Subject,
+            programme_subjects.c.created_at,
+            programme_subjects.c.is_compulsory,
+            programme_subjects.c.choice_group_id,
+        )
         .join(programme_subjects, Subject.id == programme_subjects.c.subject_id)
         .where(programme_subjects.c.programme_id == programme_id)
         .order_by(Subject.code)
@@ -151,10 +160,77 @@ async def list_programme_subjects(programme_id: int, session: DBSessionDep) -> l
             subject_code=subject.code,
             subject_name=subject.name,
             subject_type=subject.subject_type,
+            is_compulsory=is_compulsory,
+            choice_group_id=choice_group_id,
             created_at=created_at,
         )
-        for subject, created_at in subjects_data
+        for subject, created_at, is_compulsory, choice_group_id in subjects_data
     ]
+
+
+@router.get("/{programme_id}/subject-requirements", response_model=ProgrammeSubjectRequirements)
+async def get_programme_subject_requirements(
+    programme_id: int, session: DBSessionDep
+) -> ProgrammeSubjectRequirements:
+    """Get all subject requirements for a programme (compulsory, choice groups, electives)."""
+    stmt = select(Programme).where(Programme.id == programme_id)
+    result = await session.execute(stmt)
+    programme = result.scalar_one_or_none()
+    if not programme:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Programme not found")
+
+    # Get all subjects for this programme
+    subject_stmt = (
+        select(
+            Subject,
+            programme_subjects.c.created_at,
+            programme_subjects.c.is_compulsory,
+            programme_subjects.c.choice_group_id,
+        )
+        .join(programme_subjects, Subject.id == programme_subjects.c.subject_id)
+        .where(programme_subjects.c.programme_id == programme_id)
+        .order_by(Subject.code)
+    )
+    subject_result = await session.execute(subject_stmt)
+    subjects_data = subject_result.all()
+
+    # Organize subjects into categories
+    compulsory_core = []
+    optional_core_by_group: dict[int, list[ProgrammeSubjectResponse]] = {}
+    electives = []
+
+    for subject, created_at, is_compulsory, choice_group_id in subjects_data:
+        subject_response = ProgrammeSubjectResponse(
+            subject_id=subject.id,
+            subject_code=subject.code,
+            subject_name=subject.name,
+            subject_type=subject.subject_type,
+            is_compulsory=is_compulsory,
+            choice_group_id=choice_group_id,
+            created_at=created_at,
+        )
+
+        if subject.subject_type == SubjectType.CORE:
+            if is_compulsory is True:
+                compulsory_core.append(subject_response)
+            elif is_compulsory is False and choice_group_id is not None:
+                if choice_group_id not in optional_core_by_group:
+                    optional_core_by_group[choice_group_id] = []
+                optional_core_by_group[choice_group_id].append(subject_response)
+        elif subject.subject_type == SubjectType.ELECTIVE:
+            electives.append(subject_response)
+
+    # Convert optional core groups to SubjectChoiceGroup list
+    optional_core_groups = [
+        SubjectChoiceGroup(choice_group_id=group_id, subjects=subjects)
+        for group_id, subjects in sorted(optional_core_by_group.items())
+    ]
+
+    return ProgrammeSubjectRequirements(
+        compulsory_core=compulsory_core,
+        optional_core_groups=optional_core_groups,
+        electives=electives,
+    )
 
 
 @router.post(
@@ -165,6 +241,7 @@ async def list_programme_subjects(programme_id: int, session: DBSessionDep) -> l
 async def associate_subject_with_programme(
     programme_id: int,
     subject_id: int,
+    association_data: ProgrammeSubjectAssociationCreate,
     session: DBSessionDep,
 ) -> ProgrammeSubjectAssociation:
     """Associate a subject with a programme."""
@@ -182,6 +259,26 @@ async def associate_subject_with_programme(
     if not subject:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Subject not found")
 
+    # Validate: is_compulsory should only be set for CORE subjects
+    if association_data.is_compulsory is not None and subject.subject_type != SubjectType.CORE:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="is_compulsory can only be set for CORE subjects. For ELECTIVE subjects, it should be NULL.",
+        )
+
+    # Validate: choice_group_id should only be set for optional CORE subjects
+    if association_data.choice_group_id is not None:
+        if subject.subject_type != SubjectType.CORE:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="choice_group_id can only be set for CORE subjects.",
+            )
+        if association_data.is_compulsory is True:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="choice_group_id can only be set for optional core subjects (is_compulsory=False).",
+            )
+
     # Check if association already exists
     assoc_stmt = select(programme_subjects).where(
         programme_subjects.c.programme_id == programme_id, programme_subjects.c.subject_id == subject_id
@@ -195,11 +292,22 @@ async def associate_subject_with_programme(
 
     # Create association
     await session.execute(
-        insert(programme_subjects).values(programme_id=programme_id, subject_id=subject_id)
+        insert(programme_subjects).values(
+            programme_id=programme_id,
+            subject_id=subject_id,
+            is_compulsory=association_data.is_compulsory,
+            choice_group_id=association_data.choice_group_id,
+        )
     )
     await session.commit()
 
-    return ProgrammeSubjectAssociation(programme_id=programme_id, subject_id=subject_id, subject_type=subject.subject_type)
+    return ProgrammeSubjectAssociation(
+        programme_id=programme_id,
+        subject_id=subject_id,
+        subject_type=subject.subject_type,
+        is_compulsory=association_data.is_compulsory,
+        choice_group_id=association_data.choice_group_id,
+    )
 
 
 @router.put(
@@ -209,10 +317,10 @@ async def associate_subject_with_programme(
 async def update_programme_subject_association(
     programme_id: int,
     subject_id: int,
+    association_update: ProgrammeSubjectAssociationUpdate,
     session: DBSessionDep,
-    subject_type: SubjectType = Query(..., description="Subject type: CORE or ELECTIVE"),
 ) -> ProgrammeSubjectAssociation:
-    """Update the subject_type for a subject (affects all programmes)."""
+    """Update the programme-subject association (is_compulsory and choice_group_id)."""
     # Check association exists
     assoc_stmt = select(programme_subjects).where(
         programme_subjects.c.programme_id == programme_id, programme_subjects.c.subject_id == subject_id
@@ -229,17 +337,67 @@ async def update_programme_subject_association(
     if not subject:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Subject not found")
 
-    # Update subject's type (this affects all programmes)
+    # Validate: is_compulsory should only be set for CORE subjects
+    if association_update.is_compulsory is not None and subject.subject_type != SubjectType.CORE:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="is_compulsory can only be set for CORE subjects. For ELECTIVE subjects, it should be NULL.",
+        )
+
+    # Validate: choice_group_id should only be set for optional CORE subjects
+    if association_update.choice_group_id is not None:
+        if subject.subject_type != SubjectType.CORE:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="choice_group_id can only be set for CORE subjects.",
+            )
+        # Check if is_compulsory is being set to True (conflict)
+        if association_update.is_compulsory is True:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="choice_group_id can only be set for optional core subjects (is_compulsory=False).",
+            )
+        # Check existing is_compulsory value if not being updated
+        if association_update.is_compulsory is None and existing.is_compulsory is True:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="choice_group_id can only be set for optional core subjects (is_compulsory=False).",
+            )
+
+    # Update association
     from sqlalchemy import update
 
-    await session.execute(
-        update(Subject)
-        .where(Subject.id == subject_id)
-        .values(subject_type=subject_type)
-    )
-    await session.commit()
+    update_values = {}
+    if association_update.is_compulsory is not None:
+        update_values["is_compulsory"] = association_update.is_compulsory
+    if association_update.choice_group_id is not None:
+        update_values["choice_group_id"] = association_update.choice_group_id
 
-    return ProgrammeSubjectAssociation(programme_id=programme_id, subject_id=subject_id, subject_type=subject_type)
+    if update_values:
+        await session.execute(
+            update(programme_subjects)
+            .where(
+                programme_subjects.c.programme_id == programme_id,
+                programme_subjects.c.subject_id == subject_id,
+            )
+            .values(**update_values)
+        )
+        await session.commit()
+
+    # Get updated association
+    assoc_stmt = select(programme_subjects).where(
+        programme_subjects.c.programme_id == programme_id, programme_subjects.c.subject_id == subject_id
+    )
+    result = await session.execute(assoc_stmt)
+    updated = result.first()
+
+    return ProgrammeSubjectAssociation(
+        programme_id=programme_id,
+        subject_id=subject_id,
+        subject_type=subject.subject_type,
+        is_compulsory=updated.is_compulsory if updated else None,
+        choice_group_id=updated.choice_group_id if updated else None,
+    )
 
 
 @router.delete("/{programme_id}/subjects/{subject_id}", status_code=status.HTTP_204_NO_CONTENT)

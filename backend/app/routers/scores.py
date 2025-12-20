@@ -61,7 +61,7 @@ async def get_filtered_documents(
     else:
         # Apply exam_type, series, year filters (these require the join above)
         if exam_type is not None:
-            base_stmt = base_stmt.where(Exam.name == exam_type)
+            base_stmt = base_stmt.where(Exam.exam_type == exam_type)
         if series is not None:
             base_stmt = base_stmt.where(Exam.series == series)
         if year is not None:
@@ -89,7 +89,7 @@ async def get_filtered_documents(
     else:
         # Apply exam_type, series, year filters (these require the join above)
         if exam_type is not None:
-            count_stmt = count_stmt.where(Exam.name == exam_type)
+            count_stmt = count_stmt.where(Exam.exam_type == exam_type)
         if series is not None:
             count_stmt = count_stmt.where(Exam.series == series)
         if year is not None:
@@ -413,7 +413,7 @@ async def get_candidates_for_manual_entry(
     else:
         # Apply exam_type, series, year filters (these require the Exam join above)
         if exam_type is not None:
-            base_stmt = base_stmt.where(Exam.name == exam_type)
+            base_stmt = base_stmt.where(Exam.exam_type == exam_type)
         if series is not None:
             base_stmt = base_stmt.where(Exam.series == series)
         if year is not None:
@@ -442,7 +442,7 @@ async def get_candidates_for_manual_entry(
     else:
         # Apply exam_type, series, year filters (these require the Exam join above)
         if exam_type is not None:
-            count_base_stmt = count_base_stmt.where(Exam.name == exam_type)
+            count_base_stmt = count_base_stmt.where(Exam.exam_type == exam_type)
         if series is not None:
             count_base_stmt = count_base_stmt.where(Exam.series == series)
         if year is not None:
@@ -473,7 +473,7 @@ async def get_candidates_for_manual_entry(
                 subject_code=subject.code,
                 subject_name=subject.name,
                 exam_id=exam.id,
-                exam_name=exam.name.value,
+                exam_name=exam.exam_type.value,
                 exam_year=exam.year,
                 exam_series=exam.series.value,
                 programme_id=programme.id if programme else None,

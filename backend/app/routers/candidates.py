@@ -6,12 +6,15 @@ from app.models import (
     Candidate,
     Exam,
     ExamRegistration,
+    ExamSeries,
     ExamSubject,
     Programme,
+    programme_subjects,
     School,
     Subject,
     SubjectRegistration,
     SubjectScore,
+    SubjectType,
 )
 from app.schemas.candidate import (
     CandidateBulkUploadError,
@@ -23,6 +26,7 @@ from app.schemas.candidate import (
     ExamRegistrationResponse,
     SubjectRegistrationCreate,
     SubjectRegistrationResponse,
+    SubjectRequirementsValidationResponse,
     SubjectScoreResponse,
 )
 from app.services.candidate_upload import (
@@ -35,6 +39,123 @@ from app.services.candidate_upload import (
 )
 
 router = APIRouter(prefix="/api/v1/candidates", tags=["candidates"])
+
+
+# Validation Helper Functions
+
+
+async def validate_subject_registration_requirements(
+    session: DBSessionDep,
+    exam_registration: ExamRegistration,
+    registered_subject_ids: set[int],
+) -> tuple[bool, list[str]]:
+    """
+    Validate that candidate's subject registrations meet programme requirements.
+
+    For MAY/JUNE exams:
+    - All compulsory core subjects must be registered
+    - Exactly one subject from each optional core choice group must be registered
+    - ALL elective subjects under the programme must be registered
+
+    For NOV/DEC exams:
+    - No validation (returns success)
+
+    Returns:
+        tuple[bool, list[str]]: (is_valid, list of error messages)
+    """
+    # Load exam to check series
+    exam_stmt = select(Exam).where(Exam.id == exam_registration.exam_id)
+    exam_result = await session.execute(exam_stmt)
+    exam = exam_result.scalar_one_or_none()
+
+    if not exam:
+        return False, ["Exam not found"]
+
+    # For NOV/DEC, skip validation
+    if exam.series == ExamSeries.NOV_DEC:
+        return True, []
+
+    # Only validate MAY/JUNE exams
+    if exam.series != ExamSeries.MAY_JUNE:
+        return True, []  # Unknown series, skip validation
+
+    # Get candidate's programme
+    candidate_stmt = select(Candidate).where(Candidate.id == exam_registration.candidate_id)
+    candidate_result = await session.execute(candidate_stmt)
+    candidate = candidate_result.scalar_one_or_none()
+
+    if not candidate or not candidate.programme_id:
+        # No programme assigned, can't validate
+        return True, []
+
+    # Get programme subject requirements
+    programme_subject_stmt = (
+        select(
+            Subject,
+            programme_subjects.c.is_compulsory,
+            programme_subjects.c.choice_group_id,
+        )
+        .join(programme_subjects, Subject.id == programme_subjects.c.subject_id)
+        .where(programme_subjects.c.programme_id == candidate.programme_id)
+    )
+    programme_subject_result = await session.execute(programme_subject_stmt)
+    programme_subjects_data = programme_subject_result.all()
+
+    # Organize requirements
+    compulsory_core_subject_ids: set[int] = set()
+    optional_core_groups: dict[int, set[int]] = {}  # group_id -> set of subject_ids
+    elective_subject_ids: set[int] = set()
+
+    for subject, is_compulsory, choice_group_id in programme_subjects_data:
+        if subject.subject_type == SubjectType.CORE:
+            if is_compulsory is True:
+                compulsory_core_subject_ids.add(subject.id)
+            elif is_compulsory is False and choice_group_id is not None:
+                if choice_group_id not in optional_core_groups:
+                    optional_core_groups[choice_group_id] = set()
+                optional_core_groups[choice_group_id].add(subject.id)
+        elif subject.subject_type == SubjectType.ELECTIVE:
+            elective_subject_ids.add(subject.id)
+
+    errors: list[str] = []
+
+    # Check compulsory core subjects
+    missing_compulsory = compulsory_core_subject_ids - registered_subject_ids
+    if missing_compulsory:
+        missing_subject_stmt = select(Subject).where(Subject.id.in_(missing_compulsory))
+        missing_subject_result = await session.execute(missing_subject_stmt)
+        missing_subjects = missing_subject_result.scalars().all()
+        missing_names = [s.name for s in missing_subjects]
+        errors.append(f"Missing compulsory core subjects: {', '.join(missing_names)}")
+
+    # Check optional core choice groups (exactly one from each group)
+    for group_id, group_subject_ids in optional_core_groups.items():
+        registered_from_group = group_subject_ids & registered_subject_ids
+        if len(registered_from_group) == 0:
+            # Get subject names for better error message
+            group_subject_stmt = select(Subject).where(Subject.id.in_(group_subject_ids))
+            group_subject_result = await session.execute(group_subject_stmt)
+            group_subjects = group_subject_result.scalars().all()
+            group_names = [s.name for s in group_subjects]
+            errors.append(f"Must select exactly one from optional core group {group_id}: {', '.join(group_names)}")
+        elif len(registered_from_group) > 1:
+            # Multiple subjects from same group
+            registered_subject_stmt = select(Subject).where(Subject.id.in_(registered_from_group))
+            registered_subject_result = await session.execute(registered_subject_stmt)
+            registered_subjects = registered_subject_result.scalars().all()
+            registered_names = [s.name for s in registered_subjects]
+            errors.append(f"Can only select one from optional core group {group_id}, but selected: {', '.join(registered_names)}")
+
+    # Check ALL elective subjects are registered
+    missing_electives = elective_subject_ids - registered_subject_ids
+    if missing_electives:
+        missing_elective_stmt = select(Subject).where(Subject.id.in_(missing_electives))
+        missing_elective_result = await session.execute(missing_elective_stmt)
+        missing_elective_subjects = missing_elective_result.scalars().all()
+        missing_elective_names = [s.name for s in missing_elective_subjects]
+        errors.append(f"Missing elective subjects (all are compulsory for MAY/JUNE): {', '.join(missing_elective_names)}")
+
+    return len(errors) == 0, errors
 
 
 # Candidate Management Endpoints
@@ -278,6 +399,58 @@ async def bulk_upload_candidates(
                     )
                     session.add(subject_score)
 
+                # Validate subject registration requirements (for MAY/JUNE exams)
+                # Get all registered subject IDs for this exam registration
+                registered_subject_regs_stmt = select(SubjectRegistration, ExamSubject).join(
+                    ExamSubject, SubjectRegistration.exam_subject_id == ExamSubject.id
+                ).where(SubjectRegistration.exam_registration_id == exam_registration.id)
+                registered_subject_regs_result = await session.execute(registered_subject_regs_stmt)
+                registered_subject_ids = {exam_subj.subject_id for _, exam_subj in registered_subject_regs_result.all()}
+
+                is_valid, validation_errors = await validate_subject_registration_requirements(
+                    session, exam_registration, registered_subject_ids
+                )
+
+                if not is_valid:
+                    # Remove the subject registrations and scores we just added
+                    from sqlalchemy import delete as sql_delete
+                    await session.execute(
+                        sql_delete(SubjectScore).where(
+                            SubjectScore.subject_registration_id.in_(
+                                select(SubjectRegistration.id).where(
+                                    SubjectRegistration.exam_registration_id == exam_registration.id
+                                )
+                            )
+                        )
+                    )
+                    await session.execute(
+                        sql_delete(SubjectRegistration).where(
+                            SubjectRegistration.exam_registration_id == exam_registration.id
+                        )
+                    )
+                    # Remove exam registration
+                    await session.delete(exam_registration)
+                    # If candidate was newly created, remove it too
+                    if candidate.id:  # Check if candidate has an ID (was newly created)
+                        # Check if candidate has other exam registrations
+                        other_regs_stmt = select(ExamRegistration).where(
+                            ExamRegistration.candidate_id == candidate.id
+                        )
+                        other_regs_result = await session.execute(other_regs_stmt)
+                        other_regs = other_regs_result.scalars().all()
+                        if not other_regs:
+                            await session.delete(candidate)
+
+                    errors.append(
+                        CandidateBulkUploadError(
+                            row_number=row_number,
+                            error_message=f"Subject registration does not meet programme requirements: {'; '.join(validation_errors)}",
+                            field="subject_code",
+                        )
+                    )
+                    failed += 1
+                    continue
+
                 successful += 1
 
         except Exception as e:
@@ -474,7 +647,7 @@ async def register_candidate_for_exam(
         id=db_exam_registration.id,
         candidate_id=db_exam_registration.candidate_id,
         exam_id=db_exam_registration.exam_id,
-        exam_name=exam.name.value,
+        exam_name=exam.exam_type.value,
         exam_year=exam.year,
         exam_series=exam.series.value,
         created_at=db_exam_registration.created_at,
@@ -507,7 +680,7 @@ async def list_candidate_exam_registrations(candidate_id: int, session: DBSessio
             id=exam_reg.id,
             candidate_id=exam_reg.candidate_id,
             exam_id=exam_reg.exam_id,
-            exam_name=exam.name.value,
+            exam_name=exam.exam_type.value,
             exam_year=exam.year,
             exam_series=exam.series.value,
             created_at=exam_reg.created_at,
@@ -546,11 +719,75 @@ async def get_candidate_exam_registration(
         id=exam_reg.id,
         candidate_id=exam_reg.candidate_id,
         exam_id=exam_reg.exam_id,
-        exam_name=exam.name.value,
+        exam_name=exam.exam_type.value,
         exam_year=exam.year,
         exam_series=exam.series.value,
         created_at=exam_reg.created_at,
         updated_at=exam_reg.updated_at,
+    )
+
+
+@router.get(
+    "/{candidate_id}/exams/{exam_id}/subject-requirements-validation",
+    response_model=SubjectRequirementsValidationResponse,
+)
+async def validate_candidate_subject_requirements(
+    candidate_id: int, exam_id: int, session: DBSessionDep
+) -> SubjectRequirementsValidationResponse:
+    """Check if candidate's subject registrations meet programme requirements."""
+    # Check candidate exists
+    candidate_stmt = select(Candidate).where(Candidate.id == candidate_id)
+    candidate_result = await session.execute(candidate_stmt)
+    candidate = candidate_result.scalar_one_or_none()
+    if not candidate:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Candidate not found")
+
+    # Get exam registration with exam details
+    exam_reg_stmt = (
+        select(ExamRegistration, Exam)
+        .join(Exam, ExamRegistration.exam_id == Exam.id)
+        .where(ExamRegistration.candidate_id == candidate_id, ExamRegistration.exam_id == exam_id)
+    )
+    exam_reg_result = await session.execute(exam_reg_stmt)
+    exam_reg_data = exam_reg_result.first()
+    if not exam_reg_data:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Exam registration not found")
+
+    exam_registration, exam = exam_reg_data
+
+    # Get all registered subject IDs for this exam registration
+    registered_subject_regs_stmt = select(SubjectRegistration, ExamSubject).join(
+        ExamSubject, SubjectRegistration.exam_subject_id == ExamSubject.id
+    ).where(SubjectRegistration.exam_registration_id == exam_registration.id)
+    registered_subject_regs_result = await session.execute(registered_subject_regs_stmt)
+    registered_subject_ids = {exam_subj.subject_id for _, exam_subj in registered_subject_regs_result.all()}
+
+    # Validate requirements
+    is_valid, validation_errors = await validate_subject_registration_requirements(
+        session, exam_registration, registered_subject_ids
+    )
+
+    # Check if validation is applicable (MAY/JUNE only)
+    is_applicable = exam.series == ExamSeries.MAY_JUNE
+
+    # Get programme info if available
+    programme_id = None
+    programme_name = None
+    if candidate.programme_id:
+        programme_stmt = select(Programme).where(Programme.id == candidate.programme_id)
+        programme_result = await session.execute(programme_stmt)
+        programme = programme_result.scalar_one_or_none()
+        if programme:
+            programme_id = programme.id
+            programme_name = programme.name
+
+    return SubjectRequirementsValidationResponse(
+        is_valid=is_valid,
+        exam_series=exam.series.value,
+        is_applicable=is_applicable,
+        errors=validation_errors,
+        programme_id=programme_id,
+        programme_name=programme_name,
     )
 
 
@@ -594,7 +831,7 @@ async def add_subject_to_exam_registration(
     if not exam_subject_data:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Exam subject not found or does not belong to exam {exam.name.value}",
+            detail=f"Exam subject not found or does not belong to exam {exam.exam_type.value}",
         )
 
     exam_subject, subject = exam_subject_data
@@ -627,6 +864,26 @@ async def add_subject_to_exam_registration(
     )
     session.add(db_subject_registration)
     await session.flush()  # Flush to get the ID
+
+    # Validate subject registration requirements (for MAY/JUNE exams)
+    # Get all registered subject IDs for this exam registration
+    registered_subject_regs_stmt = select(SubjectRegistration, ExamSubject).join(
+        ExamSubject, SubjectRegistration.exam_subject_id == ExamSubject.id
+    ).where(SubjectRegistration.exam_registration_id == exam_registration.id)
+    registered_subject_regs_result = await session.execute(registered_subject_regs_stmt)
+    registered_subject_ids = {exam_subj.subject_id for _, exam_subj in registered_subject_regs_result.all()}
+
+    is_valid, validation_errors = await validate_subject_registration_requirements(
+        session, exam_registration, registered_subject_ids
+    )
+
+    if not is_valid:
+        # Rollback the subject registration
+        await session.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Subject registration does not meet programme requirements: {'; '.join(validation_errors)}",
+        )
 
     # Automatically create SubjectScore with default values
     db_subject_score = SubjectScore(

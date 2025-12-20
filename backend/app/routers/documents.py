@@ -351,7 +351,7 @@ async def list_documents(
 
     # Apply exam_type, series, year filters (these require the join above)
     if exam_type is not None and exam_id is None:
-        base_stmt = base_stmt.where(Exam.name == exam_type)
+        base_stmt = base_stmt.where(Exam.exam_type == exam_type)
     if series is not None and exam_id is None:
         base_stmt = base_stmt.where(Exam.series == series)
     if year is not None and exam_id is None:
@@ -374,7 +374,7 @@ async def list_documents(
 
     # Apply exam_type, series, year filters (these require the join above)
     if exam_type is not None and exam_id is None:
-        count_stmt = count_stmt.where(Exam.name == exam_type)
+        count_stmt = count_stmt.where(Exam.exam_type == exam_type)
     if series is not None and exam_id is None:
         count_stmt = count_stmt.where(Exam.series == series)
     if year is not None and exam_id is None:

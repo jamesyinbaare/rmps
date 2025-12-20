@@ -137,12 +137,10 @@ async def create_subjects(session) -> list[Subject]:
         existing = result.scalar_one_or_none()
 
         if not existing:
-            # Determine subject type based on code
-            # Subjects 701, 703, 704 are core in all programmes
-            # Subject 702 (Social Studies) is also core
-            # Subject 705 (Entrepreneurship) can be elective or core depending on programme
-            required_subject_codes = {"701", "702", "703", "704", "705"}
-            subject_type = SubjectType.CORE if (subject_data["code"] in required_subject_codes or subject_data["code"] == "702") else SubjectType.ELECTIVE
+            # All subjects in initial data are CORE subjects
+            # Subject type is set at the Subject level, but programme associations
+            # determine if they're compulsory or optional (via is_compulsory and choice_group_id)
+            subject_type = SubjectType.CORE
             subject = Subject(
                 code=subject_data["code"],
                 name=subject_data["name"],
@@ -206,7 +204,15 @@ async def create_school_programme_associations(
 async def create_programme_subject_associations(
     session, programmes: list[Programme], subjects: list[Subject]
 ) -> None:
-    """Create programme-subject associations."""
+    """Create programme-subject associations with is_compulsory and choice_group_id."""
+    # Define subject requirements:
+    # - Compulsory core subjects: 701 (English), 703 (Integrated Science), 704 (Mathematics)
+    # - Optional core subjects (choice group 1): 702 (Social Studies), 705 (Entrepreneurship)
+    #   Candidates must choose one from this group
+    compulsory_core_codes = {"701", "703", "704"}
+    optional_core_group_1_codes = {"702", "705"}  # Social Studies OR Entrepreneurship
+    optional_core_group_1_id = 1
+
     for programme in programmes:
         for subject in subjects:
             stmt = select(programme_subjects).where(
@@ -217,9 +223,29 @@ async def create_programme_subject_associations(
             existing = result.first()
 
             if not existing:
+                # Determine is_compulsory and choice_group_id based on subject code and type
+                is_compulsory = None
+                choice_group_id = None
+
+                if subject.subject_type == SubjectType.CORE:
+                    if subject.code in compulsory_core_codes:
+                        is_compulsory = True
+                        choice_group_id = None
+                    elif subject.code in optional_core_group_1_codes:
+                        is_compulsory = False
+                        choice_group_id = optional_core_group_1_id
+                    else:
+                        # Default: make it compulsory if it's core but not in our lists
+                        is_compulsory = True
+                        choice_group_id = None
+                # For ELECTIVE subjects, is_compulsory and choice_group_id remain None
+
                 await session.execute(
                     insert(programme_subjects).values(
-                        programme_id=programme.id, subject_id=subject.id
+                        programme_id=programme.id,
+                        subject_id=subject.id,
+                        is_compulsory=is_compulsory,
+                        choice_group_id=choice_group_id,
                     )
                 )
 
@@ -499,19 +525,19 @@ async def create_exams(session) -> list[Exam]:
 
     exams_data = [
         {
-            "name": ExamType.CERTIFICATE_II,
+            "exam_type": ExamType.CERTIFICATE_II,
             "series": ExamSeries.MAY_JUNE,
             "year": 2024,
             "number_of_series": 4,
         },
         {
-            "name": ExamType.CERTIFICATE_II,
+            "exam_type": ExamType.CERTIFICATE_II,
             "series": ExamSeries.NOV_DEC,
             "year": 2024,
             "number_of_series": 4,
         },
         {
-            "name": ExamType.CERTIFICATE_II,
+            "exam_type": ExamType.CERTIFICATE_II,
             "series": ExamSeries.NOV_DEC,
             "year": 2025,
             "number_of_series": 4,
@@ -521,7 +547,7 @@ async def create_exams(session) -> list[Exam]:
     exams = []
     for exam_data in exams_data:
         stmt = select(Exam).where(
-            Exam.name == exam_data["name"],
+            Exam.exam_type == exam_data["exam_type"],
             Exam.series == exam_data["series"],
             Exam.year == exam_data["year"],
         )
@@ -530,7 +556,7 @@ async def create_exams(session) -> list[Exam]:
 
         if not existing:
             exam = Exam(
-                name=exam_data["name"],
+                exam_type=exam_data["exam_type"],
                 series=exam_data["series"],
                 year=exam_data["year"],
                 number_of_series=exam_data["number_of_series"],
@@ -590,7 +616,7 @@ async def create_exam_registrations(
 
     # Get Certificate II, NOV/DEC, 2025 exam
     exam_2025_novdec = next(
-        (e for e in exams if e.year == 2025 and e.series == ExamSeries.NOV_DEC and e.name == ExamType.CERTIFICATE_II),
+        (e for e in exams if e.year == 2025 and e.series == ExamSeries.NOV_DEC and e.exam_type == ExamType.CERTIFICATE_II),
         None
     )
 
