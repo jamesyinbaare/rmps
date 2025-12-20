@@ -176,7 +176,8 @@ export default function UploadSubjectsPage() {
                     <div className="text-sm text-muted-foreground space-y-2">
                       <p>Your file must contain the following columns (in any order):</p>
                       <ul className="list-disc list-inside space-y-1 ml-4">
-                        <li><strong>Code</strong> (required) - Unique 3-character subject code</li>
+                        <li><strong>Code</strong> (required) - Unique 3-character normalized subject code</li>
+                        <li><strong>Original Code</strong> (required) - Original subject code format (e.g., C30-1-01, C701)</li>
                         <li><strong>Name</strong> (required) - Subject name</li>
                         <li><strong>Subject Type</strong> (required) - "CORE" or "ELECTIVE"</li>
                         <li><strong>Programme Code</strong> (optional) - Programme code to automatically associate this subject with</li>
@@ -191,6 +192,7 @@ export default function UploadSubjectsPage() {
                         <thead>
                           <tr className="border-b">
                             <th className="px-3 py-2 text-left border-r">Code</th>
+                            <th className="px-3 py-2 text-left border-r">Original Code</th>
                             <th className="px-3 py-2 text-left border-r">Name</th>
                             <th className="px-3 py-2 text-left border-r">Subject Type</th>
                             <th className="px-3 py-2 text-left">Programme Code</th>
@@ -198,19 +200,22 @@ export default function UploadSubjectsPage() {
                         </thead>
                         <tbody>
                           <tr>
-                            <td className="px-3 py-2 border-r font-mono">MAT</td>
+                            <td className="px-3 py-2 border-r font-mono">301</td>
+                            <td className="px-3 py-2 border-r font-mono">C30-1-01</td>
                             <td className="px-3 py-2 border-r">Mathematics</td>
                             <td className="px-3 py-2 border-r">CORE</td>
                             <td className="px-3 py-2 font-mono">PROG01</td>
                           </tr>
                           <tr>
-                            <td className="px-3 py-2 border-r font-mono">ENG</td>
+                            <td className="px-3 py-2 border-r font-mono">701</td>
+                            <td className="px-3 py-2 border-r font-mono">C701</td>
                             <td className="px-3 py-2 border-r">English</td>
                             <td className="px-3 py-2 border-r">CORE</td>
                             <td className="px-3 py-2 font-mono">PROG01</td>
                           </tr>
                           <tr>
-                            <td className="px-3 py-2 border-r font-mono">SCI</td>
+                            <td className="px-3 py-2 border-r font-mono">702</td>
+                            <td className="px-3 py-2 border-r font-mono">C702</td>
                             <td className="px-3 py-2 border-r">Science</td>
                             <td className="px-3 py-2 border-r">ELECTIVE</td>
                             <td className="px-3 py-2"></td>
@@ -224,6 +229,7 @@ export default function UploadSubjectsPage() {
                     <h4 className="text-sm font-semibold mb-2">Validation Rules</h4>
                     <ul className="text-sm text-muted-foreground space-y-1 list-disc list-inside">
                       <li>Code must be exactly 3 characters and unique (not already exist in the system)</li>
+                      <li>Original code is required and must be unique (e.g., C30-1-01, C701)</li>
                       <li>Name is required</li>
                       <li>Subject type must be either "CORE" or "ELECTIVE"</li>
                       <li>Programme code (if provided) must exist in the system - the subject will be automatically associated with that programme</li>

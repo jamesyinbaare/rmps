@@ -795,6 +795,7 @@ export async function getSubject(id: number): Promise<Subject> {
 
 export async function createSubject(data: {
   code: string;
+  original_code: string;
   name: string;
   subject_type: "CORE" | "ELECTIVE";
 }): Promise<Subject> {
@@ -810,7 +811,7 @@ export async function createSubject(data: {
 
 export async function updateSubject(
   id: number,
-  data: { name?: string; subject_type?: "CORE" | "ELECTIVE" }
+  data: { name?: string; original_code?: string; subject_type?: "CORE" | "ELECTIVE" }
 ): Promise<Subject> {
   const response = await fetch(`${API_BASE_URL}/api/v1/subjects/${id}`, {
     method: "PUT",
@@ -826,9 +827,46 @@ export async function deleteSubject(id: number): Promise<void> {
   const response = await fetch(`${API_BASE_URL}/api/v1/subjects/${id}`, {
     method: "DELETE",
   });
+
+  // 204 No Content means success
+  if (response.status === 204) {
+    return;
+  }
+
+  // For any other status, try to parse error message
   if (!response.ok) {
-    const error: ApiError = await response.json().catch(() => ({ detail: "An error occurred" }));
-    throw new Error(error.detail || `HTTP error! status: ${response.status}`);
+    let errorDetail = `Failed to delete subject`;
+    try {
+      const contentType = response.headers.get("content-type");
+      if (contentType && contentType.includes("application/json")) {
+        const error: ApiError = await response.json();
+        errorDetail = error.detail || errorDetail;
+      } else {
+        const text = await response.text();
+        if (text && text.trim()) {
+          errorDetail = text.trim();
+        } else {
+          // Provide specific messages based on status code
+          switch (response.status) {
+            case 400:
+              errorDetail = "Cannot delete subject. It is still referenced by other records (exam subjects, documents, or programme associations).";
+              break;
+            case 404:
+              errorDetail = "Subject not found";
+              break;
+            case 500:
+              errorDetail = "An internal server error occurred while deleting the subject";
+              break;
+            default:
+              errorDetail = `Failed to delete subject (HTTP ${response.status})`;
+          }
+        }
+      }
+    } catch (parseError) {
+      // If parsing fails, provide a generic message
+      errorDetail = `Failed to delete subject (HTTP ${response.status})`;
+    }
+    throw new Error(errorDetail);
   }
 }
 

@@ -30,30 +30,39 @@ export function DeleteSubjectDialog({
   onSuccess,
 }: DeleteSubjectDialogProps) {
   const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
   const handleDelete = async () => {
     if (!subject) return;
 
     setLoading(true);
+    setError(null);
     try {
       await deleteSubject(subject.id);
       toast.success("Subject deleted successfully");
       onSuccess?.();
       onOpenChange(false);
     } catch (error) {
-      toast.error(
-        error instanceof Error ? error.message : "Failed to delete subject"
-      );
+      const errorMessage = error instanceof Error ? error.message : "Failed to delete subject. Please try again.";
+      setError(errorMessage);
+      toast.error(errorMessage);
       console.error("Error deleting subject:", error);
     } finally {
       setLoading(false);
     }
   };
 
+  const handleDialogChange = (newOpen: boolean) => {
+    if (!newOpen) {
+      setError(null);
+    }
+    onOpenChange(newOpen);
+  };
+
   if (!subject) return null;
 
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
+    <Dialog open={open} onOpenChange={handleDialogChange}>
       <DialogContent className="max-w-md">
         <DialogHeader>
           <div className="flex items-center gap-3">
@@ -69,7 +78,7 @@ export function DeleteSubjectDialog({
           </div>
         </DialogHeader>
 
-        <div className="py-4">
+        <div className="py-4 space-y-4">
           <div className="rounded-lg border border-destructive/20 bg-destructive/5 p-4">
             <p className="text-sm font-medium">{subject.name}</p>
             <div className="flex items-center gap-2 mt-2">
@@ -81,12 +90,21 @@ export function DeleteSubjectDialog({
               </Badge>
             </div>
           </div>
+
+          {error && (
+            <div className="rounded-lg border border-destructive/50 bg-destructive/10 p-3">
+              <div className="flex items-start gap-2">
+                <AlertTriangle className="h-4 w-4 text-destructive mt-0.5 flex-shrink-0" />
+                <p className="text-sm text-destructive font-medium">{error}</p>
+              </div>
+            </div>
+          )}
         </div>
 
         <DialogFooter>
           <Button
             variant="outline"
-            onClick={() => onOpenChange(false)}
+            onClick={() => handleDialogChange(false)}
             disabled={loading}
           >
             Cancel

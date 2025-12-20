@@ -53,6 +53,13 @@ export function SubjectDataTable({
           ),
         },
         {
+          accessorKey: "original_code",
+          header: "Original Code",
+          cell: ({ row }) => (
+            <div className="font-medium font-mono">{row.getValue("original_code")}</div>
+          ),
+        },
+        {
           accessorKey: "name",
           header: "Name",
           cell: ({ row }) => (
@@ -128,6 +135,7 @@ export function SubjectDataTable({
       const searchValue = filterValue.toLowerCase();
       return (
         subject.code.toLowerCase().includes(searchValue) ||
+        subject.original_code.toLowerCase().includes(searchValue) ||
         subject.name.toLowerCase().includes(searchValue) ||
         subject.subject_type.toLowerCase().includes(searchValue)
       );
@@ -167,7 +175,7 @@ export function SubjectDataTable({
           <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
           <Input
             type="search"
-            placeholder="Search by code, name, or type..."
+            placeholder="Search by code, original code, name, or type..."
             value={globalFilter}
             onChange={(e) => setGlobalFilter(e.target.value)}
             className="pl-9 pr-9"

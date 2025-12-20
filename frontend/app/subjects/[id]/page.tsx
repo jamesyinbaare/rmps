@@ -101,7 +101,7 @@ export default function SubjectDetailPage() {
   return (
     <DashboardLayout title="Subject Details">
       <div className="flex flex-1 flex-col overflow-hidden">
-        <TopBar title={`${subject.code} - ${subject.name}`} />
+        <TopBar title={`${subject.code} (${subject.original_code}) - ${subject.name}`} />
         <div className="flex-1 overflow-y-auto p-6">
           {/* Header with back button */}
           <div className="mb-6">
@@ -139,6 +139,10 @@ export default function SubjectDetailPage() {
                 <div className="flex items-center gap-2">
                   <span className="text-sm text-muted-foreground">Code:</span>
                   <span className="text-sm font-medium font-mono">{subject.code}</span>
+                </div>
+                <div className="flex items-center gap-2">
+                  <span className="text-sm text-muted-foreground">Original Code:</span>
+                  <span className="text-sm font-medium font-mono">{subject.original_code}</span>
                 </div>
                 <div className="flex items-center gap-2">
                   <span className="text-sm text-muted-foreground">Name:</span>

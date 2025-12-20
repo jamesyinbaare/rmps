@@ -38,6 +38,7 @@ export function EditSubjectModal({
   const [loading, setLoading] = useState(false);
   const [formData, setFormData] = useState({
     name: "",
+    original_code: "",
     subject_type: "CORE" as "CORE" | "ELECTIVE",
   });
 
@@ -45,6 +46,7 @@ export function EditSubjectModal({
     if (subject) {
       setFormData({
         name: subject.name,
+        original_code: subject.original_code,
         subject_type: subject.subject_type,
       });
     }
@@ -83,6 +85,7 @@ export function EditSubjectModal({
     if (subject) {
       setFormData({
         name: subject.name,
+        original_code: subject.original_code,
         subject_type: subject.subject_type,
       });
     }
@@ -115,6 +118,27 @@ export function EditSubjectModal({
               />
               <p className="text-xs text-muted-foreground">
                 Subject code cannot be changed
+              </p>
+            </div>
+
+            <div className="space-y-2">
+              <label htmlFor="original_code" className="text-sm font-medium">
+                Original Code <span className="text-destructive">*</span>
+              </label>
+              <Input
+                id="original_code"
+                name="original_code"
+                type="text"
+                value={formData.original_code}
+                onChange={handleChange}
+                required
+                maxLength={50}
+                placeholder="Enter original subject code (e.g., C30-1-01, C701)"
+                disabled={loading}
+                className="font-mono"
+              />
+              <p className="text-xs text-muted-foreground">
+                The original subject code format (e.g., C30-1-01, C701)
               </p>
             </div>
 

@@ -120,6 +120,7 @@ export interface School {
 export interface Subject {
   id: number;
   code: string;
+  original_code: string;
   name: string;
   subject_type: "CORE" | "ELECTIVE";
   created_at: string;

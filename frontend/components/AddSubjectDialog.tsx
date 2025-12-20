@@ -35,6 +35,7 @@ export function AddSubjectDialog({
   const [loading, setLoading] = useState(false);
   const [formData, setFormData] = useState({
     code: "",
+    original_code: "",
     name: "",
     subject_type: "CORE" as "CORE" | "ELECTIVE",
   });
@@ -53,7 +54,7 @@ export function AddSubjectDialog({
 
       await createSubject(formData);
       toast.success("Subject created successfully");
-      setFormData({ code: "", name: "", subject_type: "CORE" });
+      setFormData({ code: "", original_code: "", name: "", subject_type: "CORE" });
       onSuccess?.();
       onOpenChange(false);
     } catch (error) {
@@ -76,7 +77,7 @@ export function AddSubjectDialog({
   };
 
   const handleCancel = () => {
-    setFormData({ code: "", name: "", subject_type: "CORE" });
+    setFormData({ code: "", original_code: "", name: "", subject_type: "CORE" });
     onOpenChange(false);
   };
 
@@ -109,7 +110,28 @@ export function AddSubjectDialog({
                 className="font-mono"
               />
               <p className="text-xs text-muted-foreground">
-                Must be exactly 3 characters
+                Must be exactly 3 characters (normalized code)
+              </p>
+            </div>
+
+            <div className="space-y-2">
+              <label htmlFor="original_code" className="text-sm font-medium">
+                Original Code <span className="text-destructive">*</span>
+              </label>
+              <Input
+                id="original_code"
+                name="original_code"
+                type="text"
+                value={formData.original_code}
+                onChange={handleChange}
+                required
+                maxLength={50}
+                placeholder="Enter original subject code (e.g., C30-1-01, C701)"
+                disabled={loading}
+                className="font-mono"
+              />
+              <p className="text-xs text-muted-foreground">
+                The original subject code format (e.g., C30-1-01, C701)
               </p>
             </div>
 

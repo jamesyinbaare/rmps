@@ -71,6 +71,8 @@ export function SubjectDetailDrawer({
           </SheetTitle>
           <SheetDescription>
             Code: <span className="font-mono">{displaySubject.code}</span>
+            {" | "}
+            Original Code: <span className="font-mono">{displaySubject.original_code}</span>
           </SheetDescription>
         </SheetHeader>
 
@@ -94,6 +96,12 @@ export function SubjectDetailDrawer({
                     <span className="text-sm text-muted-foreground">Code:</span>
                     <span className="text-sm font-medium font-mono">
                       {displaySubject.code}
+                    </span>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <span className="text-sm text-muted-foreground">Original Code:</span>
+                    <span className="text-sm font-medium font-mono">
+                      {displaySubject.original_code}
                     </span>
                   </div>
                   <div className="flex items-center gap-2">
