@@ -33,7 +33,7 @@ if env == "dev":
     database_url = "postgresql+asyncpg://postgres:postgres@postgres:5432/icm_db" #settings.database_url
 elif env == "stg":
     db_pass = os.environ.get("DB_PASS", None)
-    db_host = os.environ.get("DB_HOST", "stg-eu-west-2-academy")
+    db_host = os.environ.get("DB_HOST", "")
     db_name = os.environ.get("DB_NAME", "icm_db")
     database_url = f"postgresql://postgres:{db_pass}@{db_host}/{db_name}"
 else:  # FIXME(james): support test & production environments by reading db creds from secrets manager
