@@ -109,7 +109,7 @@ export function DocumentFilters({ filters, onFiltersChange }: DocumentFiltersPro
         // Fallback: if exam_id is set, reverse lookup
         const exam = exams.find((e) => e.id === filters.exam_id);
         if (exam) {
-          newExamType = exam.name as ExamType;
+          newExamType = exam.exam_type as ExamType;
           newExamSeries = exam.series as ExamSeries;
           newExamYear = exam.year;
           shouldUpdate = true;
@@ -230,19 +230,19 @@ export function DocumentFilters({ filters, onFiltersChange }: DocumentFiltersPro
   const hasActiveFilters = filters.exam_id || filters.school_id || filters.subject_id;
 
   // Get available exam types from exams (unique types)
-  const availableExamTypes = Array.from(new Set(exams.map((e) => e.name as ExamType)));
+  const availableExamTypes = Array.from(new Set(exams.map((e) => e.exam_type as ExamType)));
 
   // Get available series from exams
   // If examType is selected, filter by that type; otherwise show all series that exist
   const availableSeries = examType
-    ? Array.from(new Set(exams.filter((e) => e.name === examType).map((e) => e.series as ExamSeries)))
+    ? Array.from(new Set(exams.filter((e) => e.exam_type === examType).map((e) => e.series as ExamSeries)))
     : Array.from(new Set(exams.map((e) => e.series as ExamSeries)));
 
   // Get available years from exams
   // Filter by examType and examSeries if they're selected
   let filteredExamsForYears = exams;
   if (examType) {
-    filteredExamsForYears = filteredExamsForYears.filter((e) => e.name === examType);
+    filteredExamsForYears = filteredExamsForYears.filter((e) => e.exam_type === examType);
   }
   if (examSeries) {
     filteredExamsForYears = filteredExamsForYears.filter((e) => e.series === examSeries);
@@ -261,14 +261,14 @@ export function DocumentFilters({ filters, onFiltersChange }: DocumentFiltersPro
       // Clear series and year when type changes if they're no longer valid
       const newSeries = examSeries;
       const newYear = examYear;
-      const validSeries = Array.from(new Set(exams.filter((e) => e.name === value).map((e) => e.series as ExamSeries)));
+      const validSeries = Array.from(new Set(exams.filter((e) => e.exam_type === value).map((e) => e.series as ExamSeries)));
       if (newSeries && !validSeries.includes(newSeries)) {
         setExamSeries(undefined);
       }
       if (newYear) {
         const validYears = Array.from(new Set(
           exams
-            .filter((e) => e.name === value)
+            .filter((e) => e.exam_type === value)
             .filter((e) => !newSeries || e.series === newSeries)
             .map((e) => e.year)
         ));
@@ -291,7 +291,7 @@ export function DocumentFilters({ filters, onFiltersChange }: DocumentFiltersPro
       if (examYear) {
         const validYears = Array.from(new Set(
           exams
-            .filter((e) => !examType || e.name === examType)
+            .filter((e) => !examType || e.exam_type === examType)
             .filter((e) => e.series === value)
             .map((e) => e.year)
         ));

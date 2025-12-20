@@ -22,14 +22,12 @@ import {
 } from "@/components/ui/table";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { ClipboardList, Trash2, Search, X, Eye, Edit, Trash } from "lucide-react";
+import { ClipboardList, Trash2, Search, X, Trash } from "lucide-react";
 
 interface ExamDataTableProps {
   exams: Exam[];
   loading?: boolean;
   showSearch?: boolean;
-  onView?: (exam: Exam) => void;
-  onEdit?: (exam: Exam) => void;
   onDelete?: (exam: Exam) => void;
 }
 
@@ -37,8 +35,6 @@ export function ExamDataTable({
   exams,
   loading,
   showSearch = true,
-  onView,
-  onEdit,
   onDelete,
 }: ExamDataTableProps) {
   const router = useRouter();
@@ -49,22 +45,11 @@ export function ExamDataTable({
     () => {
       const cols: ColumnDef<Exam>[] = [
         {
-          accessorKey: "name",
-          header: "Name",
-          cell: ({ row }) => {
-            const exam = row.original;
-            return (
-              <button
-                onClick={(e) => {
-                  e.stopPropagation();
-                  router.push(`/examinations/${exam.id}`);
-                }}
-                className="font-medium text-left hover:text-primary hover:underline transition-colors"
-              >
-                {row.getValue("name")}
-              </button>
-            );
-          },
+          accessorKey: "exam_type",
+          header: "Exam Type",
+          cell: ({ row }) => (
+            <div className="font-medium">{row.getValue("exam_type")}</div>
+          ),
         },
         {
           accessorKey: "year",
@@ -118,34 +103,6 @@ export function ExamDataTable({
             const exam = row.original;
             return (
               <div className="flex items-center gap-2">
-                {onView && (
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      onView(exam);
-                    }}
-                    className="hover:bg-accent"
-                  >
-                    <Eye className="h-4 w-4 mr-1" />
-                    View
-                  </Button>
-                )}
-                {onEdit && (
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      onEdit(exam);
-                    }}
-                    className="hover:bg-accent"
-                  >
-                    <Edit className="h-4 w-4 mr-1" />
-                    Edit
-                  </Button>
-                )}
                 {onDelete && (
                   <Button
                     variant="ghost"
@@ -168,7 +125,7 @@ export function ExamDataTable({
 
       return cols;
     },
-    [onView, onEdit, onDelete]
+    [onDelete, router]
   );
 
   const table = useReactTable({
@@ -183,7 +140,7 @@ export function ExamDataTable({
       const exam = row.original;
       const searchValue = filterValue.toLowerCase();
       return (
-        exam.name.toLowerCase().includes(searchValue) ||
+        exam.exam_type.toLowerCase().includes(searchValue) ||
         exam.year.toString().includes(searchValue) ||
         exam.series.toLowerCase().includes(searchValue) ||
         (exam.description?.toLowerCase().includes(searchValue) ?? false)
@@ -274,21 +231,26 @@ export function ExamDataTable({
           </TableHeader>
           <TableBody>
             {table.getRowModel().rows?.length ? (
-              table.getRowModel().rows.map((row) => (
-                <TableRow
-                  key={row.id}
-                  data-state={row.getIsSelected() && "selected"}
-                >
-                  {row.getVisibleCells().map((cell) => (
-                    <TableCell key={cell.id}>
-                      {flexRender(
-                        cell.column.columnDef.cell,
-                        cell.getContext()
-                      )}
-                    </TableCell>
-                  ))}
-                </TableRow>
-              ))
+              table.getRowModel().rows.map((row) => {
+                const exam = row.original;
+                return (
+                  <TableRow
+                    key={row.id}
+                    data-state={row.getIsSelected() && "selected"}
+                    onClick={() => router.push(`/examinations/${exam.id}`)}
+                    className="cursor-pointer hover:bg-muted/50"
+                  >
+                    {row.getVisibleCells().map((cell) => (
+                      <TableCell key={cell.id}>
+                        {flexRender(
+                          cell.column.columnDef.cell,
+                          cell.getContext()
+                        )}
+                      </TableCell>
+                    ))}
+                  </TableRow>
+                );
+              })
             ) : (
               <TableRow>
                 <TableCell

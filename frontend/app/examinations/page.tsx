@@ -6,10 +6,8 @@ import { DashboardLayout } from "@/components/DashboardLayout";
 import { TopBar } from "@/components/TopBar";
 import { Button } from "@/components/ui/button";
 import { AddExamDialog } from "@/components/AddExamDialog";
-import { ExamDetailDrawer } from "@/components/ExamDetailDrawer";
-import { EditExamModal } from "@/components/EditExamModal";
 import { DeleteExamDialog } from "@/components/DeleteExamDialog";
-import { getAllExams, getExam } from "@/lib/api";
+import { getAllExams } from "@/lib/api";
 import type { Exam } from "@/types/document";
 import { Plus } from "lucide-react";
 import { toast } from "sonner";
@@ -19,9 +17,6 @@ export default function ExaminationsPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [addDialogOpen, setAddDialogOpen] = useState(false);
-  const [selectedExam, setSelectedExam] = useState<Exam | null>(null);
-  const [drawerOpen, setDrawerOpen] = useState(false);
-  const [editModalOpen, setEditModalOpen] = useState(false);
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
   const [examToDelete, setExamToDelete] = useState<Exam | null>(null);
 
@@ -44,33 +39,9 @@ export default function ExaminationsPage() {
     loadExams();
   }, []);
 
-  const handleView = (exam: Exam) => {
-    setSelectedExam(exam);
-    setDrawerOpen(true);
-  };
-
-  const handleEdit = (exam: Exam) => {
-    setSelectedExam(exam);
-    setEditModalOpen(true);
-  };
-
   const handleAddSuccess = () => {
     setAddDialogOpen(false);
     loadExams();
-  };
-
-  const handleEditSuccess = async () => {
-    // Reload exams to get updated data
-    await loadExams();
-    // Refresh drawer if it's open - reload the selected exam
-    if (drawerOpen && selectedExam) {
-      try {
-        const updatedExam = await getExam(selectedExam.id);
-        setSelectedExam(updatedExam);
-      } catch (error) {
-        console.error("Error refreshing examination:", error);
-      }
-    }
   };
 
   const handleDelete = (exam: Exam) => {
@@ -80,12 +51,6 @@ export default function ExaminationsPage() {
 
   const handleDeleteSuccess = () => {
     loadExams();
-    // Close drawer/modal if the deleted exam is selected
-    if (selectedExam?.id === examToDelete?.id) {
-      setDrawerOpen(false);
-      setEditModalOpen(false);
-      setSelectedExam(null);
-    }
     setExamToDelete(null);
   };
 
@@ -112,8 +77,6 @@ export default function ExaminationsPage() {
             exams={exams}
             loading={loading}
             showSearch={true}
-            onView={handleView}
-            onEdit={handleEdit}
             onDelete={handleDelete}
           />
         </div>
@@ -123,19 +86,6 @@ export default function ExaminationsPage() {
         open={addDialogOpen}
         onOpenChange={setAddDialogOpen}
         onSuccess={handleAddSuccess}
-      />
-
-      <ExamDetailDrawer
-        exam={selectedExam}
-        open={drawerOpen}
-        onOpenChange={setDrawerOpen}
-      />
-
-      <EditExamModal
-        exam={selectedExam}
-        open={editModalOpen}
-        onOpenChange={setEditModalOpen}
-        onSuccess={handleEditSuccess}
       />
 
       <DeleteExamDialog

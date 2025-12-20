@@ -170,7 +170,7 @@ export default function ReductoExtractionPage() {
       } else if (filters.exam_id && (!examType || !examSeries || !examYear)) {
         const exam = exams.find((e) => e.id === filters.exam_id);
         if (exam) {
-          setExamType(exam.name as ExamType);
+          setExamType(exam.exam_type as ExamType);
           setExamSeries(exam.series as ExamSeries);
           setExamYear(exam.year);
         }
@@ -336,7 +336,7 @@ export default function ReductoExtractionPage() {
                     </SelectTrigger>
                     <SelectContent>
                       <SelectItem value="all">All types</SelectItem>
-                      {Array.from(new Set(exams.map((e) => e.name as ExamType))).map((type) => (
+                      {Array.from(new Set(exams.map((e) => e.exam_type as ExamType))).map((type) => (
                         <SelectItem key={type} value={type}>
                           {type === "Certificate II Examination" ? "Certificate II" : type}
                         </SelectItem>
@@ -359,7 +359,7 @@ export default function ReductoExtractionPage() {
                       <SelectItem value="all">All series</SelectItem>
                       {Array.from(new Set(
                         examType
-                          ? exams.filter((e) => e.name === examType).map((e) => e.series as ExamSeries)
+                          ? exams.filter((e) => e.exam_type === examType).map((e) => e.series as ExamSeries)
                           : exams.map((e) => e.series as ExamSeries)
                       )).map((series) => (
                         <SelectItem key={series} value={series}>
@@ -385,7 +385,7 @@ export default function ReductoExtractionPage() {
                       {Array.from(new Set(
                         (() => {
                           let filtered = exams;
-                          if (examType) filtered = filtered.filter((e) => e.name === examType);
+                          if (examType) filtered = filtered.filter((e) => e.exam_type === examType);
                           if (examSeries) filtered = filtered.filter((e) => e.series === examSeries);
                           return filtered.map((e) => e.year);
                         })()

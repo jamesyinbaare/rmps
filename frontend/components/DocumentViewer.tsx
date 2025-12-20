@@ -35,7 +35,7 @@ export function DocumentViewer({ document, onClose, onDownload }: DocumentViewer
         if (document.exam_id) {
           try {
             const exam = await getExam(document.exam_id);
-            setExamName(exam.name);
+            setExamName(exam.exam_type);
           } catch (err) {
             console.error("Failed to fetch exam:", err);
           }

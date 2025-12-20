@@ -173,7 +173,7 @@ export default function ScoreDataEntryPage() {
       } else if (filters.exam_id && (!examType || !examSeries || !examYear)) {
         const exam = exams.find((e) => e.id === filters.exam_id);
         if (exam) {
-          setExamType(exam.name as ExamType);
+          setExamType(exam.exam_type as ExamType);
           setExamSeries(exam.series as ExamSeries);
           setExamYear(exam.year);
         }
@@ -289,13 +289,13 @@ export default function ScoreDataEntryPage() {
   };
 
   // Get available exam types, series, and years from exams
-  const availableExamTypes = Array.from(new Set(exams.map((e) => e.name as ExamType)));
+  const availableExamTypes = Array.from(new Set(exams.map((e) => e.exam_type as ExamType)));
   const availableSeries = examType
-    ? Array.from(new Set(exams.filter((e) => e.name === examType).map((e) => e.series as ExamSeries)))
+    ? Array.from(new Set(exams.filter((e) => e.exam_type === examType).map((e) => e.series as ExamSeries)))
     : Array.from(new Set(exams.map((e) => e.series as ExamSeries)));
   let filteredExamsForYears = exams;
   if (examType) {
-    filteredExamsForYears = filteredExamsForYears.filter((e) => e.name === examType);
+    filteredExamsForYears = filteredExamsForYears.filter((e) => e.exam_type === examType);
   }
   if (examSeries) {
     filteredExamsForYears = filteredExamsForYears.filter((e) => e.series === examSeries);

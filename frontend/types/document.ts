@@ -43,7 +43,7 @@ export interface BulkUploadResponse {
 
 export interface Exam {
   id: number;
-  name: string;
+  exam_type: string;
   description: string | null;
   year: number;
   series: string;

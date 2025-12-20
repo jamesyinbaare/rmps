@@ -6,10 +6,8 @@ import { DashboardLayout } from "@/components/DashboardLayout";
 import { TopBar } from "@/components/TopBar";
 import { Button } from "@/components/ui/button";
 import { AddProgrammeDialog } from "@/components/AddProgrammeDialog";
-import { ProgrammeDetailDrawer } from "@/components/ProgrammeDetailDrawer";
-import { EditProgrammeModal } from "@/components/EditProgrammeModal";
 import { DeleteProgrammeDialog } from "@/components/DeleteProgrammeDialog";
-import { listProgrammes, getProgramme } from "@/lib/api";
+import { listProgrammes } from "@/lib/api";
 import type { Programme } from "@/types/document";
 import { Plus } from "lucide-react";
 import { toast } from "sonner";
@@ -19,9 +17,6 @@ export default function ProgrammesPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [addDialogOpen, setAddDialogOpen] = useState(false);
-  const [selectedProgramme, setSelectedProgramme] = useState<Programme | null>(null);
-  const [drawerOpen, setDrawerOpen] = useState(false);
-  const [editModalOpen, setEditModalOpen] = useState(false);
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
   const [programmeToDelete, setProgrammeToDelete] = useState<Programme | null>(null);
 
@@ -55,33 +50,9 @@ export default function ProgrammesPage() {
     loadProgrammes();
   }, []);
 
-  const handleView = (programme: Programme) => {
-    setSelectedProgramme(programme);
-    setDrawerOpen(true);
-  };
-
-  const handleEdit = (programme: Programme) => {
-    setSelectedProgramme(programme);
-    setEditModalOpen(true);
-  };
-
   const handleAddSuccess = () => {
     setAddDialogOpen(false);
     loadProgrammes();
-  };
-
-  const handleEditSuccess = async () => {
-    // Reload programmes to get updated data
-    await loadProgrammes();
-    // Refresh drawer if it's open - reload the selected programme
-    if (drawerOpen && selectedProgramme) {
-      try {
-        const updatedProgramme = await getProgramme(selectedProgramme.id);
-        setSelectedProgramme(updatedProgramme);
-      } catch (error) {
-        console.error("Error refreshing programme:", error);
-      }
-    }
   };
 
   const handleDelete = (programme: Programme) => {
@@ -91,12 +62,6 @@ export default function ProgrammesPage() {
 
   const handleDeleteSuccess = () => {
     loadProgrammes();
-    // Close drawer/modal if the deleted programme is selected
-    if (selectedProgramme?.id === programmeToDelete?.id) {
-      setDrawerOpen(false);
-      setEditModalOpen(false);
-      setSelectedProgramme(null);
-    }
     setProgrammeToDelete(null);
   };
 
@@ -123,8 +88,6 @@ export default function ProgrammesPage() {
             programmes={programmes}
             loading={loading}
             showSearch={true}
-            onView={handleView}
-            onEdit={handleEdit}
             onDelete={handleDelete}
           />
         </div>
@@ -134,19 +97,6 @@ export default function ProgrammesPage() {
         open={addDialogOpen}
         onOpenChange={setAddDialogOpen}
         onSuccess={handleAddSuccess}
-      />
-
-      <ProgrammeDetailDrawer
-        programme={selectedProgramme}
-        open={drawerOpen}
-        onOpenChange={setDrawerOpen}
-      />
-
-      <EditProgrammeModal
-        programme={selectedProgramme}
-        open={editModalOpen}
-        onOpenChange={setEditModalOpen}
-        onSuccess={handleEditSuccess}
       />
 
       <DeleteProgrammeDialog

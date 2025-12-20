@@ -35,7 +35,7 @@ export function AddExamDialog({
 }: AddExamDialogProps) {
   const [loading, setLoading] = useState(false);
   const [formData, setFormData] = useState({
-    name: "Certificate II Examination" as ExamType,
+    exam_type: "Certificate II Examination" as ExamType,
     description: "",
     year: new Date().getFullYear(),
     series: "MAY/JUNE" as ExamSeries,
@@ -62,7 +62,7 @@ export function AddExamDialog({
       }
 
       await createExam({
-        name: formData.name,
+        exam_type: formData.exam_type,
         description: formData.description || null,
         year: formData.year,
         series: formData.series,
@@ -70,7 +70,7 @@ export function AddExamDialog({
       });
       toast.success("Examination created successfully");
       setFormData({
-        name: "Certificate II Examination",
+        exam_type: "Certificate II Examination",
         description: "",
         year: new Date().getFullYear(),
         series: "MAY/JUNE",
@@ -99,7 +99,7 @@ export function AddExamDialog({
   };
 
   const handleNameChange = (value: ExamType) => {
-    setFormData((prev) => ({ ...prev, name: value }));
+    setFormData((prev) => ({ ...prev, exam_type: value }));
   };
 
   const handleSeriesChange = (value: ExamSeries) => {
@@ -108,7 +108,7 @@ export function AddExamDialog({
 
   const handleCancel = () => {
     setFormData({
-      name: "Certificate II Examination",
+      exam_type: "Certificate II Examination",
       description: "",
       year: new Date().getFullYear(),
       series: "MAY/JUNE",
@@ -133,7 +133,7 @@ export function AddExamDialog({
                 Examination Name <span className="text-destructive">*</span>
               </label>
               <Select
-                value={formData.name}
+                value={formData.exam_type}
                 onValueChange={handleNameChange}
                 disabled={loading}
               >

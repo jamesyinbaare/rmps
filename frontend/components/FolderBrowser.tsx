@@ -337,7 +337,7 @@ export function FolderBrowser({
                   className="flex flex-col items-center rounded-lg border border-border bg-card p-4 transition-all hover:border-primary/50 hover:shadow-md aspect-square"
                 >
                   <Folder className="h-12 w-12 text-muted-foreground mb-2" />
-                  <p className="text-sm font-medium text-center truncate w-full">{exam.name}</p>
+                  <p className="text-sm font-medium text-center truncate w-full">{exam.exam_type}</p>
                   <p className="text-xs text-muted-foreground mt-1">{exam.year}</p>
                 </button>
               ))}

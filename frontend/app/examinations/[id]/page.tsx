@@ -5,9 +5,11 @@ import { useParams, useRouter } from "next/navigation";
 import { DashboardLayout } from "@/components/DashboardLayout";
 import { TopBar } from "@/components/TopBar";
 import { ExamSubjectCard } from "@/components/ExamSubjectCard";
+import { EditExamModal } from "@/components/EditExamModal";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import {
   Select,
   SelectContent,
@@ -17,7 +19,7 @@ import {
 } from "@/components/ui/select";
 import { getExam, listExamSubjects, type ExamSubject } from "@/lib/api";
 import type { Exam } from "@/types/document";
-import { ArrowLeft, Search, X, ClipboardList } from "lucide-react";
+import { ArrowLeft, Search, X, ClipboardList, Edit, Calendar } from "lucide-react";
 
 export default function ExaminationDetailPage() {
   const params = useParams();
@@ -30,6 +32,7 @@ export default function ExaminationDetailPage() {
   const [error, setError] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState<string>("");
   const [subjectTypeFilter, setSubjectTypeFilter] = useState<"ALL" | "CORE" | "ELECTIVE">("ALL");
+  const [editModalOpen, setEditModalOpen] = useState(false);
 
   // Load examination data
   useEffect(() => {
@@ -84,6 +87,17 @@ export default function ExaminationDetailPage() {
     );
   };
 
+  const handleEditSuccess = async () => {
+    if (!examId) return;
+    try {
+      const updatedExam = await getExam(examId);
+      setExam(updatedExam);
+    } catch (error) {
+      console.error("Error refreshing examination:", error);
+    }
+    setEditModalOpen(false);
+  };
+
   if (loading) {
     return (
       <DashboardLayout title="Examination Details">
@@ -131,7 +145,7 @@ export default function ExaminationDetailPage() {
     <DashboardLayout title="Examination Details">
       <div className="flex flex-1 flex-col overflow-hidden">
         <TopBar
-          title={`${exam.name} - ${exam.year} ${exam.series}`}
+          title={`${exam.exam_type} - ${exam.year} ${exam.series}`}
         />
         <div className="flex-1 overflow-y-auto p-6">
           {/* Header with back button */}
@@ -144,22 +158,61 @@ export default function ExaminationDetailPage() {
               <ArrowLeft className="h-4 w-4 mr-2" />
               Back to Examinations
             </Button>
-            <div className="flex items-center gap-2 mb-4">
-              <ClipboardList className="h-5 w-5 text-muted-foreground" />
-              <h1 className="text-2xl font-semibold">{exam.name}</h1>
-            </div>
-            <div className="text-sm text-muted-foreground">
-              <span>{exam.year}</span>
-              <span className="mx-2">•</span>
-              <span>{exam.series}</span>
-              {exam.description && (
-                <>
-                  <span className="mx-2">•</span>
-                  <span>{exam.description}</span>
-                </>
-              )}
-            </div>
           </div>
+
+          {/* Exam Information Card */}
+          <Card className="mb-6">
+            <CardHeader>
+              <div className="flex items-center justify-between">
+                <CardTitle className="flex items-center gap-2">
+                  <ClipboardList className="h-5 w-5" />
+                  Examination Information
+                </CardTitle>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => setEditModalOpen(true)}
+                  className="gap-2"
+                >
+                  <Edit className="h-4 w-4" />
+                  Edit
+                </Button>
+              </div>
+            </CardHeader>
+            <CardContent className="space-y-3">
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div className="flex items-center gap-2">
+                  <span className="text-sm text-muted-foreground">Exam Type:</span>
+                  <span className="text-sm font-medium">{exam.exam_type}</span>
+                </div>
+                <div className="flex items-center gap-2">
+                  <span className="text-sm text-muted-foreground">Year:</span>
+                  <span className="text-sm font-medium">{exam.year}</span>
+                </div>
+                <div className="flex items-center gap-2">
+                  <span className="text-sm text-muted-foreground">Series:</span>
+                  <span className="text-sm font-medium">{exam.series}</span>
+                </div>
+                <div className="flex items-center gap-2">
+                  <span className="text-sm text-muted-foreground">Number of Series:</span>
+                  <span className="text-sm font-medium">{exam.number_of_series}</span>
+                </div>
+                {exam.description && (
+                  <div className="flex items-start gap-2 md:col-span-2">
+                    <span className="text-sm text-muted-foreground">Description:</span>
+                    <span className="text-sm font-medium">{exam.description}</span>
+                  </div>
+                )}
+                <div className="flex items-center gap-2">
+                  <Calendar className="h-4 w-4 text-muted-foreground" />
+                  <span className="text-sm text-muted-foreground">Created:</span>
+                  <span className="text-sm font-medium">
+                    {new Date(exam.created_at).toLocaleDateString()}
+                  </span>
+                </div>
+              </div>
+            </CardContent>
+          </Card>
 
           {/* Search and Filter Controls */}
           <div className="mb-6 flex flex-col sm:flex-row gap-4">
@@ -228,6 +281,13 @@ export default function ExaminationDetailPage() {
           )}
         </div>
       </div>
+
+      <EditExamModal
+        exam={exam}
+        open={editModalOpen}
+        onOpenChange={setEditModalOpen}
+        onSuccess={handleEditSuccess}
+      />
     </DashboardLayout>
   );
 }

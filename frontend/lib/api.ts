@@ -214,7 +214,7 @@ export function findExamId(
   year: number
 ): number | null {
   const exam = exams.find(
-    (e) => e.name === examType && e.series === series && e.year === year
+    (e) => e.exam_type === examType && e.series === series && e.year === year
   );
   return exam ? exam.id : null;
 }
@@ -255,8 +255,8 @@ export async function getExamsWithDocuments(): Promise<Exam[]> {
     }
   }
 
-  // Return exams sorted by name
-  return exams.sort((a, b) => a.name.localeCompare(b.name));
+  // Return exams sorted by exam_type
+  return exams.sort((a, b) => a.exam_type.localeCompare(b.exam_type));
 }
 
 /**
@@ -428,6 +428,8 @@ export interface ProgrammeSubject {
   subject_code: string;
   subject_name: string;
   subject_type: SubjectType;
+  is_compulsory: boolean | null;
+  choice_group_id: number | null;
   created_at: string;
 }
 
@@ -436,17 +438,40 @@ export async function listProgrammeSubjects(programmeId: number): Promise<Progra
   return handleResponse<ProgrammeSubject[]>(response);
 }
 
+export interface ProgrammeSubjectAssociationCreate {
+  is_compulsory?: boolean | null;
+  choice_group_id?: number | null;
+}
+
+export interface ProgrammeSubjectAssociationUpdate {
+  is_compulsory?: boolean | null;
+  choice_group_id?: number | null;
+}
+
+export interface ProgrammeSubjectAssociation {
+  programme_id: number;
+  subject_id: number;
+  subject_type: SubjectType;
+  is_compulsory: boolean | null;
+  choice_group_id: number | null;
+}
+
 export async function addSubjectToProgramme(
   programmeId: number,
-  subjectId: number
-): Promise<{ programme_id: number; subject_id: number; subject_type: SubjectType }> {
+  subjectId: number,
+  associationData?: ProgrammeSubjectAssociationCreate
+): Promise<ProgrammeSubjectAssociation> {
   const response = await fetch(
     `${API_BASE_URL}/api/v1/programmes/${programmeId}/subjects/${subjectId}`,
     {
       method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(associationData || {}),
     }
   );
-  return handleResponse<{ programme_id: number; subject_id: number; subject_type: SubjectType }>(response);
+  return handleResponse<ProgrammeSubjectAssociation>(response);
 }
 
 export async function removeSubjectFromProgramme(
@@ -468,15 +493,58 @@ export async function removeSubjectFromProgramme(
 export async function updateProgrammeSubject(
   programmeId: number,
   subjectId: number,
-  subjectType: SubjectType
-): Promise<{ programme_id: number; subject_id: number; subject_type: SubjectType }> {
+  updateData: ProgrammeSubjectAssociationUpdate
+): Promise<ProgrammeSubjectAssociation> {
   const response = await fetch(
-    `${API_BASE_URL}/api/v1/programmes/${programmeId}/subjects/${subjectId}?subject_type=${subjectType}`,
+    `${API_BASE_URL}/api/v1/programmes/${programmeId}/subjects/${subjectId}`,
     {
       method: "PUT",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(updateData),
     }
   );
-  return handleResponse<{ programme_id: number; subject_id: number; subject_type: SubjectType }>(response);
+  return handleResponse<ProgrammeSubjectAssociation>(response);
+}
+
+export interface SubjectChoiceGroup {
+  choice_group_id: number;
+  subjects: ProgrammeSubject[];
+}
+
+export interface ProgrammeSubjectRequirements {
+  compulsory_core: ProgrammeSubject[];
+  optional_core_groups: SubjectChoiceGroup[];
+  electives: ProgrammeSubject[];
+}
+
+export async function getProgrammeSubjectRequirements(
+  programmeId: number
+): Promise<ProgrammeSubjectRequirements> {
+  const response = await fetch(
+    `${API_BASE_URL}/api/v1/programmes/${programmeId}/subject-requirements`
+  );
+  return handleResponse<ProgrammeSubjectRequirements>(response);
+}
+
+export interface SubjectRequirementsValidationResponse {
+  is_valid: boolean;
+  exam_series: string;
+  is_applicable: boolean;
+  errors: string[];
+  programme_id: number | null;
+  programme_name: string | null;
+}
+
+export async function validateCandidateSubjectRequirements(
+  candidateId: number,
+  examId: number
+): Promise<SubjectRequirementsValidationResponse> {
+  const response = await fetch(
+    `${API_BASE_URL}/api/v1/candidates/${candidateId}/exams/${examId}/subject-requirements-validation`
+  );
+  return handleResponse<SubjectRequirementsValidationResponse>(response);
 }
 
 // Candidate API Functions
@@ -742,7 +810,7 @@ export async function getExam(id: number): Promise<Exam> {
 }
 
 export async function createExam(data: {
-  name: string;
+  exam_type: string;
   description?: string | null;
   year: number;
   series: string;
@@ -761,7 +829,7 @@ export async function createExam(data: {
 export async function updateExam(
   id: number,
   data: {
-    name?: string;
+    exam_type?: string;
     description?: string | null;
     year?: number;
     series?: string;

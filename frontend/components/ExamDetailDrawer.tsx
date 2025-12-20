@@ -88,7 +88,7 @@ export function ExamDetailDrawer({
         <SheetHeader>
           <SheetTitle className="flex items-center gap-2">
             <ClipboardList className="h-5 w-5" />
-            {displayExam.name}
+            {displayExam.exam_type}
           </SheetTitle>
           <SheetDescription>
             {displayExam.year} - {displayExam.series}
@@ -113,7 +113,7 @@ export function ExamDetailDrawer({
                 <CardContent className="space-y-2">
                   <div className="flex items-center gap-2">
                     <span className="text-sm text-muted-foreground">Name:</span>
-                    <span className="text-sm font-medium">{displayExam.name}</span>
+                    <span className="text-sm font-medium">{displayExam.exam_type}</span>
                   </div>
                   <div className="flex items-center gap-2">
                     <span className="text-sm text-muted-foreground">Year:</span>

@@ -37,7 +37,7 @@ export function EditExamModal({
 }: EditExamModalProps) {
   const [loading, setLoading] = useState(false);
   const [formData, setFormData] = useState({
-    name: "Certificate II Examination" as ExamType,
+    exam_type: "Certificate II Examination" as ExamType,
     description: "",
     year: new Date().getFullYear(),
     series: "MAY/JUNE" as ExamSeries,
@@ -47,7 +47,7 @@ export function EditExamModal({
   useEffect(() => {
     if (exam) {
       setFormData({
-        name: exam.name as ExamType,
+        exam_type: exam.exam_type as ExamType,
         description: exam.description || "",
         year: exam.year,
         series: exam.series as ExamSeries,
@@ -77,7 +77,7 @@ export function EditExamModal({
       }
 
       await updateExam(exam.id, {
-        name: formData.name,
+        exam_type: formData.exam_type,
         description: formData.description || null,
         year: formData.year,
         series: formData.series,
@@ -107,7 +107,7 @@ export function EditExamModal({
   };
 
   const handleNameChange = (value: ExamType) => {
-    setFormData((prev) => ({ ...prev, name: value }));
+    setFormData((prev) => ({ ...prev, exam_type: value }));
   };
 
   const handleSeriesChange = (value: ExamSeries) => {
@@ -117,7 +117,7 @@ export function EditExamModal({
   const handleCancel = () => {
     if (exam) {
       setFormData({
-        name: exam.name as ExamType,
+        exam_type: exam.exam_type as ExamType,
         description: exam.description || "",
         year: exam.year,
         series: exam.series as ExamSeries,
@@ -145,7 +145,7 @@ export function EditExamModal({
                 Examination Name <span className="text-destructive">*</span>
               </label>
               <Select
-                value={formData.name}
+                value={formData.exam_type}
                 onValueChange={handleNameChange}
                 disabled={loading}
               >

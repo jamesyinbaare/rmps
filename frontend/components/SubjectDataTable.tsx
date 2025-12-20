@@ -1,6 +1,7 @@
 "use client";
 
 import { useMemo, useState } from "react";
+import { useRouter } from "next/navigation";
 import {
   ColumnDef,
   flexRender,
@@ -22,14 +23,12 @@ import {
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
-import { BookOpen, Trash2, Search, X, Eye, Edit, Trash } from "lucide-react";
+import { BookOpen, Trash2, Search, X, Trash } from "lucide-react";
 
 interface SubjectDataTableProps {
   subjects: Subject[];
   loading?: boolean;
   showSearch?: boolean;
-  onView?: (subject: Subject) => void;
-  onEdit?: (subject: Subject) => void;
   onDelete?: (subject: Subject) => void;
 }
 
@@ -37,10 +36,9 @@ export function SubjectDataTable({
   subjects,
   loading,
   showSearch = true,
-  onView,
-  onEdit,
   onDelete,
 }: SubjectDataTableProps) {
+  const router = useRouter();
   const [sorting, setSorting] = useState<SortingState>([]);
   const [globalFilter, setGlobalFilter] = useState("");
 
@@ -92,34 +90,6 @@ export function SubjectDataTable({
             const subject = row.original;
             return (
               <div className="flex items-center gap-2">
-                {onView && (
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      onView(subject);
-                    }}
-                    className="hover:bg-accent"
-                  >
-                    <Eye className="h-4 w-4 mr-1" />
-                    View
-                  </Button>
-                )}
-                {onEdit && (
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      onEdit(subject);
-                    }}
-                    className="hover:bg-accent"
-                  >
-                    <Edit className="h-4 w-4 mr-1" />
-                    Edit
-                  </Button>
-                )}
                 {onDelete && (
                   <Button
                     variant="ghost"
@@ -142,7 +112,7 @@ export function SubjectDataTable({
 
       return cols;
     },
-    [onView, onEdit, onDelete]
+    [onDelete, router]
   );
 
   const table = useReactTable({
@@ -247,21 +217,26 @@ export function SubjectDataTable({
           </TableHeader>
           <TableBody>
             {table.getRowModel().rows?.length ? (
-              table.getRowModel().rows.map((row) => (
-                <TableRow
-                  key={row.id}
-                  data-state={row.getIsSelected() && "selected"}
-                >
-                  {row.getVisibleCells().map((cell) => (
-                    <TableCell key={cell.id}>
-                      {flexRender(
-                        cell.column.columnDef.cell,
-                        cell.getContext()
-                      )}
-                    </TableCell>
-                  ))}
-                </TableRow>
-              ))
+              table.getRowModel().rows.map((row) => {
+                const subject = row.original;
+                return (
+                  <TableRow
+                    key={row.id}
+                    data-state={row.getIsSelected() && "selected"}
+                    onClick={() => router.push(`/subjects/${subject.id}`)}
+                    className="cursor-pointer hover:bg-muted/50"
+                  >
+                    {row.getVisibleCells().map((cell) => (
+                      <TableCell key={cell.id}>
+                        {flexRender(
+                          cell.column.columnDef.cell,
+                          cell.getContext()
+                        )}
+                      </TableCell>
+                    ))}
+                  </TableRow>
+                );
+              })
             ) : (
               <TableRow>
                 <TableCell

@@ -1,25 +1,23 @@
 "use client";
 
 import { useState, useEffect } from "react";
-import {
-  Sheet,
-  SheetContent,
-  SheetDescription,
-  SheetHeader,
-  SheetTitle,
-} from "@/components/ui/sheet";
-import type { Programme } from "@/types/document";
-import {
-  listProgrammeSubjects,
-  getProgrammeSubjectRequirements,
-  type ProgrammeSubject,
-  type ProgrammeSubjectRequirements,
-} from "@/lib/api";
+import { useParams, useRouter } from "next/navigation";
+import { DashboardLayout } from "@/components/DashboardLayout";
+import { TopBar } from "@/components/TopBar";
+import { EditProgrammeModal } from "@/components/EditProgrammeModal";
+import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
-import { Button } from "@/components/ui/button";
-import { GraduationCap, BookOpen, Calendar, Info, Loader2 } from "lucide-react";
+import {
+  listProgrammeSubjects,
+  getProgrammeSubjectRequirements,
+  getProgramme,
+  type ProgrammeSubject,
+  type ProgrammeSubjectRequirements,
+} from "@/lib/api";
+import type { Programme } from "@/types/document";
+import { ArrowLeft, GraduationCap, Edit, Calendar, BookOpen, Info, Loader2 } from "lucide-react";
 import {
   Table,
   TableBody,
@@ -29,55 +27,59 @@ import {
   TableRow,
 } from "@/components/ui/table";
 
-interface ProgrammeDetailDrawerProps {
-  programme: Programme | null;
-  open: boolean;
-  onOpenChange: (open: boolean) => void;
-}
+export default function ProgrammeDetailPage() {
+  const params = useParams();
+  const router = useRouter();
+  const programmeId = params.id ? parseInt(params.id as string) : null;
 
-export function ProgrammeDetailDrawer({
-  programme,
-  open,
-  onOpenChange,
-}: ProgrammeDetailDrawerProps) {
+  const [programme, setProgramme] = useState<Programme | null>(null);
   const [subjects, setSubjects] = useState<ProgrammeSubject[]>([]);
   const [requirements, setRequirements] = useState<ProgrammeSubjectRequirements | null>(null);
-  const [loading, setLoading] = useState(false);
+  const [loading, setLoading] = useState(true);
+  const [subjectsLoading, setSubjectsLoading] = useState(false);
   const [requirementsLoading, setRequirementsLoading] = useState(false);
   const [showRequirements, setShowRequirements] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [editModalOpen, setEditModalOpen] = useState(false);
 
+  // Load programme data
   useEffect(() => {
-    const loadSubjects = async () => {
-      if (!programme || !open) {
-        setSubjects([]);
-        setRequirements(null);
-        setShowRequirements(false);
+    const loadProgramme = async () => {
+      if (!programmeId) {
+        setError("Invalid programme ID");
+        setLoading(false);
         return;
       }
 
       setLoading(true);
       setError(null);
       try {
-        const subjectsData = await listProgrammeSubjects(programme.id);
-        setSubjects(subjectsData);
+        const programmeData = await getProgramme(programmeId);
+        setProgramme(programmeData);
+
+        // Load subjects
+        setSubjectsLoading(true);
+        try {
+          const subjectsData = await listProgrammeSubjects(programmeId);
+          setSubjects(subjectsData);
+        } catch (err) {
+          console.error("Failed to load programme subjects:", err);
+        } finally {
+          setSubjectsLoading(false);
+        }
       } catch (err) {
-        setError(
-          err instanceof Error
-            ? err.message
-            : "Failed to load programme subjects"
-        );
-        console.error("Failed to load subjects:", err);
+        setError(err instanceof Error ? err.message : "Failed to load programme");
+        console.error("Error loading programme:", err);
       } finally {
         setLoading(false);
       }
     };
 
-    loadSubjects();
-  }, [programme, open]);
+    loadProgramme();
+  }, [programmeId]);
 
   const loadRequirements = async () => {
-    if (!programme) return;
+    if (!programmeId) return;
 
     if (requirements !== null) {
       // Toggle visibility if already loaded
@@ -88,7 +90,7 @@ export function ProgrammeDetailDrawer({
     setRequirementsLoading(true);
     setError(null);
     try {
-      const reqs = await getProgrammeSubjectRequirements(programme.id);
+      const reqs = await getProgrammeSubjectRequirements(programmeId);
       setRequirements(reqs);
       setShowRequirements(true);
     } catch (err) {
@@ -104,42 +106,110 @@ export function ProgrammeDetailDrawer({
     }
   };
 
-  if (!programme) return null;
+  const handleEditSuccess = async () => {
+    if (!programmeId) return;
+    try {
+      const updatedProgramme = await getProgramme(programmeId);
+      setProgramme(updatedProgramme);
+    } catch (error) {
+      console.error("Error refreshing programme:", error);
+    }
+    setEditModalOpen(false);
+  };
+
+  if (loading) {
+    return (
+      <DashboardLayout title="Programme Details">
+        <div className="flex flex-1 flex-col overflow-hidden">
+          <TopBar title="Loading..." />
+          <div className="flex-1 overflow-y-auto p-6">
+            <div className="space-y-4">
+              <Skeleton className="h-8 w-64" />
+              <Skeleton className="h-48 w-full" />
+              <Skeleton className="h-64 w-full" />
+            </div>
+          </div>
+        </div>
+      </DashboardLayout>
+    );
+  }
+
+  if (error || !programme) {
+    return (
+      <DashboardLayout title="Programme Details">
+        <div className="flex flex-1 flex-col overflow-hidden">
+          <TopBar title="Error" />
+          <div className="flex-1 overflow-y-auto p-6">
+            <div className="rounded-lg bg-destructive/10 border border-destructive/20 p-4 text-destructive">
+              {error || "Programme not found"}
+            </div>
+            <Button
+              variant="outline"
+              className="mt-4"
+              onClick={() => router.push("/programmes")}
+            >
+              <ArrowLeft className="h-4 w-4 mr-2" />
+              Back to Programmes
+            </Button>
+          </div>
+        </div>
+      </DashboardLayout>
+    );
+  }
 
   return (
-    <Sheet open={open} onOpenChange={onOpenChange}>
-      <SheetContent side="right" className="w-full sm:max-w-2xl overflow-y-auto">
-        <SheetHeader>
-          <SheetTitle className="flex items-center gap-2">
-            <GraduationCap className="h-5 w-5" />
-            {programme.name}
-          </SheetTitle>
-          <SheetDescription>Code: {programme.code}</SheetDescription>
-        </SheetHeader>
+    <DashboardLayout title="Programme Details">
+      <div className="flex flex-1 flex-col overflow-hidden">
+        <TopBar title={`${programme.code} - ${programme.name}`} />
+        <div className="flex-1 overflow-y-auto p-6">
+          {/* Header with back button */}
+          <div className="mb-6">
+            <Button
+              variant="ghost"
+              onClick={() => router.push("/programmes")}
+              className="mb-4"
+            >
+              <ArrowLeft className="h-4 w-4 mr-2" />
+              Back to Programmes
+            </Button>
+          </div>
 
-        <div className="mt-6 space-y-6">
-          {/* Programme Basic Info */}
-          <Card>
+          {/* Programme Information Card */}
+          <Card className="mb-6">
             <CardHeader>
-              <CardTitle className="text-base">Programme Information</CardTitle>
+              <div className="flex items-center justify-between">
+                <CardTitle className="flex items-center gap-2">
+                  <GraduationCap className="h-5 w-5" />
+                  Programme Information
+                </CardTitle>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => setEditModalOpen(true)}
+                  className="gap-2"
+                >
+                  <Edit className="h-4 w-4" />
+                  Edit
+                </Button>
+              </div>
             </CardHeader>
-            <CardContent className="space-y-2">
-              <div className="flex items-center gap-2">
-                <span className="text-sm text-muted-foreground">Code:</span>
-                <span className="text-sm font-medium font-mono">
-                  {programme.code}
-                </span>
-              </div>
-              <div className="flex items-center gap-2">
-                <span className="text-sm text-muted-foreground">Name:</span>
-                <span className="text-sm font-medium">{programme.name}</span>
-              </div>
-              <div className="flex items-center gap-2">
-                <Calendar className="h-4 w-4 text-muted-foreground" />
-                <span className="text-sm text-muted-foreground">Created:</span>
-                <span className="text-sm font-medium">
-                  {new Date(programme.created_at).toLocaleDateString()}
-                </span>
+            <CardContent className="space-y-3">
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div className="flex items-center gap-2">
+                  <span className="text-sm text-muted-foreground">Code:</span>
+                  <span className="text-sm font-medium font-mono">{programme.code}</span>
+                </div>
+                <div className="flex items-center gap-2">
+                  <span className="text-sm text-muted-foreground">Name:</span>
+                  <span className="text-sm font-medium">{programme.name}</span>
+                </div>
+                <div className="flex items-center gap-2">
+                  <Calendar className="h-4 w-4 text-muted-foreground" />
+                  <span className="text-sm text-muted-foreground">Created:</span>
+                  <span className="text-sm font-medium">
+                    {new Date(programme.created_at).toLocaleDateString()}
+                  </span>
+                </div>
               </div>
             </CardContent>
           </Card>
@@ -156,7 +226,7 @@ export function ProgrammeDetailDrawer({
                   variant="outline"
                   size="sm"
                   onClick={loadRequirements}
-                  disabled={requirementsLoading || loading}
+                  disabled={requirementsLoading || subjectsLoading}
                 >
                   {requirementsLoading ? (
                     <>
@@ -173,7 +243,7 @@ export function ProgrammeDetailDrawer({
               </div>
             </CardHeader>
             <CardContent>
-              {loading ? (
+              {subjectsLoading ? (
                 <div className="space-y-2">
                   <Skeleton className="h-10 w-full" />
                   <Skeleton className="h-10 w-full" />
@@ -307,7 +377,14 @@ export function ProgrammeDetailDrawer({
             </CardContent>
           </Card>
         </div>
-      </SheetContent>
-    </Sheet>
+      </div>
+
+      <EditProgrammeModal
+        programme={programme}
+        open={editModalOpen}
+        onOpenChange={setEditModalOpen}
+        onSuccess={handleEditSuccess}
+      />
+    </DashboardLayout>
   );
 }

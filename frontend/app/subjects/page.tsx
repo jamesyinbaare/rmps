@@ -6,10 +6,8 @@ import { DashboardLayout } from "@/components/DashboardLayout";
 import { TopBar } from "@/components/TopBar";
 import { Button } from "@/components/ui/button";
 import { AddSubjectDialog } from "@/components/AddSubjectDialog";
-import { SubjectDetailDrawer } from "@/components/SubjectDetailDrawer";
-import { EditSubjectModal } from "@/components/EditSubjectModal";
 import { DeleteSubjectDialog } from "@/components/DeleteSubjectDialog";
-import { listSubjects, getSubject } from "@/lib/api";
+import { listSubjects } from "@/lib/api";
 import type { Subject } from "@/types/document";
 import { Plus } from "lucide-react";
 import { toast } from "sonner";
@@ -19,9 +17,6 @@ export default function SubjectsPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [addDialogOpen, setAddDialogOpen] = useState(false);
-  const [selectedSubject, setSelectedSubject] = useState<Subject | null>(null);
-  const [drawerOpen, setDrawerOpen] = useState(false);
-  const [editModalOpen, setEditModalOpen] = useState(false);
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
   const [subjectToDelete, setSubjectToDelete] = useState<Subject | null>(null);
 
@@ -55,33 +50,9 @@ export default function SubjectsPage() {
     loadSubjects();
   }, []);
 
-  const handleView = (subject: Subject) => {
-    setSelectedSubject(subject);
-    setDrawerOpen(true);
-  };
-
-  const handleEdit = (subject: Subject) => {
-    setSelectedSubject(subject);
-    setEditModalOpen(true);
-  };
-
   const handleAddSuccess = () => {
     setAddDialogOpen(false);
     loadSubjects();
-  };
-
-  const handleEditSuccess = async () => {
-    // Reload subjects to get updated data
-    await loadSubjects();
-    // Refresh drawer if it's open - reload the selected subject
-    if (drawerOpen && selectedSubject) {
-      try {
-        const updatedSubject = await getSubject(selectedSubject.id);
-        setSelectedSubject(updatedSubject);
-      } catch (error) {
-        console.error("Error refreshing subject:", error);
-      }
-    }
   };
 
   const handleDelete = (subject: Subject) => {
@@ -91,12 +62,6 @@ export default function SubjectsPage() {
 
   const handleDeleteSuccess = () => {
     loadSubjects();
-    // Close drawer/modal if the deleted subject is selected
-    if (selectedSubject?.id === subjectToDelete?.id) {
-      setDrawerOpen(false);
-      setEditModalOpen(false);
-      setSelectedSubject(null);
-    }
     setSubjectToDelete(null);
   };
 
@@ -123,8 +88,6 @@ export default function SubjectsPage() {
             subjects={subjects}
             loading={loading}
             showSearch={true}
-            onView={handleView}
-            onEdit={handleEdit}
             onDelete={handleDelete}
           />
         </div>
@@ -134,19 +97,6 @@ export default function SubjectsPage() {
         open={addDialogOpen}
         onOpenChange={setAddDialogOpen}
         onSuccess={handleAddSuccess}
-      />
-
-      <SubjectDetailDrawer
-        subject={selectedSubject}
-        open={drawerOpen}
-        onOpenChange={setDrawerOpen}
-      />
-
-      <EditSubjectModal
-        subject={selectedSubject}
-        open={editModalOpen}
-        onOpenChange={setEditModalOpen}
-        onSuccess={handleEditSuccess}
       />
 
       <DeleteSubjectDialog

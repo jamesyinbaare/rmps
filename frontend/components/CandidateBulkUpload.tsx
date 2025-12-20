@@ -123,7 +123,7 @@ export function CandidateBulkUpload({ open, onOpenChange, onUploadSuccess }: Can
   };
 
   const formatExamName = (exam: Exam) => {
-    return `${exam.name} - ${exam.series} ${exam.year}`;
+    return `${exam.exam_type} - ${exam.series} ${exam.year}`;
   };
 
   return (

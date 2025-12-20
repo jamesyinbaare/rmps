@@ -75,7 +75,7 @@ export function DeleteExamDialog({
 
         <div className="py-4">
           <div className="rounded-lg border border-destructive/20 bg-destructive/5 p-4">
-            <p className="text-sm font-medium">{exam.name}</p>
+            <p className="text-sm font-medium">{exam.exam_type}</p>
             <div className="mt-2 space-y-1">
               <p className="text-xs text-muted-foreground">
                 Year: {exam.year} | Series: {exam.series}

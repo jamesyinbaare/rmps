@@ -1,6 +1,7 @@
 "use client";
 
 import { useMemo, useState } from "react";
+import { useRouter } from "next/navigation";
 import {
   ColumnDef,
   flexRender,
@@ -21,7 +22,7 @@ import {
 } from "@/components/ui/table";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { GraduationCap, Trash2, Search, X, Eye, Edit, Trash } from "lucide-react";
+import { GraduationCap, Trash2, Search, X, Trash } from "lucide-react";
 import { toast } from "sonner";
 
 interface ProgrammeDataTableProps {
@@ -30,8 +31,6 @@ interface ProgrammeDataTableProps {
   schoolId?: number;
   onRemove?: (programmeId: number) => Promise<void>;
   showSearch?: boolean;
-  onView?: (programme: Programme) => void;
-  onEdit?: (programme: Programme) => void;
   onDelete?: (programme: Programme) => void;
 }
 
@@ -41,10 +40,9 @@ export function ProgrammeDataTable({
   schoolId,
   onRemove,
   showSearch = true,
-  onView,
-  onEdit,
   onDelete,
 }: ProgrammeDataTableProps) {
+  const router = useRouter();
   const [sorting, setSorting] = useState<SortingState>([]);
   const [globalFilter, setGlobalFilter] = useState("");
   const [removingId, setRemovingId] = useState<number | null>(null);
@@ -111,34 +109,6 @@ export function ProgrammeDataTable({
           const isRemoving = removingId === programme.id;
           return (
             <div className="flex items-center gap-2">
-              {onView && (
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    onView(programme);
-                  }}
-                  className="hover:bg-accent"
-                >
-                  <Eye className="h-4 w-4 mr-1" />
-                  View
-                </Button>
-              )}
-              {onEdit && (
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    onEdit(programme);
-                  }}
-                  className="hover:bg-accent"
-                >
-                  <Edit className="h-4 w-4 mr-1" />
-                  Edit
-                </Button>
-              )}
               {onRemove && (
                 <Button
                   variant="ghost"
@@ -175,7 +145,7 @@ export function ProgrammeDataTable({
 
       return cols;
     },
-    [removingId, onRemove, schoolId, onView, onEdit, onDelete]
+    [removingId, onRemove, schoolId, onDelete, router]
   );
 
   const table = useReactTable({
@@ -281,21 +251,28 @@ export function ProgrammeDataTable({
         </TableHeader>
         <TableBody>
           {table.getRowModel().rows?.length ? (
-            table.getRowModel().rows.map((row) => (
-              <TableRow
-                key={row.id}
-                data-state={row.getIsSelected() && "selected"}
-              >
-                {row.getVisibleCells().map((cell) => (
-                  <TableCell key={cell.id}>
-                    {flexRender(
-                      cell.column.columnDef.cell,
-                      cell.getContext()
-                    )}
-                  </TableCell>
-                ))}
-              </TableRow>
-            ))
+            table.getRowModel().rows.map((row) => {
+              const programme = row.original;
+              // Only make rows clickable if not in school context
+              const isClickable = !schoolId;
+              return (
+                <TableRow
+                  key={row.id}
+                  data-state={row.getIsSelected() && "selected"}
+                  onClick={isClickable ? () => router.push(`/programmes/${programme.id}`) : undefined}
+                  className={isClickable ? "cursor-pointer hover:bg-muted/50" : ""}
+                >
+                  {row.getVisibleCells().map((cell) => (
+                    <TableCell key={cell.id}>
+                      {flexRender(
+                        cell.column.columnDef.cell,
+                        cell.getContext()
+                      )}
+                    </TableCell>
+                  ))}
+                </TableRow>
+              );
+            })
           ) : (
             <TableRow>
               <TableCell

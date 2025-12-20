@@ -154,7 +154,7 @@ export function DocumentUpload({ open, onOpenChange, onUploadSuccess }: Document
             <SelectContent>
               {exams.map((exam) => (
                 <SelectItem key={exam.id} value={exam.id.toString()}>
-                  {exam.name} ({exam.year})
+                  {exam.exam_type} ({exam.year})
                 </SelectItem>
               ))}
             </SelectContent>

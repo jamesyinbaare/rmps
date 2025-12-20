@@ -217,12 +217,12 @@ export default function SchoolCandidatesPage() {
 
   // Get available exam series and years based on exam type
   const availableSeries = examType
-    ? Array.from(new Set(exams.filter((e) => e.name === examType).map((e) => e.series as ExamSeries)))
+    ? Array.from(new Set(exams.filter((e) => e.exam_type === examType).map((e) => e.series as ExamSeries)))
     : Array.from(new Set(exams.map((e) => e.series as ExamSeries)));
 
   let filteredExamsForYears = exams;
   if (examType) {
-    filteredExamsForYears = filteredExamsForYears.filter((e) => e.name === examType);
+    filteredExamsForYears = filteredExamsForYears.filter((e) => e.exam_type === examType);
   }
   if (examSeries) {
     filteredExamsForYears = filteredExamsForYears.filter((e) => e.series === examSeries);
@@ -247,7 +247,7 @@ export default function SchoolCandidatesPage() {
       for (const exam of candidateExams) {
         let examMatches = true;
 
-        if (examType && exam.name !== examType) {
+        if (examType && exam.exam_type !== examType) {
           examMatches = false;
         }
         if (examSeries && exam.series !== examSeries) {
@@ -355,7 +355,7 @@ export default function SchoolCandidatesPage() {
                     </SelectTrigger>
                     <SelectContent>
                       <SelectItem value="all">All Exam Types</SelectItem>
-                      {Array.from(new Set(exams.map((e) => e.name as ExamType))).map((type) => (
+                      {Array.from(new Set(exams.map((e) => e.exam_type as ExamType))).map((type) => (
                         <SelectItem key={type} value={type}>
                           {type === "Certificate II Examination" ? "Certificate II" : type}
                         </SelectItem>

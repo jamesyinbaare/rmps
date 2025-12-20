@@ -231,7 +231,7 @@ export default function ManualEntryPage() {
                       <SelectValue placeholder="Select Exam Type" />
                     </SelectTrigger>
                     <SelectContent>
-                      {Array.from(new Set(exams.map((e) => e.name as ExamType))).map((type) => (
+                      {Array.from(new Set(exams.map((e) => e.exam_type as ExamType))).map((type) => (
                         <SelectItem key={type} value={type}>
                           {type === "Certificate II Examination" ? "Certificate II" : type}
                         </SelectItem>
@@ -253,7 +253,7 @@ export default function ManualEntryPage() {
                     <SelectContent>
                       {Array.from(new Set(
                         examType
-                          ? exams.filter((e) => e.name === examType).map((e) => e.series as ExamSeries)
+                          ? exams.filter((e) => e.exam_type === examType).map((e) => e.series as ExamSeries)
                           : exams.map((e) => e.series as ExamSeries)
                       )).map((series) => (
                         <SelectItem key={series} value={series}>
@@ -278,7 +278,7 @@ export default function ManualEntryPage() {
                       {Array.from(new Set(
                         (() => {
                           let filtered = exams;
-                          if (examType) filtered = filtered.filter((e) => e.name === examType);
+                          if (examType) filtered = filtered.filter((e) => e.exam_type === examType);
                           if (examSeries) filtered = filtered.filter((e) => e.series === examSeries);
                           return filtered.map((e) => e.year);
                         })()

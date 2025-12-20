@@ -22,7 +22,7 @@ export function Breadcrumbs({ exam, school, subject }: BreadcrumbsProps) {
   ];
 
   if (exam) {
-    items.push({ label: exam.name, href: `/folders?exam=${exam.id}` });
+    items.push({ label: exam.exam_type, href: `/folders?exam=${exam.id}` });
   }
 
   if (exam && school) {
