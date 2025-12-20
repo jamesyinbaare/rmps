@@ -315,7 +315,7 @@ export default function ScoreDataEntryPage() {
           <div className="flex items-center gap-2 flex-wrap">
             {/* Examination Type */}
             <Select
-              value={examType || ""}
+              value={examType || "all"}
               onValueChange={handleExamTypeChange}
               disabled={loadingFilters}
             >
@@ -334,7 +334,7 @@ export default function ScoreDataEntryPage() {
 
             {/* Examination Series */}
             <Select
-              value={examSeries || ""}
+              value={examSeries || "all"}
               onValueChange={handleExamSeriesChange}
               disabled={loadingFilters || !examType}
             >
@@ -353,7 +353,7 @@ export default function ScoreDataEntryPage() {
 
             {/* Examination Year */}
             <Select
-              value={examYear?.toString() || ""}
+              value={examYear?.toString() || "all"}
               onValueChange={handleExamYearChange}
               disabled={loadingFilters || !examType || !examSeries}
             >

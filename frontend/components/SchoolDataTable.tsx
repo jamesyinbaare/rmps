@@ -5,12 +5,14 @@ import {
   ColumnDef,
   flexRender,
   getCoreRowModel,
+  getFilteredRowModel,
   getSortedRowModel,
   SortingState,
   useReactTable,
+  VisibilityState,
 } from "@tanstack/react-table";
 import { useRouter } from "next/navigation";
-import { Building2 } from "lucide-react";
+import { Building2, Search, X, Eye } from "lucide-react";
 import type { School } from "@/types/document";
 import {
   Table,
@@ -21,6 +23,9 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import { Checkbox } from "@/components/ui/checkbox";
 
 interface SchoolDataTableProps {
   schools: School[];
@@ -30,6 +35,8 @@ interface SchoolDataTableProps {
 export function SchoolDataTable({ schools, loading }: SchoolDataTableProps) {
   const router = useRouter();
   const [sorting, setSorting] = useState<SortingState>([]);
+  const [globalFilter, setGlobalFilter] = useState("");
+  const [columnVisibility, setColumnVisibility] = useState<VisibilityState>({});
 
   const columns = useMemo<ColumnDef<School>[]>(
     () => [
@@ -37,7 +44,7 @@ export function SchoolDataTable({ schools, loading }: SchoolDataTableProps) {
         accessorKey: "code",
         header: "Code",
         cell: ({ row }) => (
-          <div className="font-medium">{row.getValue("code")}</div>
+          <div className="font-medium font-mono">{row.getValue("code")}</div>
         ),
       },
       {
@@ -46,6 +53,32 @@ export function SchoolDataTable({ schools, loading }: SchoolDataTableProps) {
         cell: ({ row }) => (
           <div className="font-medium">{row.getValue("name")}</div>
         ),
+      },
+      {
+        accessorKey: "region",
+        header: "Region",
+        cell: ({ row }) => (
+          <div className="text-muted-foreground">{row.getValue("region")}</div>
+        ),
+      },
+      {
+        accessorKey: "zone",
+        header: "Zone",
+        cell: ({ row }) => (
+          <div className="text-muted-foreground">{row.getValue("zone")}</div>
+        ),
+      },
+      {
+        accessorKey: "school_type",
+        header: "School Type",
+        cell: ({ row }) => {
+          const schoolType = row.getValue("school_type") as "private" | "public" | null;
+          return (
+            <div className="text-muted-foreground">
+              {schoolType ? schoolType.charAt(0).toUpperCase() + schoolType.slice(1) : "Not specified"}
+            </div>
+          );
+        },
       },
       {
         accessorKey: "created_at",
@@ -63,12 +96,27 @@ export function SchoolDataTable({ schools, loading }: SchoolDataTableProps) {
     data: schools,
     columns,
     getCoreRowModel: getCoreRowModel(),
+    getFilteredRowModel: getFilteredRowModel(),
     getSortedRowModel: getSortedRowModel(),
     onSortingChange: setSorting,
+    onGlobalFilterChange: setGlobalFilter,
+    onColumnVisibilityChange: setColumnVisibility,
+    globalFilterFn: (row, columnId, filterValue) => {
+      const school = row.original;
+      const searchValue = filterValue.toLowerCase();
+      return (
+        school.code.toLowerCase().includes(searchValue) ||
+        school.name.toLowerCase().includes(searchValue)
+      );
+    },
     state: {
       sorting,
+      globalFilter,
+      columnVisibility,
     },
   });
+
+  const filteredSchools = table.getFilteredRowModel().rows.map((row) => row.original);
 
   if (loading) {
     return (
@@ -89,8 +137,75 @@ export function SchoolDataTable({ schools, loading }: SchoolDataTableProps) {
   }
 
   return (
-    <div className="rounded-md border">
-      <Table>
+    <div className="space-y-4">
+      <div className="flex items-center gap-4">
+        <div className="relative flex-1">
+          <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+          <Input
+            type="search"
+            placeholder="Search by code or name..."
+            value={globalFilter}
+            onChange={(e) => setGlobalFilter(e.target.value)}
+            className="pl-9 pr-9"
+          />
+          {globalFilter && (
+            <Button
+              variant="ghost"
+              size="sm"
+              className="absolute right-1 top-1/2 h-6 w-6 -translate-y-1/2 p-0"
+              onClick={() => setGlobalFilter("")}
+            >
+              <X className="h-3 w-3" />
+            </Button>
+          )}
+        </div>
+        <Popover>
+          <PopoverTrigger asChild>
+            <Button variant="outline">
+              <Eye className="h-4 w-4 mr-2" />
+              Columns
+            </Button>
+          </PopoverTrigger>
+          <PopoverContent align="end" className="w-48">
+            <div className="space-y-2">
+              <div className="text-sm font-medium mb-2">Toggle columns</div>
+              {table
+                .getAllColumns()
+                .filter((column) => column.getCanHide())
+                .map((column) => {
+                  return (
+                    <div key={column.id} className="flex items-center space-x-2">
+                      <Checkbox
+                        checked={column.getIsVisible()}
+                        onCheckedChange={(checked) => column.toggleVisibility(checked)}
+                      />
+                      <label
+                        htmlFor={column.id}
+                        className="text-sm font-normal cursor-pointer"
+                      >
+                        {column.id === "code"
+                          ? "Code"
+                          : column.id === "name"
+                          ? "Name"
+                          : column.id === "region"
+                          ? "Region"
+                          : column.id === "zone"
+                          ? "Zone"
+                          : column.id === "school_type"
+                          ? "School Type"
+                          : column.id === "created_at"
+                          ? "Created"
+                          : column.id}
+                      </label>
+                    </div>
+                  );
+                })}
+            </div>
+          </PopoverContent>
+        </Popover>
+      </div>
+      <div className="rounded-md border">
+        <Table>
         <TableHeader>
           {table.getHeaderGroups().map((headerGroup) => (
             <TableRow key={headerGroup.id}>
@@ -142,6 +257,12 @@ export function SchoolDataTable({ schools, loading }: SchoolDataTableProps) {
           )}
         </TableBody>
       </Table>
+      </div>
+      {globalFilter && filteredSchools.length === 0 && (
+        <div className="text-center py-8 text-muted-foreground">
+          No schools match your search.
+        </div>
+      )}
     </div>
   );
 }

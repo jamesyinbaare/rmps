@@ -575,6 +575,7 @@ export async function createSchool(data: {
   name: string;
   region: string;
   zone: string;
+  school_type?: "private" | "public" | null;
 }): Promise<School> {
   const response = await fetch(`${API_BASE_URL}/api/v1/schools`, {
     method: "POST",
@@ -591,7 +592,15 @@ export async function getSchoolByCode(code: string): Promise<School> {
   return handleResponse<School>(response);
 }
 
-export async function updateSchool(code: string, data: { name?: string }): Promise<School> {
+export async function updateSchool(
+  code: string,
+  data: {
+    name?: string;
+    region?: string;
+    zone?: string;
+    school_type?: "private" | "public" | null;
+  }
+): Promise<School> {
   const response = await fetch(`${API_BASE_URL}/api/v1/schools/${code}`, {
     method: "PUT",
     headers: {

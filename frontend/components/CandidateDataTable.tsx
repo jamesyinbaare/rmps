@@ -6,6 +6,8 @@ import {
   flexRender,
   getCoreRowModel,
   getSortedRowModel,
+  getFilteredRowModel,
+  getPaginationRowModel,
   SortingState,
   useReactTable,
 } from "@tanstack/react-table";
@@ -19,7 +21,16 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import { UserCheck } from "lucide-react";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import { UserCheck, Search, X, ChevronLeft, ChevronRight } from "lucide-react";
 
 interface CandidateDataTableProps {
   candidates: Candidate[];
@@ -29,6 +40,11 @@ interface CandidateDataTableProps {
 
 export function CandidateDataTable({ candidates, loading, onSelect }: CandidateDataTableProps) {
   const [sorting, setSorting] = useState<SortingState>([]);
+  const [globalFilter, setGlobalFilter] = useState("");
+  const [pagination, setPagination] = useState({
+    pageIndex: 0,
+    pageSize: 20,
+  });
   const [programmeMap, setProgrammeMap] = useState<Map<number, string>>(new Map());
 
   // Fetch programme names for lookup
@@ -114,6 +130,28 @@ export function CandidateDataTable({ candidates, loading, onSelect }: CandidateD
         },
       },
     ],
+    [programmeMap, onSelect]
+  );
+
+  const globalFilterFn = useMemo(
+    () => (row: any, columnId: string, filterValue: string) => {
+      const searchValue = filterValue.toLowerCase();
+      const candidate = row.original as Candidate;
+      const programmeName = candidate.programme_id
+        ? programmeMap.get(candidate.programme_id)?.toLowerCase() || ""
+        : "";
+      const dob = candidate.date_of_birth
+        ? new Date(candidate.date_of_birth).toLocaleDateString().toLowerCase()
+        : "";
+
+      return (
+        candidate.name.toLowerCase().includes(searchValue) ||
+        candidate.index_number.toLowerCase().includes(searchValue) ||
+        programmeName.includes(searchValue) ||
+        dob.includes(searchValue) ||
+        (candidate.gender && candidate.gender.toLowerCase().includes(searchValue))
+      );
+    },
     [programmeMap]
   );
 
@@ -122,10 +160,17 @@ export function CandidateDataTable({ candidates, loading, onSelect }: CandidateD
     columns,
     getCoreRowModel: getCoreRowModel(),
     getSortedRowModel: getSortedRowModel(),
+    getFilteredRowModel: getFilteredRowModel(),
+    getPaginationRowModel: getPaginationRowModel(),
     onSortingChange: setSorting,
+    onPaginationChange: setPagination,
+    globalFilterFn,
     state: {
       sorting,
+      globalFilter,
+      pagination,
     },
+    onGlobalFilterChange: setGlobalFilter,
   });
 
   if (loading) {
@@ -146,58 +191,149 @@ export function CandidateDataTable({ candidates, loading, onSelect }: CandidateD
     );
   }
 
+  const filteredRows = table.getFilteredRowModel().rows;
+  const paginatedRows = table.getRowModel().rows;
+  const totalFiltered = filteredRows.length;
+  const startIndex = pagination.pageIndex * pagination.pageSize + 1;
+  const endIndex = Math.min(
+    startIndex + paginatedRows.length - 1,
+    totalFiltered
+  );
+
   return (
-    <div className="rounded-md border">
-      <Table>
-        <TableHeader>
-          {table.getHeaderGroups().map((headerGroup) => (
-            <TableRow key={headerGroup.id}>
-              {headerGroup.headers.map((header) => (
-                <TableHead key={header.id}>
-                  {header.isPlaceholder ? null : (
-                    <div
-                      className={
-                        header.column.getCanSort()
-                          ? "cursor-pointer select-none hover:text-foreground"
-                          : ""
-                      }
-                      onClick={header.column.getToggleSortingHandler()}
-                    >
-                      {flexRender(header.column.columnDef.header, header.getContext())}
-                      {{
-                        asc: " ↑",
-                        desc: " ↓",
-                      }[header.column.getIsSorted() as string] ?? null}
-                    </div>
-                  )}
-                </TableHead>
-              ))}
-            </TableRow>
-          ))}
-        </TableHeader>
-        <TableBody>
-          {table.getRowModel().rows?.length ? (
-            table.getRowModel().rows.map((row) => (
-              <TableRow
-                key={row.id}
-                data-state={row.getIsSelected() && "selected"}
-              >
-                {row.getVisibleCells().map((cell) => (
-                  <TableCell key={cell.id}>
-                    {flexRender(cell.column.columnDef.cell, cell.getContext())}
-                  </TableCell>
+    <div className="space-y-4">
+      {/* Search Input and Page Size Selector */}
+      <div className="flex items-center gap-4">
+        <div className="relative flex-1">
+          <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+          <Input
+            type="search"
+            placeholder="Search candidates..."
+            value={globalFilter}
+            onChange={(e) => setGlobalFilter(e.target.value)}
+            className="pl-9"
+          />
+          {globalFilter && (
+            <Button
+              variant="ghost"
+              size="sm"
+              className="absolute right-1 top-1/2 -translate-y-1/2 h-7 w-7 p-0"
+              onClick={() => setGlobalFilter("")}
+            >
+              <X className="h-4 w-4" />
+            </Button>
+          )}
+        </div>
+        {totalFiltered > 0 && (
+          <div className="flex items-center gap-2">
+            <span className="text-sm text-muted-foreground whitespace-nowrap">Rows per page:</span>
+            <Select
+              value={pagination.pageSize.toString()}
+              onValueChange={(value) => {
+                table.setPageSize(Number(value));
+              }}
+            >
+              <SelectTrigger className="h-8 w-[70px]">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="10">10</SelectItem>
+                <SelectItem value="20">20</SelectItem>
+                <SelectItem value="50">50</SelectItem>
+                <SelectItem value="100">100</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
+        )}
+      </div>
+
+      {/* Table */}
+      <div className="rounded-md border">
+        <Table>
+          <TableHeader>
+            {table.getHeaderGroups().map((headerGroup) => (
+              <TableRow key={headerGroup.id}>
+                {headerGroup.headers.map((header) => (
+                  <TableHead key={header.id}>
+                    {header.isPlaceholder ? null : (
+                      <div
+                        className={
+                          header.column.getCanSort()
+                            ? "cursor-pointer select-none hover:text-foreground"
+                            : ""
+                        }
+                        onClick={header.column.getToggleSortingHandler()}
+                      >
+                        {flexRender(header.column.columnDef.header, header.getContext())}
+                        {{
+                          asc: " ↑",
+                          desc: " ↓",
+                        }[header.column.getIsSorted() as string] ?? null}
+                      </div>
+                    )}
+                  </TableHead>
                 ))}
               </TableRow>
-            ))
-          ) : (
-            <TableRow>
-              <TableCell colSpan={columns.length} className="h-24 text-center">
-                No results.
-              </TableCell>
-            </TableRow>
-          )}
-        </TableBody>
-      </Table>
+            ))}
+          </TableHeader>
+          <TableBody>
+            {paginatedRows?.length ? (
+              paginatedRows.map((row) => (
+                <TableRow
+                  key={row.id}
+                  data-state={row.getIsSelected() && "selected"}
+                >
+                  {row.getVisibleCells().map((cell) => (
+                    <TableCell key={cell.id}>
+                      {flexRender(cell.column.columnDef.cell, cell.getContext())}
+                    </TableCell>
+                  ))}
+                </TableRow>
+              ))
+            ) : (
+              <TableRow>
+                <TableCell colSpan={columns.length} className="h-24 text-center">
+                  {globalFilter ? "No results found." : "No candidates available."}
+                </TableCell>
+              </TableRow>
+            )}
+          </TableBody>
+        </Table>
+      </div>
+
+      {/* Pagination Controls */}
+      {totalFiltered > 0 && (
+        <div className="flex items-center justify-between">
+          <p className="text-sm text-muted-foreground">
+            Showing {startIndex} to {endIndex} of {totalFiltered} candidate{totalFiltered !== 1 ? "s" : ""}
+          </p>
+          <div className="flex items-center gap-2">
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => table.previousPage()}
+              disabled={!table.getCanPreviousPage()}
+            >
+              <ChevronLeft className="h-4 w-4 mr-1" />
+              Previous
+            </Button>
+            <div className="flex items-center gap-1">
+              <span className="text-sm text-muted-foreground">
+                Page {table.getState().pagination.pageIndex + 1} of {table.getPageCount()}
+              </span>
+            </div>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => table.nextPage()}
+              disabled={!table.getCanNextPage()}
+            >
+              Next
+              <ChevronRight className="h-4 w-4 ml-1" />
+            </Button>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

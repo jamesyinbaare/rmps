@@ -22,9 +22,11 @@ import {
   BookOpen,
   ClipboardList,
   ClipboardCheck,
+  Upload,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Button } from "./ui/button";
+import { Popover, PopoverContent, PopoverTrigger } from "./ui/popover";
 
 interface MenuItem {
   href: string;
@@ -39,6 +41,7 @@ export function Sidebar() {
   const [selectedMenu, setSelectedMenu] = useState<string | null>("home");
   const [submenuVisible, setSubmenuVisible] = useState(true); // Default to visible (will be adjusted by useEffect on mobile)
   const [isMobile, setIsMobile] = useState(false);
+  const [moreMenuOpen, setMoreMenuOpen] = useState(false);
 
   const menuItems: MenuItem[] = [
     {
@@ -55,20 +58,11 @@ export function Sidebar() {
       ],
     },
     {
-      href: "/schools",
-      label: "Schools",
-      icon: Building2,
-      submenu: [
-        { href: "/schools", label: "All Schools", icon: Building2 },
-        { href: "/schools/new", label: "New School", icon: Plus },
-        { href: "/schools/manage-programmes", label: "Manage Programmes", icon: Settings },
-      ],
-    },
-    {
       href: "/manage",
       label: "Manage",
       icon: Settings,
       submenu: [
+        { href: "/schools", label: "Schools", icon: Building2 },
         { href: "/programmes", label: "Programmes", icon: GraduationCap },
         { href: "/subjects", label: "Subjects", icon: BookOpen },
         { href: "/examinations", label: "Examinations", icon: ClipboardList },
@@ -93,6 +87,9 @@ export function Sidebar() {
       href: "/more",
       label: "More",
       icon: Grid3x3,
+      submenu: [
+        { href: "/more/upload-candidates", label: "Upload Candidates", icon: Upload },
+      ],
     },
   ];
 
@@ -111,6 +108,11 @@ export function Sidebar() {
   useEffect(() => {
     // Find which menu item matches the current pathname
     for (const item of menuItems) {
+      // Skip "More" menu - it uses dropdown, not sidebar submenu
+      if (item.href === "/more") {
+        continue;
+      }
+
       if (item.submenu) {
         // Check if any submenu item matches
         const matchingSubmenu = item.submenu.find((sub) => {
@@ -156,6 +158,11 @@ export function Sidebar() {
   }, []);
 
   const handleMenuClick = (item: MenuItem) => {
+    // Don't handle "More" menu here - it uses Popover dropdown
+    if (item.href === "/more") {
+      return;
+    }
+
     if (item.submenu && item.submenu.length > 0) {
       const menuKey = item.href.toLowerCase().replace(/[^a-z0-9]/g, "");
       setSelectedMenu(menuKey);
@@ -203,10 +210,47 @@ export function Sidebar() {
               const hasSubmenu = item.submenu && item.submenu.length > 0;
               const isSelected = selectedMenu === menuKey;
               const active = isActive(item.href) || (hasSubmenu && item.submenu?.some((sub) => isActive(sub.href)));
+              const isMoreMenu = item.href === "/more";
 
               return (
                 <div key={item.href} className="mb-1">
-                  {hasSubmenu ? (
+                  {isMoreMenu && hasSubmenu ? (
+                    <Popover open={moreMenuOpen} onOpenChange={setMoreMenuOpen}>
+                      <PopoverTrigger asChild>
+                        <button
+                          className={cn(
+                            "flex w-full flex-col items-center justify-center gap-1 rounded-md px-2 py-2.5 text-xs transition-colors hover:bg-sidebar-accent hover:text-sidebar-accent-foreground",
+                            active && "bg-sidebar-accent text-sidebar-accent-foreground"
+                          )}
+                        >
+                          <Icon className="h-4 w-4 shrink-0" />
+                          <span className={cn("text-center text-[10px] leading-tight", isMobile && "hidden")}>{item.label}</span>
+                        </button>
+                      </PopoverTrigger>
+                      <PopoverContent side="right" align="start" className="w-48 p-1">
+                        <div className="space-y-1">
+                          {item.submenu?.map((subItem) => {
+                            const SubIcon = subItem.icon;
+                            const subActive = isActive(subItem.href);
+                            return (
+                              <Link
+                                key={subItem.href}
+                                href={subItem.href}
+                                onClick={() => setMoreMenuOpen(false)}
+                                className={cn(
+                                  "flex items-center gap-3 rounded-md px-3 py-2 text-sm transition-colors hover:bg-accent hover:text-accent-foreground",
+                                  subActive && "bg-accent text-accent-foreground"
+                                )}
+                              >
+                                <SubIcon className="h-4 w-4" />
+                                <span>{subItem.label}</span>
+                              </Link>
+                            );
+                          })}
+                        </div>
+                      </PopoverContent>
+                    </Popover>
+                  ) : hasSubmenu ? (
                     <button
                       onClick={() => handleMenuClick(item)}
                       className={cn(
@@ -259,7 +303,7 @@ export function Sidebar() {
         {!isMobile && submenuVisible && (
           <div className="flex w-48 flex-col border-l border-sidebar-border">
             <div className="h-16 shrink-0 border-b border-sidebar-border" />
-            {selectedMenuItem?.submenu ? (
+            {selectedMenuItem?.submenu && selectedMenuItem.href !== "/more" ? (
               <nav className="flex-1 overflow-y-auto px-2 py-4">
                 {selectedMenuItem.submenu.map((subItem) => {
                   const SubIcon = subItem.icon;

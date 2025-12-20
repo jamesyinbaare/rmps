@@ -105,16 +105,6 @@ export default function ManualEntryPage() {
     loadCandidates();
   }, [loadCandidates]);
 
-  // Update selected exam when exam_id changes
-  useEffect(() => {
-    if (filters.exam_id) {
-      const exam = exams.find((e) => e.id === filters.exam_id);
-      setSelectedExam(exam || null);
-    } else {
-      setSelectedExam(null);
-    }
-  }, [filters.exam_id, exams]);
-
   const handleFilterChange = (key: keyof ManualEntryFilters, value: number | string | undefined) => {
     setFilters((prev) => ({
       ...prev,
