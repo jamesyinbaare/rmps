@@ -11,6 +11,7 @@ from app.models import (
     Exam,
     ExamRegistration,
     ExamSubject,
+    ExamType,
     Programme,
     School,
     Subject,

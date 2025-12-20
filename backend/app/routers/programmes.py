@@ -34,7 +34,7 @@ async def create_programme(programme: ProgrammeCreate, session: DBSessionDep) ->
             status_code=status.HTTP_400_BAD_REQUEST, detail=f"Programme with code {programme.code} already exists"
         )
 
-    db_programme = Programme(code=programme.code, name=programme.name)
+    db_programme = Programme(code=programme.code, name=programme.name, exam_type=programme.exam_type)
     session.add(db_programme)
     await session.commit()
     await session.refresh(db_programme)
@@ -104,10 +104,15 @@ async def update_programme(
                 detail=f"Programme with code {programme_update.code} already exists",
             )
 
-    if programme_update.name is not None:
+    # Get fields that were actually provided in the update
+    update_data = programme_update.model_dump(exclude_unset=True)
+
+    if "name" in update_data:
         programme.name = programme_update.name
-    if programme_update.code is not None:
+    if "code" in update_data:
         programme.code = programme_update.code
+    if "exam_type" in update_data:
+        programme.exam_type = programme_update.exam_type
 
     await session.commit()
     await session.refresh(programme)

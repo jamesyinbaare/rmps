@@ -2,7 +2,7 @@ from datetime import datetime
 
 from pydantic import BaseModel, Field
 
-from app.models import SubjectType
+from app.models import ExamType, SubjectType
 
 
 class ProgrammeBase(BaseModel):
@@ -10,6 +10,7 @@ class ProgrammeBase(BaseModel):
 
     name: str = Field(..., min_length=1, max_length=255)
     code: str = Field(..., min_length=1, max_length=50)
+    exam_type: ExamType | None = None
 
 
 class ProgrammeCreate(ProgrammeBase):
@@ -23,6 +24,7 @@ class ProgrammeUpdate(BaseModel):
 
     name: str | None = Field(None, min_length=1, max_length=255)
     code: str | None = Field(None, min_length=1, max_length=50)
+    exam_type: ExamType | None = None
 
 
 class ProgrammeResponse(ProgrammeBase):

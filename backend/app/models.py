@@ -184,6 +184,7 @@ class Programme(Base):
     id = Column(Integer, primary_key=True)
     name = Column(String(255), nullable=False)
     code = Column(String(50), unique=True, nullable=False, index=True)
+    exam_type = Column(Enum(ExamType), nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
 
