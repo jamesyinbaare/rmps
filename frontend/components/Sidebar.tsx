@@ -89,6 +89,8 @@ export function Sidebar() {
       icon: Grid3x3,
       submenu: [
         { href: "/more/upload-candidates", label: "Upload Candidates", icon: Upload },
+        { href: "/more/upload-programmes", label: "Upload Programmes", icon: GraduationCap },
+        { href: "/more/upload-subjects", label: "Upload Subjects", icon: BookOpen },
       ],
     },
   ];

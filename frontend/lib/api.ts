@@ -12,9 +12,11 @@ import type {
   ApiError,
   Programme,
   ProgrammeListResponse,
+  ProgrammeBulkUploadResponse,
   Candidate,
   CandidateBulkUploadResponse,
   CandidateListResponse,
+  SubjectBulkUploadResponse,
   ExamRegistration,
   SubjectRegistration,
   ScoreDocumentFilters,
@@ -420,6 +422,34 @@ export async function deleteProgramme(id: number): Promise<void> {
   }
 }
 
+export async function uploadProgrammesBulk(file: File): Promise<ProgrammeBulkUploadResponse> {
+  const formData = new FormData();
+  formData.append("file", file);
+
+  const response = await fetch(`${API_BASE_URL}/api/v1/programmes/bulk-upload`, {
+    method: "POST",
+    body: formData,
+  });
+  return handleResponse<ProgrammeBulkUploadResponse>(response);
+}
+
+export async function downloadProgrammeTemplate(): Promise<Blob> {
+  const response = await fetch(`${API_BASE_URL}/api/v1/programmes/template`);
+  if (!response.ok) {
+    // Try to parse JSON error, but handle case where response might not be JSON
+    let errorMessage = `HTTP error! status: ${response.status}`;
+    try {
+      const error: ApiError = await response.json();
+      errorMessage = error.detail || errorMessage;
+    } catch {
+      // If response is not JSON, use status text
+      errorMessage = response.statusText || errorMessage;
+    }
+    throw new Error(errorMessage);
+  }
+  return response.blob();
+}
+
 // Programme Subject API Functions
 export type SubjectType = "CORE" | "ELECTIVE";
 
@@ -800,6 +830,34 @@ export async function deleteSubject(id: number): Promise<void> {
     const error: ApiError = await response.json().catch(() => ({ detail: "An error occurred" }));
     throw new Error(error.detail || `HTTP error! status: ${response.status}`);
   }
+}
+
+export async function uploadSubjectsBulk(file: File): Promise<SubjectBulkUploadResponse> {
+  const formData = new FormData();
+  formData.append("file", file);
+
+  const response = await fetch(`${API_BASE_URL}/api/v1/subjects/bulk-upload`, {
+    method: "POST",
+    body: formData,
+  });
+  return handleResponse<SubjectBulkUploadResponse>(response);
+}
+
+export async function downloadSubjectTemplate(): Promise<Blob> {
+  const response = await fetch(`${API_BASE_URL}/api/v1/subjects/template`);
+  if (!response.ok) {
+    // Try to parse JSON error, but handle case where response might not be JSON
+    let errorMessage = `HTTP error! status: ${response.status}`;
+    try {
+      const error: ApiError = await response.json();
+      errorMessage = error.detail || errorMessage;
+    } catch {
+      // If response is not JSON, use status text
+      errorMessage = response.statusText || errorMessage;
+    }
+    throw new Error(errorMessage);
+  }
+  return response.blob();
 }
 
 // Exam CRUD API Functions

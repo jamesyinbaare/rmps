@@ -195,6 +195,32 @@ export interface CandidateBulkUploadResponse {
   errors: CandidateBulkUploadError[];
 }
 
+export interface ProgrammeBulkUploadError {
+  row_number: number;
+  error_message: string;
+  field: string | null;
+}
+
+export interface ProgrammeBulkUploadResponse {
+  total_rows: number;
+  successful: number;
+  failed: number;
+  errors: ProgrammeBulkUploadError[];
+}
+
+export interface SubjectBulkUploadError {
+  row_number: number;
+  error_message: string;
+  field: string | null;
+}
+
+export interface SubjectBulkUploadResponse {
+  total_rows: number;
+  successful: number;
+  failed: number;
+  errors: SubjectBulkUploadError[];
+}
+
 export interface SubjectScore {
   id: number;
   subject_registration_id: number;
