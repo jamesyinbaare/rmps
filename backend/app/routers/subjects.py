@@ -1,11 +1,27 @@
 from typing import Any
 
-from fastapi import APIRouter, HTTPException, Query, status
-from sqlalchemy import func, select
+from fastapi import APIRouter, File, HTTPException, Query, UploadFile, status
+from fastapi.responses import StreamingResponse
+from sqlalchemy import func, insert, select
 
 from app.dependencies.database import DBSessionDep
 from app.models import Document, Programme, School, Subject, programme_subjects, school_programmes
-from app.schemas.subject import SubjectCreate, SubjectResponse, SubjectStatistics, SubjectUpdate
+from app.schemas.subject import (
+    SubjectBulkUploadError,
+    SubjectBulkUploadResponse,
+    SubjectCreate,
+    SubjectResponse,
+    SubjectStatistics,
+    SubjectUpdate,
+)
+from app.services.subject_upload import (
+    SubjectUploadParseError,
+    SubjectUploadValidationError,
+    parse_subject_row,
+    parse_upload_file,
+    validate_required_columns,
+)
+from app.services.template_generator import generate_subject_template
 
 router = APIRouter(prefix="/api/v1/subjects", tags=["subjects"])
 
@@ -43,6 +59,23 @@ async def list_subjects(
     result = await session.execute(stmt)
     subjects = result.scalars().all()
     return [SubjectResponse.model_validate(subject) for subject in subjects]
+
+
+@router.get("/template")
+async def download_subject_template() -> StreamingResponse:
+    """Download Excel template for subject upload."""
+    try:
+        template_bytes = generate_subject_template()
+        return StreamingResponse(
+            iter([template_bytes]),
+            media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            headers={"Content-Disposition": 'attachment; filename=subject_upload_template.xlsx'},
+        )
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to generate template: {str(e)}",
+        )
 
 
 @router.get("/{subject_id}", response_model=SubjectResponse)
@@ -193,3 +226,165 @@ async def list_schools_for_subject(subject_id: int, session: DBSessionDep) -> li
     from app.schemas.school import SchoolResponse
 
     return [SchoolResponse.model_validate(school) for school in schools]
+
+
+# Bulk Upload Endpoints
+
+
+@router.post("/bulk-upload", response_model=SubjectBulkUploadResponse, status_code=status.HTTP_200_OK)
+async def bulk_upload_subjects(
+    session: DBSessionDep, file: UploadFile = File(...)
+) -> SubjectBulkUploadResponse:
+    """Bulk upload subjects from Excel or CSV file."""
+    # Read file content
+    file_content = await file.read()
+
+    # Parse file
+    try:
+        df = parse_upload_file(file_content, file.filename or "unknown")
+        validate_required_columns(df)
+    except (SubjectUploadParseError, SubjectUploadValidationError) as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+
+    # Process each row
+    total_rows = len(df)
+    successful = 0
+    failed = 0
+    errors: list[SubjectBulkUploadError] = []
+
+    for idx, row in df.iterrows():
+        row_number = int(idx) + 2  # +2 because Excel rows are 1-indexed and header is row 1
+        try:
+            # Parse row data
+            subject_data = parse_subject_row(row)
+
+            # Validate required fields
+            if not subject_data["code"]:
+                errors.append(
+                    SubjectBulkUploadError(
+                        row_number=row_number, error_message="Code is required", field="code"
+                    )
+                )
+                failed += 1
+                continue
+
+            if len(subject_data["code"]) != 3:
+                errors.append(
+                    SubjectBulkUploadError(
+                        row_number=row_number,
+                        error_message="Code must be exactly 3 characters",
+                        field="code",
+                    )
+                )
+                failed += 1
+                continue
+
+            if not subject_data["name"]:
+                errors.append(
+                    SubjectBulkUploadError(
+                        row_number=row_number, error_message="Name is required", field="name"
+                    )
+                )
+                failed += 1
+                continue
+
+            if subject_data["subject_type"] is None:
+                errors.append(
+                    SubjectBulkUploadError(
+                        row_number=row_number,
+                        error_message="Subject type is required and must be 'CORE' or 'ELECTIVE'",
+                        field="subject_type",
+                    )
+                )
+                failed += 1
+                continue
+
+            # Check if subject with code already exists
+            existing_stmt = select(Subject).where(Subject.code == subject_data["code"])
+            existing_result = await session.execute(existing_stmt)
+            existing = existing_result.scalar_one_or_none()
+            if existing:
+                errors.append(
+                    SubjectBulkUploadError(
+                        row_number=row_number,
+                        error_message=f"Subject with code '{subject_data['code']}' already exists",
+                        field="code",
+                    )
+                )
+                failed += 1
+                continue
+
+            # Validate programme_code if provided (before creating subject)
+            programme_code = subject_data.get("programme_code")
+            programme = None
+            if programme_code:
+                # Lookup programme by code
+                programme_stmt = select(Programme).where(Programme.code == programme_code)
+                programme_result = await session.execute(programme_stmt)
+                programme = programme_result.scalar_one_or_none()
+                if not programme:
+                    errors.append(
+                        SubjectBulkUploadError(
+                            row_number=row_number,
+                            error_message=f"Programme with code '{programme_code}' not found",
+                            field="programme_code",
+                        )
+                    )
+                    failed += 1
+                    continue
+
+            # Create subject
+            db_subject = Subject(
+                code=subject_data["code"],
+                name=subject_data["name"],
+                subject_type=subject_data["subject_type"],
+            )
+            session.add(db_subject)
+            await session.flush()  # Flush to get ID but don't commit yet
+
+            # Associate with programme if programme_code was provided and validated
+            if programme:
+                # Check if association already exists
+                assoc_stmt = select(programme_subjects).where(
+                    programme_subjects.c.programme_id == programme.id,
+                    programme_subjects.c.subject_id == db_subject.id,
+                )
+                assoc_result = await session.execute(assoc_stmt)
+                existing_assoc = assoc_result.first()
+                if not existing_assoc:
+                    # Create association
+                    await session.execute(
+                        insert(programme_subjects).values(
+                            programme_id=programme.id,
+                            subject_id=db_subject.id,
+                            is_compulsory=None,  # Default values, can be updated later
+                            choice_group_id=None,
+                        )
+                    )
+
+            successful += 1
+
+        except Exception as e:
+            errors.append(
+                SubjectBulkUploadError(
+                    row_number=row_number,
+                    error_message=f"Unexpected error: {str(e)}",
+                    field=None,
+                )
+            )
+            failed += 1
+            continue
+
+    # Commit all successful inserts
+    try:
+        await session.commit()
+    except Exception as e:
+        await session.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to commit subjects: {str(e)}",
+        )
+
+    return SubjectBulkUploadResponse(
+        total_rows=total_rows, successful=successful, failed=failed, errors=errors
+    )

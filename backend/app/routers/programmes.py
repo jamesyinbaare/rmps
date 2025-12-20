@@ -1,11 +1,14 @@
 from typing import Any
 
-from fastapi import APIRouter, HTTPException, Query, status
+from fastapi import APIRouter, File, HTTPException, Query, UploadFile, status
+from fastapi.responses import StreamingResponse
 from sqlalchemy import delete, func, insert, select
 
 from app.dependencies.database import DBSessionDep
-from app.models import Programme, School, Subject, SubjectType, programme_subjects, school_programmes
+from app.models import ExamType, Programme, School, Subject, SubjectType, programme_subjects, school_programmes
 from app.schemas.programme import (
+    ProgrammeBulkUploadError,
+    ProgrammeBulkUploadResponse,
     ProgrammeCreate,
     ProgrammeListResponse,
     ProgrammeResponse,
@@ -18,6 +21,14 @@ from app.schemas.programme import (
     SchoolProgrammeAssociation,
     SubjectChoiceGroup,
 )
+from app.services.programme_upload import (
+    ProgrammeUploadParseError,
+    ProgrammeUploadValidationError,
+    parse_programme_row,
+    parse_upload_file,
+    validate_required_columns,
+)
+from app.services.template_generator import generate_programme_template
 
 router = APIRouter(prefix="/api/v1/programmes", tags=["programmes"])
 
@@ -69,6 +80,23 @@ async def list_programmes(
         page_size=page_size,
         total_pages=total_pages,
     )
+
+
+@router.get("/template")
+async def download_programme_template() -> StreamingResponse:
+    """Download Excel template for programme upload."""
+    try:
+        template_bytes = generate_programme_template()
+        return StreamingResponse(
+            iter([template_bytes]),
+            media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            headers={"Content-Disposition": 'attachment; filename=programme_upload_template.xlsx'},
+        )
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to generate template: {str(e)}",
+        )
 
 
 @router.get("/{programme_id}", response_model=ProgrammeResponse)
@@ -511,3 +539,116 @@ async def remove_school_association(programme_id: int, school_id: int, session: 
         )
     )
     await session.commit()
+
+
+# Bulk Upload Endpoints
+
+
+@router.post("/bulk-upload", response_model=ProgrammeBulkUploadResponse, status_code=status.HTTP_200_OK)
+async def bulk_upload_programmes(
+    session: DBSessionDep, file: UploadFile = File(...)
+) -> ProgrammeBulkUploadResponse:
+    """Bulk upload programmes from Excel or CSV file."""
+    # Read file content
+    file_content = await file.read()
+
+    # Parse file
+    try:
+        df = parse_upload_file(file_content, file.filename or "unknown")
+        validate_required_columns(df)
+    except (ProgrammeUploadParseError, ProgrammeUploadValidationError) as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+
+    # Process each row
+    total_rows = len(df)
+    successful = 0
+    failed = 0
+    errors: list[ProgrammeBulkUploadError] = []
+
+    for idx, row in df.iterrows():
+        row_number = int(idx) + 2  # +2 because Excel rows are 1-indexed and header is row 1
+        try:
+            # Parse row data
+            programme_data = parse_programme_row(row)
+
+            # Validate required fields
+            if not programme_data["code"]:
+                errors.append(
+                    ProgrammeBulkUploadError(
+                        row_number=row_number, error_message="Code is required", field="code"
+                    )
+                )
+                failed += 1
+                continue
+
+            if not programme_data["name"]:
+                errors.append(
+                    ProgrammeBulkUploadError(
+                        row_number=row_number, error_message="Name is required", field="name"
+                    )
+                )
+                failed += 1
+                continue
+
+            # Check if programme with code already exists
+            existing_stmt = select(Programme).where(Programme.code == programme_data["code"])
+            existing_result = await session.execute(existing_stmt)
+            existing = existing_result.scalar_one_or_none()
+            if existing:
+                errors.append(
+                    ProgrammeBulkUploadError(
+                        row_number=row_number,
+                        error_message=f"Programme with code '{programme_data['code']}' already exists",
+                        field="code",
+                    )
+                )
+                failed += 1
+                continue
+
+            # Validate exam_type if provided
+            exam_type = programme_data["exam_type"]
+            if exam_type is not None and not isinstance(exam_type, ExamType):
+                errors.append(
+                    ProgrammeBulkUploadError(
+                        row_number=row_number,
+                        error_message="Invalid exam_type. Must be 'Certificate II Examination' or 'CBT'",
+                        field="exam_type",
+                    )
+                )
+                failed += 1
+                continue
+
+            # Create programme
+            db_programme = Programme(
+                code=programme_data["code"],
+                name=programme_data["name"],
+                exam_type=exam_type,
+            )
+            session.add(db_programme)
+            await session.flush()  # Flush to get ID but don't commit yet
+            successful += 1
+
+        except Exception as e:
+            errors.append(
+                ProgrammeBulkUploadError(
+                    row_number=row_number,
+                    error_message=f"Unexpected error: {str(e)}",
+                    field=None,
+                )
+            )
+            failed += 1
+            continue
+
+    # Commit all successful inserts
+    try:
+        await session.commit()
+    except Exception as e:
+        await session.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to commit programmes: {str(e)}",
+        )
+
+    return ProgrammeBulkUploadResponse(
+        total_rows=total_rows, successful=successful, failed=failed, errors=errors
+    )

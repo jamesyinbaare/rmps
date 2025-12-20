@@ -47,3 +47,20 @@ class SubjectStatistics(BaseModel):
     total_schools: int
     documents_by_test_type: dict[str, int]  # "1" or "2" -> count
     sheet_sequence_gaps: list[int]  # List of missing sheet numbers
+
+
+class SubjectBulkUploadError(BaseModel):
+    """Schema for bulk upload error details."""
+
+    row_number: int
+    error_message: str
+    field: str | None = None
+
+
+class SubjectBulkUploadResponse(BaseModel):
+    """Schema for bulk upload response."""
+
+    total_rows: int
+    successful: int
+    failed: int
+    errors: list[SubjectBulkUploadError]

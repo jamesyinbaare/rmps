@@ -107,3 +107,20 @@ class SchoolProgrammeAssociation(BaseModel):
 
     school_id: int
     programme_id: int
+
+
+class ProgrammeBulkUploadError(BaseModel):
+    """Schema for bulk upload error details."""
+
+    row_number: int
+    error_message: str
+    field: str | None = None
+
+
+class ProgrammeBulkUploadResponse(BaseModel):
+    """Schema for bulk upload response."""
+
+    total_rows: int
+    successful: int
+    failed: int
+    errors: list[ProgrammeBulkUploadError]
