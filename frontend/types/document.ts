@@ -223,6 +223,19 @@ export interface SubjectBulkUploadResponse {
   errors: SubjectBulkUploadError[];
 }
 
+export interface SchoolBulkUploadError {
+  row_number: number;
+  error_message: string;
+  field: string | null;
+}
+
+export interface SchoolBulkUploadResponse {
+  total_rows: number;
+  successful: number;
+  failed: number;
+  errors: SchoolBulkUploadError[];
+}
+
 export interface SubjectScore {
   id: number;
   subject_registration_id: number;

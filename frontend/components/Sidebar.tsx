@@ -91,6 +91,7 @@ export function Sidebar() {
         { href: "/more/upload-candidates", label: "Upload Candidates", icon: Upload },
         { href: "/more/upload-programmes", label: "Upload Programmes", icon: GraduationCap },
         { href: "/more/upload-subjects", label: "Upload Subjects", icon: BookOpen },
+        { href: "/more/upload-schools", label: "Upload Schools", icon: Building2 },
       ],
     },
   ];

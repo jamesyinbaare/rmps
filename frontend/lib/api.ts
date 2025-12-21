@@ -17,6 +17,7 @@ import type {
   CandidateBulkUploadResponse,
   CandidateListResponse,
   SubjectBulkUploadResponse,
+  SchoolBulkUploadResponse,
   ExamRegistration,
   SubjectRegistration,
   ScoreDocumentFilters,
@@ -742,6 +743,34 @@ export async function removeProgrammeFromSchool(schoolId: number, programmeId: n
     const error: ApiError = await response.json().catch(() => ({ detail: "An error occurred" }));
     throw new Error(error.detail || `HTTP error! status: ${response.status}`);
   }
+}
+
+export async function uploadSchoolsBulk(file: File): Promise<SchoolBulkUploadResponse> {
+  const formData = new FormData();
+  formData.append("file", file);
+
+  const response = await fetch(`${API_BASE_URL}/api/v1/schools/bulk-upload`, {
+    method: "POST",
+    body: formData,
+  });
+  return handleResponse<SchoolBulkUploadResponse>(response);
+}
+
+export async function downloadSchoolTemplate(): Promise<Blob> {
+  const response = await fetch(`${API_BASE_URL}/api/v1/schools/template`);
+  if (!response.ok) {
+    // Try to parse JSON error, but handle case where response might not be JSON
+    let errorMessage = `HTTP error! status: ${response.status}`;
+    try {
+      const error: ApiError = await response.json();
+      errorMessage = error.detail || errorMessage;
+    } catch {
+      // If response is not JSON, use status text
+      errorMessage = response.statusText || errorMessage;
+    }
+    throw new Error(errorMessage);
+  }
+  return response.blob();
 }
 
 // Programme-School Association API Functions
