@@ -127,3 +127,34 @@ class SerializationResponse(BaseModel):
     subjects_processed: list[SubjectProcessedInfo]
     subjects_defaulted: list[SubjectProcessedInfo]
     message: str
+
+
+class SchoolSheetInfo(BaseModel):
+    """Schema for school score sheet generation information."""
+
+    school_id: int
+    school_name: str
+    sheets_count: int
+    candidates_count: int
+
+
+class SubjectSheetInfo(BaseModel):
+    """Schema for subject score sheet generation information."""
+
+    subject_id: int
+    subject_code: str
+    subject_name: str
+    sheets_count: int
+    candidates_count: int
+
+
+class ScoreSheetGenerationResponse(BaseModel):
+    """Schema for score sheet generation response."""
+
+    exam_id: int
+    total_sheets_generated: int
+    total_candidates_assigned: int
+    schools_processed: list[SchoolSheetInfo]
+    subjects_processed: list[SubjectSheetInfo]
+    sheets_by_series: dict[int, int]
+    message: str

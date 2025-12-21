@@ -14,8 +14,10 @@ from app.schemas.exam import (
     ExamSubjectResponse,
     ExamSubjectUpdate,
     ExamUpdate,
+    ScoreSheetGenerationResponse,
     SerializationResponse,
 )
+from app.services.score_sheet_generator import generate_score_sheets
 from app.services.serialization import serialize_exam
 
 router = APIRouter(prefix="/api/v1/exams", tags=["exams"])
@@ -573,3 +575,35 @@ async def serialize_exam_candidates(
     except Exception as e:
         await session.rollback()
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Serialization failed: {str(e)}")
+
+
+@router.post("/{exam_id}/generate-score-sheets", response_model=ScoreSheetGenerationResponse, status_code=status.HTTP_200_OK)
+async def generate_exam_score_sheets(
+    exam_id: int,
+    session: DBSessionDep,
+    school_id: int | None = Query(None, description="Optional school ID to generate sheets only for that school"),
+    subject_id: int | None = Query(None, description="Optional subject ID to generate sheets only for that subject"),
+    test_types: list[int] = Query(default=[1, 2], description="List of test types to generate (1 = Objectives, 2 = Essay). Default: [1, 2]"),
+) -> ScoreSheetGenerationResponse:
+    """
+    Generate score sheets for an exam and assign sheet IDs to candidates.
+
+    For every school and subject combination:
+    - For every series group, candidates are sorted by index number
+    - Candidates are organized into batches of 25 per sheet
+    - Each sheet gets a unique 13-character ID: SCHOOL_CODE(6) + SUBJECT_CODE(3) + SERIES(1) + TEST_TYPE(1) + SHEET_NUMBER(2)
+    - Sheet IDs are assigned to SubjectScore records (obj_document_id for test_type=1, essay_document_id for test_type=2)
+
+    Example: If a school has 200 candidates and mathematics has been serialized into 4 series,
+    there will be 50 candidates per series, meaning each series will take about 2 pages (sheets).
+
+    This operation will overwrite existing sheet ID assignments.
+    """
+    try:
+        result = await generate_score_sheets(session, exam_id, school_id, subject_id, test_types)
+        return ScoreSheetGenerationResponse.model_validate(result)
+    except ValueError as e:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
+    except Exception as e:
+        await session.rollback()
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Score sheet generation failed: {str(e)}")
