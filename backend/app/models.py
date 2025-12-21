@@ -113,6 +113,7 @@ class Subject(Base):
     original_code = Column(String(50), unique=True, nullable=False, index=True)
     name = Column(String(255), nullable=False)
     subject_type = Column(Enum(SubjectType), nullable=False)
+    exam_type = Column(Enum(ExamType), nullable=False, index=True)
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
 

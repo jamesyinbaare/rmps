@@ -54,6 +54,7 @@ async def create_subject(subject: SubjectCreate, session: DBSessionDep) -> Subje
         original_code=subject.original_code,
         name=subject.name,
         subject_type=subject.subject_type,
+        exam_type=subject.exam_type,
     )
     session.add(db_subject)
     await session.commit()
@@ -127,6 +128,8 @@ async def update_subject(subject_id: int, subject_update: SubjectUpdate, session
         subject.original_code = subject_update.original_code
     if subject_update.subject_type is not None:
         subject.subject_type = subject_update.subject_type
+    if subject_update.exam_type is not None:
+        subject.exam_type = subject_update.exam_type
 
     await session.commit()
     await session.refresh(subject)
@@ -380,6 +383,17 @@ async def bulk_upload_subjects(
                 failed += 1
                 continue
 
+            if subject_data["exam_type"] is None:
+                errors.append(
+                    SubjectBulkUploadError(
+                        row_number=row_number,
+                        error_message="Exam type is required and must be 'CERTIFICATE II' or 'CBT'",
+                        field="exam_type",
+                    )
+                )
+                failed += 1
+                continue
+
             # Check if subject with code already exists in database
             existing_stmt = select(Subject).where(Subject.code == subject_data["code"])
             existing_result = await session.execute(existing_stmt)
@@ -435,6 +449,7 @@ async def bulk_upload_subjects(
                 original_code=subject_data["original_code"],
                 name=subject_data["name"],
                 subject_type=subject_data["subject_type"],
+                exam_type=subject_data["exam_type"],
             )
             session.add(db_subject)
             await session.flush()  # Flush to get ID but don't commit yet

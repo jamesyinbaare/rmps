@@ -5,7 +5,7 @@ from typing import Any
 
 import pandas as pd
 
-from app.models import SubjectType
+from app.models import ExamType, SubjectType
 
 
 class SubjectUploadParseError(Exception):
@@ -71,7 +71,7 @@ def validate_required_columns(df: pd.DataFrame) -> None:
     Raises:
         SubjectUploadValidationError: If required columns are missing
     """
-    required_columns = {"code", "original_code", "name", "subject_type"}
+    required_columns = {"code", "original_code", "name", "subject_type", "exam_type"}
     df_columns = set(df.columns.str.lower().str.strip())
 
     missing_columns = required_columns - df_columns
@@ -95,6 +95,7 @@ def parse_subject_row(row: pd.Series) -> dict[str, Any]:
         - original_code: str
         - name: str
         - subject_type: SubjectType
+        - exam_type: ExamType
         - programme_code: str | None (optional)
     """
     # Normalize column names (case-insensitive, strip whitespace)
@@ -105,6 +106,7 @@ def parse_subject_row(row: pd.Series) -> dict[str, Any]:
     original_code = str(row_dict.get("original_code", "")).strip()
     name = str(row_dict.get("name", "")).strip()
     subject_type_str = str(row_dict.get("subject_type", "")).strip().upper()
+    exam_type_str = str(row_dict.get("exam_type", "")).strip()
 
     # Parse subject_type
     subject_type = None
@@ -112,6 +114,15 @@ def parse_subject_row(row: pd.Series) -> dict[str, Any]:
         subject_type = SubjectType.CORE
     elif subject_type_str == "ELECTIVE":
         subject_type = SubjectType.ELECTIVE
+
+    # Parse exam_type
+    exam_type = None
+    if exam_type_str:
+        exam_type_str_upper = exam_type_str.upper()
+        if "CERTIFICATE" in exam_type_str_upper or exam_type_str_upper == "CERTIFICATE II":
+            exam_type = ExamType.CERTIFICATE_II
+        elif exam_type_str_upper == "CBT":
+            exam_type = ExamType.CBT
 
     # Extract optional programme_code
     programme_code = row_dict.get("programme_code")
@@ -125,5 +136,6 @@ def parse_subject_row(row: pd.Series) -> dict[str, Any]:
         "original_code": original_code,
         "name": name,
         "subject_type": subject_type,
+        "exam_type": exam_type,
         "programme_code": programme_code,
     }

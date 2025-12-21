@@ -5,7 +5,7 @@ from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 
 from app.dependencies.database import DBSessionDep
-from app.models import Document, Exam, ExamSubject, ExamType, ExamSeries, Subject
+from app.models import Document, Exam, ExamRegistration, ExamSubject, ExamType, ExamSeries, Subject
 from app.schemas.exam import (
     ExamCreate,
     ExamListResponse,
@@ -48,6 +48,36 @@ async def create_exam(exam: ExamCreate, session: DBSessionDep) -> ExamResponse:
     )
     session.add(db_exam)
     try:
+        await session.commit()
+        await session.refresh(db_exam)
+
+        # Auto-register all subjects with matching exam_type
+        subjects_stmt = select(Subject).where(Subject.exam_type == exam.exam_type)
+        subjects_result = await session.execute(subjects_stmt)
+        subjects = subjects_result.scalars().all()
+
+        for subject in subjects:
+            # Check if subject is already registered
+            existing_exam_subject_stmt = select(ExamSubject).where(
+                ExamSubject.exam_id == db_exam.id, ExamSubject.subject_id == subject.id
+            )
+            existing_exam_subject_result = await session.execute(existing_exam_subject_stmt)
+            existing_exam_subject = existing_exam_subject_result.scalar_one_or_none()
+
+            if not existing_exam_subject:
+                # Create ExamSubject with NULL values for percentages and scores
+                exam_subject = ExamSubject(
+                    exam_id=db_exam.id,
+                    subject_id=subject.id,
+                    obj_pct=None,
+                    essay_pct=None,
+                    pract_pct=None,
+                    obj_max_score=None,
+                    essay_max_score=None,
+                    pract_max_score=None,
+                )
+                session.add(exam_subject)
+
         await session.commit()
         await session.refresh(db_exam)
         return ExamResponse.model_validate(db_exam)
@@ -138,6 +168,23 @@ async def update_exam(exam_id: int, exam_update: ExamUpdate, session: DBSessionD
     new_series = exam_update.series if exam_update.series is not None else exam.series
     new_year = exam_update.year if exam_update.year is not None else exam.year
 
+    # Check if exam_type is being updated
+    exam_type_changing = exam_update.exam_type is not None and exam_update.exam_type != exam.exam_type
+
+    # If exam_type is changing, check if candidates have registered
+    if exam_type_changing:
+        registration_count_stmt = select(func.count(ExamRegistration.id)).where(
+            ExamRegistration.exam_id == exam_id
+        )
+        registration_count_result = await session.execute(registration_count_stmt)
+        registration_count = registration_count_result.scalar() or 0
+
+        if registration_count > 0:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Cannot change exam type because {registration_count} candidate(s) have already registered for this exam",
+            )
+
     # Check if updating exam_type, series, or year would create a duplicate
     if (
         (exam_update.exam_type is not None and exam_update.exam_type != exam.exam_type)
@@ -173,6 +220,42 @@ async def update_exam(exam_id: int, exam_update: ExamUpdate, session: DBSessionD
         exam.number_of_series = exam_update.number_of_series
 
     try:
+        await session.flush()  # Flush to ensure exam is updated in session
+
+        # If exam_type changed, update subjects
+        if exam_type_changing:
+            # Get current ExamSubject records
+            current_exam_subjects_stmt = select(ExamSubject).where(ExamSubject.exam_id == exam_id)
+            current_exam_subjects_result = await session.execute(current_exam_subjects_stmt)
+            current_exam_subjects = current_exam_subjects_result.scalars().all()
+
+            # Get subjects with new exam_type
+            new_subjects_stmt = select(Subject).where(Subject.exam_type == new_exam_type)
+            new_subjects_result = await session.execute(new_subjects_stmt)
+            new_subjects = new_subjects_result.scalars().all()
+            new_subject_ids = {subject.id for subject in new_subjects}
+
+            # Remove ExamSubject records for subjects that don't match the new exam_type
+            for exam_subject in current_exam_subjects:
+                if exam_subject.subject_id not in new_subject_ids:
+                    await session.delete(exam_subject)
+
+            # Add ExamSubject records for subjects with new exam_type that aren't already registered
+            existing_exam_subject_ids = {es.subject_id for es in current_exam_subjects}
+            for subject in new_subjects:
+                if subject.id not in existing_exam_subject_ids:
+                    exam_subject = ExamSubject(
+                        exam_id=exam_id,
+                        subject_id=subject.id,
+                        obj_pct=None,
+                        essay_pct=None,
+                        pract_pct=None,
+                        obj_max_score=None,
+                        essay_max_score=None,
+                        pract_max_score=None,
+                    )
+                    session.add(exam_subject)
+
         await session.commit()
         await session.refresh(exam)
         return ExamResponse.model_validate(exam)

@@ -39,6 +39,7 @@ def generate_subject_template() -> bytes:
         "original_code": ["C30-1-01", "C30-1-02", "C701"],
         "name": ["Mathematics", "English", "Science"],
         "subject_type": ["CORE", "CORE", "ELECTIVE"],
+        "exam_type": ["Certificate II Examination", "Certificate II Examination", "CBT"],
         "programme_code": ["PROG01", "PROG01", ""],
     }
     df = pd.DataFrame(data)

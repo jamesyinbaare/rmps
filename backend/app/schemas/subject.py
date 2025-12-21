@@ -2,7 +2,7 @@ from datetime import datetime
 
 from pydantic import BaseModel, Field
 
-from app.models import SubjectType
+from app.models import ExamType, SubjectType
 
 
 class SubjectBase(BaseModel):
@@ -11,6 +11,7 @@ class SubjectBase(BaseModel):
     code: str = Field(..., min_length=3, max_length=3)
     original_code: str = Field(..., min_length=1, max_length=50)
     name: str = Field(..., min_length=1, max_length=255)
+    exam_type: ExamType
 
 
 class SubjectCreate(SubjectBase):
@@ -25,6 +26,7 @@ class SubjectUpdate(BaseModel):
     name: str | None = Field(None, min_length=1, max_length=255)
     original_code: str | None = Field(None, min_length=1, max_length=50)
     subject_type: SubjectType | None = Field(None, description="Subject type: CORE or ELECTIVE")
+    exam_type: ExamType | None = None
 
 
 class SubjectResponse(SubjectBase):
