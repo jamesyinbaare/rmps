@@ -72,3 +72,27 @@ def generate_candidate_template() -> bytes:
         df.to_excel(writer, index=False, sheet_name="Candidates")
     output.seek(0)
     return output.getvalue()
+
+
+def generate_school_template() -> bytes:
+    """
+    Generate Excel template for school upload.
+
+    Returns:
+        Bytes of Excel file
+    """
+    data = {
+        "code": ["SCH001", "SCH002"],
+        "name": ["Example School 1", "Example School 2"],
+        "region": ["Greater Accra Region", "Ashanti Region"],
+        "zone": ["A", "B"],
+        "school_type": ["PUBLIC", "PRIVATE"],
+        "programme_codes": ["PROG01,PROG02", "PROG01"],
+    }
+    df = pd.DataFrame(data)
+
+    output = io.BytesIO()
+    with pd.ExcelWriter(output, engine="openpyxl") as writer:
+        df.to_excel(writer, index=False, sheet_name="Schools")
+    output.seek(0)
+    return output.getvalue()

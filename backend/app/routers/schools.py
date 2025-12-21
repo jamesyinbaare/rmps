@@ -1,17 +1,29 @@
 from typing import Any
 
-from fastapi import APIRouter, HTTPException, Query, status
+from fastapi import APIRouter, File, HTTPException, Query, UploadFile, status
+from fastapi.responses import StreamingResponse
 from sqlalchemy import delete, func, insert, select
 
 from app.dependencies.database import DBSessionDep
 from app.models import Document, Programme, School, Subject, programme_subjects, school_programmes
 from app.schemas.programme import SchoolProgrammeAssociation
 from app.schemas.school import (
+    SchoolBulkUploadError,
+    SchoolBulkUploadResponse,
     SchoolCreate,
     SchoolResponse,
     SchoolStatistics,
     SchoolUpdate,
 )
+from app.services.school_upload import (
+    SchoolUploadParseError,
+    SchoolUploadValidationError,
+    find_programmes_column,
+    parse_school_row,
+    parse_upload_file,
+    validate_required_columns,
+)
+from app.services.template_generator import generate_school_template
 
 router = APIRouter(prefix="/api/v1/schools", tags=["schools"])
 
@@ -53,6 +65,23 @@ async def list_schools(
     result = await session.execute(stmt)
     schools = result.scalars().all()
     return [SchoolResponse.model_validate(school) for school in schools]
+
+
+@router.get("/template")
+async def download_school_template() -> StreamingResponse:
+    """Download Excel template for school upload."""
+    try:
+        template_bytes = generate_school_template()
+        return StreamingResponse(
+            iter([template_bytes]),
+            media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            headers={"Content-Disposition": 'attachment; filename=school_upload_template.xlsx'},
+        )
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to generate template: {str(e)}",
+        )
 
 
 @router.get("/{school_code}", response_model=SchoolResponse)
@@ -337,3 +366,170 @@ async def remove_programme_association(school_id: int, programme_id: int, sessio
         )
     )
     await session.commit()
+
+
+# Bulk Upload Endpoints
+
+
+@router.post("/bulk-upload", response_model=SchoolBulkUploadResponse, status_code=status.HTTP_200_OK)
+async def bulk_upload_schools(session: DBSessionDep, file: UploadFile = File(...)) -> SchoolBulkUploadResponse:
+    """Bulk upload schools from Excel or CSV file."""
+    # Read file content
+    file_content = await file.read()
+
+    # Parse file
+    try:
+        df = parse_upload_file(file_content, file.filename or "unknown")
+        validate_required_columns(df)
+    except (SchoolUploadParseError, SchoolUploadValidationError) as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+
+    # Find programmes column (comma-separated programme codes)
+    programmes_column = find_programmes_column(df)
+
+    # Process each row
+    total_rows = len(df)
+    successful = 0
+    failed = 0
+    errors: list[SchoolBulkUploadError] = []
+
+    for idx, row in df.iterrows():
+        row_number = int(idx) + 2  # +2 because Excel rows are 1-indexed and header is row 1
+        try:
+            # Parse row data
+            school_data = parse_school_row(row, programmes_column)
+
+            # Validate required fields
+            if not school_data["code"]:
+                errors.append(
+                    SchoolBulkUploadError(
+                        row_number=row_number, error_message="Code is required", field="code"
+                    )
+                )
+                failed += 1
+                continue
+
+            if not school_data["name"]:
+                errors.append(
+                    SchoolBulkUploadError(
+                        row_number=row_number, error_message="Name is required", field="name"
+                    )
+                )
+                failed += 1
+                continue
+
+            if not school_data["region"]:
+                errors.append(
+                    SchoolBulkUploadError(
+                        row_number=row_number,
+                        error_message="Invalid or missing region. Must be a valid SchoolRegion value",
+                        field="region",
+                    )
+                )
+                failed += 1
+                continue
+
+            if not school_data["zone"]:
+                errors.append(
+                    SchoolBulkUploadError(
+                        row_number=row_number,
+                        error_message="Invalid or missing zone. Must be a single letter (A-Z)",
+                        field="zone",
+                    )
+                )
+                failed += 1
+                continue
+
+            # Check if school with code already exists
+            existing_stmt = select(School).where(School.code == school_data["code"])
+            existing_result = await session.execute(existing_stmt)
+            existing = existing_result.scalar_one_or_none()
+            if existing:
+                errors.append(
+                    SchoolBulkUploadError(
+                        row_number=row_number,
+                        error_message=f"School with code '{school_data['code']}' already exists",
+                        field="code",
+                    )
+                )
+                failed += 1
+                continue
+
+            # Validate and collect programme codes
+            valid_programme_ids: list[int] = []
+            invalid_programme_codes: list[str] = []
+
+            if school_data["programme_codes"]:
+                for programme_code in school_data["programme_codes"]:
+                    programme_stmt = select(Programme).where(Programme.code == programme_code)
+                    programme_result = await session.execute(programme_stmt)
+                    programme = programme_result.scalar_one_or_none()
+                    if programme:
+                        valid_programme_ids.append(programme.id)
+                    else:
+                        invalid_programme_codes.append(programme_code)
+
+            # If there are invalid programme codes, record error but continue with school creation
+            if invalid_programme_codes:
+                errors.append(
+                    SchoolBulkUploadError(
+                        row_number=row_number,
+                        error_message=f"Programme codes not found: {', '.join(invalid_programme_codes)}",
+                        field="programme_codes",
+                    )
+                )
+                # Note: We continue to create the school even if some programme codes are invalid
+
+            # Create school
+            db_school = School(
+                code=school_data["code"],
+                name=school_data["name"],
+                region=school_data["region"],
+                zone=school_data["zone"],
+                school_type=school_data["school_type"],
+            )
+            session.add(db_school)
+            await session.flush()  # Flush to get ID but don't commit yet
+
+            # Create school-programme associations for valid programmes
+            for programme_id in valid_programme_ids:
+                # Check if association already exists (shouldn't for new school, but check anyway)
+                assoc_stmt = select(school_programmes).where(
+                    school_programmes.c.school_id == db_school.id,
+                    school_programmes.c.programme_id == programme_id,
+                )
+                assoc_result = await session.execute(assoc_stmt)
+                existing_assoc = assoc_result.first()
+                if not existing_assoc:
+                    await session.execute(
+                        insert(school_programmes).values(
+                            school_id=db_school.id, programme_id=programme_id
+                        )
+                    )
+
+            successful += 1
+
+        except Exception as e:
+            errors.append(
+                SchoolBulkUploadError(
+                    row_number=row_number,
+                    error_message=f"Unexpected error: {str(e)}",
+                    field=None,
+                )
+            )
+            failed += 1
+            continue
+
+    # Commit all successful inserts
+    try:
+        await session.commit()
+    except Exception as e:
+        await session.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to commit schools: {str(e)}",
+        )
+
+    return SchoolBulkUploadResponse(
+        total_rows=total_rows, successful=successful, failed=failed, errors=errors
+    )

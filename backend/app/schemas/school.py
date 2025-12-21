@@ -59,3 +59,20 @@ class SchoolSubjectAssociation(BaseModel):
 
     school_id: int
     subject_id: int
+
+
+class SchoolBulkUploadError(BaseModel):
+    """Schema for school bulk upload error."""
+
+    row_number: int
+    error_message: str
+    field: str | None = None
+
+
+class SchoolBulkUploadResponse(BaseModel):
+    """Schema for bulk upload response."""
+
+    total_rows: int
+    successful: int
+    failed: int
+    errors: list[SchoolBulkUploadError]
