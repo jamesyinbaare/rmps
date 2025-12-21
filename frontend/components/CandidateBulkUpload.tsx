@@ -133,7 +133,7 @@ export function CandidateBulkUpload({ open, onOpenChange, onUploadSuccess }: Can
           <DialogTitle>Bulk Upload Candidates</DialogTitle>
           <DialogDescription>
             Upload candidate information from an Excel or CSV file. The file should contain columns for school code,
-            programme code (optional), name, index number, and subject codes.
+            programme code (optional), name, index number, and a subjects column with comma-separated subject original codes (e.g., C701,C702,C48-1-01).
           </DialogDescription>
         </DialogHeader>
 
