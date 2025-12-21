@@ -32,7 +32,7 @@ from app.schemas.candidate import (
 from app.services.candidate_upload import (
     CandidateUploadParseError,
     CandidateUploadValidationError,
-    extract_subject_columns,
+    find_subjects_column,
     parse_candidate_row,
     parse_upload_file,
     validate_required_columns,
@@ -225,8 +225,8 @@ async def bulk_upload_candidates(
     except (CandidateUploadParseError, CandidateUploadValidationError) as e:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
 
-    # Extract subject columns
-    subject_columns = extract_subject_columns(df)
+    # Find subjects column (comma-separated original_code values)
+    subjects_column = find_subjects_column(df)
 
     # Get exam subjects for validation
     exam_subject_stmt = (
@@ -236,7 +236,9 @@ async def bulk_upload_candidates(
     )
     exam_subject_result = await session.execute(exam_subject_stmt)
     exam_subjects_data = exam_subject_result.all()
-    exam_subjects_by_code = {subject.code: (exam_subject, subject) for exam_subject, subject in exam_subjects_data}
+    exam_subjects_by_original_code = {
+        subject.original_code: (exam_subject, subject) for exam_subject, subject in exam_subjects_data
+    }
 
     # Process each row
     total_rows = len(df)
@@ -248,7 +250,7 @@ async def bulk_upload_candidates(
         row_number = int(idx) + 2  # +2 because Excel rows are 1-indexed and header is row 1
         try:
             # Parse row data
-            candidate_data = parse_candidate_row(row, subject_columns)
+            candidate_data = parse_candidate_row(row, subjects_column)
 
             # Validate required fields
             if not candidate_data["school_code"]:
@@ -306,30 +308,23 @@ async def bulk_upload_candidates(
                     failed += 1
                     continue
 
-            # Validate subject codes exist and are part of the exam
-            valid_subject_codes = []
-            for subject_code in candidate_data["subject_codes"]:
-                if subject_code not in exam_subjects_by_code:
+            # Validate subject original_codes exist and are part of the exam
+            valid_subject_original_codes = []
+            for subject_original_code in candidate_data["subject_original_codes"]:
+                if subject_original_code not in exam_subjects_by_original_code:
                     errors.append(
                         CandidateBulkUploadError(
                             row_number=row_number,
-                            error_message=f"Subject code '{subject_code}' not found in exam or not part of this exam",
-                            field="subject_code",
+                            error_message=f"Subject with original_code '{subject_original_code}' not found in exam or not part of this exam",
+                            field="subject_original_code",
                         )
                     )
                     failed += 1
                     break
-                valid_subject_codes.append(subject_code)
+                valid_subject_original_codes.append(subject_original_code)
             else:
-                # Only continue if all subject codes were valid
-                if not valid_subject_codes:
-                    errors.append(
-                        CandidateBulkUploadError(
-                            row_number=row_number, error_message="At least one subject code is required", field="subject_code"
-                        )
-                    )
-                    failed += 1
-                    continue
+                # Only continue if all subject original_codes were valid
+                # Note: Empty subjects list is allowed (will be caught by validation for MAY/JUNE if required)
 
                 # Check if (index_number, exam_id) already exists
                 existing_reg_stmt = select(ExamRegistration).where(
@@ -375,8 +370,8 @@ async def bulk_upload_candidates(
                 await session.flush()
 
                 # Create subject registrations
-                for subject_code in valid_subject_codes:
-                    exam_subject, subject = exam_subjects_by_code[subject_code]
+                for subject_original_code in valid_subject_original_codes:
+                    exam_subject, subject = exam_subjects_by_original_code[subject_original_code]
                     subject_registration = SubjectRegistration(
                         exam_registration_id=exam_registration.id, exam_subject_id=exam_subject.id, series=None
                     )
@@ -445,7 +440,7 @@ async def bulk_upload_candidates(
                         CandidateBulkUploadError(
                             row_number=row_number,
                             error_message=f"Subject registration does not meet programme requirements: {'; '.join(validation_errors)}",
-                            field="subject_code",
+                            field="subject_original_code",
                         )
                     )
                     failed += 1
