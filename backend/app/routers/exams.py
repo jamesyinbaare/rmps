@@ -5,7 +5,7 @@ from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 
 from app.dependencies.database import DBSessionDep
-from app.models import Document, Exam, ExamRegistration, ExamSubject, ExamType, ExamSeries, Subject
+from app.models import Document, Exam, ExamRegistration, ExamSeries, ExamSubject, ExamType, Subject
 from app.schemas.exam import (
     ExamCreate,
     ExamListResponse,
@@ -14,7 +14,9 @@ from app.schemas.exam import (
     ExamSubjectResponse,
     ExamSubjectUpdate,
     ExamUpdate,
+    SerializationResponse,
 )
+from app.services.serialization import serialize_exam
 
 router = APIRouter(prefix="/api/v1/exams", tags=["exams"])
 
@@ -541,3 +543,33 @@ async def get_exam_statistics(exam_id: int, session: DBSessionDep) -> dict[str, 
         "total_subjects": total_subjects,
         "documents_by_status": documents_by_status,
     }
+
+
+@router.post("/{exam_id}/serialize", response_model=SerializationResponse, status_code=status.HTTP_200_OK)
+async def serialize_exam_candidates(
+    exam_id: int,
+    session: DBSessionDep,
+    school_id: int | None = Query(None, description="Optional school ID to serialize only that school"),
+    subject_codes: list[str] = Query(default_factory=list, description="List of subject codes to serialize. Subjects not in this list will be assigned default series 1."),
+) -> SerializationResponse:
+    """
+    Serialize candidates for an exam by assigning series numbers in round-robin fashion.
+
+    For subjects specified in subject_codes:
+    - Candidates are sorted by index_number
+    - Series numbers 1 to number_of_series are assigned in round-robin fashion
+    - The assigned series is stored in SubjectRegistration.series
+
+    For subjects NOT in subject_codes:
+    - All subject registrations are assigned a default series of 1
+
+    This operation is idempotent - running it multiple times will overwrite existing series assignments.
+    """
+    try:
+        result = await serialize_exam(session, exam_id, school_id, subject_codes if subject_codes else None)
+        return SerializationResponse.model_validate(result)
+    except ValueError as e:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
+    except Exception as e:
+        await session.rollback()
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Serialization failed: {str(e)}")

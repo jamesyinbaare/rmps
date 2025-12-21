@@ -95,3 +95,35 @@ class ExamSubjectResponse(BaseModel):
 
     class Config:
         from_attributes = True
+
+
+class SchoolProcessedInfo(BaseModel):
+    """Schema for school processing information in serialization response."""
+
+    school_id: int
+    school_name: str
+    candidates_count: int
+
+
+class SubjectProcessedInfo(BaseModel):
+    """Schema for subject processing information in serialization response."""
+
+    subject_id: int
+    subject_code: str
+    subject_name: str
+    candidates_count: int
+
+
+class SerializationResponse(BaseModel):
+    """Schema for serialization response."""
+
+    exam_id: int
+    school_id: int | None
+    total_candidates_count: int
+    total_schools_count: int
+    subjects_serialized_count: int
+    subjects_defaulted_count: int
+    schools_processed: list[SchoolProcessedInfo]
+    subjects_processed: list[SubjectProcessedInfo]
+    subjects_defaulted: list[SubjectProcessedInfo]
+    message: str
