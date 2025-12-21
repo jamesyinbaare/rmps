@@ -17,9 +17,10 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { getExam, listExamSubjects, type ExamSubject } from "@/lib/api";
+import { getExam, listExamSubjects, serializeExam, type ExamSubject, type SerializationResponse } from "@/lib/api";
 import type { Exam } from "@/types/document";
-import { ArrowLeft, Search, X, ClipboardList, Edit, Calendar } from "lucide-react";
+import { ArrowLeft, Search, X, ClipboardList, Edit, Calendar, Users, CheckCircle2, AlertCircle, Loader2, ChevronDown, ChevronRight } from "lucide-react";
+import { Checkbox } from "@/components/ui/checkbox";
 
 export default function ExaminationDetailPage() {
   const params = useParams();
@@ -33,6 +34,11 @@ export default function ExaminationDetailPage() {
   const [searchQuery, setSearchQuery] = useState<string>("");
   const [subjectTypeFilter, setSubjectTypeFilter] = useState<"ALL" | "CORE" | "ELECTIVE">("ALL");
   const [editModalOpen, setEditModalOpen] = useState(false);
+  const [serializing, setSerializing] = useState(false);
+  const [serializationResult, setSerializationResult] = useState<SerializationResponse | null>(null);
+  const [serializationError, setSerializationError] = useState<string | null>(null);
+  const [selectedSubjectCodes, setSelectedSubjectCodes] = useState<Set<string>>(new Set());
+  const [showSerializedSubjects, setShowSerializedSubjects] = useState(false);
 
   // Load examination data
   useEffect(() => {
@@ -96,6 +102,45 @@ export default function ExaminationDetailPage() {
       console.error("Error refreshing examination:", error);
     }
     setEditModalOpen(false);
+  };
+
+  const handleSerialization = async () => {
+    if (!examId) return;
+
+    setSerializing(true);
+    setSerializationError(null);
+    setSerializationResult(null);
+
+    try {
+      const subjectCodesArray = Array.from(selectedSubjectCodes);
+      const result = await serializeExam(examId, subjectCodesArray.length > 0 ? subjectCodesArray : undefined);
+      setSerializationResult(result);
+    } catch (err) {
+      setSerializationError(err instanceof Error ? err.message : "Failed to serialize candidates");
+      console.error("Error serializing candidates:", err);
+    } finally {
+      setSerializing(false);
+    }
+  };
+
+  const toggleSubjectSelection = (subjectCode: string) => {
+    setSelectedSubjectCodes((prev) => {
+      const newSet = new Set(prev);
+      if (newSet.has(subjectCode)) {
+        newSet.delete(subjectCode);
+      } else {
+        newSet.add(subjectCode);
+      }
+      return newSet;
+    });
+  };
+
+  const selectAllSubjects = () => {
+    setSelectedSubjectCodes(new Set(subjects.map((s) => s.subject_code)));
+  };
+
+  const clearSubjectSelection = () => {
+    setSelectedSubjectCodes(new Set());
   };
 
   if (loading) {
@@ -211,6 +256,168 @@ export default function ExaminationDetailPage() {
                   </span>
                 </div>
               </div>
+            </CardContent>
+          </Card>
+
+          {/* Serialization Card */}
+          <Card className="mb-6">
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2">
+                <Users className="h-5 w-5" />
+                Candidate Serialization
+              </CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              <p className="text-sm text-muted-foreground">
+                Select subjects to serialize. Selected subjects will have candidates assigned series numbers (1 to {exam.number_of_series}) in round-robin fashion.
+                Unselected subjects will have all candidates assigned a default series of 1.
+              </p>
+
+              {/* Subject Selection */}
+              {subjects.length > 0 && (
+                <div className="space-y-3">
+                  <div className="flex items-center justify-between">
+                    <p className="text-sm font-medium">Select Subjects to Serialize</p>
+                    <div className="flex gap-2">
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={selectAllSubjects}
+                        disabled={serializing}
+                      >
+                        Select All
+                      </Button>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={clearSubjectSelection}
+                        disabled={serializing}
+                      >
+                        Clear
+                      </Button>
+                    </div>
+                  </div>
+                  <div className="border rounded-lg p-4 max-h-64 overflow-y-auto space-y-2">
+                    {subjects.map((subject) => (
+                      <div key={subject.id} className="flex items-center space-x-2">
+                        <Checkbox
+                          id={`subject-${subject.id}`}
+                          checked={selectedSubjectCodes.has(subject.subject_code)}
+                          onCheckedChange={() => toggleSubjectSelection(subject.subject_code)}
+                          disabled={serializing}
+                        />
+                        <label
+                          htmlFor={`subject-${subject.id}`}
+                          className="text-sm font-medium leading-none peer-disabled:cursor-not-allowed peer-disabled:opacity-70 cursor-pointer flex-1"
+                        >
+                          <span className="font-mono font-semibold">{subject.subject_code}</span> - {subject.subject_name}
+                          <span className="ml-2 text-xs text-muted-foreground">({subject.subject_type})</span>
+                        </label>
+                      </div>
+                    ))}
+                  </div>
+                  <p className="text-xs text-muted-foreground">
+                    {selectedSubjectCodes.size} of {subjects.length} subject{subjects.length !== 1 ? "s" : ""} selected
+                  </p>
+                </div>
+              )}
+
+              <Button
+                onClick={handleSerialization}
+                disabled={serializing || subjects.length === 0}
+                className="w-full sm:w-auto"
+              >
+                {serializing ? (
+                  <>
+                    <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                    Serializing...
+                  </>
+                ) : (
+                  <>
+                    <Users className="h-4 w-4 mr-2" />
+                    Serialize Candidates
+                  </>
+                )}
+              </Button>
+
+              {serializationError && (
+                <div className="rounded-lg bg-destructive/10 border border-destructive/20 p-4 flex items-start gap-3">
+                  <AlertCircle className="h-5 w-5 text-destructive mt-0.5 flex-shrink-0" />
+                  <div className="flex-1">
+                    <p className="text-sm font-medium text-destructive">Serialization Failed</p>
+                    <p className="text-sm text-destructive/80 mt-1">{serializationError}</p>
+                  </div>
+                </div>
+              )}
+
+              {serializationResult && (
+                <div className="rounded-lg bg-green-50 dark:bg-green-950/20 border border-green-200 dark:border-green-900/50 p-4 space-y-4">
+                  <div className="flex items-start gap-3">
+                    <CheckCircle2 className="h-5 w-5 text-green-600 dark:text-green-400 mt-0.5 flex-shrink-0" />
+                    <div className="flex-1">
+                      <p className="text-sm font-medium text-green-900 dark:text-green-100">
+                        Serialization Complete
+                      </p>
+                      <p className="text-sm text-green-700 dark:text-green-300 mt-1">
+                        {serializationResult.message}
+                      </p>
+                    </div>
+                  </div>
+
+                  {/* Summary */}
+                  <div className="pt-2 border-t border-green-200 dark:border-green-900/50">
+                    <p className="text-sm font-medium text-green-900 dark:text-green-100 mb-3">
+                      Summary
+                    </p>
+                    <div className="grid grid-cols-2 gap-4 text-sm text-green-700 dark:text-green-300">
+                      <div>
+                        <span className="font-medium">Total Candidates:</span>{" "}
+                        {serializationResult.total_candidates_count}
+                      </div>
+                      <div>
+                        <span className="font-medium">Total Schools:</span>{" "}
+                        {serializationResult.total_schools_count}
+                      </div>
+                      <div>
+                        <span className="font-medium">Subjects Serialized:</span>{" "}
+                        {serializationResult.subjects_serialized_count}
+                      </div>
+                      <div>
+                        <span className="font-medium">Subjects Defaulted:</span>{" "}
+                        {serializationResult.subjects_defaulted_count}
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Serialized Subjects - Accordion */}
+                  {serializationResult.subjects_processed.length > 0 && (
+                    <div className="pt-2 border-t border-green-200 dark:border-green-900/50">
+                      <button
+                        onClick={() => setShowSerializedSubjects(!showSerializedSubjects)}
+                        className="flex items-center gap-2 w-full text-left text-sm font-medium text-green-900 dark:text-green-100 hover:text-green-700 dark:hover:text-green-300 transition-colors"
+                      >
+                        {showSerializedSubjects ? (
+                          <ChevronDown className="h-4 w-4" />
+                        ) : (
+                          <ChevronRight className="h-4 w-4" />
+                        )}
+                        <span>
+                          Serialized Subjects ({serializationResult.subjects_processed.length})
+                        </span>
+                      </button>
+                      {showSerializedSubjects && (
+                        <div className="mt-2 max-h-48 overflow-y-auto space-y-1 text-sm text-green-700 dark:text-green-300 pl-6">
+                          {serializationResult.subjects_processed.map((subject) => (
+                            <p key={subject.subject_id} className="truncate">
+                              {subject.subject_code} - {subject.subject_name}: {subject.candidates_count} candidate{subject.candidates_count !== 1 ? "s" : ""}
+                            </p>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </div>
+              )}
             </CardContent>
           </Card>
 

@@ -1028,6 +1028,54 @@ export async function updateExamSubject(
   return handleResponse<ExamSubject>(response);
 }
 
+export interface SerializationResponse {
+  exam_id: number;
+  school_id: number | null;
+  total_candidates_count: number;
+  total_schools_count: number;
+  subjects_serialized_count: number;
+  subjects_defaulted_count: number;
+  schools_processed: Array<{
+    school_id: number;
+    school_name: string;
+    candidates_count: number;
+  }>;
+  subjects_processed: Array<{
+    subject_id: number;
+    subject_code: string;
+    subject_name: string;
+    candidates_count: number;
+  }>;
+  subjects_defaulted: Array<{
+    subject_id: number;
+    subject_code: string;
+    subject_name: string;
+    candidates_count: number;
+  }>;
+  message: string;
+}
+
+export async function serializeExam(
+  examId: number,
+  subjectCodes?: string[],
+  schoolId?: number | null
+): Promise<SerializationResponse> {
+  const params = new URLSearchParams();
+  if (schoolId !== undefined && schoolId !== null) {
+    params.append("school_id", schoolId.toString());
+  }
+  if (subjectCodes && subjectCodes.length > 0) {
+    subjectCodes.forEach((code) => {
+      params.append("subject_codes", code);
+    });
+  }
+  const url = `${API_BASE_URL}/api/v1/exams/${examId}/serialize${params.toString() ? `?${params.toString()}` : ""}`;
+  const response = await fetch(url, {
+    method: "POST",
+  });
+  return handleResponse<SerializationResponse>(response);
+}
+
 // Score-related API functions
 
 export async function getFilteredDocuments(
