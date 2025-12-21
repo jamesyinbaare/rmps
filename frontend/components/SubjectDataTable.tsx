@@ -79,6 +79,18 @@ export function SubjectDataTable({
           },
         },
         {
+          accessorKey: "exam_type",
+          header: "Exam Type",
+          cell: ({ row }) => {
+            const examType = row.getValue("exam_type") as string;
+            return (
+              <Badge variant="outline">
+                {examType}
+              </Badge>
+            );
+          },
+        },
+        {
           accessorKey: "created_at",
           header: "Created",
           cell: ({ row }) => {
@@ -137,7 +149,8 @@ export function SubjectDataTable({
         subject.code.toLowerCase().includes(searchValue) ||
         subject.original_code.toLowerCase().includes(searchValue) ||
         subject.name.toLowerCase().includes(searchValue) ||
-        subject.subject_type.toLowerCase().includes(searchValue)
+        subject.subject_type.toLowerCase().includes(searchValue) ||
+        subject.exam_type.toLowerCase().includes(searchValue)
       );
     },
     state: {
@@ -175,7 +188,7 @@ export function SubjectDataTable({
           <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
           <Input
             type="search"
-            placeholder="Search by code, original code, name, or type..."
+            placeholder="Search by code, original code, name, type, or exam type..."
             value={globalFilter}
             onChange={(e) => setGlobalFilter(e.target.value)}
             className="pl-9 pr-9"

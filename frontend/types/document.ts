@@ -123,6 +123,7 @@ export interface Subject {
   original_code: string;
   name: string;
   subject_type: "CORE" | "ELECTIVE";
+  exam_type: ExamType;
   created_at: string;
   updated_at: string;
 }

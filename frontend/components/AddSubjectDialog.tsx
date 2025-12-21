@@ -19,6 +19,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { createSubject } from "@/lib/api";
+import type { ExamType } from "@/types/document";
 import { toast } from "sonner";
 
 interface AddSubjectDialogProps {
@@ -38,6 +39,7 @@ export function AddSubjectDialog({
     original_code: "",
     name: "",
     subject_type: "CORE" as "CORE" | "ELECTIVE",
+    exam_type: "Certificate II Examination" as ExamType,
   });
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -54,7 +56,7 @@ export function AddSubjectDialog({
 
       await createSubject(formData);
       toast.success("Subject created successfully");
-      setFormData({ code: "", original_code: "", name: "", subject_type: "CORE" });
+      setFormData({ code: "", original_code: "", name: "", subject_type: "CORE", exam_type: "Certificate II Examination" });
       onSuccess?.();
       onOpenChange(false);
     } catch (error) {
@@ -76,8 +78,12 @@ export function AddSubjectDialog({
     setFormData((prev) => ({ ...prev, subject_type: value }));
   };
 
+  const handleExamTypeChange = (value: ExamType) => {
+    setFormData((prev) => ({ ...prev, exam_type: value }));
+  };
+
   const handleCancel = () => {
-    setFormData({ code: "", original_code: "", name: "", subject_type: "CORE" });
+    setFormData({ code: "", original_code: "", name: "", subject_type: "CORE", exam_type: "Certificate II Examination" });
     onOpenChange(false);
   };
 
@@ -167,6 +173,25 @@ export function AddSubjectDialog({
                 <SelectContent>
                   <SelectItem value="CORE">Core</SelectItem>
                   <SelectItem value="ELECTIVE">Elective</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+
+            <div className="space-y-2">
+              <label htmlFor="exam_type" className="text-sm font-medium">
+                Exam Type <span className="text-destructive">*</span>
+              </label>
+              <Select
+                value={formData.exam_type}
+                onValueChange={handleExamTypeChange}
+                disabled={loading}
+              >
+                <SelectTrigger>
+                  <SelectValue placeholder="Select exam type" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="Certificate II Examination">Certificate II Examination</SelectItem>
+                  <SelectItem value="CBT">CBT</SelectItem>
                 </SelectContent>
               </Select>
             </div>

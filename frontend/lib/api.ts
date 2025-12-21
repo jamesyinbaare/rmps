@@ -798,6 +798,7 @@ export async function createSubject(data: {
   original_code: string;
   name: string;
   subject_type: "CORE" | "ELECTIVE";
+  exam_type: ExamType;
 }): Promise<Subject> {
   const response = await fetch(`${API_BASE_URL}/api/v1/subjects`, {
     method: "POST",
@@ -811,7 +812,7 @@ export async function createSubject(data: {
 
 export async function updateSubject(
   id: number,
-  data: { name?: string; original_code?: string; subject_type?: "CORE" | "ELECTIVE" }
+  data: { name?: string; original_code?: string; subject_type?: "CORE" | "ELECTIVE"; exam_type?: ExamType }
 ): Promise<Subject> {
   const response = await fetch(`${API_BASE_URL}/api/v1/subjects/${id}`, {
     method: "PUT",
