@@ -229,6 +229,7 @@ class Exam(Base):
     exam_subjects = relationship("ExamSubject", back_populates="exam", cascade="all, delete-orphan")
     exam_registrations = relationship("ExamRegistration", back_populates="exam", cascade="all, delete-orphan")
     documents = relationship("Document", back_populates="exam")
+    pdf_generation_jobs = relationship("PdfGenerationJob", back_populates="exam", cascade="all, delete-orphan")
     __table_args__ = (UniqueConstraint("exam_type", "series", "year", name="uq_exam_exam_type_series_year"),)
 
 
@@ -312,3 +313,32 @@ class SubjectScore(Base):
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
 
     subject_registration = relationship("SubjectRegistration", back_populates="subject_score")
+
+
+class PdfGenerationJobStatus(enum.Enum):
+    PENDING = "pending"
+    PROCESSING = "processing"
+    COMPLETED = "completed"
+    FAILED = "failed"
+    CANCELLED = "cancelled"
+
+
+class PdfGenerationJob(Base):
+    __tablename__ = "pdf_generation_jobs"
+    id = Column(Integer, primary_key=True)
+    status = Column(Enum(PdfGenerationJobStatus), default=PdfGenerationJobStatus.PENDING, nullable=False, index=True)
+    exam_id = Column(Integer, ForeignKey("exams.id", ondelete="CASCADE"), nullable=False, index=True)
+    school_ids = Column(JSON, nullable=True)  # JSON array of school IDs, null = all schools
+    subject_id = Column(Integer, ForeignKey("subjects.id", ondelete="SET NULL"), nullable=True)
+    test_types = Column(JSON, nullable=False)  # JSON array of test types [1, 2]
+    progress_current = Column(Integer, default=0, nullable=False)
+    progress_total = Column(Integer, default=0, nullable=False)
+    current_school_name = Column(String(255), nullable=True)
+    error_message = Column(Text, nullable=True)
+    results = Column(JSON, nullable=True)  # JSON array of {school_id, school_name, pdf_file_path}
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False, index=True)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+    completed_at = Column(DateTime, nullable=True)
+
+    exam = relationship("Exam", back_populates="pdf_generation_jobs")
+    subject = relationship("Subject")

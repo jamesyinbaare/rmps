@@ -1,11 +1,14 @@
 from typing import Any
+from pathlib import Path
 
 from fastapi import APIRouter, HTTPException, Query, status
+from fastapi.responses import StreamingResponse
 from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 
+from app.config import settings
 from app.dependencies.database import DBSessionDep
-from app.models import Document, Exam, ExamRegistration, ExamSeries, ExamSubject, ExamType, Subject
+from app.models import Candidate, Document, Exam, ExamRegistration, ExamSeries, ExamSubject, ExamType, School, Subject, SubjectRegistration
 from app.schemas.exam import (
     ExamCreate,
     ExamListResponse,
@@ -14,11 +17,17 @@ from app.schemas.exam import (
     ExamSubjectResponse,
     ExamSubjectUpdate,
     ExamUpdate,
+    PdfGenerationJobCreate,
+    PdfGenerationJobListResponse,
+    PdfGenerationJobResponse,
+    PdfGenerationResponse,
     ScoreSheetGenerationResponse,
     SerializationResponse,
 )
 from app.services.score_sheet_generator import generate_score_sheets
+from app.services.score_sheet_pdf_service import combine_pdfs_for_school, generate_pdfs_for_exam
 from app.services.serialization import serialize_exam
+from app.background_tasks import start_pdf_generation_job
 
 router = APIRouter(prefix="/api/v1/exams", tags=["exams"])
 
@@ -607,3 +616,271 @@ async def generate_exam_score_sheets(
     except Exception as e:
         await session.rollback()
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Score sheet generation failed: {str(e)}")
+
+
+@router.post("/{exam_id}/generate-pdf-score-sheets", response_model=PdfGenerationResponse, status_code=status.HTTP_200_OK)
+async def generate_exam_pdf_score_sheets(
+    exam_id: int,
+    session: DBSessionDep,
+    school_id: int | None = Query(None, description="Optional school ID to generate PDFs only for that school"),
+    subject_id: int | None = Query(None, description="Optional subject ID to generate PDFs only for that subject"),
+    test_types: list[int] = Query(default=[1, 2], description="List of test types to generate (1 = Objectives, 2 = Essay). Default: [1, 2]"),
+) -> PdfGenerationResponse:
+    """
+    Generate PDF score sheets for an exam and assign sheet IDs to candidates.
+
+    For every school and subject combination:
+    - For every series group, candidates are sorted by index number
+    - Generate ONE multi-page PDF with all candidates (template auto-paginates, max 25 per page)
+    - Count pages in the generated PDF
+    - Split candidates into batches of 25 (matching pages)
+    - Generate sheet IDs based on page count: SCHOOL_CODE(6) + SUBJECT_CODE(3) + SERIES(1) + TEST_TYPE(1) + SHEET_NUMBER(2)
+    - Annotate each page of PDF with its sheet ID (barcode + text)
+    - Assign sheet IDs to SubjectScore records (obj_document_id for test_type=1, essay_document_id for test_type=2)
+
+    Example: If a school has 200 candidates and mathematics has been serialized into 4 series,
+    there will be 50 candidates per series, meaning each series will generate a 2-page PDF.
+
+    This operation will overwrite existing sheet ID assignments.
+    """
+    try:
+        result = await generate_pdfs_for_exam(session, exam_id, school_id, subject_id, test_types)
+        return PdfGenerationResponse.model_validate(result)
+    except ValueError as e:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
+    except Exception as e:
+        await session.rollback()
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"PDF generation failed: {str(e)}")
+
+
+@router.get("/{exam_id}/schools")
+async def get_exam_schools(
+    exam_id: int,
+    session: DBSessionDep,
+) -> list[dict[str, Any]]:
+    """
+    Get list of schools that have candidates registered for the exam.
+
+    Returns schools with their ID, code, and name.
+    """
+    # Validate exam exists
+    exam_stmt = select(Exam).where(Exam.id == exam_id)
+    exam_result = await session.execute(exam_stmt)
+    exam = exam_result.scalar_one_or_none()
+    if not exam:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Exam not found")
+
+    # Get unique schools through exam registrations
+    schools_stmt = (
+        select(School)
+        .join(Candidate, Candidate.school_id == School.id)
+        .join(ExamRegistration, ExamRegistration.candidate_id == Candidate.id)
+        .where(ExamRegistration.exam_id == exam_id)
+        .distinct()
+        .order_by(School.name)
+    )
+
+    schools_result = await session.execute(schools_stmt)
+    schools = schools_result.scalars().all()
+
+    return [
+        {
+            "id": school.id,
+            "code": school.code,
+            "name": school.name,
+        }
+        for school in schools
+    ]
+
+
+@router.get("/{exam_id}/schools/{school_id}/subjects")
+async def get_exam_school_subjects(
+    exam_id: int,
+    school_id: int,
+    session: DBSessionDep,
+) -> list[dict[str, Any]]:
+    """
+    Get list of subjects that a school has candidates registered for in an exam.
+
+    Returns subjects with their ID, code, name, and subject_type.
+    """
+    # Validate exam exists
+    exam_stmt = select(Exam).where(Exam.id == exam_id)
+    exam_result = await session.execute(exam_stmt)
+    exam = exam_result.scalar_one_or_none()
+    if not exam:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Exam not found")
+
+    # Validate school exists
+    school_stmt = select(School).where(School.id == school_id)
+    school_result = await session.execute(school_stmt)
+    school = school_result.scalar_one_or_none()
+    if not school:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="School not found")
+
+    # Get unique subjects through subject registrations
+    # Join: SubjectRegistration -> ExamRegistration -> Candidate -> School
+    # Also join with ExamSubject and Subject to get subject details
+    subjects_stmt = (
+        select(Subject)
+        .join(ExamSubject, ExamSubject.subject_id == Subject.id)
+        .join(SubjectRegistration, SubjectRegistration.exam_subject_id == ExamSubject.id)
+        .join(ExamRegistration, SubjectRegistration.exam_registration_id == ExamRegistration.id)
+        .join(Candidate, ExamRegistration.candidate_id == Candidate.id)
+        .where(ExamSubject.exam_id == exam_id)
+        .where(ExamRegistration.exam_id == exam_id)
+        .where(Candidate.school_id == school_id)
+        .distinct()
+        .order_by(Subject.code)
+    )
+
+    subjects_result = await session.execute(subjects_stmt)
+    subjects = subjects_result.scalars().all()
+
+    return [
+        {
+            "id": subject.id,
+            "code": subject.code,
+            "name": subject.name,
+            "original_code": subject.original_code,
+            "subject_type": subject.subject_type.value if hasattr(subject.subject_type, 'value') else str(subject.subject_type),
+            "exam_type": exam.exam_type.value if hasattr(exam.exam_type, 'value') else str(exam.exam_type),
+        }
+        for subject in subjects
+    ]
+
+
+@router.post("/{exam_id}/generate-pdf-score-sheets-combined", status_code=status.HTTP_200_OK)
+async def generate_exam_pdf_score_sheets_combined(
+    exam_id: int,
+    session: DBSessionDep,
+    school_id: int = Query(..., description="School ID to generate PDFs for (required)"),
+    subject_id: int | None = Query(None, description="Optional subject ID to generate PDFs only for that subject"),
+    test_types: list[int] = Query(default=[1, 2], description="List of test types to generate (1 = Objectives, 2 = Essay). Default: [1, 2]"),
+) -> StreamingResponse:
+    """
+    Generate PDF score sheets for a specific school and combine all PDFs into one downloadable file.
+
+    This endpoint:
+    1. Generates PDFs for the specified school (and optionally subject/test types)
+    2. Combines all generated PDFs for that school into a single PDF
+    3. Returns the combined PDF as a downloadable file
+
+    The combined PDF includes all subjects, series, and test types for the school,
+    sorted by: subject_code, series, test_type.
+    """
+    try:
+        # Validate school exists
+        school_stmt = select(School).where(School.id == school_id)
+        school_result = await session.execute(school_stmt)
+        school = school_result.scalar_one_or_none()
+        if not school:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"School with id {school_id} not found")
+
+        # Generate PDFs for the school
+        result = await generate_pdfs_for_exam(session, exam_id, school_id, subject_id, test_types)
+
+        # Get the school directory path
+        school_name_safe = school.name.replace("/", " ").replace("\\", " ")
+        school_dir = Path(settings.pdf_output_path) / school_name_safe
+
+        # Combine all PDFs for this school
+        try:
+            combined_pdf_bytes = combine_pdfs_for_school(school_dir)
+        except ValueError as e:
+            # If no PDFs found or combination fails, return error
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=f"Failed to combine PDFs: {str(e)}"
+            )
+
+        # Generate filename
+        filename = f"{school.code}_{school.name.replace('/', '_').replace('\\', '_')}_combined_score_sheets.pdf"
+
+        # Return as downloadable file
+        return StreamingResponse(
+            iter([combined_pdf_bytes]),
+            media_type="application/pdf",
+            headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+        )
+
+    except HTTPException:
+        raise
+    except ValueError as e:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
+    except Exception as e:
+        await session.rollback()
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"PDF generation failed: {str(e)}")
+
+
+# PDF Generation Job Endpoints
+
+@router.post("/{exam_id}/generate-pdf-score-sheets-job", response_model=PdfGenerationJobResponse, status_code=status.HTTP_201_CREATED)
+async def create_pdf_generation_job(
+    exam_id: int,
+    job_data: PdfGenerationJobCreate,
+    session: DBSessionDep,
+) -> PdfGenerationJobResponse:
+    """
+    Create a PDF generation job and start processing in the background.
+
+    Returns job_id immediately. The job will be processed asynchronously.
+    """
+    from app.models import PdfGenerationJob, PdfGenerationJobStatus
+
+    # Validate exam exists
+    exam_stmt = select(Exam).where(Exam.id == exam_id)
+    exam_result = await session.execute(exam_stmt)
+    exam = exam_result.scalar_one_or_none()
+    if not exam:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Exam not found")
+
+    # Validate test types
+    if not job_data.test_types or len(job_data.test_types) == 0:
+        # Default to both test types if none provided
+        job_data.test_types = [1, 2]
+
+    for test_type in job_data.test_types:
+        if test_type not in [1, 2]:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"Test type must be 1 or 2, got {test_type}")
+
+    # Create job
+    job = PdfGenerationJob(
+        status=PdfGenerationJobStatus.PENDING,
+        exam_id=exam_id,
+        school_ids=job_data.school_ids,
+        subject_id=job_data.subject_id,
+        test_types=job_data.test_types,
+        progress_current=0,
+        progress_total=0,
+    )
+
+    session.add(job)
+    await session.commit()
+    await session.refresh(job)
+
+    # Start background task
+    start_pdf_generation_job(job.id)
+
+    # Convert results if present
+    results = None
+    if job.results:
+        from app.schemas.exam import PdfGenerationJobResult
+        results = [PdfGenerationJobResult(**r) for r in job.results]
+
+    return PdfGenerationJobResponse(
+        id=job.id,
+        status=job.status.value,
+        exam_id=job.exam_id,
+        school_ids=job.school_ids,
+        subject_id=job.subject_id,
+        test_types=job.test_types,
+        progress_current=job.progress_current,
+        progress_total=job.progress_total,
+        current_school_name=job.current_school_name,
+        error_message=job.error_message,
+        results=results,
+        created_at=job.created_at,
+        updated_at=job.updated_at,
+        completed_at=job.completed_at,
+    )

@@ -1,0 +1,108 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <title>Cert II ICM Template with Python and WeasyPrint</title>
+    <link href="sample.css" rel="stylesheet" />
+    <style>
+      img{
+  width: 100%;
+  height: 100px;
+}
+
+p {
+  margin: 0;
+  text-align: center;
+  font-weight: bold;
+}
+
+table {
+  width: 100%;
+  border-collapse: collapse;
+}
+table, th, td {
+  border: 1px solid;
+  text-align: left;
+  padding-top: .5cm ;
+  padding-bottom: .5cm;
+}
+th, {
+  color: #a9a;
+  font-size: 10pt;
+  font-weight: 400;
+  padding-bottom: .25cm;
+  text-transform: uppercase;
+}
+
+td {
+  padding: 0px;
+  padding-left: 2px;
+  padding-top: 2px ;
+  padding-bottom: 2px;
+}
+.series-1{
+     background-color:#90cbf9;
+}
+.series-2{
+     background-color:#64b7f6;
+}
+.series-3{
+     background-color:#41a7f5;
+}
+.series-4{
+     background-color:#1e97f3;
+}
+.series-5{
+     background-color:#1a8ae5;
+}
+.series-6{
+     background-color: #1477d2;
+}
+
+.series-7{
+     background-color:#1065c0;
+}
+
+.series-8{
+    background-color: #0747a1;
+}
+
+@page {
+  @bottom-left {
+    content: "Page " counter(page) " of " counter(pages);
+    text-align: center;
+    font-weight: bold;
+    vertical-align: bottom;
+    margin-bottom: 45px;
+
+  }
+}
+    </style>
+  </head>
+  <body>
+
+    <table style="margin-top: 10px;">
+      <thead style="display: table-header-group;">
+        <tr>
+          <th style="width:8%;">SN</th>
+
+          <th style="width:20%;">CANDIDATE #</th>
+          <th style="width:55%;">CANDIDATE NAME</th>
+          <th style="">SERIES</th>
+
+        </tr>
+      </thead>
+
+      <tbody>
+        {% for student in students %}
+        <tr style="padding-bottom: 0.5cm; padding-top: 5cm;">
+          <td>{{loop.index}}</td>
+          <td>{{student.index}}</td>
+          <td>{{student.name}}</td>
+          <td>{{student.s_number}}</td>
+
+        </tr>
+        {%endfor%}
+      </tbody>
+    </table>
+  </body>
+</html>

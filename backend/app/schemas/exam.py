@@ -158,3 +158,93 @@ class ScoreSheetGenerationResponse(BaseModel):
     subjects_processed: list[SubjectSheetInfo]
     sheets_by_series: dict[int, int]
     message: str
+
+
+class SchoolPdfInfo(BaseModel):
+    """Schema for school PDF generation information."""
+
+    school_id: int
+    school_name: str
+    pdfs_count: int
+    sheets_count: int
+    candidates_count: int
+
+
+class SubjectPdfInfo(BaseModel):
+    """Schema for subject PDF generation information."""
+
+    subject_id: int
+    subject_code: str
+    subject_name: str
+    pdfs_count: int
+    sheets_count: int
+    candidates_count: int
+
+
+class PdfGenerationResponse(BaseModel):
+    """Schema for PDF generation response."""
+
+    exam_id: int
+    total_pdfs_generated: int
+    total_sheets_generated: int
+    total_candidates_assigned: int
+    schools_processed: list[SchoolPdfInfo]
+    subjects_processed: list[SubjectPdfInfo]
+    sheets_by_series: dict[int, int]
+    message: str
+
+
+class PdfGenerationJobCreate(BaseModel):
+    """Schema for creating a PDF generation job."""
+
+    school_ids: list[int] | None = None  # None = all schools
+    subject_id: int | None = None
+    test_types: list[int] = Field(default=[1, 2], description="List of test types (1 = Objectives, 2 = Essay)")
+
+
+class PdfGenerationJobResult(BaseModel):
+    """Schema for a completed school result in a job."""
+
+    school_id: int
+    school_name: str
+    school_code: str
+    pdf_file_path: str | None = None
+    error: str | None = None
+
+
+class PdfGenerationJobResponse(BaseModel):
+    """Schema for PDF generation job response."""
+
+    id: int
+    status: str
+    exam_id: int
+    school_ids: list[int] | None
+    subject_id: int | None
+    test_types: list[int]
+    progress_current: int
+    progress_total: int
+    current_school_name: str | None
+    error_message: str | None
+    results: list[PdfGenerationJobResult] | None
+    created_at: datetime
+    updated_at: datetime
+    completed_at: datetime | None
+
+    class Config:
+        from_attributes = True
+
+
+class PdfGenerationJobListResponse(BaseModel):
+    """Schema for paginated PDF generation job list response."""
+
+    items: list[PdfGenerationJobResponse]
+    total: int
+    page: int
+    page_size: int
+    total_pages: int
+
+
+class DeleteJobsRequest(BaseModel):
+    """Schema for deleting multiple PDF generation jobs."""
+
+    job_ids: list[int] = Field(..., description="List of job IDs to delete")

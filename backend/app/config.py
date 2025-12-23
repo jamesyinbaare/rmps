@@ -8,6 +8,9 @@ class Settings(BaseSettings):
     storage_backend: str = "local"  # local, s3, azure
     storage_path: str = "storage/documents"
     storage_max_size: int = 50 * 1024 * 1024  # 50MB default
+    # PDF generation settings
+    templates_path: str = "templates"  # Path to HTML templates directory
+    pdf_output_path: str = "score_sheets"  # Path to save generated PDF score sheets
     # Extraction settings
     barcode_enabled: bool = True
     ocr_enabled: bool = True

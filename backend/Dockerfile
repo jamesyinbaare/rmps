@@ -46,8 +46,7 @@ COPY ./pyproject.toml ./uv.lock ./alembic.ini  /app/
 COPY ./app /app/app
 COPY ./tests /app/tests
 COPY ./alembic /app/alembic
-# Copy the application into the container.
-
+COPY ./templates /app/templates
 
 # Sync the project
 # Ref: https://docs.astral.sh/uv/guides/integration/docker/#intermediate-layers
