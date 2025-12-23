@@ -100,11 +100,11 @@ export function ExamSubjectCard({ examSubject, onUpdate }: ExamSubjectCardProps)
   };
 
   return (
-    <Card>
-      <CardHeader>
-        <div className="flex items-center justify-between">
-          <div className="flex items-center gap-3">
-            <CardTitle className="text-lg">
+    <Card className="min-w-0 w-full flex flex-col h-full">
+      <CardHeader className="shrink-0">
+        <div className="flex items-center justify-between gap-2 flex-wrap">
+          <div className="flex items-center gap-3 flex-wrap min-w-0">
+            <CardTitle className="text-lg wrap-break-word">
               {examSubject.subject_code} - {examSubject.subject_name}
             </CardTitle>
             <Badge variant={examSubject.subject_type === "CORE" ? "default" : "secondary"}>
@@ -134,12 +134,12 @@ export function ExamSubjectCard({ examSubject, onUpdate }: ExamSubjectCardProps)
           )}
         </div>
       </CardHeader>
-      <CardContent>
-        <div className="grid grid-cols-2 gap-4">
+      <CardContent className="flex-1">
+        <div className="grid grid-cols-2 gap-3">
           {/* Max Scores */}
-          <div className="space-y-4">
+          <div className="space-y-3">
             <h4 className="text-sm font-semibold text-muted-foreground">Maximum Scores</h4>
-            <div className="space-y-3">
+            <div className="space-y-2">
               <div>
                 <label className="text-sm text-muted-foreground">Objective Max Score</label>
                 {isEditing ? (
@@ -195,9 +195,9 @@ export function ExamSubjectCard({ examSubject, onUpdate }: ExamSubjectCardProps)
           </div>
 
           {/* Percentages */}
-          <div className="space-y-4">
+          <div className="space-y-3">
             <h4 className="text-sm font-semibold text-muted-foreground">Percentages</h4>
-            <div className="space-y-3">
+            <div className="space-y-2">
               <div>
                 <label className="text-sm text-muted-foreground">Objective %</label>
                 {isEditing ? (
