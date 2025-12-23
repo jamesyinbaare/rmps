@@ -21,6 +21,7 @@ import { getExam, listExamSubjects, serializeExam, type ExamSubject, type Serial
 import type { Exam } from "@/types/document";
 import { ArrowLeft, Search, X, ClipboardList, Edit, Calendar, Users, CheckCircle2, AlertCircle, Loader2, ChevronDown, ChevronRight } from "lucide-react";
 import { Checkbox } from "@/components/ui/checkbox";
+import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 
 export default function ExaminationDetailPage() {
   const params = useParams();
@@ -39,6 +40,7 @@ export default function ExaminationDetailPage() {
   const [serializationError, setSerializationError] = useState<string | null>(null);
   const [selectedSubjectCodes, setSelectedSubjectCodes] = useState<Set<string>>(new Set());
   const [showSerializedSubjects, setShowSerializedSubjects] = useState(false);
+  const [activeTab, setActiveTab] = useState<string>("serialization");
 
   // Load examination data
   useEffect(() => {
@@ -148,13 +150,15 @@ export default function ExaminationDetailPage() {
       <DashboardLayout title="Examination Details">
         <div className="flex flex-1 flex-col overflow-hidden">
           <TopBar title="Loading..." />
-          <div className="flex-1 overflow-y-auto p-6">
-            <div className="space-y-4">
-              <Skeleton className="h-8 w-64" />
-              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-                {[1, 2, 3, 4, 5, 6].map((i) => (
-                  <Skeleton key={i} className="h-64 w-full" />
-                ))}
+          <div className="flex-1 overflow-y-auto py-6 px-4 sm:px-6 md:px-8 lg:px-12 xl:px-16 2xl:px-24">
+            <div className="max-w-full lg:max-w-5xl xl:max-w-6xl 2xl:max-w-[66.666667%] mx-auto">
+              <div className="space-y-4">
+                <Skeleton className="h-8 w-64" />
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                  {[1, 2, 3, 4, 5, 6].map((i) => (
+                    <Skeleton key={i} className="h-64 w-full" />
+                  ))}
+                </div>
               </div>
             </div>
           </div>
@@ -168,18 +172,20 @@ export default function ExaminationDetailPage() {
       <DashboardLayout title="Examination Details">
         <div className="flex flex-1 flex-col overflow-hidden">
           <TopBar title="Error" />
-          <div className="flex-1 overflow-y-auto p-6">
-            <div className="rounded-lg bg-destructive/10 border border-destructive/20 p-4 text-destructive">
-              {error || "Examination not found"}
+          <div className="flex-1 overflow-y-auto py-6 px-4 sm:px-6 md:px-8 lg:px-12 xl:px-16 2xl:px-24">
+            <div className="max-w-full lg:max-w-5xl xl:max-w-6xl 2xl:max-w-[66.666667%] mx-auto">
+              <div className="rounded-lg bg-destructive/10 border border-destructive/20 p-4 text-destructive">
+                {error || "Examination not found"}
+              </div>
+              <Button
+                variant="outline"
+                className="mt-4"
+                onClick={() => router.push("/examinations")}
+              >
+                <ArrowLeft className="h-4 w-4 mr-2" />
+                Back to Examinations
+              </Button>
             </div>
-            <Button
-              variant="outline"
-              className="mt-4"
-              onClick={() => router.push("/examinations")}
-            >
-              <ArrowLeft className="h-4 w-4 mr-2" />
-              Back to Examinations
-            </Button>
           </div>
         </div>
       </DashboardLayout>
@@ -192,9 +198,10 @@ export default function ExaminationDetailPage() {
         <TopBar
           title={`${exam.exam_type} - ${exam.year} ${exam.series}`}
         />
-        <div className="flex-1 overflow-y-auto p-6">
-          {/* Header with back button */}
-          <div className="mb-6">
+        <div className="flex-1 overflow-y-auto py-6 px-4 sm:px-6 md:px-8 lg:px-12 xl:px-16 2xl:px-4">
+          <div className="max-w-full lg:max-w-5xl xl:max-w-6xl 2xl:max-w-[5/6] mx-auto">
+            {/* Header with back button */}
+            <div className="mb-6">
             <Button
               variant="ghost"
               onClick={() => router.push("/examinations")}
@@ -259,233 +266,256 @@ export default function ExaminationDetailPage() {
             </CardContent>
           </Card>
 
-          {/* Serialization Card */}
-          <Card className="mb-6">
-            <CardHeader>
-              <CardTitle className="flex items-center gap-2">
-                <Users className="h-5 w-5" />
-                Candidate Serialization
-              </CardTitle>
-            </CardHeader>
-            <CardContent className="space-y-4">
-              <p className="text-sm text-muted-foreground">
-                Select subjects to serialize. Selected subjects will have candidates assigned series numbers (1 to {exam.number_of_series}) in round-robin fashion.
-                Unselected subjects will have all candidates assigned a default series of 1.
-              </p>
-
-              {/* Subject Selection */}
-              {subjects.length > 0 && (
-                <div className="space-y-3">
-                  <div className="flex items-center justify-between">
-                    <p className="text-sm font-medium">Select Subjects to Serialize</p>
-                    <div className="flex gap-2">
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        onClick={selectAllSubjects}
-                        disabled={serializing}
-                      >
-                        Select All
-                      </Button>
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        onClick={clearSubjectSelection}
-                        disabled={serializing}
-                      >
-                        Clear
-                      </Button>
-                    </div>
-                  </div>
-                  <div className="border rounded-lg p-4 max-h-64 overflow-y-auto space-y-2">
-                    {subjects.map((subject) => (
-                      <div key={subject.id} className="flex items-center space-x-2">
-                        <Checkbox
-                          id={`subject-${subject.id}`}
-                          checked={selectedSubjectCodes.has(subject.subject_code)}
-                          onCheckedChange={() => toggleSubjectSelection(subject.subject_code)}
-                          disabled={serializing}
-                        />
-                        <label
-                          htmlFor={`subject-${subject.id}`}
-                          className="text-sm font-medium leading-none peer-disabled:cursor-not-allowed peer-disabled:opacity-70 cursor-pointer flex-1"
-                        >
-                          <span className="font-mono font-semibold">{subject.subject_code}</span> - {subject.subject_name}
-                          <span className="ml-2 text-xs text-muted-foreground">({subject.subject_type})</span>
-                        </label>
-                      </div>
-                    ))}
-                  </div>
-                  <p className="text-xs text-muted-foreground">
-                    {selectedSubjectCodes.size} of {subjects.length} subject{subjects.length !== 1 ? "s" : ""} selected
-                  </p>
-                </div>
-              )}
-
-              <Button
-                onClick={handleSerialization}
-                disabled={serializing || subjects.length === 0}
-                className="w-full sm:w-auto"
+          {/* Tab Navigation */}
+          <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full">
+            <TabsList className="h-auto w-full justify-start rounded-none border-b bg-transparent p-0">
+              <TabsTrigger
+                value="serialization"
+                className="rounded-none border-b-2 border-transparent bg-transparent px-4 py-3 text-sm font-medium text-muted-foreground transition-all hover:text-foreground data-[state=active]:border-primary data-[state=active]:text-foreground data-[state=active]:shadow-none"
               >
-                {serializing ? (
-                  <>
-                    <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                    Serializing...
-                  </>
-                ) : (
-                  <>
-                    <Users className="h-4 w-4 mr-2" />
-                    Serialize Candidates
-                  </>
-                )}
-              </Button>
+                Serialization
+              </TabsTrigger>
+              <TabsTrigger
+                value="score-interpretation"
+                className="rounded-none border-b-2 border-transparent bg-transparent px-4 py-3 text-sm font-medium text-muted-foreground transition-all hover:text-foreground data-[state=active]:border-primary data-[state=active]:text-foreground data-[state=active]:shadow-none"
+              >
+                Score interpretation
+              </TabsTrigger>
+            </TabsList>
 
-              {serializationError && (
-                <div className="rounded-lg bg-destructive/10 border border-destructive/20 p-4 flex items-start gap-3">
-                  <AlertCircle className="h-5 w-5 text-destructive mt-0.5 flex-shrink-0" />
-                  <div className="flex-1">
-                    <p className="text-sm font-medium text-destructive">Serialization Failed</p>
-                    <p className="text-sm text-destructive/80 mt-1">{serializationError}</p>
-                  </div>
-                </div>
-              )}
+            <TabsContent value="serialization" className="mt-6">
+              {/* Serialization Card */}
+              <Card className="mb-6">
+                <CardHeader>
+                  <CardTitle className="flex items-center gap-2">
+                    <Users className="h-5 w-5" />
+                    Candidate Serialization
+                  </CardTitle>
+                </CardHeader>
+                <CardContent className="space-y-4">
+                  <p className="text-sm text-muted-foreground">
+                    Select subjects to serialize. Selected subjects will have candidates assigned series numbers (1 to {exam.number_of_series}) in round-robin fashion.
+                    Unselected subjects will have all candidates assigned a default series of 1.
+                  </p>
 
-              {serializationResult && (
-                <div className="rounded-lg bg-green-50 dark:bg-green-950/20 border border-green-200 dark:border-green-900/50 p-4 space-y-4">
-                  <div className="flex items-start gap-3">
-                    <CheckCircle2 className="h-5 w-5 text-green-600 dark:text-green-400 mt-0.5 flex-shrink-0" />
-                    <div className="flex-1">
-                      <p className="text-sm font-medium text-green-900 dark:text-green-100">
-                        Serialization Complete
-                      </p>
-                      <p className="text-sm text-green-700 dark:text-green-300 mt-1">
-                        {serializationResult.message}
+                  {/* Subject Selection */}
+                  {subjects.length > 0 && (
+                    <div className="space-y-3">
+                      <div className="flex items-center justify-between">
+                        <p className="text-sm font-medium">Select Subjects to Serialize</p>
+                        <div className="flex gap-2">
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            onClick={selectAllSubjects}
+                            disabled={serializing}
+                          >
+                            Select All
+                          </Button>
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            onClick={clearSubjectSelection}
+                            disabled={serializing}
+                          >
+                            Clear
+                          </Button>
+                        </div>
+                      </div>
+                      <div className="border rounded-lg p-4 max-h-64 overflow-y-auto space-y-2">
+                        {subjects.map((subject) => (
+                          <div key={subject.id} className="flex items-center space-x-2">
+                            <Checkbox
+                              id={`subject-${subject.id}`}
+                              checked={selectedSubjectCodes.has(subject.subject_code)}
+                              onCheckedChange={() => toggleSubjectSelection(subject.subject_code)}
+                              disabled={serializing}
+                            />
+                            <label
+                              htmlFor={`subject-${subject.id}`}
+                              className="text-sm font-medium leading-none peer-disabled:cursor-not-allowed peer-disabled:opacity-70 cursor-pointer flex-1"
+                            >
+                              <span className="font-mono font-semibold">{subject.subject_code}</span> - {subject.subject_name}
+                              <span className="ml-2 text-xs text-muted-foreground">({subject.subject_type})</span>
+                            </label>
+                          </div>
+                        ))}
+                      </div>
+                      <p className="text-xs text-muted-foreground">
+                        {selectedSubjectCodes.size} of {subjects.length} subject{subjects.length !== 1 ? "s" : ""} selected
                       </p>
                     </div>
-                  </div>
+                  )}
 
-                  {/* Summary */}
-                  <div className="pt-2 border-t border-green-200 dark:border-green-900/50">
-                    <p className="text-sm font-medium text-green-900 dark:text-green-100 mb-3">
-                      Summary
-                    </p>
-                    <div className="grid grid-cols-2 gap-4 text-sm text-green-700 dark:text-green-300">
-                      <div>
-                        <span className="font-medium">Total Candidates:</span>{" "}
-                        {serializationResult.total_candidates_count}
-                      </div>
-                      <div>
-                        <span className="font-medium">Total Schools:</span>{" "}
-                        {serializationResult.total_schools_count}
-                      </div>
-                      <div>
-                        <span className="font-medium">Subjects Serialized:</span>{" "}
-                        {serializationResult.subjects_serialized_count}
-                      </div>
-                      <div>
-                        <span className="font-medium">Subjects Defaulted:</span>{" "}
-                        {serializationResult.subjects_defaulted_count}
+                  <Button
+                    onClick={handleSerialization}
+                    disabled={serializing || subjects.length === 0}
+                    className="w-full sm:w-auto"
+                  >
+                    {serializing ? (
+                      <>
+                        <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                        Serializing...
+                      </>
+                    ) : (
+                      <>
+                        <Users className="h-4 w-4 mr-2" />
+                        Serialize Candidates
+                      </>
+                    )}
+                  </Button>
+
+                  {serializationError && (
+                    <div className="rounded-lg bg-destructive/10 border border-destructive/20 p-4 flex items-start gap-3">
+                      <AlertCircle className="h-5 w-5 text-destructive mt-0.5 shrink-0" />
+                      <div className="flex-1">
+                        <p className="text-sm font-medium text-destructive">Serialization Failed</p>
+                        <p className="text-sm text-destructive/80 mt-1">{serializationError}</p>
                       </div>
                     </div>
-                  </div>
+                  )}
 
-                  {/* Serialized Subjects - Accordion */}
-                  {serializationResult.subjects_processed.length > 0 && (
-                    <div className="pt-2 border-t border-green-200 dark:border-green-900/50">
-                      <button
-                        onClick={() => setShowSerializedSubjects(!showSerializedSubjects)}
-                        className="flex items-center gap-2 w-full text-left text-sm font-medium text-green-900 dark:text-green-100 hover:text-green-700 dark:hover:text-green-300 transition-colors"
-                      >
-                        {showSerializedSubjects ? (
-                          <ChevronDown className="h-4 w-4" />
-                        ) : (
-                          <ChevronRight className="h-4 w-4" />
-                        )}
-                        <span>
-                          Serialized Subjects ({serializationResult.subjects_processed.length})
-                        </span>
-                      </button>
-                      {showSerializedSubjects && (
-                        <div className="mt-2 max-h-48 overflow-y-auto space-y-1 text-sm text-green-700 dark:text-green-300 pl-6">
-                          {serializationResult.subjects_processed.map((subject) => (
-                            <p key={subject.subject_id} className="truncate">
-                              {subject.subject_code} - {subject.subject_name}: {subject.candidates_count} candidate{subject.candidates_count !== 1 ? "s" : ""}
-                            </p>
-                          ))}
+                  {serializationResult && (
+                    <div className="rounded-lg bg-green-50 dark:bg-green-950/20 border border-green-200 dark:border-green-900/50 p-4 space-y-4">
+                      <div className="flex items-start gap-3">
+                        <CheckCircle2 className="h-5 w-5 text-green-600 dark:text-green-400 mt-0.5 shrink-0" />
+                        <div className="flex-1">
+                          <p className="text-sm font-medium text-green-900 dark:text-green-100">
+                            Serialization Complete
+                          </p>
+                          <p className="text-sm text-green-700 dark:text-green-300 mt-1">
+                            {serializationResult.message}
+                          </p>
+                        </div>
+                      </div>
+
+                      {/* Summary */}
+                      <div className="pt-2 border-t border-green-200 dark:border-green-900/50">
+                        <p className="text-sm font-medium text-green-900 dark:text-green-100 mb-3">
+                          Summary
+                        </p>
+                        <div className="grid grid-cols-2 gap-4 text-sm text-green-700 dark:text-green-300">
+                          <div>
+                            <span className="font-medium">Total Candidates:</span>{" "}
+                            {serializationResult.total_candidates_count}
+                          </div>
+                          <div>
+                            <span className="font-medium">Total Schools:</span>{" "}
+                            {serializationResult.total_schools_count}
+                          </div>
+                          <div>
+                            <span className="font-medium">Subjects Serialized:</span>{" "}
+                            {serializationResult.subjects_serialized_count}
+                          </div>
+                          <div>
+                            <span className="font-medium">Subjects Defaulted:</span>{" "}
+                            {serializationResult.subjects_defaulted_count}
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* Serialized Subjects - Accordion */}
+                      {serializationResult.subjects_processed.length > 0 && (
+                        <div className="pt-2 border-t border-green-200 dark:border-green-900/50">
+                          <button
+                            onClick={() => setShowSerializedSubjects(!showSerializedSubjects)}
+                            className="flex items-center gap-2 w-full text-left text-sm font-medium text-green-900 dark:text-green-100 hover:text-green-700 dark:hover:text-green-300 transition-colors"
+                          >
+                            {showSerializedSubjects ? (
+                              <ChevronDown className="h-4 w-4" />
+                            ) : (
+                              <ChevronRight className="h-4 w-4" />
+                            )}
+                            <span>
+                              Serialized Subjects ({serializationResult.subjects_processed.length})
+                            </span>
+                          </button>
+                          {showSerializedSubjects && (
+                            <div className="mt-2 max-h-48 overflow-y-auto space-y-1 text-sm text-green-700 dark:text-green-300 pl-6">
+                              {serializationResult.subjects_processed.map((subject) => (
+                                <p key={subject.subject_id} className="truncate">
+                                  {subject.subject_code} - {subject.subject_name}: {subject.candidates_count} candidate{subject.candidates_count !== 1 ? "s" : ""}
+                                </p>
+                              ))}
+                            </div>
+                          )}
                         </div>
                       )}
                     </div>
                   )}
+                </CardContent>
+              </Card>
+            </TabsContent>
+
+            <TabsContent value="score-interpretation" className="mt-6">
+              {/* Search and Filter Controls */}
+              <div className="mb-6 flex flex-col sm:flex-row gap-4">
+                <div className="relative flex-1 max-w-md">
+                  <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+                  <Input
+                    type="search"
+                    placeholder="Search subjects by code or name..."
+                    value={searchQuery}
+                    onChange={(e) => setSearchQuery(e.target.value)}
+                    className="pl-9 pr-9"
+                  />
+                  {searchQuery && (
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      className="absolute right-1 top-1/2 h-6 w-6 -translate-y-1/2 p-0"
+                      onClick={() => setSearchQuery("")}
+                    >
+                      <X className="h-3 w-3" />
+                    </Button>
+                  )}
+                </div>
+                <Select value={subjectTypeFilter} onValueChange={(value: "ALL" | "CORE" | "ELECTIVE") => setSubjectTypeFilter(value)}>
+                  <SelectTrigger className="w-[180px]">
+                    <SelectValue placeholder="Filter by type" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="ALL">All Subjects</SelectItem>
+                    <SelectItem value="CORE">Core Only</SelectItem>
+                    <SelectItem value="ELECTIVE">Elective Only</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+
+              {/* Subjects Count */}
+              <div className="mb-4 text-sm text-muted-foreground">
+                Showing {filteredSubjects.length} of {subjects.length} subject{subjects.length !== 1 ? "s" : ""}
+              </div>
+
+              {/* Subjects Grid */}
+              {filteredSubjects.length === 0 ? (
+                <div className="flex flex-col items-center justify-center py-24 text-center">
+                  <ClipboardList className="h-16 w-16 text-muted-foreground mb-4" />
+                  <p className="text-lg font-medium mb-2">
+                    {searchQuery || subjectTypeFilter !== "ALL"
+                      ? "No subjects match your filters"
+                      : "No subjects found"}
+                  </p>
+                  <p className="text-sm text-muted-foreground">
+                    {searchQuery || subjectTypeFilter !== "ALL"
+                      ? "Try adjusting your search or filter criteria"
+                      : "Subjects will appear here once added to this examination"}
+                  </p>
+                </div>
+              ) : (
+                <div className="grid grid-cols-2 2xl:grid-cols-3 gap-4 items-stretch">
+                  {filteredSubjects.map((subject) => (
+                    <ExamSubjectCard
+                      key={subject.id}
+                      examSubject={subject}
+                      onUpdate={handleSubjectUpdate}
+                    />
+                  ))}
                 </div>
               )}
-            </CardContent>
-          </Card>
-
-          {/* Search and Filter Controls */}
-          <div className="mb-6 flex flex-col sm:flex-row gap-4">
-            <div className="relative flex-1 max-w-md">
-              <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-              <Input
-                type="search"
-                placeholder="Search subjects by code or name..."
-                value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
-                className="pl-9 pr-9"
-              />
-              {searchQuery && (
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  className="absolute right-1 top-1/2 h-6 w-6 -translate-y-1/2 p-0"
-                  onClick={() => setSearchQuery("")}
-                >
-                  <X className="h-3 w-3" />
-                </Button>
-              )}
-            </div>
-            <Select value={subjectTypeFilter} onValueChange={(value: "ALL" | "CORE" | "ELECTIVE") => setSubjectTypeFilter(value)}>
-              <SelectTrigger className="w-[180px]">
-                <SelectValue placeholder="Filter by type" />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="ALL">All Subjects</SelectItem>
-                <SelectItem value="CORE">Core Only</SelectItem>
-                <SelectItem value="ELECTIVE">Elective Only</SelectItem>
-              </SelectContent>
-            </Select>
+            </TabsContent>
+          </Tabs>
           </div>
-
-          {/* Subjects Count */}
-          <div className="mb-4 text-sm text-muted-foreground">
-            Showing {filteredSubjects.length} of {subjects.length} subject{subjects.length !== 1 ? "s" : ""}
-          </div>
-
-          {/* Subjects Grid */}
-          {filteredSubjects.length === 0 ? (
-            <div className="flex flex-col items-center justify-center py-24 text-center">
-              <ClipboardList className="h-16 w-16 text-muted-foreground mb-4" />
-              <p className="text-lg font-medium mb-2">
-                {searchQuery || subjectTypeFilter !== "ALL"
-                  ? "No subjects match your filters"
-                  : "No subjects found"}
-              </p>
-              <p className="text-sm text-muted-foreground">
-                {searchQuery || subjectTypeFilter !== "ALL"
-                  ? "Try adjusting your search or filter criteria"
-                  : "Subjects will appear here once added to this examination"}
-              </p>
-            </div>
-          ) : (
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-              {filteredSubjects.map((subject) => (
-                <ExamSubjectCard
-                  key={subject.id}
-                  examSubject={subject}
-                  onUpdate={handleSubjectUpdate}
-                />
-              ))}
-            </div>
-          )}
         </div>
       </div>
 
