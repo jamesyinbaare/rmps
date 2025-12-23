@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { File, Image as ImageIcon, FileText, Download, Trash2 } from "lucide-react";
+import { File, Image as ImageIcon, FileText, Download, Trash2, AlertCircle } from "lucide-react";
 import { Button } from "./ui/button";
 import type { Document } from "@/types/document";
 import { formatFileSize } from "@/lib/utils";
@@ -83,9 +83,15 @@ function DocumentCard({
 }) {
   const [imageError, setImageError] = useState(false);
 
+  const isFailed = doc.id_extraction_status === "error";
+
   return (
     <div
-      className="group relative flex flex-col rounded-lg border border-border bg-card transition-all hover:border-primary/50 hover:shadow-md aspect-square max-w-full cursor-pointer"
+      className={`group relative flex flex-col rounded-lg border transition-all hover:shadow-md aspect-square max-w-full cursor-pointer ${
+        isFailed
+          ? "border-destructive/50 bg-destructive/5 hover:border-destructive"
+          : "border-border bg-card hover:border-primary/50"
+      }`}
       onClick={() => onSelect?.(doc)}
     >
       {/* Image Preview / Icon Fallback */}
@@ -106,7 +112,12 @@ function DocumentCard({
 
       {/* Card Footer - ID and Metadata */}
       <div className="w-full px-4 py-3 border-t border-border bg-card text-center hover:bg-accent/50 transition-colors">
-        <p className="truncate text-sm font-medium mb-1">{displayText}</p>
+        <div className="flex items-center justify-center gap-1.5 mb-1">
+          <p className="truncate text-sm font-medium">{displayText}</p>
+          {doc.id_extraction_status === "error" && (
+            <AlertCircle className="h-3.5 w-3.5 text-destructive shrink-0" title="ID extraction failed" />
+          )}
+        </div>
         <p className="text-xs text-muted-foreground">
           {fileType} • {formatFileSize(doc.file_size)}
         </p>
