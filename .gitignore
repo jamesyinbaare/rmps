@@ -19,3 +19,6 @@ htmlcov
 node_modules/
 package-lock.json
 package.json
+annotate_icm.py
+pdf_utils.py
+generate_pdf.py

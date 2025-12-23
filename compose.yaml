@@ -7,6 +7,9 @@ services:
       - "8000:80"
     env_file:
       - .env
+    volumes:
+      - icm_storage_data:/app/storage/documents
+      - icm_score_sheets_data:/app/score_sheets
     develop:
       watch:
         - action: sync
@@ -80,3 +83,5 @@ services:
 
 volumes:
   icm_db_data:
+  icm_storage_data:
+  icm_score_sheets_data:

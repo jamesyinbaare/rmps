@@ -23,6 +23,7 @@ import {
   ClipboardList,
   ClipboardCheck,
   Upload,
+  FileText,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Button } from "./ui/button";
@@ -54,7 +55,7 @@ export function Sidebar() {
         { href: "/documents?filter=recent", label: "Recent", icon: Clock },
         { href: "/documents?filter=starred", label: "Starred", icon: Star },
         { href: "/documents?filter=shared", label: "Shared", icon: Share2 },
-
+        { href: "/home/generate-icms", label: "Generate ICMs", icon: FileText },
       ],
     },
     {

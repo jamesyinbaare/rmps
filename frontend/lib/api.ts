@@ -1178,3 +1178,256 @@ export async function batchUpdateScoresForManualEntry(
   });
   return handleResponse<BatchScoreUpdateResponse>(response);
 }
+
+// PDF Score Sheet Generation API Functions
+
+export interface PdfGenerationResponse {
+  exam_id: number;
+  total_pdfs_generated: number;
+  total_sheets_generated: number;
+  total_candidates_assigned: number;
+  schools_processed: Array<{
+    school_id: number;
+    school_name: string;
+    pdfs_count: number;
+    sheets_count: number;
+    candidates_count: number;
+  }>;
+  subjects_processed: Array<{
+    subject_id: number;
+    subject_code: string;
+    subject_name: string;
+    pdfs_count: number;
+    sheets_count: number;
+    candidates_count: number;
+  }>;
+  sheets_by_series: Record<number, number>;
+  message: string;
+}
+
+/**
+ * Get schools that have candidates registered for an exam.
+ */
+export async function getSchoolsForExamWithCandidates(examId: number): Promise<School[]> {
+  const response = await fetch(`${API_BASE_URL}/api/v1/exams/${examId}/schools`);
+  return handleResponse<School[]>(response);
+}
+
+/**
+ * Get subjects that a school has candidates registered for in an exam.
+ */
+export async function getSubjectsForExamAndSchoolByCandidates(
+  examId: number,
+  schoolId: number
+): Promise<Subject[]> {
+  const response = await fetch(`${API_BASE_URL}/api/v1/exams/${examId}/schools/${schoolId}/subjects`);
+  return handleResponse<Subject[]>(response);
+}
+
+/**
+ * Generate PDF score sheets for an exam (existing endpoint).
+ */
+export async function generatePdfScoreSheets(
+  examId: number,
+  schoolId?: number | null,
+  subjectId?: number | null,
+  testTypes?: number[]
+): Promise<PdfGenerationResponse> {
+  const params = new URLSearchParams();
+  if (schoolId !== undefined && schoolId !== null) {
+    params.append("school_id", schoolId.toString());
+  }
+  if (subjectId !== undefined && subjectId !== null) {
+    params.append("subject_id", subjectId.toString());
+  }
+  if (testTypes && testTypes.length > 0) {
+    testTypes.forEach((type) => {
+      params.append("test_types", type.toString());
+    });
+  }
+
+  const url = `${API_BASE_URL}/api/v1/exams/${examId}/generate-pdf-score-sheets${params.toString() ? `?${params.toString()}` : ""}`;
+  const response = await fetch(url, {
+    method: "POST",
+  });
+  return handleResponse<PdfGenerationResponse>(response);
+}
+
+/**
+ * Generate PDF score sheets for a specific school and return combined PDF as blob.
+ */
+export async function generatePdfScoreSheetsCombined(
+  examId: number,
+  schoolId: number,
+  subjectId?: number | null,
+  testTypes?: number[]
+): Promise<Blob> {
+  const params = new URLSearchParams();
+  params.append("school_id", schoolId.toString());
+  if (subjectId !== undefined && subjectId !== null) {
+    params.append("subject_id", subjectId.toString());
+  }
+  if (testTypes && testTypes.length > 0) {
+    testTypes.forEach((type) => {
+      params.append("test_types", type.toString());
+    });
+  }
+
+  const url = `${API_BASE_URL}/api/v1/exams/${examId}/generate-pdf-score-sheets-combined?${params.toString()}`;
+  const response = await fetch(url, {
+    method: "POST",
+  });
+
+  if (!response.ok) {
+    const error: ApiError = await response.json().catch(() => ({ detail: "An error occurred" }));
+    throw new Error(error.detail || `HTTP error! status: ${response.status}`);
+  }
+
+  return response.blob();
+}
+
+// PDF Generation Job API Functions
+
+export interface PdfGenerationJobResult {
+  school_id: number;
+  school_name: string;
+  school_code: string;
+  pdf_file_path: string | null;
+  error: string | null;
+}
+
+export interface PdfGenerationJob {
+  id: number;
+  status: "pending" | "processing" | "completed" | "failed" | "cancelled";
+  exam_id: number;
+  school_ids: number[] | null;
+  subject_id: number | null;
+  test_types: number[];
+  progress_current: number;
+  progress_total: number;
+  current_school_name: string | null;
+  error_message: string | null;
+  results: PdfGenerationJobResult[] | null;
+  created_at: string;
+  updated_at: string;
+  completed_at: string | null;
+}
+
+export interface PdfGenerationJobListResponse {
+  items: PdfGenerationJob[];
+  total: number;
+  page: number;
+  page_size: number;
+  total_pages: number;
+}
+
+export interface PdfGenerationJobCreate {
+  school_ids?: number[] | null;
+  subject_id?: number | null;
+  test_types?: number[];
+}
+
+/**
+ * Create a PDF generation job.
+ */
+export async function createPdfGenerationJob(
+  examId: number,
+  jobData: PdfGenerationJobCreate
+): Promise<PdfGenerationJob> {
+  const response = await fetch(`${API_BASE_URL}/api/v1/exams/${examId}/generate-pdf-score-sheets-job`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(jobData),
+  });
+  return handleResponse<PdfGenerationJob>(response);
+}
+
+/**
+ * Get PDF generation job details.
+ */
+export async function getPdfGenerationJob(jobId: number): Promise<PdfGenerationJob> {
+  const response = await fetch(`${API_BASE_URL}/api/v1/pdf-generation-jobs/${jobId}`);
+  return handleResponse<PdfGenerationJob>(response);
+}
+
+/**
+ * List PDF generation jobs.
+ */
+export async function listPdfGenerationJobs(
+  page: number = 1,
+  pageSize: number = 20,
+  statusFilter?: string
+): Promise<PdfGenerationJobListResponse> {
+  const params = new URLSearchParams();
+  params.append("page", page.toString());
+  params.append("page_size", pageSize.toString());
+  if (statusFilter) {
+    params.append("status_filter", statusFilter);
+  }
+
+  const response = await fetch(`${API_BASE_URL}/api/v1/pdf-generation-jobs?${params.toString()}`);
+  return handleResponse<PdfGenerationJobListResponse>(response);
+}
+
+/**
+ * Download PDF for a specific school from a job.
+ */
+export async function downloadJobSchoolPdf(jobId: number, schoolId: number): Promise<Blob> {
+  const response = await fetch(`${API_BASE_URL}/api/v1/pdf-generation-jobs/${jobId}/download/${schoolId}`);
+  if (!response.ok) {
+    const error: ApiError = await response.json().catch(() => ({ detail: "An error occurred" }));
+    throw new Error(error.detail || `HTTP error! status: ${response.status}`);
+  }
+  return response.blob();
+}
+
+/**
+ * Download all PDFs from a job as a ZIP file.
+ */
+export async function downloadJobAllPdfs(jobId: number): Promise<Blob> {
+  const response = await fetch(`${API_BASE_URL}/api/v1/pdf-generation-jobs/${jobId}/download-all`);
+  if (!response.ok) {
+    const error: ApiError = await response.json().catch(() => ({ detail: "An error occurred" }));
+    throw new Error(error.detail || `HTTP error! status: ${response.status}`);
+  }
+  return response.blob();
+}
+
+/**
+ * Cancel a PDF generation job.
+ */
+export async function cancelPdfGenerationJob(jobId: number): Promise<PdfGenerationJob> {
+  const response = await fetch(`${API_BASE_URL}/api/v1/pdf-generation-jobs/${jobId}/cancel`, {
+    method: "POST",
+  });
+  return handleResponse<PdfGenerationJob>(response);
+}
+
+/**
+ * Delete a PDF generation job.
+ */
+export async function deletePdfGenerationJob(jobId: number): Promise<void> {
+  const response = await fetch(`${API_BASE_URL}/api/v1/pdf-generation-jobs/${jobId}`, {
+    method: "DELETE",
+  });
+  if (!response.ok) {
+    const error: ApiError = await response.json().catch(() => ({ detail: "An error occurred" }));
+    throw new Error(error.detail || `HTTP error! status: ${response.status}`);
+  }
+}
+
+/**
+ * Delete multiple PDF generation jobs.
+ */
+export async function deleteMultiplePdfGenerationJobs(jobIds: number[]): Promise<{ deleted_count: number; deleted_ids: number[] }> {
+  const response = await fetch(`${API_BASE_URL}/api/v1/pdf-generation-jobs/delete-multiple`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({ job_ids: jobIds }),
+  });
+  return handleResponse<{ deleted_count: number; deleted_ids: number[] }>(response);
+}
