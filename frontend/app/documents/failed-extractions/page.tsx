@@ -57,6 +57,10 @@ export default function FailedExtractionsPage() {
     setFilters((prev) => ({ ...prev, page }));
   };
 
+  const handlePageSizeChange = (pageSize: number) => {
+    setFilters((prev) => ({ ...prev, page: 1, page_size: pageSize }));
+  };
+
   const handleDocumentSelect = (doc: Document) => {
     const index = documents.findIndex((d) => d.id === doc.id);
     if (index >= 0) {
@@ -232,7 +236,9 @@ export default function FailedExtractionsPage() {
               loading={loading}
               currentPage={currentPage}
               totalPages={totalPages}
+              pageSize={filters.page_size || 20}
               onPageChange={handlePageChange}
+              onPageSizeChange={handlePageSizeChange}
               viewMode={viewMode}
               onSelect={handleDocumentSelect}
               onDelete={handleDeleteClick}

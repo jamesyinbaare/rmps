@@ -77,6 +77,10 @@ export default function DocumentsPage() {
     setFilters((prev) => ({ ...prev, page }));
   };
 
+  const handlePageSizeChange = (pageSize: number) => {
+    setFilters((prev) => ({ ...prev, page: 1, page_size: pageSize }));
+  };
+
   const handleUploadSuccess = () => {
     loadDocuments();
   };
@@ -264,7 +268,9 @@ export default function DocumentsPage() {
               loading={loading}
               currentPage={currentPage}
               totalPages={totalPages}
+              pageSize={filters.page_size || 20}
               onPageChange={handlePageChange}
+              onPageSizeChange={handlePageSizeChange}
               viewMode={viewMode}
               onSelect={handleDocumentSelect}
               onDelete={handleDeleteClick}
