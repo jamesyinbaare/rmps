@@ -83,17 +83,18 @@ export function SearchableSelect({
             variant="outline"
             role="combobox"
             aria-expanded={open}
-            className="w-full justify-between"
+            className="w-full justify-between h-8"
             disabled={disabled}
           >
           <span className="truncate">
             {value === "all" ? allLabel : selectedOption?.label || placeholder}
           </span>
-          <div className="flex items-center gap-1 ml-2">
+          <div className="flex items-center gap-1 ml-2 shrink-0">
             {value && value !== "" && value !== "all" && (
               <X
-                className="h-4 w-4 opacity-50 hover:opacity-100"
+                className="h-4 w-4 opacity-70 hover:opacity-100 cursor-pointer transition-opacity"
                 onClick={handleClear}
+                onMouseDown={(e) => e.preventDefault()}
               />
             )}
             <ChevronsUpDown className="h-4 w-4 shrink-0 opacity-50" />
@@ -121,11 +122,11 @@ export function SearchableSelect({
             >
               <Check
                 className={cn(
-                  "mr-2 h-4 w-4",
+                  "mr-2 h-4 w-4 shrink-0",
                   value === "all" ? "opacity-100" : "opacity-0"
                 )}
               />
-              {allLabel}
+              <span className="truncate">{allLabel}</span>
             </div>
           )}
           {filteredOptions.length === 0 ? (
@@ -141,11 +142,11 @@ export function SearchableSelect({
               >
                 <Check
                   className={cn(
-                    "mr-2 h-4 w-4",
+                    "mr-2 h-4 w-4 shrink-0",
                     value === option.value ? "opacity-100" : "opacity-0"
                   )}
                 />
-                {option.label}
+                <span className="truncate">{option.label}</span>
               </div>
             ))
           )}

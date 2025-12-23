@@ -109,6 +109,45 @@ export async function downloadDocument(documentId: number): Promise<Blob> {
   return response.blob();
 }
 
+export async function deleteDocument(documentId: number): Promise<void> {
+  const response = await fetch(`${API_BASE_URL}/api/v1/documents/${documentId}`, {
+    method: "DELETE",
+  });
+  if (!response.ok) {
+    const error: ApiError = await response.json().catch(() => ({ detail: "An error occurred" }));
+    throw new Error(error.detail || `HTTP error! status: ${response.status}`);
+  }
+}
+
+export async function updateDocumentId(
+  documentId: number,
+  extractedId: string,
+  schoolId?: number,
+  subjectId?: number
+): Promise<Document> {
+  const body: any = {
+    extracted_id: extractedId,
+    id_extraction_status: "success"
+  };
+
+  if (schoolId !== undefined) {
+    body.school_id = schoolId;
+  }
+
+  if (subjectId !== undefined) {
+    body.subject_id = subjectId;
+  }
+
+  const response = await fetch(`${API_BASE_URL}/api/v1/documents/${documentId}/id`, {
+    method: "PATCH",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(body),
+  });
+  return handleResponse<Document>(response);
+}
+
 export async function listExams(
   examType: string,
   series: string,

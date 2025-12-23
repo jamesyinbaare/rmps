@@ -17,6 +17,7 @@ interface DocumentListProps {
   onPageChange: (page: number) => void;
   viewMode?: "grid" | "list";
   onSelect?: (document: Document) => void;
+  onDelete?: (document: Document) => void;
 }
 
 export function DocumentList({
@@ -27,6 +28,7 @@ export function DocumentList({
   onPageChange,
   viewMode = "grid",
   onSelect,
+  onDelete,
 }: DocumentListProps) {
   const [schoolMap, setSchoolMap] = useState<Map<number, string>>(new Map());
   const [subjectMap, setSubjectMap] = useState<Map<number, string>>(new Map());
@@ -151,7 +153,7 @@ export function DocumentList({
   return (
     <div className="flex flex-col">
       {viewMode === "grid" ? (
-        <FileGrid documents={documents} onDownload={handleDownload} onSelect={onSelect} />
+        <FileGrid documents={documents} onDownload={handleDownload} onSelect={onSelect} onDelete={onDelete} />
       ) : (
         <div>
           {/* Table Header */}
@@ -176,6 +178,7 @@ export function DocumentList({
                 document={doc}
                 onDownload={handleDownload}
                 onSelect={onSelect}
+                onDelete={onDelete}
                 schoolName={doc.school_id ? schoolMap.get(doc.school_id) : undefined}
                 subjectName={doc.subject_id ? subjectMap.get(doc.subject_id) : undefined}
               />

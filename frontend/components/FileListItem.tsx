@@ -1,6 +1,6 @@
 "use client";
 
-import { File, Image, FileText, Download } from "lucide-react";
+import { File, Image, FileText, Download, Trash2 } from "lucide-react";
 import { Button } from "./ui/button";
 import type { Document } from "@/types/document";
 import { formatFileSize, formatDate } from "@/lib/utils";
@@ -9,6 +9,7 @@ interface FileListItemProps {
   document: Document;
   onDownload?: (document: Document) => void;
   onSelect?: (document: Document) => void;
+  onDelete?: (document: Document) => void;
   schoolName?: string;
   subjectName?: string;
 }
@@ -17,6 +18,7 @@ export function FileListItem({
   document,
   onDownload,
   onSelect,
+  onDelete,
   schoolName,
   subjectName,
 }: FileListItemProps) {
@@ -66,7 +68,19 @@ export function FileListItem({
       </div>
 
       {/* Actions */}
-      <div className="shrink-0 opacity-0 transition-opacity group-hover:opacity-100">
+      <div className="shrink-0 opacity-0 transition-opacity group-hover:opacity-100 flex gap-1">
+        {onDelete && (
+          <Button
+            variant="ghost"
+            size="icon-sm"
+            onClick={(e) => {
+              e.stopPropagation();
+              onDelete?.(document);
+            }}
+          >
+            <Trash2 className="h-4 w-4" />
+          </Button>
+        )}
         <Button
           variant="ghost"
           size="icon-sm"
