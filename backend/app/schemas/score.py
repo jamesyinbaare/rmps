@@ -101,6 +101,7 @@ class CandidateScoreEntry(BaseModel):
     subject_id: int
     subject_code: str
     subject_name: str
+    subject_series: int | None = None
     exam_id: int
     exam_name: str
     exam_year: int
@@ -112,6 +113,10 @@ class CandidateScoreEntry(BaseModel):
     obj_raw_score: str | None
     essay_raw_score: str | None
     pract_raw_score: str | None
+    # ExamSubject test type configuration
+    obj_pct: float | None = None
+    essay_pct: float | None = None
+    pract_pct: float | None = None
 
     class Config:
         from_attributes = True
