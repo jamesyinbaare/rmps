@@ -334,6 +334,7 @@ async def list_documents(
     year: int | None = Query(None, ge=1900, le=2100, description="Filter by examination year"),
     school_id: int | None = Query(None),
     subject_id: int | None = Query(None),
+    id_extraction_status: str | None = Query(None, description="Filter by ID extraction status: pending, success, error"),
 ) -> DocumentListResponse:
     """List documents with pagination and optional filters."""
     offset = (page - 1) * page_size
@@ -361,6 +362,8 @@ async def list_documents(
         base_stmt = base_stmt.where(Document.school_id == school_id)
     if subject_id is not None:
         base_stmt = base_stmt.where(Document.subject_id == subject_id)
+    if id_extraction_status is not None:
+        base_stmt = base_stmt.where(Document.id_extraction_status == id_extraction_status)
 
     # Get total count with same filters
     if (exam_type is not None or series is not None or year is not None) and exam_id is None:
@@ -384,6 +387,8 @@ async def list_documents(
         count_stmt = count_stmt.where(Document.school_id == school_id)
     if subject_id is not None:
         count_stmt = count_stmt.where(Document.subject_id == subject_id)
+    if id_extraction_status is not None:
+        count_stmt = count_stmt.where(Document.id_extraction_status == id_extraction_status)
     count_result = await session.execute(count_stmt)
     total = count_result.scalar() or 0
 

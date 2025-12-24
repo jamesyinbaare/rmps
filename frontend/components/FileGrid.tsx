@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { File, Image as ImageIcon, FileText, Download } from "lucide-react";
+import { File, Image as ImageIcon, FileText, Download, Trash2, AlertCircle } from "lucide-react";
 import { Button } from "./ui/button";
 import type { Document } from "@/types/document";
 import { formatFileSize } from "@/lib/utils";
@@ -11,9 +11,10 @@ interface FileGridProps {
   documents: Document[];
   onDownload?: (document: Document) => void;
   onSelect?: (document: Document) => void;
+  onDelete?: (document: Document) => void;
 }
 
-export function FileGrid({ documents, onDownload, onSelect }: FileGridProps) {
+export function FileGrid({ documents, onDownload, onSelect, onDelete }: FileGridProps) {
   const getFileIcon = (mimeType: string) => {
     if (mimeType.startsWith("image/")) {
       return ImageIcon;
@@ -53,6 +54,7 @@ export function FileGrid({ documents, onDownload, onSelect }: FileGridProps) {
             Icon={Icon}
             onSelect={onSelect}
             onDownload={onDownload}
+            onDelete={onDelete}
           />
         );
       })}
@@ -68,6 +70,7 @@ function DocumentCard({
   Icon,
   onSelect,
   onDownload,
+  onDelete,
 }: {
   doc: Document;
   previewUrl: string;
@@ -76,12 +79,20 @@ function DocumentCard({
   Icon: React.ComponentType<{ className?: string }>;
   onSelect?: (document: Document) => void;
   onDownload?: (document: Document) => void;
+  onDelete?: (document: Document) => void;
 }) {
   const [imageError, setImageError] = useState(false);
 
+  const isFailed = doc.id_extraction_status === "error";
+
   return (
     <div
-      className="group relative flex flex-col rounded-lg border border-border bg-card transition-all hover:border-primary/50 hover:shadow-md aspect-square max-w-full"
+      className={`group relative flex flex-col rounded-lg border transition-all hover:shadow-md aspect-square max-w-full cursor-pointer ${
+        isFailed
+          ? "border-destructive/50 bg-destructive/5 hover:border-destructive"
+          : "border-border bg-card hover:border-primary/50"
+      }`}
+      onClick={() => onSelect?.(doc)}
     >
       {/* Image Preview / Icon Fallback */}
       <div className="flex-1 flex items-center justify-center p-4 bg-muted/30">
@@ -99,22 +110,34 @@ function DocumentCard({
         </div>
       </div>
 
-      {/* Card Footer - ID and Metadata - Clickable */}
-      <div
-        className="w-full px-4 py-3 border-t border-border bg-card text-center cursor-pointer hover:bg-accent/50 transition-colors"
-        onClick={(e) => {
-          e.stopPropagation();
-          onSelect?.(doc);
-        }}
-      >
-        <p className="truncate text-sm font-medium mb-1">{displayText}</p>
+      {/* Card Footer - ID and Metadata */}
+      <div className="w-full px-4 py-3 border-t border-border bg-card text-center hover:bg-accent/50 transition-colors">
+        <div className="flex items-center justify-center gap-1.5 mb-1">
+          <p className="truncate text-sm font-medium">{displayText}</p>
+          {doc.id_extraction_status === "error" && (
+            <AlertCircle className="h-3.5 w-3.5 text-destructive shrink-0" title="ID extraction failed" />
+          )}
+        </div>
         <p className="text-xs text-muted-foreground">
           {fileType} • {formatFileSize(doc.file_size)}
         </p>
       </div>
 
       {/* Hover Actions */}
-      <div className="absolute right-2 top-2 opacity-0 transition-opacity group-hover:opacity-100">
+      <div className="absolute right-2 top-2 opacity-0 transition-opacity group-hover:opacity-100 flex gap-1">
+        {onDelete && (
+          <Button
+            variant="ghost"
+            size="icon-sm"
+            onClick={(e) => {
+              e.stopPropagation();
+              onDelete?.(doc);
+            }}
+            className="h-7 w-7"
+          >
+            <Trash2 className="h-3 w-3" />
+          </Button>
+        )}
         <Button
           variant="ghost"
           size="icon-sm"

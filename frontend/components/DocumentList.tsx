@@ -3,6 +3,13 @@
 import { useState, useEffect } from "react";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { downloadDocument, listSchools, listSubjects } from "@/lib/api";
 import type { Document, School, Subject } from "@/types/document";
 import { File } from "lucide-react";
@@ -14,9 +21,12 @@ interface DocumentListProps {
   loading?: boolean;
   currentPage: number;
   totalPages: number;
+  pageSize?: number;
   onPageChange: (page: number) => void;
+  onPageSizeChange?: (pageSize: number) => void;
   viewMode?: "grid" | "list";
   onSelect?: (document: Document) => void;
+  onDelete?: (document: Document) => void;
 }
 
 export function DocumentList({
@@ -24,9 +34,12 @@ export function DocumentList({
   loading = false,
   currentPage,
   totalPages,
+  pageSize = 20,
   onPageChange,
+  onPageSizeChange,
   viewMode = "grid",
   onSelect,
+  onDelete,
 }: DocumentListProps) {
   const [schoolMap, setSchoolMap] = useState<Map<number, string>>(new Map());
   const [subjectMap, setSubjectMap] = useState<Map<number, string>>(new Map());
@@ -151,7 +164,7 @@ export function DocumentList({
   return (
     <div className="flex flex-col">
       {viewMode === "grid" ? (
-        <FileGrid documents={documents} onDownload={handleDownload} onSelect={onSelect} />
+        <FileGrid documents={documents} onDownload={handleDownload} onSelect={onSelect} onDelete={onDelete} />
       ) : (
         <div>
           {/* Table Header */}
@@ -176,6 +189,7 @@ export function DocumentList({
                 document={doc}
                 onDownload={handleDownload}
                 onSelect={onSelect}
+                onDelete={onDelete}
                 schoolName={doc.school_id ? schoolMap.get(doc.school_id) : undefined}
                 subjectName={doc.subject_id ? subjectMap.get(doc.subject_id) : undefined}
               />
@@ -184,29 +198,53 @@ export function DocumentList({
         </div>
       )}
 
-      {totalPages > 1 && (
+      {(totalPages > 1 || onPageSizeChange) && (
         <div className="flex items-center justify-between border-t border-border px-6 py-4">
-          <p className="text-sm text-muted-foreground">
-            Page {currentPage} of {totalPages}
-          </p>
-          <div className="flex gap-2">
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() => onPageChange(currentPage - 1)}
-              disabled={currentPage === 1}
-            >
-              Previous
-            </Button>
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() => onPageChange(currentPage + 1)}
-              disabled={currentPage === totalPages}
-            >
-              Next
-            </Button>
+          <div className="flex items-center gap-4">
+            {totalPages > 1 && (
+              <p className="text-sm text-muted-foreground">
+                Page {currentPage} of {totalPages}
+              </p>
+            )}
+            {onPageSizeChange && (
+              <div className="flex items-center gap-2">
+                <span className="text-sm text-muted-foreground">Show:</span>
+                <Select
+                  value={pageSize.toString()}
+                  onValueChange={(value) => onPageSizeChange(parseInt(value, 10))}
+                >
+                  <SelectTrigger className="h-8 w-[80px]">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="20">20</SelectItem>
+                    <SelectItem value="50">50</SelectItem>
+                    <SelectItem value="100">100</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+            )}
           </div>
+          {totalPages > 1 && (
+            <div className="flex gap-2">
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => onPageChange(currentPage - 1)}
+                disabled={currentPage === 1}
+              >
+                Previous
+              </Button>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => onPageChange(currentPage + 1)}
+                disabled={currentPage === totalPages}
+              >
+                Next
+              </Button>
+            </div>
+          )}
         </div>
       )}
     </div>

@@ -9,6 +9,8 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Button } from "@/components/ui/button";
+import { SearchableSelect } from "@/components/ui/searchable-select";
+import type { SearchableSelectOption } from "@/components/ui/searchable-select";
 import { getAllExams, listSchools, listSubjects, findExamId } from "@/lib/api";
 import type { Exam, School, Subject, DocumentFilters, ExamType, ExamSeries } from "@/types/document";
 import { X } from "lucide-react";
@@ -156,8 +158,8 @@ export function CompactFilters({ filters, onFiltersChange }: CompactFiltersProps
       return;
     }
 
-    const newExamType = examType && examType !== "all" ? examType : undefined;
-    const newSeries = examSeries && examSeries !== "all" ? examSeries : undefined;
+    const newExamType = examType || undefined;
+    const newSeries = examSeries || undefined;
     const newYear = examYear || undefined;
 
     const newFilters: DocumentFilters = { ...filtersRef.current };
@@ -214,7 +216,10 @@ export function CompactFilters({ filters, onFiltersChange }: CompactFiltersProps
     if (value === undefined || value === "all" || value === "") {
       delete newFilters[key];
     } else {
-      newFilters[key] = parseInt(value, 10);
+      const numValue = parseInt(value, 10);
+      if (!isNaN(numValue)) {
+        (newFilters as any)[key] = numValue;
+      }
     }
     newFilters.page = 1;
     onFiltersChange(newFilters);
@@ -314,14 +319,14 @@ export function CompactFilters({ filters, onFiltersChange }: CompactFiltersProps
   };
 
   return (
-    <div className="flex items-center gap-2">
+    <div className="flex flex-col sm:flex-row flex-wrap items-stretch sm:items-center gap-2">
       {/* Examination Type */}
       <Select
         value={examType || ""}
         onValueChange={handleExamTypeChange}
         disabled={loading}
       >
-        <SelectTrigger className="h-8 w-[140px]">
+        <SelectTrigger className="h-8 w-full sm:w-[160px]">
           <SelectValue placeholder="Exam Type" />
         </SelectTrigger>
         <SelectContent>
@@ -340,7 +345,7 @@ export function CompactFilters({ filters, onFiltersChange }: CompactFiltersProps
         onValueChange={handleExamSeriesChange}
         disabled={loading || !examType}
       >
-        <SelectTrigger className="h-8 w-[140px]">
+        <SelectTrigger className="h-8 w-full sm:w-[140px]">
           <SelectValue placeholder="Series" />
         </SelectTrigger>
         <SelectContent>
@@ -359,7 +364,7 @@ export function CompactFilters({ filters, onFiltersChange }: CompactFiltersProps
         onValueChange={handleExamYearChange}
         disabled={loading || !examType || !examSeries}
       >
-        <SelectTrigger className="h-8 w-[120px]">
+        <SelectTrigger className="h-8 w-full sm:w-[100px]">
           <SelectValue placeholder="Year" />
         </SelectTrigger>
         <SelectContent>
@@ -372,41 +377,51 @@ export function CompactFilters({ filters, onFiltersChange }: CompactFiltersProps
         </SelectContent>
       </Select>
 
-      <Select
-        value={filters.school_id?.toString() || undefined}
-        onValueChange={(value) => handleFilterChange("school_id", value === "all" ? undefined : value)}
-        disabled={loading}
-      >
-        <SelectTrigger className="h-8 w-[140px]">
-          <SelectValue placeholder="School" />
-        </SelectTrigger>
-        <SelectContent>
-          <SelectItem value="all">All schools</SelectItem>
-          {schools.map((school) => (
-            <SelectItem key={school.id} value={school.id.toString()}>
-              {school.code} - {school.name}
-            </SelectItem>
-          ))}
-        </SelectContent>
-      </Select>
+      <div className="w-full sm:w-[320px]">
+        <SearchableSelect
+          options={schools.map((school) => ({
+            value: school.id,
+            label: `${school.code} - ${school.name}`,
+          }))}
+          value={filters.school_id || ""}
+          onValueChange={(value) => {
+            if (value === "all" || value === "") {
+              handleFilterChange("school_id", undefined);
+            } else {
+              handleFilterChange("school_id", String(value));
+            }
+          }}
+          placeholder="School"
+          disabled={loading}
+          allowAll={true}
+          allLabel="All schools"
+          searchPlaceholder="Search schools..."
+          emptyMessage="No schools found"
+        />
+      </div>
 
-      <Select
-        value={filters.subject_id?.toString() || undefined}
-        onValueChange={(value) => handleFilterChange("subject_id", value === "all" ? undefined : value)}
-        disabled={loading}
-      >
-        <SelectTrigger className="h-8 w-[140px]">
-          <SelectValue placeholder="Subject" />
-        </SelectTrigger>
-        <SelectContent>
-          <SelectItem value="all">All subjects</SelectItem>
-          {subjects.map((subject) => (
-            <SelectItem key={subject.id} value={subject.id.toString()}>
-              {subject.code} - {subject.name}
-            </SelectItem>
-          ))}
-        </SelectContent>
-      </Select>
+      <div className="w-full sm:w-[320px]">
+        <SearchableSelect
+          options={subjects.map((subject) => ({
+            value: subject.id,
+            label: `${subject.code} - ${subject.name}`,
+          }))}
+          value={filters.subject_id || ""}
+          onValueChange={(value) => {
+            if (value === "all" || value === "") {
+              handleFilterChange("subject_id", undefined);
+            } else {
+              handleFilterChange("subject_id", String(value));
+            }
+          }}
+          placeholder="Subject"
+          disabled={loading}
+          allowAll={true}
+          allLabel="All subjects"
+          searchPlaceholder="Search subjects..."
+          emptyMessage="No subjects found"
+        />
+      </div>
 
       {hasActiveFilters && (
         <Button
@@ -414,7 +429,7 @@ export function CompactFilters({ filters, onFiltersChange }: CompactFiltersProps
           size="sm"
           onClick={handleClearFilters}
           disabled={loading}
-          className="h-8 gap-1"
+          className="h-8 gap-1 w-full sm:w-auto"
         >
           <X className="h-3 w-3" />
           Clear

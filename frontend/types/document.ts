@@ -139,6 +139,7 @@ export interface DocumentFilters {
   year?: number;
   school_id?: number;
   subject_id?: number;
+  id_extraction_status?: string;
   page?: number;
   page_size?: number;
 }

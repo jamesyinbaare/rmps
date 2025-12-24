@@ -65,6 +65,7 @@ export async function listDocuments(
   if (filters.year) params.append("year", filters.year.toString());
   if (filters.school_id) params.append("school_id", filters.school_id.toString());
   if (filters.subject_id) params.append("subject_id", filters.subject_id.toString());
+  if (filters.id_extraction_status) params.append("id_extraction_status", filters.id_extraction_status);
   if (filters.page) params.append("page", filters.page.toString());
   if (filters.page_size) params.append("page_size", filters.page_size.toString());
 
@@ -107,6 +108,45 @@ export async function downloadDocument(documentId: number): Promise<Blob> {
     throw new Error(error.detail || `HTTP error! status: ${response.status}`);
   }
   return response.blob();
+}
+
+export async function deleteDocument(documentId: number): Promise<void> {
+  const response = await fetch(`${API_BASE_URL}/api/v1/documents/${documentId}`, {
+    method: "DELETE",
+  });
+  if (!response.ok) {
+    const error: ApiError = await response.json().catch(() => ({ detail: "An error occurred" }));
+    throw new Error(error.detail || `HTTP error! status: ${response.status}`);
+  }
+}
+
+export async function updateDocumentId(
+  documentId: number,
+  extractedId: string,
+  schoolId?: number,
+  subjectId?: number
+): Promise<Document> {
+  const body: any = {
+    extracted_id: extractedId,
+    id_extraction_status: "success"
+  };
+
+  if (schoolId !== undefined) {
+    body.school_id = schoolId;
+  }
+
+  if (subjectId !== undefined) {
+    body.subject_id = subjectId;
+  }
+
+  const response = await fetch(`${API_BASE_URL}/api/v1/documents/${documentId}/id`, {
+    method: "PATCH",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(body),
+  });
+  return handleResponse<Document>(response);
 }
 
 export async function listExams(
