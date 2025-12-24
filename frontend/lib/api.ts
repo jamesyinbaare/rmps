@@ -1197,6 +1197,7 @@ export async function getCandidatesForManualEntry(
   if (filters.exam_type) params.append("exam_type", filters.exam_type);
   if (filters.series) params.append("series", filters.series);
   if (filters.year) params.append("year", filters.year.toString());
+  if (filters.school_id) params.append("school_id", filters.school_id.toString());
   if (filters.programme_id) params.append("programme_id", filters.programme_id.toString());
   if (filters.subject_id) params.append("subject_id", filters.subject_id.toString());
   if (filters.page) params.append("page", filters.page.toString());

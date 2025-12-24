@@ -376,6 +376,7 @@ async def get_candidates_for_manual_entry(
     exam_type: ExamType | None = Query(None, description="Filter by examination type"),
     series: ExamSeries | None = Query(None, description="Filter by examination series"),
     year: int | None = Query(None, ge=1900, le=2100, description="Filter by examination year"),
+    school_id: int | None = Query(None, description="Filter by school ID"),
     programme_id: int | None = Query(None),
     subject_id: int | None = Query(None),
     page: int = Query(1, ge=1),
@@ -418,6 +419,8 @@ async def get_candidates_for_manual_entry(
             base_stmt = base_stmt.where(Exam.series == series)
         if year is not None:
             base_stmt = base_stmt.where(Exam.year == year)
+    if school_id is not None:
+        base_stmt = base_stmt.where(Candidate.school_id == school_id)
     if programme_id is not None:
         base_stmt = base_stmt.where(Candidate.programme_id == programme_id)
     if subject_id is not None:
@@ -447,6 +450,8 @@ async def get_candidates_for_manual_entry(
             count_base_stmt = count_base_stmt.where(Exam.series == series)
         if year is not None:
             count_base_stmt = count_base_stmt.where(Exam.year == year)
+    if school_id is not None:
+        count_base_stmt = count_base_stmt.where(Candidate.school_id == school_id)
     if programme_id is not None:
         count_base_stmt = count_base_stmt.where(Candidate.programme_id == programme_id)
     if subject_id is not None:
@@ -462,7 +467,7 @@ async def get_candidates_for_manual_entry(
     rows = result.all()
 
     items = []
-    for candidate, subject_reg, subject_score, _exam_reg, exam, _exam_subject, subject, programme in rows:
+    for candidate, subject_reg, subject_score, _exam_reg, exam, exam_subject, subject, programme in rows:
         items.append(
             CandidateScoreEntry(
                 candidate_id=candidate.id,
@@ -472,6 +477,7 @@ async def get_candidates_for_manual_entry(
                 subject_id=subject.id,
                 subject_code=subject.code,
                 subject_name=subject.name,
+                subject_series=subject_reg.series,
                 exam_id=exam.id,
                 exam_name=exam.exam_type.value,
                 exam_year=exam.year,
@@ -483,6 +489,9 @@ async def get_candidates_for_manual_entry(
                 obj_raw_score=subject_score.obj_raw_score,
                 essay_raw_score=subject_score.essay_raw_score,
                 pract_raw_score=subject_score.pract_raw_score,
+                obj_pct=exam_subject.obj_pct,
+                essay_pct=exam_subject.essay_pct,
+                pract_pct=exam_subject.pract_pct,
             )
         )
 
