@@ -16,11 +16,11 @@ import { toast } from "sonner";
 
 interface DocumentViewerProps {
   document: Document;
-  documents: Document[];
-  currentIndex: number;
-  open: boolean;
+  documents?: Document[];
+  currentIndex?: number;
+  open?: boolean;
   onClose: () => void;
-  onNavigate: (index: number) => void;
+  onNavigate?: (index: number) => void;
   onDownload?: (document: Document) => void;
   onUpdateId?: (documentId: number, extractedId: string, schoolId?: number, subjectId?: number) => Promise<void>;
   onDelete?: (documentId: number) => Promise<void>;
@@ -198,7 +198,8 @@ export function DocumentViewer({
 
   // Keyboard navigation
   useEffect(() => {
-    if (!open || !document) return;
+    if (open === false || !document) return;
+    if (!documents || !onNavigate || currentIndex === undefined) return;
 
     const handleKeyDown = (e: KeyboardEvent) => {
       // Only handle navigation if we have valid documents and index
@@ -215,7 +216,7 @@ export function DocumentViewer({
 
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [open, currentIndex, documents.length, onNavigate, onClose, document]);
+  }, [open, currentIndex, documents, onNavigate, onClose, document]);
 
   const getFileIcon = (mimeType: string) => {
     if (mimeType.startsWith("image/")) {
@@ -385,19 +386,19 @@ export function DocumentViewer({
   };
 
   const handlePrevious = () => {
-    if (currentIndex > 0 && currentIndex < documents.length) {
+    if (documents && onNavigate && currentIndex !== undefined && currentIndex > 0 && currentIndex < documents.length) {
       onNavigate(currentIndex - 1);
     }
   };
 
   const handleNext = () => {
-    if (currentIndex >= 0 && currentIndex < documents.length - 1) {
+    if (documents && onNavigate && currentIndex !== undefined && currentIndex >= 0 && currentIndex < documents.length - 1) {
       onNavigate(currentIndex + 1);
     }
   };
 
   return (
-    <Dialog open={open} onOpenChange={onClose}>
+    <Dialog open={open !== false} onOpenChange={onClose}>
       <DialogContent className="w-screen h-[95vh] min-w-[80vw] max-h-[95vh] p-0 flex flex-col" showCloseButton={false}>
         {/* DialogTitle for accessibility - visually hidden */}
         <DialogTitle className="sr-only">
@@ -527,7 +528,7 @@ export function DocumentViewer({
         {/* Document Content Area */}
         <div className="flex-1 overflow-auto bg-muted/30 p-6 relative">
           {/* Navigation Buttons */}
-          {documents.length > 1 && currentIndex >= 0 && (
+          {documents && documents.length > 1 && currentIndex !== undefined && currentIndex >= 0 && (
             <>
               <Button
                 variant="outline"
@@ -551,7 +552,7 @@ export function DocumentViewer({
           )}
 
           {/* Document Counter */}
-          {documents.length > 1 && currentIndex >= 0 && (
+          {documents && documents.length > 1 && currentIndex !== undefined && currentIndex >= 0 && (
             <div className="absolute top-4 left-1/2 -translate-x-1/2 z-10">
               <div className="px-3 py-1 rounded-full bg-background/90 border border-border text-xs text-muted-foreground">
                 {currentIndex + 1} of {documents.length}

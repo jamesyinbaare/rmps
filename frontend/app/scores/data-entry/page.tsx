@@ -3,8 +3,7 @@
 import { useState, useEffect, useCallback } from "react";
 import { DashboardLayout } from "@/components/DashboardLayout";
 import { TopBar } from "@/components/TopBar";
-import { DocumentViewer } from "@/components/DocumentViewer";
-import { ScoreEntryForm } from "@/components/ScoreEntryForm";
+import { DataEntryModal } from "@/components/DataEntryModal";
 import { Button } from "@/components/ui/button";
 import {
   Select,
@@ -22,7 +21,8 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Search, File } from "lucide-react";
+import { Search, File, ArrowUpDown, ArrowUp, ArrowDown } from "lucide-react";
+import { SearchableSelect } from "@/components/ui/searchable-select";
 import { getFilteredDocuments, getAllExams, listSchools, listSubjects, downloadDocument, findExamId } from "@/lib/api";
 import type { Document, Exam, School, Subject, ScoreDocumentFilters, ExamType, ExamSeries } from "@/types/document";
 
@@ -32,12 +32,16 @@ export default function ScoreDataEntryPage() {
   const [error, setError] = useState<string | null>(null);
   const [filters, setFilters] = useState<ScoreDocumentFilters>({
     page: 1,
-    page_size: 20,
+    page_size: 50,
   });
   const [totalPages, setTotalPages] = useState(1);
   const [currentPage, setCurrentPage] = useState(1);
   const [total, setTotal] = useState(0);
   const [selectedDocument, setSelectedDocument] = useState<Document | null>(null);
+
+  // Sorting state
+  const [sortColumn, setSortColumn] = useState<keyof Document | null>(null);
+  const [sortDirection, setSortDirection] = useState<"asc" | "desc">("asc");
 
   // Filter options
   const [exams, setExams] = useState<Exam[]>([]);
@@ -251,12 +255,40 @@ export default function ScoreDataEntryPage() {
       });
   };
 
+  const handlePageSizeChange = (pageSize: number) => {
+    const newFilters = { ...filters, page: 1, page_size: pageSize };
+    setFilters(newFilters);
+    // Trigger fetch with new page size
+    setLoading(true);
+    setError(null);
+    getFilteredDocuments(newFilters)
+      .then((response) => {
+        setDocuments(response.items);
+        setTotalPages(response.total_pages);
+        setCurrentPage(response.page);
+        setTotal(response.total);
+      })
+      .catch((err) => {
+        setError(err instanceof Error ? err.message : "Failed to load documents");
+        console.error("Error loading documents:", err);
+      })
+      .finally(() => {
+        setLoading(false);
+      });
+  };
+
   const handleDocumentSelect = (doc: Document) => {
     setSelectedDocument(doc);
   };
 
   const handleCloseViewer = () => {
     setSelectedDocument(null);
+  };
+
+  const handleModalOpenChange = (open: boolean) => {
+    if (!open) {
+      setSelectedDocument(null);
+    }
   };
 
   const handleDownload = async (doc: Document) => {
@@ -288,6 +320,54 @@ export default function ScoreDataEntryPage() {
     setFilters({ page: 1, page_size: 20 });
   };
 
+  const handleSort = (column: keyof Document) => {
+    if (sortColumn === column) {
+      // Toggle direction if clicking the same column
+      setSortDirection(sortDirection === "asc" ? "desc" : "asc");
+    } else {
+      // Set new column and default to ascending
+      setSortColumn(column);
+      setSortDirection("asc");
+    }
+  };
+
+  const getSortedDocuments = (docs: Document[]): Document[] => {
+    if (!sortColumn) return docs;
+
+    return [...docs].sort((a, b) => {
+      const aValue = a[sortColumn];
+      const bValue = b[sortColumn];
+
+      // Handle null/undefined values
+      if (aValue == null && bValue == null) return 0;
+      if (aValue == null) return 1;
+      if (bValue == null) return -1;
+
+      // Handle different types
+      let comparison = 0;
+      if (typeof aValue === "string" && typeof bValue === "string") {
+        comparison = aValue.localeCompare(bValue);
+      } else if (typeof aValue === "number" && typeof bValue === "number") {
+        comparison = aValue - bValue;
+      } else {
+        comparison = String(aValue).localeCompare(String(bValue));
+      }
+
+      return sortDirection === "asc" ? comparison : -comparison;
+    });
+  };
+
+  const getSortIcon = (column: keyof Document) => {
+    if (sortColumn !== column) {
+      return <ArrowUpDown className="h-4 w-4 ml-1 opacity-50" />;
+    }
+    return sortDirection === "asc" ? (
+      <ArrowUp className="h-4 w-4 ml-1" />
+    ) : (
+      <ArrowDown className="h-4 w-4 ml-1" />
+    );
+  };
+
   // Get available exam types, series, and years from exams
   const availableExamTypes = Array.from(new Set(exams.map((e) => e.exam_type as ExamType)));
   const availableSeries = examType
@@ -310,16 +390,19 @@ export default function ScoreDataEntryPage() {
       <div className="flex flex-1 flex-col overflow-hidden">
         <TopBar title="Score Data Entry" />
 
-        {/* Compact Filters */}
-        <div className="border-b border-border bg-background px-4 py-2">
-          <div className="flex items-center gap-2 flex-wrap">
+        {/* Filters - Horizontal */}
+        <div className="border-b border-border bg-background px-4 py-4">
+          <div className="flex justify-center">
+            <Card className="w-fit">
+              <CardContent className="p-4">
+                <div className="flex items-center gap-2 flex-wrap">
             {/* Examination Type */}
             <Select
               value={examType || "all"}
               onValueChange={handleExamTypeChange}
               disabled={loadingFilters}
             >
-              <SelectTrigger className="h-8 w-[140px]">
+              <SelectTrigger className="h-8 w-[180px]">
                 <SelectValue placeholder="Exam Type" />
               </SelectTrigger>
               <SelectContent>
@@ -338,7 +421,7 @@ export default function ScoreDataEntryPage() {
               onValueChange={handleExamSeriesChange}
               disabled={loadingFilters || !examType}
             >
-              <SelectTrigger className="h-8 w-[140px]">
+              <SelectTrigger className="h-8 w-[180px]">
                 <SelectValue placeholder="Series" />
               </SelectTrigger>
               <SelectContent>
@@ -370,54 +453,67 @@ export default function ScoreDataEntryPage() {
               </SelectContent>
             </Select>
 
-            <Select
-              value={filters.school_id?.toString() || undefined}
-              onValueChange={(value) => handleFilterChange("school_id", value === "all" ? undefined : value)}
-              disabled={loadingFilters}
-            >
-              <SelectTrigger className="h-8 w-[160px]">
-                <SelectValue placeholder="School" />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="all">All schools</SelectItem>
-                {schools.map((school) => (
-                  <SelectItem key={school.id} value={school.id.toString()}>
-                    {school.code} - {school.name}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
+            {/* School - Searchable */}
+            <div className="w-[240px]">
+              <SearchableSelect
+                options={schools.map((school) => ({
+                  value: school.id,
+                  label: `${school.code} - ${school.name}`,
+                }))}
+                value={filters.school_id || ""}
+                onValueChange={(value) => {
+                  if (value === "all" || value === "") {
+                    handleFilterChange("school_id", undefined);
+                  } else {
+                    handleFilterChange("school_id", String(value));
+                  }
+                }}
+                placeholder="School"
+                disabled={loadingFilters}
+                allowAll={true}
+                allLabel="All schools"
+                searchPlaceholder="Search schools..."
+                emptyMessage="No schools found"
+              />
+            </div>
 
-            <Select
-              value={filters.subject_id?.toString() || undefined}
-              onValueChange={(value) => handleFilterChange("subject_id", value === "all" ? undefined : value)}
-              disabled={loadingFilters}
-            >
-              <SelectTrigger className="h-8 w-[160px]">
-                <SelectValue placeholder="Subject" />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="all">All subjects</SelectItem>
-                {subjects.map((subject) => (
-                  <SelectItem key={subject.id} value={subject.id.toString()}>
-                    {subject.code} - {subject.name}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
+            {/* Subject - Searchable */}
+            <div className="w-[240px]">
+              <SearchableSelect
+                options={subjects.map((subject) => ({
+                  value: subject.id,
+                  label: `${subject.code} - ${subject.name}`,
+                }))}
+                value={filters.subject_id || ""}
+                onValueChange={(value) => {
+                  if (value === "all" || value === "") {
+                    handleFilterChange("subject_id", undefined);
+                  } else {
+                    handleFilterChange("subject_id", String(value));
+                  }
+                }}
+                placeholder="Subject"
+                disabled={loadingFilters}
+                allowAll={true}
+                allLabel="All subjects"
+                searchPlaceholder="Search subjects..."
+                emptyMessage="No subjects found"
+              />
+            </div>
 
+            {/* Paper Type */}
             <Select
               value={filters.test_type || undefined}
               onValueChange={(value) => handleFilterChange("test_type", value === "all" ? undefined : value)}
               disabled={loadingFilters}
             >
-              <SelectTrigger className="h-8 w-[140px]">
-                <SelectValue placeholder="Test type" />
+              <SelectTrigger className="h-8 w-[120px]">
+                <SelectValue placeholder="Paper" />
               </SelectTrigger>
               <SelectContent>
-                <SelectItem value="all">All types</SelectItem>
-                <SelectItem value="1">Objectives</SelectItem>
-                <SelectItem value="2">Essay</SelectItem>
+                <SelectItem value="all">All papers</SelectItem>
+                <SelectItem value="1">1</SelectItem>
+                <SelectItem value="2">2</SelectItem>
               </SelectContent>
             </Select>
 
@@ -431,31 +527,24 @@ export default function ScoreDataEntryPage() {
                 Clear
               </Button>
             )}
+                </div>
+              </CardContent>
+            </Card>
           </div>
         </div>
 
-        {selectedDocument ? (
-          /* Full Screen Document Viewer and Score Entry */
-          <div className="flex flex-1 overflow-hidden">
-            {/* Document Viewer - Left Side */}
-            <div className="hidden lg:flex lg:w-1/2 flex-col border-r border-border">
-              <DocumentViewer
-                document={selectedDocument}
-                onClose={handleCloseViewer}
-                onDownload={handleDownload}
-              />
-            </div>
+        {/* Data Entry Modal */}
+        <DataEntryModal
+          document={selectedDocument}
+          open={selectedDocument !== null}
+          onOpenChange={handleModalOpenChange}
+          onDownload={handleDownload}
+          filters={filters}
+          onDocumentChange={setSelectedDocument}
+        />
 
-            {/* Score Entry Form - Right Side */}
-            <div className="flex-1 lg:w-1/2 flex flex-col overflow-hidden">
-              <ScoreEntryForm
-                document={selectedDocument}
-                onClose={handleCloseViewer}
-              />
-            </div>
-          </div>
-        ) : (
-          /* Documents Table */
+        {/* Documents Table */}
+        {!selectedDocument && (
           <div className="flex-1 overflow-y-auto">
             {error && (
               <div className="mx-6 mt-4 rounded-lg bg-destructive/10 border border-destructive/20 p-4 text-destructive">
@@ -481,24 +570,60 @@ export default function ScoreDataEntryPage() {
                   <Table>
                     <TableHeader>
                       <TableRow>
-                        <TableHead className="w-[150px]">File Name</TableHead>
-                        <TableHead className="w-[120px]">Extracted ID</TableHead>
-                        <TableHead className="w-[100px]">Test Type</TableHead>
-                        <TableHead className="w-[100px]">Subject Series</TableHead>
-                        <TableHead className="w-[100px]">Sheet Number</TableHead>
-                        <TableHead className="w-[100px]">Status</TableHead>
+                        <TableHead
+                          className="w-[120px] cursor-pointer hover:bg-muted/50"
+                          onClick={() => handleSort("extracted_id")}
+                        >
+                          <div className="flex items-center">
+                            Extracted ID
+                            {getSortIcon("extracted_id")}
+                          </div>
+                        </TableHead>
+                        <TableHead
+                          className="w-[100px] cursor-pointer hover:bg-muted/50"
+                          onClick={() => handleSort("test_type")}
+                        >
+                          <div className="flex items-center">
+                            Test Type
+                            {getSortIcon("test_type")}
+                          </div>
+                        </TableHead>
+                        <TableHead
+                          className="w-[100px] cursor-pointer hover:bg-muted/50"
+                          onClick={() => handleSort("subject_series")}
+                        >
+                          <div className="flex items-center">
+                            Subject Series
+                            {getSortIcon("subject_series")}
+                          </div>
+                        </TableHead>
+                        <TableHead
+                          className="w-[100px] cursor-pointer hover:bg-muted/50"
+                          onClick={() => handleSort("sheet_number")}
+                        >
+                          <div className="flex items-center">
+                            Sheet Number
+                            {getSortIcon("sheet_number")}
+                          </div>
+                        </TableHead>
+                        <TableHead
+                          className="w-[100px] cursor-pointer hover:bg-muted/50"
+                          onClick={() => handleSort("scores_extraction_status")}
+                        >
+                          <div className="flex items-center">
+                            Status
+                            {getSortIcon("scores_extraction_status")}
+                          </div>
+                        </TableHead>
                       </TableRow>
                     </TableHeader>
                     <TableBody>
-                      {documents.map((doc) => (
+                      {getSortedDocuments(documents).map((doc) => (
                         <TableRow
                           key={doc.id}
                           className="cursor-pointer hover:bg-muted/50"
                           onClick={() => handleDocumentSelect(doc)}
                         >
-                          <TableCell className="font-medium">
-                            {doc.file_name}
-                          </TableCell>
                           <TableCell className="font-mono text-sm">
                             {doc.extracted_id || "-"}
                           </TableCell>
@@ -513,11 +638,12 @@ export default function ScoreDataEntryPage() {
                           </TableCell>
                           <TableCell>
                             <span className={`text-xs px-2 py-1 rounded ${
-                              doc.id_extraction_status === "success" ? "bg-green-100 text-green-800" :
-                              doc.id_extraction_status === "error" ? "bg-red-100 text-red-800" :
-                              "bg-yellow-100 text-yellow-800"
+                              doc.scores_extraction_status === "success" ? "bg-green-100 text-green-800" :
+                              doc.scores_extraction_status === "error" ? "bg-red-100 text-red-800" :
+                              doc.scores_extraction_status === "pending" ? "bg-yellow-100 text-yellow-800" :
+                              "bg-gray-100 text-gray-800"
                             }`}>
-                              {doc.id_extraction_status}
+                              {doc.scores_extraction_status || "pending"}
                             </span>
                           </TableCell>
                         </TableRow>
@@ -526,34 +652,57 @@ export default function ScoreDataEntryPage() {
                   </Table>
                 </div>
 
-                {totalPages > 1 && (
-                  <div className="flex items-center justify-between mt-4">
-                    <div className="text-sm text-muted-foreground">
-                      Showing {documents.length} of {total} document{total !== 1 ? "s" : ""}
-                    </div>
-                    <div className="flex gap-2">
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        onClick={() => handlePageChange(currentPage - 1)}
-                        disabled={currentPage === 1}
-                      >
-                        Previous
-                      </Button>
-                      <div className="flex items-center gap-2">
-                        <span className="text-sm text-muted-foreground">
-                          Page {currentPage} of {totalPages}
-                        </span>
+                {(totalPages > 1 || total > 0) && (
+                  <div className="flex items-center justify-between mt-4 pt-4 border-t border-border">
+                    <div className="flex items-center gap-4">
+                      <div className="text-sm text-muted-foreground">
+                        Showing {((currentPage - 1) * (filters.page_size || 50)) + 1} to{" "}
+                        {Math.min(currentPage * (filters.page_size || 50), total)} of {total} document{total !== 1 ? "s" : ""}
                       </div>
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        onClick={() => handlePageChange(currentPage + 1)}
-                        disabled={currentPage === totalPages}
-                      >
-                        Next
-                      </Button>
+                      <div className="flex items-center gap-2">
+                        <span className="text-sm text-muted-foreground whitespace-nowrap">Rows per page:</span>
+                        <Select
+                          value={(filters.page_size || 50).toString()}
+                          onValueChange={(value) => handlePageSizeChange(parseInt(value, 10))}
+                          disabled={loading}
+                        >
+                          <SelectTrigger className="h-8 w-[70px]">
+                            <SelectValue />
+                          </SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="10">10</SelectItem>
+                            <SelectItem value="20">20</SelectItem>
+                            <SelectItem value="50">50</SelectItem>
+                            <SelectItem value="100">100</SelectItem>
+                          </SelectContent>
+                        </Select>
+                      </div>
                     </div>
+                    {totalPages > 1 && (
+                      <div className="flex gap-2">
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          onClick={() => handlePageChange(currentPage - 1)}
+                          disabled={currentPage === 1 || loading}
+                        >
+                          Previous
+                        </Button>
+                        <div className="flex items-center gap-2">
+                          <span className="text-sm text-muted-foreground">
+                            Page {currentPage} of {totalPages}
+                          </span>
+                        </div>
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          onClick={() => handlePageChange(currentPage + 1)}
+                          disabled={currentPage === totalPages || loading}
+                        >
+                          Next
+                        </Button>
+                      </div>
+                    )}
                   </div>
                 )}
               </div>

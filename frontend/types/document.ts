@@ -372,6 +372,7 @@ export interface ManualEntryFilters {
   exam_type?: ExamType;
   series?: ExamSeries;
   year?: number;
+  school_id?: number;
   programme_id?: number;
   subject_id?: number;
   page?: number;
@@ -386,6 +387,7 @@ export interface CandidateScoreEntry {
   subject_id: number;
   subject_code: string;
   subject_name: string;
+  subject_series: number | null;
   exam_id: number;
   exam_name: string;
   exam_year: number;
@@ -397,6 +399,9 @@ export interface CandidateScoreEntry {
   obj_raw_score: string | null;
   essay_raw_score: string | null;
   pract_raw_score: string | null;
+  obj_pct: number | null;
+  essay_pct: number | null;
+  pract_pct: number | null;
 }
 
 export interface CandidateScoreListResponse {
