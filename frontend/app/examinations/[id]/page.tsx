@@ -5,7 +5,9 @@ import { useParams, useRouter } from "next/navigation";
 import { DashboardLayout } from "@/components/DashboardLayout";
 import { TopBar } from "@/components/TopBar";
 import { ExamSubjectCard } from "@/components/ExamSubjectCard";
+import { ExamSubjectListItem } from "@/components/ExamSubjectListItem";
 import { EditExamModal } from "@/components/EditExamModal";
+import { ExamSubjectBulkUpload } from "@/components/ExamSubjectBulkUpload";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -17,9 +19,10 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { getExam, listExamSubjects, serializeExam, type ExamSubject, type SerializationResponse } from "@/lib/api";
+import { getExam, listExamSubjects, serializeExam, downloadExamSubjectTemplate, type ExamSubject, type SerializationResponse } from "@/lib/api";
 import type { Exam } from "@/types/document";
-import { ArrowLeft, Search, X, ClipboardList, Edit, Calendar, Users, CheckCircle2, AlertCircle, Loader2, ChevronDown, ChevronRight } from "lucide-react";
+import { ArrowLeft, Search, X, ClipboardList, Edit, Calendar, Users, CheckCircle2, AlertCircle, Loader2, ChevronDown, ChevronRight, Download, Upload, LayoutGrid, List } from "lucide-react";
+import { toast } from "sonner";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 
@@ -41,6 +44,9 @@ export default function ExaminationDetailPage() {
   const [selectedSubjectCodes, setSelectedSubjectCodes] = useState<Set<string>>(new Set());
   const [showSerializedSubjects, setShowSerializedSubjects] = useState(false);
   const [activeTab, setActiveTab] = useState<string>("serialization");
+  const [downloadingTemplate, setDownloadingTemplate] = useState<string | null>(null);
+  const [uploadDialogOpen, setUploadDialogOpen] = useState(false);
+  const [viewMode, setViewMode] = useState<"card" | "list">("card");
 
   // Load examination data
   useEffect(() => {
@@ -95,6 +101,17 @@ export default function ExaminationDetailPage() {
     );
   };
 
+  const handleUploadSuccess = async () => {
+    if (!examId) return;
+    try {
+      const updatedSubjects = await listExamSubjects(examId);
+      setSubjects(updatedSubjects);
+      setUploadDialogOpen(false);
+    } catch (error) {
+      console.error("Error refreshing subjects:", error);
+    }
+  };
+
   const handleEditSuccess = async () => {
     if (!examId) return;
     try {
@@ -104,6 +121,32 @@ export default function ExaminationDetailPage() {
       console.error("Error refreshing examination:", error);
     }
     setEditModalOpen(false);
+  };
+
+  const handleDownloadTemplate = async (subjectType?: "CORE" | "ELECTIVE") => {
+    if (!examId) return;
+    try {
+      const typeKey = subjectType || "all";
+      setDownloadingTemplate(typeKey);
+      const blob = await downloadExamSubjectTemplate(examId, subjectType);
+      const url = window.URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      const filename = subjectType
+        ? `exam_${examId}_subjects_${subjectType.toLowerCase()}_template.xlsx`
+        : `exam_${examId}_subjects_template.xlsx`;
+      a.download = filename;
+      document.body.appendChild(a);
+      a.click();
+      window.URL.revokeObjectURL(url);
+      document.body.removeChild(a);
+      toast.success("Template downloaded successfully");
+    } catch (err) {
+      const errorMessage = err instanceof Error ? err.message : "Failed to download template";
+      toast.error(errorMessage);
+    } finally {
+      setDownloadingTemplate(null);
+    }
   };
 
   const handleSerialization = async () => {
@@ -482,12 +525,101 @@ export default function ExaminationDetailPage() {
                 </Select>
               </div>
 
+              {/* Download Template, Upload Buttons, and View Toggle */}
+              <div className="mb-6 flex flex-wrap items-center justify-between gap-4">
+                <div className="flex flex-wrap gap-2">
+                  <Button
+                    onClick={() => handleDownloadTemplate()}
+                    variant="outline"
+                    size="sm"
+                    disabled={!!downloadingTemplate}
+                  >
+                    {downloadingTemplate === "all" ? (
+                      <>
+                        <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                        Downloading...
+                      </>
+                    ) : (
+                      <>
+                        <Download className="mr-2 h-4 w-4" />
+                        Download Template (All)
+                      </>
+                    )}
+                  </Button>
+                  <Button
+                    onClick={() => handleDownloadTemplate("CORE")}
+                    variant="outline"
+                    size="sm"
+                    disabled={!!downloadingTemplate}
+                  >
+                    {downloadingTemplate === "CORE" ? (
+                      <>
+                        <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                        Downloading...
+                      </>
+                    ) : (
+                      <>
+                        <Download className="mr-2 h-4 w-4" />
+                        Download Template (Core)
+                      </>
+                    )}
+                  </Button>
+                  <Button
+                    onClick={() => handleDownloadTemplate("ELECTIVE")}
+                    variant="outline"
+                    size="sm"
+                    disabled={!!downloadingTemplate}
+                  >
+                    {downloadingTemplate === "ELECTIVE" ? (
+                      <>
+                        <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                        Downloading...
+                      </>
+                    ) : (
+                      <>
+                        <Download className="mr-2 h-4 w-4" />
+                        Download Template (Elective)
+                      </>
+                    )}
+                  </Button>
+                  <Button
+                    onClick={() => setUploadDialogOpen(true)}
+                    variant="default"
+                    size="sm"
+                    disabled={!examId}
+                  >
+                    <Upload className="mr-2 h-4 w-4" />
+                    Upload File
+                  </Button>
+                </div>
+
+                {/* View Toggle */}
+                <div className="flex items-center gap-2 border rounded-md p-1">
+                  <Button
+                    variant={viewMode === "card" ? "default" : "ghost"}
+                    size="sm"
+                    onClick={() => setViewMode("card")}
+                    className="h-8"
+                  >
+                    <LayoutGrid className="h-4 w-4" />
+                  </Button>
+                  <Button
+                    variant={viewMode === "list" ? "default" : "ghost"}
+                    size="sm"
+                    onClick={() => setViewMode("list")}
+                    className="h-8"
+                  >
+                    <List className="h-4 w-4" />
+                  </Button>
+                </div>
+              </div>
+
               {/* Subjects Count */}
               <div className="mb-4 text-sm text-muted-foreground">
                 Showing {filteredSubjects.length} of {subjects.length} subject{subjects.length !== 1 ? "s" : ""}
               </div>
 
-              {/* Subjects Grid */}
+              {/* Subjects Display */}
               {filteredSubjects.length === 0 ? (
                 <div className="flex flex-col items-center justify-center py-24 text-center">
                   <ClipboardList className="h-16 w-16 text-muted-foreground mb-4" />
@@ -502,10 +634,20 @@ export default function ExaminationDetailPage() {
                       : "Subjects will appear here once added to this examination"}
                   </p>
                 </div>
-              ) : (
+              ) : viewMode === "card" ? (
                 <div className="grid grid-cols-2 2xl:grid-cols-3 gap-4 items-stretch">
                   {filteredSubjects.map((subject) => (
                     <ExamSubjectCard
+                      key={subject.id}
+                      examSubject={subject}
+                      onUpdate={handleSubjectUpdate}
+                    />
+                  ))}
+                </div>
+              ) : (
+                <div className="space-y-3">
+                  {filteredSubjects.map((subject) => (
+                    <ExamSubjectListItem
                       key={subject.id}
                       examSubject={subject}
                       onUpdate={handleSubjectUpdate}
@@ -525,6 +667,15 @@ export default function ExaminationDetailPage() {
         onOpenChange={setEditModalOpen}
         onSuccess={handleEditSuccess}
       />
+
+      {examId && (
+        <ExamSubjectBulkUpload
+          open={uploadDialogOpen}
+          onOpenChange={setUploadDialogOpen}
+          examId={examId}
+          onUploadSuccess={handleUploadSuccess}
+        />
+      )}
     </DashboardLayout>
   );
 }

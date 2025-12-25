@@ -1061,6 +1061,58 @@ export async function listExamSubjects(examId: number): Promise<ExamSubject[]> {
   return handleResponse<ExamSubject[]>(response);
 }
 
+export async function downloadExamSubjectTemplate(
+  examId: number,
+  subjectType?: "CORE" | "ELECTIVE"
+): Promise<Blob> {
+  let url = `${API_BASE_URL}/api/v1/exams/${examId}/subjects/template`;
+  if (subjectType) {
+    url += `?subject_type=${subjectType}`;
+  }
+  const response = await fetch(url);
+  if (!response.ok) {
+    // Try to parse JSON error, but handle case where response might not be JSON
+    let errorMessage = `HTTP error! status: ${response.status}`;
+    try {
+      const error: ApiError = await response.json();
+      errorMessage = error.detail || errorMessage;
+    } catch {
+      // If response is not JSON, use status text
+      errorMessage = response.statusText || errorMessage;
+    }
+    throw new Error(errorMessage);
+  }
+  return response.blob();
+}
+
+export interface ExamSubjectBulkUploadError {
+  row_number: number;
+  original_code: string;
+  error_message: string;
+  field: string | null;
+}
+
+export interface ExamSubjectBulkUploadResponse {
+  total_rows: number;
+  successful: number;
+  failed: number;
+  errors: ExamSubjectBulkUploadError[];
+}
+
+export async function uploadExamSubjectsBulk(
+  examId: number,
+  file: File
+): Promise<ExamSubjectBulkUploadResponse> {
+  const formData = new FormData();
+  formData.append("file", file);
+
+  const response = await fetch(`${API_BASE_URL}/api/v1/exams/${examId}/subjects/bulk-upload`, {
+    method: "POST",
+    body: formData,
+  });
+  return handleResponse<ExamSubjectBulkUploadResponse>(response);
+}
+
 export interface ExamSubjectUpdate {
   obj_pct?: number | null;
   essay_pct?: number | null;
