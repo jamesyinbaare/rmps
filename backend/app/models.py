@@ -185,6 +185,7 @@ class Document(Base):
     school = relationship("School", back_populates="documents")
     subject = relationship("Subject", back_populates="documents")
     exam = relationship("Exam", back_populates="documents")
+    unmatched_records = relationship("UnmatchedExtractionRecord", back_populates="document", cascade="all, delete-orphan")
 
 
 
@@ -322,6 +323,32 @@ class SubjectScore(Base):
     essay_extraction_method = Column(Enum(DataExtractionMethod), nullable=True)  # AUTOMATED_EXTRACTION, MANUAL_TRANSCRIPTION_DIGITAL, MANUAL_ENTRY_PHYSICAL
     pract_extraction_method = Column(Enum(DataExtractionMethod), nullable=True)  # AUTOMATED_EXTRACTION, MANUAL_TRANSCRIPTION_DIGITAL, MANUAL_ENTRY_PHYSICAL
     subject_registration = relationship("SubjectRegistration", back_populates="subject_score")
+
+
+class UnmatchedRecordStatus(enum.Enum):
+    PENDING = "pending"
+    RESOLVED = "resolved"
+    IGNORED = "ignored"
+
+
+class UnmatchedExtractionRecord(Base):
+    """Records for candidates extracted from documents that don't match existing SubjectScore records."""
+
+    __tablename__ = "unmatched_extraction_records"
+    id = Column(Integer, primary_key=True)
+    document_id = Column(Integer, ForeignKey("documents.id", ondelete="CASCADE"), nullable=False, index=True)
+    index_number = Column(String(50), nullable=True, index=True)
+    candidate_name = Column(String(255), nullable=True)
+    score = Column(String(10), nullable=True)  # Raw score from extraction
+    sn = Column(Integer, nullable=True, index=True)  # Serial number/row number from Reducto extraction
+    raw_data = Column(JSON, nullable=True)  # Full extraction data as JSON
+    status = Column(Enum(UnmatchedRecordStatus), default=UnmatchedRecordStatus.PENDING, nullable=False, index=True)
+    extraction_method = Column(Enum(DataExtractionMethod), nullable=False)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+    resolved_at = Column(DateTime, nullable=True)
+
+    document = relationship("Document", back_populates="unmatched_records")
 
 
 class PdfGenerationJobStatus(enum.Enum):

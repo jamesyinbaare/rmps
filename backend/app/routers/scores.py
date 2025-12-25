@@ -1,4 +1,5 @@
 from datetime import datetime
+import logging
 
 from fastapi import APIRouter, HTTPException, Query, status
 from sqlalchemy import func, or_, select
@@ -18,6 +19,8 @@ from app.models import (
     SubjectRegistration,
     SubjectScore,
     DataExtractionMethod,
+    UnmatchedExtractionRecord,
+    UnmatchedRecordStatus,
 )
 from app.schemas.document import DocumentListResponse, DocumentResponse
 from app.schemas.score import (
@@ -26,10 +29,17 @@ from app.schemas.score import (
     CandidateScoreEntry,
     CandidateScoreListResponse,
     DocumentScoresResponse,
+    ReductoDataResponse,
+    ResolveUnmatchedRecordRequest,
     ScoreResponse,
     ScoreUpdate,
+    UnmatchedExtractionRecordResponse,
+    UnmatchedRecordsListResponse,
+    UpdateScoresFromReductoResponse,
 )
-from app.utils.score_utils import add_extraction_method_to_document
+from app.utils.score_utils import add_extraction_method_to_document, parse_score_value
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/v1/scores", tags=["scores"])
 
@@ -47,6 +57,7 @@ async def get_filtered_documents(
     subject_id: int | None = Query(None),
     test_type: str | None = Query(None, description="1 = Objectives, 2 = Essay"),
     extraction_status: str | None = Query(None, description="Filter by extraction status: pending, queued, processing, success, error"),
+    extraction_method: DataExtractionMethod | None = Query(None, description="Filter by extraction method in scores_extraction_methods array"),
 ) -> DocumentListResponse:
     """Get documents filtered by exam, school, subject, test_type, and extraction status."""
     offset = (page - 1) * page_size
@@ -79,6 +90,13 @@ async def get_filtered_documents(
         base_stmt = base_stmt.where(Document.test_type == test_type)
     if extraction_status is not None:
         base_stmt = base_stmt.where(Document.scores_extraction_status == extraction_status)
+    if extraction_method is not None:
+        # Filter by array contains operation - check if extraction_method is in the array
+        # For PostgreSQL arrays, use the @> (contains) operator
+        base_stmt = base_stmt.where(
+            Document.scores_extraction_methods.isnot(None)
+            & Document.scores_extraction_methods.op("@>")([extraction_method])
+        )
 
     # Get total count with same filters
     count_stmt = select(func.count(Document.id)).select_from(Document)
@@ -107,6 +125,11 @@ async def get_filtered_documents(
         count_stmt = count_stmt.where(Document.test_type == test_type)
     if extraction_status is not None:
         count_stmt = count_stmt.where(Document.scores_extraction_status == extraction_status)
+    if extraction_method is not None:
+        count_stmt = count_stmt.where(
+            Document.scores_extraction_methods.isnot(None)
+            & Document.scores_extraction_methods.op("@>")([extraction_method])
+        )
 
     count_result = await session.execute(count_stmt)
     total = count_result.scalar() or 0
@@ -737,3 +760,600 @@ async def batch_update_scores_manual_entry(
     await session.commit()
 
     return BatchScoreUpdateResponse(successful=successful, failed=failed, errors=errors)
+
+
+@router.get("/documents/{document_id}/reducto-data", response_model=ReductoDataResponse)
+async def get_reducto_data(document_id: int, session: DBSessionDep) -> ReductoDataResponse:
+    """Get reducto extraction data for a document."""
+    stmt = select(Document).where(Document.id == document_id)
+    result = await session.execute(stmt)
+    document = result.scalar_one_or_none()
+
+    if not document:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Document not found")
+
+    if not document.scores_extraction_data:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="No extraction data available for this document"
+        )
+
+    return ReductoDataResponse(
+        data=document.scores_extraction_data,
+        status=document.scores_extraction_status or "pending",
+        confidence=document.scores_extraction_confidence,
+        extracted_at=document.scores_extracted_at,
+    )
+
+
+@router.post("/documents/{document_id}/update-from-reducto", response_model=UpdateScoresFromReductoResponse)
+async def update_scores_from_reducto(document_id: int, session: DBSessionDep) -> UpdateScoresFromReductoResponse:
+    """Update existing SubjectScore records with data from reducto extraction."""
+    logger.info(f"Starting update_scores_from_reducto for document_id={document_id}")
+
+    # Get document
+    stmt = select(Document).where(Document.id == document_id)
+    result = await session.execute(stmt)
+    document = result.scalar_one_or_none()
+
+    if not document:
+        logger.warning(f"Document not found: document_id={document_id}")
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Document not found")
+
+    logger.debug(f"Document found: id={document.id}, extracted_id={document.extracted_id}, test_type={document.test_type}, exam_id={document.exam_id}, subject_id={document.subject_id}")
+    print(document)
+    if not document.scores_extraction_data:
+        logger.warning(f"No extraction data available for document_id={document_id}")
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST, detail="No extraction data available for this document"
+        )
+
+    extraction_data = document.scores_extraction_data
+    # Log raw data structure for debugging (limit size to avoid huge logs)
+    import json
+    data_str = json.dumps(extraction_data, default=str)[:500] if extraction_data else "None"
+    logger.info(f"Raw extraction_data (first 500 chars): {data_str}")
+    logger.info(f"Extraction data type: {type(extraction_data)}")
+    if isinstance(extraction_data, dict):
+        logger.info(f"Extraction data keys: {list(extraction_data.keys())}")
+        # Log a sample of the structure for debugging
+        if "data" in extraction_data:
+            data = extraction_data.get("data", {})
+            if isinstance(data, dict):
+                logger.info(f"Nested data keys: {list(data.keys())}")
+                if "tables" in data:
+                    tables = data.get("tables", [])
+                    logger.info(f"Found {len(tables)} tables in nested data")
+                    if tables and isinstance(tables[0], dict):
+                        logger.info(f"First table keys: {list(tables[0].keys())}")
+                        if "rows" in tables[0]:
+                            logger.info(f"First table has {len(tables[0].get('rows', []))} rows")
+
+    # Handle different data structures from reducto extraction
+    # The data might be in:
+    # 1. Direct format: {"candidates": [...]}
+    # 2. Tables format: {"tables": [{"rows": [...]}]}
+    # 3. Nested format: {"data": {"candidates": [...]}}
+    # 4. Nested tables format: {"data": {"tables": [{"rows": [...]}]}}
+    candidates = []
+
+    def extract_candidates_from_rows(rows: list) -> list:
+        """Helper function to convert rows to candidates format."""
+        result = []
+        for idx, row in enumerate(rows):
+            if isinstance(row, dict):
+                candidate = {
+                    "index_number": row.get("index_number"),
+                    "candidate_name": row.get("candidate_name"),
+                    "score": row.get("raw_score") or row.get("score"),
+                    "attend": row.get("attend"),
+                    "verify": row.get("verify"),
+                    "sn": row.get("sn") or row.get("serial_number") or row.get("row_number") or (idx + 1),
+                }
+                result.append(candidate)
+        return result
+
+    if isinstance(extraction_data, dict):
+        # Try direct candidates key
+        if "candidates" in extraction_data:
+            candidates = extraction_data.get("candidates", [])
+            logger.info(f"Found candidates in direct 'candidates' key: {len(candidates)} candidates")
+
+        # Try tables format at top level
+        if not candidates and "tables" in extraction_data:
+            tables = extraction_data.get("tables", [])
+            logger.info(f"Found 'tables' key at top level with {len(tables)} tables")
+            for table in tables:
+                if isinstance(table, dict) and "rows" in table:
+                    rows = table.get("rows", [])
+                    logger.info(f"Found {len(rows)} rows in top-level table")
+                    candidates.extend(extract_candidates_from_rows(rows))
+                    logger.info(f"Total candidates after processing top-level tables: {len(candidates)}")
+
+        # Try nested data format
+        if not candidates and "data" in extraction_data:
+            data = extraction_data.get("data", {})
+            logger.info(f"Found 'data' key, checking nested structure")
+            if isinstance(data, dict):
+                # Check for candidates in nested data
+                if "candidates" in data:
+                    candidates = data.get("candidates", [])
+                    logger.info(f"Found candidates in nested 'data.candidates' key: {len(candidates)} candidates")
+
+                # Check for tables in nested data
+                if not candidates and "tables" in data:
+                    tables = data.get("tables", [])
+                    logger.info(f"Found 'tables' key in nested data with {len(tables)} tables")
+                    for table in tables:
+                        if isinstance(table, dict) and "rows" in table:
+                            rows = table.get("rows", [])
+                            logger.info(f"Found {len(rows)} rows in nested table")
+                            candidates.extend(extract_candidates_from_rows(rows))
+                            logger.info(f"Total candidates after processing nested tables: {len(candidates)}")
+
+    logger.info(f"Total candidates extracted: {len(candidates)} from extraction_data structure")
+
+    if not candidates:
+        logger.warning(f"No candidate data found in extraction for document_id={document_id}")
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST, detail="No candidate data found in extraction"
+        )
+
+    # Use document's extracted_id and test_type to determine which fields to update
+    # Fallback to document.id if extracted_id is not available
+    document_identifier = document.extracted_id if document.extracted_id else str(document.id)
+    logger.debug(f"Using document_identifier={document_identifier} (extracted_id={document.extracted_id}, fallback={str(document.id)})")
+
+    test_type = document.test_type
+
+    # Check if test_type is set
+    if not test_type:
+        logger.error(f"Document {document_id} does not have test_type set")
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Document does not have a test_type set. Please set test_type to '1' (obj), '2' (essay), or '3' (pract)",
+        )
+
+    # Determine which score field to update based on test_type
+    # test_type="1" -> obj, test_type="2" -> essay, test_type="3" -> pract
+    if test_type == "1":
+        update_score_attr = "obj_raw_score"
+        update_doc_attr = "obj_document_id"
+        update_method_attr = "obj_extraction_method"
+        logger.debug("test_type='1' -> updating obj_raw_score")
+    elif test_type == "2":
+        update_score_attr = "essay_raw_score"
+        update_doc_attr = "essay_document_id"
+        update_method_attr = "essay_extraction_method"
+        logger.debug("test_type='2' -> updating essay_raw_score")
+    elif test_type == "3":
+        update_score_attr = "pract_raw_score"
+        update_doc_attr = "pract_document_id"
+        update_method_attr = "pract_extraction_method"
+        logger.debug("test_type='3' -> updating pract_raw_score")
+    else:
+        logger.error(f"Invalid test_type={test_type} for document_id={document_id}")
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Invalid test_type: {test_type}. Expected '1' (obj), '2' (essay), or '3' (pract)",
+        )
+
+    updated_count = 0
+    unmatched_count = 0
+    unmatched_records = []
+    errors: list[dict[str, str]] = []
+
+    # Process each candidate from reducto data
+    logger.info(f"Processing {len(candidates)} candidates from reducto data")
+    for idx, candidate_data in enumerate(candidates):
+        try:
+            index_number = candidate_data.get("index_number")
+            candidate_name = candidate_data.get("candidate_name")
+            score_value = candidate_data.get("score")
+            # Extract SN: try sn, serial_number, row_number, or fallback to array index + 1
+            sn = candidate_data.get("sn") or candidate_data.get("serial_number") or candidate_data.get("row_number") or (idx + 1)
+            # Ensure sn is an integer
+            if not isinstance(sn, int):
+                try:
+                    sn = int(sn)
+                except (ValueError, TypeError):
+                    sn = idx + 1
+
+            logger.debug(f"Processing candidate {idx+1}/{len(candidates)}: index_number={index_number}, name={candidate_name}, score={score_value}, sn={sn}")
+
+            if not index_number:
+                logger.warning(f"Candidate {idx+1} missing index_number: {candidate_data}")
+                unmatched_count += 1
+                parsed_score = None
+                try:
+                    parsed_score = parse_score_value(score_value) if score_value is not None else None
+                except ValueError:
+                    pass
+
+                unmatched_record = UnmatchedExtractionRecord(
+                    document_id=document.id,
+                    index_number=index_number,
+                    candidate_name=candidate_name,
+                    score=parsed_score,
+                    sn=sn,
+                    raw_data=candidate_data,
+                    status=UnmatchedRecordStatus.PENDING,
+                    extraction_method=DataExtractionMethod.AUTOMATED_EXTRACTION,
+                )
+                session.add(unmatched_record)
+                unmatched_records.append(
+                    {
+                        "index_number": None,
+                        "candidate_name": candidate_name,
+                        "score": str(score_value) if score_value else None,
+                        "error": "Missing index_number",
+                    }
+                )
+                continue
+
+            # Find matching SubjectScore via Candidate.index_number
+            # Path: SubjectScore -> SubjectRegistration -> ExamRegistration -> Candidate
+            stmt = (
+                select(SubjectScore, Candidate, SubjectRegistration, ExamRegistration)
+                .join(SubjectRegistration, SubjectScore.subject_registration_id == SubjectRegistration.id)
+                .join(ExamRegistration, SubjectRegistration.exam_registration_id == ExamRegistration.id)
+                .join(Candidate, ExamRegistration.candidate_id == Candidate.id)
+                .where(Candidate.index_number == index_number)
+                .where(ExamRegistration.exam_id == document.exam_id)
+            )
+
+            # If document has subject_id, filter by it
+            if document.subject_id:
+                logger.debug(f"Filtering by subject_id={document.subject_id}")
+                stmt = stmt.join(ExamSubject, SubjectRegistration.exam_subject_id == ExamSubject.id).where(
+                    ExamSubject.subject_id == document.subject_id
+                )
+
+            result = await session.execute(stmt)
+            row = result.first()
+
+            if not row:
+                # No match found - create unmatched record
+                logger.warning(f"No matching SubjectScore found for index_number={index_number}, exam_id={document.exam_id}, subject_id={document.subject_id}")
+                unmatched_count += 1
+                parsed_score = None
+                try:
+                    parsed_score = parse_score_value(score_value) if score_value is not None else None
+                except ValueError as e:
+                    logger.debug(f"Failed to parse score value '{score_value}' for index_number={index_number}: {e}")
+
+                unmatched_record = UnmatchedExtractionRecord(
+                    document_id=document.id,
+                    index_number=index_number,
+                    candidate_name=candidate_name,
+                    score=parsed_score,
+                    sn=sn,
+                    raw_data=candidate_data,
+                    status=UnmatchedRecordStatus.PENDING,
+                    extraction_method=DataExtractionMethod.AUTOMATED_EXTRACTION,
+                )
+                session.add(unmatched_record)
+                unmatched_records.append(
+                    {
+                        "index_number": index_number,
+                        "candidate_name": candidate_name,
+                        "score": parsed_score,
+                    }
+                )
+                continue
+
+            subject_score, candidate, _subject_reg, _exam_reg = row
+            logger.debug(f"Found matching SubjectScore: id={subject_score.id}, candidate_id={candidate.id}, subject_registration_id={subject_score.subject_registration_id}")
+
+            # Parse score value
+            try:
+                parsed_score = parse_score_value(score_value) if score_value is not None else None
+                logger.debug(f"Parsed score: {score_value} -> {parsed_score}")
+            except ValueError as e:
+                logger.error(f"Invalid score format for index_number={index_number}, score={score_value}: {e}")
+                errors.append({"index_number": index_number, "error": f"Invalid score format: {e}"})
+                continue
+
+            # Update appropriate score field based on test_type
+            old_score = getattr(subject_score, update_score_attr)
+            setattr(subject_score, update_score_attr, parsed_score)
+            setattr(subject_score, update_method_attr, DataExtractionMethod.AUTOMATED_EXTRACTION)
+            setattr(subject_score, update_doc_attr, document_identifier)
+
+            logger.debug(f"Updated {update_score_attr}: {old_score} -> {parsed_score} for SubjectScore id={subject_score.id}")
+
+            # Update document's extraction methods array
+            add_extraction_method_to_document(document, DataExtractionMethod.AUTOMATED_EXTRACTION)
+
+            updated_count += 1
+
+        except Exception as e:
+            logger.error(f"Error processing candidate {idx+1} (index_number={candidate_data.get('index_number', 'unknown')}): {e}", exc_info=True)
+            errors.append({"index_number": candidate_data.get("index_number", "unknown"), "error": str(e)})
+
+    # Update document extraction status
+    if updated_count > 0:
+        document.scores_extraction_status = "success"
+        document.scores_extracted_at = datetime.utcnow()
+        logger.info(f"Updated document extraction status to 'success' for document_id={document_id}")
+
+    await session.commit()
+
+    logger.info(
+        f"Completed update_scores_from_reducto for document_id={document_id}: "
+        f"updated={updated_count}, unmatched={unmatched_count}, errors={len(errors)}"
+    )
+
+    return UpdateScoresFromReductoResponse(
+        updated_count=updated_count,
+        unmatched_count=unmatched_count,
+        unmatched_records=unmatched_records,
+        errors=errors,
+    )
+
+
+@router.get("/unmatched-records", response_model=UnmatchedRecordsListResponse)
+async def get_unmatched_records(
+    session: DBSessionDep,
+    document_id: int | None = Query(None),
+    status: UnmatchedRecordStatus | None = Query(None),
+    extraction_method: DataExtractionMethod | None = Query(None),
+    page: int = Query(1, ge=1),
+    page_size: int = Query(20, ge=1, le=100),
+) -> UnmatchedRecordsListResponse:
+    """Get list of unmatched extraction records."""
+    offset = (page - 1) * page_size
+
+    # Build query with joins to get document info
+    base_stmt = (
+        select(UnmatchedExtractionRecord, Document, School.name, Subject.name)
+        .join(Document, UnmatchedExtractionRecord.document_id == Document.id)
+        .outerjoin(School, Document.school_id == School.id)
+        .outerjoin(Subject, Document.subject_id == Subject.id)
+    )
+
+    # Apply filters
+    if document_id is not None:
+        base_stmt = base_stmt.where(UnmatchedExtractionRecord.document_id == document_id)
+    if status is not None:
+        base_stmt = base_stmt.where(UnmatchedExtractionRecord.status == status)
+    if extraction_method is not None:
+        base_stmt = base_stmt.where(UnmatchedExtractionRecord.extraction_method == extraction_method)
+
+    # Get total count
+    count_stmt = select(func.count(UnmatchedExtractionRecord.id))
+    if document_id is not None:
+        count_stmt = count_stmt.where(UnmatchedExtractionRecord.document_id == document_id)
+    if status is not None:
+        count_stmt = count_stmt.where(UnmatchedExtractionRecord.status == status)
+    if extraction_method is not None:
+        count_stmt = count_stmt.where(UnmatchedExtractionRecord.extraction_method == extraction_method)
+
+    count_result = await session.execute(count_stmt)
+    total = count_result.scalar() or 0
+
+    # Get paginated results
+    stmt = base_stmt.offset(offset).limit(page_size).order_by(UnmatchedExtractionRecord.created_at.desc())
+    result = await session.execute(stmt)
+    rows = result.all()
+
+    items = []
+    for unmatched_record, document, school_name, subject_name in rows:
+        items.append(
+            UnmatchedExtractionRecordResponse(
+                id=unmatched_record.id,
+                document_id=unmatched_record.document_id,
+                document_extracted_id=document.extracted_id,
+                document_school_name=school_name,
+                document_subject_name=subject_name,
+                index_number=unmatched_record.index_number,
+                candidate_name=unmatched_record.candidate_name,
+                score=unmatched_record.score,
+                sn=unmatched_record.sn,
+                raw_data=unmatched_record.raw_data,
+                status=unmatched_record.status.value,
+                extraction_method=unmatched_record.extraction_method.value,
+                created_at=unmatched_record.created_at,
+                updated_at=unmatched_record.updated_at,
+                resolved_at=unmatched_record.resolved_at,
+            )
+        )
+
+    total_pages = (total + page_size - 1) // page_size if total > 0 else 0
+
+    return UnmatchedRecordsListResponse(
+        items=items,
+        total=total,
+        page=page,
+        page_size=page_size,
+        total_pages=total_pages,
+    )
+
+
+@router.get("/unmatched-records/{record_id}", response_model=UnmatchedExtractionRecordResponse)
+async def get_unmatched_record(record_id: int, session: DBSessionDep) -> UnmatchedExtractionRecordResponse:
+    """Get single unmatched record details."""
+    stmt = (
+        select(UnmatchedExtractionRecord, Document, School.name, Subject.name)
+        .join(Document, UnmatchedExtractionRecord.document_id == Document.id)
+        .outerjoin(School, Document.school_id == School.id)
+        .outerjoin(Subject, Document.subject_id == Subject.id)
+        .where(UnmatchedExtractionRecord.id == record_id)
+    )
+
+    result = await session.execute(stmt)
+    row = result.first()
+
+    if not row:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Unmatched record not found")
+
+    unmatched_record, document, school_name, subject_name = row
+
+    return UnmatchedExtractionRecordResponse(
+        id=unmatched_record.id,
+        document_id=unmatched_record.document_id,
+        document_extracted_id=document.extracted_id,
+        document_school_name=school_name,
+        document_subject_name=subject_name,
+        index_number=unmatched_record.index_number,
+        candidate_name=unmatched_record.candidate_name,
+        score=unmatched_record.score,
+        sn=unmatched_record.sn,
+        raw_data=unmatched_record.raw_data,
+        status=unmatched_record.status.value,
+        extraction_method=unmatched_record.extraction_method.value,
+        created_at=unmatched_record.created_at,
+        updated_at=unmatched_record.updated_at,
+        resolved_at=unmatched_record.resolved_at,
+    )
+
+
+@router.put("/unmatched-records/{record_id}/resolve")
+async def resolve_unmatched_record(
+    record_id: int, request: ResolveUnmatchedRecordRequest, session: DBSessionDep
+) -> dict:
+    """Resolve an unmatched record by linking it to a SubjectRegistration and applying the score."""
+    # Get unmatched record
+    stmt = select(UnmatchedExtractionRecord, Document).join(
+        Document, UnmatchedExtractionRecord.document_id == Document.id
+    ).where(UnmatchedExtractionRecord.id == record_id)
+
+    result = await session.execute(stmt)
+    row = result.first()
+
+    if not row:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Unmatched record not found")
+
+    unmatched_record, document = row
+
+    if unmatched_record.status != UnmatchedRecordStatus.PENDING:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Record is already {unmatched_record.status.value}, cannot resolve",
+        )
+
+    # Verify subject_registration exists
+    reg_stmt = select(SubjectRegistration).where(SubjectRegistration.id == request.subject_registration_id)
+    reg_result = await session.execute(reg_stmt)
+    subject_reg = reg_result.scalar_one_or_none()
+
+    if not subject_reg:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Subject registration not found"
+        )
+
+    # Validate score_field
+    if request.score_field not in ("obj", "essay", "pract"):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST, detail="score_field must be 'obj', 'essay', or 'pract'"
+        )
+
+    # Parse score value
+    parsed_score = None
+    if request.score_value is not None:
+        try:
+            parsed_score = parse_score_value(request.score_value)
+        except ValueError as e:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"Invalid score format: {e}")
+
+    # Get or create SubjectScore
+    score_stmt = select(SubjectScore).where(SubjectScore.subject_registration_id == request.subject_registration_id)
+    score_result = await session.execute(score_stmt)
+    subject_score = score_result.scalar_one_or_none()
+
+    document_identifier = document.extracted_id if document.extracted_id else str(document.id)
+
+    if not subject_score:
+        # Create new SubjectScore
+        subject_score = SubjectScore(
+            subject_registration_id=request.subject_registration_id,
+            obj_raw_score=parsed_score if request.score_field == "obj" else None,
+            essay_raw_score=parsed_score if request.score_field == "essay" else None,
+            pract_raw_score=parsed_score if request.score_field == "pract" else None,
+            obj_normalized=None,
+            essay_normalized=None,
+            pract_normalized=None,
+            total_score=0.0,
+            obj_document_id=document_identifier if request.score_field == "obj" else None,
+            essay_document_id=document_identifier if request.score_field == "essay" else None,
+            pract_document_id=document_identifier if request.score_field == "pract" else None,
+            obj_extraction_method=DataExtractionMethod.AUTOMATED_EXTRACTION
+            if request.score_field == "obj"
+            else None,
+            essay_extraction_method=DataExtractionMethod.AUTOMATED_EXTRACTION
+            if request.score_field == "essay"
+            else None,
+            pract_extraction_method=DataExtractionMethod.AUTOMATED_EXTRACTION
+            if request.score_field == "pract"
+            else None,
+        )
+        session.add(subject_score)
+    else:
+        # Update existing SubjectScore
+        if request.score_field == "obj":
+            subject_score.obj_raw_score = parsed_score
+            subject_score.obj_extraction_method = DataExtractionMethod.AUTOMATED_EXTRACTION
+            subject_score.obj_document_id = document_identifier
+        elif request.score_field == "essay":
+            subject_score.essay_raw_score = parsed_score
+            subject_score.essay_extraction_method = DataExtractionMethod.AUTOMATED_EXTRACTION
+            subject_score.essay_document_id = document_identifier
+        elif request.score_field == "pract":
+            subject_score.pract_raw_score = parsed_score
+            subject_score.pract_extraction_method = DataExtractionMethod.AUTOMATED_EXTRACTION
+            subject_score.pract_document_id = document_identifier
+
+    # Update document's extraction methods array
+    add_extraction_method_to_document(document, DataExtractionMethod.AUTOMATED_EXTRACTION)
+
+    # Mark unmatched record as resolved
+    unmatched_record.status = UnmatchedRecordStatus.RESOLVED
+    unmatched_record.resolved_at = datetime.utcnow()
+
+    await session.commit()
+
+    return {"message": "Record resolved successfully", "record_id": record_id}
+
+
+@router.put("/unmatched-records/{record_id}/mark-resolved")
+async def mark_unmatched_record_resolved(record_id: int, session: DBSessionDep) -> dict:
+    """Mark an unmatched record as resolved without linking to a subject registration."""
+    stmt = select(UnmatchedExtractionRecord).where(UnmatchedExtractionRecord.id == record_id)
+    result = await session.execute(stmt)
+    unmatched_record = result.scalar_one_or_none()
+
+    if not unmatched_record:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Unmatched record not found")
+
+    if unmatched_record.status != UnmatchedRecordStatus.PENDING:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Record is already {unmatched_record.status.value}, cannot mark as resolved",
+        )
+
+    unmatched_record.status = UnmatchedRecordStatus.RESOLVED
+    unmatched_record.resolved_at = datetime.utcnow()
+    await session.commit()
+
+    return {"message": "Record marked as resolved successfully", "record_id": record_id}
+
+
+@router.put("/unmatched-records/{record_id}/ignore")
+async def ignore_unmatched_record(record_id: int, session: DBSessionDep) -> dict:
+    """Mark an unmatched record as ignored."""
+    stmt = select(UnmatchedExtractionRecord).where(UnmatchedExtractionRecord.id == record_id)
+    result = await session.execute(stmt)
+    unmatched_record = result.scalar_one_or_none()
+
+    if not unmatched_record:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Unmatched record not found")
+
+    if unmatched_record.status != UnmatchedRecordStatus.PENDING:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Record is already {unmatched_record.status.value}, cannot ignore",
+        )
+
+    unmatched_record.status = UnmatchedRecordStatus.IGNORED
+    await session.commit()
+
+    return {"message": "Record ignored successfully", "record_id": record_id}
