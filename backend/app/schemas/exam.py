@@ -97,6 +97,24 @@ class ExamSubjectResponse(BaseModel):
         from_attributes = True
 
 
+class ExamSubjectBulkUploadError(BaseModel):
+    """Schema for exam subject bulk upload error."""
+
+    row_number: int
+    original_code: str
+    error_message: str
+    field: str | None = None
+
+
+class ExamSubjectBulkUploadResponse(BaseModel):
+    """Schema for exam subject bulk upload response."""
+
+    total_rows: int
+    successful: int
+    failed: int
+    errors: list[ExamSubjectBulkUploadError]
+
+
 class SchoolProcessedInfo(BaseModel):
     """Schema for school processing information in serialization response."""
 

@@ -1,18 +1,20 @@
 from typing import Any
 from pathlib import Path
 
-from fastapi import APIRouter, HTTPException, Query, status
+from fastapi import APIRouter, File, Form, HTTPException, Query, UploadFile, status
 from fastapi.responses import StreamingResponse
 from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 
 from app.config import settings
 from app.dependencies.database import DBSessionDep
-from app.models import Candidate, Document, Exam, ExamRegistration, ExamSeries, ExamSubject, ExamType, School, Subject, SubjectRegistration
+from app.models import Candidate, Document, Exam, ExamRegistration, ExamSeries, ExamSubject, ExamType, School, Subject, SubjectRegistration, SubjectType
 from app.schemas.exam import (
     ExamCreate,
     ExamListResponse,
     ExamResponse,
+    ExamSubjectBulkUploadResponse,
+    ExamSubjectBulkUploadError,
     ExamSubjectCreate,
     ExamSubjectResponse,
     ExamSubjectUpdate,
@@ -27,6 +29,14 @@ from app.schemas.exam import (
 from app.services.score_sheet_generator import generate_score_sheets
 from app.services.score_sheet_pdf_service import combine_pdfs_for_school, generate_pdfs_for_exam
 from app.services.serialization import serialize_exam
+from app.services.template_generator import generate_exam_subject_template
+from app.services.exam_subject_upload import (
+    SubjectUploadParseError,
+    SubjectUploadValidationError,
+    parse_exam_subject_row,
+    parse_upload_file,
+    validate_exam_subject_columns,
+)
 from app.background_tasks import start_pdf_generation_job
 
 router = APIRouter(prefix="/api/v1/exams", tags=["exams"])
@@ -517,6 +527,250 @@ async def remove_subject_from_exam(exam_id: int, subject_id: int, session: DBSes
 
     await session.delete(exam_subject)
     await session.commit()
+
+
+@router.get("/{exam_id}/subjects/template")
+async def download_exam_subject_template(
+    exam_id: int,
+    subject_type: SubjectType | None = Query(None, description="Filter by subject type (CORE or ELECTIVE)"),
+    session: DBSessionDep = ...,
+) -> StreamingResponse:
+    """Download Excel template for exam subject upload."""
+    # Validate exam exists
+    stmt = select(Exam).where(Exam.id == exam_id)
+    result = await session.execute(stmt)
+    exam = result.scalar_one_or_none()
+    if not exam:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Exam not found")
+
+    try:
+        template_bytes = await generate_exam_subject_template(session, exam_id, subject_type)
+        filename = f"exam_{exam_id}_subjects_template.xlsx"
+        if subject_type:
+            filename = f"exam_{exam_id}_subjects_{subject_type.value.lower()}_template.xlsx"
+        return StreamingResponse(
+            iter([template_bytes]),
+            media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+        )
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to generate template: {str(e)}",
+        )
+
+
+@router.post("/{exam_id}/subjects/bulk-upload", response_model=ExamSubjectBulkUploadResponse, status_code=status.HTTP_200_OK)
+async def bulk_upload_exam_subjects(
+    exam_id: int,
+    session: DBSessionDep,
+    file: UploadFile = File(...),
+) -> ExamSubjectBulkUploadResponse:
+    """Bulk upload/update exam subjects from Excel or CSV file."""
+    # Validate exam exists
+    exam_stmt = select(Exam).where(Exam.id == exam_id)
+    exam_result = await session.execute(exam_stmt)
+    exam = exam_result.scalar_one_or_none()
+    if not exam:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Exam not found")
+
+    # Read file content
+    file_content = await file.read()
+
+    # Parse file
+    try:
+        df = parse_upload_file(file_content, file.filename or "unknown")
+        validate_exam_subject_columns(df)
+    except (SubjectUploadParseError, SubjectUploadValidationError) as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+
+    # Get exam subjects by original_code for lookup
+    exam_subject_stmt = (
+        select(ExamSubject, Subject)
+        .join(Subject, ExamSubject.subject_id == Subject.id)
+        .where(ExamSubject.exam_id == exam_id)
+    )
+    exam_subject_result = await session.execute(exam_subject_stmt)
+    exam_subjects_data = exam_subject_result.all()
+    exam_subjects_by_original_code = {
+        subject.original_code: (exam_subject, subject) for exam_subject, subject in exam_subjects_data
+    }
+
+    # Process each row
+    total_rows = len(df)
+    successful = 0
+    failed = 0
+    errors: list[ExamSubjectBulkUploadError] = []
+
+    for idx, row in df.iterrows():
+        row_number = int(idx) + 2  # +2 because Excel rows are 1-indexed and header is row 1
+        exam_subject_data = None
+        try:
+            # Parse row data
+            exam_subject_data = parse_exam_subject_row(row)
+
+            # Validate required fields
+            if not exam_subject_data["original_code"]:
+                errors.append(
+                    ExamSubjectBulkUploadError(
+                        row_number=row_number,
+                        original_code="",
+                        error_message="Original code is required",
+                        field="original_code",
+                    )
+                )
+                failed += 1
+                continue
+
+            # Lookup exam subject by original_code
+            original_code = exam_subject_data["original_code"]
+            if original_code not in exam_subjects_by_original_code:
+                errors.append(
+                    ExamSubjectBulkUploadError(
+                        row_number=row_number,
+                        original_code=original_code,
+                        error_message=f"Subject with original_code '{original_code}' not found in this exam",
+                        field="original_code",
+                    )
+                )
+                failed += 1
+                continue
+
+            exam_subject, subject = exam_subjects_by_original_code[original_code]
+
+            # Validate percentages sum to 100 if all are provided
+            obj_pct = exam_subject_data["obj_pct"]
+            essay_pct = exam_subject_data["essay_pct"]
+            pract_pct = exam_subject_data["pract_pct"]
+
+            if obj_pct is not None and essay_pct is not None:
+                total_percentage = obj_pct + essay_pct
+                if pract_pct is not None:
+                    total_percentage += pract_pct
+                if abs(total_percentage - 100.0) > 0.01:  # Allow small floating point differences
+                    errors.append(
+                        ExamSubjectBulkUploadError(
+                            row_number=row_number,
+                            original_code=original_code,
+                            error_message=f"Percentages must sum to 100. Current sum: {total_percentage}",
+                            field="obj_pct,essay_pct,pract_pct",
+                        )
+                    )
+                    failed += 1
+                    continue
+
+            # Validate non-negative values
+            if obj_pct is not None and obj_pct < 0:
+                errors.append(
+                    ExamSubjectBulkUploadError(
+                        row_number=row_number,
+                        original_code=original_code,
+                        error_message="obj_pct must be >= 0",
+                        field="obj_pct",
+                    )
+                )
+                failed += 1
+                continue
+
+            if essay_pct is not None and essay_pct < 0:
+                errors.append(
+                    ExamSubjectBulkUploadError(
+                        row_number=row_number,
+                        original_code=original_code,
+                        error_message="essay_pct must be >= 0",
+                        field="essay_pct",
+                    )
+                )
+                failed += 1
+                continue
+
+            if pract_pct is not None and pract_pct < 0:
+                errors.append(
+                    ExamSubjectBulkUploadError(
+                        row_number=row_number,
+                        original_code=original_code,
+                        error_message="pract_pct must be >= 0",
+                        field="pract_pct",
+                    )
+                )
+                failed += 1
+                continue
+
+            # Validate max scores are positive
+            obj_max_score = exam_subject_data["obj_max_score"]
+            essay_max_score = exam_subject_data["essay_max_score"]
+
+            if obj_max_score is not None and obj_max_score <= 0:
+                errors.append(
+                    ExamSubjectBulkUploadError(
+                        row_number=row_number,
+                        original_code=original_code,
+                        error_message="obj_max_score must be > 0",
+                        field="obj_max_score",
+                    )
+                )
+                failed += 1
+                continue
+
+            if essay_max_score is not None and essay_max_score <= 0:
+                errors.append(
+                    ExamSubjectBulkUploadError(
+                        row_number=row_number,
+                        original_code=original_code,
+                        error_message="essay_max_score must be > 0",
+                        field="essay_max_score",
+                    )
+                )
+                failed += 1
+                continue
+
+            # Update exam subject (only update if value is provided)
+            if obj_pct is not None:
+                exam_subject.obj_pct = obj_pct
+            if essay_pct is not None:
+                exam_subject.essay_pct = essay_pct
+            if pract_pct is not None:
+                exam_subject.pract_pct = pract_pct
+            if obj_max_score is not None:
+                exam_subject.obj_max_score = obj_max_score
+            if essay_max_score is not None:
+                exam_subject.essay_max_score = essay_max_score
+
+            successful += 1
+
+        except Exception as e:
+            # Get original_code from exam_subject_data if available, otherwise use empty string
+            error_original_code = ""
+            if exam_subject_data:
+                error_original_code = exam_subject_data.get("original_code", "")
+
+            errors.append(
+                ExamSubjectBulkUploadError(
+                    row_number=row_number,
+                    original_code=error_original_code,
+                    error_message=f"Unexpected error: {str(e)}",
+                    field=None,
+                )
+            )
+            failed += 1
+            continue
+
+    # Commit all changes
+    try:
+        await session.commit()
+    except Exception as e:
+        await session.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to save changes: {str(e)}",
+        )
+
+    return ExamSubjectBulkUploadResponse(
+        total_rows=total_rows,
+        successful=successful,
+        failed=failed,
+        errors=errors,
+    )
 
 
 @router.get("/{exam_id}/statistics", response_model=dict[str, Any])
