@@ -137,3 +137,62 @@ class CandidateScoreListResponse(BaseModel):
     page: int
     page_size: int
     total_pages: int
+
+
+class ReductoDataResponse(BaseModel):
+    """Response for reducto extraction data preview."""
+
+    data: dict
+    status: str
+    confidence: float | None
+    extracted_at: datetime | None
+
+
+class UpdateScoresFromReductoResponse(BaseModel):
+    """Response for updating scores from reducto data."""
+
+    updated_count: int
+    unmatched_count: int
+    unmatched_records: list[dict]
+    errors: list[dict[str, str]]
+
+
+class UnmatchedExtractionRecordResponse(BaseModel):
+    """Response for unmatched extraction record."""
+
+    id: int
+    document_id: int
+    document_extracted_id: str | None
+    document_school_name: str | None
+    document_subject_name: str | None
+    index_number: str | None
+    candidate_name: str | None
+    score: str | None
+    sn: int | None
+    raw_data: dict | None
+    status: str
+    extraction_method: str
+    created_at: datetime
+    updated_at: datetime
+    resolved_at: datetime | None
+
+    class Config:
+        from_attributes = True
+
+
+class UnmatchedRecordsListResponse(BaseModel):
+    """Response for list of unmatched records."""
+
+    items: list[UnmatchedExtractionRecordResponse]
+    total: int
+    page: int
+    page_size: int
+    total_pages: int
+
+
+class ResolveUnmatchedRecordRequest(BaseModel):
+    """Request to resolve an unmatched record."""
+
+    subject_registration_id: int
+    score_field: str = Field(..., description="'obj', 'essay', or 'pract'")
+    score_value: str | None = Field(None, description="Score value to apply")

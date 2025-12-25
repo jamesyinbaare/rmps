@@ -338,6 +338,7 @@ export interface ScoreDocumentFilters {
   subject_id?: number;
   test_type?: string;
   extraction_status?: string; // Filter by extraction status: pending, queued, processing, success, error
+  extraction_method?: string; // Filter by extraction method: AUTOMATED_EXTRACTION, MANUAL_TRANSCRIPTION_DIGITAL, MANUAL_ENTRY_PHYSICAL
   page?: number;
   page_size?: number;
 }
@@ -411,4 +412,55 @@ export interface CandidateScoreListResponse {
   page: number;
   page_size: number;
   total_pages: number;
+}
+
+export interface ReductoDataResponse {
+  data: Record<string, any>;
+  status: string;
+  confidence: number | null;
+  extracted_at: string | null;
+}
+
+export interface UpdateScoresFromReductoResponse {
+  updated_count: number;
+  unmatched_count: number;
+  unmatched_records: Array<{
+    index_number: string | null;
+    candidate_name: string | null;
+    score: string | null;
+    error?: string;
+  }>;
+  errors: Array<{ [key: string]: string }>;
+}
+
+export interface UnmatchedExtractionRecord {
+  id: number;
+  document_id: number;
+  document_extracted_id: string | null;
+  document_school_name: string | null;
+  document_subject_name: string | null;
+  index_number: string | null;
+  candidate_name: string | null;
+  score: string | null;
+  sn: number | null;
+  raw_data: Record<string, any> | null;
+  status: string;
+  extraction_method: string;
+  created_at: string;
+  updated_at: string;
+  resolved_at: string | null;
+}
+
+export interface UnmatchedRecordsListResponse {
+  items: UnmatchedExtractionRecord[];
+  total: number;
+  page: number;
+  page_size: number;
+  total_pages: number;
+}
+
+export interface ResolveUnmatchedRecordRequest {
+  subject_registration_id: number;
+  score_field: "obj" | "essay" | "pract";
+  score_value: string | null;
 }

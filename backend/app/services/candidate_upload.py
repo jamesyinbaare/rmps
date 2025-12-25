@@ -36,9 +36,11 @@ def parse_upload_file(file_content: bytes, filename: str) -> pd.DataFrame:
         # Detect file type from extension
         file_lower = filename.lower()
         if file_lower.endswith((".xlsx", ".xls")):
-            df = pd.read_excel(io.BytesIO(file_content), engine="openpyxl")
+            # Read Excel file and convert index_number column to string to preserve leading zeros
+            df = pd.read_excel(io.BytesIO(file_content), engine="openpyxl", dtype=str)
         elif file_lower.endswith(".csv"):
-            df = pd.read_csv(io.BytesIO(file_content))
+            # Read CSV file and convert index_number column to string to preserve leading zeros
+            df = pd.read_csv(io.BytesIO(file_content), dtype=str)
         else:
             raise CandidateUploadParseError(f"Unsupported file type. Expected .xlsx, .xls, or .csv, got {filename}")
 

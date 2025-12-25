@@ -30,6 +30,11 @@ import type {
   ReductoStatusResponse,
   ManualEntryFilters,
   CandidateScoreListResponse,
+  ReductoDataResponse,
+  UpdateScoresFromReductoResponse,
+  UnmatchedExtractionRecord,
+  UnmatchedRecordsListResponse,
+  ResolveUnmatchedRecordRequest,
 } from "@/types/document";
 
 export const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL || "http://localhost:8000";
@@ -39,15 +44,22 @@ async function handleResponse<T>(response: Response): Promise<T> {
     let errorDetail = `HTTP error! status: ${response.status}`;
     try {
       const contentType = response.headers.get("content-type");
-      if (contentType && contentType.includes("application/json")) {
-        const error: ApiError = await response.json();
-        errorDetail = error.detail || errorDetail;
-      } else {
-        const text = await response.text();
-        errorDetail = text || errorDetail;
+      const text = await response.text();
+
+      if (contentType && contentType.includes("application/json") && text) {
+        try {
+          const error: ApiError = JSON.parse(text);
+          // FastAPI returns errors with a "detail" field
+          errorDetail = error.detail || error.message || text;
+        } catch {
+          // If JSON parsing fails, use the text as-is
+          errorDetail = text;
+        }
+      } else if (text) {
+        errorDetail = text;
       }
     } catch (e) {
-      // If we can't parse the error, use the default message
+      // If we can't read the response, use the default message
       errorDetail = `HTTP error! status: ${response.status}`;
     }
     throw new Error(errorDetail);
@@ -99,6 +111,11 @@ export async function bulkUploadDocuments(files: File[], examId: number): Promis
   });
 
   return handleResponse<BulkUploadResponse>(response);
+}
+
+export async function getDocument(documentId: number): Promise<Document> {
+  const response = await fetch(`${API_BASE_URL}/api/v1/documents/${documentId}`);
+  return handleResponse<Document>(response);
 }
 
 export async function downloadDocument(documentId: number): Promise<Blob> {
@@ -1130,6 +1147,7 @@ export async function getFilteredDocuments(
   if (filters.subject_id) params.append("subject_id", filters.subject_id.toString());
   if (filters.test_type) params.append("test_type", filters.test_type);
   if (filters.extraction_status) params.append("extraction_status", filters.extraction_status);
+  if (filters.extraction_method) params.append("extraction_method", filters.extraction_method);
   if (filters.page) params.append("page", filters.page.toString());
   if (filters.page_size) params.append("page_size", filters.page_size.toString());
 
@@ -1185,6 +1203,84 @@ export async function queueReductoExtraction(
 export async function getReductoStatus(documentId: number): Promise<ReductoStatusResponse> {
   const response = await fetch(`${API_BASE_URL}/api/v1/documents/${documentId}/reducto-status`);
   return handleResponse<ReductoStatusResponse>(response);
+}
+
+export async function getReductoData(documentId: number): Promise<ReductoDataResponse> {
+  const response = await fetch(`${API_BASE_URL}/api/v1/scores/documents/${documentId}/reducto-data`);
+  return handleResponse<ReductoDataResponse>(response);
+}
+
+export async function updateScoresFromReducto(
+  documentId: number
+): Promise<UpdateScoresFromReductoResponse> {
+  const response = await fetch(`${API_BASE_URL}/api/v1/scores/documents/${documentId}/update-from-reducto`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+    },
+  });
+  return handleResponse<UpdateScoresFromReductoResponse>(response);
+}
+
+export interface UnmatchedRecordsFilters {
+  document_id?: number;
+  status?: "pending" | "resolved" | "ignored";
+  extraction_method?: string;
+  page?: number;
+  page_size?: number;
+}
+
+export async function getUnmatchedRecords(
+  filters: UnmatchedRecordsFilters = {}
+): Promise<UnmatchedRecordsListResponse> {
+  const params = new URLSearchParams();
+  if (filters.document_id) params.append("document_id", filters.document_id.toString());
+  if (filters.status) params.append("status", filters.status);
+  if (filters.extraction_method) params.append("extraction_method", filters.extraction_method);
+  if (filters.page) params.append("page", filters.page.toString());
+  if (filters.page_size) params.append("page_size", filters.page_size.toString());
+
+  const response = await fetch(`${API_BASE_URL}/api/v1/scores/unmatched-records?${params.toString()}`);
+  return handleResponse<UnmatchedRecordsListResponse>(response);
+}
+
+export async function getUnmatchedRecord(recordId: number): Promise<UnmatchedExtractionRecord> {
+  const response = await fetch(`${API_BASE_URL}/api/v1/scores/unmatched-records/${recordId}`);
+  return handleResponse<UnmatchedExtractionRecord>(response);
+}
+
+export async function resolveUnmatchedRecord(
+  recordId: number,
+  data: ResolveUnmatchedRecordRequest
+): Promise<void> {
+  const response = await fetch(`${API_BASE_URL}/api/v1/scores/unmatched-records/${recordId}/resolve`, {
+    method: "PUT",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(data),
+  });
+  await handleResponse(response);
+}
+
+export async function markUnmatchedRecordResolved(recordId: number): Promise<void> {
+  const response = await fetch(`${API_BASE_URL}/api/v1/scores/unmatched-records/${recordId}/mark-resolved`, {
+    method: "PUT",
+    headers: {
+      "Content-Type": "application/json",
+    },
+  });
+  await handleResponse(response);
+}
+
+export async function ignoreUnmatchedRecord(recordId: number): Promise<void> {
+  const response = await fetch(`${API_BASE_URL}/api/v1/scores/unmatched-records/${recordId}/ignore`, {
+    method: "PUT",
+    headers: {
+      "Content-Type": "application/json",
+    },
+  });
+  await handleResponse(response);
 }
 
 // Manual Entry API Functions
