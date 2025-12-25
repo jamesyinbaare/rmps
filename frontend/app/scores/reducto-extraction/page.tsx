@@ -270,7 +270,8 @@ export default function ReductoExtractionPage() {
 
   const getStatusBadge = (document: Document) => {
     const status = document.scores_extraction_status;
-    const method = document.scores_extraction_method;
+    const methods = document.scores_extraction_methods;
+    const methodDisplay = methods && methods.length > 0 ? methods.join(", ") : null;
 
     if (status === "queued") {
       return (
@@ -292,7 +293,7 @@ export default function ReductoExtractionPage() {
       return (
         <Badge variant="default" className="flex items-center gap-1 bg-green-600">
           <CheckCircle2 className="h-3 w-3" />
-          Success {method && `(${method})`}
+          Success {methodDisplay && `(${methodDisplay})`}
         </Badge>
       );
     }

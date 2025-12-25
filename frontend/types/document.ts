@@ -20,7 +20,7 @@ export interface Document {
   id_extracted_at: string | null; // When the ID was extracted
   scores_extraction_data: Record<string, any> | null; // Extracted scores/content as JSON
   scores_extraction_status: string | null; // Status: pending, success, error
-  scores_extraction_method: string | null; // How scores were extracted (ocr, reducto, manual)
+  scores_extraction_methods: string[] | null; // Set of extraction methods used: AUTOMATED_EXTRACTION, MANUAL_TRANSCRIPTION_DIGITAL, MANUAL_ENTRY_PHYSICAL
   scores_extraction_confidence: number | null; // Confidence level (0.0 to 1.0)
   scores_extracted_at: string | null; // When scores were extracted
 }
@@ -361,7 +361,7 @@ export interface ReductoQueueResponse {
 export interface ReductoStatusResponse {
   document_id: number;
   scores_extraction_status: string | null;
-  scores_extraction_method: string | null;
+  scores_extraction_methods: string[] | null;
   scores_extraction_confidence: number | null;
   scores_extracted_at: string | null;
   queue_position: number | null;
@@ -375,6 +375,7 @@ export interface ManualEntryFilters {
   school_id?: number;
   programme_id?: number;
   subject_id?: number;
+  document_id?: string;
   page?: number;
   page_size?: number;
 }
