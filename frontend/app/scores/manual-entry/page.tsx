@@ -531,6 +531,18 @@ export default function ManualEntryPage() {
                   />
                 </div>
 
+                <div className="flex items-center gap-2">
+                  <label className="text-sm font-medium w-32 text-center">Document ID</label>
+                  <Input
+                    type="text"
+                    placeholder="Enter document ID..."
+                    value={pendingFilters.document_id || ""}
+                    onChange={(e) => handleFilterChange("document_id", e.target.value || undefined)}
+                    disabled={loadingFilters}
+                    className="flex-1"
+                  />
+                </div>
+
                 {/* Action Buttons */}
                 <div className="flex gap-2 pt-2">
                   <Button

@@ -2,6 +2,7 @@ from datetime import datetime
 
 from pydantic import BaseModel, Field, field_validator
 
+from app.models import DataExtractionMethod
 from app.utils.score_utils import parse_score_value
 
 
@@ -16,6 +17,9 @@ class ScoreUpdate(BaseModel):
     )
     pract_raw_score: str | None = Field(
         None, description="Practical score: numeric string (>=0), 'A'/'AA' (absent), or None (not entered)"
+    )
+    extraction_method: DataExtractionMethod | None = Field(
+        None, description="Extraction method used for this update. If not provided, will be inferred from endpoint context."
     )
 
     @field_validator("obj_raw_score", "essay_raw_score", "pract_raw_score")
@@ -69,6 +73,9 @@ class BatchScoreUpdateItem(BaseModel):
     obj_raw_score: str | None = None
     essay_raw_score: str | None = None
     pract_raw_score: str | None = None
+    extraction_method: DataExtractionMethod | None = Field(
+        None, description="Extraction method used for this update. If not provided, will be inferred from endpoint context."
+    )
 
     @field_validator("obj_raw_score", "essay_raw_score", "pract_raw_score")
     @classmethod

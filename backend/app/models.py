@@ -2,6 +2,7 @@ from datetime import datetime
 import enum
 
 from sqlalchemy import (
+    ARRAY,
     Boolean,
     Column,
     Date,
@@ -89,6 +90,12 @@ class SubjectType(enum.Enum):
     ELECTIVE = "ELECTIVE"
 
 
+class DataExtractionMethod(enum.Enum):
+    AUTOMATED_EXTRACTION = "AUTOMATED_EXTRACTION"
+    MANUAL_TRANSCRIPTION_DIGITAL = "MANUAL_TRANSCRIPTION_DIGITAL"
+    MANUAL_ENTRY_PHYSICAL = "MANUAL_ENTRY_PHYSICAL"
+
+
 class School(Base):
     __tablename__ = "schools"
     id = Column(Integer, primary_key=True)
@@ -171,7 +178,7 @@ class Document(Base):
     # Scores extraction fields
     scores_extraction_data = Column(JSON, nullable=True)  # Stores extracted scores/content as JSON
     scores_extraction_status = Column(String(20), default="pending", nullable=False)  # pending, success, error
-    scores_extraction_method = Column(String(20), nullable=True)  # ocr, reducto, manual
+    scores_extraction_methods = Column(ARRAY(Enum(DataExtractionMethod)), nullable=True)  # Set of extraction methods: AUTOMATED_EXTRACTION, MANUAL_TRANSCRIPTION_DIGITAL, MANUAL_ENTRY_PHYSICAL
     scores_extraction_confidence = Column(Float, nullable=True)  # 0.0 to 1.0
     scores_extracted_at = Column(DateTime, nullable=True)
 
@@ -311,7 +318,9 @@ class SubjectScore(Base):
     pract_document_id = Column(String(13), nullable=True, index=True)  # Document extracted_id for practicals test
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
-
+    obj_extraction_method = Column(Enum(DataExtractionMethod), nullable=True)  # AUTOMATED_EXTRACTION, MANUAL_TRANSCRIPTION_DIGITAL, MANUAL_ENTRY_PHYSICAL
+    essay_extraction_method = Column(Enum(DataExtractionMethod), nullable=True)  # AUTOMATED_EXTRACTION, MANUAL_TRANSCRIPTION_DIGITAL, MANUAL_ENTRY_PHYSICAL
+    pract_extraction_method = Column(Enum(DataExtractionMethod), nullable=True)  # AUTOMATED_EXTRACTION, MANUAL_TRANSCRIPTION_DIGITAL, MANUAL_ENTRY_PHYSICAL
     subject_registration = relationship("SubjectRegistration", back_populates="subject_score")
 
 

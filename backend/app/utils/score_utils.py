@@ -1,5 +1,10 @@
 """Utility functions for score validation and parsing."""
 
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from app.models import DataExtractionMethod, Document
+
 
 def validate_score_value(value: str | float | None) -> bool:
     """
@@ -118,3 +123,23 @@ def calculate_total_score(
         total += pract_num
 
     return total
+
+
+def add_extraction_method_to_document(
+    document: "Document", extraction_method: "DataExtractionMethod"
+) -> None:
+    """
+    Add an extraction method to a document's scores_extraction_methods array.
+    Handles NULL arrays by initializing as empty, and avoids duplicates.
+
+    Args:
+        document: The Document model instance to update
+        extraction_method: The DataExtractionMethod enum value to add
+    """
+    if document.scores_extraction_methods is None:
+        document.scores_extraction_methods = []
+
+    # Convert to set to avoid duplicates, then back to list
+    methods_set = set(document.scores_extraction_methods)
+    methods_set.add(extraction_method)
+    document.scores_extraction_methods = list(methods_set)
