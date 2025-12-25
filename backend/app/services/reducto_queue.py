@@ -6,9 +6,10 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.dependencies.database import get_sessionmanager
-from app.models import Document
+from app.models import Document, DataExtractionMethod
 from app.services.content_extraction import content_extraction_service
 from app.services.storage import storage_service
+from app.utils.score_utils import add_extraction_method_to_document
 
 
 class ReductoQueueService:
@@ -75,12 +76,12 @@ class ReductoQueueService:
                 # Update document with extraction results
                 if extraction_result["is_valid"]:
                     document.scores_extraction_data = extraction_result["parsed_content"]
-                    document.scores_extraction_method = extraction_result["parsing_method"]
+                    add_extraction_method_to_document(document, DataExtractionMethod.AUTOMATED_EXTRACTION)
                     document.scores_extraction_confidence = extraction_result["parsing_confidence"]
                     document.scores_extraction_status = "success"
                     document.scores_extracted_at = datetime.utcnow()
                 else:
-                    document.scores_extraction_method = extraction_result.get("parsing_method")
+                    add_extraction_method_to_document(document, DataExtractionMethod.AUTOMATED_EXTRACTION)
                     document.scores_extraction_confidence = extraction_result.get("parsing_confidence", 0.0)
                     document.scores_extraction_status = "error"
 

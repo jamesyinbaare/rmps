@@ -7,7 +7,7 @@ from sqlalchemy import func, select
 
 from app.config import settings
 from app.dependencies.database import DBSessionDep, get_sessionmanager
-from app.models import Document, Exam, ExamType, ExamSeries
+from app.models import Document, Exam, ExamType, ExamSeries, DataExtractionMethod
 from app.schemas.document import (
     BulkUploadResponse,
     ContentExtractionResponse,
@@ -25,6 +25,7 @@ from app.services.id_extraction import id_extraction_service
 from app.services.reducto_queue import reducto_queue_service
 from app.services.storage import storage_service
 from app.utils.file_utils import calculate_checksum
+from app.utils.score_utils import add_extraction_method_to_document
 
 router = APIRouter(prefix="/api/v1/documents", tags=["documents"])
 
@@ -516,14 +517,29 @@ async def parse_content(
     )
 
     # Update document with extraction results
+    # Determine extraction method based on the method used
+    extraction_method_to_add: DataExtractionMethod | None = None
+    if method == "reducto" or extraction_result.get("parsing_method") == "reducto":
+        extraction_method_to_add = DataExtractionMethod.AUTOMATED_EXTRACTION
+    else:
+        # If parsing_method is a string, try to convert it to Enum
+        parsing_method = extraction_result.get("parsing_method")
+        if parsing_method:
+            try:
+                extraction_method_to_add = DataExtractionMethod(parsing_method)
+            except (ValueError, KeyError):
+                extraction_method_to_add = None
+
     if extraction_result["is_valid"]:
         document.scores_extraction_data = extraction_result["parsed_content"]
-        document.scores_extraction_method = extraction_result["parsing_method"]
+        if extraction_method_to_add:
+            add_extraction_method_to_document(document, extraction_method_to_add)
         document.scores_extraction_confidence = extraction_result["parsing_confidence"]
         document.scores_extraction_status = "success"
         document.scores_extracted_at = datetime.utcnow()
     else:
-        document.scores_extraction_method = extraction_result.get("parsing_method")
+        if extraction_method_to_add:
+            add_extraction_method_to_document(document, extraction_method_to_add)
         document.scores_extraction_confidence = extraction_result.get("parsing_confidence", 0.0)
         document.scores_extraction_status = "error"
 
@@ -579,6 +595,15 @@ async def update_document_id(document_id: int, update: DocumentUpdate, session: 
         document.id_extraction_confidence = update.id_extraction_confidence
     if update.id_extraction_status is not None:
         document.id_extraction_status = update.id_extraction_status
+    if update.scores_extraction_method is not None:
+        # Validate that only MANUAL_TRANSCRIPTION_DIGITAL or MANUAL_ENTRY_PHYSICAL can be set
+        # (excluding AUTOMATED_EXTRACTION for now)
+        if update.scores_extraction_method == DataExtractionMethod.AUTOMATED_EXTRACTION:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="AUTOMATED_EXTRACTION cannot be set via this endpoint. Use the parse-content endpoint instead.",
+            )
+        add_extraction_method_to_document(document, update.scores_extraction_method)
 
     # If extracted_id is set manually, mark as manual
     if update.extracted_id is not None and document.id_extraction_method != "manual":
@@ -649,7 +674,11 @@ async def get_reducto_status(document_id: int, session: DBSessionDep) -> Reducto
     return ReductoStatusResponse(
         document_id=document_id,
         scores_extraction_status=document.scores_extraction_status,
-        scores_extraction_method=document.scores_extraction_method,
+        scores_extraction_methods=(
+            [method.value for method in document.scores_extraction_methods]
+            if document.scores_extraction_methods
+            else None
+        ),
         scores_extraction_confidence=document.scores_extraction_confidence,
         scores_extracted_at=document.scores_extracted_at,
         queue_position=queue_position,

@@ -1,3 +1,5 @@
+from datetime import datetime
+
 from fastapi import APIRouter, HTTPException, Query, status
 from sqlalchemy import func, or_, select
 
@@ -15,6 +17,7 @@ from app.models import (
     Subject,
     SubjectRegistration,
     SubjectScore,
+    DataExtractionMethod,
 )
 from app.schemas.document import DocumentListResponse, DocumentResponse
 from app.schemas.score import (
@@ -26,6 +29,7 @@ from app.schemas.score import (
     ScoreResponse,
     ScoreUpdate,
 )
+from app.utils.score_utils import add_extraction_method_to_document
 
 router = APIRouter(prefix="/api/v1/scores", tags=["scores"])
 
@@ -214,13 +218,77 @@ async def update_score(score_id: int, score_update: ScoreUpdate, session: DBSess
 
     subject_score, subject_reg, exam_reg, candidate, exam_subject, subject = row
 
-    # Update raw scores
+    # Determine extraction method (from parameter or infer from context)
+    extraction_method = score_update.extraction_method
+    if extraction_method is None:
+        # Check if any associated document has AUTOMATED_EXTRACTION
+        document_ids_to_check: set[str] = set()
+        if subject_score.obj_document_id:
+            document_ids_to_check.add(subject_score.obj_document_id)
+        if subject_score.essay_document_id:
+            document_ids_to_check.add(subject_score.essay_document_id)
+        if subject_score.pract_document_id:
+            document_ids_to_check.add(subject_score.pract_document_id)
+
+        has_automated = False
+        if document_ids_to_check:
+            docs_stmt = select(Document).where(Document.extracted_id.in_(document_ids_to_check))
+            docs_result = await session.execute(docs_stmt)
+            for doc in docs_result.scalars().all():
+                if doc.scores_extraction_methods and DataExtractionMethod.AUTOMATED_EXTRACTION in doc.scores_extraction_methods:
+                    has_automated = True
+                    break
+
+        if has_automated:
+            extraction_method = DataExtractionMethod.AUTOMATED_EXTRACTION
+        else:
+            extraction_method = DataExtractionMethod.MANUAL_TRANSCRIPTION_DIGITAL
+
+    # Track documents that need status updates
+    documents_to_update_status: set[Document] = set()
+
+    # Update raw scores and set extraction methods per field
     if score_update.obj_raw_score is not None:
         subject_score.obj_raw_score = score_update.obj_raw_score
+        subject_score.obj_extraction_method = extraction_method
+        # Update document's extraction methods array
+        if subject_score.obj_document_id:
+            doc_stmt = select(Document).where(Document.extracted_id == subject_score.obj_document_id)
+            doc_result = await session.execute(doc_stmt)
+            doc = doc_result.scalar_one_or_none()
+            if doc:
+                add_extraction_method_to_document(doc, extraction_method)
+                documents_to_update_status.add(doc)
+
     if score_update.essay_raw_score is not None:
         subject_score.essay_raw_score = score_update.essay_raw_score
+        subject_score.essay_extraction_method = extraction_method
+        # Update document's extraction methods array
+        if subject_score.essay_document_id:
+            doc_stmt = select(Document).where(Document.extracted_id == subject_score.essay_document_id)
+            doc_result = await session.execute(doc_stmt)
+            doc = doc_result.scalar_one_or_none()
+            if doc:
+                add_extraction_method_to_document(doc, extraction_method)
+                documents_to_update_status.add(doc)
+
     if score_update.pract_raw_score is not None:
         subject_score.pract_raw_score = score_update.pract_raw_score
+        subject_score.pract_extraction_method = extraction_method
+        # Update document's extraction methods array
+        if subject_score.pract_document_id:
+            doc_stmt = select(Document).where(Document.extracted_id == subject_score.pract_document_id)
+            doc_result = await session.execute(doc_stmt)
+            doc = doc_result.scalar_one_or_none()
+            if doc:
+                add_extraction_method_to_document(doc, extraction_method)
+                documents_to_update_status.add(doc)
+
+    # Update document extraction status to success when scores are manually entered/transcribed
+    current_time = datetime.utcnow()
+    for doc in documents_to_update_status:
+        doc.scores_extraction_status = "success"
+        doc.scores_extracted_at = current_time
 
     # Note: Normalized scores and total_score would typically be calculated
     # by a service/utility function, but for now we'll leave them as-is
@@ -258,15 +326,26 @@ async def batch_update_scores(
     document_id: str, batch_update: BatchScoreUpdate, session: DBSessionDep
 ) -> BatchScoreUpdateResponse:
     """Batch update/create scores for a document."""
-    # Note: document_id here refers to Document.extracted_id (string), not Document.id
+    # Note: document_id here refers to Document.extracted_id (string) or Document.id (numeric string)
     # We need to determine which document_id field to use based on the document's test_type
     # First, get the document to determine test_type
+    # Try extracted_id first, then fall back to numeric ID if not found
     doc_stmt = select(Document).where(Document.extracted_id == document_id)
     doc_result = await session.execute(doc_stmt)
     document = doc_result.scalar_one_or_none()
 
+    # If not found by extracted_id and document_id looks like a numeric ID, try by Document.id
+    if not document and document_id.isdigit():
+        doc_stmt = select(Document).where(Document.id == int(document_id))
+        doc_result = await session.execute(doc_stmt)
+        document = doc_result.scalar_one_or_none()
+
     if not document:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Document not found")
+
+    # Use document.extracted_id if available, otherwise fall back to the document_id parameter
+    # This ensures we use the correct identifier when setting SubjectScore document_id fields
+    document_identifier = document.extracted_id if document.extracted_id else document_id
 
     # Determine which document_id field to use based on test_type
     # test_type="1" -> obj_document_id, test_type="2" -> essay_document_id, test_type="3" -> pract_document_id
@@ -278,6 +357,15 @@ async def batch_update_scores(
 
     for score_item in batch_update.scores:
         try:
+            # Determine extraction method for this score item
+            extraction_method = score_item.extraction_method
+            if extraction_method is None:
+                # Check if document has AUTOMATED_EXTRACTION
+                if document.scores_extraction_methods and DataExtractionMethod.AUTOMATED_EXTRACTION in document.scores_extraction_methods:
+                    extraction_method = DataExtractionMethod.AUTOMATED_EXTRACTION
+                else:
+                    extraction_method = DataExtractionMethod.MANUAL_TRANSCRIPTION_DIGITAL
+
             if score_item.score_id is not None:
                 # Update existing score
                 stmt = select(SubjectScore).where(SubjectScore.id == score_item.score_id)
@@ -288,21 +376,33 @@ async def batch_update_scores(
                     errors.append({"score_id": str(score_item.score_id), "error": "Score not found"})
                     continue
 
-                # Update fields
+                # Update fields and set extraction methods per field
                 if score_item.obj_raw_score is not None:
                     subject_score.obj_raw_score = score_item.obj_raw_score
+                    subject_score.obj_extraction_method = extraction_method
+                    # Set document_id if test_type matches
+                    if test_type == "1":
+                        subject_score.obj_document_id = document_identifier
+                    # Update document's extraction methods array
+                    add_extraction_method_to_document(document, extraction_method)
+
                 if score_item.essay_raw_score is not None:
                     subject_score.essay_raw_score = score_item.essay_raw_score
+                    subject_score.essay_extraction_method = extraction_method
+                    # Set document_id if test_type matches
+                    if test_type == "2":
+                        subject_score.essay_document_id = document_identifier
+                    # Update document's extraction methods array
+                    add_extraction_method_to_document(document, extraction_method)
+
                 if score_item.pract_raw_score is not None:
                     subject_score.pract_raw_score = score_item.pract_raw_score
-
-                # Set appropriate document_id field based on test_type
-                if test_type == "1":
-                    subject_score.obj_document_id = document_id
-                elif test_type == "2":
-                    subject_score.essay_document_id = document_id
-                elif test_type == "3":
-                    subject_score.pract_document_id = document_id
+                    subject_score.pract_extraction_method = extraction_method
+                    # Set document_id if test_type matches
+                    if test_type == "3":
+                        subject_score.pract_document_id = document_identifier
+                    # Update document's extraction methods array
+                    add_extraction_method_to_document(document, extraction_method)
 
             else:
                 # Create new score
@@ -331,19 +431,29 @@ async def batch_update_scores(
                     # Update existing score instead of creating new one
                     if score_item.obj_raw_score is not None:
                         existing_score.obj_raw_score = score_item.obj_raw_score
+                        existing_score.obj_extraction_method = extraction_method
+                        if test_type == "1":
+                            existing_score.obj_document_id = document_identifier
+                        add_extraction_method_to_document(document, extraction_method)
                     if score_item.essay_raw_score is not None:
                         existing_score.essay_raw_score = score_item.essay_raw_score
+                        existing_score.essay_extraction_method = extraction_method
+                        if test_type == "2":
+                            existing_score.essay_document_id = document_identifier
+                        add_extraction_method_to_document(document, extraction_method)
                     if score_item.pract_raw_score is not None:
                         existing_score.pract_raw_score = score_item.pract_raw_score
-                    # Set appropriate document_id field based on test_type
-                    if test_type == "1":
-                        existing_score.obj_document_id = document_id
-                    elif test_type == "2":
-                        existing_score.essay_document_id = document_id
-                    elif test_type == "3":
-                        existing_score.pract_document_id = document_id
+                        existing_score.pract_extraction_method = extraction_method
+                        if test_type == "3":
+                            existing_score.pract_document_id = document_identifier
+                        add_extraction_method_to_document(document, extraction_method)
                 else:
                     # Create new score
+                    # Determine which extraction methods to set based on which scores are provided
+                    obj_extraction_method = extraction_method if score_item.obj_raw_score is not None else None
+                    essay_extraction_method = extraction_method if score_item.essay_raw_score is not None else None
+                    pract_extraction_method = extraction_method if score_item.pract_raw_score is not None else None
+
                     subject_score = SubjectScore(
                         subject_registration_id=score_item.subject_registration_id,
                         obj_raw_score=score_item.obj_raw_score,
@@ -353,16 +463,27 @@ async def batch_update_scores(
                         essay_normalized=None,
                         pract_normalized=None,
                         total_score=0.0,
-                        obj_document_id=document_id if test_type == "1" else None,
-                        essay_document_id=document_id if test_type == "2" else None,
-                        pract_document_id=document_id if test_type == "3" else None,
+                        obj_document_id=document_identifier if test_type == "1" else None,
+                        essay_document_id=document_identifier if test_type == "2" else None,
+                        pract_document_id=document_identifier if test_type == "3" else None,
+                        obj_extraction_method=obj_extraction_method,
+                        essay_extraction_method=essay_extraction_method,
+                        pract_extraction_method=pract_extraction_method,
                     )
                     session.add(subject_score)
+                    # Update document's extraction methods array for any scores being set
+                    if score_item.obj_raw_score is not None or score_item.essay_raw_score is not None or score_item.pract_raw_score is not None:
+                        add_extraction_method_to_document(document, extraction_method)
 
             successful += 1
         except Exception as e:
             failed += 1
             errors.append({"error": str(e)})
+
+    # Update document extraction status to success when scores are manually entered/transcribed
+    if document and successful > 0:
+        document.scores_extraction_status = "success"
+        document.scores_extracted_at = datetime.utcnow()
 
     await session.commit()
 
@@ -379,6 +500,7 @@ async def get_candidates_for_manual_entry(
     school_id: int | None = Query(None, description="Filter by school ID"),
     programme_id: int | None = Query(None),
     subject_id: int | None = Query(None),
+    document_id: str | None = Query(None, description="Filter by document ID (extracted_id) - matches obj_document_id, essay_document_id, or pract_document_id"),
     page: int = Query(1, ge=1),
     page_size: int = Query(20, ge=1, le=100),
 ) -> CandidateScoreListResponse:
@@ -425,6 +547,15 @@ async def get_candidates_for_manual_entry(
         base_stmt = base_stmt.where(Candidate.programme_id == programme_id)
     if subject_id is not None:
         base_stmt = base_stmt.where(Subject.id == subject_id)
+    if document_id is not None:
+        # Filter by document_id matching any of obj_document_id, essay_document_id, or pract_document_id
+        base_stmt = base_stmt.where(
+            or_(
+                SubjectScore.obj_document_id == document_id,
+                SubjectScore.essay_document_id == document_id,
+                SubjectScore.pract_document_id == document_id,
+            )
+        )
 
     # Get total count - count distinct SubjectScore IDs with same filters
     count_base_stmt = (
@@ -456,6 +587,15 @@ async def get_candidates_for_manual_entry(
         count_base_stmt = count_base_stmt.where(Candidate.programme_id == programme_id)
     if subject_id is not None:
         count_base_stmt = count_base_stmt.where(Subject.id == subject_id)
+    if document_id is not None:
+        # Filter by document_id matching any of obj_document_id, essay_document_id, or pract_document_id
+        count_base_stmt = count_base_stmt.where(
+            or_(
+                SubjectScore.obj_document_id == document_id,
+                SubjectScore.essay_document_id == document_id,
+                SubjectScore.pract_document_id == document_id,
+            )
+        )
 
     count_stmt = select(func.count()).select_from(count_base_stmt.subquery())
     count_result = await session.execute(count_stmt)
@@ -528,6 +668,11 @@ async def batch_update_scores_manual_entry(
                 )
                 continue
 
+            # Determine extraction method for this score item
+            extraction_method = score_item.extraction_method
+            if extraction_method is None:
+                extraction_method = DataExtractionMethod.MANUAL_ENTRY_PHYSICAL
+
             # Update existing score
             stmt = select(SubjectScore).where(SubjectScore.id == score_item.score_id)
             result = await session.execute(stmt)
@@ -538,13 +683,51 @@ async def batch_update_scores_manual_entry(
                 errors.append({"score_id": str(score_item.score_id), "error": "Score not found"})
                 continue
 
-            # Update fields
+            # Track documents that need status updates
+            documents_to_update_status: set[Document] = set()
+
+            # Update fields and set extraction methods per field
             if score_item.obj_raw_score is not None:
                 subject_score.obj_raw_score = score_item.obj_raw_score
+                subject_score.obj_extraction_method = extraction_method
+                # Update document's extraction methods array
+                if subject_score.obj_document_id:
+                    doc_stmt = select(Document).where(Document.extracted_id == subject_score.obj_document_id)
+                    doc_result = await session.execute(doc_stmt)
+                    doc = doc_result.scalar_one_or_none()
+                    if doc:
+                        add_extraction_method_to_document(doc, extraction_method)
+                        documents_to_update_status.add(doc)
+
             if score_item.essay_raw_score is not None:
                 subject_score.essay_raw_score = score_item.essay_raw_score
+                subject_score.essay_extraction_method = extraction_method
+                # Update document's extraction methods array
+                if subject_score.essay_document_id:
+                    doc_stmt = select(Document).where(Document.extracted_id == subject_score.essay_document_id)
+                    doc_result = await session.execute(doc_stmt)
+                    doc = doc_result.scalar_one_or_none()
+                    if doc:
+                        add_extraction_method_to_document(doc, extraction_method)
+                        documents_to_update_status.add(doc)
+
             if score_item.pract_raw_score is not None:
                 subject_score.pract_raw_score = score_item.pract_raw_score
+                subject_score.pract_extraction_method = extraction_method
+                # Update document's extraction methods array
+                if subject_score.pract_document_id:
+                    doc_stmt = select(Document).where(Document.extracted_id == subject_score.pract_document_id)
+                    doc_result = await session.execute(doc_stmt)
+                    doc = doc_result.scalar_one_or_none()
+                    if doc:
+                        add_extraction_method_to_document(doc, extraction_method)
+                        documents_to_update_status.add(doc)
+
+            # Update document extraction status to success when scores are manually entered/transcribed
+            current_time = datetime.utcnow()
+            for doc in documents_to_update_status:
+                doc.scores_extraction_status = "success"
+                doc.scores_extracted_at = current_time
 
             successful += 1
         except Exception as e:

@@ -3,6 +3,8 @@ from typing import Any
 
 from pydantic import BaseModel, Field
 
+from app.models import DataExtractionMethod
+
 
 class DocumentBase(BaseModel):
     """Base document schema."""
@@ -31,6 +33,9 @@ class DocumentUpdate(BaseModel):
     id_extraction_method: str | None = None
     id_extraction_confidence: float | None = None
     id_extraction_status: str | None = None
+    scores_extraction_method: DataExtractionMethod | None = Field(
+        None, description="Extraction method to add to the document's scores_extraction_methods array"
+    )
 
 
 class DocumentResponse(DocumentBase):
@@ -54,7 +59,7 @@ class DocumentResponse(DocumentBase):
     id_extracted_at: datetime | None = None
     scores_extraction_data: dict[str, Any] | None = None
     scores_extraction_status: str | None = None
-    scores_extraction_method: str | None = None
+    scores_extraction_methods: list[str] | None = None
     scores_extraction_confidence: float | None = None
     scores_extracted_at: datetime | None = None
 
@@ -86,7 +91,7 @@ class ContentExtractionResponse(BaseModel):
     """Schema for content extraction response."""
 
     scores_extraction_data: dict[str, Any]
-    scores_extraction_method: str
+    scores_extraction_method: str  # Keep for backward compatibility, represents the method used in this extraction
     scores_extraction_confidence: float
     is_valid: bool
     error_message: str | None = None
@@ -119,7 +124,7 @@ class ReductoStatusResponse(BaseModel):
 
     document_id: int
     scores_extraction_status: str | None
-    scores_extraction_method: str | None
+    scores_extraction_methods: list[str] | None = None
     scores_extraction_confidence: float | None
     scores_extracted_at: datetime | None
     queue_position: int | None = None
