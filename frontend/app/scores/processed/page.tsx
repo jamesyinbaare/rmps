@@ -20,29 +20,25 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Checkbox } from "@/components/ui/checkbox";
 import { Badge } from "@/components/ui/badge";
-import { getFilteredDocuments, getAllExams, listSchools, listSubjects, queueReductoExtraction, getReductoStatus, findExamId, getReductoData, updateScoresFromReducto, getUnmatchedRecords, resolveUnmatchedRecord, ignoreUnmatchedRecord } from "@/lib/api";
-import type { Document, Exam, School, Subject, ScoreDocumentFilters, ExamType, ExamSeries, ReductoDataResponse, UpdateScoresFromReductoResponse, UnmatchedExtractionRecord } from "@/types/document";
-import { Loader2, CheckCircle2, XCircle, Clock, Send, Eye, RefreshCw, AlertCircle } from "lucide-react";
+import { getFilteredDocuments, getAllExams, listSchools, listSubjects, findExamId, getReductoData, updateScoresFromReducto, getUnmatchedRecords } from "@/lib/api";
+import type { Document, Exam, School, Subject, ScoreDocumentFilters, ExamType, ExamSeries, ReductoDataResponse, UnmatchedExtractionRecord } from "@/types/document";
+import { Loader2, CheckCircle2, Eye, RefreshCw } from "lucide-react";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog";
-import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { toast } from "sonner";
 
-export default function ReductoExtractionPage() {
+export default function ProcessedICMsPage() {
   const [documents, setDocuments] = useState<Document[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [filters, setFilters] = useState<ScoreDocumentFilters>({
     page: 1,
     page_size: 20,
-    // Don't set extraction_status - we'll filter out "success" on frontend
+    extraction_status: "success", // Default to processed documents
   });
   const [totalPages, setTotalPages] = useState(1);
   const [currentPage, setCurrentPage] = useState(1);
   const [total, setTotal] = useState(0);
-  const [selectedDocuments, setSelectedDocuments] = useState<Set<number>>(new Set());
-  const [queuing, setQueuing] = useState(false);
 
   // Filter options
   const [exams, setExams] = useState<Exam[]>([]);
@@ -55,16 +51,12 @@ export default function ReductoExtractionPage() {
   const [examSeries, setExamSeries] = useState<ExamSeries | undefined>();
   const [examYear, setExamYear] = useState<number | undefined>();
 
-  // Polling for status updates
-  const [pollingInterval, setPollingInterval] = useState<NodeJS.Timeout | null>(null);
-
   // Preview and update states
   const [previewOpen, setPreviewOpen] = useState(false);
   const [previewDocument, setPreviewDocument] = useState<Document | null>(null);
   const [previewData, setPreviewData] = useState<ReductoDataResponse | null>(null);
   const [loadingPreview, setLoadingPreview] = useState(false);
   const [updatingScores, setUpdatingScores] = useState<number | null>(null);
-  const [previewViewMode, setPreviewViewMode] = useState<"table" | "json">("table");
 
   // Unmatched records state
   const [unmatchedRecords, setUnmatchedRecords] = useState<UnmatchedExtractionRecord[]>([]);
@@ -93,21 +85,15 @@ export default function ReductoExtractionPage() {
     loadFilterOptions();
   }, []);
 
-  // Load documents - only show unprocessed documents
+  // Load documents
   const loadDocuments = useCallback(async () => {
     setLoading(true);
     setError(null);
     try {
-      // Fetch all documents, then filter out processed (success) ones on frontend
       const response = await getFilteredDocuments(filters);
-      // Filter out processed documents (extraction_status === "success")
-      const unprocessedDocs = response.items.filter(
-        (doc) => doc.scores_extraction_status !== "success"
-      );
-      setDocuments(unprocessedDocs);
-      // Note: total count is approximate since we filter on frontend
-      setTotal(unprocessedDocs.length);
-      setTotalPages(Math.ceil(unprocessedDocs.length / (filters.page_size || 20)));
+      setDocuments(response.items);
+      setTotal(response.total);
+      setTotalPages(response.total_pages);
       setCurrentPage(response.page);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to load documents");
@@ -121,22 +107,9 @@ export default function ReductoExtractionPage() {
     loadDocuments();
   }, [loadDocuments]);
 
-  // Poll for status updates every 3 seconds
-  useEffect(() => {
-    const interval = setInterval(() => {
-      loadDocuments();
-    }, 3000);
-
-    setPollingInterval(interval);
-
-    return () => {
-      if (interval) clearInterval(interval);
-    };
-  }, [loadDocuments]);
-
   // Update filters when exam type, series, or year changes
   useEffect(() => {
-    const newFilters: ScoreDocumentFilters = { ...filters };
+    const newFilters: ScoreDocumentFilters = { ...filters, extraction_status: "success" };
 
     // Set or clear exam_type, series, and year based on selections
     if (examType && examType !== "all") {
@@ -174,7 +147,6 @@ export default function ReductoExtractionPage() {
 
     newFilters.page = 1;
     setFilters(newFilters);
-    setSelectedDocuments(new Set()); // Clear selection when filters change
   }, [examType, examSeries, examYear, exams]);
 
   // Reverse lookup: if filters have exam_type, series, year, populate local state
@@ -209,9 +181,9 @@ export default function ReductoExtractionPage() {
     setFilters((prev) => ({
       ...prev,
       [key]: value,
+      extraction_status: "success", // Always keep extraction_status as success
       page: 1, // Reset to first page when filter changes
     }));
-    setSelectedDocuments(new Set()); // Clear selection when filters change
   };
 
   const handleExamTypeChange = (value: string) => {
@@ -241,63 +213,11 @@ export default function ReductoExtractionPage() {
     }
   };
 
-  const handleSelectDocument = (documentId: number) => {
-    setSelectedDocuments((prev) => {
-      const newSet = new Set(prev);
-      if (newSet.has(documentId)) {
-        newSet.delete(documentId);
-      } else {
-        newSet.add(documentId);
-      }
-      return newSet;
-    });
-  };
-
-  const handleSelectAll = () => {
-    if (selectedDocuments.size === documents.length) {
-      setSelectedDocuments(new Set());
-    } else {
-      setSelectedDocuments(new Set(documents.map((d) => d.id)));
-    }
-  };
-
-  const handleQueueForReducto = async () => {
-    if (selectedDocuments.size === 0) {
-      setError("Please select at least one document");
-      return;
-    }
-
-    setQueuing(true);
-    setError(null);
-    try {
-      const documentIds = Array.from(selectedDocuments);
-      const response = await queueReductoExtraction(documentIds);
-
-      // Refresh documents to show updated status
-      await loadDocuments();
-
-      // Clear selection
-      setSelectedDocuments(new Set());
-
-      // Show success message
-      if (response.queued_count > 0) {
-        toast.success(`${response.queued_count} document(s) queued for extraction`);
-      }
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to queue documents for Reducto extraction");
-      console.error("Error queueing documents:", err);
-      toast.error("Failed to queue documents for extraction");
-    } finally {
-      setQueuing(false);
-    }
-  };
-
   const handlePreview = async (document: Document) => {
     setPreviewDocument(document);
     setPreviewOpen(true);
     setLoadingPreview(true);
     setPreviewData(null);
-    setPreviewViewMode("table"); // Reset to table view when opening preview
     try {
       const data = await getReductoData(document.id);
       setPreviewData(data);
@@ -346,41 +266,17 @@ export default function ReductoExtractionPage() {
     const methods = document.scores_extraction_methods;
     const methodDisplay = methods && methods.length > 0 ? methods.join(", ") : null;
 
-    if (status === "queued") {
-      return (
-        <Badge variant="outline" className="flex items-center gap-1">
-          <Clock className="h-3 w-3" />
-          Queued
-        </Badge>
-      );
-    }
-    if (status === "processing") {
-      return (
-        <Badge variant="default" className="flex items-center gap-1">
-          <Loader2 className="h-3 w-3 animate-spin" />
-          Processing
-        </Badge>
-      );
-    }
     if (status === "success") {
       return (
         <Badge variant="default" className="flex items-center gap-1 bg-green-600">
           <CheckCircle2 className="h-3 w-3" />
-          Success {methodDisplay && `(${methodDisplay})`}
-        </Badge>
-      );
-    }
-    if (status === "error") {
-      return (
-        <Badge variant="destructive" className="flex items-center gap-1">
-          <XCircle className="h-3 w-3" />
-          Error
+          Processed {methodDisplay && `(${methodDisplay})`}
         </Badge>
       );
     }
     return (
       <Badge variant="secondary">
-        {status || "Pending"}
+        {status || "Unknown"}
       </Badge>
     );
   };
@@ -388,7 +284,7 @@ export default function ReductoExtractionPage() {
   return (
     <DashboardLayout>
       <div className="flex flex-col h-full">
-        <TopBar title="Reducto Extraction" />
+        <TopBar title="Processed ICMs" />
 
         <div className="flex-1 overflow-hidden flex flex-col p-6 gap-4">
           {/* Filters */}
@@ -397,7 +293,7 @@ export default function ReductoExtractionPage() {
               <CardTitle>Filters</CardTitle>
             </CardHeader>
             <CardContent>
-              <div className="grid grid-cols-1 md:grid-cols-5 gap-4">
+              <div className="grid grid-cols-1 md:grid-cols-6 gap-4">
                 <div>
                   <label className="text-sm font-medium mb-2 block">Exam Type</label>
                   <Select
@@ -535,31 +431,6 @@ export default function ReductoExtractionPage() {
             </CardContent>
           </Card>
 
-          {/* Actions */}
-          <div className="flex items-center justify-between">
-            <div className="text-sm text-muted-foreground">
-              {selectedDocuments.size > 0 && (
-                <span>{selectedDocuments.size} document(s) selected</span>
-              )}
-            </div>
-            <Button
-              onClick={handleQueueForReducto}
-              disabled={selectedDocuments.size === 0 || queuing}
-            >
-              {queuing ? (
-                <>
-                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                  Queueing...
-                </>
-              ) : (
-                <>
-                  <Send className="mr-2 h-4 w-4" />
-                  Queue for Reducto
-                </>
-              )}
-            </Button>
-          </div>
-
           {/* Documents Table */}
           <Card className="flex-1 overflow-hidden flex flex-col">
             {/* <CardHeader>
@@ -572,6 +443,25 @@ export default function ReductoExtractionPage() {
                 </div>
               )}
 
+              {/* Extraction Method Filter */}
+              <div className="mb-4 flex items-center gap-2">
+                {/* <label className="text-sm font-medium">Extraction Method:</label> */}
+                <Select
+                  value={filters.extraction_method || "all"}
+                  onValueChange={(value) => handleFilterChange("extraction_method", value && value !== "all" ? value : undefined)}
+                >
+                  <SelectTrigger className="w-[200px]">
+                    <SelectValue placeholder="All Methods" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="all">All Methods</SelectItem>
+                    <SelectItem value="AUTOMATED_EXTRACTION">Automated Extraction</SelectItem>
+                    <SelectItem value="MANUAL_TRANSCRIPTION_DIGITAL">Manual Transcription (Digital)</SelectItem>
+                    <SelectItem value="MANUAL_ENTRY_PHYSICAL">Manual Entry (Physical)</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+
               {loading && loadingFilters ? (
                 <div className="flex items-center justify-center h-32">
                   <Loader2 className="h-6 w-6 animate-spin" />
@@ -580,34 +470,23 @@ export default function ReductoExtractionPage() {
                 <Table>
                   <TableHeader>
                     <TableRow>
-                      <TableHead className="w-12">
-                        <Checkbox
-                          checked={selectedDocuments.size === documents.length && documents.length > 0}
-                          onCheckedChange={handleSelectAll}
-                        />
-                      </TableHead>
                       <TableHead>Extracted ID</TableHead>
                       <TableHead>School Name</TableHead>
                       <TableHead>Extraction Status</TableHead>
                       <TableHead>Extracted At</TableHead>
+                      <TableHead>Actions</TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>
                     {documents.length === 0 ? (
                       <TableRow>
                         <TableCell colSpan={5} className="text-center text-muted-foreground">
-                          No unprocessed documents found
+                          No processed documents found
                         </TableCell>
                       </TableRow>
                     ) : (
                       documents.map((document) => (
                         <TableRow key={document.id}>
-                          <TableCell>
-                            <Checkbox
-                              checked={selectedDocuments.has(document.id)}
-                              onCheckedChange={() => handleSelectDocument(document.id)}
-                            />
-                          </TableCell>
                           <TableCell className="font-medium">{document.extracted_id || "-"}</TableCell>
                           <TableCell>{document.school_name || "-"}</TableCell>
                           <TableCell>{getStatusBadge(document)}</TableCell>
@@ -615,6 +494,36 @@ export default function ReductoExtractionPage() {
                             {document.scores_extracted_at
                               ? new Date(document.scores_extracted_at).toLocaleString()
                               : "-"}
+                          </TableCell>
+                          <TableCell>
+                            <div className="flex gap-2">
+                              {document.scores_extraction_data && (
+                                <Button
+                                  variant="outline"
+                                  size="sm"
+                                  onClick={() => handlePreview(document)}
+                                  disabled={loadingPreview}
+                                >
+                                  <Eye className="h-4 w-4 mr-1" />
+                                  Preview
+                                </Button>
+                              )}
+                              {document.scores_extraction_data && (
+                                <Button
+                                  variant="outline"
+                                  size="sm"
+                                  onClick={() => handleUpdateScores(document)}
+                                  disabled={updatingScores === document.id}
+                                >
+                                  {updatingScores === document.id ? (
+                                    <Loader2 className="h-4 w-4 mr-1 animate-spin" />
+                                  ) : (
+                                    <RefreshCw className="h-4 w-4 mr-1" />
+                                  )}
+                                  Update Scores
+                                </Button>
+                              )}
+                            </div>
                           </TableCell>
                         </TableRow>
                       ))
@@ -706,7 +615,7 @@ export default function ReductoExtractionPage() {
 
       {/* Preview Dialog */}
       <Dialog open={previewOpen} onOpenChange={setPreviewOpen}>
-        <DialogContent className="max-w-4xl max-h-[80vh] overflow-auto">
+        <DialogContent className="min-w-4xl max-h-[80vh] overflow-auto">
           <DialogHeader>
             <DialogTitle>
               Preview Reducto Data - {previewDocument?.extracted_id || previewDocument?.file_name}
@@ -736,57 +645,39 @@ export default function ReductoExtractionPage() {
                   </div>
                 )}
               </div>
-
-              {/* View Toggle */}
-              <Tabs value={previewViewMode} onValueChange={(value) => setPreviewViewMode(value as "table" | "json")}>
-                <TabsList className="grid w-full grid-cols-2">
-                  <TabsTrigger value="table">Table View</TabsTrigger>
-                  <TabsTrigger value="json">JSON / Raw</TabsTrigger>
-                </TabsList>
-
-                <TabsContent value="table" className="mt-4">
-                  {previewData.data?.candidates && Array.isArray(previewData.data.candidates) ? (
-                    <div>
-                      <h3 className="font-medium mb-2">Candidates ({previewData.data.candidates.length})</h3>
-                      <div className="border rounded-lg overflow-auto max-h-96">
-                        <Table>
-                          <TableHeader>
-                            <TableRow>
-                              <TableHead>Index Number</TableHead>
-                              <TableHead>Name</TableHead>
-                              <TableHead>Score</TableHead>
-                              <TableHead>Attendance</TableHead>
-                            </TableRow>
-                          </TableHeader>
-                          <TableBody>
-                            {previewData.data.candidates.map((candidate: any, idx: number) => (
-                              <TableRow key={idx}>
-                                <TableCell>{candidate.index_number || "-"}</TableCell>
-                                <TableCell>{candidate.candidate_name || "-"}</TableCell>
-                                <TableCell>{candidate.score || "-"}</TableCell>
-                                <TableCell>{candidate.attend ? "✓" : "-"}</TableCell>
-                              </TableRow>
-                            ))}
-                          </TableBody>
-                        </Table>
-                      </div>
-                    </div>
-                  ) : (
-                    <div className="text-sm text-muted-foreground">
-                      <p>No candidate data available in table format.</p>
-                    </div>
-                  )}
-                </TabsContent>
-
-                <TabsContent value="json" className="mt-4">
-                  <div className="text-sm">
-                    <h3 className="font-medium mb-2">Raw JSON Data</h3>
-                    <pre className="bg-muted p-4 rounded overflow-auto max-h-96 text-xs">
-                      {JSON.stringify(previewData.data, null, 2)}
-                    </pre>
+              {previewData.data?.candidates && Array.isArray(previewData.data.candidates) ? (
+                <div>
+                  <h3 className="font-medium mb-2">Candidates ({previewData.data.candidates.length})</h3>
+                  <div className="border rounded-lg overflow-auto max-h-96">
+                    <Table>
+                      <TableHeader>
+                        <TableRow>
+                          <TableHead>Index Number</TableHead>
+                          <TableHead>Name</TableHead>
+                          <TableHead>Score</TableHead>
+                          <TableHead>Attendance</TableHead>
+                        </TableRow>
+                      </TableHeader>
+                      <TableBody>
+                        {previewData.data.candidates.map((candidate: any, idx: number) => (
+                          <TableRow key={idx}>
+                            <TableCell>{candidate.index_number || "-"}</TableCell>
+                            <TableCell>{candidate.candidate_name || "-"}</TableCell>
+                            <TableCell>{candidate.score || "-"}</TableCell>
+                            <TableCell>{candidate.attend ? "✓" : "-"}</TableCell>
+                          </TableRow>
+                        ))}
+                      </TableBody>
+                    </Table>
                   </div>
-                </TabsContent>
-              </Tabs>
+                </div>
+              ) : (
+                <div className="text-sm text-muted-foreground">
+                  <pre className="bg-muted p-4 rounded overflow-auto">
+                    {JSON.stringify(previewData.data, null, 2)}
+                  </pre>
+                </div>
+              )}
             </div>
           ) : (
             <p className="text-sm text-muted-foreground">No preview data available</p>

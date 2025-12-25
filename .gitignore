@@ -23,3 +23,6 @@ annotate_icm.py
 pdf_utils.py
 generate_pdf.py
 .github/
+backend/sample_candidates_upload.csv
+create_sample_upload.py
+backend/app/add_test_unmatched_records.py
