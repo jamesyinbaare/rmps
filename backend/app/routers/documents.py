@@ -304,6 +304,33 @@ async def get_document(document_id: int, session: DBSessionDep) -> DocumentRespo
     return DocumentResponse.model_validate(document)
 
 
+@router.get("/by-extracted-id/{extracted_id}/download")
+async def download_document_by_extracted_id(
+    extracted_id: str,
+    exam_id: int = Query(..., description="Exam ID to filter by"),
+    session: DBSessionDep = ...,
+) -> StreamingResponse:
+    """Download document file by extracted_id and exam_id."""
+    stmt = select(Document).where(
+        Document.extracted_id == extracted_id,
+        Document.exam_id == exam_id,
+    )
+    result = await session.execute(stmt)
+    document = result.scalar_one_or_none()
+    if not document:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Document not found")
+
+    try:
+        file_content = await storage_service.retrieve(document.file_path)
+        return StreamingResponse(
+            iter([file_content]),
+            media_type=document.mime_type,
+            headers={"Content-Disposition": f'inline; filename="{document.file_name}"'},
+        )
+    except FileNotFoundError:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="File not found in storage")
+
+
 @router.get("/{document_id}/download")
 async def download_document(document_id: int, session: DBSessionDep) -> StreamingResponse:
     """Download document file."""
