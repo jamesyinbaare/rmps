@@ -331,6 +331,17 @@ class UnmatchedRecordStatus(enum.Enum):
     IGNORED = "ignored"
 
 
+class ValidationIssueType(enum.Enum):
+    MISSING_SCORE = "missing_score"
+    INVALID_SCORE = "invalid_score"
+
+
+class ValidationIssueStatus(enum.Enum):
+    PENDING = "pending"
+    RESOLVED = "resolved"
+    IGNORED = "ignored"
+
+
 class UnmatchedExtractionRecord(Base):
     """Records for candidates extracted from documents that don't match existing SubjectScore records."""
 
@@ -378,3 +389,27 @@ class PdfGenerationJob(Base):
 
     exam = relationship("Exam", back_populates="pdf_generation_jobs")
     subject = relationship("Subject")
+
+
+class SubjectScoreValidationIssue(Base):
+    """Records for validation issues found in SubjectScore records."""
+
+    __tablename__ = "subject_score_validation_issues"
+    id = Column(Integer, primary_key=True)
+    subject_score_id = Column(
+        Integer, ForeignKey("subject_scores.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    exam_subject_id = Column(
+        Integer, ForeignKey("exam_subjects.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    issue_type = Column(Enum(ValidationIssueType), nullable=False, index=True)
+    field_name = Column(String(20), nullable=False)  # obj_raw_score, essay_raw_score, pract_raw_score
+    test_type = Column(Integer, nullable=False)  # 1 = Objectives, 2 = Essay, 3 = Practical
+    message = Column(Text, nullable=False)
+    status = Column(Enum(ValidationIssueStatus), default=ValidationIssueStatus.PENDING, nullable=False, index=True)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+    resolved_at = Column(DateTime, nullable=True)
+
+    subject_score = relationship("SubjectScore")
+    exam_subject = relationship("ExamSubject")

@@ -125,6 +125,42 @@ def calculate_total_score(
     return total
 
 
+def validate_score_range(score: str | None, max_score: float) -> tuple[bool, str | None]:
+    """
+    Validate that a score value is within the allowed range (0 to max_score) or is "A"/"AA".
+
+    Args:
+        score: The score value to validate (can be None, "A", "AA", or numeric string)
+        max_score: The maximum allowed score value
+
+    Returns:
+        Tuple of (is_valid, error_message). is_valid is True if score is valid, False otherwise.
+        error_message is None if valid, otherwise contains the error description.
+    """
+    if score is None:
+        return False, "Score is required but not set"
+
+    score_str = str(score).strip().upper()
+
+    # Format max_score to remove unnecessary decimals
+    max_score_display = int(max_score) if max_score == int(max_score) else max_score
+
+    # Check for absence indicators - these are always valid
+    if score_str in ("A", "AA"):
+        return True, None
+
+    # Check for numeric value
+    try:
+        num_value = float(score_str)
+        if num_value < 0:
+            return False, f"Score cannot be negative. Please enter a value between 0 and {max_score_display}, or 'A'/'AA' for absent"
+        if num_value > max_score:
+            return False, f"Score {score_str} exceeds the maximum of {max_score_display}. Please enter a value between 0 and {max_score_display}, or 'A'/'AA' for absent"
+        return True, None
+    except ValueError:
+        return False, f"Invalid score format. Please enter a number between 0 and {max_score_display}, or 'A'/'AA' for absent"
+
+
 def add_extraction_method_to_document(
     document: "Document", extraction_method: "DataExtractionMethod"
 ) -> None:

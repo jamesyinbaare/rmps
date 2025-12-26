@@ -79,6 +79,7 @@ export function Sidebar() {
         { href: "/scores/manual-entry", label: "Manual Entry", icon: ClipboardCheck },
         { href: "/scores/processed", label: "Processed ICMs", icon: ClipboardCheck },
         { href: "/scores/unmatched-records", label: "Unmatched Records", icon: ClipboardCheck },
+        { href: "/scores/issues", label: "Issues", icon: ClipboardCheck },
       ],
     },
     {

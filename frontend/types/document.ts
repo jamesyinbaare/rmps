@@ -464,3 +464,81 @@ export interface ResolveUnmatchedRecordRequest {
   score_field: "obj" | "essay" | "pract";
   score_value: string | null;
 }
+
+export type ValidationIssueType = "missing_score" | "invalid_score";
+export type ValidationIssueStatus = "pending" | "resolved" | "ignored";
+
+export interface SubjectScoreValidationIssue {
+  id: number;
+  subject_score_id: number;
+  exam_subject_id: number;
+  issue_type: ValidationIssueType;
+  field_name: string;
+  test_type: number;
+  message: string;
+  status: ValidationIssueStatus;
+  created_at: string;
+  updated_at: string;
+  resolved_at: string | null;
+}
+
+export interface ValidationIssueListResponse {
+  total: number;
+  page: number;
+  page_size: number;
+  issues: SubjectScoreValidationIssue[];
+}
+
+export interface RunValidationRequest {
+  exam_id?: number | null;
+  school_id?: number | null;
+  subject_id?: number | null;
+}
+
+export interface RunValidationResponse {
+  total_scores_checked: number;
+  issues_found: number;
+  issues_resolved: number;
+  issues_created: number;
+  message: string;
+}
+
+export interface ValidationIssuesFilters {
+  exam_id?: number;
+  school_id?: number;
+  subject_id?: number;
+  status?: ValidationIssueStatus;
+  issue_type?: ValidationIssueType;
+  test_type?: number;
+  page?: number;
+  page_size?: number;
+}
+
+export interface ValidationIssueDetailResponse {
+  id: number;
+  subject_score_id: number;
+  exam_subject_id: number;
+  issue_type: ValidationIssueType;
+  field_name: string;
+  test_type: number;
+  message: string;
+  status: ValidationIssueStatus;
+  created_at: string;
+  updated_at: string;
+  resolved_at: string | null;
+  candidate_id: number | null;
+  candidate_name: string | null;
+  candidate_index_number: string | null;
+  subject_id: number | null;
+  subject_code: string | null;
+  subject_name: string | null;
+  exam_id: number | null;
+  exam_type: string | null;
+  exam_year: number | null;
+  exam_series: string | null;
+  current_score_value: string | null;
+  document_id: string | null;
+  document_file_name: string | null;
+  document_numeric_id: number | null;
+  document_mime_type: string | null;
+}

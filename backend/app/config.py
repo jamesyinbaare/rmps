@@ -121,6 +121,11 @@ class Settings(BaseSettings):
         },
         "required": ["candidates"],
     }  # Schema for structured data extraction
+    # Cache settings
+    cache_backend: str = "memory"  # memory, redis
+    cache_ttl: int = 300  # 5 minutes default
+    cache_max_size: int = 1000  # Max cached items for in-memory
+    redis_url: str | None = None  # Optional Redis URL
 
 
 settings = Settings()  # type: ignore
