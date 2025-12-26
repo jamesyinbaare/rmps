@@ -35,6 +35,12 @@ import type {
   UnmatchedExtractionRecord,
   UnmatchedRecordsListResponse,
   ResolveUnmatchedRecordRequest,
+  SubjectScoreValidationIssue,
+  ValidationIssueListResponse,
+  ValidationIssueDetailResponse,
+  RunValidationRequest,
+  RunValidationResponse,
+  ValidationIssuesFilters,
 } from "@/types/document";
 
 export const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL || "http://localhost:8000";
@@ -1620,4 +1626,67 @@ export async function deleteMultiplePdfGenerationJobs(jobIds: number[]): Promise
     body: JSON.stringify({ job_ids: jobIds }),
   });
   return handleResponse<{ deleted_count: number; deleted_ids: number[] }>(response);
+}
+
+// Validation Issues API Functions
+
+export async function runValidation(
+  request: RunValidationRequest = {}
+): Promise<RunValidationResponse> {
+  const response = await fetch(`${API_BASE_URL}/api/v1/validation/run`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(request),
+  });
+  return handleResponse<RunValidationResponse>(response);
+}
+
+export async function getValidationIssues(
+  filters: ValidationIssuesFilters = {}
+): Promise<ValidationIssueListResponse> {
+  const params = new URLSearchParams();
+  if (filters.exam_id) params.append("exam_id", filters.exam_id.toString());
+  if (filters.school_id) params.append("school_id", filters.school_id.toString());
+  if (filters.subject_id) params.append("subject_id", filters.subject_id.toString());
+  if (filters.status) params.append("status_filter", filters.status);
+  if (filters.issue_type) params.append("issue_type", filters.issue_type);
+  if (filters.test_type) params.append("test_type", filters.test_type.toString());
+  if (filters.page) params.append("page", filters.page.toString());
+  if (filters.page_size) params.append("page_size", filters.page_size.toString());
+
+  const response = await fetch(`${API_BASE_URL}/api/v1/validation/issues?${params.toString()}`);
+  return handleResponse<ValidationIssueListResponse>(response);
+}
+
+export async function getValidationIssue(issueId: number): Promise<ValidationIssueDetailResponse> {
+  const response = await fetch(`${API_BASE_URL}/api/v1/validation/issues/${issueId}`);
+  return handleResponse<ValidationIssueDetailResponse>(response);
+}
+
+export async function resolveValidationIssue(
+  issueId: number,
+  correctedScore?: string
+): Promise<SubjectScoreValidationIssue> {
+  const response = await fetch(`${API_BASE_URL}/api/v1/validation/issues/${issueId}/resolve`, {
+    method: "PUT",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      corrected_score: correctedScore !== undefined ? correctedScore : null,
+    }),
+  });
+  return handleResponse<SubjectScoreValidationIssue>(response);
+}
+
+export async function ignoreValidationIssue(issueId: number): Promise<SubjectScoreValidationIssue> {
+  const response = await fetch(`${API_BASE_URL}/api/v1/validation/issues/${issueId}/ignore`, {
+    method: "PUT",
+    headers: {
+      "Content-Type": "application/json",
+    },
+  });
+  return handleResponse<SubjectScoreValidationIssue>(response);
 }
