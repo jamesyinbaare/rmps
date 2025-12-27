@@ -980,7 +980,12 @@ async def list_exam_registration_subjects(
         # Calculate grade if subject_score exists
         grade = None
         if subject_score:
-            grade = calculate_grade(subject_score.total_score, exam_subject.grade_ranges_json)
+            grade = calculate_grade(
+                subject_score.total_score,
+                exam_subject.grade_ranges_json,
+                subject_score=subject_score,
+                exam_subject=exam_subject,
+            )
 
         # Create SubjectScoreResponse with grade
         subject_score_response = None

@@ -5,6 +5,7 @@ from typing import TYPE_CHECKING
 from app.utils.score_utils import (
     calculate_final_score,
     calculate_normalized_scores,
+    is_grade_pending,
 )
 
 if TYPE_CHECKING:
@@ -36,6 +37,24 @@ class ResultProcessingService:
         Raises:
             ResultProcessingError: If calculation fails (e.g., percentages don't sum to 100%)
         """
+        # Check if grade should be pending due to missing components
+        # If pending, we should not calculate the final score
+        if is_grade_pending(subject_score, exam_subject):
+            # Set normalized scores to None for missing components
+            obj_normalized, essay_normalized, pract_normalized = calculate_normalized_scores(
+                subject_score, exam_subject
+            )
+            # Don't calculate total_score if pending - set it to 0.0 as a placeholder
+            # Note: total_score field is not nullable, so we use 0.0
+            # The grade calculation will return None (pending) when calculate_grade is called
+            subject_score.obj_normalized = obj_normalized
+            subject_score.essay_normalized = essay_normalized
+            subject_score.pract_normalized = pract_normalized
+            # Set total_score to 0.0 when pending (not -1.0 which would show as ABSENT)
+            # The frontend will show PENDING when grade is None
+            subject_score.total_score = 0.0
+            return
+
         # Calculate normalized scores
         obj_normalized, essay_normalized, pract_normalized = calculate_normalized_scores(
             subject_score, exam_subject

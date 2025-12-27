@@ -193,7 +193,12 @@ async def get_document_scores(document_id: str, session: DBSessionDep) -> Docume
     scores = []
     for subject_score, subject_reg, _exam_reg, candidate, exam_subject, subject in rows:
         # Calculate grade from grade ranges JSON
-        grade = calculate_grade(subject_score.total_score, exam_subject.grade_ranges_json)
+        grade = calculate_grade(
+            subject_score.total_score,
+            exam_subject.grade_ranges_json,
+            subject_score=subject_score,
+            exam_subject=exam_subject,
+        )
 
         scores.append(
             ScoreResponse(
@@ -324,7 +329,12 @@ async def update_score(score_id: int, score_update: ScoreUpdate, session: DBSess
     await session.refresh(subject_score)
 
     # Calculate grade from grade ranges JSON
-    grade = calculate_grade(subject_score.total_score, exam_subject.grade_ranges_json)
+    grade = calculate_grade(
+        subject_score.total_score,
+        exam_subject.grade_ranges_json,
+        subject_score=subject_score,
+        exam_subject=exam_subject,
+    )
 
     return ScoreResponse(
         id=subject_score.id,

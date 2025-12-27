@@ -12,7 +12,7 @@ import {
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Alert, AlertDescription } from "@/components/ui/alert";
-import { upsertGradeRanges, type GradeRangeConfig, type ExamSubject } from "@/lib/api";
+import { upsertGradeRanges, getGradeRanges, type GradeRangeConfig, type ExamSubject } from "@/lib/api";
 import { toast } from "sonner";
 import { Loader2, AlertCircle } from "lucide-react";
 
@@ -45,33 +45,53 @@ export function GradeRangeModal({
 
   // Initialize form data with all 6 grades
   useEffect(() => {
-    if (open && examSubject) {
-      setLoadingData(true);
-      // Load existing grade ranges or initialize with empty values
-      if (examSubject.grade_ranges_json && examSubject.grade_ranges_json.length > 0) {
-        // Ensure all 6 grades are present, fill missing ones
-        const existingGrades = new Map(
-          examSubject.grade_ranges_json.map((gr) => [gr.grade, gr])
-        );
-        const initialData: GradeRangeConfig[] = GRADE_NAMES.map((gradeName) => {
-          const existing = existingGrades.get(gradeName);
-          return existing || { grade: gradeName, min: null, max: null };
-        });
-        setFormData(initialData);
-      } else {
-        // Initialize with empty values for all grades
-        setFormData(
-          GRADE_NAMES.map((gradeName) => ({
-            grade: gradeName,
-            min: null,
-            max: null,
-          }))
-        );
+    const loadGradeRanges = async () => {
+      if (open && examSubject) {
+        setLoadingData(true);
+        try {
+          // Fetch grade ranges from API
+          const result = await getGradeRanges(examSubject.id);
+          const gradeRanges = result.grade_ranges;
+
+          if (gradeRanges && gradeRanges.length > 0) {
+            // Ensure all 6 grades are present, fill missing ones
+            const existingGrades = new Map(
+              gradeRanges.map((gr) => [gr.grade, gr])
+            );
+            const initialData: GradeRangeConfig[] = GRADE_NAMES.map((gradeName) => {
+              const existing = existingGrades.get(gradeName);
+              return existing || { grade: gradeName, min: null, max: null };
+            });
+            setFormData(initialData);
+          } else {
+            // Initialize with empty values for all grades
+            setFormData(
+              GRADE_NAMES.map((gradeName) => ({
+                grade: gradeName,
+                min: null,
+                max: null,
+              }))
+            );
+          }
+        } catch (error) {
+          console.error("Error loading grade ranges:", error);
+          // Initialize with empty values on error
+          setFormData(
+            GRADE_NAMES.map((gradeName) => ({
+              grade: gradeName,
+              min: null,
+              max: null,
+            }))
+          );
+        } finally {
+          setLoadingData(false);
+          setValidationError(null);
+        }
       }
-      setLoadingData(false);
-      setValidationError(null);
-    }
-  }, [open, examSubject]);
+    };
+
+    loadGradeRanges();
+  }, [open, examSubject.id]);
 
   const handleChange = (gradeIndex: number, field: "min" | "max", value: string) => {
     setFormData((prev) => {

@@ -155,7 +155,12 @@ async def process_score(score_id: int, session: DBSessionDep) -> ScoreResponse:
     candidate = candidate_result.scalar_one()
 
     # Calculate grade from grade ranges JSON
-    grade = calculate_grade(subject_score.total_score, exam_subject.grade_ranges_json)
+    grade = calculate_grade(
+        subject_score.total_score,
+        exam_subject.grade_ranges_json,
+        subject_score=subject_score,
+        exam_subject=exam_subject,
+    )
 
     return ScoreResponse(
         id=subject_score.id,
@@ -390,7 +395,12 @@ async def process_subject_registration_result(
     subject = subject_result.scalar_one()
 
     # Calculate grade from grade ranges JSON
-    grade = calculate_grade(subject_score.total_score, exam_subject.grade_ranges_json)
+    grade = calculate_grade(
+        subject_score.total_score,
+        exam_subject.grade_ranges_json,
+        subject_score=subject_score,
+        exam_subject=exam_subject,
+    )
 
     return ScoreResponse(
         id=subject_score.id,
