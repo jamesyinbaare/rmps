@@ -4,10 +4,11 @@ import { useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
-import { Edit, Save, X, Loader2 } from "lucide-react";
+import { Edit, Save, X, Loader2, GraduationCap } from "lucide-react";
 import type { ExamSubject } from "@/lib/api";
 import { updateExamSubject } from "@/lib/api";
 import { toast } from "sonner";
+import { GradeRangeModal } from "@/components/GradeRangeModal";
 
 interface ExamSubjectListItemProps {
   examSubject: ExamSubject;
@@ -17,6 +18,7 @@ interface ExamSubjectListItemProps {
 export function ExamSubjectListItem({ examSubject, onUpdate }: ExamSubjectListItemProps) {
   const [isEditing, setIsEditing] = useState(false);
   const [loading, setLoading] = useState(false);
+  const [gradeModalOpen, setGradeModalOpen] = useState(false);
   const [formData, setFormData] = useState({
     obj_max_score: examSubject.obj_max_score?.toString() || "",
     essay_max_score: examSubject.essay_max_score?.toString() || "",
@@ -113,12 +115,18 @@ export function ExamSubjectListItem({ examSubject, onUpdate }: ExamSubjectListIt
           </div>
         </div>
 
-        {/* Edit Button */}
+        {/* Action Buttons */}
         {!isEditing && (
-          <Button variant="outline" size="sm" onClick={handleEdit} className="shrink-0">
-            <Edit className="h-4 w-4 mr-2" />
-            Edit
-          </Button>
+          <div className="flex gap-2 shrink-0">
+            <Button variant="outline" size="sm" onClick={() => setGradeModalOpen(true)} className="shrink-0">
+              <GraduationCap className="h-4 w-4 mr-2" />
+              Manage Grades
+            </Button>
+            <Button variant="outline" size="sm" onClick={handleEdit} className="shrink-0">
+              <Edit className="h-4 w-4 mr-2" />
+              Edit
+            </Button>
+          </div>
         )}
 
         {isEditing && (
@@ -250,6 +258,17 @@ export function ExamSubjectListItem({ examSubject, onUpdate }: ExamSubjectListIt
           )}
         </div>
       </div>
+
+      <GradeRangeModal
+        examSubject={examSubject}
+        open={gradeModalOpen}
+        onOpenChange={setGradeModalOpen}
+        onSuccess={async () => {
+          // Refresh exam subject data by reloading from API
+          // The parent component should handle the refresh
+          onUpdate?.(examSubject);
+        }}
+      />
     </div>
   );
 }

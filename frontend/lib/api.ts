@@ -1045,6 +1045,12 @@ export async function deleteExam(id: number): Promise<void> {
   }
 }
 
+export interface GradeRangeConfig {
+  grade: string;
+  min: number | null;
+  max: number | null;
+}
+
 export interface ExamSubject {
   id: number;
   exam_id: number;
@@ -1058,6 +1064,7 @@ export interface ExamSubject {
   obj_max_score: number | null;
   essay_max_score: number | null;
   pract_max_score: number | null;
+  grade_ranges_json?: GradeRangeConfig[] | null;
   created_at: string;
   updated_at: string;
 }
@@ -1065,6 +1072,22 @@ export interface ExamSubject {
 export async function listExamSubjects(examId: number): Promise<ExamSubject[]> {
   const response = await fetch(`${API_BASE_URL}/api/v1/exams/${examId}/subjects`);
   return handleResponse<ExamSubject[]>(response);
+}
+
+export async function getGradeRanges(examSubjectId: number): Promise<{ exam_subject_id: number; grade_ranges: GradeRangeConfig[] | null }> {
+  const response = await fetch(`${API_BASE_URL}/api/v1/exam-subjects/${examSubjectId}/grade-ranges`);
+  return handleResponse<{ exam_subject_id: number; grade_ranges: GradeRangeConfig[] | null }>(response);
+}
+
+export async function upsertGradeRanges(examSubjectId: number, gradeRanges: GradeRangeConfig[]): Promise<{ exam_subject_id: number; grade_ranges: GradeRangeConfig[] | null }> {
+  const response = await fetch(`${API_BASE_URL}/api/v1/exam-subjects/${examSubjectId}/grade-ranges`, {
+    method: "PUT",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({ grade_ranges: gradeRanges }),
+  });
+  return handleResponse<{ exam_subject_id: number; grade_ranges: GradeRangeConfig[] | null }>(response);
 }
 
 export async function downloadExamSubjectTemplate(
