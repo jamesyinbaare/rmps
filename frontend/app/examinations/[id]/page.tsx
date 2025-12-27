@@ -19,7 +19,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { getExam, listExamSubjects, serializeExam, downloadExamSubjectTemplate, type ExamSubject, type SerializationResponse } from "@/lib/api";
+import { getExam, listExamSubjects, serializeExam, downloadExamSubjectTemplate, type ExamSubject, type SerializationResponse, processExamSubjects, processExamResults } from "@/lib/api";
 import type { Exam } from "@/types/document";
 import { ArrowLeft, Search, X, ClipboardList, Edit, Calendar, Users, CheckCircle2, AlertCircle, Loader2, ChevronDown, ChevronRight, Download, Upload, LayoutGrid, List } from "lucide-react";
 import { toast } from "sonner";
@@ -47,6 +47,9 @@ export default function ExaminationDetailPage() {
   const [downloadingTemplate, setDownloadingTemplate] = useState<string | null>(null);
   const [uploadDialogOpen, setUploadDialogOpen] = useState(false);
   const [viewMode, setViewMode] = useState<"card" | "list">("card");
+  const [selectedExamSubjectIds, setSelectedExamSubjectIds] = useState<Set<number>>(new Set());
+  const [processing, setProcessing] = useState(false);
+  const [processingResult, setProcessingResult] = useState<{ successful: number; failed: number; errors: any[] } | null>(null);
 
   // Load examination data
   useEffect(() => {
@@ -323,6 +326,12 @@ export default function ExaminationDetailPage() {
                 className="rounded-none border-b-2 border-transparent bg-transparent px-4 py-3 text-sm font-medium text-muted-foreground transition-all hover:text-foreground data-[state=active]:border-primary data-[state=active]:text-foreground data-[state=active]:shadow-none"
               >
                 Score interpretation
+              </TabsTrigger>
+              <TabsTrigger
+                value="result-processing"
+                className="rounded-none border-b-2 border-transparent bg-transparent px-4 py-3 text-sm font-medium text-muted-foreground transition-all hover:text-foreground data-[state=active]:border-primary data-[state=active]:text-foreground data-[state=active]:shadow-none"
+              >
+                Result Processing
               </TabsTrigger>
             </TabsList>
 
@@ -655,6 +664,210 @@ export default function ExaminationDetailPage() {
                   ))}
                 </div>
               )}
+            </TabsContent>
+
+            <TabsContent value="result-processing" className="mt-6">
+              <Card>
+                <CardHeader>
+                  <CardTitle className="flex items-center gap-2">
+                    <CheckCircle2 className="h-5 w-5" />
+                    Process Subject Scores
+                  </CardTitle>
+                </CardHeader>
+                <CardContent className="space-y-4">
+                  <p className="text-sm text-muted-foreground">
+                    Select exam subjects to process. This will calculate normalized scores and final scores for all subject registrations under the selected exam subjects.
+                  </p>
+
+                  {subjects.length > 0 && (
+                    <div className="space-y-3">
+                      <div className="flex items-center justify-between">
+                        <p className="text-sm font-medium">Select Exam Subjects to Process</p>
+                        <div className="flex gap-2">
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            onClick={() => {
+                              setSelectedExamSubjectIds(new Set(subjects.map((s) => s.id)));
+                            }}
+                            disabled={processing}
+                          >
+                            Select All
+                          </Button>
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            onClick={() => {
+                              setSelectedExamSubjectIds(new Set());
+                            }}
+                            disabled={processing}
+                          >
+                            Clear
+                          </Button>
+                        </div>
+                      </div>
+                      <p className="text-sm text-muted-foreground">
+                        {selectedExamSubjectIds.size} of {subjects.length} exam subject{subjects.length !== 1 ? "s" : ""} selected
+                      </p>
+                      <div className="border rounded-lg p-4 max-h-96 overflow-y-auto space-y-2">
+                        {subjects.map((subject) => (
+                          <div key={subject.id} className="flex items-center space-x-2">
+                            <Checkbox
+                              id={`exam-subject-${subject.id}`}
+                              checked={selectedExamSubjectIds.has(subject.id)}
+                              onCheckedChange={() => {
+                                setSelectedExamSubjectIds((prev) => {
+                                  const newSet = new Set(prev);
+                                  if (newSet.has(subject.id)) {
+                                    newSet.delete(subject.id);
+                                  } else {
+                                    newSet.add(subject.id);
+                                  }
+                                  return newSet;
+                                });
+                              }}
+                              disabled={processing}
+                            />
+                            <label
+                              htmlFor={`exam-subject-${subject.id}`}
+                              className="text-sm font-medium leading-none peer-disabled:cursor-not-allowed peer-disabled:opacity-70 cursor-pointer flex-1"
+                            >
+                              <span className="font-mono font-semibold">{subject.subject_code}</span> - {subject.subject_name}
+                              <span className="ml-2 text-xs text-muted-foreground">({subject.subject_type})</span>
+                            </label>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
+                  <div className="flex gap-2">
+                    <Button
+                      onClick={async () => {
+                        if (!examId || selectedExamSubjectIds.size === 0) return;
+                        setProcessing(true);
+                        setProcessingResult(null);
+                        try {
+                          const result = await processExamSubjects(Array.from(selectedExamSubjectIds));
+                          setProcessingResult({
+                            successful: result.successful,
+                            failed: result.failed,
+                            errors: result.errors,
+                          });
+                          if (result.failed === 0) {
+                            toast.success(`Successfully processed ${result.successful} subject score(s)`);
+                          } else {
+                            toast.warning(`Processed ${result.successful} successfully, ${result.failed} failed`);
+                          }
+                        } catch (err) {
+                          toast.error(err instanceof Error ? err.message : "Failed to process results");
+                        } finally {
+                          setProcessing(false);
+                        }
+                      }}
+                      disabled={processing || selectedExamSubjectIds.size === 0 || !examId}
+                      className="w-full sm:w-auto"
+                    >
+                      {processing ? (
+                        <>
+                          <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                          Processing...
+                        </>
+                      ) : (
+                        <>
+                          <CheckCircle2 className="h-4 w-4 mr-2" />
+                          Process Selected ({selectedExamSubjectIds.size})
+                        </>
+                      )}
+                    </Button>
+                    <Button
+                      variant="outline"
+                      onClick={async () => {
+                        if (!examId) return;
+                        setProcessing(true);
+                        setProcessingResult(null);
+                        try {
+                          const result = await processExamResults(examId);
+                          setProcessingResult({
+                            successful: result.successful,
+                            failed: result.failed,
+                            errors: result.errors,
+                          });
+                          if (result.failed === 0) {
+                            toast.success(`Successfully processed ${result.successful} subject score(s)`);
+                          } else {
+                            toast.warning(`Processed ${result.successful} successfully, ${result.failed} failed`);
+                          }
+                        } catch (err) {
+                          toast.error(err instanceof Error ? err.message : "Failed to process all results");
+                        } finally {
+                          setProcessing(false);
+                        }
+                      }}
+                      disabled={processing || !examId}
+                      className="w-full sm:w-auto"
+                    >
+                      {processing ? (
+                        <>
+                          <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                          Processing All...
+                        </>
+                      ) : (
+                        <>
+                          <Users className="h-4 w-4 mr-2" />
+                          Process All
+                        </>
+                      )}
+                    </Button>
+                  </div>
+
+                  {processingResult && (
+                    <div className={`rounded-lg p-4 ${
+                      processingResult.failed === 0
+                        ? "bg-green-50 dark:bg-green-950/20 border border-green-200 dark:border-green-900/50"
+                        : "bg-yellow-50 dark:bg-yellow-950/20 border border-yellow-200 dark:border-yellow-900/50"
+                    }`}>
+                      <div className="flex items-start gap-3">
+                        {processingResult.failed === 0 ? (
+                          <CheckCircle2 className="h-5 w-5 text-green-600 dark:text-green-400 mt-0.5 shrink-0" />
+                        ) : (
+                          <AlertCircle className="h-5 w-5 text-yellow-600 dark:text-yellow-400 mt-0.5 shrink-0" />
+                        )}
+                        <div className="flex-1">
+                          <p className={`text-sm font-medium ${
+                            processingResult.failed === 0
+                              ? "text-green-900 dark:text-green-100"
+                              : "text-yellow-900 dark:text-yellow-100"
+                          }`}>
+                            Processing Complete
+                          </p>
+                          <p className={`text-sm mt-1 ${
+                            processingResult.failed === 0
+                              ? "text-green-700 dark:text-green-300"
+                              : "text-yellow-700 dark:text-yellow-300"
+                          }`}>
+                            Successful: {processingResult.successful}, Failed: {processingResult.failed}
+                          </p>
+                          {processingResult.errors.length > 0 && (
+                            <div className="mt-2 max-h-32 overflow-y-auto">
+                              {processingResult.errors.slice(0, 5).map((error, idx) => (
+                                <p key={idx} className="text-xs text-muted-foreground">
+                                  {error.subject_registration_id}: {error.error}
+                                </p>
+                              ))}
+                              {processingResult.errors.length > 5 && (
+                                <p className="text-xs text-muted-foreground">
+                                  ... and {processingResult.errors.length - 5} more errors
+                                </p>
+                              )}
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    </div>
+                  )}
+                </CardContent>
+              </Card>
             </TabsContent>
           </Tabs>
           </div>

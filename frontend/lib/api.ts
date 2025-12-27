@@ -1690,3 +1690,100 @@ export async function ignoreValidationIssue(issueId: number): Promise<SubjectSco
   });
   return handleResponse<SubjectScoreValidationIssue>(response);
 }
+
+// Result Processing API Functions
+
+export interface ProcessScoresBatchResponse {
+  successful: number;
+  failed: number;
+  total: number;
+  errors: Array<{ score_id: number; error: string }>;
+}
+
+export interface ProcessExamResultsResponse {
+  message: string;
+  successful: number;
+  failed: number;
+  total: number;
+  errors: Array<{ score_id?: number; subject_registration_id?: number; error: string }>;
+}
+
+/**
+ * Process a single subject score.
+ */
+export async function processScore(scoreId: number): Promise<ScoreResponse> {
+  const response = await fetch(`${API_BASE_URL}/api/v1/results/process/${scoreId}`, {
+    method: "POST",
+  });
+  return handleResponse<ScoreResponse>(response);
+}
+
+/**
+ * Process multiple scores in batch.
+ */
+export async function processScoresBatch(scoreIds: number[]): Promise<ProcessScoresBatchResponse> {
+  const params = new URLSearchParams();
+  scoreIds.forEach((id) => params.append("score_ids", id.toString()));
+
+  const response = await fetch(`${API_BASE_URL}/api/v1/results/process/batch?${params.toString()}`, {
+    method: "POST",
+  });
+  return handleResponse<ProcessScoresBatchResponse>(response);
+}
+
+/**
+ * Process all scores for an exam.
+ */
+export async function processExamResults(
+  examId: number,
+  schoolId?: number,
+  subjectId?: number
+): Promise<ProcessExamResultsResponse> {
+  const params = new URLSearchParams();
+  if (schoolId) params.append("school_id", schoolId.toString());
+  if (subjectId) params.append("subject_id", subjectId.toString());
+
+  const response = await fetch(
+    `${API_BASE_URL}/api/v1/results/process/exam/${examId}?${params.toString()}`,
+    {
+      method: "POST",
+    }
+  );
+  return handleResponse<ProcessExamResultsResponse>(response);
+}
+
+/**
+ * Process result for a specific subject registration.
+ */
+export async function processSubjectRegistrationResult(
+  subjectRegistrationId: number
+): Promise<ScoreResponse> {
+  const response = await fetch(
+    `${API_BASE_URL}/api/v1/results/process/subject-registration/${subjectRegistrationId}`,
+    {
+      method: "POST",
+    }
+  );
+  return handleResponse<ScoreResponse>(response);
+}
+
+/**
+ * Process scores for selected exam subjects.
+ */
+export async function processExamSubjects(
+  examSubjectIds: number[]
+): Promise<ProcessExamResultsResponse> {
+  const response = await fetch(
+    `${API_BASE_URL}/api/v1/results/process/exam-subjects`,
+    {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        exam_subject_ids: examSubjectIds,
+      }),
+    }
+  );
+  return handleResponse<ProcessExamResultsResponse>(response);
+}
