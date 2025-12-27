@@ -45,7 +45,7 @@ export default function SchoolCandidatesPage() {
   const [candidatesLoading, setCandidatesLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [selectedCandidate, setSelectedCandidate] = useState<Candidate | null>(null);
-  const [drawerOpen, setDrawerOpen] = useState(false);
+  const [dialogOpen, setDialogOpen] = useState(false);
 
   // Candidate filter state
   const [examType, setExamType] = useState<ExamType | undefined>(undefined);
@@ -477,17 +477,19 @@ export default function SchoolCandidatesPage() {
               loading={candidatesLoading}
               onSelect={(candidate) => {
                 setSelectedCandidate(candidate);
-                setDrawerOpen(true);
+                setDialogOpen(true);
               }}
             />
           </div>
         </div>
 
-        {/* Candidate Detail Drawer */}
+        {/* Candidate Detail Dialog */}
         <CandidateDetailDrawer
           candidate={selectedCandidate}
-          open={drawerOpen}
-          onOpenChange={setDrawerOpen}
+          candidates={filteredCandidates}
+          open={dialogOpen}
+          onOpenChange={setDialogOpen}
+          onCandidateChange={(candidate) => setSelectedCandidate(candidate)}
         />
       </div>
     </DashboardLayout>
