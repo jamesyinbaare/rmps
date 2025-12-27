@@ -313,9 +313,8 @@ async def update_score(score_id: int, score_update: ScoreUpdate, session: DBSess
         doc.scores_extraction_status = "success"
         doc.scores_extracted_at = current_time
 
-    # Note: Normalized scores and total_score would typically be calculated
-    # by a service/utility function, but for now we'll leave them as-is
-    # The backend should handle recalculation if needed
+    # Note: Result processing must be triggered manually via /api/v1/results/process endpoints
+    # Normalized scores and total_score will remain unchanged until processing is triggered
 
     await session.commit()
     await session.refresh(subject_score)
@@ -391,13 +390,19 @@ async def batch_update_scores(
 
             if score_item.score_id is not None:
                 # Update existing score
-                stmt = select(SubjectScore).where(SubjectScore.id == score_item.score_id)
+                stmt = (
+                    select(SubjectScore, SubjectRegistration)
+                    .join(SubjectRegistration, SubjectScore.subject_registration_id == SubjectRegistration.id)
+                    .where(SubjectScore.id == score_item.score_id)
+                )
                 result = await session.execute(stmt)
-                subject_score = result.scalar_one_or_none()
-                if not subject_score:
+                row = result.first()
+                if not row:
                     failed += 1
                     errors.append({"score_id": str(score_item.score_id), "error": "Score not found"})
                     continue
+
+                subject_score, subject_reg = row
 
                 # Update fields and set extraction methods per field
                 if score_item.obj_raw_score is not None:

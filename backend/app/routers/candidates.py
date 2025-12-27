@@ -884,7 +884,7 @@ async def add_subject_to_exam_registration(
     db_subject_score = SubjectScore(
         subject_registration_id=db_subject_registration.id,
         obj_raw_score=None,
-        essay_raw_score=0.0,
+        essay_raw_score=None,  # Should be None, not 0.0
         pract_raw_score=None,
         obj_normalized=None,
         essay_normalized=None,
@@ -895,6 +895,9 @@ async def add_subject_to_exam_registration(
         pract_document_id=None,
     )
     session.add(db_subject_score)
+
+    # Note: Result processing must be triggered manually via /api/v1/results/process endpoints
+
     await session.commit()
     await session.refresh(db_subject_registration)
     await session.refresh(db_subject_score)
