@@ -312,6 +312,7 @@ def calculate_final_score(
     - If ALL raw_scores (that have corresponding max_score/pct) are "A"/"AA", returns ABSENT_RESULT_SENTINEL (-1.0)
     - Components are excluded if max_score or pct is None
     - Components are excluded if raw_score is None (should flag as issue)
+    - IMPORTANT: This function should NOT be called if is_grade_pending() returns True
 
     Args:
         subject_score: The SubjectScore instance
@@ -339,15 +340,32 @@ def calculate_final_score(
         subject_score.pract_raw_score, exam_subject.pract_max_score, exam_subject.pract_pct
     )
 
-    # Track which components are valid (have max_score and pct)
+    # Track which components are expected (have max_score and pct) and valid (have a calculated score)
+    expected_components = []
     valid_components = []
 
-    if component_a is not None:
-        valid_components.append(("A", component_a, is_absent_a))
-    if component_b is not None:
-        valid_components.append(("B", component_b, is_absent_b))
-    if component_c is not None:
-        valid_components.append(("C", component_c, is_absent_c))
+    if exam_subject.obj_max_score is not None and exam_subject.obj_pct is not None:
+        expected_components.append(("obj", component_a, is_absent_a))
+        if component_a is not None:
+            valid_components.append(("obj", component_a, is_absent_a))
+
+    if exam_subject.essay_max_score is not None and exam_subject.essay_pct is not None:
+        expected_components.append(("essay", component_b, is_absent_b))
+        if component_b is not None:
+            valid_components.append(("essay", component_b, is_absent_b))
+
+    if exam_subject.pract_max_score is not None and exam_subject.pract_pct is not None:
+        expected_components.append(("pract", component_c, is_absent_c))
+        if component_c is not None:
+            valid_components.append(("pract", component_c, is_absent_c))
+
+    # If not all expected components are valid (some are None), this indicates pending status
+    # This function should not be called when is_grade_pending() returns True
+    # But we handle it gracefully by raising an error
+    if len(valid_components) < len(expected_components):
+        # Some expected components are missing - this indicates pending status
+        # The caller should check is_grade_pending first before calling this function
+        raise ValueError("Cannot calculate final score: some expected components are missing. Check is_grade_pending() first.")
 
     # Check if all valid components are absent
     if valid_components:
@@ -360,18 +378,74 @@ def calculate_final_score(
     return final_score
 
 
-def calculate_grade(total_score: float, grade_ranges_json: list[dict] | None) -> "Grade | None":
+def is_grade_pending(subject_score: "SubjectScore", exam_subject: "ExamSubject") -> bool:
+    """
+    Check if grade should be pending due to missing component scores.
+
+    A grade is pending if any expected component is not explicitly set:
+    - An ExamSubject has a max_score set for a component (obj, essay, or pract) - this means the component is expected
+    - But the corresponding SubjectScore raw_score is None (not set)
+    - Note: "A"/"AA" counts as explicitly set (absent is still a valid value), so it does NOT cause pending status
+    - Only None (not set) causes pending status
+
+    Examples:
+    - If obj_max_score is set but obj_raw_score is None → PENDING
+    - If obj_max_score is set and obj_raw_score is "A" → NOT PENDING (explicitly set as absent)
+    - If obj_max_score is set and obj_raw_score is "50" → NOT PENDING (explicitly set as numeric)
+
+    Args:
+        subject_score: The SubjectScore instance
+        exam_subject: The ExamSubject instance with max_scores
+
+    Returns:
+        True if grade should be pending (any expected component is not explicitly set), False otherwise
+    """
+    # Check if obj component is expected but not explicitly set
+    if exam_subject.obj_max_score is not None:
+        if subject_score.obj_raw_score is None:
+            return True
+
+    # Check if essay component is expected but not explicitly set
+    if exam_subject.essay_max_score is not None:
+        if subject_score.essay_raw_score is None:
+            return True
+
+    # Check if pract component is expected but not explicitly set
+    if exam_subject.pract_max_score is not None:
+        if subject_score.pract_raw_score is None:
+            return True
+
+    return False
+
+
+def calculate_grade(
+    total_score: float,
+    grade_ranges_json: list[dict] | None,
+    subject_score: "SubjectScore | None" = None,
+    exam_subject: "ExamSubject | None" = None,
+) -> "Grade | None":
     """
     Calculate grade from total_score using grade ranges JSON array.
 
     Args:
         total_score: The total score (0-100, or ABSENT_RESULT_SENTINEL -1.0)
         grade_ranges_json: List of grade range dicts: [{"grade": "Fail", "min": 0, "max": 40}, ...]
+        subject_score: Optional SubjectScore instance to check for pending components
+        exam_subject: Optional ExamSubject instance to check for pending components
 
     Returns:
         Grade enum if a matching range is found, None otherwise.
-        Returns None if total_score is ABSENT_RESULT_SENTINEL (-1.0) or if no range matches.
+        Returns None if:
+        - total_score is ABSENT_RESULT_SENTINEL (-1.0)
+        - Any required component is missing (pending)
+        - No range matches
+        - grade_ranges_json is missing or empty
     """
+    # Check if grade should be pending due to missing components
+    if subject_score is not None and exam_subject is not None:
+        if is_grade_pending(subject_score, exam_subject):
+            return None
+
     # Handle absent result sentinel
     if total_score == ABSENT_RESULT_SENTINEL:
         return None
