@@ -2,7 +2,7 @@ from datetime import datetime
 
 from pydantic import BaseModel, Field, field_validator
 
-from app.models import DataExtractionMethod
+from app.models import DataExtractionMethod, Grade
 from app.utils.score_utils import parse_score_value
 
 
@@ -53,6 +53,7 @@ class ScoreResponse(BaseModel):
     subject_id: int
     subject_code: str
     subject_name: str
+    grade: Grade | None = None  # Calculated on-the-fly from total_score using grade ranges
 
     class Config:
         from_attributes = True

@@ -37,7 +37,7 @@ from app.schemas.score import (
     UnmatchedRecordsListResponse,
     UpdateScoresFromReductoResponse,
 )
-from app.utils.score_utils import add_extraction_method_to_document, parse_score_value
+from app.utils.score_utils import add_extraction_method_to_document, calculate_grade, parse_score_value
 
 logger = logging.getLogger(__name__)
 
@@ -191,7 +191,10 @@ async def get_document_scores(document_id: str, session: DBSessionDep) -> Docume
     rows = result.all()
 
     scores = []
-    for subject_score, subject_reg, _exam_reg, candidate, _exam_subject, subject in rows:
+    for subject_score, subject_reg, _exam_reg, candidate, exam_subject, subject in rows:
+        # Calculate grade from grade ranges JSON
+        grade = calculate_grade(subject_score.total_score, exam_subject.grade_ranges_json)
+
         scores.append(
             ScoreResponse(
                 id=subject_score.id,
@@ -214,6 +217,7 @@ async def get_document_scores(document_id: str, session: DBSessionDep) -> Docume
                 subject_id=subject.id,
                 subject_code=subject.code,
                 subject_name=subject.name,
+                grade=grade,
             )
         )
 
@@ -319,6 +323,9 @@ async def update_score(score_id: int, score_update: ScoreUpdate, session: DBSess
     await session.commit()
     await session.refresh(subject_score)
 
+    # Calculate grade from grade ranges JSON
+    grade = calculate_grade(subject_score.total_score, exam_subject.grade_ranges_json)
+
     return ScoreResponse(
         id=subject_score.id,
         subject_registration_id=subject_score.subject_registration_id,
@@ -340,6 +347,7 @@ async def update_score(score_id: int, score_update: ScoreUpdate, session: DBSess
         subject_id=subject.id,
         subject_code=subject.code,
         subject_name=subject.name,
+        grade=grade,
     )
 
 

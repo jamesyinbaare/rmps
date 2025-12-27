@@ -2,6 +2,8 @@
 
 from typing import TYPE_CHECKING
 
+from app.models import Grade
+
 if TYPE_CHECKING:
     from app.models import DataExtractionMethod, Document, ExamSubject, SubjectScore
 
@@ -356,3 +358,147 @@ def calculate_final_score(
     # Sum all component scores (absent components contribute 0.0)
     final_score = sum(score for _, score, _ in valid_components)
     return final_score
+
+
+def calculate_grade(total_score: float, grade_ranges_json: list[dict] | None) -> "Grade | None":
+    """
+    Calculate grade from total_score using grade ranges JSON array.
+
+    Args:
+        total_score: The total score (0-100, or ABSENT_RESULT_SENTINEL -1.0)
+        grade_ranges_json: List of grade range dicts: [{"grade": "Fail", "min": 0, "max": 40}, ...]
+
+    Returns:
+        Grade enum if a matching range is found, None otherwise.
+        Returns None if total_score is ABSENT_RESULT_SENTINEL (-1.0) or if no range matches.
+    """
+    # Handle absent result sentinel
+    if total_score == ABSENT_RESULT_SENTINEL:
+        return None
+
+    # Handle missing or empty grade ranges
+    if not grade_ranges_json:
+        return None
+
+    # Iterate through the array and find matching range
+    for grade_range in grade_ranges_json:
+        min_score = grade_range.get("min")
+        max_score = grade_range.get("max")
+        grade_name = grade_range.get("grade")
+
+        # Skip if min/max are None
+        if min_score is None or max_score is None:
+            continue
+
+        # Check if score falls within this range (inclusive boundaries)
+        if min_score <= total_score <= max_score:
+            # Convert grade name string to Grade enum
+            try:
+                return Grade(grade_name)  # e.g., "Fail" -> Grade.FAIL
+            except ValueError:
+                # Invalid grade name in JSON
+                continue
+
+    return None
+
+
+def validate_grade_ranges(grade_ranges_json: list[dict]) -> tuple[bool, str | None]:
+    """
+    Validate that grade ranges don't overlap and cover 0-100 when all ranges are set.
+
+    Args:
+        grade_ranges_json: List of grade range dicts: [{"grade": "Fail", "min": 0, "max": 40}, ...]
+
+    Returns:
+        Tuple of (is_valid, error_message). is_valid is True if ranges are valid, False otherwise.
+        error_message is None if valid, otherwise contains the error description.
+    """
+    if not grade_ranges_json:
+        # Empty ranges are valid (can be set later)
+        return True, None
+
+    # Filter to only ranges with both min and max set
+    valid_ranges = [
+        gr for gr in grade_ranges_json
+        if gr.get("min") is not None and gr.get("max") is not None
+    ]
+
+    if not valid_ranges:
+        # No complete ranges are valid (can be set later)
+        return True, None
+
+    # Validate min <= max for each range
+    for grade_range in valid_ranges:
+        min_score = grade_range.get("min")
+        max_score = grade_range.get("max")
+        grade_name = grade_range.get("grade", "Unknown")
+
+        if min_score > max_score:
+            return False, f"Grade {grade_name}: min ({min_score}) cannot be greater than max ({max_score})"
+
+    # Validate ranges are within 0-100
+    for grade_range in valid_ranges:
+        min_score = grade_range.get("min")
+        max_score = grade_range.get("max")
+        grade_name = grade_range.get("grade", "Unknown")
+
+        if min_score < 0 or max_score > 100:
+            return False, f"Grade {grade_name}: scores must be between 0 and 100"
+
+    # Check for overlaps
+    # Sort by min_score for easier overlap detection
+    sorted_ranges = sorted(valid_ranges, key=lambda gr: gr.get("min", 0))
+
+    for i in range(len(sorted_ranges) - 1):
+        current = sorted_ranges[i]
+        next_range = sorted_ranges[i + 1]
+
+        current_min = current.get("min")
+        current_max = current.get("max")
+        current_grade = current.get("grade", "Unknown")
+        next_min = next_range.get("min")
+        next_max = next_range.get("max")
+        next_grade = next_range.get("grade", "Unknown")
+
+        # Check if ranges overlap (inclusive boundaries)
+        # Overlap if: current.max >= next_range.min
+        if current_max >= next_min:
+            return False, (
+                f"Grade ranges overlap: {current_grade} ({current_min}-{current_max}) "
+                f"overlaps with {next_grade} ({next_min}-{next_max})"
+            )
+
+    # Check if ranges cover 0-100
+    # Get the minimum min_score and maximum max_score
+    min_min = min(gr.get("min", 0) for gr in valid_ranges)
+    max_max = max(gr.get("max", 100) for gr in valid_ranges)
+
+    if min_min > 0:
+        return False, f"Grade ranges do not cover the full range. Lowest min is {min_min}, but should start at 0"
+
+    if max_max < 100:
+        return False, f"Grade ranges do not cover the full range. Highest max is {max_max}, but should end at 100"
+
+    # Check for gaps between ranges
+    for i in range(len(sorted_ranges) - 1):
+        current = sorted_ranges[i]
+        next_range = sorted_ranges[i + 1]
+
+        current_max = current.get("max")
+        current_grade = current.get("grade", "Unknown")
+        next_min = next_range.get("min")
+        next_grade = next_range.get("grade", "Unknown")
+
+        # Check if there's a gap: next_min should be exactly current_max + 1 (or less if overlapping, which we already checked)
+        # A gap exists if next_min > current_max + 1 (allowing small floating point errors)
+        # Consecutive ranges (e.g., 39 and 40) are valid: current_max=39, next_min=40, gap = 40 - 39 = 1, which is acceptable
+        gap_size = next_min - current_max
+        if gap_size > 1.01:  # Allow small floating point errors (0.01)
+            gap_start = current_max
+            gap_end = next_min
+            return False, (
+                f"Grade ranges have a gap: {current_grade} ends at {gap_start} "
+                f"but {next_grade} starts at {gap_end}"
+            )
+
+    return True, None

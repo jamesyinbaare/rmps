@@ -90,6 +90,7 @@ class ExamSubjectResponse(BaseModel):
     obj_max_score: float | None
     essay_max_score: float | None
     pract_max_score: float | None
+    grade_ranges_json: list[dict] | None = None
     created_at: datetime
     updated_at: datetime
 
