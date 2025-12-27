@@ -29,6 +29,7 @@ from app.schemas.candidate import (
     SubjectRequirementsValidationResponse,
     SubjectScoreResponse,
 )
+from app.utils.score_utils import calculate_grade
 from app.services.candidate_upload import (
     CandidateUploadParseError,
     CandidateUploadValidationError,
@@ -969,23 +970,42 @@ async def list_exam_registration_subjects(
         .join(Subject, ExamSubject.subject_id == Subject.id)
         .outerjoin(SubjectScore, SubjectRegistration.id == SubjectScore.subject_registration_id)
         .where(SubjectRegistration.exam_registration_id == exam_registration.id)
-        .order_by(Subject.code)
+        .order_by(Subject.subject_type, Subject.code)  # Sort by subject_type (CORE first), then code
     )
     subject_reg_result = await session.execute(subject_reg_stmt)
     subject_registrations = subject_reg_result.all()
 
-    return [
-        SubjectRegistrationResponse(
-            id=subject_reg.id,
-            exam_registration_id=subject_reg.exam_registration_id,
-            exam_subject_id=subject_reg.exam_subject_id,
-            subject_id=subject.id,
-            subject_code=subject.code,
-            subject_name=subject.name,
-            series=subject_reg.series,
-            created_at=subject_reg.created_at,
-            updated_at=subject_reg.updated_at,
-            subject_score=SubjectScoreResponse.model_validate(subject_score) if subject_score else None,
+    result = []
+    for subject_reg, exam_subject, subject, subject_score in subject_registrations:
+        # Calculate grade if subject_score exists
+        grade = None
+        if subject_score:
+            grade = calculate_grade(subject_score.total_score, exam_subject.grade_ranges_json)
+
+        # Create SubjectScoreResponse with grade
+        subject_score_response = None
+        if subject_score:
+            subject_score_dict = SubjectScoreResponse.model_validate(subject_score).model_dump()
+            subject_score_dict["grade"] = grade
+            subject_score_response = SubjectScoreResponse(**subject_score_dict)
+
+        result.append(
+            SubjectRegistrationResponse(
+                id=subject_reg.id,
+                exam_registration_id=subject_reg.exam_registration_id,
+                exam_subject_id=subject_reg.exam_subject_id,
+                subject_id=subject.id,
+                subject_code=subject.code,
+                subject_name=subject.name,
+                subject_type=subject.subject_type,
+                series=subject_reg.series,
+                created_at=subject_reg.created_at,
+                updated_at=subject_reg.updated_at,
+                subject_score=subject_score_response,
+                obj_max_score=exam_subject.obj_max_score,
+                essay_max_score=exam_subject.essay_max_score,
+                pract_max_score=exam_subject.pract_max_score,
+            )
         )
-        for subject_reg, exam_subject, subject, subject_score in subject_registrations
-    ]
+
+    return result

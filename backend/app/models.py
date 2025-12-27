@@ -96,6 +96,15 @@ class DataExtractionMethod(enum.Enum):
     MANUAL_ENTRY_PHYSICAL = "MANUAL_ENTRY_PHYSICAL"
 
 
+class Grade(enum.Enum):
+    FAIL = "Fail"
+    PASS = "Pass"
+    LOWER_CREDIT = "Lower Credit"
+    CREDIT = "Credit"
+    UPPER_CREDIT = "Upper Credit"
+    DISTINCTION = "Distinction"
+
+
 class School(Base):
     __tablename__ = "schools"
     id = Column(Integer, primary_key=True)
@@ -252,6 +261,7 @@ class ExamSubject(Base):
     obj_max_score = Column(Float, nullable=True)
     essay_max_score = Column(Float, nullable=True)
     pract_max_score = Column(Float, nullable=True)
+    grade_ranges_json = Column(JSON, nullable=True)  # Array of {"grade": str, "min": float, "max": float}
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
 

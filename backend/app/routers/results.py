@@ -17,6 +17,7 @@ from app.models import (
 )
 from app.schemas.score import ScoreResponse
 from app.services.result_processing import ResultProcessingError, ResultProcessingService
+from app.utils.score_utils import calculate_grade
 
 logger = logging.getLogger(__name__)
 
@@ -153,6 +154,9 @@ async def process_score(score_id: int, session: DBSessionDep) -> ScoreResponse:
     candidate_result = await session.execute(candidate_stmt)
     candidate = candidate_result.scalar_one()
 
+    # Calculate grade from grade ranges JSON
+    grade = calculate_grade(subject_score.total_score, exam_subject.grade_ranges_json)
+
     return ScoreResponse(
         id=subject_score.id,
         subject_registration_id=subject_score.subject_registration_id,
@@ -174,6 +178,7 @@ async def process_score(score_id: int, session: DBSessionDep) -> ScoreResponse:
         subject_id=subject.id,
         subject_code=subject.code,
         subject_name=subject.name,
+        grade=grade,
     )
 
 
@@ -384,6 +389,9 @@ async def process_subject_registration_result(
     subject_result = await session.execute(subject_stmt)
     subject = subject_result.scalar_one()
 
+    # Calculate grade from grade ranges JSON
+    grade = calculate_grade(subject_score.total_score, exam_subject.grade_ranges_json)
+
     return ScoreResponse(
         id=subject_score.id,
         subject_registration_id=subject_score.subject_registration_id,
@@ -405,4 +413,5 @@ async def process_subject_registration_result(
         subject_id=subject.id,
         subject_code=subject.code,
         subject_name=subject.name,
+        grade=grade,
     )

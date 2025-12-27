@@ -250,6 +250,7 @@ export interface SubjectScore {
   obj_document_id: string | null;
   essay_document_id: string | null;
   pract_document_id: string | null;
+  grade: "Fail" | "Pass" | "Lower Credit" | "Credit" | "Upper Credit" | "Distinction" | null;
   created_at: string;
   updated_at: string;
 }
@@ -260,10 +261,14 @@ export interface SubjectRegistration {
   subject_id: number;
   subject_code: string;
   subject_name: string;
+  subject_type: "CORE" | "ELECTIVE";
   series: number | null;
   created_at: string;
   updated_at: string;
   subject_score: SubjectScore | null;
+  obj_max_score: number | null;
+  essay_max_score: number | null;
+  pract_max_score: number | null;
 }
 
 export interface ExamRegistration {

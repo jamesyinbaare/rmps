@@ -2,6 +2,8 @@ from datetime import date, datetime
 
 from pydantic import BaseModel, Field
 
+from app.models import Grade, SubjectType
+
 
 class CandidateBase(BaseModel):
     """Base candidate schema."""
@@ -89,10 +91,15 @@ class SubjectRegistrationResponse(BaseModel):
     subject_id: int  # Derived from exam_subject.subject_id
     subject_code: str  # Derived from exam_subject.subject.code
     subject_name: str  # Derived from exam_subject.subject.name
+    subject_type: SubjectType  # Derived from exam_subject.subject.subject_type
     series: int | None
     created_at: datetime
     updated_at: datetime
     subject_score: "SubjectScoreResponse | None" = None
+    # ExamSubject details for displaying score components
+    obj_max_score: float | None = None
+    essay_max_score: float | None = None
+    pract_max_score: float | None = None
 
     class Config:
         from_attributes = True
@@ -113,6 +120,7 @@ class SubjectScoreResponse(BaseModel):
     obj_document_id: str | None = None
     essay_document_id: str | None = None
     pract_document_id: str | None = None
+    grade: Grade | None = None  # Calculated from total_score using grade ranges
     created_at: datetime
     updated_at: datetime
 

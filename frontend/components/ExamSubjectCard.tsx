@@ -5,10 +5,11 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
-import { Edit, Save, X, Loader2 } from "lucide-react";
+import { Edit, Save, X, Loader2, GraduationCap } from "lucide-react";
 import type { ExamSubject } from "@/lib/api";
 import { updateExamSubject } from "@/lib/api";
 import { toast } from "sonner";
+import { GradeRangeModal } from "@/components/GradeRangeModal";
 
 interface ExamSubjectCardProps {
   examSubject: ExamSubject;
@@ -18,6 +19,7 @@ interface ExamSubjectCardProps {
 export function ExamSubjectCard({ examSubject, onUpdate }: ExamSubjectCardProps) {
   const [isEditing, setIsEditing] = useState(false);
   const [loading, setLoading] = useState(false);
+  const [gradeModalOpen, setGradeModalOpen] = useState(false);
   const [formData, setFormData] = useState({
     obj_max_score: examSubject.obj_max_score?.toString() || "",
     essay_max_score: examSubject.essay_max_score?.toString() || "",
@@ -112,10 +114,16 @@ export function ExamSubjectCard({ examSubject, onUpdate }: ExamSubjectCardProps)
             </Badge>
           </div>
           {!isEditing ? (
-            <Button variant="outline" size="sm" onClick={handleEdit}>
-              <Edit className="h-4 w-4 mr-2" />
-              Edit
-            </Button>
+            <div className="flex gap-2">
+              <Button variant="outline" size="sm" onClick={() => setGradeModalOpen(true)}>
+                <GraduationCap className="h-4 w-4 mr-2" />
+                Manage Grades
+              </Button>
+              <Button variant="outline" size="sm" onClick={handleEdit}>
+                <Edit className="h-4 w-4 mr-2" />
+                Edit
+              </Button>
+            </div>
           ) : (
             <div className="flex gap-2">
               <Button variant="outline" size="sm" onClick={handleCancel} disabled={loading}>
@@ -256,6 +264,17 @@ export function ExamSubjectCard({ examSubject, onUpdate }: ExamSubjectCardProps)
           </div>
         </div>
       </CardContent>
+
+      <GradeRangeModal
+        examSubject={examSubject}
+        open={gradeModalOpen}
+        onOpenChange={setGradeModalOpen}
+        onSuccess={() => {
+          // The modal updates examSubject.grade_ranges_json internally
+          // Trigger parent update to refresh the list
+          onUpdate?.(examSubject);
+        }}
+      />
     </Card>
   );
 }
