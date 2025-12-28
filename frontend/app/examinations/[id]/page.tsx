@@ -22,6 +22,7 @@ import {
 import { getExam, listExamSubjects, serializeExam, downloadExamSubjectTemplate, type ExamSubject, type SerializationResponse, processExamSubjects, processExamResults } from "@/lib/api";
 import type { Exam } from "@/types/document";
 import { ArrowLeft, Search, X, ClipboardList, Edit, Calendar, Users, CheckCircle2, AlertCircle, Loader2, ChevronDown, ChevronRight, Download, Upload, LayoutGrid, List } from "lucide-react";
+import { SubjectInsightsPlayground } from "@/components/SubjectInsightsPlayground";
 import { toast } from "sonner";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
@@ -332,6 +333,12 @@ export default function ExaminationDetailPage() {
                 className="rounded-none border-b-2 border-transparent bg-transparent px-4 py-3 text-sm font-medium text-muted-foreground transition-all hover:text-foreground data-[state=active]:border-primary data-[state=active]:text-foreground data-[state=active]:shadow-none"
               >
                 Result Processing
+              </TabsTrigger>
+              <TabsTrigger
+                value="insights"
+                className="rounded-none border-b-2 border-transparent bg-transparent px-4 py-3 text-sm font-medium text-muted-foreground transition-all hover:text-foreground data-[state=active]:border-primary data-[state=active]:text-foreground data-[state=active]:shadow-none"
+              >
+                Insights
               </TabsTrigger>
             </TabsList>
 
@@ -868,6 +875,10 @@ export default function ExaminationDetailPage() {
                   )}
                 </CardContent>
               </Card>
+            </TabsContent>
+
+            <TabsContent value="insights" className="mt-6">
+              <SubjectInsightsPlayground examId={examId!} subjects={subjects} />
             </TabsContent>
           </Tabs>
           </div>

@@ -1810,3 +1810,170 @@ export async function processExamSubjects(
   );
   return handleResponse<ProcessExamResultsResponse>(response);
 }
+
+// Insights API Functions
+
+export interface FilterInfo {
+  region: string | null;
+  zone: string | null;
+  school_id: number | null;
+  school_name: string | null;
+}
+
+export interface ComponentStats {
+  mean: number | null;
+  median: number | null;
+  min: number | null;
+  max: number | null;
+  std_deviation: number | null;
+}
+
+export interface SubjectPerformanceStatistics {
+  exam_subject_id: number;
+  subject_code: string;
+  subject_name: string;
+  filters: FilterInfo;
+  total_candidates: number;
+  processed_candidates: number;
+  absent_candidates: number;
+  pending_candidates: number;
+  mean_score: number | null;
+  median_score: number | null;
+  min_score: number | null;
+  max_score: number | null;
+  std_deviation: number | null;
+  percentiles: {
+    "25th": number;
+    "50th": number;
+    "75th": number;
+    "90th": number;
+    "95th": number;
+  };
+  grade_distribution: Record<string, number>;
+  grade_percentages: Record<string, number>;
+  pass_rate: number | null;
+  obj_stats: ComponentStats | null;
+  essay_stats: ComponentStats | null;
+  pract_stats: ComponentStats | null;
+}
+
+export interface BinData {
+  range_label: string;
+  min: number;
+  max: number;
+  count: number;
+  percentage: number;
+  grade_breakdown: Record<string, number> | null;
+}
+
+export interface HistogramData {
+  bins: BinData[];
+  bin_size: number;
+  total_count: number;
+  excluded_count: number;
+  filters: FilterInfo;
+}
+
+export interface SchoolOption {
+  id: number;
+  code: string;
+  name: string;
+  region: string;
+  zone: string;
+  candidate_count: number;
+}
+
+export interface FilterOptions {
+  regions: string[];
+  zones: string[];
+  schools: SchoolOption[];
+}
+
+/**
+ * Get performance statistics for an exam subject.
+ */
+export async function getSubjectPerformanceStatistics(
+  examSubjectId: number,
+  filters?: {
+    region?: string;
+    zone?: string;
+    schoolId?: number;
+  },
+  testGradeRanges?: GradeRangeConfig[],
+  includePending?: boolean,
+  includeAbsent?: boolean
+): Promise<SubjectPerformanceStatistics> {
+  const params = new URLSearchParams();
+  if (filters?.region) params.append("region", filters.region);
+  if (filters?.zone) params.append("zone", filters.zone);
+  if (filters?.schoolId) params.append("school_id", filters.schoolId.toString());
+  if (testGradeRanges) {
+    params.append("grade_ranges_json", JSON.stringify(testGradeRanges));
+  }
+  if (includePending !== undefined) {
+    params.append("include_pending", includePending.toString());
+  }
+  if (includeAbsent !== undefined) {
+    params.append("include_absent", includeAbsent.toString());
+  }
+
+  const response = await fetch(
+    `${API_BASE_URL}/api/v1/insights/exam-subject/${examSubjectId}/statistics?${params.toString()}`,
+    {
+      method: "GET",
+    }
+  );
+  return handleResponse<SubjectPerformanceStatistics>(response);
+}
+
+/**
+ * Get histogram data for score distribution.
+ */
+export async function getSubjectHistogram(
+  examSubjectId: number,
+  binSize?: number,
+  filters?: {
+    region?: string;
+    zone?: string;
+    schoolId?: number;
+  },
+  testGradeRanges?: GradeRangeConfig[],
+  includePending?: boolean,
+  includeAbsent?: boolean
+): Promise<HistogramData> {
+  const params = new URLSearchParams();
+  if (binSize !== undefined) params.append("bin_size", binSize.toString());
+  if (filters?.region) params.append("region", filters.region);
+  if (filters?.zone) params.append("zone", filters.zone);
+  if (filters?.schoolId) params.append("school_id", filters.schoolId.toString());
+  if (testGradeRanges) {
+    params.append("grade_ranges_json", JSON.stringify(testGradeRanges));
+  }
+  if (includePending !== undefined) {
+    params.append("include_pending", includePending.toString());
+  }
+  if (includeAbsent !== undefined) {
+    params.append("include_absent", includeAbsent.toString());
+  }
+
+  const response = await fetch(
+    `${API_BASE_URL}/api/v1/insights/exam-subject/${examSubjectId}/histogram?${params.toString()}`,
+    {
+      method: "GET",
+    }
+  );
+  return handleResponse<HistogramData>(response);
+}
+
+/**
+ * Get available filter options for an exam subject.
+ */
+export async function getSubjectFilterOptions(examSubjectId: number): Promise<FilterOptions> {
+  const response = await fetch(
+    `${API_BASE_URL}/api/v1/insights/exam-subject/${examSubjectId}/filter-options`,
+    {
+      method: "GET",
+    }
+  );
+  return handleResponse<FilterOptions>(response);
+}
