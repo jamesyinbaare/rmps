@@ -356,6 +356,7 @@ async def list_exam_subjects(exam_id: int, session: DBSessionDep) -> list[ExamSu
             obj_max_score=exam_subject.obj_max_score,
             essay_max_score=exam_subject.essay_max_score,
             pract_max_score=exam_subject.pract_max_score,
+            grade_ranges_json=exam_subject.grade_ranges_json,
             created_at=exam_subject.created_at,
             updated_at=exam_subject.updated_at,
         )

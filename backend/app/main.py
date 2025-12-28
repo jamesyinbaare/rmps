@@ -7,7 +7,7 @@ from fastapi import FastAPI, status
 from starlette.middleware.cors import CORSMiddleware
 
 from app.dependencies.database import get_sessionmanager, initialize_db
-from app.routers import candidates, documents, exams, grades, pdf_generation_jobs, programmes, results, schools, scores, subjects, validation
+from app.routers import candidates, documents, exams, grades, insights, pdf_generation_jobs, programmes, results, schools, scores, subjects, validation
 from app.services.reducto_queue import reducto_queue_service
 
 
@@ -47,6 +47,7 @@ app.include_router(results.router)
 app.include_router(grades.router)
 app.include_router(pdf_generation_jobs.router)
 app.include_router(validation.router)
+app.include_router(insights.router)
 
 
 @app.get("/", status_code=status.HTTP_200_OK)
