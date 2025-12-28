@@ -40,6 +40,8 @@ class SubjectPerformanceStatistics(BaseModel):
     min_score: float | None = None
     max_score: float | None = None
     std_deviation: float | None = None
+    skewness: float | None = None
+    kurtosis: float | None = None
     percentiles: dict[str, float]  # 25th, 50th, 75th, 90th, 95th
 
     # Grade distribution (using provided or current grade_ranges_json)
@@ -91,3 +93,12 @@ class FilterOptions(BaseModel):
     regions: list[str]  # Available regions for this exam subject
     zones: list[str]  # Available zones
     schools: list[SchoolOption]  # Available schools with counts
+
+
+class RawScoresResponse(BaseModel):
+    """Raw scores array for an exam subject."""
+
+    scores: list[float]
+    total_count: int
+    processed_count: int
+    filters: FilterInfo

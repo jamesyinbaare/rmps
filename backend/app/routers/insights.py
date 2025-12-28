@@ -2,11 +2,9 @@
 
 import json
 import logging
-from typing import Any
 
 from fastapi import APIRouter, HTTPException, Query, status
 from sqlalchemy import func, select
-from sqlalchemy.orm import joinedload
 
 from app.dependencies.database import DBSessionDep
 from app.models import (
@@ -25,10 +23,18 @@ from app.schemas.insights import (
     FilterInfo,
     FilterOptions,
     HistogramData,
+    RawScoresResponse,
     SchoolOption,
     SubjectPerformanceStatistics,
     BinData,
 )
+from app.schemas.scores_analysis import (
+    BoundaryAnalysisRequest,
+    BoundaryComparisonRequest,
+    MethodAnalysis,
+    MethodComparison,
+)
+from app.services.scores_analysis_service import ScoresAnalysisService
 from app.utils.score_utils import ABSENT_RESULT_SENTINEL, calculate_grade, is_grade_pending
 from app.utils.statistics_utils import calculate_percentiles, calculate_statistics
 
@@ -143,7 +149,7 @@ async def get_subject_performance_statistics(
 
     grade_distribution: dict[str, int] = {}
 
-    for subject_score, subject_reg, exam_reg, candidate, school in rows:
+    for subject_score, _subject_reg, _exam_reg, _candidate, _school in rows:
         total_score = subject_score.total_score
 
         # Process scores based on inclusion flags
@@ -238,6 +244,8 @@ async def get_subject_performance_statistics(
         min_score=score_stats["min"],
         max_score=score_stats["max"],
         std_deviation=score_stats["std_deviation"],
+        skewness=score_stats["skewness"],
+        kurtosis=score_stats["kurtosis"],
         percentiles=percentiles_dict,
         grade_distribution=grade_distribution,
         grade_percentages=grade_percentages,
@@ -303,7 +311,7 @@ async def get_subject_histogram(
     processed_scores: list[float] = []
     excluded_count = 0
 
-    for subject_score, subject_reg, exam_reg, candidate, school in rows:
+    for subject_score, _subject_reg, _exam_reg, _candidate, _school in rows:
         total_score = subject_score.total_score
 
         # Process scores based on inclusion flags
@@ -411,6 +419,77 @@ async def get_subject_histogram(
     )
 
 
+@router.get("/exam-subject/{exam_subject_id}/scores", response_model=RawScoresResponse)
+async def get_subject_raw_scores(
+    exam_subject_id: int,
+    session: DBSessionDep,
+    region: SchoolRegion | None = Query(None, description="Filter by school region"),
+    zone: SchoolZone | None = Query(None, description="Filter by school zone"),
+    school_id: int | None = Query(None, description="Filter by school ID"),
+    include_pending: bool = Query(False, description="Include pending candidates as 0.0 in calculations"),
+    include_absent: bool = Query(False, description="Include absent candidates as 0.0 in calculations"),
+) -> RawScoresResponse:
+    """
+    Get raw scores array for an exam subject.
+
+    Returns the actual score values, not histogram bins.
+    Supports filtering by region, zone, and school.
+    """
+    # Get exam subject
+    exam_subject_stmt = select(ExamSubject).where(ExamSubject.id == exam_subject_id)
+    exam_subject_result = await session.execute(exam_subject_stmt)
+    exam_subject = exam_subject_result.scalar_one_or_none()
+    if not exam_subject:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Exam subject not found")
+
+    # Build query
+    stmt = (
+        select(SubjectScore, SubjectRegistration, ExamRegistration, Candidate, School)
+        .join(SubjectRegistration, SubjectScore.subject_registration_id == SubjectRegistration.id)
+        .join(ExamRegistration, SubjectRegistration.exam_registration_id == ExamRegistration.id)
+        .join(Candidate, ExamRegistration.candidate_id == Candidate.id)
+        .join(School, Candidate.school_id == School.id)
+        .where(SubjectRegistration.exam_subject_id == exam_subject_id)
+    )
+
+    # Apply filters
+    stmt = apply_filters(stmt, region, zone, school_id)
+
+    result = await session.execute(stmt)
+    rows = result.all()
+
+    # Collect processed scores
+    processed_scores: list[float] = []
+
+    for subject_score, _subject_reg, _exam_reg, _candidate, _school in rows:
+        total_score = subject_score.total_score
+
+        # Process scores based on inclusion flags
+        if total_score == ABSENT_RESULT_SENTINEL:
+            if include_absent:
+                # Treat absent as 0.0 when included
+                processed_scores.append(0.0)
+        elif total_score == 0.0:
+            # Check if actually pending
+            if is_grade_pending(subject_score, exam_subject):
+                if include_pending:
+                    # Treat pending as 0.0 when included
+                    processed_scores.append(0.0)
+            else:
+                # Not pending, just a zero score
+                processed_scores.append(total_score)
+        else:
+            # Valid score > 0
+            processed_scores.append(total_score)
+
+    return RawScoresResponse(
+        scores=processed_scores,
+        total_count=len(rows),
+        processed_count=len(processed_scores),
+        filters=get_filter_info(region, zone, school_id),
+    )
+
+
 @router.get("/exam-subject/{exam_subject_id}/filter-options", response_model=FilterOptions)
 async def get_subject_filter_options(
     exam_subject_id: int,
@@ -485,3 +564,123 @@ async def get_subject_filter_options(
     ]
 
     return FilterOptions(regions=regions, zones=zones, schools=schools)
+
+
+@router.post(
+    "/exam-subject/{exam_subject_id}/boundary-analysis",
+    response_model=MethodAnalysis,
+    status_code=status.HTTP_200_OK,
+)
+async def analyze_boundary_method(
+    exam_subject_id: int,
+    request: BoundaryAnalysisRequest,
+    session: DBSessionDep,
+) -> MethodAnalysis:
+    """
+    Analyze a single scoring method for boundary setting.
+
+    Supports filtering by region, zone, and school.
+    Returns calculated boundaries, grade distribution, and impact metrics.
+    """
+    try:
+        # Convert string region/zone to enum if provided
+        region_enum = None
+        if request.region:
+            try:
+                region_enum = SchoolRegion(request.region)
+            except ValueError:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail=f"Invalid region: {request.region}",
+                )
+
+        zone_enum = None
+        if request.zone:
+            try:
+                zone_enum = SchoolZone(request.zone)
+            except ValueError:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail=f"Invalid zone: {request.zone}",
+                )
+
+        analysis = await ScoresAnalysisService.analyze_single_method(
+            session=session,
+            exam_subject_id=exam_subject_id,
+            method=request.method,
+            region=region_enum,
+            zone=zone_enum,
+            school_id=request.school_id,
+            include_pending=request.include_pending,
+            include_absent=request.include_absent,
+        )
+
+        return analysis
+    except ValueError as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+    except Exception as e:
+        logger.exception("Error analyzing boundary method")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error analyzing boundary method: {str(e)}",
+        )
+
+
+@router.post(
+    "/exam-subject/{exam_subject_id}/boundary-comparison",
+    response_model=MethodComparison,
+    status_code=status.HTTP_200_OK,
+)
+async def compare_boundary_methods(
+    exam_subject_id: int,
+    request: BoundaryComparisonRequest,
+    session: DBSessionDep,
+) -> MethodComparison:
+    """
+    Compare multiple scoring methods for boundary setting.
+
+    Supports filtering by region, zone, and school.
+    Returns comparison of boundaries, grade distributions, and impact analysis.
+    """
+    try:
+        # Convert string region/zone to enum if provided
+        region_enum = None
+        if request.region:
+            try:
+                region_enum = SchoolRegion(request.region)
+            except ValueError:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail=f"Invalid region: {request.region}",
+                )
+
+        zone_enum = None
+        if request.zone:
+            try:
+                zone_enum = SchoolZone(request.zone)
+            except ValueError:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail=f"Invalid zone: {request.zone}",
+                )
+
+        comparison = await ScoresAnalysisService.compare_methods(
+            session=session,
+            exam_subject_id=exam_subject_id,
+            methods=request.methods,
+            region=region_enum,
+            zone=zone_enum,
+            school_id=request.school_id,
+            include_pending=request.include_pending,
+            include_absent=request.include_absent,
+        )
+
+        return comparison
+    except ValueError as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+    except Exception as e:
+        logger.exception("Error comparing boundary methods")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error comparing boundary methods: {str(e)}",
+        )

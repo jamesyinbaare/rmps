@@ -25,6 +25,7 @@ dependencies = [
     "python-barcode>=0.16.1",
     "weasyprint>=67.0",
     "cachetools>=6.2.4",
+    "scipy>=1.16.3",
 ]
 
 [dependency-groups]

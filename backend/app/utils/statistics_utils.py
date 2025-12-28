@@ -3,6 +3,12 @@
 import statistics
 from typing import Sequence
 
+try:
+    from scipy import stats
+    SCIPY_AVAILABLE = True
+except ImportError:
+    SCIPY_AVAILABLE = False
+
 
 def calculate_percentiles(data: Sequence[float], percentiles: list[float]) -> dict[str, float]:
     """
@@ -47,7 +53,7 @@ def calculate_statistics(data: Sequence[float]) -> dict[str, float | None]:
         data: Sequence of numeric values
 
     Returns:
-        Dictionary with mean, median, min, max, std_deviation
+        Dictionary with mean, median, min, max, std_deviation, skewness, kurtosis
     """
     if not data:
         return {
@@ -56,6 +62,8 @@ def calculate_statistics(data: Sequence[float]) -> dict[str, float | None]:
             "min": None,
             "max": None,
             "std_deviation": None,
+            "skewness": None,
+            "kurtosis": None,
         }
 
     try:
@@ -65,12 +73,24 @@ def calculate_statistics(data: Sequence[float]) -> dict[str, float | None]:
         max_val = max(data)
         std_dev = statistics.stdev(data) if len(data) > 1 else 0.0
 
+        # Calculate skewness and kurtosis
+        skewness = None
+        kurtosis = None
+        if SCIPY_AVAILABLE and len(data) > 2:
+            try:
+                skewness = float(stats.skew(data))
+                kurtosis = float(stats.kurtosis(data))
+            except Exception:
+                pass
+
         return {
             "mean": round(mean, 2),
             "median": round(median, 2),
             "min": round(min_val, 2),
             "max": round(max_val, 2),
             "std_deviation": round(std_dev, 2),
+            "skewness": round(skewness, 2) if skewness is not None else None,
+            "kurtosis": round(kurtosis, 2) if kurtosis is not None else None,
         }
     except statistics.StatisticsError:
         return {
@@ -79,4 +99,6 @@ def calculate_statistics(data: Sequence[float]) -> dict[str, float | None]:
             "min": None,
             "max": None,
             "std_deviation": None,
+            "skewness": None,
+            "kurtosis": None,
         }
