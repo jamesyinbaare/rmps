@@ -1842,6 +1842,8 @@ export interface SubjectPerformanceStatistics {
   min_score: number | null;
   max_score: number | null;
   std_deviation: number | null;
+  skewness: number | null;
+  kurtosis: number | null;
   percentiles: {
     "25th": number;
     "50th": number;
@@ -1887,6 +1889,13 @@ export interface FilterOptions {
   regions: string[];
   zones: string[];
   schools: SchoolOption[];
+}
+
+export interface RawScoresResponse {
+  scores: number[];
+  total_count: number;
+  processed_count: number;
+  filters: FilterInfo;
 }
 
 /**
@@ -1966,6 +1975,40 @@ export async function getSubjectHistogram(
 }
 
 /**
+ * Get raw scores array for an exam subject.
+ * Returns actual score values, not histogram bins.
+ */
+export async function getSubjectRawScores(
+  examSubjectId: number,
+  filters?: {
+    region?: string;
+    zone?: string;
+    schoolId?: number;
+  },
+  includePending?: boolean,
+  includeAbsent?: boolean
+): Promise<RawScoresResponse> {
+  const params = new URLSearchParams();
+  if (filters?.region) params.append("region", filters.region);
+  if (filters?.zone) params.append("zone", filters.zone);
+  if (filters?.schoolId) params.append("school_id", filters.schoolId.toString());
+  if (includePending !== undefined) {
+    params.append("include_pending", includePending.toString());
+  }
+  if (includeAbsent !== undefined) {
+    params.append("include_absent", includeAbsent.toString());
+  }
+
+  const response = await fetch(
+    `${API_BASE_URL}/api/v1/insights/exam-subject/${examSubjectId}/scores?${params.toString()}`,
+    {
+      method: "GET",
+    }
+  );
+  return handleResponse<RawScoresResponse>(response);
+}
+
+/**
  * Get available filter options for an exam subject.
  */
 export async function getSubjectFilterOptions(examSubjectId: number): Promise<FilterOptions> {
@@ -1976,4 +2019,145 @@ export async function getSubjectFilterOptions(examSubjectId: number): Promise<Fi
     }
   );
   return handleResponse<FilterOptions>(response);
+}
+
+// Scores Analysis Types
+export type ScoringMethod =
+  | "norm_referenced"
+  | "criterion_referenced"
+  | "statistical_std"
+  | "statistical_zscore"
+  | "fixed_distribution"
+  | "modified_curve"
+  | "mastery_based"
+  | "hybrid";
+
+export interface BoundarySet {
+  method: ScoringMethod;
+  method_name: string;
+  boundaries: Record<string, number>;
+  description?: string | null;
+  adjustments?: Record<string, any> | null;
+}
+
+export interface GradeDistribution {
+  grade_counts: Record<string, number>;
+  grade_percentages: Record<string, number>;
+  pass_rate: number | null;
+  distinction_rate: number | null;
+}
+
+export interface BorderlineAnalysis {
+  grade: string;
+  cutoff: number;
+  borderline_count: number;
+  borderline_percentage: number;
+}
+
+export interface ImpactMetrics {
+  total_students: number;
+  pass_rate: number | null;
+  distinction_rate: number | null;
+  average_grade_gap: number | null;
+  borderline_candidates: BorderlineAnalysis[];
+  warnings: string[];
+  recommendations: string[];
+}
+
+export interface MethodAnalysis {
+  method: ScoringMethod;
+  method_name: string;
+  boundaries: BoundarySet;
+  grade_distribution: GradeDistribution;
+  impact_metrics: ImpactMetrics;
+  score_statistics: Record<string, number | null>;
+  scores: number[];
+}
+
+export interface MethodComparisonItem {
+  method: ScoringMethod;
+  method_name: string;
+  boundaries: Record<string, number>;
+  grade_distribution: GradeDistribution;
+  impact_metrics: ImpactMetrics;
+}
+
+export interface ImpactComparison {
+  students_affected: Record<string, number>;
+  grade_changes: Record<string, Record<string, number>>;
+}
+
+export interface MethodComparison {
+  methods: MethodComparisonItem[];
+  impact_comparison: ImpactComparison | null;
+  recommendations: string[];
+  scores: number[];
+}
+
+/**
+ * Analyze a single scoring method for boundary setting.
+ */
+export async function analyzeBoundaryMethod(
+  examSubjectId: number,
+  method: ScoringMethod,
+  filters?: {
+    region?: string;
+    zone?: string;
+    schoolId?: number;
+  },
+  includePending?: boolean,
+  includeAbsent?: boolean
+): Promise<MethodAnalysis> {
+  const response = await fetch(
+    `${API_BASE_URL}/api/v1/insights/exam-subject/${examSubjectId}/boundary-analysis`,
+    {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        method,
+        region: filters?.region || null,
+        zone: filters?.zone || null,
+        school_id: filters?.schoolId || null,
+        include_pending: includePending || false,
+        include_absent: includeAbsent || false,
+      }),
+    }
+  );
+  return handleResponse<MethodAnalysis>(response);
+}
+
+/**
+ * Compare multiple scoring methods for boundary setting.
+ */
+export async function compareBoundaryMethods(
+  examSubjectId: number,
+  methods: ScoringMethod[],
+  filters?: {
+    region?: string;
+    zone?: string;
+    schoolId?: number;
+  },
+  includePending?: boolean,
+  includeAbsent?: boolean
+): Promise<MethodComparison> {
+  const response = await fetch(
+    `${API_BASE_URL}/api/v1/insights/exam-subject/${examSubjectId}/boundary-comparison`,
+    {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        methods,
+        region: filters?.region || null,
+        zone: filters?.zone || null,
+        school_id: filters?.schoolId || null,
+        include_pending: includePending || false,
+        include_absent: includeAbsent || false,
+      }),
+    }
+  );
+  return handleResponse<MethodComparison>(response);
 }

@@ -86,12 +86,12 @@ export function FilterPanel({
   const hasActiveFilters = filters.region || filters.zone || filters.schoolId;
 
   return (
-    <Card>
+    <Card className="h-full">
       <CardHeader>
         <div className="flex items-center justify-between">
           <CardTitle className="text-base flex items-center gap-2">
-            <Filter className="h-4 w-4" />
-            Filters
+            {/* <Filter className="h-4 w-4" />
+            Filters */}
           </CardTitle>
           {hasActiveFilters && (
             <Button variant="ghost" size="sm" onClick={clearFilters}>

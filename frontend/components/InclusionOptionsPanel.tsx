@@ -21,7 +21,7 @@ export function InclusionOptionsPanel({
   disabled = false,
 }: InclusionOptionsPanelProps) {
   return (
-    <Card>
+    <Card className="h-full">
       <CardHeader>
         <CardTitle className="text-base flex items-center gap-2">
           <Info className="h-4 w-4" />

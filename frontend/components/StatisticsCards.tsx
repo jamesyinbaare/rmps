@@ -7,93 +7,141 @@ interface StatisticsCardsProps {
   statistics: SubjectPerformanceStatistics;
 }
 
+interface StatCardProps {
+  title: string;
+  description: string;
+  value: string | number;
+}
+
+function StatCard({ title, description, value }: StatCardProps) {
+  return (
+    <Card className="h-full">
+      <CardHeader className="pb-3">
+        <CardTitle className="text-sm font-medium">{title}</CardTitle>
+      </CardHeader>
+      <CardContent>
+        <div className="space-y-1">
+          <div className="text-2xl font-bold">{value}</div>
+          <div className="text-xs text-muted-foreground">{description}</div>
+        </div>
+      </CardContent>
+    </Card>
+  );
+}
+
+interface CombinedStatCardProps {
+  title: string;
+  description: string;
+  items: Array<{ label: string; value: string | number }>;
+}
+
+function CombinedStatCard({ title, description, items }: CombinedStatCardProps) {
+  return (
+    <Card className="h-full">
+      <CardHeader className="pb-3">
+        <CardTitle className="text-sm font-medium">{title}</CardTitle>
+        <div className="text-xs text-muted-foreground mt-1">{description}</div>
+      </CardHeader>
+      <CardContent>
+        <div className="flex items-start gap-6">
+          {items.map((item, index) => (
+            <div key={index} className="flex-1 space-y-1">
+              <div className="text-xs font-medium text-muted-foreground uppercase tracking-wide">
+                {item.label}
+              </div>
+              <div className="text-2xl font-bold">{item.value}</div>
+            </div>
+          ))}
+        </div>
+      </CardContent>
+    </Card>
+  );
+}
+
 export function StatisticsCards({ statistics }: StatisticsCardsProps) {
   return (
-    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
-      {/* Candidate Counts */}
-      <Card>
-        <CardHeader className="pb-2">
-          <CardTitle className="text-sm font-medium">Total Candidates</CardTitle>
-        </CardHeader>
-        <CardContent>
-          <div className="text-2xl font-bold">{statistics.total_candidates}</div>
-          <div className="text-xs text-muted-foreground mt-1">
-            {statistics.processed_candidates} processed, {statistics.absent_candidates} absent,{" "}
-            {statistics.pending_candidates} pending
-          </div>
-        </CardContent>
-      </Card>
+    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 h-full">
+      {/* Row 1: Central Tendency and Standard Deviation */}
+      <CombinedStatCard
+        title="Central Tendency"
+        description="Average and median scores"
+        items={[
+          {
+            label: "Average",
+            value:
+              statistics.mean_score !== null ? statistics.mean_score.toFixed(2) : "—",
+          },
+          {
+            label: "Median",
+            value:
+              statistics.median_score !== null ? statistics.median_score.toFixed(2) : "—",
+          },
+        ]}
+      />
 
-      {/* Mean Score */}
-      <Card>
-        <CardHeader className="pb-2">
-          <CardTitle className="text-sm font-medium">Mean Score</CardTitle>
-        </CardHeader>
-        <CardContent>
-          <div className="text-2xl font-bold">
-            {statistics.mean_score !== null ? statistics.mean_score.toFixed(2) : "—"}
-          </div>
-          {statistics.std_deviation !== null && (
-            <div className="text-xs text-muted-foreground mt-1">
-              Std Dev: {statistics.std_deviation.toFixed(2)}
-            </div>
-          )}
-        </CardContent>
-      </Card>
+      <StatCard
+        title="Standard Deviation"
+        description="Measure of score spread"
+        value={
+          statistics.std_deviation !== null ? statistics.std_deviation.toFixed(2) : "—"
+        }
+      />
 
-      {/* Median Score */}
-      <Card>
-        <CardHeader className="pb-2">
-          <CardTitle className="text-sm font-medium">Median Score</CardTitle>
-        </CardHeader>
-        <CardContent>
-          <div className="text-2xl font-bold">
-            {statistics.median_score !== null ? statistics.median_score.toFixed(2) : "—"}
-          </div>
-          {statistics.percentiles && (
-            <div className="text-xs text-muted-foreground mt-1">
-              Q1: {statistics.percentiles["25th"].toFixed(1)}, Q3:{" "}
-              {statistics.percentiles["75th"].toFixed(1)}
-            </div>
-          )}
-        </CardContent>
-      </Card>
+      {/* Row 2: Distribution Measures */}
+      <StatCard
+        title="Skewness"
+        description="Distribution asymmetry measure"
+        value={
+          statistics.skewness !== null ? statistics.skewness.toFixed(2) : "—"
+        }
+      />
 
-      {/* Score Range */}
-      <Card>
-        <CardHeader className="pb-2">
-          <CardTitle className="text-sm font-medium">Score Range</CardTitle>
-        </CardHeader>
-        <CardContent>
-          <div className="text-2xl font-bold">
-            {statistics.min_score !== null && statistics.max_score !== null
-              ? `${statistics.min_score.toFixed(1)} - ${statistics.max_score.toFixed(1)}`
-              : "—"}
-          </div>
-          {statistics.percentiles && (
-            <div className="text-xs text-muted-foreground mt-1">
-              90th: {statistics.percentiles["90th"].toFixed(1)}, 95th:{" "}
-              {statistics.percentiles["95th"].toFixed(1)}
-            </div>
-          )}
-        </CardContent>
-      </Card>
+      <StatCard
+        title="Kurtosis"
+        description="Distribution tail heaviness"
+        value={
+          statistics.kurtosis !== null ? statistics.kurtosis.toFixed(2) : "—"
+        }
+      />
 
-      {/* Pass Rate */}
-      {statistics.pass_rate !== null && (
-        <Card>
-          <CardHeader className="pb-2">
-            <CardTitle className="text-sm font-medium">Pass Rate</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div className="text-2xl font-bold">{statistics.pass_rate.toFixed(1)}%</div>
-            <div className="text-xs text-muted-foreground mt-1">
-              {statistics.grade_distribution["Pass"] || 0} passed out of{" "}
-              {statistics.processed_candidates} processed
-            </div>
-          </CardContent>
-        </Card>
-      )}
+      {/* Row 3: Quartiles and Score Range */}
+      <CombinedStatCard
+        title="Quartiles"
+        description="First and third quartile scores"
+        items={[
+          {
+            label: "Q1",
+            value:
+              statistics.percentiles?.["25th"] !== undefined
+                ? statistics.percentiles["25th"].toFixed(2)
+                : "—",
+          },
+          {
+            label: "Q3",
+            value:
+              statistics.percentiles?.["75th"] !== undefined
+                ? statistics.percentiles["75th"].toFixed(2)
+                : "—",
+          },
+        ]}
+      />
+
+      <CombinedStatCard
+        title="Score Range"
+        description="Minimum and maximum scores"
+        items={[
+          {
+            label: "Minimum",
+            value:
+              statistics.min_score !== null ? statistics.min_score.toFixed(2) : "—",
+          },
+          {
+            label: "Maximum",
+            value:
+              statistics.max_score !== null ? statistics.max_score.toFixed(2) : "—",
+          },
+        ]}
+      />
     </div>
   );
 }
