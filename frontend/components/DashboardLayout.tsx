@@ -1,7 +1,8 @@
 "use client";
 
 import { ReactNode } from "react";
-import { Sidebar } from "./Sidebar";
+import { AppSidebar } from "./app-sidebar";
+import { SidebarProvider, SidebarInset } from "./ui/sidebar";
 
 interface DashboardLayoutProps {
   children: ReactNode;
@@ -10,11 +11,11 @@ interface DashboardLayoutProps {
 
 export function DashboardLayout({ children, title = "All files" }: DashboardLayoutProps) {
   return (
-    <div className="flex h-screen w-full overflow-hidden bg-background">
-      <Sidebar />
-      <div className="flex flex-1 flex-col overflow-hidden">
+    <SidebarProvider>
+      <AppSidebar />
+      <SidebarInset>
         {children}
-      </div>
-    </div>
+      </SidebarInset>
+    </SidebarProvider>
   );
 }

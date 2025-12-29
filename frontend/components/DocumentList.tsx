@@ -13,25 +13,34 @@ import {
 import { downloadDocument, listSchools, listSubjects } from "@/lib/api";
 import type { Document, School, Subject } from "@/types/document";
 import { File } from "lucide-react";
+import { Checkbox } from "@/components/ui/checkbox";
 import { FileGrid } from "./FileGrid";
 import { FileListItem } from "./FileListItem";
 
 interface DocumentListProps {
   documents: Document[];
   loading?: boolean;
+  loadingMore?: boolean;
   currentPage: number;
   totalPages: number;
   pageSize?: number;
   onPageChange: (page: number) => void;
   onPageSizeChange?: (pageSize: number) => void;
-  viewMode?: "grid" | "list";
+  viewMode?: "grid" | "large-grid" | "list" | "large-list";
   onSelect?: (document: Document) => void;
   onDelete?: (document: Document) => void;
+  selectedIds?: Set<number>;
+  onSelectionChange?: (id: number, selected: boolean) => void;
+  bulkMode?: boolean;
+  onSelectAll?: () => void;
+  infiniteScroll?: boolean;
+  hasMore?: boolean;
 }
 
 export function DocumentList({
   documents,
   loading = false,
+  loadingMore = false,
   currentPage,
   totalPages,
   pageSize = 20,
@@ -40,6 +49,12 @@ export function DocumentList({
   viewMode = "grid",
   onSelect,
   onDelete,
+  selectedIds = new Set(),
+  onSelectionChange,
+  bulkMode = false,
+  onSelectAll,
+  infiniteScroll = false,
+  hasMore = false,
 }: DocumentListProps) {
   const [schoolMap, setSchoolMap] = useState<Map<number, string>>(new Map());
   const [subjectMap, setSubjectMap] = useState<Map<number, string>>(new Map());
@@ -48,7 +63,7 @@ export function DocumentList({
   // Fetch lookup data for schools and subjects
   useEffect(() => {
     const fetchLookupData = async () => {
-      if (viewMode !== "list") {
+      if (viewMode !== "list" && viewMode !== "large-list") {
         setLookupLoading(false);
         return;
       }
@@ -163,13 +178,44 @@ export function DocumentList({
 
   return (
     <div className="flex flex-col">
-      {viewMode === "grid" ? (
-        <FileGrid documents={documents} onDownload={handleDownload} onSelect={onSelect} onDelete={onDelete} />
+      {(viewMode === "grid" || viewMode === "large-grid") ? (
+        <FileGrid
+          documents={documents}
+          onDownload={handleDownload}
+          onSelect={onSelect}
+          onDelete={onDelete}
+          selectedIds={selectedIds}
+          onSelectionChange={onSelectionChange}
+          bulkMode={bulkMode}
+          size={viewMode === "large-grid" ? "large-grid" : "grid"}
+        />
       ) : (
         <div>
           {/* Table Header */}
           <div className="hidden md:flex items-center gap-4 border-b border-border sticky top-0 bg-background z-10 px-6 pt-6 pb-3">
-            <div className="w-10 shrink-0" /> {/* Icon spacer */}
+            {bulkMode && onSelectionChange ? (
+              <div className="w-10 shrink-0 flex items-center justify-center">
+                <Checkbox
+                  checked={documents.length > 0 && selectedIds.size === documents.length}
+                  onCheckedChange={(checked) => {
+                    if (checked) {
+                      // Select all on current page
+                      documents.forEach((doc) => {
+                        onSelectionChange?.(doc.id, true);
+                      });
+                    } else {
+                      // Deselect all on current page
+                      documents.forEach((doc) => {
+                        onSelectionChange?.(doc.id, false);
+                      });
+                    }
+                  }}
+                  className="bg-background border-2"
+                />
+              </div>
+            ) : (
+              <div className="w-10 shrink-0" />
+            )}
             <div className="flex-1 min-w-0 text-left">
               <div className="text-sm font-medium">File Name</div>
             </div>
@@ -192,13 +238,45 @@ export function DocumentList({
                 onDelete={onDelete}
                 schoolName={doc.school_id ? schoolMap.get(doc.school_id) : undefined}
                 subjectName={doc.subject_id ? subjectMap.get(doc.subject_id) : undefined}
+                isSelected={selectedIds.has(doc.id)}
+                onSelectionChange={onSelectionChange}
+                bulkMode={bulkMode}
+                size={viewMode === "large-list" ? "large-list" : "list"}
               />
             ))}
           </div>
         </div>
       )}
 
-      {(totalPages > 1 || onPageSizeChange) && (
+      {/* Infinite Scroll Sentinel - Intersection Observer target */}
+      {infiniteScroll && hasMore && !loadingMore && (
+        <div
+          id="infinite-scroll-sentinel"
+          className="h-20 w-full"
+        />
+      )}
+
+      {/* Infinite Scroll Loading Indicator */}
+      {infiniteScroll && loadingMore && (
+        <div className="flex items-center justify-center py-8">
+          <div className="flex items-center gap-2 text-sm text-muted-foreground">
+            <div className="h-4 w-4 animate-spin rounded-full border-2 border-primary border-t-transparent" />
+            <span>Loading more documents...</span>
+          </div>
+        </div>
+      )}
+
+      {/* End of Results Message */}
+      {infiniteScroll && !hasMore && documents.length > 0 && (
+        <div className="flex items-center justify-center py-8">
+          <p className="text-sm text-muted-foreground">
+            No more documents to load
+          </p>
+        </div>
+      )}
+
+      {/* Pagination Controls (only show when not using infinite scroll) */}
+      {!infiniteScroll && (totalPages > 1 || onPageSizeChange) && (
         <div className="flex items-center justify-between border-t border-border px-6 py-4">
           <div className="flex items-center gap-4">
             {totalPages > 1 && (
