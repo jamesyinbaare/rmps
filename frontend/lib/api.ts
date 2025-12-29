@@ -56,7 +56,7 @@ async function handleResponse<T>(response: Response): Promise<T> {
         try {
           const error: ApiError = JSON.parse(text);
           // FastAPI returns errors with a "detail" field
-          errorDetail = error.detail || error.message || text;
+          errorDetail = error.detail || text;
         } catch {
           // If JSON parsing fails, use the text as-is
           errorDetail = text;
@@ -1214,6 +1214,72 @@ export async function serializeExam(
     method: "POST",
   });
   return handleResponse<SerializationResponse>(response);
+}
+
+export async function exportScannablesCore(examId: number): Promise<void> {
+  const url = `${API_BASE_URL}/api/v1/exams/${examId}/export/scannables/core`;
+  const response = await fetch(url, {
+    method: "GET",
+  });
+
+  if (!response.ok) {
+    const error = await response.json().catch(() => ({ detail: "Failed to download export" }));
+    throw new Error((error as { detail?: string }).detail || "Failed to download core subjects export");
+  }
+
+  // Get filename from Content-Disposition header or use default
+  const contentDisposition = response.headers.get("Content-Disposition");
+  let filename = `exam_${examId}_scannables_core.xlsx`;
+  if (contentDisposition) {
+    const filenameMatch = contentDisposition.match(/filename="?(.+)"?/i);
+    if (filenameMatch) {
+      filename = filenameMatch[1];
+    }
+  }
+
+  // Download the file
+  const blob = await response.blob();
+  const downloadUrl = window.URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = downloadUrl;
+  link.download = filename;
+  document.body.appendChild(link);
+  link.click();
+  document.body.removeChild(link);
+  window.URL.revokeObjectURL(downloadUrl);
+}
+
+export async function exportScannablesElectives(examId: number): Promise<void> {
+  const url = `${API_BASE_URL}/api/v1/exams/${examId}/export/scannables/electives`;
+  const response = await fetch(url, {
+    method: "GET",
+  });
+
+  if (!response.ok) {
+    const error = await response.json().catch(() => ({ detail: "Failed to download export" }));
+    throw new Error((error as { detail?: string }).detail || "Failed to download electives export");
+  }
+
+  // Get filename from Content-Disposition header or use default
+  const contentDisposition = response.headers.get("Content-Disposition");
+  let filename = `exam_${examId}_scannables_electives.xlsx`;
+  if (contentDisposition) {
+    const filenameMatch = contentDisposition.match(/filename="?(.+)"?/i);
+    if (filenameMatch) {
+      filename = filenameMatch[1];
+    }
+  }
+
+  // Download the file
+  const blob = await response.blob();
+  const downloadUrl = window.URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = downloadUrl;
+  link.download = filename;
+  document.body.appendChild(link);
+  link.click();
+  document.body.removeChild(link);
+  window.URL.revokeObjectURL(downloadUrl);
 }
 
 // Score-related API functions

@@ -27,7 +27,7 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import { getExam, listExamSubjects, serializeExam, downloadExamSubjectTemplate, type ExamSubject, type SerializationResponse, processExamSubjects, processExamResults, updateExam } from "@/lib/api";
+import { getExam, listExamSubjects, serializeExam, downloadExamSubjectTemplate, type ExamSubject, type SerializationResponse, processExamSubjects, processExamResults, updateExam, exportScannablesCore, exportScannablesElectives } from "@/lib/api";
 import type { Exam } from "@/types/document";
 import { ArrowLeft, Search, X, ClipboardList, Edit, Calendar, Users, CheckCircle2, AlertCircle, Loader2, ChevronDown, ChevronRight, Download, Upload, LayoutGrid, List, PanelLeftOpen, CheckCircle, XCircle, AlertTriangle, BarChart3, ArrowUpDown, FileSpreadsheet } from "lucide-react";
 import { SubjectInsightsPlayground } from "@/components/SubjectInsightsPlayground";
@@ -971,6 +971,54 @@ export default function ExaminationDetailPage() {
                           <p className="text-lg font-semibold text-green-900 dark:text-green-100">
                             {serializationResult.subjects_defaulted_count}
                           </p>
+                        </div>
+                      </div>
+
+                      {/* Export Buttons */}
+                      <div className="pt-2 border-t border-green-200 dark:border-green-900/50">
+                        <div className="flex flex-col sm:flex-row gap-2">
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            onClick={async () => {
+                              if (!examId) return;
+                              try {
+                                await exportScannablesCore(examId);
+                                toast.success("Core subjects export downloaded successfully");
+                              } catch (err) {
+                                toast.error(
+                                  err instanceof Error
+                                    ? err.message
+                                    : "Failed to download core subjects export"
+                                );
+                              }
+                            }}
+                            className="flex items-center gap-2"
+                          >
+                            <Download className="h-4 w-4" />
+                            Download Core Subjects Export
+                          </Button>
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            onClick={async () => {
+                              if (!examId) return;
+                              try {
+                                await exportScannablesElectives(examId);
+                                toast.success("Electives export downloaded successfully");
+                              } catch (err) {
+                                toast.error(
+                                  err instanceof Error
+                                    ? err.message
+                                    : "Failed to download electives export"
+                                );
+                              }
+                            }}
+                            className="flex items-center gap-2"
+                          >
+                            <Download className="h-4 w-4" />
+                            Download Electives Export
+                          </Button>
                         </div>
                       </div>
 
