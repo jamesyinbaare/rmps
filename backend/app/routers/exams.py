@@ -30,6 +30,7 @@ from app.services.score_sheet_generator import generate_score_sheets
 from app.services.score_sheet_pdf_service import combine_pdfs_for_school, generate_pdfs_for_exam
 from app.services.serialization import serialize_exam
 from app.services.template_generator import generate_exam_subject_template
+from app.services.scannables_export import generate_core_subjects_export, generate_electives_export
 from app.services.exam_subject_upload import (
     SubjectUploadParseError,
     SubjectUploadValidationError,
@@ -895,6 +896,66 @@ async def serialize_exam_candidates(
     except Exception as e:
         await session.rollback()
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Serialization failed: {str(e)}")
+
+
+@router.get("/{exam_id}/export/scannables/core")
+async def export_scannables_core(
+    exam_id: int,
+    session: DBSessionDep,
+) -> StreamingResponse:
+    """Export scannables data for core subjects as Excel file."""
+    # Validate exam exists
+    exam_stmt = select(Exam).where(Exam.id == exam_id)
+    exam_result = await session.execute(exam_stmt)
+    exam = exam_result.scalar_one_or_none()
+    if not exam:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Exam not found")
+
+    try:
+        excel_bytes = await generate_core_subjects_export(session, exam_id)
+        filename = f"exam_{exam_id}_scannables_core.xlsx"
+        return StreamingResponse(
+            iter([excel_bytes]),
+            media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to generate core subjects export: {str(e)}",
+        )
+
+
+@router.get("/{exam_id}/export/scannables/electives")
+async def export_scannables_electives(
+    exam_id: int,
+    session: DBSessionDep,
+) -> StreamingResponse:
+    """Export scannables data for electives as Excel file with multiple sheets (one per programme)."""
+    # Validate exam exists
+    exam_stmt = select(Exam).where(Exam.id == exam_id)
+    exam_result = await session.execute(exam_stmt)
+    exam = exam_result.scalar_one_or_none()
+    if not exam:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Exam not found")
+
+    try:
+        excel_bytes = await generate_electives_export(session, exam_id)
+        filename = f"exam_{exam_id}_scannables_electives.xlsx"
+        return StreamingResponse(
+            iter([excel_bytes]),
+            media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to generate electives export: {str(e)}",
+        )
 
 
 @router.post("/{exam_id}/generate-score-sheets", response_model=ScoreSheetGenerationResponse, status_code=status.HTTP_200_OK)
