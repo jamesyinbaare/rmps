@@ -75,6 +75,8 @@ export function GradeRangeModal({
           }
         } catch (error) {
           console.error("Error loading grade ranges:", error);
+          const errorMessage = error instanceof Error ? error.message : "Failed to load grade ranges";
+          toast.error(errorMessage);
           // Initialize with empty values on error
           setFormData(
             GRADE_NAMES.map((gradeName) => ({
@@ -168,10 +170,12 @@ export function GradeRangeModal({
     const error = validateRanges();
     if (error) {
       setValidationError(error);
+      toast.error("Please fix validation errors before saving");
       return;
     }
 
     setLoading(true);
+    setValidationError(null);
     try {
       const result = await upsertGradeRanges(examSubject.id, formData);
       toast.success("Grade ranges updated successfully");
@@ -183,6 +187,7 @@ export function GradeRangeModal({
       const errorMessage = error instanceof Error ? error.message : "Failed to update grade ranges";
       toast.error(errorMessage);
       console.error("Error updating grade ranges:", error);
+      // Don't close modal on error so user can try again
     } finally {
       setLoading(false);
     }

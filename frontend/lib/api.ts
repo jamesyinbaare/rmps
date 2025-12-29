@@ -1023,6 +1023,7 @@ export async function updateExam(
     year?: number;
     series?: string;
     number_of_series?: number;
+    subjects_to_serialize?: string[] | null;
   }
 ): Promise<Exam> {
   const response = await fetch(`${API_BASE_URL}/api/v1/exams/${id}`, {
@@ -1056,6 +1057,7 @@ export interface ExamSubject {
   exam_id: number;
   subject_id: number;
   subject_code: string;
+  original_code: string;
   subject_name: string;
   subject_type: "CORE" | "ELECTIVE";
   obj_pct: number | null;

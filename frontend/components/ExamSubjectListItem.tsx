@@ -4,7 +4,7 @@ import { useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
-import { Edit, Save, X, Loader2, GraduationCap } from "lucide-react";
+import { Edit, Save, X, Loader2, GraduationCap, CheckCircle, AlertTriangle } from "lucide-react";
 import type { ExamSubject } from "@/lib/api";
 import { updateExamSubject } from "@/lib/api";
 import { toast } from "sonner";
@@ -13,9 +13,10 @@ import { GradeRangeModal } from "@/components/GradeRangeModal";
 interface ExamSubjectListItemProps {
   examSubject: ExamSubject;
   onUpdate?: (updatedSubject: ExamSubject) => void;
+  isComplete?: boolean;
 }
 
-export function ExamSubjectListItem({ examSubject, onUpdate }: ExamSubjectListItemProps) {
+export function ExamSubjectListItem({ examSubject, onUpdate, isComplete }: ExamSubjectListItemProps) {
   const [isEditing, setIsEditing] = useState(false);
   const [loading, setLoading] = useState(false);
   const [gradeModalOpen, setGradeModalOpen] = useState(false);
@@ -106,8 +107,15 @@ export function ExamSubjectListItem({ examSubject, onUpdate }: ExamSubjectListIt
         {/* Subject Info */}
         <div className="flex items-center gap-3 flex-1 min-w-0">
           <div className="flex items-center gap-2 min-w-0">
+            {isComplete !== undefined && (
+              isComplete ? (
+                <CheckCircle className="h-4 w-4 text-green-600 shrink-0" title="Complete configuration" />
+              ) : (
+                <AlertTriangle className="h-4 w-4 text-orange-600 shrink-0" title="Incomplete configuration" />
+              )
+            )}
             <span className="font-medium text-sm">
-              {examSubject.subject_code} - {examSubject.subject_name}
+              {examSubject.original_code || examSubject.subject_code} - {examSubject.subject_name}
             </span>
             <Badge variant={examSubject.subject_type === "CORE" ? "default" : "secondary"} className="shrink-0">
               {examSubject.subject_type}
