@@ -166,6 +166,27 @@ async def list_exams(
     )
 
 
+def compute_default_subjects_to_serialize(subjects: list[Subject]) -> list[str]:
+    """
+    Compute default subject codes to serialize: CORE subjects + specific default codes.
+
+    Args:
+        subjects: List of Subject objects
+
+    Returns:
+        List of subject codes to serialize by default
+    """
+    # Default subject codes (same as frontend)
+    DEFAULT_SERIALIZE_CODES = ["301", "302", "421", "422", "461", "462", "471", "472", "601", "602", "621", "622", "701", "702", "703", "704", "705"]
+
+    # Get CORE subject codes
+    core_codes = [s.code for s in subjects if s.subject_type == SubjectType.CORE]
+
+    # Combine CORE + default codes, remove duplicates, and return
+    all_codes = list(set(core_codes + DEFAULT_SERIALIZE_CODES))
+    return sorted(all_codes)
+
+
 @router.get("/{exam_id}", response_model=ExamResponse)
 async def get_exam(exam_id: int, session: DBSessionDep) -> ExamResponse:
     """Get exam details."""
@@ -174,6 +195,29 @@ async def get_exam(exam_id: int, session: DBSessionDep) -> ExamResponse:
     exam = result.scalar_one_or_none()
     if not exam:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Exam not found")
+
+    # If subjects_to_serialize is not set, compute defaults from exam subjects
+    if not exam.subjects_to_serialize:
+        # Load exam subjects with subject relationship
+        exam_subjects_stmt = (
+            select(ExamSubject, Subject)
+            .join(Subject, ExamSubject.subject_id == Subject.id)
+            .where(ExamSubject.exam_id == exam_id)
+        )
+        exam_subjects_result = await session.execute(exam_subjects_stmt)
+        exam_subjects_data = exam_subjects_result.all()
+
+        if exam_subjects_data:
+            # Extract Subject objects
+            subjects = [subject for _, subject in exam_subjects_data]
+            # Compute defaults: CORE subjects + specific codes
+            default_codes = compute_default_subjects_to_serialize(subjects)
+            # Note: We don't save this to the database automatically, just return it in the response
+            # The frontend will use this as defaults
+            exam_dict = ExamResponse.model_validate(exam).model_dump()
+            exam_dict["subjects_to_serialize"] = default_codes
+            return ExamResponse.model_validate(exam_dict)
+
     return ExamResponse.model_validate(exam)
 
 
@@ -241,6 +285,8 @@ async def update_exam(exam_id: int, exam_update: ExamUpdate, session: DBSessionD
         exam.series = exam_update.series
     if exam_update.number_of_series is not None:
         exam.number_of_series = exam_update.number_of_series
+    if exam_update.subjects_to_serialize is not None:
+        exam.subjects_to_serialize = exam_update.subjects_to_serialize
 
     try:
         await session.flush()  # Flush to ensure exam is updated in session
@@ -348,6 +394,7 @@ async def list_exam_subjects(exam_id: int, session: DBSessionDep) -> list[ExamSu
             exam_id=exam_subject.exam_id,
             subject_id=exam_subject.subject_id,
             subject_code=subject.code,
+            original_code=subject.original_code,
             subject_name=subject.name,
             subject_type=subject.subject_type,
             obj_pct=exam_subject.obj_pct,
@@ -816,7 +863,7 @@ async def serialize_exam_candidates(
     exam_id: int,
     session: DBSessionDep,
     school_id: int | None = Query(None, description="Optional school ID to serialize only that school"),
-    subject_codes: list[str] = Query(default_factory=list, description="List of subject codes to serialize. Subjects not in this list will be assigned default series 1."),
+    subject_codes: list[str] | None = Query(None, description="List of subject codes to serialize. Subjects not in this list will be assigned default series 1. If not provided, uses exam.subjects_to_serialize if available."),
 ) -> SerializationResponse:
     """
     Serialize candidates for an exam by assigning series numbers in round-robin fashion.
@@ -832,7 +879,16 @@ async def serialize_exam_candidates(
     This operation is idempotent - running it multiple times will overwrite existing series assignments.
     """
     try:
-        result = await serialize_exam(session, exam_id, school_id, subject_codes if subject_codes else None)
+        # If subject_codes not provided, try to use exam.subjects_to_serialize
+        codes_to_use = subject_codes
+        if codes_to_use is None:
+            exam_stmt = select(Exam).where(Exam.id == exam_id)
+            exam_result = await session.execute(exam_stmt)
+            exam = exam_result.scalar_one_or_none()
+            if exam and exam.subjects_to_serialize:
+                codes_to_use = exam.subjects_to_serialize
+
+        result = await serialize_exam(session, exam_id, school_id, codes_to_use)
         return SerializationResponse.model_validate(result)
     except ValueError as e:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))

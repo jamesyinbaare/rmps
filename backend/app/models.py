@@ -240,6 +240,7 @@ class Exam(Base):
     year = Column(Integer, nullable=False)
     series = Column(Enum(ExamSeries), nullable=False)
     number_of_series = Column(Integer, nullable=False, default=1)  # Number of groups (1-8, 1-4, etc.)
+    subjects_to_serialize = Column(ARRAY(String), nullable=True)  # Array of subject codes to serialize
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
 

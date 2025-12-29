@@ -48,6 +48,7 @@ export interface Exam {
   year: number;
   series: string;
   number_of_series: number;
+  subjects_to_serialize: string[] | null;
   created_at: string;
   updated_at: string;
 }
