@@ -551,3 +551,138 @@ export interface ValidationIssueDetailResponse {
   document_numeric_id: number | null;
   document_mime_type: string | null;
 }
+
+export interface RegistrationProgress {
+  total_candidates: number;
+  completion_percentage: number;
+  status: "complete" | "in_progress" | "pending";
+}
+
+export interface SerializationProgress {
+  total_candidates: number;
+  candidates_serialized: number;
+  total_schools: number;
+  schools_serialized: number;
+  completion_percentage: number;
+  status: "complete" | "in_progress" | "pending";
+  last_serialized_at: string | null;
+  schools_detail: Array<Record<string, any>>;
+  subjects_detail: Array<Record<string, any>>;
+}
+
+export interface IcmPdfGenerationProgress {
+  total_schools: number;
+  schools_with_sheets: number;
+  total_subjects: number;
+  subjects_with_sheets: number;
+  score_sheets_generated: number;
+  pdfs_generated: number;
+  excel_exports_generated: number;
+  completion_percentage: number;
+  status: "complete" | "in_progress" | "pending";
+  schools_detail: Array<Record<string, any>>;
+  subjects_detail: Array<Record<string, any>>;
+  excel_exports: Array<{
+    process_type: string;
+    file_path: string;
+    file_name: string;
+    file_size: number;
+    generated_at: string | null;
+  }>;
+}
+
+export interface PreparationsProgress {
+  registration: RegistrationProgress;
+  serialization: SerializationProgress;
+  icm_pdf_generation: IcmPdfGenerationProgress;
+  overall_completion_percentage: number;
+  status: "complete" | "in_progress" | "pending";
+}
+
+export interface ScoreInterpretationProgress {
+  total_subjects: number;
+  subjects_configured: number;
+  subjects_with_grade_ranges: number;
+  completion_percentage: number;
+  status: "complete" | "in_progress" | "pending";
+}
+
+export interface DocumentProcessingProgress {
+  total_documents: number;
+  documents_id_extracted_success: number;
+  documents_id_extracted_error: number;
+  documents_id_extracted_pending: number;
+  documents_scores_extracted_success: number;
+  documents_scores_extracted_error: number;
+  documents_scores_extracted_pending: number;
+  id_extraction_completion_percentage: number;
+  scores_extraction_completion_percentage: number;
+  overall_completion_percentage: number;
+  status: "complete" | "in_progress" | "pending";
+}
+
+export interface ScoringDataEntryProgress {
+  total_subject_registrations: number;
+  registrations_with_scores: number;
+  total_expected_score_entries: number;
+  total_actual_score_entries: number;
+  registrations_manual_entry: number;
+  registrations_digital_transcription: number;
+  registrations_automated_extraction: number;
+  completion_percentage: number;
+  status: "complete" | "in_progress" | "pending";
+}
+
+export interface ValidationIssuesProgress {
+  unmatched_records_total: number;
+  unmatched_records_pending: number;
+  unmatched_records_resolved: number;
+  validation_issues_total: number;
+  validation_issues_pending: number;
+  validation_issues_resolved: number;
+  completion_percentage: number;
+  status: "complete" | "in_progress" | "pending";
+}
+
+export interface ResultsProcessingProgress {
+  total_subject_registrations: number;
+  registrations_processed: number;
+  registrations_pending: number;
+  completion_percentage: number;
+  status: "complete" | "in_progress" | "pending";
+}
+
+export interface ResultsProcessingOverallProgress {
+  score_interpretation: ScoreInterpretationProgress;
+  document_processing: DocumentProcessingProgress;
+  scoring_data_entry: ScoringDataEntryProgress;
+  validation_issues: ValidationIssuesProgress;
+  results_processing: ResultsProcessingProgress;
+  overall_completion_percentage: number;
+  status: "complete" | "in_progress" | "pending";
+}
+
+export interface GradeRangesProgress {
+  total_subjects: number;
+  subjects_with_grade_ranges: number;
+  completion_percentage: number;
+  status: "complete" | "in_progress" | "pending";
+}
+
+export interface ResultsReleaseProgress {
+  grade_ranges: GradeRangesProgress;
+  overall_completion_percentage: number;
+  status: "complete" | "in_progress" | "pending";
+}
+
+export interface ExamProgressResponse {
+  exam_id: number;
+  exam_type: string;
+  exam_year: number;
+  exam_series: string;
+  preparations: PreparationsProgress;
+  results_processing: ResultsProcessingOverallProgress;
+  results_release: ResultsReleaseProgress;
+  overall_completion_percentage: number;
+  overall_status: "complete" | "in_progress" | "pending";
+}

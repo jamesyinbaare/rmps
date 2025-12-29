@@ -5,11 +5,16 @@ from typing import Any
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from datetime import datetime
+
 from app.models import (
     Candidate,
     Exam,
     ExamRegistration,
     ExamSubject,
+    ProcessStatus,
+    ProcessTracking,
+    ProcessType,
     School,
     Subject,
     SubjectRegistration,
@@ -228,6 +233,29 @@ async def serialize_exam(
     total_schools_count = len(unique_school_ids)
     subjects_serialized_count = len(subjects_list)
     subjects_defaulted_count = len(subjects_defaulted_list)
+
+    # Create ProcessTracking record
+    tracking = ProcessTracking(
+        exam_id=exam_id,
+        process_type=ProcessType.SERIALIZATION,
+        school_id=school_id,
+        subject_id=None,  # Serialization is per-school or all schools, not per-subject
+        status=ProcessStatus.COMPLETED,
+        process_metadata={
+            "total_candidates": total_candidates_count,
+            "total_schools": total_schools_count,
+            "subjects_serialized_count": subjects_serialized_count,
+            "subjects_defaulted_count": subjects_defaulted_count,
+            "subjects_serialized": [s["subject_code"] for s in subjects_list],
+            "schools_processed": schools_list,
+            "subjects_processed": subjects_list,
+            "subjects_defaulted": subjects_defaulted_list,
+        },
+        started_at=datetime.utcnow(),  # Could track start time if needed
+        completed_at=datetime.utcnow(),
+    )
+    session.add(tracking)
+    await session.commit()
 
     message_parts = []
     if subjects_serialized_count > 0:

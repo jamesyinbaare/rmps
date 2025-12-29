@@ -353,6 +353,21 @@ class ValidationIssueStatus(enum.Enum):
     IGNORED = "ignored"
 
 
+class ProcessType(enum.Enum):
+    SERIALIZATION = "SERIALIZATION"
+    EXCEL_EXPORT_CORE = "EXCEL_EXPORT_CORE"
+    EXCEL_EXPORT_ELECTIVES = "EXCEL_EXPORT_ELECTIVES"
+    SCORE_SHEET_GENERATION = "SCORE_SHEET_GENERATION"
+    PDF_GENERATION = "PDF_GENERATION"
+
+
+class ProcessStatus(enum.Enum):
+    PENDING = "pending"
+    IN_PROGRESS = "in_progress"
+    COMPLETED = "completed"
+    FAILED = "failed"
+
+
 class UnmatchedExtractionRecord(Base):
     """Records for candidates extracted from documents that don't match existing SubjectScore records."""
 
@@ -424,3 +439,25 @@ class SubjectScoreValidationIssue(Base):
 
     subject_score = relationship("SubjectScore")
     exam_subject = relationship("ExamSubject")
+
+
+class ProcessTracking(Base):
+    """Unified model to track all examination processes."""
+
+    __tablename__ = "process_tracking"
+    id = Column(Integer, primary_key=True)
+    exam_id = Column(Integer, ForeignKey("exams.id", ondelete="CASCADE"), nullable=False, index=True)
+    process_type = Column(Enum(ProcessType), nullable=False, index=True)
+    school_id = Column(Integer, ForeignKey("schools.id", ondelete="CASCADE"), nullable=True, index=True)
+    subject_id = Column(Integer, ForeignKey("subjects.id", ondelete="CASCADE"), nullable=True, index=True)
+    status = Column(Enum(ProcessStatus), default=ProcessStatus.PENDING, nullable=False, index=True)
+    process_metadata = Column(JSON, nullable=True)  # Flexible storage for process-specific data
+    started_at = Column(DateTime, nullable=True)
+    completed_at = Column(DateTime, nullable=True)
+    error_message = Column(Text, nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False, index=True)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+
+    exam = relationship("Exam")
+    school = relationship("School")
+    subject = relationship("Subject")

@@ -1,17 +1,40 @@
+from datetime import datetime
 from typing import Any
 from pathlib import Path
 
-from fastapi import APIRouter, File, Form, HTTPException, Query, UploadFile, status
+from fastapi import APIRouter, File, HTTPException, Query, UploadFile, status
 from fastapi.responses import StreamingResponse
 from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 
 from app.config import settings
 from app.dependencies.database import DBSessionDep
-from app.models import Candidate, Document, Exam, ExamRegistration, ExamSeries, ExamSubject, ExamType, School, Subject, SubjectRegistration, SubjectType
+from app.models import (
+    Candidate,
+    DataExtractionMethod,
+    Document,
+    Exam,
+    ExamRegistration,
+    ExamSeries,
+    ExamSubject,
+    ExamType,
+    ProcessStatus,
+    ProcessTracking,
+    ProcessType,
+    School,
+    Subject,
+    SubjectRegistration,
+    SubjectScore,
+    SubjectScoreValidationIssue,
+    SubjectType,
+    UnmatchedExtractionRecord,
+    UnmatchedRecordStatus,
+    ValidationIssueStatus,
+)
 from app.schemas.exam import (
     ExamCreate,
     ExamListResponse,
+    ExamProgressResponse,
     ExamResponse,
     ExamSubjectBulkUploadResponse,
     ExamSubjectBulkUploadError,
@@ -20,9 +43,20 @@ from app.schemas.exam import (
     ExamSubjectUpdate,
     ExamUpdate,
     PdfGenerationJobCreate,
-    PdfGenerationJobListResponse,
     PdfGenerationJobResponse,
     PdfGenerationResponse,
+    PreparationsProgress,
+    RegistrationProgress,
+    SerializationProgress,
+    IcmPdfGenerationProgress,
+    ResultsProcessingOverallProgress,
+    ScoreInterpretationProgress,
+    DocumentProcessingProgress,
+    ScoringDataEntryProgress,
+    ValidationIssuesProgress,
+    ResultsProcessingProgress,
+    ResultsReleaseProgress,
+    GradeRangesProgress,
     ScoreSheetGenerationResponse,
     SerializationResponse,
 )
@@ -859,6 +893,654 @@ async def get_exam_statistics(exam_id: int, session: DBSessionDep) -> dict[str, 
     }
 
 
+@router.get("/{exam_id}/progress", response_model=ExamProgressResponse)
+async def get_exam_progress(exam_id: int, session: DBSessionDep) -> ExamProgressResponse:
+    """Get comprehensive progress data for an exam across all lifecycle stages using ProcessTracking."""
+    # Get exam
+    stmt = select(Exam).where(Exam.id == exam_id)
+    result = await session.execute(stmt)
+    exam = result.scalar_one_or_none()
+    if not exam:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Exam not found")
+
+    # ========== PREPARATIONS PHASE ==========
+    # 1. Registration
+    candidates_stmt = select(func.count(ExamRegistration.id)).where(ExamRegistration.exam_id == exam_id)
+    candidates_result = await session.execute(candidates_stmt)
+    total_candidates = candidates_result.scalar() or 0
+
+    registration_completion = 100.0 if total_candidates > 0 else 0.0
+    registration_status = "complete" if total_candidates > 0 else "pending"
+
+    registration = RegistrationProgress(
+        total_candidates=total_candidates,
+        completion_percentage=registration_completion,
+        status=registration_status,
+    )
+
+    # 2. Serialization - Query ProcessTracking
+    serialization_tracking_stmt = (
+        select(ProcessTracking)
+        .where(ProcessTracking.exam_id == exam_id, ProcessTracking.process_type == ProcessType.SERIALIZATION)
+        .order_by(ProcessTracking.completed_at.desc())
+    )
+    serialization_tracking_result = await session.execute(serialization_tracking_stmt)
+    serialization_tracking = serialization_tracking_result.scalars().first()
+
+    # Count candidates with serialization
+    serialized_candidates_stmt = (
+        select(func.count(func.distinct(SubjectRegistration.exam_registration_id)))
+        .select_from(SubjectRegistration)
+        .join(ExamRegistration, SubjectRegistration.exam_registration_id == ExamRegistration.id)
+        .where(ExamRegistration.exam_id == exam_id, SubjectRegistration.series.isnot(None))
+    )
+    serialized_candidates_result = await session.execute(serialized_candidates_stmt)
+    candidates_serialized = serialized_candidates_result.scalar() or 0
+
+    # Count total schools
+    schools_stmt = (
+        select(func.count(func.distinct(Candidate.school_id)))
+        .select_from(Candidate)
+        .join(ExamRegistration, Candidate.id == ExamRegistration.candidate_id)
+        .where(ExamRegistration.exam_id == exam_id)
+    )
+    schools_result = await session.execute(schools_stmt)
+    total_schools = schools_result.scalar() or 0
+
+    # Count schools with serialization (from ProcessTracking metadata)
+    schools_serialized = 0
+    schools_detail = []
+    subjects_detail = []
+    last_serialized_at = None
+
+    if serialization_tracking and serialization_tracking.process_metadata:
+        meta = serialization_tracking.process_metadata
+        schools_serialized = len(meta.get("schools_processed", []))
+        schools_detail = meta.get("schools_processed", [])
+        subjects_detail = meta.get("subjects_processed", [])
+        if serialization_tracking.completed_at:
+            last_serialized_at = serialization_tracking.completed_at.isoformat()
+
+    serialization_completion = (candidates_serialized / total_candidates * 100.0) if total_candidates > 0 else 0.0
+    serialization_status = "complete" if serialization_completion == 100.0 and total_candidates > 0 else ("in_progress" if serialization_completion > 0 else "pending")
+
+    serialization = SerializationProgress(
+        total_candidates=total_candidates,
+        candidates_serialized=candidates_serialized,
+        total_schools=total_schools,
+        schools_serialized=schools_serialized,
+        completion_percentage=round(serialization_completion, 2),
+        status=serialization_status,
+        last_serialized_at=last_serialized_at,
+        schools_detail=schools_detail,
+        subjects_detail=subjects_detail,
+    )
+
+    # 3. ICM/PDF Generation - Query ProcessTracking
+    score_sheet_tracking_stmt = (
+        select(ProcessTracking)
+        .where(
+            ProcessTracking.exam_id == exam_id,
+            ProcessTracking.process_type == ProcessType.SCORE_SHEET_GENERATION,
+            ProcessTracking.status == ProcessStatus.COMPLETED,
+        )
+    )
+    score_sheet_result = await session.execute(score_sheet_tracking_stmt)
+    score_sheet_trackings = score_sheet_result.scalars().all()
+
+    pdf_tracking_stmt = (
+        select(ProcessTracking)
+        .where(
+            ProcessTracking.exam_id == exam_id,
+            ProcessTracking.process_type == ProcessType.PDF_GENERATION,
+            ProcessTracking.status == ProcessStatus.COMPLETED,
+        )
+    )
+    pdf_result = await session.execute(pdf_tracking_stmt)
+    pdf_trackings = pdf_result.scalars().all()
+
+    excel_tracking_stmt = (
+        select(ProcessTracking)
+        .where(
+            ProcessTracking.exam_id == exam_id,
+            ProcessTracking.process_type.in_([ProcessType.EXCEL_EXPORT_CORE, ProcessType.EXCEL_EXPORT_ELECTIVES]),
+            ProcessTracking.status == ProcessStatus.COMPLETED,
+        )
+    )
+    excel_result = await session.execute(excel_tracking_stmt)
+    excel_trackings = excel_result.scalars().all()
+
+    # Aggregate school/subject data from tracking
+    schools_with_sheets = set()
+    subjects_with_sheets = set()
+    total_score_sheets = 0
+    total_pdfs = 0
+
+    schools_detail_gen: dict[int, dict[str, Any]] = {}
+    subjects_detail_gen: dict[int, dict[str, Any]] = {}
+
+    for tracking in score_sheet_trackings:
+        if tracking.school_id:
+            schools_with_sheets.add(tracking.school_id)
+        if tracking.subject_id:
+            subjects_with_sheets.add(tracking.subject_id)
+        if tracking.process_metadata:
+            total_score_sheets += tracking.process_metadata.get("sheets_generated", 0)
+            if tracking.school_id:
+                if tracking.school_id not in schools_detail_gen:
+                    schools_detail_gen[tracking.school_id] = {"school_id": tracking.school_id, "sheets_count": 0, "pdfs_count": 0}
+                schools_detail_gen[tracking.school_id]["sheets_count"] += tracking.process_metadata.get("sheets_generated", 0)
+            if tracking.subject_id:
+                if tracking.subject_id not in subjects_detail_gen:
+                    subjects_detail_gen[tracking.subject_id] = {"subject_id": tracking.subject_id, "sheets_count": 0, "pdfs_count": 0}
+                subjects_detail_gen[tracking.subject_id]["sheets_count"] += tracking.process_metadata.get("sheets_generated", 0)
+
+    for tracking in pdf_trackings:
+        if tracking.school_id:
+            schools_with_sheets.add(tracking.school_id)
+        if tracking.subject_id:
+            subjects_with_sheets.add(tracking.subject_id)
+        if tracking.process_metadata:
+            total_pdfs += 1
+            if tracking.school_id:
+                if tracking.school_id not in schools_detail_gen:
+                    schools_detail_gen[tracking.school_id] = {"school_id": tracking.school_id, "sheets_count": 0, "pdfs_count": 0}
+                schools_detail_gen[tracking.school_id]["pdfs_count"] += 1
+            if tracking.subject_id:
+                if tracking.subject_id not in subjects_detail_gen:
+                    subjects_detail_gen[tracking.subject_id] = {"subject_id": tracking.subject_id, "sheets_count": 0, "pdfs_count": 0}
+                subjects_detail_gen[tracking.subject_id]["pdfs_count"] += 1
+
+    # Get school and subject names for detail
+    for school_id in schools_detail_gen:
+        school_stmt = select(School).where(School.id == school_id)
+        school_res = await session.execute(school_stmt)
+        school = school_res.scalar_one_or_none()
+        if school:
+            schools_detail_gen[school_id]["school_name"] = school.name
+
+    for subject_id in subjects_detail_gen:
+        subject_stmt = select(Subject).where(Subject.id == subject_id)
+        subject_res = await session.execute(subject_stmt)
+        subject = subject_res.scalar_one_or_none()
+        if subject:
+            subjects_detail_gen[subject_id]["subject_code"] = subject.code
+            subjects_detail_gen[subject_id]["subject_name"] = subject.name
+
+    # Count total subjects
+    subjects_stmt = select(func.count(ExamSubject.id)).where(ExamSubject.exam_id == exam_id)
+    subjects_result = await session.execute(subjects_stmt)
+    total_subjects = subjects_result.scalar() or 0
+
+    # Excel exports
+    excel_exports = []
+    for tracking in excel_trackings:
+        if tracking.process_metadata:
+            excel_exports.append({
+                "process_type": tracking.process_type.value,
+                "file_path": tracking.process_metadata.get("file_path"),
+                "file_name": tracking.process_metadata.get("file_name"),
+                "file_size": tracking.process_metadata.get("file_size"),
+                "generated_at": tracking.completed_at.isoformat() if tracking.completed_at else None,
+            })
+
+    icm_pdf_completion = 0.0
+    if total_schools > 0 and total_subjects > 0:
+        school_progress = (len(schools_with_sheets) / total_schools) * 50.0
+        subject_progress = (len(subjects_with_sheets) / total_subjects) * 50.0
+        icm_pdf_completion = school_progress + subject_progress
+    icm_pdf_status = "complete" if icm_pdf_completion == 100.0 else ("in_progress" if icm_pdf_completion > 0 else "pending")
+
+    icm_pdf_generation = IcmPdfGenerationProgress(
+        total_schools=total_schools,
+        schools_with_sheets=len(schools_with_sheets),
+        total_subjects=total_subjects,
+        subjects_with_sheets=len(subjects_with_sheets),
+        score_sheets_generated=total_score_sheets,
+        pdfs_generated=total_pdfs,
+        excel_exports_generated=len(excel_trackings),
+        completion_percentage=round(icm_pdf_completion, 2),
+        status=icm_pdf_status,
+        schools_detail=list(schools_detail_gen.values()),
+        subjects_detail=list(subjects_detail_gen.values()),
+        excel_exports=excel_exports,
+    )
+
+    # Overall preparations completion
+    prep_completion = (registration_completion + serialization_completion + icm_pdf_completion) / 3.0
+    prep_status = "complete" if prep_completion == 100.0 else ("in_progress" if prep_completion > 0 else "pending")
+
+    preparations = PreparationsProgress(
+        registration=registration,
+        serialization=serialization,
+        icm_pdf_generation=icm_pdf_generation,
+        overall_completion_percentage=round(prep_completion, 2),
+        status=prep_status,
+    )
+
+    # ========== RESULTS PROCESSING PHASE ==========
+    # 1. Score Interpretation (setting max scores, percentages)
+    subjects_stmt = select(func.count(ExamSubject.id)).where(ExamSubject.exam_id == exam_id)
+    subjects_result = await session.execute(subjects_stmt)
+    total_subjects = subjects_result.scalar() or 0
+
+    # Count subjects with percentages and max scores configured
+    configured_subjects_stmt = (
+        select(func.count(ExamSubject.id))
+        .where(
+            ExamSubject.exam_id == exam_id,
+            ExamSubject.obj_pct.isnot(None),
+            ExamSubject.essay_pct.isnot(None),
+            ExamSubject.obj_max_score.isnot(None),
+            ExamSubject.essay_max_score.isnot(None),
+        )
+    )
+    configured_subjects_result = await session.execute(configured_subjects_stmt)
+    subjects_configured = configured_subjects_result.scalar() or 0
+
+    # Count subjects with grade ranges
+    grade_ranges_stmt = (
+        select(func.count(ExamSubject.id))
+        .where(ExamSubject.exam_id == exam_id, ExamSubject.grade_ranges_json.isnot(None))
+    )
+    grade_ranges_result = await session.execute(grade_ranges_stmt)
+    subjects_with_grade_ranges = grade_ranges_result.scalar() or 0
+
+    score_interpretation_completion = (subjects_configured / total_subjects * 100.0) if total_subjects > 0 else 0.0
+    score_interpretation_status = "complete" if score_interpretation_completion == 100.0 else ("in_progress" if score_interpretation_completion > 0 else "pending")
+
+    score_interpretation = ScoreInterpretationProgress(
+        total_subjects=total_subjects,
+        subjects_configured=subjects_configured,
+        subjects_with_grade_ranges=subjects_with_grade_ranges,
+        completion_percentage=round(score_interpretation_completion, 2),
+        status=score_interpretation_status,
+    )
+
+    # 2. Document Processing
+    # Count total documents
+    docs_stmt = select(func.count(Document.id)).where(Document.exam_id == exam_id)
+    docs_result = await session.execute(docs_stmt)
+    total_documents = docs_result.scalar() or 0
+
+    # Count documents by ID extraction status
+    id_success_stmt = (
+        select(func.count(Document.id))
+        .where(Document.exam_id == exam_id, Document.id_extraction_status == "success")
+    )
+    id_success_result = await session.execute(id_success_stmt)
+    documents_id_extracted_success = id_success_result.scalar() or 0
+
+    id_error_stmt = (
+        select(func.count(Document.id))
+        .where(Document.exam_id == exam_id, Document.id_extraction_status == "error")
+    )
+    id_error_result = await session.execute(id_error_stmt)
+    documents_id_extracted_error = id_error_result.scalar() or 0
+
+    id_pending_stmt = (
+        select(func.count(Document.id))
+        .where(Document.exam_id == exam_id, Document.id_extraction_status == "pending")
+    )
+    id_pending_result = await session.execute(id_pending_stmt)
+    documents_id_extracted_pending = id_pending_result.scalar() or 0
+
+    # Count documents by scores extraction status
+    scores_success_stmt = (
+        select(func.count(Document.id))
+        .where(Document.exam_id == exam_id, Document.scores_extraction_status == "success")
+    )
+    scores_success_result = await session.execute(scores_success_stmt)
+    documents_scores_extracted_success = scores_success_result.scalar() or 0
+
+    scores_error_stmt = (
+        select(func.count(Document.id))
+        .where(Document.exam_id == exam_id, Document.scores_extraction_status == "error")
+    )
+    scores_error_result = await session.execute(scores_error_stmt)
+    documents_scores_extracted_error = scores_error_result.scalar() or 0
+
+    scores_pending_stmt = (
+        select(func.count(Document.id))
+        .where(Document.exam_id == exam_id, Document.scores_extraction_status == "pending")
+    )
+    scores_pending_result = await session.execute(scores_pending_stmt)
+    documents_scores_extracted_pending = scores_pending_result.scalar() or 0
+
+    # Calculate document processing completion
+    id_completion = 0.0
+    scores_completion = 0.0
+    if total_documents > 0:
+        id_completion = ((documents_id_extracted_success + documents_id_extracted_error) / total_documents) * 100.0
+        scores_completion = ((documents_scores_extracted_success + documents_scores_extracted_error) / total_documents) * 100.0
+    overall_doc_completion = (id_completion + scores_completion) / 2.0 if total_documents > 0 else 0.0
+    doc_status = "complete" if overall_doc_completion == 100.0 else ("in_progress" if overall_doc_completion > 0 else "pending")
+
+    document_processing = DocumentProcessingProgress(
+        total_documents=total_documents,
+        documents_id_extracted_success=documents_id_extracted_success,
+        documents_id_extracted_error=documents_id_extracted_error,
+        documents_id_extracted_pending=documents_id_extracted_pending,
+        documents_scores_extracted_success=documents_scores_extracted_success,
+        documents_scores_extracted_error=documents_scores_extracted_error,
+        documents_scores_extracted_pending=documents_scores_extracted_pending,
+        id_extraction_completion_percentage=round(id_completion, 2),
+        scores_extraction_completion_percentage=round(scores_completion, 2),
+        overall_completion_percentage=round(overall_doc_completion, 2),
+        status=doc_status,
+    )
+
+    # 3. Scoring/Data Entry
+    # Calculate expected vs actual score entries based on max_scores set per subject
+    # Get all subject registrations with their exam subjects to check max_scores
+    regs_with_subjects_stmt = (
+        select(SubjectRegistration, ExamSubject)
+        .join(ExamRegistration, SubjectRegistration.exam_registration_id == ExamRegistration.id)
+        .join(ExamSubject, SubjectRegistration.exam_subject_id == ExamSubject.id)
+        .where(ExamRegistration.exam_id == exam_id)
+    )
+    regs_with_subjects_result = await session.execute(regs_with_subjects_stmt)
+    regs_with_subjects = regs_with_subjects_result.all()
+
+    total_subject_registrations = len(regs_with_subjects)
+    total_expected_score_entries = 0
+    total_actual_score_entries = 0
+
+    # For each registration, count expected and actual entries
+    for subject_reg, exam_subject in regs_with_subjects:
+        # Count expected entries based on max_scores set
+        expected_count = 0
+        obj_expected = exam_subject.obj_max_score is not None
+        essay_expected = exam_subject.essay_max_score is not None
+        pract_expected = exam_subject.pract_max_score is not None
+
+        if obj_expected:
+            expected_count += 1
+        if essay_expected:
+            expected_count += 1
+        if pract_expected:
+            expected_count += 1
+
+        total_expected_score_entries += expected_count
+
+        # Get SubjectScore if it exists and count actual entries
+        # Only count entries that correspond to expected test types
+        score_stmt = select(SubjectScore).where(SubjectScore.subject_registration_id == subject_reg.id)
+        score_result = await session.execute(score_stmt)
+        subject_score = score_result.scalar_one_or_none()
+
+        if subject_score:
+            actual_count = 0
+            # Only count if max_score is set for that test type and raw_score is not None/empty
+            # Empty strings and whitespace-only strings are treated as not set
+            if obj_expected:
+                raw_score = subject_score.obj_raw_score
+                if raw_score is not None and str(raw_score).strip():
+                    actual_count += 1
+            if essay_expected:
+                raw_score = subject_score.essay_raw_score
+                if raw_score is not None and str(raw_score).strip():
+                    actual_count += 1
+            if pract_expected:
+                raw_score = subject_score.pract_raw_score
+                if raw_score is not None and str(raw_score).strip():
+                    actual_count += 1
+            total_actual_score_entries += actual_count
+
+    # Count registrations with at least one score (has SubjectScore record)
+    scores_stmt = (
+        select(func.count(SubjectScore.id))
+        .select_from(SubjectScore)
+        .join(SubjectRegistration, SubjectScore.subject_registration_id == SubjectRegistration.id)
+        .join(ExamRegistration, SubjectRegistration.exam_registration_id == ExamRegistration.id)
+        .where(ExamRegistration.exam_id == exam_id)
+    )
+    scores_result = await session.execute(scores_stmt)
+    registrations_with_scores = scores_result.scalar() or 0
+
+    # Count by extraction method
+    manual_stmt = (
+        select(func.count(func.distinct(SubjectScore.id)))
+        .select_from(SubjectScore)
+        .join(SubjectRegistration, SubjectScore.subject_registration_id == SubjectRegistration.id)
+        .join(ExamRegistration, SubjectRegistration.exam_registration_id == ExamRegistration.id)
+        .where(
+            ExamRegistration.exam_id == exam_id,
+            (
+                (SubjectScore.obj_extraction_method == DataExtractionMethod.MANUAL_ENTRY_PHYSICAL)
+                | (SubjectScore.essay_extraction_method == DataExtractionMethod.MANUAL_ENTRY_PHYSICAL)
+                | (SubjectScore.pract_extraction_method == DataExtractionMethod.MANUAL_ENTRY_PHYSICAL)
+            ),
+        )
+    )
+    manual_result = await session.execute(manual_stmt)
+    registrations_manual_entry = manual_result.scalar() or 0
+
+    digital_stmt = (
+        select(func.count(func.distinct(SubjectScore.id)))
+        .select_from(SubjectScore)
+        .join(SubjectRegistration, SubjectScore.subject_registration_id == SubjectRegistration.id)
+        .join(ExamRegistration, SubjectRegistration.exam_registration_id == ExamRegistration.id)
+        .where(
+            ExamRegistration.exam_id == exam_id,
+            (
+                (SubjectScore.obj_extraction_method == DataExtractionMethod.MANUAL_TRANSCRIPTION_DIGITAL)
+                | (SubjectScore.essay_extraction_method == DataExtractionMethod.MANUAL_TRANSCRIPTION_DIGITAL)
+                | (SubjectScore.pract_extraction_method == DataExtractionMethod.MANUAL_TRANSCRIPTION_DIGITAL)
+            ),
+        )
+    )
+    digital_result = await session.execute(digital_stmt)
+    registrations_digital_transcription = digital_result.scalar() or 0
+
+    automated_stmt = (
+        select(func.count(func.distinct(SubjectScore.id)))
+        .select_from(SubjectScore)
+        .join(SubjectRegistration, SubjectScore.subject_registration_id == SubjectRegistration.id)
+        .join(ExamRegistration, SubjectRegistration.exam_registration_id == ExamRegistration.id)
+        .where(
+            ExamRegistration.exam_id == exam_id,
+            (
+                (SubjectScore.obj_extraction_method == DataExtractionMethod.AUTOMATED_EXTRACTION)
+                | (SubjectScore.essay_extraction_method == DataExtractionMethod.AUTOMATED_EXTRACTION)
+                | (SubjectScore.pract_extraction_method == DataExtractionMethod.AUTOMATED_EXTRACTION)
+            ),
+        )
+    )
+    automated_result = await session.execute(automated_stmt)
+    registrations_automated_extraction = automated_result.scalar() or 0
+
+    # Count unmatched records
+    unmatched_stmt = (
+        select(func.count(UnmatchedExtractionRecord.id))
+        .select_from(UnmatchedExtractionRecord)
+        .join(Document, UnmatchedExtractionRecord.document_id == Document.id)
+        .where(Document.exam_id == exam_id)
+    )
+    unmatched_result = await session.execute(unmatched_stmt)
+    unmatched_records_total = unmatched_result.scalar() or 0
+
+    unmatched_pending_stmt = (
+        select(func.count(UnmatchedExtractionRecord.id))
+        .select_from(UnmatchedExtractionRecord)
+        .join(Document, UnmatchedExtractionRecord.document_id == Document.id)
+        .where(Document.exam_id == exam_id, UnmatchedExtractionRecord.status == UnmatchedRecordStatus.PENDING)
+    )
+    unmatched_pending_result = await session.execute(unmatched_pending_stmt)
+    unmatched_records_pending = unmatched_pending_result.scalar() or 0
+
+    unmatched_resolved_stmt = (
+        select(func.count(UnmatchedExtractionRecord.id))
+        .select_from(UnmatchedExtractionRecord)
+        .join(Document, UnmatchedExtractionRecord.document_id == Document.id)
+        .where(Document.exam_id == exam_id, UnmatchedExtractionRecord.status == UnmatchedRecordStatus.RESOLVED)
+    )
+    unmatched_resolved_result = await session.execute(unmatched_resolved_stmt)
+    unmatched_records_resolved = unmatched_resolved_result.scalar() or 0
+
+    # Count validation issues
+    validation_stmt = (
+        select(func.count(SubjectScoreValidationIssue.id))
+        .select_from(SubjectScoreValidationIssue)
+        .join(ExamSubject, SubjectScoreValidationIssue.exam_subject_id == ExamSubject.id)
+        .where(ExamSubject.exam_id == exam_id)
+    )
+    validation_result = await session.execute(validation_stmt)
+    validation_issues_total = validation_result.scalar() or 0
+
+    validation_pending_stmt = (
+        select(func.count(SubjectScoreValidationIssue.id))
+        .select_from(SubjectScoreValidationIssue)
+        .join(ExamSubject, SubjectScoreValidationIssue.exam_subject_id == ExamSubject.id)
+        .where(ExamSubject.exam_id == exam_id, SubjectScoreValidationIssue.status == ValidationIssueStatus.PENDING)
+    )
+    validation_pending_result = await session.execute(validation_pending_stmt)
+    validation_issues_pending = validation_pending_result.scalar() or 0
+
+    validation_resolved_stmt = (
+        select(func.count(SubjectScoreValidationIssue.id))
+        .select_from(SubjectScoreValidationIssue)
+        .join(ExamSubject, SubjectScoreValidationIssue.exam_subject_id == ExamSubject.id)
+        .where(ExamSubject.exam_id == exam_id, SubjectScoreValidationIssue.status == ValidationIssueStatus.RESOLVED)
+    )
+    validation_resolved_result = await session.execute(validation_resolved_stmt)
+    validation_issues_resolved = validation_resolved_result.scalar() or 0
+
+    # Calculate score entry completion based on expected vs actual entries
+    score_entry_completion = 0.0
+    if total_expected_score_entries > 0:
+        score_entry_completion = (total_actual_score_entries / total_expected_score_entries) * 100.0
+    elif total_subject_registrations > 0:
+        # If there are registrations but no expected entries (no max_scores set), show 0%
+        score_entry_completion = 0.0
+    # If no registrations at all, completion stays at 0.0
+
+    score_entry_status = "complete" if score_entry_completion == 100.0 and unmatched_records_pending == 0 and validation_issues_pending == 0 else ("in_progress" if score_entry_completion > 0 else "pending")
+
+    scoring_data_entry = ScoringDataEntryProgress(
+        total_subject_registrations=total_subject_registrations,
+        registrations_with_scores=registrations_with_scores,
+        total_expected_score_entries=total_expected_score_entries,
+        total_actual_score_entries=total_actual_score_entries,
+        registrations_manual_entry=registrations_manual_entry,
+        registrations_digital_transcription=registrations_digital_transcription,
+        registrations_automated_extraction=registrations_automated_extraction,
+        completion_percentage=round(score_entry_completion, 2),
+        status=score_entry_status,
+    )
+
+    # 4. Validation Issues
+    validation_completion = 0.0
+    if validation_issues_total > 0:
+        validation_completion = (validation_issues_resolved / validation_issues_total * 100.0) if unmatched_records_total == 0 else ((unmatched_records_resolved + validation_issues_resolved) / (unmatched_records_total + validation_issues_total) * 100.0)
+    elif unmatched_records_total > 0:
+        validation_completion = (unmatched_records_resolved / unmatched_records_total * 100.0)
+    else:
+        validation_completion = 100.0 if total_subject_registrations > 0 else 0.0
+
+    validation_status = "complete" if validation_completion == 100.0 and unmatched_records_pending == 0 and validation_issues_pending == 0 else ("in_progress" if validation_completion > 0 else "pending")
+
+    validation_issues = ValidationIssuesProgress(
+        unmatched_records_total=unmatched_records_total,
+        unmatched_records_pending=unmatched_records_pending,
+        unmatched_records_resolved=unmatched_records_resolved,
+        validation_issues_total=validation_issues_total,
+        validation_issues_pending=validation_issues_pending,
+        validation_issues_resolved=validation_issues_resolved,
+        completion_percentage=round(validation_completion, 2),
+        status=validation_status,
+    )
+
+    # 5. Results Processing (normalization, total scores)
+    # Count processed registrations (has normalized scores and total_score > 0)
+    processed_stmt = (
+        select(func.count(SubjectScore.id))
+        .select_from(SubjectScore)
+        .join(SubjectRegistration, SubjectScore.subject_registration_id == SubjectRegistration.id)
+        .join(ExamRegistration, SubjectRegistration.exam_registration_id == ExamRegistration.id)
+        .where(
+            ExamRegistration.exam_id == exam_id,
+            SubjectScore.total_score > 0,
+            SubjectScore.obj_normalized.isnot(None),
+            SubjectScore.essay_normalized.isnot(None),
+        )
+    )
+    processed_result = await session.execute(processed_stmt)
+    registrations_processed = processed_result.scalar() or 0
+
+    registrations_pending = total_subject_registrations - registrations_processed
+
+    # Calculate result processing completion
+    result_processing_completion = 0.0
+    if total_subject_registrations > 0:
+        result_processing_completion = (registrations_processed / total_subject_registrations) * 100.0
+    result_processing_status = "complete" if result_processing_completion == 100.0 else ("in_progress" if result_processing_completion > 0 else "pending")
+
+    results_processing = ResultsProcessingProgress(
+        total_subject_registrations=total_subject_registrations,
+        registrations_processed=registrations_processed,
+        registrations_pending=registrations_pending,
+        completion_percentage=round(result_processing_completion, 2),
+        status=result_processing_status,
+    )
+
+    # Overall Results Processing completion
+    results_processing_completion_overall = (
+        score_interpretation_completion + overall_doc_completion + score_entry_completion + validation_completion + result_processing_completion
+    ) / 5.0
+    results_processing_status_overall = "complete" if results_processing_completion_overall == 100.0 else ("in_progress" if results_processing_completion_overall > 0 else "pending")
+
+    results_processing_overall = ResultsProcessingOverallProgress(
+        score_interpretation=score_interpretation,
+        document_processing=document_processing,
+        scoring_data_entry=scoring_data_entry,
+        validation_issues=validation_issues,
+        results_processing=results_processing,
+        overall_completion_percentage=round(results_processing_completion_overall, 2),
+        status=results_processing_status_overall,
+    )
+
+    # ========== RESULTS RELEASE PHASE ==========
+    # Grade Ranges Setup
+    grade_ranges_completion = (subjects_with_grade_ranges / total_subjects * 100.0) if total_subjects > 0 else 0.0
+    grade_ranges_status = "complete" if grade_ranges_completion == 100.0 else ("in_progress" if grade_ranges_completion > 0 else "pending")
+
+    grade_ranges = GradeRangesProgress(
+        total_subjects=total_subjects,
+        subjects_with_grade_ranges=subjects_with_grade_ranges,
+        completion_percentage=round(grade_ranges_completion, 2),
+        status=grade_ranges_status,
+    )
+
+    # Overall Results Release completion
+    results_release_completion = grade_ranges_completion
+    results_release_status = grade_ranges_status
+
+    results_release = ResultsReleaseProgress(
+        grade_ranges=grade_ranges,
+        overall_completion_percentage=round(results_release_completion, 2),
+        status=results_release_status,
+    )
+
+    # ========== OVERALL PROGRESS ==========
+    overall_completion = (
+        prep_completion + results_processing_completion_overall + results_release_completion
+    ) / 3.0
+    overall_status = "complete" if overall_completion == 100.0 else ("in_progress" if overall_completion > 0 else "pending")
+
+    return ExamProgressResponse(
+        exam_id=exam.id,
+        exam_type=exam.exam_type.value if hasattr(exam.exam_type, 'value') else str(exam.exam_type),
+        exam_year=exam.year,
+        exam_series=exam.series.value if hasattr(exam.series, 'value') else str(exam.series),
+        preparations=preparations,
+        results_processing=results_processing_overall,
+        results_release=results_release,
+        overall_completion_percentage=round(overall_completion, 2),
+        overall_status=overall_status,
+    )
+
+
 @router.post("/{exam_id}/serialize", response_model=SerializationResponse, status_code=status.HTTP_200_OK)
 async def serialize_exam_candidates(
     exam_id: int,
@@ -914,6 +1596,31 @@ async def export_scannables_core(
     try:
         excel_bytes = await generate_core_subjects_export(session, exam_id)
         filename = f"exam_{exam_id}_scannables_core.xlsx"
+
+        # Save file to disk for tracking
+        excel_export_dir = Path(settings.storage_path) / "excel_exports"
+        excel_export_dir.mkdir(parents=True, exist_ok=True)
+        file_path = excel_export_dir / filename
+        file_path.write_bytes(excel_bytes)
+
+        # Create ProcessTracking record
+        tracking = ProcessTracking(
+            exam_id=exam_id,
+            process_type=ProcessType.EXCEL_EXPORT_CORE,
+            school_id=None,
+            subject_id=None,
+            status=ProcessStatus.COMPLETED,
+            process_metadata={
+                "file_path": str(file_path),
+                "file_name": filename,
+                "file_size": len(excel_bytes),
+            },
+            started_at=datetime.utcnow(),
+            completed_at=datetime.utcnow(),
+        )
+        session.add(tracking)
+        await session.commit()
+
         return StreamingResponse(
             iter([excel_bytes]),
             media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
@@ -944,6 +1651,31 @@ async def export_scannables_electives(
     try:
         excel_bytes = await generate_electives_export(session, exam_id)
         filename = f"exam_{exam_id}_scannables_electives.xlsx"
+
+        # Save file to disk for tracking
+        excel_export_dir = Path(settings.storage_path) / "excel_exports"
+        excel_export_dir.mkdir(parents=True, exist_ok=True)
+        file_path = excel_export_dir / filename
+        file_path.write_bytes(excel_bytes)
+
+        # Create ProcessTracking record
+        tracking = ProcessTracking(
+            exam_id=exam_id,
+            process_type=ProcessType.EXCEL_EXPORT_ELECTIVES,
+            school_id=None,
+            subject_id=None,
+            status=ProcessStatus.COMPLETED,
+            process_metadata={
+                "file_path": str(file_path),
+                "file_name": filename,
+                "file_size": len(excel_bytes),
+            },
+            started_at=datetime.utcnow(),
+            completed_at=datetime.utcnow(),
+        )
+        session.add(tracking)
+        await session.commit()
+
         return StreamingResponse(
             iter([excel_bytes]),
             media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
@@ -1167,7 +1899,8 @@ async def generate_exam_pdf_score_sheets_combined(
             )
 
         # Generate filename
-        filename = f"{school.code}_{school.name.replace('/', '_').replace('\\', '_')}_combined_score_sheets.pdf"
+        school_name_safe = school.name.replace("/", "_").replace("\\", "_")
+        filename = f"{school.code}_{school_name_safe}_combined_score_sheets.pdf"
 
         # Return as downloadable file
         return StreamingResponse(

@@ -1,5 +1,6 @@
 """Service for generating score sheets and assigning sheet IDs to candidates."""
 
+from datetime import datetime
 from typing import Any
 
 from sqlalchemy import select
@@ -10,6 +11,9 @@ from app.models import (
     Exam,
     ExamRegistration,
     ExamSubject,
+    ProcessStatus,
+    ProcessTracking,
+    ProcessType,
     School,
     Subject,
     SubjectRegistration,
@@ -310,6 +314,46 @@ async def generate_score_sheets(
                     sheets_by_series[series] = sheets_by_series.get(series, 0) + 1
 
     # Commit changes
+    await session.commit()
+
+    # Create ProcessTracking records for each (school_id, subject_id) combination
+    # Group by (school_id, subject_id) to create one tracking record per combination
+    tracking_data: dict[tuple[int, int], dict[str, Any]] = {}
+    for (school_id_key, subject_id_key, _series), rows_group in grouped_data.items():
+        key = (school_id_key, subject_id_key)
+        if key not in tracking_data:
+            tracking_data[key] = {
+                "school_id": school_id_key,
+                "subject_id": subject_id_key,
+                "test_types": test_types,
+                "sheets_generated": 0,
+                "candidates_assigned": 0,
+            }
+        # Count sheets and candidates for this combination
+        for test_type in test_types:
+            num_candidates = len(rows_group)
+            num_batches = (num_candidates + BATCH_SIZE - 1) // BATCH_SIZE
+            tracking_data[key]["sheets_generated"] += num_batches
+            tracking_data[key]["candidates_assigned"] += num_candidates
+
+    # Create tracking records
+    for (school_id_key, subject_id_key), data in tracking_data.items():
+        tracking = ProcessTracking(
+            exam_id=exam_id,
+            process_type=ProcessType.SCORE_SHEET_GENERATION,
+            school_id=school_id_key,
+            subject_id=subject_id_key,
+            status=ProcessStatus.COMPLETED,
+            process_metadata={
+                "test_types": data["test_types"],
+                "sheets_generated": data["sheets_generated"],
+                "candidates_assigned": data["candidates_assigned"],
+            },
+            started_at=datetime.utcnow(),
+            completed_at=datetime.utcnow(),
+        )
+        session.add(tracking)
+
     await session.commit()
 
     # Convert statistics to lists

@@ -1,5 +1,6 @@
 """Service for generating PDF score sheets and assigning sheet IDs."""
 
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
@@ -13,6 +14,9 @@ from app.models import (
     Exam,
     ExamRegistration,
     ExamSubject,
+    ProcessStatus,
+    ProcessTracking,
+    ProcessType,
     School,
     Subject,
     SubjectRegistration,
@@ -164,6 +168,8 @@ async def generate_pdfs_for_exam(
     schools_processed: dict[int, dict[str, Any]] = {}
     subjects_processed: dict[int, dict[str, Any]] = {}
     sheets_by_series: dict[int, int] = {}
+    # Track PDF file paths for ProcessTracking
+    pdf_tracking_data: dict[tuple[int, int], dict[str, Any]] = {}
 
     # Process each (school, subject, series) combination
     for (school_id_key, subject_id_key, series), rows_group in grouped_data.items():
@@ -265,6 +271,7 @@ async def generate_pdfs_for_exam(
                 annotated_pdf = pdf_bytes
 
             # Save PDF to filesystem
+            pdf_file_path = None
             try:
                 # Create directory structure: pdf_output_path/{school_name}/
                 school_name_safe = school.name.replace("/", " ").replace("\\", " ")
@@ -277,9 +284,28 @@ async def generate_pdfs_for_exam(
 
                 # Write PDF to file
                 output_path.write_bytes(annotated_pdf)
+                pdf_file_path = str(output_path)
             except Exception:
                 # If saving fails, continue (PDF generation and ID assignment still succeeded)
                 pass
+
+            # Track PDF file path for this (school_id, subject_id) combination
+            tracking_key = (school_id_key, subject_id_key)
+            if tracking_key not in pdf_tracking_data:
+                pdf_tracking_data[tracking_key] = {
+                    "school_id": school_id_key,
+                    "subject_id": subject_id_key,
+                    "test_types": [],
+                    "pdf_file_paths": [],
+                    "sheets_count": 0,
+                    "candidates_count": 0,
+                }
+            if test_type not in pdf_tracking_data[tracking_key]["test_types"]:
+                pdf_tracking_data[tracking_key]["test_types"].append(test_type)
+            if pdf_file_path:
+                pdf_tracking_data[tracking_key]["pdf_file_paths"].append(pdf_file_path)
+            pdf_tracking_data[tracking_key]["sheets_count"] += page_count
+            pdf_tracking_data[tracking_key]["candidates_count"] += len(rows_group)
 
             # Assign sheet IDs to candidates based on their batch/page
             for batch_index in range(min(len(batches), len(sheet_ids))):
@@ -334,6 +360,31 @@ async def generate_pdfs_for_exam(
             subjects_processed[subject_id_key]["pdfs_count"] += 1
 
     # Commit changes
+    await session.commit()
+
+    # Create ProcessTracking records for each (school_id, subject_id) combination
+    for (school_id_key, subject_id_key), data in pdf_tracking_data.items():
+        # Use first PDF path if available, or None
+        pdf_file_path = data["pdf_file_paths"][0] if data["pdf_file_paths"] else None
+
+        tracking = ProcessTracking(
+            exam_id=exam_id,
+            process_type=ProcessType.PDF_GENERATION,
+            school_id=school_id_key,
+            subject_id=subject_id_key,
+            status=ProcessStatus.COMPLETED,
+            process_metadata={
+                "test_types": data["test_types"],
+                "pdf_file_path": pdf_file_path,
+                "pdf_file_paths": data["pdf_file_paths"],  # All PDF paths for this combination
+                "sheets_count": data["sheets_count"],
+                "candidates_count": data["candidates_count"],
+            },
+            started_at=datetime.utcnow(),
+            completed_at=datetime.utcnow(),
+        )
+        session.add(tracking)
+
     await session.commit()
 
     # Convert statistics to lists
