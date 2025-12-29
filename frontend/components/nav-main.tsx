@@ -21,6 +21,12 @@ import {
 } from "@/components/ui/sidebar"
 import { cn } from "@/lib/utils"
 
+type NavItem = {
+  title: string
+  url: string
+  items?: NavItem[]
+}
+
 export function NavMain({
   items,
 }: {
@@ -29,10 +35,7 @@ export function NavMain({
     url: string
     icon?: LucideIcon
     isActive?: boolean
-    items?: {
-      title: string
-      url: string
-    }[]
+    items?: NavItem[]
   }[]
 }) {
   const pathname = usePathname()
@@ -60,13 +63,67 @@ export function NavMain({
     return currentPath === hrefPath && !currentQuery
   }
 
+  // Recursively check if any nested item is active
+  const hasActiveChild = (item: NavItem): boolean => {
+    if (isActive(item.url)) return true
+    if (item.items) {
+      return item.items.some((subItem) => hasActiveChild(subItem))
+    }
+    return false
+  }
+
   // Determine which items should be open based on active submenu items
   const getDefaultOpen = (item: typeof items[0]) => {
     if (item.isActive) return true
     if (item.items) {
-      return item.items.some((subItem) => isActive(subItem.url))
+      return item.items.some((subItem) => hasActiveChild(subItem))
     }
     return false
+  }
+
+  // Render nested submenu items
+  const renderSubItems = (subItems: NavItem[]) => {
+    return subItems.map((subItem) => {
+      const hasNestedItems = subItem.items && subItem.items.length > 0
+      const subActive = isActive(subItem.url) || (hasNestedItems && hasActiveChild(subItem))
+
+      if (!hasNestedItems) {
+        // Regular sub-item without nested items
+        return (
+          <SidebarMenuSubItem key={subItem.title}>
+            <SidebarMenuSubButton asChild isActive={subActive}>
+              <Link href={subItem.url}>
+                <span>{subItem.title}</span>
+              </Link>
+            </SidebarMenuSubButton>
+          </SidebarMenuSubItem>
+        )
+      }
+
+      // Sub-item with nested submenu
+      return (
+        <Collapsible
+          key={subItem.title}
+          asChild
+          defaultOpen={hasActiveChild(subItem)}
+          className="group/nested-collapsible"
+        >
+          <SidebarMenuSubItem>
+            <CollapsibleTrigger asChild>
+              <SidebarMenuSubButton isActive={subActive}>
+                <span>{subItem.title}</span>
+                <ChevronRight className="ml-auto transition-transform duration-200 group-data-[state=open]/nested-collapsible:rotate-90" />
+              </SidebarMenuSubButton>
+            </CollapsibleTrigger>
+            <CollapsibleContent>
+              <SidebarMenuSub>
+                {renderSubItems(subItem.items || [])}
+              </SidebarMenuSub>
+            </CollapsibleContent>
+          </SidebarMenuSubItem>
+        </Collapsible>
+      )
+    })
   }
 
   return (
@@ -75,7 +132,7 @@ export function NavMain({
       <SidebarMenu>
         {items.map((item) => {
           const hasSubmenu = item.items && item.items.length > 0
-          const itemActive = isActive(item.url) || (hasSubmenu && item.items?.some((sub) => isActive(sub.url)))
+          const itemActive = isActive(item.url) || (hasSubmenu && item.items?.some((sub) => hasActiveChild(sub)))
 
           if (!hasSubmenu) {
             // Single menu item without submenu
@@ -109,18 +166,7 @@ export function NavMain({
                 </CollapsibleTrigger>
                 <CollapsibleContent>
                   <SidebarMenuSub>
-                    {item.items?.map((subItem) => {
-                      const subActive = isActive(subItem.url)
-                      return (
-                        <SidebarMenuSubItem key={subItem.title}>
-                          <SidebarMenuSubButton asChild isActive={subActive}>
-                            <Link href={subItem.url}>
-                              <span>{subItem.title}</span>
-                            </Link>
-                          </SidebarMenuSubButton>
-                        </SidebarMenuSubItem>
-                      )
-                    })}
+                    {item.items && renderSubItems(item.items)}
                   </SidebarMenuSub>
                 </CollapsibleContent>
               </SidebarMenuItem>

@@ -25,7 +25,10 @@ import { SearchableSelect } from "@/components/ui/searchable-select";
 import { Checkbox } from "@/components/ui/checkbox";
 import { getCandidatesForManualEntry, getAllExams, listProgrammes, listSubjects, batchUpdateScoresForManualEntry, findExamId, listSchools, listSchoolProgrammes, listProgrammeSubjects } from "@/lib/api";
 import type { Exam, Programme, Subject, School, ManualEntryFilters, CandidateScoreEntry, BatchScoreUpdateItem, ExamType, ExamSeries } from "@/types/document";
-import { Loader2, Save, Search, X } from "lucide-react";
+import { Loader2, Save, Search, X, Users, Edit, CheckCircle2, AlertCircle, Filter, FileText, ChevronDown, ChevronUp } from "lucide-react";
+import { Badge } from "@/components/ui/badge";
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
+import { toast } from "sonner";
 
 export default function ManualEntryPage() {
   const [candidates, setCandidates] = useState<CandidateScoreEntry[]>([]);
@@ -52,6 +55,8 @@ export default function ManualEntryPage() {
   const [subjects, setSubjects] = useState<Subject[]>([]);
   const [loadingFilters, setLoadingFilters] = useState(true);
   const [loadingProgrammes, setLoadingProgrammes] = useState(false);
+  const [loadingSubjects, setLoadingSubjects] = useState(false);
+  const [allSubjects, setAllSubjects] = useState<Subject[]>([]); // Store all subjects for filtering
 
   // Exam filtering state (three-step: type, series, year)
   const [examType, setExamType] = useState<ExamType | undefined>();
@@ -69,6 +74,32 @@ export default function ManualEntryPage() {
   const [showObj, setShowObj] = useState(true);
   const [showEssay, setShowEssay] = useState(true);
   const [showPract, setShowPract] = useState(false);
+
+  // Document ID search mode - tracks which document type matched
+  const [documentIdMatchType, setDocumentIdMatchType] = useState<"obj" | "essay" | "pract" | null>(null);
+
+  // Collapsible state for filters and stats
+  const [filtersOpen, setFiltersOpen] = useState(true);
+  const [statsOpen, setStatsOpen] = useState(true);
+
+  // Keyboard shortcut handler (Ctrl/Cmd + K to toggle filters)
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      // Ctrl+K or Cmd+K to toggle filters
+      if ((e.ctrlKey || e.metaKey) && e.key === 'k') {
+        e.preventDefault();
+        setFiltersOpen((prev) => !prev);
+      }
+      // Ctrl+Shift+K or Cmd+Shift+K to toggle stats
+      if ((e.ctrlKey || e.metaKey) && e.shiftKey && e.key === 'K') {
+        e.preventDefault();
+        setStatsOpen((prev) => !prev);
+      }
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, []);
 
   // Load filter options
   useEffect(() => {
@@ -105,7 +136,8 @@ export default function ManualEntryPage() {
         ]);
         setExams(examsData);
         setSchools(schoolsData);
-        setSubjects(subjectsData); // Load all subjects initially
+        setAllSubjects(subjectsData); // Store all subjects
+        setSubjects([]); // Don't show subjects until school is selected
         setProgrammes([]);
       } catch (err) {
         console.error("Error loading filter options:", err);
@@ -121,21 +153,7 @@ export default function ManualEntryPage() {
     async function loadProgrammesForSchool() {
       if (!pendingFilters.school_id) {
         setProgrammes([]);
-        // Reload all subjects when school is cleared
-        try {
-          const allSubjects: Subject[] = [];
-          let page = 1;
-          let hasMore = true;
-          while (hasMore) {
-            const subjectsPage = await listSubjects(page, 100);
-            allSubjects.push(...subjectsPage);
-            hasMore = subjectsPage.length === 100;
-            page++;
-          }
-          setSubjects(allSubjects);
-        } catch (err) {
-          console.error("Error loading all subjects:", err);
-        }
+        setSubjects([]); // Clear subjects when school is cleared
         return;
       }
 
@@ -157,14 +175,65 @@ export default function ManualEntryPage() {
     loadProgrammesForSchool();
   }, [pendingFilters.school_id]);
 
+  // Load subjects when school is selected (and optionally programme)
+  useEffect(() => {
+    async function loadSubjectsForSchoolAndProgramme() {
+      if (!pendingFilters.school_id) {
+        setSubjects([]);
+        return;
+      }
+
+      setLoadingSubjects(true);
+      try {
+        let subjectsToShow: Subject[] = [];
+
+        if (pendingFilters.programme_id) {
+          // If programme is selected, load subjects from that programme
+          const programmeSubjects = await listProgrammeSubjects(pendingFilters.programme_id);
+          // Convert ProgrammeSubject[] to Subject[] by matching with allSubjects
+          const programmeSubjectIds = new Set(programmeSubjects.map(ps => ps.subject_id));
+          subjectsToShow = allSubjects.filter(subject => programmeSubjectIds.has(subject.id));
+        } else {
+          // If only school is selected (no programme), show all subjects
+          // In the future, if there's a listSchoolSubjects API, use that
+          subjectsToShow = allSubjects;
+        }
+
+        setSubjects(subjectsToShow);
+      } catch (err) {
+        console.error("Error loading subjects:", err);
+        // Fallback to all subjects on error
+        setSubjects(allSubjects);
+      } finally {
+        setLoadingSubjects(false);
+      }
+    }
+    loadSubjectsForSchoolAndProgramme();
+  }, [pendingFilters.school_id, pendingFilters.programme_id, allSubjects]);
+
   // Load candidates
   const loadCandidates = useCallback(async () => {
-    // Require at least exam_type or exam_id to load candidates
-    if (!filters.exam_id && !filters.exam_type) {
-      setCandidates([]);
-      setTotal(0);
-      setTotalPages(0);
-      return;
+    // Check if exam filters are present (required for both document_id and regular search)
+    const hasRequiredExamFilters = filters.exam_id || (filters.exam_type && filters.series && filters.year);
+
+    if (filters.document_id) {
+      // When searching by document_id, exam filters are required
+      if (!hasRequiredExamFilters) {
+        setCandidates([]);
+        setTotal(0);
+        setTotalPages(0);
+        setCurrentPage(1);
+        return;
+      }
+    } else {
+      // Regular search requires exam filters, school, and subject
+      if (!hasRequiredExamFilters || !filters.school_id || !filters.subject_id) {
+        setCandidates([]);
+        setTotal(0);
+        setTotalPages(0);
+        setCurrentPage(1);
+        return;
+      }
     }
 
     setLoading(true);
@@ -176,6 +245,34 @@ export default function ManualEntryPage() {
       setTotalPages(response.total_pages);
       setCurrentPage(response.page);
       setScoreChanges(new Map()); // Reset changes when loading new data
+
+      // If searching by document_id, determine which document type matched
+      if (filters.document_id && response.items.length > 0) {
+        const firstCandidate = response.items[0];
+        if (firstCandidate.obj_document_id === filters.document_id) {
+          setDocumentIdMatchType("obj");
+          setShowObj(true);
+          setShowEssay(false);
+          setShowPract(false);
+        } else if (firstCandidate.essay_document_id === filters.document_id) {
+          setDocumentIdMatchType("essay");
+          setShowObj(false);
+          setShowEssay(true);
+          setShowPract(false);
+        } else if (firstCandidate.pract_document_id === filters.document_id) {
+          setDocumentIdMatchType("pract");
+          setShowObj(false);
+          setShowEssay(false);
+          setShowPract(true);
+        } else {
+          // Fallback - shouldn't happen but handle gracefully
+          setDocumentIdMatchType(null);
+        }
+      } else {
+        // Reset to default when not searching by document_id
+        setDocumentIdMatchType(null);
+        // Keep current toggle states when not using document_id search
+      }
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to load candidates");
       console.error("Error loading candidates:", err);
@@ -190,6 +287,7 @@ export default function ManualEntryPage() {
 
   // Find exam_id when type, series, year are all selected (update pending filters)
   useEffect(() => {
+    // Always update exam filters - document_id now requires them (no longer standalone)
     if (examType && examSeries && examYear) {
       const foundExamId = findExamId(exams, examType, examSeries, examYear);
       setPendingFilters((prev) => ({
@@ -221,13 +319,25 @@ export default function ManualEntryPage() {
         page: 1, // Reset to first page when filter changes
       };
 
+      // If document_id is being cleared, keep other filters
+      if (key === "document_id" && !value) {
+        delete newFilters.document_id;
+        // Reset document ID match type when clearing
+        setDocumentIdMatchType(null);
+      }
+
       // Clear dependent filters when parent filter changes
       if (key === "school_id") {
-        // Clear programme when school changes (but keep subject - it can be selected independently)
+        // Clear programme and subject when school changes
         newFilters.programme_id = undefined;
+        newFilters.subject_id = undefined;
         setProgrammes([]);
+        setSubjects([]);
       }
-      // Note: subject_id is no longer dependent on programme_id
+      if (key === "programme_id") {
+        // Clear subject when programme changes
+        newFilters.subject_id = undefined;
+      }
 
       return newFilters;
     });
@@ -258,23 +368,12 @@ export default function ManualEntryPage() {
     });
     setProgrammes([]);
     setSubjects([]);
-    // Reload all subjects
-    (async () => {
-      try {
-        const allSubjects: Subject[] = [];
-        let page = 1;
-        let hasMore = true;
-        while (hasMore) {
-          const subjectsPage = await listSubjects(page, 100);
-          allSubjects.push(...subjectsPage);
-          hasMore = subjectsPage.length === 100;
-          page++;
-        }
-        setSubjects(allSubjects);
-      } catch (err) {
-        console.error("Error loading all subjects:", err);
-      }
-    })();
+    // Reset document ID match type
+    setDocumentIdMatchType(null);
+    // Reset toggles to default
+    setShowObj(true);
+    setShowEssay(true);
+    setShowPract(false);
   };
 
   const handleExamTypeChange = (value: string) => {
@@ -346,11 +445,14 @@ export default function ManualEntryPage() {
       const response = await batchUpdateScoresForManualEntry({ scores: scoreUpdates });
 
       if (response.failed > 0) {
-        setError(`Failed to save ${response.failed} score(s). ${response.errors.map((e) => e.error || "").join(", ")}`);
+        const errorMsg = `Failed to save ${response.failed} score(s). ${response.errors.map((e) => e.error || "").join(", ")}`;
+        setError(errorMsg);
+        toast.error(errorMsg);
       } else {
         // Success - reload data
         await loadCandidates();
         setError(null);
+        toast.success(`Successfully saved ${scoreUpdates.length} score(s)`);
       }
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to save scores");
@@ -378,23 +480,227 @@ export default function ManualEntryPage() {
     return "";
   };
 
+  // Check if a candidate row has changes
+  const hasRowChanges = (candidate: CandidateScoreEntry) => {
+    if (!candidate.score_id) return false;
+    return scoreChanges.has(candidate.score_id);
+  };
+
+  // Check if a specific field has changed
+  const hasFieldChanged = (candidate: CandidateScoreEntry, field: "obj" | "essay" | "pract") => {
+    if (!candidate.score_id) return false;
+    const changes = scoreChanges.get(candidate.score_id);
+    if (!changes) return false;
+    return changes[field] !== undefined;
+  };
+
+  // Calculate statistics
+  const stats = {
+    total: total,
+    loaded: candidates.length,
+    modified: scoreChanges.size,
+    complete: candidates.filter((c) => {
+      const obj = getScoreValue(c, "obj");
+      const essay = getScoreValue(c, "essay");
+      const pract = c.pract_pct !== null ? getScoreValue(c, "pract") : null;
+      return obj && essay && (pract !== null ? pract : true);
+    }).length,
+    incomplete: candidates.filter((c) => {
+      const obj = getScoreValue(c, "obj");
+      const essay = getScoreValue(c, "essay");
+      const pract = c.pract_pct !== null ? getScoreValue(c, "pract") : null;
+      return !obj || !essay || (pract !== null && !pract);
+    }).length,
+  };
+
+  // Get active filter chips
+  const getActiveFilterChips = () => {
+    const chips: Array<{ label: string; onRemove: () => void }> = [];
+
+    if (examType) {
+      chips.push({
+        label: `Type: ${examType === "Certificate II Examination" ? "Certificate II" : examType}`,
+        onRemove: () => handleExamTypeChange("all"),
+      });
+    }
+    if (examSeries) {
+      chips.push({
+        label: `Series: ${examSeries}`,
+        onRemove: () => handleExamSeriesChange("all"),
+      });
+    }
+    if (examYear) {
+      chips.push({
+        label: `Year: ${examYear}`,
+        onRemove: () => handleExamYearChange("all"),
+      });
+    }
+    if (pendingFilters.school_id) {
+      const school = schools.find((s) => s.id === pendingFilters.school_id);
+      chips.push({
+        label: `School: ${school ? `${school.code} - ${school.name}` : `ID: ${pendingFilters.school_id}`}`,
+        onRemove: () => handleFilterChange("school_id", undefined),
+      });
+    }
+    if (pendingFilters.programme_id) {
+      const programme = programmes.find((p) => p.id === pendingFilters.programme_id);
+      chips.push({
+        label: `Programme: ${programme ? programme.name : `ID: ${pendingFilters.programme_id}`}`,
+        onRemove: () => handleFilterChange("programme_id", undefined),
+      });
+    }
+    if (pendingFilters.subject_id) {
+      const subject = subjects.find((s) => s.id === pendingFilters.subject_id);
+      chips.push({
+        label: `Subject: ${subject ? `${subject.code} - ${subject.name}` : `ID: ${pendingFilters.subject_id}`}`,
+        onRemove: () => handleFilterChange("subject_id", undefined),
+      });
+    }
+    if (pendingFilters.document_id) {
+      chips.push({
+        label: `Document: ${pendingFilters.document_id}`,
+        onRemove: () => handleFilterChange("document_id", undefined),
+      });
+    }
+
+    return chips;
+  };
+
+  const handleClearAllChanges = () => {
+    setScoreChanges(new Map());
+    toast.info("All changes cleared");
+  };
+
   return (
     <DashboardLayout>
       <div className="flex flex-col h-full">
         <TopBar title="Manual Score Entry" />
 
+        {/* Statistics Dashboard - Collapsible */}
+        {!loading && candidates.length > 0 && (
+          <div className="border-b border-border bg-background">
+            <Collapsible open={statsOpen} onOpenChange={setStatsOpen}>
+              <div className="px-4 py-2">
+                <CollapsibleTrigger className="flex items-center justify-between w-full hover:bg-muted/50 rounded-md px-2 py-1.5 transition-colors">
+                  <div className="flex items-center gap-2">
+                    <FileText className="h-4 w-4 text-muted-foreground" />
+                    <span className="text-sm font-medium">Statistics</span>
+                    <Badge variant="secondary" className="h-5 px-1.5 text-xs">
+                      {stats.total}
+                    </Badge>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <span className="text-xs text-muted-foreground">Ctrl+Shift+K</span>
+                    {statsOpen ? (
+                      <ChevronUp className="h-4 w-4 text-muted-foreground" />
+                    ) : (
+                      <ChevronDown className="h-4 w-4 text-muted-foreground" />
+                    )}
+                  </div>
+                </CollapsibleTrigger>
+              </div>
+              <CollapsibleContent>
+                <div className="px-6 pb-4 border-t border-border pt-4">
+                  <div className="grid gap-4 md:grid-cols-5 max-w-[2000px] mx-auto">
+              <Card className="cursor-pointer hover:shadow-md transition-shadow">
+                <CardContent className="p-4">
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <p className="text-sm font-medium text-muted-foreground">Total Candidates</p>
+                      <p className="text-2xl font-bold mt-1">{stats.total.toLocaleString()}</p>
+                    </div>
+                    <Users className="h-8 w-8 text-muted-foreground" />
+                  </div>
+                </CardContent>
+              </Card>
+              <Card className="cursor-pointer hover:shadow-md transition-shadow">
+                <CardContent className="p-4">
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <p className="text-sm font-medium text-muted-foreground">Loaded</p>
+                      <p className="text-2xl font-bold mt-1">{stats.loaded.toLocaleString()}</p>
+                    </div>
+                    <FileText className="h-8 w-8 text-blue-600" />
+                  </div>
+                </CardContent>
+              </Card>
+              <Card className={`cursor-pointer hover:shadow-md transition-shadow ${stats.modified > 0 ? 'border-orange-300 bg-orange-50/50' : ''}`}>
+                <CardContent className="p-4">
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <p className="text-sm font-medium text-muted-foreground">Modified</p>
+                      <p className="text-2xl font-bold mt-1 text-orange-600">{stats.modified.toLocaleString()}</p>
+                    </div>
+                    <Edit className="h-8 w-8 text-orange-600" />
+                  </div>
+                </CardContent>
+              </Card>
+              <Card className="cursor-pointer hover:shadow-md transition-shadow">
+                <CardContent className="p-4">
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <p className="text-sm font-medium text-muted-foreground">Complete</p>
+                      <p className="text-2xl font-bold mt-1 text-green-600">{stats.complete.toLocaleString()}</p>
+                    </div>
+                    <CheckCircle2 className="h-8 w-8 text-green-600" />
+                  </div>
+                </CardContent>
+              </Card>
+              <Card className="cursor-pointer hover:shadow-md transition-shadow">
+                <CardContent className="p-4">
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <p className="text-sm font-medium text-muted-foreground">Incomplete</p>
+                      <p className="text-2xl font-bold mt-1 text-yellow-600">{stats.incomplete.toLocaleString()}</p>
+                    </div>
+                    <AlertCircle className="h-8 w-8 text-yellow-600" />
+                  </div>
+                </CardContent>
+              </Card>
+                  </div>
+                </div>
+              </CollapsibleContent>
+            </Collapsible>
+          </div>
+        )}
+
         <div className="flex-1 overflow-hidden flex flex-col p-6 gap-4">
-          {/* Filters */}
-          <div className="flex justify-center">
-            <Card className="w-1/3">
-              <CardContent>
-              <div className="flex flex-col gap-2">
+          {/* Filters - Collapsible */}
+          <div className="border-b border-border bg-background -mx-6 px-6 pb-4">
+            <Collapsible open={filtersOpen} onOpenChange={setFiltersOpen}>
+              <div className="py-2">
+                <CollapsibleTrigger className="flex items-center justify-between w-full hover:bg-muted/50 rounded-md px-2 py-1.5 transition-colors">
+                  <div className="flex items-center gap-2">
+                    <Filter className="h-4 w-4 text-muted-foreground" />
+                    <span className="text-sm font-medium">Filters</span>
+                    {getActiveFilterChips().length > 0 && (
+                      <Badge variant="secondary" className="h-5 px-1.5 text-xs">
+                        {getActiveFilterChips().length}
+                      </Badge>
+                    )}
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <span className="text-xs text-muted-foreground">Ctrl+K</span>
+                    {filtersOpen ? (
+                      <ChevronUp className="h-4 w-4 text-muted-foreground" />
+                    ) : (
+                      <ChevronDown className="h-4 w-4 text-muted-foreground" />
+                    )}
+                  </div>
+                </CollapsibleTrigger>
+              </div>
+              <CollapsibleContent>
+                <div className="pt-4">
+                  <div className="flex justify-center">
+                    <Card className="w-1/3">
+                      <CardContent>
+                      <div className="flex flex-col gap-2">
                 <div className="flex items-center gap-2">
                   <label className="text-sm font-medium w-32 text-center">Exam Type</label>
                   <Select
                     value={examType || ""}
                     onValueChange={handleExamTypeChange}
-                    disabled={loadingFilters}
+                    disabled={loadingFilters || !!pendingFilters.document_id}
                   >
                     <SelectTrigger>
                       <SelectValue placeholder="Select Exam Type" />
@@ -414,7 +720,7 @@ export default function ManualEntryPage() {
                   <Select
                     value={examSeries || ""}
                     onValueChange={handleExamSeriesChange}
-                    disabled={loadingFilters || !examType}
+                    disabled={loadingFilters || !examType || !!pendingFilters.document_id}
                   >
                     <SelectTrigger>
                       <SelectValue placeholder="Select Series" />
@@ -438,7 +744,7 @@ export default function ManualEntryPage() {
                   <Select
                     value={examYear?.toString() || ""}
                     onValueChange={handleExamYearChange}
-                    disabled={loadingFilters || !examType || !examSeries}
+                    disabled={loadingFilters || !examType || !examSeries || !!pendingFilters.document_id}
                   >
                     <SelectTrigger>
                       <SelectValue placeholder="Select Year" />
@@ -471,16 +777,15 @@ export default function ManualEntryPage() {
                     }))}
                     value={pendingFilters.school_id || ""}
                     onValueChange={(value) => {
-                      if (value === "all" || value === "") {
+                      if (value === "" || value === undefined) {
                         handleFilterChange("school_id", undefined);
                       } else {
                         handleFilterChange("school_id", typeof value === "number" ? value : parseInt(value.toString()));
                       }
                     }}
-                    placeholder="All Schools"
-                    disabled={loadingFilters}
-                    allowAll={true}
-                    allLabel="All Schools"
+                    placeholder="Select School"
+                    disabled={loadingFilters || !examType || !examSeries || !examYear || !!pendingFilters.document_id}
+                    allowAll={false}
                     searchPlaceholder="Search schools..."
                     emptyMessage="No schools found"
                   />
@@ -491,7 +796,7 @@ export default function ManualEntryPage() {
                   <Select
                     value={pendingFilters.programme_id?.toString() || undefined}
                     onValueChange={(value) => handleFilterChange("programme_id", value && value !== "all" ? parseInt(value) : undefined)}
-                    disabled={loadingFilters || loadingProgrammes || !pendingFilters.school_id}
+                    disabled={loadingFilters || loadingProgrammes || !pendingFilters.school_id || !!pendingFilters.document_id}
                   >
                     <SelectTrigger>
                       <SelectValue placeholder={pendingFilters.school_id ? "Select Programme" : "Select School First"} />
@@ -516,16 +821,15 @@ export default function ManualEntryPage() {
                     }))}
                     value={pendingFilters.subject_id || ""}
                     onValueChange={(value) => {
-                      if (value === "all" || value === "") {
+                      if (value === "" || value === undefined) {
                         handleFilterChange("subject_id", undefined);
                       } else {
                         handleFilterChange("subject_id", typeof value === "number" ? value : parseInt(value.toString()));
                       }
                     }}
-                    placeholder="All Subjects"
-                    disabled={loadingFilters}
-                    allowAll={true}
-                    allLabel="All Subjects"
+                    placeholder={!pendingFilters.school_id ? "Select School First" : "Select Subject"}
+                    disabled={loadingFilters || loadingSubjects || !pendingFilters.school_id}
+                    allowAll={false}
                     searchPlaceholder="Search subjects..."
                     emptyMessage="No subjects found"
                   />
@@ -535,10 +839,13 @@ export default function ManualEntryPage() {
                   <label className="text-sm font-medium w-32 text-center">Document ID</label>
                   <Input
                     type="text"
-                    placeholder="Enter document ID..."
+                    placeholder={!examType || !examSeries || !examYear ? "Select Exam Type, Series, and Year first" : "Enter document ID..."}
                     value={pendingFilters.document_id || ""}
-                    onChange={(e) => handleFilterChange("document_id", e.target.value || undefined)}
-                    disabled={loadingFilters}
+                    onChange={(e) => {
+                      const docId = e.target.value || undefined;
+                      handleFilterChange("document_id", docId);
+                    }}
+                    disabled={loadingFilters || !examType || !examSeries || !examYear}
                     className="flex-1"
                   />
                 </div>
@@ -547,7 +854,16 @@ export default function ManualEntryPage() {
                 <div className="flex gap-2 pt-2">
                   <Button
                     onClick={handleSearch}
-                    disabled={loading || (!pendingFilters.exam_id && !pendingFilters.exam_type)}
+                    disabled={
+                      loading ||
+                      !examType ||
+                      !examSeries ||
+                      !examYear ||
+                      (!pendingFilters.document_id && (
+                        !pendingFilters.school_id ||
+                        !pendingFilters.subject_id
+                      ))
+                    }
                     className="flex-1"
                   >
                     <Search className="mr-2 h-4 w-4" />
@@ -563,21 +879,58 @@ export default function ManualEntryPage() {
                     Clear Filters
                   </Button>
                 </div>
-              </div>
-              </CardContent>
-            </Card>
+                      </div>
+                      </CardContent>
+                    </Card>
+                  </div>
+
+                  {/* Active Filter Chips */}
+                  {getActiveFilterChips().length > 0 && (
+                    <div className="flex items-center gap-2 flex-wrap mt-3">
+                      <span className="text-xs text-muted-foreground">Active:</span>
+                      {getActiveFilterChips().map((chip, index) => (
+                        <Badge
+                          key={index}
+                          variant="secondary"
+                          className="gap-1 pr-1 cursor-pointer hover:bg-secondary/80 text-xs h-5"
+                          onClick={chip.onRemove}
+                        >
+                          {chip.label}
+                          <X className="h-3 w-3" />
+                        </Badge>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              </CollapsibleContent>
+            </Collapsible>
           </div>
 
           {/* Actions */}
           <div className="flex items-center justify-between">
-            <div className="text-sm text-muted-foreground">
+            <div className="flex items-center gap-4">
               {scoreChanges.size > 0 && (
-                <span>{scoreChanges.size} score(s) modified</span>
+                <div className="flex items-center gap-2">
+                  <Badge variant="secondary" className="bg-orange-100 text-orange-800 border-orange-300">
+                    <Edit className="h-3 w-3 mr-1" />
+                    {scoreChanges.size} change{scoreChanges.size !== 1 ? 's' : ''} pending
+                  </Badge>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={handleClearAllChanges}
+                    disabled={saving}
+                  >
+                    <X className="h-4 w-4 mr-1" />
+                    Clear All Changes
+                  </Button>
+                </div>
               )}
             </div>
             <Button
               onClick={handleSave}
               disabled={scoreChanges.size === 0 || saving || (!filters.exam_id && !filters.exam_type)}
+              size="lg"
             >
               {saving ? (
                 <>
@@ -587,7 +940,7 @@ export default function ManualEntryPage() {
               ) : (
                 <>
                   <Save className="mr-2 h-4 w-4" />
-                  Save Changes
+                  Save {scoreChanges.size > 0 ? `${scoreChanges.size} Change${scoreChanges.size !== 1 ? 's' : ''}` : 'Changes'}
                 </>
               )}
             </Button>
@@ -632,8 +985,9 @@ export default function ManualEntryPage() {
                         id="toggle-obj"
                         checked={showObj}
                         onCheckedChange={(checked) => setShowObj(checked === true)}
+                        disabled={documentIdMatchType !== null && documentIdMatchType !== "obj"}
                       />
-                      <label htmlFor="toggle-obj" className="text-sm cursor-pointer">
+                      <label htmlFor="toggle-obj" className={`text-sm ${documentIdMatchType !== null && documentIdMatchType !== "obj" ? "text-muted-foreground cursor-not-allowed" : "cursor-pointer"}`}>
                         Objectives
                       </label>
                     </div>
@@ -642,8 +996,9 @@ export default function ManualEntryPage() {
                         id="toggle-essay"
                         checked={showEssay}
                         onCheckedChange={(checked) => setShowEssay(checked === true)}
+                        disabled={documentIdMatchType !== null && documentIdMatchType !== "essay"}
                       />
-                      <label htmlFor="toggle-essay" className="text-sm cursor-pointer">
+                      <label htmlFor="toggle-essay" className={`text-sm ${documentIdMatchType !== null && documentIdMatchType !== "essay" ? "text-muted-foreground cursor-not-allowed" : "cursor-pointer"}`}>
                         Essay
                       </label>
                     </div>
@@ -653,11 +1008,17 @@ export default function ManualEntryPage() {
                           id="toggle-pract"
                           checked={showPract}
                           onCheckedChange={(checked) => setShowPract(checked === true)}
+                          disabled={documentIdMatchType !== null && documentIdMatchType !== "pract"}
                         />
-                        <label htmlFor="toggle-pract" className="text-sm cursor-pointer">
+                        <label htmlFor="toggle-pract" className={`text-sm ${documentIdMatchType !== null && documentIdMatchType !== "pract" ? "text-muted-foreground cursor-not-allowed" : "cursor-pointer"}`}>
                           Practicals
                         </label>
                       </div>
+                    )}
+                    {documentIdMatchType && (
+                      <Badge variant="outline" className="text-xs">
+                        Showing: {documentIdMatchType === "obj" ? "Objectives" : documentIdMatchType === "essay" ? "Essay" : "Practicals"}
+                      </Badge>
                     )}
                   </div>
                   <div className="flex items-center gap-2">
@@ -697,8 +1058,16 @@ export default function ManualEntryPage() {
                   Please select an examination to view candidates
                 </div>
               ) : loading && loadingFilters ? (
-                <div className="flex items-center justify-center h-32">
-                  <Loader2 className="h-6 w-6 animate-spin" />
+                <div className="flex flex-col items-center justify-center h-32">
+                  <Loader2 className="h-8 w-8 animate-spin text-primary mb-4" />
+                  <div className="text-sm text-muted-foreground">Loading candidates...</div>
+                  <div className="mt-4 w-full max-w-md">
+                    <div className="space-y-2">
+                      {[...Array(5)].map((_, i) => (
+                        <div key={i} className="h-12 bg-muted animate-pulse rounded" />
+                      ))}
+                    </div>
+                  </div>
                 </div>
               ) : (() => {
                 // Filter candidates based on search query and subject series
@@ -745,46 +1114,73 @@ export default function ManualEntryPage() {
                           </TableCell>
                         </TableRow>
                       ) : (
-                        filteredCandidates.map((candidate) => (
-                          <TableRow key={candidate.score_id || candidate.candidate_id}>
+                        filteredCandidates.map((candidate) => {
+                          const rowHasChanges = hasRowChanges(candidate);
+                          const rowClass = rowHasChanges
+                            ? "bg-orange-50/50 hover:bg-orange-100/50 border-l-2 border-l-orange-500"
+                            : "";
+                          return (
+                          <TableRow key={candidate.score_id || candidate.candidate_id} className={rowClass}>
                             <TableCell className="font-medium">{candidate.candidate_index_number}</TableCell>
                             <TableCell>{candidate.candidate_name}</TableCell>
                             <TableCell>{candidate.subject_series ?? "-"}</TableCell>
                             {hasObj && (
                               <TableCell>
-                                <Input
-                                  type="text"
-                                  value={getScoreValue(candidate, "obj")}
-                                  onChange={(e) => handleScoreChange(candidate, "obj", e.target.value)}
-                                  className="w-32"
-                                  disabled={!candidate.score_id}
-                                />
+                                <div className="relative">
+                                  <Input
+                                    type="text"
+                                    value={getScoreValue(candidate, "obj")}
+                                    onChange={(e) => handleScoreChange(candidate, "obj", e.target.value)}
+                                    className={`w-32 ${hasFieldChanged(candidate, "obj") ? "border-orange-500 focus:border-orange-600" : ""}`}
+                                    disabled={!candidate.score_id}
+                                  />
+                                  {hasFieldChanged(candidate, "obj") && (
+                                    <div className="absolute -right-2 -top-1">
+                                      <div className="h-2 w-2 rounded-full bg-orange-500" />
+                                    </div>
+                                  )}
+                                </div>
                               </TableCell>
                             )}
                             {hasEssay && (
                               <TableCell>
-                                <Input
-                                  type="text"
-                                  value={getScoreValue(candidate, "essay")}
-                                  onChange={(e) => handleScoreChange(candidate, "essay", e.target.value)}
-                                  className="w-32"
-                                  disabled={!candidate.score_id}
-                                />
+                                <div className="relative">
+                                  <Input
+                                    type="text"
+                                    value={getScoreValue(candidate, "essay")}
+                                    onChange={(e) => handleScoreChange(candidate, "essay", e.target.value)}
+                                    className={`w-32 ${hasFieldChanged(candidate, "essay") ? "border-orange-500 focus:border-orange-600" : ""}`}
+                                    disabled={!candidate.score_id || (documentIdMatchType !== null && documentIdMatchType !== "essay")}
+                                  />
+                                  {hasFieldChanged(candidate, "essay") && (
+                                    <div className="absolute -right-2 -top-1">
+                                      <div className="h-2 w-2 rounded-full bg-orange-500" />
+                                    </div>
+                                  )}
+                                </div>
                               </TableCell>
                             )}
                             {hasPract && (
                               <TableCell>
-                                <Input
-                                  type="text"
-                                  value={getScoreValue(candidate, "pract")}
-                                  onChange={(e) => handleScoreChange(candidate, "pract", e.target.value)}
-                                  className="w-32"
-                                  disabled={!candidate.score_id || candidate.pract_pct === null}
-                                />
+                                <div className="relative">
+                                  <Input
+                                    type="text"
+                                    value={getScoreValue(candidate, "pract")}
+                                    onChange={(e) => handleScoreChange(candidate, "pract", e.target.value)}
+                                    className={`w-32 ${hasFieldChanged(candidate, "pract") ? "border-orange-500 focus:border-orange-600" : ""}`}
+                                    disabled={!candidate.score_id || candidate.pract_pct === null || (documentIdMatchType !== null && documentIdMatchType !== "pract")}
+                                  />
+                                  {hasFieldChanged(candidate, "pract") && (
+                                    <div className="absolute -right-2 -top-1">
+                                      <div className="h-2 w-2 rounded-full bg-orange-500" />
+                                    </div>
+                                  )}
+                                </div>
                               </TableCell>
                             )}
                           </TableRow>
-                        ))
+                          );
+                        })
                       )}
                     </TableBody>
                   </Table>

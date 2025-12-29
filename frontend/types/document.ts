@@ -410,6 +410,9 @@ export interface CandidateScoreEntry {
   obj_pct: number | null;
   essay_pct: number | null;
   pract_pct: number | null;
+  obj_document_id: string | null;
+  essay_document_id: string | null;
+  pract_document_id: string | null;
 }
 
 export interface CandidateScoreListResponse {

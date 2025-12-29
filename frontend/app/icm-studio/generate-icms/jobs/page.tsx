@@ -203,7 +203,7 @@ export default function JobHistoryPage() {
                   </CardTitle>
                   <CardDescription>View and manage PDF generation jobs</CardDescription>
                 </div>
-                <Link href="/home/generate-icms">
+                <Link href="/icm-studio/generate-icms">
                   <Button>
                     <Plus className="h-4 w-4 mr-2" />
                     Generate New ICMs
@@ -326,7 +326,7 @@ export default function JobHistoryPage() {
                                   <Button
                                     variant="ghost"
                                     size="sm"
-                                    onClick={() => router.push(`/home/generate-icms/jobs/${job.id}`)}
+                                    onClick={() => router.push(`/icm-studio/generate-icms/jobs/${job.id}`)}
                                   >
                                     <Eye className="h-4 w-4 mr-1" />
                                     View

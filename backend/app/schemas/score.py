@@ -125,6 +125,10 @@ class CandidateScoreEntry(BaseModel):
     obj_pct: float | None = None
     essay_pct: float | None = None
     pract_pct: float | None = None
+    # Document IDs for matching
+    obj_document_id: str | None = None
+    essay_document_id: str | None = None
+    pract_document_id: str | None = None
 
     class Config:
         from_attributes = True

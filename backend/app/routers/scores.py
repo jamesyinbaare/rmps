@@ -678,6 +678,9 @@ async def get_candidates_for_manual_entry(
                 obj_pct=exam_subject.obj_pct,
                 essay_pct=exam_subject.essay_pct,
                 pract_pct=exam_subject.pract_pct,
+                obj_document_id=subject_score.obj_document_id,
+                essay_document_id=subject_score.essay_document_id,
+                pract_document_id=subject_score.pract_document_id,
             )
         )
 

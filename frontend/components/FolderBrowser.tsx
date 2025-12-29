@@ -263,15 +263,15 @@ export function FolderBrowser({
   };
 
   const handleExamClick = (exam: Exam) => {
-    router.push(`/folders?exam=${exam.id}`);
+    router.push(`/icm-studio/folders?exam=${exam.id}`);
   };
 
   const handleSchoolClick = (school: School) => {
-    router.push(`/folders?exam=${examId}&school=${school.id}`);
+    router.push(`/icm-studio/folders?exam=${examId}&school=${school.id}`);
   };
 
   const handleSubjectClick = (subject: Subject) => {
-    router.push(`/folders?exam=${examId}&school=${schoolId}&subject=${subject.id}`);
+    router.push(`/icm-studio/folders?exam=${examId}&school=${schoolId}&subject=${subject.id}`);
   };
 
   const handleDownload = async (doc: Document) => {
