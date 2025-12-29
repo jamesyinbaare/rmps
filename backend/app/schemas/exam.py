@@ -13,6 +13,7 @@ class ExamBase(BaseModel):
     year: int = Field(..., ge=1900, le=2100)
     series: ExamSeries
     number_of_series: int = Field(1, ge=1, le=10)
+    subjects_to_serialize: list[str] | None = None
 
 
 class ExamCreate(ExamBase):
@@ -29,6 +30,7 @@ class ExamUpdate(BaseModel):
     year: int | None = Field(None, ge=1900, le=2100)
     series: ExamSeries | None = None
     number_of_series: int | None = Field(None, ge=1, le=10)
+    subjects_to_serialize: list[str] | None = None
 
 
 class ExamResponse(ExamBase):
@@ -82,6 +84,7 @@ class ExamSubjectResponse(BaseModel):
     exam_id: int
     subject_id: int
     subject_code: str
+    original_code: str
     subject_name: str
     subject_type: SubjectType
     obj_pct: float | None
