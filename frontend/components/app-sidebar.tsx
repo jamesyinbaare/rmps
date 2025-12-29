@@ -7,6 +7,7 @@ import {
   Grid3x3,
   ClipboardCheck,
   Settings,
+  ClipboardList,
 } from "lucide-react"
 
 import { NavMain } from "@/components/nav-main"
@@ -50,6 +51,17 @@ const navMain = [
     ],
   },
   {
+    title: "Examinations",
+    url: "/examinations",
+    icon: ClipboardList,
+    items: [
+      {
+        title: "All Examinations",
+        url: "/examinations",
+      },
+    ],
+  },
+  {
     title: "Manage",
     url: "/manage",
     icon: Settings,
@@ -66,10 +78,6 @@ const navMain = [
         title: "Subjects",
         url: "/subjects",
       },
-      {
-        title: "Examinations",
-        url: "/examinations",
-      },
     ],
   },
   {
@@ -80,14 +88,20 @@ const navMain = [
       {
         title: "Data Entry",
         url: "/scores/data-entry",
-      },
-      {
-        title: "Reducto Extraction",
-        url: "/scores/reducto-extraction",
-      },
-      {
-        title: "Manual Entry",
-        url: "/scores/manual-entry",
+        items: [
+          {
+            title: "Digital",
+            url: "/scores/data-entry/digital",
+          },
+          {
+            title: "Reducto Extraction",
+            url: "/scores/data-entry/reducto-extraction",
+          },
+          {
+            title: "Manual",
+            url: "/scores/data-entry/manual",
+          },
+        ],
       },
       {
         title: "Processed ICMs",

@@ -21,8 +21,9 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Search, File, ArrowUpDown, ArrowUp, ArrowDown } from "lucide-react";
+import { Search, File, ArrowUpDown, ArrowUp, ArrowDown, CheckCircle2, AlertCircle, Clock, X, Filter, Loader2 } from "lucide-react";
 import { SearchableSelect } from "@/components/ui/searchable-select";
+import { Badge } from "@/components/ui/badge";
 import { getFilteredDocuments, getAllExams, listSchools, listSubjects, downloadDocument, findExamId } from "@/lib/api";
 import type { Document, Exam, School, Subject, ScoreDocumentFilters, ExamType, ExamSeries } from "@/types/document";
 
@@ -124,7 +125,7 @@ export default function ScoreDataEntryPage() {
     const newFilters: ScoreDocumentFilters = { ...filters };
 
     // Set or clear exam_type, series, and year based on selections
-    if (examType && examType !== "all") {
+    if (examType) {
       newFilters.exam_type = examType;
     } else {
       delete newFilters.exam_type;
@@ -132,7 +133,7 @@ export default function ScoreDataEntryPage() {
       delete newFilters.year;
     }
 
-    if (examSeries && examSeries !== "all" && examType) {
+    if (examSeries && examType) {
       newFilters.series = examSeries;
     } else {
       delete newFilters.series;
@@ -196,7 +197,7 @@ export default function ScoreDataEntryPage() {
     } else {
       if (key === "test_type") {
         newFilters[key] = value;
-      } else {
+      } else if (key === "school_id" || key === "subject_id" || key === "exam_id") {
         newFilters[key] = parseInt(value, 10);
       }
     }
@@ -383,19 +384,136 @@ export default function ScoreDataEntryPage() {
   const availableYears = Array.from(new Set(filteredExamsForYears.map((e) => e.year)))
     .sort((a, b) => b - a);
 
-  const hasActiveFilters = filters.exam_id || filters.exam_type || filters.series || filters.year || filters.school_id || filters.subject_id || filters.test_type;
+  const hasActiveFilters = filters.exam_id || filters.exam_type || filters.series || filters.year || filters.school_id || filters.subject_id || filters.test_type || filters.extraction_status;
+
+  // Calculate statistics from documents
+  const stats = {
+    total: total,
+    success: documents.filter((d) => d.scores_extraction_status === "success").length,
+    pending: documents.filter((d) => d.scores_extraction_status === "pending" || !d.scores_extraction_status).length,
+    error: documents.filter((d) => d.scores_extraction_status === "error").length,
+  };
+
+  // Get active filter labels for chips
+  const getActiveFilterChips = () => {
+    const chips: Array<{ label: string; onRemove: () => void }> = [];
+
+    if (examType) {
+      chips.push({
+        label: `Type: ${examType === "Certificate II Examination" ? "Certificate II" : examType}`,
+        onRemove: () => handleExamTypeChange("all"),
+      });
+    }
+    if (examSeries) {
+      chips.push({
+        label: `Series: ${examSeries}`,
+        onRemove: () => handleExamSeriesChange("all"),
+      });
+    }
+    if (examYear) {
+      chips.push({
+        label: `Year: ${examYear}`,
+        onRemove: () => handleExamYearChange("all"),
+      });
+    }
+    if (filters.school_id) {
+      const school = schools.find((s) => s.id === filters.school_id);
+      chips.push({
+        label: `School: ${school ? `${school.code} - ${school.name}` : `ID: ${filters.school_id}`}`,
+        onRemove: () => handleFilterChange("school_id", undefined),
+      });
+    }
+    if (filters.subject_id) {
+      const subject = subjects.find((s) => s.id === filters.subject_id);
+      chips.push({
+        label: `Subject: ${subject ? `${subject.code} - ${subject.name}` : `ID: ${filters.subject_id}`}`,
+        onRemove: () => handleFilterChange("subject_id", undefined),
+      });
+    }
+    if (filters.test_type) {
+      chips.push({
+        label: `Paper: ${filters.test_type === "1" ? "Objectives" : "Essay"}`,
+        onRemove: () => handleFilterChange("test_type", undefined),
+      });
+    }
+    if (filters.extraction_status) {
+      const statusLabels: Record<string, string> = {
+        success: "Success",
+        error: "Error",
+        pending: "Pending",
+      };
+      chips.push({
+        label: `Status: ${statusLabels[filters.extraction_status] || filters.extraction_status}`,
+        onRemove: () => handleStatusFilter(undefined),
+      });
+    }
+
+    return chips;
+  };
+
+  const handleStatusFilter = async (status: string | undefined) => {
+    const newFilters = { ...filters };
+    if (status) {
+      newFilters.extraction_status = status as "success" | "error" | "pending";
+    } else {
+      delete newFilters.extraction_status;
+    }
+    newFilters.page = 1;
+    setFilters(newFilters);
+    // Auto-fetch when status filter changes
+    setLoading(true);
+    setError(null);
+    try {
+      const response = await getFilteredDocuments(newFilters);
+      setDocuments(response.items);
+      setTotalPages(response.total_pages);
+      setCurrentPage(response.page);
+      setTotal(response.total);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to load documents");
+      console.error("Error loading documents:", err);
+    } finally {
+      setLoading(false);
+    }
+  };
 
   return (
-    <DashboardLayout title="Score Data Entry">
+    <DashboardLayout title="Digital Data Entry">
       <div className="flex flex-1 flex-col overflow-hidden">
-        <TopBar title="Score Data Entry" />
+        <TopBar title="Digital Data Entry" />
 
-        {/* Filters - Horizontal */}
-        <div className="border-b border-border bg-background px-4 py-4">
-          <div className="flex justify-center">
-            <Card className="w-fit">
-              <CardContent className="p-4">
-                <div className="flex items-center gap-2 flex-wrap">
+        {/* Compact Statistics Bar */}
+        {!loading && documents.length > 0 && (
+          <div className="border-b border-border bg-background px-4 py-2">
+            <div className="flex items-center gap-4 max-w-[2000px] mx-auto">
+              <div className="flex items-center gap-1 text-sm text-muted-foreground">
+                <File className="h-4 w-4" />
+                <span className="font-medium">Total:</span>
+                <span className="font-bold text-foreground">{stats.total}</span>
+              </div>
+              <div className="flex items-center gap-1 text-sm cursor-pointer hover:text-green-600 transition-colors" onClick={() => handleStatusFilter("success")}>
+                <CheckCircle2 className="h-4 w-4" />
+                <span className="font-medium">Success:</span>
+                <span className="font-bold text-green-600">{stats.success}</span>
+              </div>
+              <div className="flex items-center gap-1 text-sm cursor-pointer hover:text-yellow-600 transition-colors" onClick={() => handleStatusFilter("pending")}>
+                <Clock className="h-4 w-4" />
+                <span className="font-medium">Pending:</span>
+                <span className="font-bold text-yellow-600">{stats.pending}</span>
+              </div>
+              <div className="flex items-center gap-1 text-sm cursor-pointer hover:text-red-600 transition-colors" onClick={() => handleStatusFilter("error")}>
+                <AlertCircle className="h-4 w-4" />
+                <span className="font-medium">Errors:</span>
+                <span className="font-bold text-red-600">{stats.error}</span>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Filters - Always Visible */}
+        <div className="border-b border-border bg-background px-4 py-3">
+          <div className="max-w-[2000px] mx-auto">
+            <div className="flex items-center gap-2 flex-wrap">
             {/* Examination Type */}
             <Select
               value={examType || "all"}
@@ -524,12 +642,28 @@ export default function ScoreDataEntryPage() {
 
             {hasActiveFilters && (
               <Button variant="outline" size="sm" onClick={handleClearFilters} className="h-8">
-                Clear
+                Clear All
               </Button>
             )}
-                </div>
-              </CardContent>
-            </Card>
+            </div>
+
+            {/* Active Filter Chips */}
+            {getActiveFilterChips().length > 0 && (
+              <div className="flex items-center gap-2 flex-wrap mt-3">
+                <span className="text-xs text-muted-foreground">Active:</span>
+                {getActiveFilterChips().map((chip, index) => (
+                  <Badge
+                    key={index}
+                    variant="secondary"
+                    className="gap-1 pr-1 cursor-pointer hover:bg-secondary/80 text-xs h-5"
+                    onClick={chip.onRemove}
+                  >
+                    {chip.label}
+                    <X className="h-3 w-3" />
+                  </Badge>
+                ))}
+              </div>
+            )}
           </div>
         </div>
 
@@ -553,8 +687,16 @@ export default function ScoreDataEntryPage() {
             )}
 
             {loading ? (
-              <div className="flex items-center justify-center py-24">
+              <div className="flex flex-col items-center justify-center py-24">
+                <Loader2 className="h-8 w-8 animate-spin text-primary mb-4" />
                 <div className="text-sm text-muted-foreground">Loading documents...</div>
+                <div className="mt-4 w-full max-w-md">
+                  <div className="space-y-2">
+                    {[...Array(5)].map((_, i) => (
+                      <div key={i} className="h-12 bg-muted animate-pulse rounded" />
+                    ))}
+                  </div>
+                </div>
               </div>
             ) : documents.length === 0 ? (
               <div className="flex flex-col items-center justify-center py-24 text-center">
@@ -566,7 +708,7 @@ export default function ScoreDataEntryPage() {
               </div>
             ) : (
               <div className="p-6">
-                <div className="rounded-md border">
+                <div className="rounded-md border max-w-[2000px] mx-auto">
                   <Table>
                     <TableHeader>
                       <TableRow>
@@ -618,10 +760,17 @@ export default function ScoreDataEntryPage() {
                       </TableRow>
                     </TableHeader>
                     <TableBody>
-                      {getSortedDocuments(documents).map((doc) => (
+                      {getSortedDocuments(documents).map((doc) => {
+                        const status = doc.scores_extraction_status;
+                        const rowClass = status === "error"
+                          ? "cursor-pointer hover:bg-red-50/50 border-l-2 border-l-red-500"
+                          : status === "success"
+                          ? "cursor-pointer hover:bg-green-50/50"
+                          : "cursor-pointer hover:bg-yellow-50/50";
+                        return (
                         <TableRow
                           key={doc.id}
-                          className="cursor-pointer hover:bg-muted/50"
+                          className={rowClass}
                           onClick={() => handleDocumentSelect(doc)}
                         >
                           <TableCell className="font-mono text-sm">
@@ -637,17 +786,26 @@ export default function ScoreDataEntryPage() {
                             {doc.sheet_number || "-"}
                           </TableCell>
                           <TableCell>
-                            <span className={`text-xs px-2 py-1 rounded ${
-                              doc.scores_extraction_status === "success" ? "bg-green-100 text-green-800" :
-                              doc.scores_extraction_status === "error" ? "bg-red-100 text-red-800" :
-                              doc.scores_extraction_status === "pending" ? "bg-yellow-100 text-yellow-800" :
-                              "bg-gray-100 text-gray-800"
-                            }`}>
-                              {doc.scores_extraction_status || "pending"}
-                            </span>
+                            {doc.scores_extraction_status === "success" ? (
+                              <Badge variant="default" className="bg-green-600 hover:bg-green-700">
+                                <CheckCircle2 className="h-3 w-3 mr-1" />
+                                Success
+                              </Badge>
+                            ) : doc.scores_extraction_status === "error" ? (
+                              <Badge variant="destructive">
+                                <AlertCircle className="h-3 w-3 mr-1" />
+                                Error
+                              </Badge>
+                            ) : (
+                              <Badge variant="secondary" className="bg-yellow-100 text-yellow-800 hover:bg-yellow-200 border-yellow-300">
+                                <Clock className="h-3 w-3 mr-1" />
+                                Pending
+                              </Badge>
+                            )}
                           </TableCell>
                         </TableRow>
-                      ))}
+                        );
+                      })}
                     </TableBody>
                   </Table>
                 </div>
