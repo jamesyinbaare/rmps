@@ -18,21 +18,21 @@ interface BreadcrumbsProps {
 
 export function Breadcrumbs({ exam, school, subject }: BreadcrumbsProps) {
   const items: BreadcrumbItem[] = [
-    { label: "Home", href: "/folders" },
+    { label: "Home", href: "/icm-studio/folders" },
   ];
 
   if (exam) {
-    items.push({ label: exam.exam_type, href: `/folders?exam=${exam.id}` });
+    items.push({ label: exam.exam_type, href: `/icm-studio/folders?exam=${exam.id}` });
   }
 
   if (exam && school) {
-    items.push({ label: school.name, href: `/folders?exam=${exam.id}&school=${school.id}` });
+    items.push({ label: school.name, href: `/icm-studio/folders?exam=${exam.id}&school=${school.id}` });
   }
 
   if (exam && school && subject) {
     items.push({
       label: subject.name,
-      href: `/folders?exam=${exam.id}&school=${school.id}&subject=${subject.id}`,
+      href: `/icm-studio/folders?exam=${exam.id}&school=${school.id}&subject=${subject.id}`,
     });
   }
 

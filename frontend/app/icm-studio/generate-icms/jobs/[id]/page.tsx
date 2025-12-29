@@ -208,7 +208,7 @@ export default function JobDetailsPage() {
             <div className="rounded-lg bg-destructive/10 border border-destructive/20 p-4 text-destructive">
               {error || "Job not found"}
             </div>
-            <Button variant="outline" className="mt-4" onClick={() => router.push("/home/generate-icms/jobs")}>
+            <Button variant="outline" className="mt-4" onClick={() => router.push("/icm-studio/generate-icms/jobs")}>
               <ArrowLeft className="h-4 w-4 mr-2" />
               Back to Jobs
             </Button>
@@ -228,7 +228,7 @@ export default function JobDetailsPage() {
         <main className="flex-1 overflow-y-auto p-6">
           <div className="max-w-4xl mx-auto space-y-6">
             {/* Back Button */}
-            <Button variant="ghost" onClick={() => router.push("/home/generate-icms/jobs")}>
+            <Button variant="ghost" onClick={() => router.push("/icm-studio/generate-icms/jobs")}>
               <ArrowLeft className="h-4 w-4 mr-2" />
               Back to Jobs
             </Button>

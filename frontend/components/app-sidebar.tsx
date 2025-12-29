@@ -24,24 +24,28 @@ import {
 const navMain = [
   {
     title: "ICM Studio",
-    url: "/",
+    url: "/icm-studio",
     icon: Home,
     items: [
       {
+        title: "Overview",
+        url: "/icm-studio",
+      },
+      {
         title: "All files",
-        url: "/documents",
+        url: "/icm-studio/documents",
       },
       {
         title: "Recent",
-        url: "/documents?filter=recent",
+        url: "/icm-studio/documents?filter=recent",
       },
       {
         title: "Folders",
-        url: "/folders",
+        url: "/icm-studio/folders",
       },
       {
         title: "Generate ICMs",
-        url: "/home/generate-icms",
+        url: "/icm-studio/generate-icms",
       },
     ],
   },
