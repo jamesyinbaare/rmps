@@ -1,4 +1,5 @@
 from datetime import datetime
+from typing import Any
 
 from pydantic import BaseModel, Field
 
@@ -270,3 +271,158 @@ class DeleteJobsRequest(BaseModel):
     """Schema for deleting multiple PDF generation jobs."""
 
     job_ids: list[int] = Field(..., description="List of job IDs to delete")
+
+
+class RegistrationProgress(BaseModel):
+    """Schema for candidate registration progress."""
+
+    total_candidates: int
+    completion_percentage: float
+    status: str  # "complete", "in_progress", "pending"
+
+
+class SerializationProgress(BaseModel):
+    """Schema for serialization progress with per-school/subject tracking."""
+
+    total_candidates: int
+    candidates_serialized: int
+    total_schools: int
+    schools_serialized: int
+    completion_percentage: float
+    status: str  # "complete", "in_progress", "pending"
+    last_serialized_at: str | None  # ISO datetime string
+    schools_detail: list[dict[str, Any]]  # Per-school serialization status
+    subjects_detail: list[dict[str, Any]]  # Per-subject serialization status
+
+
+class IcmPdfGenerationProgress(BaseModel):
+    """Schema for ICM/PDF/Score sheet generation progress."""
+
+    total_schools: int
+    schools_with_sheets: int
+    total_subjects: int
+    subjects_with_sheets: int
+    score_sheets_generated: int
+    pdfs_generated: int
+    excel_exports_generated: int
+    completion_percentage: float
+    status: str  # "complete", "in_progress", "pending"
+    schools_detail: list[dict[str, Any]]  # Per-school generation status
+    subjects_detail: list[dict[str, Any]]  # Per-subject generation status
+    excel_exports: list[dict[str, Any]]  # Excel export file tracking
+
+
+class PreparationsProgress(BaseModel):
+    """Schema for preparations phase progress (registration, serialization, ICM/PDF generation)."""
+
+    registration: RegistrationProgress
+    serialization: SerializationProgress
+    icm_pdf_generation: IcmPdfGenerationProgress
+    overall_completion_percentage: float
+    status: str  # "complete", "in_progress", "pending"
+
+
+class ScoreInterpretationProgress(BaseModel):
+    """Schema for score interpretation progress (setting max scores, percentages)."""
+
+    total_subjects: int
+    subjects_configured: int  # Subjects with percentages and max scores set
+    subjects_with_grade_ranges: int
+    completion_percentage: float
+    status: str  # "complete", "in_progress", "pending"
+
+
+class DocumentProcessingProgress(BaseModel):
+    """Schema for document processing phase progress."""
+
+    total_documents: int
+    documents_id_extracted_success: int
+    documents_id_extracted_error: int
+    documents_id_extracted_pending: int
+    documents_scores_extracted_success: int
+    documents_scores_extracted_error: int
+    documents_scores_extracted_pending: int
+    id_extraction_completion_percentage: float
+    scores_extraction_completion_percentage: float
+    overall_completion_percentage: float
+    status: str  # "complete", "in_progress", "pending"
+
+
+class ScoringDataEntryProgress(BaseModel):
+    """Schema for scoring/data entry progress."""
+
+    total_subject_registrations: int
+    registrations_with_scores: int
+    total_expected_score_entries: int  # Total expected entries based on max_scores set
+    total_actual_score_entries: int  # Total actual entries (raw scores entered)
+    registrations_manual_entry: int
+    registrations_digital_transcription: int
+    registrations_automated_extraction: int
+    completion_percentage: float
+    status: str  # "complete", "in_progress", "pending"
+
+
+class ValidationIssuesProgress(BaseModel):
+    """Schema for validation issues resolution progress."""
+
+    unmatched_records_total: int
+    unmatched_records_pending: int
+    unmatched_records_resolved: int
+    validation_issues_total: int
+    validation_issues_pending: int
+    validation_issues_resolved: int
+    completion_percentage: float
+    status: str  # "complete", "in_progress", "pending"
+
+
+class ResultsProcessingProgress(BaseModel):
+    """Schema for results processing phase progress (normalization, total scores)."""
+
+    total_subject_registrations: int
+    registrations_processed: int  # Has normalized scores and total_score > 0
+    registrations_pending: int
+    completion_percentage: float
+    status: str  # "complete", "in_progress", "pending"
+
+
+class ResultsProcessingOverallProgress(BaseModel):
+    """Schema for overall results processing phase progress."""
+
+    score_interpretation: ScoreInterpretationProgress
+    document_processing: DocumentProcessingProgress
+    scoring_data_entry: ScoringDataEntryProgress
+    validation_issues: ValidationIssuesProgress
+    results_processing: ResultsProcessingProgress
+    overall_completion_percentage: float
+    status: str  # "complete", "in_progress", "pending"
+
+
+class GradeRangesProgress(BaseModel):
+    """Schema for grade ranges setup progress."""
+
+    total_subjects: int
+    subjects_with_grade_ranges: int
+    completion_percentage: float
+    status: str  # "complete", "in_progress", "pending"
+
+
+class ResultsReleaseProgress(BaseModel):
+    """Schema for results release phase progress."""
+
+    grade_ranges: GradeRangesProgress
+    overall_completion_percentage: float
+    status: str  # "complete", "in_progress", "pending"
+
+
+class ExamProgressResponse(BaseModel):
+    """Schema for comprehensive exam progress response."""
+
+    exam_id: int
+    exam_type: str
+    exam_year: int
+    exam_series: str
+    preparations: PreparationsProgress
+    results_processing: ResultsProcessingOverallProgress
+    results_release: ResultsReleaseProgress
+    overall_completion_percentage: float
+    overall_status: str  # "complete", "in_progress", "pending"

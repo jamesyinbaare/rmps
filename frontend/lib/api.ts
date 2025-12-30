@@ -5,6 +5,7 @@ import type {
   BulkUploadResponse,
   Exam,
   ExamListResponse,
+  ExamProgressResponse,
   ExamType,
   ExamSeries,
   School,
@@ -996,6 +997,14 @@ export async function downloadSubjectTemplate(): Promise<Blob> {
 export async function getExam(id: number): Promise<Exam> {
   const response = await fetch(`${API_BASE_URL}/api/v1/exams/${id}`);
   return handleResponse<Exam>(response);
+}
+
+/**
+ * Get comprehensive progress data for an exam.
+ */
+export async function getExamProgress(examId: number): Promise<ExamProgressResponse> {
+  const response = await fetch(`${API_BASE_URL}/api/v1/exams/${examId}/progress`);
+  return handleResponse<ExamProgressResponse>(response);
 }
 
 export async function createExam(data: {
