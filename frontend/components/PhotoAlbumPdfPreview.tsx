@@ -3,6 +3,8 @@
 import { useState, useEffect } from "react";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
+import { Label } from "@/components/ui/label";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Loader2, Download, Printer, X } from "lucide-react";
 import { generatePhotoAlbumPdf } from "@/lib/api";
 
@@ -34,6 +36,8 @@ export function PhotoAlbumPdfPreview({
   const [pdfUrl, setPdfUrl] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [columns, setColumns] = useState<number>(1);
+  const [rowsPerColumn, setRowsPerColumn] = useState<number>(10);
 
   useEffect(() => {
     if (open && examId && schoolId) {
@@ -51,13 +55,13 @@ export function PhotoAlbumPdfPreview({
         URL.revokeObjectURL(pdfUrl);
       }
     };
-  }, [open, examId, schoolId, programmeId]);
+  }, [open, examId, schoolId, programmeId, columns, rowsPerColumn, searchQuery]);
 
   const loadPdf = async () => {
     setLoading(true);
     setError(null);
     try {
-      const blob = await generatePhotoAlbumPdf(examId, schoolId, programmeId, true, searchQuery);
+      const blob = await generatePhotoAlbumPdf(examId, schoolId, programmeId, true, searchQuery, columns, rowsPerColumn);
       const url = URL.createObjectURL(blob);
       setPdfUrl(url);
     } catch (err) {
@@ -93,7 +97,7 @@ export function PhotoAlbumPdfPreview({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-5xl max-h-[90vh] flex flex-col">
+      <DialogContent className="min-w-6xl min-h-[90vh] flex flex-col">
         <DialogHeader>
           <DialogTitle>Photo Album PDF Preview</DialogTitle>
         </DialogHeader>
@@ -106,6 +110,37 @@ export function PhotoAlbumPdfPreview({
             {schoolName && <div><strong>School:</strong> {schoolName}</div>}
             {programmeName && <div><strong>Programme:</strong> {programmeName}</div>}
             {candidateCount !== undefined && <div><strong>Total Candidates:</strong> {candidateCount}</div>}
+          </div>
+
+          {/* Layout Selection */}
+          <div className="flex bg-muted p-4 rounded-lg space-y-4">
+            <div className="space-y-2">
+              <Label className="text-sm font-semibold">Layout:</Label>
+              <Select value={columns.toString()} onValueChange={(value) => setColumns(parseInt(value))}>
+                <SelectTrigger className="w-[180px]">
+                  <SelectValue placeholder="Select layout" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="1">Single Column</SelectItem>
+                  <SelectItem value="2">Two Columns</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="space-y-2">
+              <Label className="text-sm font-semibold">Rows per Column:</Label>
+              <Select value={rowsPerColumn.toString()} onValueChange={(value) => setRowsPerColumn(parseInt(value))}>
+                <SelectTrigger className="w-[180px]">
+                  <SelectValue placeholder="Select rows" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="10">10</SelectItem>
+                  <SelectItem value="11">11</SelectItem>
+                  <SelectItem value="12">12</SelectItem>
+                  <SelectItem value="13">13</SelectItem>
+                  <SelectItem value="14">14</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
           </div>
 
           {/* PDF Preview */}
@@ -127,7 +162,7 @@ export function PhotoAlbumPdfPreview({
             <div className="border rounded-lg overflow-hidden">
               <iframe
                 src={pdfUrl}
-                className="w-full h-[600px] border-0"
+                className="w-full h-[800px] border-0"
                 title="PDF Preview"
               />
             </div>

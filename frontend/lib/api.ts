@@ -852,7 +852,9 @@ export async function generatePhotoAlbumPdf(
   schoolId: number,
   programmeId?: number,
   hasPhoto?: boolean,
-  searchQuery?: string
+  searchQuery?: string,
+  columns?: number,
+  rowsPerColumn?: number
 ): Promise<Blob> {
   const params = new URLSearchParams();
   params.append("exam_id", examId.toString());
@@ -860,6 +862,8 @@ export async function generatePhotoAlbumPdf(
   if (programmeId) params.append("programme_id", programmeId.toString());
   if (hasPhoto !== undefined) params.append("has_photo", hasPhoto.toString());
   if (searchQuery && searchQuery.trim()) params.append("search_query", searchQuery.trim());
+  if (columns !== undefined) params.append("columns", columns.toString());
+  if (rowsPerColumn !== undefined) params.append("rows_per_column", rowsPerColumn.toString());
 
   const response = await fetch(`${API_BASE_URL}/api/v1/candidates/photos/album/pdf?${params.toString()}`);
   if (!response.ok) {
