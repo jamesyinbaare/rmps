@@ -1,44 +1,62 @@
-<!DOCTYPE html>
-<html>
-<head>
-    <style>
-        header {
-            width: 100%;
-            text-align: center;
-            padding: 15px 0;
-            border-bottom: 2px solid #333;
-            margin-bottom: 10px;
-        }
-        .header-title {
-            font-size: 18pt;
-            font-weight: bold;
-            margin-bottom: 8px;
-            color: #1a1a1a;
-        }
-        .header-subtitle {
-            font-size: 12pt;
-            color: #555;
-            margin: 4px 0;
-        }
-        .header-info {
-            font-size: 10pt;
-            color: #666;
-            margin: 2px 0;
-        }
-    </style>
-</head>
-<body>
-    <header>
-        <div class="header-title">CANDIDATE PHOTO ALBUM</div>
-        {% if exam_info %}
-        <div class="header-subtitle">{{ exam_info }}</div>
-        {% endif %}
-        {% if school_info %}
-        <div class="header-info">{{ school_info }}</div>
-        {% endif %}
-        {% if programme_info %}
-        <div class="header-info">Programme: {{ programme_info }}</div>
-        {% endif %}
-    </header>
-</body>
-</html>
+<style>
+
+    img{
+  width: 50%;
+  height: 80px;
+}
+
+p {
+  margin: 0;
+  text-align: center;
+  font-weight: bold;
+}
+
+table {
+  border-collapse: collapse;
+}
+
+th {
+  color: #a9a;
+  font-size: 9pt;
+  font-weight: bold;
+  padding-bottom: .25cm;
+  text-transform: uppercase;
+}
+
+td {
+  padding: 0px;
+  padding-left: 2px;
+  font-size: 8pt;
+  font-weight: medium;
+}
+header {
+    position: fixed;
+    top: 0;
+    height: 20%;
+    width: 100%;
+}
+</style>
+
+<header>
+
+    <img
+      src="logo.jpg"
+      alt="CTVET Logo"
+    />
+    <p style="text-align: left;">{{ exam_info }}</p>
+
+    <table style="margin-top: 2px;" id="header-table">
+      <tbody>
+        <tr>
+          <td>{{ school_info }}</td>
+        </tr>
+            {% if programme_info %}
+            <tr>
+                <td>{{ programme_info }}</td>
+              </tr>
+            {% endif %}
+      </tbody>
+    </table>
+
+
+</header>

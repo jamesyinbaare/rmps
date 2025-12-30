@@ -1670,6 +1670,8 @@ async def generate_photo_album_pdf(
     programme_id: int | None = Query(None, description="Filter by programme ID"),
     has_photo: bool | None = Query(None, description="Filter by presence of photo (default: only with photos)"),
     search_query: str | None = Query(None, description="Optional search query to filter candidates by name, index number, or school"),
+    columns: int = Query(1, description="Number of columns (1 or 2)", ge=1, le=2),
+    rows_per_column: int = Query(10, description="Number of rows per column", ge=1, le=50),
 ) -> StreamingResponse:
     """Generate PDF photo album for filtered candidates."""
     from app.services.pdf_generator import PdfGenerator, render_html, get_templates_base_url
@@ -1799,14 +1801,56 @@ async def generate_photo_album_pdf(
         "programme_info": programme_info,
     }
 
-    # Prepare main content context
-    main_context = {
-        "candidates": candidates_data,
-    }
+    # Prepare main content context with pagination
+    if columns == 2:
+        # Split candidates into pages (rows_per_column per column)
+        # Each page will have exactly rows_per_column candidates per column
+        pages = []
+        for i in range(0, len(candidates_data), rows_per_column * 2):
+            page_candidates = candidates_data[i:i + rows_per_column * 2]
+            left = page_candidates[:rows_per_column]
+            right = page_candidates[rows_per_column:rows_per_column * 2]
+
+            # Pad to ensure exactly rows_per_column per column
+            while len(left) < rows_per_column:
+                left.append(None)
+            while len(right) < rows_per_column:
+                right.append(None)
+
+            pages.append({
+                "candidates_left": left,
+                "candidates_right": right,
+                "page_number": len(pages) + 1,
+                "is_last": i + rows_per_column * 2 >= len(candidates_data),
+                "rows_per_column": rows_per_column,
+            })
+        main_context = {
+            "pages": pages,
+            "total_candidates": len(candidates_data),
+            "rows_per_column": rows_per_column,
+        }
+        main_template = "photo_album/main_2_columns.html"
+    else:
+        # Split candidates into pages
+        pages = []
+        for i in range(0, len(candidates_data), rows_per_column):
+            page_candidates = candidates_data[i:i + rows_per_column]
+            pages.append({
+                "candidates": page_candidates,
+                "page_number": len(pages) + 1,
+                "is_last": i + rows_per_column >= len(candidates_data),
+                "rows_per_column": rows_per_column,
+            })
+        main_context = {
+            "pages": pages,
+            "total_candidates": len(candidates_data),
+            "rows_per_column": rows_per_column,
+        }
+        main_template = "photo_album/main.html"
 
     # Render templates
     header_html = render_html(header_context, "photo_album/header.html")
-    main_html = render_html(main_context, "photo_album/main.html")
+    main_html = render_html(main_context, main_template)
 
     # Get base URL for templates
     base_url = get_templates_base_url("photo_album")
@@ -1817,7 +1861,7 @@ async def generate_photo_album_pdf(
         header_html=header_html,
         base_url=base_url,
         side_margin=1,
-        extra_vertical_margin=20,
+        extra_vertical_margin=10,
     )
 
     pdf_bytes = pdf_generator.render_pdf()
