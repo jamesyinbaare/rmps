@@ -1,0 +1,153 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <title>Photo Album</title>
+    <link href="sample.css" rel="stylesheet" />
+    <style>
+
+body {
+    font-family: 'Source Sans Pro', Arial, sans-serif;
+    font-size: 9pt;
+    margin: 0;
+    padding: 0;
+}
+
+.page {
+    page-break-after: always;
+    margin-bottom: 0;
+}
+
+.page:last-child {
+    page-break-after: auto;
+}
+
+table {
+    width: 100%;
+    border-collapse: collapse;
+    margin-top: 10px;
+    margin-bottom: 10px;
+}
+
+th {
+    background-color: #f0f0f0;
+    border: 1px solid #333;
+    padding: 8px;
+    text-align: center;
+    font-weight: bold;
+    font-size: 9pt;
+}
+
+td {
+    border: 1px solid #333;
+    padding: 6px;
+    text-align: center;
+    vertical-align: middle;
+}
+
+.photo-cell {
+    width: 50px;
+    height: 50px;
+    padding: 2px;
+}
+
+.photo-cell img {
+    width: 48px;
+    height: 48px;
+    object-fit: cover;
+    border: 1px solid #ccc;
+}
+
+.no-photo {
+    width: 48px;
+    height: 48px;
+    background-color: #f5f5f5;
+    border: 1px solid #ddd;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: #999;
+    font-size: 8pt;
+}
+
+.name-cell {
+    text-align: left;
+    padding-left: 10px;
+    font-weight: 500;
+    min-width: 150px;
+}
+
+.index-cell {
+    text-align: center;
+    font-family: 'Courier New', monospace;
+    font-weight: bold;
+    min-width: 120px;
+}
+
+.count-cell {
+    text-align: center;
+    font-weight: bold;
+    width: 25px;
+    padding: 2px;
+}
+
+tr:nth-child(even) {
+    background-color: #fafafa;
+}
+
+tr:hover {
+    background-color: #f0f0f0;
+}
+
+@page {
+    @bottom-left {
+      content: "Page " counter(page) " of " counter(pages);
+      text-align: center;
+      font-weight: bold;
+      vertical-align: bottom;
+      margin-bottom: 45px;
+
+    }
+  }
+    </style>
+  </head>
+  <body>
+    {% for page in pages %}
+    <div class="page">
+      <table style="margin-top: 0px; margin-bottom: 10px;">
+        <thead style="display: table-header-group;">
+          <tr>
+            <th style="width:8%;">#</th>
+            <th style="width:20%;">Photo</th>
+            <th style="width:55%;">Name & Index Number</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for candidate in page.candidates %}
+          <tr>
+              <td class="count-cell">{{ (page.page_number - 1) * rows_per_column + loop.index }}</td>
+              <td class="photo-cell">
+                  {% if candidate and candidate.photo_url %}
+                  <img src="{{ candidate.photo_url }}" alt="{{ candidate.name }}" />
+                  {% elif candidate %}
+                  <div class="no-photo">No Photo</div>
+                  {% else %}
+                  <div class="no-photo"></div>
+                  {% endif %}
+              </td>
+              <td class="name-cell">
+                  {% if candidate %}
+                  <div style="font-weight: 500; margin-bottom: 4px;">{{ candidate.name }}</div>
+                  <div style="font-family: 'Courier New', monospace; font-size: 8pt; color: #666;">{{ candidate.index_number }}</div>
+                  {% else %}
+                  <div>&nbsp;</div>
+                  <div>&nbsp;</div>
+                  {% endif %}
+              </td>
+          </tr>
+          {% endfor %}
+      </tbody>
+      </table>
+    </div>
+    {% endfor %}
+  </body>
+</html>

@@ -176,6 +176,67 @@ export interface Candidate {
   gender: string | null;
   created_at: string;
   updated_at: string;
+  active_photo: CandidatePhoto | null;
+}
+
+export interface CandidatePhoto {
+  id: number;
+  candidate_id: number;
+  file_name: string;
+  mime_type: string;
+  is_active: boolean;
+  uploaded_at: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface CandidatePhotoListResponse {
+  items: CandidatePhoto[];
+  total: number;
+  page: number;
+  page_size: number;
+  total_pages: number;
+}
+
+export interface PhotoAlbumItem {
+  candidate_id: number;
+  candidate_name: string;
+  index_number: string;
+  school_id: number;
+  school_name: string;
+  school_code: string;
+  photo: CandidatePhoto | null;
+}
+
+export interface PhotoAlbumResponse {
+  items: PhotoAlbumItem[];
+  total: number;
+  page: number;
+  page_size: number;
+  total_pages: number;
+}
+
+export interface PhotoAlbumFilters {
+  page?: number;
+  page_size?: number;
+  school_id?: number;
+  exam_id?: number;
+  programme_id?: number;
+  has_photo?: boolean;
+}
+
+export interface PhotoBulkUploadError {
+  filename: string;
+  index_number?: string | null;
+  error_message: string;
+}
+
+export interface PhotoBulkUploadResponse {
+  total: number;
+  successful: number;
+  failed: number;
+  skipped: number;
+  errors: PhotoBulkUploadError[];
 }
 
 export interface CandidateListResponse {

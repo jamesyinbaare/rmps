@@ -39,6 +39,7 @@ class CandidateResponse(CandidateBase):
     id: int
     created_at: datetime
     updated_at: datetime
+    active_photo: "CandidatePhotoResponse | None" = None
 
     class Config:
         from_attributes = True
@@ -156,5 +157,78 @@ class SubjectRequirementsValidationResponse(BaseModel):
     programme_name: str | None = None
 
 
+class CandidatePhotoCreate(BaseModel):
+    """Schema for creating a candidate photo (used internally, not for API)."""
+
+    pass  # Photo data comes from file upload
+
+
+class CandidatePhotoResponse(BaseModel):
+    """Schema for candidate photo response."""
+
+    id: int
+    candidate_id: int
+    file_name: str
+    mime_type: str
+    is_active: bool
+    uploaded_at: datetime
+    created_at: datetime
+    updated_at: datetime
+
+    class Config:
+        from_attributes = True
+
+
+class CandidatePhotoListResponse(BaseModel):
+    """Schema for paginated candidate photo list response."""
+
+    items: list[CandidatePhotoResponse]
+    total: int
+    page: int
+    page_size: int
+    total_pages: int
+
+
+class PhotoAlbumItem(BaseModel):
+    """Schema for a single item in the photo album."""
+
+    candidate_id: int
+    candidate_name: str
+    index_number: str
+    school_id: int
+    school_name: str
+    school_code: str
+    photo: CandidatePhotoResponse | None = None
+
+
+class PhotoAlbumResponse(BaseModel):
+    """Schema for photo album response."""
+
+    items: list[PhotoAlbumItem]
+    total: int
+    page: int
+    page_size: int
+    total_pages: int
+
+
+class PhotoBulkUploadError(BaseModel):
+    """Schema for bulk photo upload error details."""
+
+    filename: str
+    index_number: str | None = None
+    error_message: str
+
+
+class PhotoBulkUploadResponse(BaseModel):
+    """Schema for bulk photo upload response."""
+
+    total: int
+    successful: int
+    failed: int
+    skipped: int
+    errors: list[PhotoBulkUploadError]
+
+
 # Update forward references
 SubjectRegistrationResponse.model_rebuild()
+CandidateResponse.model_rebuild()

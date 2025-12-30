@@ -17,6 +17,11 @@ import type {
   Candidate,
   CandidateBulkUploadResponse,
   CandidateListResponse,
+  CandidatePhoto,
+  CandidatePhotoListResponse,
+  PhotoAlbumResponse,
+  PhotoAlbumFilters,
+  PhotoBulkUploadResponse,
   SubjectBulkUploadResponse,
   SchoolBulkUploadResponse,
   ExamRegistration,
@@ -729,6 +734,143 @@ export async function uploadCandidatesBulk(file: File, examId: number): Promise<
     body: formData,
   });
   return handleResponse<CandidateBulkUploadResponse>(response);
+}
+
+// Candidate Photo API Functions
+
+export async function uploadCandidatePhoto(
+  candidateId: number,
+  file: File,
+  isActive: boolean = true
+): Promise<CandidatePhoto> {
+  const formData = new FormData();
+  formData.append("file", file);
+  formData.append("is_active", isActive.toString());
+
+  const response = await fetch(`${API_BASE_URL}/api/v1/candidates/${candidateId}/photos`, {
+    method: "POST",
+    body: formData,
+  });
+  return handleResponse<CandidatePhoto>(response);
+}
+
+export async function getCandidatePhotos(
+  candidateId: number,
+  page: number = 1,
+  pageSize: number = 20
+): Promise<CandidatePhotoListResponse> {
+  const params = new URLSearchParams();
+  params.append("page", page.toString());
+  params.append("page_size", pageSize.toString());
+
+  const response = await fetch(
+    `${API_BASE_URL}/api/v1/candidates/${candidateId}/photos?${params.toString()}`
+  );
+  return handleResponse<CandidatePhotoListResponse>(response);
+}
+
+export async function getActiveCandidatePhoto(candidateId: number): Promise<CandidatePhoto | null> {
+  const response = await fetch(`${API_BASE_URL}/api/v1/candidates/${candidateId}/photos/active`);
+  if (response.status === 204 || response.status === 404) {
+    return null;
+  }
+  return handleResponse<CandidatePhoto>(response);
+}
+
+export async function getCandidatePhoto(candidateId: number, photoId: number): Promise<CandidatePhoto> {
+  const response = await fetch(`${API_BASE_URL}/api/v1/candidates/${candidateId}/photos/${photoId}`);
+  return handleResponse<CandidatePhoto>(response);
+}
+
+export async function deleteCandidatePhoto(candidateId: number, photoId: number): Promise<void> {
+  const response = await fetch(`${API_BASE_URL}/api/v1/candidates/${candidateId}/photos/${photoId}`, {
+    method: "DELETE",
+  });
+  if (!response.ok) {
+    const error: ApiError = await response.json().catch(() => ({ detail: "An error occurred" }));
+    throw new Error(error.detail || `HTTP error! status: ${response.status}`);
+  }
+}
+
+export async function activateCandidatePhoto(candidateId: number, photoId: number): Promise<CandidatePhoto> {
+  const response = await fetch(
+    `${API_BASE_URL}/api/v1/candidates/${candidateId}/photos/${photoId}/activate`,
+    {
+      method: "PUT",
+    }
+  );
+  return handleResponse<CandidatePhoto>(response);
+}
+
+export async function getPhotoFile(candidateId: number, photoId: number): Promise<string | null> {
+  const response = await fetch(`${API_BASE_URL}/api/v1/candidates/${candidateId}/photos/${photoId}/file`);
+  if (response.status === 404) {
+    // File not found - this is expected when the file doesn't exist in storage
+    return null;
+  }
+  if (!response.ok) {
+    const error: ApiError = await response.json().catch(() => ({ detail: "An error occurred" }));
+    throw new Error(error.detail || `HTTP error! status: ${response.status}`);
+  }
+  const blob = await response.blob();
+  return URL.createObjectURL(blob);
+}
+
+export async function bulkUploadPhotos(
+  examId: number,
+  files: File[]
+): Promise<PhotoBulkUploadResponse> {
+  const formData = new FormData();
+  formData.append("exam_id", examId.toString());
+  files.forEach((file) => {
+    formData.append("files", file);
+  });
+
+  const response = await fetch(`${API_BASE_URL}/api/v1/candidates/photos/bulk-upload`, {
+    method: "POST",
+    body: formData,
+  });
+
+  return handleResponse<PhotoBulkUploadResponse>(response);
+}
+
+export async function getPhotoAlbum(filters: PhotoAlbumFilters = {}): Promise<PhotoAlbumResponse> {
+  const params = new URLSearchParams();
+  if (filters.page) params.append("page", filters.page.toString());
+  if (filters.page_size) params.append("page_size", filters.page_size.toString());
+  if (filters.school_id) params.append("school_id", filters.school_id.toString());
+  if (filters.exam_id) params.append("exam_id", filters.exam_id.toString());
+  if (filters.programme_id) params.append("programme_id", filters.programme_id.toString());
+  if (filters.has_photo !== undefined) params.append("has_photo", filters.has_photo.toString());
+
+  const response = await fetch(`${API_BASE_URL}/api/v1/candidates/photos/album?${params.toString()}`);
+  return handleResponse<PhotoAlbumResponse>(response);
+}
+
+export async function generatePhotoAlbumPdf(
+  examId: number,
+  schoolId: number,
+  programmeId?: number,
+  hasPhoto?: boolean,
+  searchQuery?: string,
+  columns?: number,
+  rowsPerColumn?: number
+): Promise<Blob> {
+  const params = new URLSearchParams();
+  params.append("exam_id", examId.toString());
+  params.append("school_id", schoolId.toString());
+  if (programmeId) params.append("programme_id", programmeId.toString());
+  if (hasPhoto !== undefined) params.append("has_photo", hasPhoto.toString());
+  if (searchQuery && searchQuery.trim()) params.append("search_query", searchQuery.trim());
+  if (columns !== undefined) params.append("columns", columns.toString());
+  if (rowsPerColumn !== undefined) params.append("rows_per_column", rowsPerColumn.toString());
+
+  const response = await fetch(`${API_BASE_URL}/api/v1/candidates/photos/album/pdf?${params.toString()}`);
+  if (!response.ok) {
+    const error: ApiError = await response.json().catch(() => ({ detail: "An error occurred" }));
+    throw new Error(error.detail || `HTTP error! status: ${response.status}`);
+  }
+  return response.blob();
 }
 
 // School Management API Functions

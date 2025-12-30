@@ -1,0 +1,266 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <title>Photo Album - 2 Columns</title>
+
+    <style>
+
+body {
+    font-family: 'Source Sans Pro', Arial, sans-serif;
+    font-size: 8pt;
+    margin: 0;
+    padding: 0;
+}
+
+.page {
+    page-break-after: always;
+    margin-bottom: 0;
+}
+
+.page:last-child {
+    page-break-after: auto;
+}
+
+.container {
+    width: 100%;
+    margin-top: 0px;
+    margin-bottom: 10px;
+    border-collapse: separate;
+    border-spacing: 0;
+}
+
+.column-wrapper {
+    width: 100%;
+    border-collapse: separate;
+    border-spacing: 0;
+    display: table;
+    table-layout: fixed;
+    box-sizing: border-box;
+}
+
+.column {
+    display: table-cell;
+    width: 50%;
+    vertical-align: top;
+    padding: 0;
+    overflow: hidden;
+}
+
+.column:first-child table {
+    border-right: 1px solid #333;
+    margin-left: -1px;
+}
+
+.column:last-child table {
+    border-left: none;
+    margin-left: 0px;
+}
+
+table {
+    width: 100%;
+    border-collapse: collapse;
+    margin-bottom: 5px;
+    table-layout: fixed;
+    max-width: 100%;
+    box-sizing: border-box;
+    overflow: hidden;
+}
+
+tbody tr {
+    height: 60px;
+}
+
+th {
+    background-color: #f0f0f0;
+    border: 1px solid #333;
+    padding: 6px;
+    text-align: center;
+    font-weight: bold;
+    font-size: 8pt;
+}
+
+td {
+    border: 1px solid #333;
+    padding: 2px;
+    text-align: center;
+    vertical-align: middle;
+}
+
+.photo-cell {
+    width: 50px;
+    height: 50px;
+    padding: 2px;
+    box-sizing: border-box;
+}
+
+.photo-cell img {
+    width: 48px;
+    height: 48px;
+    object-fit: cover;
+    border: 1px solid #ccc;
+    display: block;
+    margin: 0 auto;
+}
+
+.no-photo {
+    width: 48px;
+    height: 48px;
+    background-color: #f5f5f5;
+    border: 1px solid #ddd;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: #999;
+    font-size: 7pt;
+    margin: 0 auto;
+    box-sizing: border-box;
+}
+
+.name-cell {
+    text-align: left;
+    padding-left: 8px;
+    padding-right: 4px;
+    font-weight: 500;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    word-wrap: break-word;
+}
+
+.name-cell > div {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    max-width: 100%;
+}
+
+.count-cell {
+    text-align: center;
+    font-weight: bold;
+    width: 20px;
+    font-size: 7pt;
+    padding: 2px;
+}
+
+tr:nth-child(even) {
+    background-color: #fafafa;
+}
+
+@page {
+    @bottom-left {
+      content: "Page " counter(page) " of " counter(pages);
+      text-align: center;
+      font-weight: bold;
+      vertical-align: bottom;
+      margin-bottom: 45px;
+
+    }
+  }
+    </style>
+  </head>
+  <body>
+    {% for page in pages %}
+    <div class="page">
+      <div class="container">
+        <div class="column-wrapper">
+          <div class="column">
+          <table>
+            <thead style="display: table-header-group;">
+              <tr>
+                <th style="width:10%;">#</th>
+                <th style="width:25%;">Photo</th>
+                <th style="width:65%;">Name & Index</th>
+              </tr>
+            </thead>
+            <tbody>
+              {% for candidate in page.candidates_left %}
+              <tr>
+                  <td class="count-cell">{{ (page.page_number - 1) * (rows_per_column * 2) + loop.index }}</td>
+                  <td class="photo-cell">
+                      {% if candidate and candidate.photo_url %}
+                      <img src="{{ candidate.photo_url }}" alt="{{ candidate.name }}" />
+                      {% elif candidate %}
+                      <div class="no-photo">No Photo</div>
+                      {% else %}
+                      <div class="no-photo"></div>
+                      {% endif %}
+                  </td>
+                  <td class="name-cell">
+                      {% if candidate %}
+                      <div style="font-weight: 500; margin-bottom: 2px; font-size: 8pt; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">{{ candidate.name[:20] }}{% if candidate.name|length > 20 %}...{% endif %}</div>
+                      <div style="font-family: 'Courier New', monospace; font-size: 7pt; color: #666; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">{{ candidate.index_number }}</div>
+                      {% else %}
+                      <div>&nbsp;</div>
+                      <div>&nbsp;</div>
+                      {% endif %}
+                  </td>
+              </tr>
+              {% endfor %}
+          </tbody>
+          </table>
+          </div>
+          <div class="column">
+          <table style="border-left: none;">
+            <thead style="display: table-header-group;">
+              <tr>
+                <th style="width:10%;">#</th>
+                <th style="width:25%;">Photo</th>
+                <th style="width:65%;">Name & Index</th>
+              </tr>
+            </thead>
+            <tbody>
+              {% set ns = namespace(found=false) %}
+              {% for candidate in page.candidates_right %}
+                {% if candidate %}
+                  {% set ns.found = true %}
+                {% endif %}
+              {% endfor %}
+              {% if ns.found %}
+                {% for candidate in page.candidates_right %}
+                {% if candidate %}
+                <tr>
+                    <td class="count-cell">{{ (page.page_number - 1) * (rows_per_column * 2) + rows_per_column + loop.index }}</td>
+                    <td class="photo-cell">
+                        {% if candidate.photo_url %}
+                        <img src="{{ candidate.photo_url }}" alt="{{ candidate.name }}" />
+                        {% else %}
+                        <div class="no-photo">No Photo</div>
+                        {% endif %}
+                    </td>
+                    <td class="name-cell">
+                        <div style="font-weight: 500; margin-bottom: 2px; font-size: 8pt; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">{{ candidate.name[:20] }}{% if candidate.name|length > 20 %}...{% endif %}</div>
+                        <div style="font-family: 'Courier New', monospace; font-size: 7pt; color: #666; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">{{ candidate.index_number }}</div>
+                    </td>
+                </tr>
+                {% else %}
+                <tr>
+                    <td class="count-cell">&nbsp;</td>
+                    <td class="photo-cell"><div class="no-photo"></div></td>
+                    <td class="name-cell">
+                        <div>&nbsp;</div>
+                        <div>&nbsp;</div>
+                    </td>
+                </tr>
+                {% endif %}
+                {% endfor %}
+              {% else %}
+                {% for candidate in page.candidates_right %}
+                <tr>
+                    <td class="count-cell">&nbsp;</td>
+                    <td class="photo-cell"><div class="no-photo"></div></td>
+                    <td class="name-cell">
+                        <div>&nbsp;</div>
+                        <div>&nbsp;</div>
+                    </td>
+                </tr>
+                {% endfor %}
+              {% endif %}
+          </tbody>
+          </table>
+          </div>
+        </div>
+      </div>
+    </div>
+    {% endfor %}
+  </body>
+</html>

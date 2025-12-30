@@ -1,0 +1,62 @@
+<style>
+
+    img{
+  width: 50%;
+  height: 80px;
+}
+
+p {
+  margin: 0;
+  text-align: center;
+  font-weight: bold;
+}
+
+table {
+  border-collapse: collapse;
+}
+
+th {
+  color: #a9a;
+  font-size: 9pt;
+  font-weight: bold;
+  padding-bottom: .25cm;
+  text-transform: uppercase;
+}
+
+td {
+  padding: 0px;
+  padding-left: 2px;
+  font-size: 8pt;
+  font-weight: medium;
+}
+header {
+    position: fixed;
+    top: 0;
+    height: 20%;
+    width: 100%;
+}
+</style>
+
+<header>
+
+    <img
+      src="logo.jpg"
+      alt="CTVET Logo"
+    />
+    <p style="text-align: left;">{{ exam_info }}</p>
+
+    <table style="margin-top: 2px;" id="header-table">
+      <tbody>
+        <tr>
+          <td>{{ school_info }}</td>
+        </tr>
+            {% if programme_info %}
+            <tr>
+                <td>{{ programme_info }}</td>
+              </tr>
+            {% endif %}
+      </tbody>
+    </table>
+
+
+</header>

@@ -126,6 +126,13 @@ class Settings(BaseSettings):
     cache_ttl: int = 300  # 5 minutes default
     cache_max_size: int = 1000  # Max cached items for in-memory
     redis_url: str | None = None  # Optional Redis URL
+    # Photo validation settings
+    photo_max_width: int = 600
+    photo_max_height: int = 600
+    photo_min_width: int = 200
+    photo_min_height: int = 200
+    photo_max_file_size: int = 2 * 1024 * 1024  # 2MB
+    photo_storage_path: str = "storage/photos"
 
 
 settings = Settings()  # type: ignore

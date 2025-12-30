@@ -1,9 +1,14 @@
+import logging
+
 from fastapi import APIRouter, File, Form, HTTPException, Query, UploadFile, status
+from fastapi.responses import Response, StreamingResponse
 from sqlalchemy import func, select
 
+from app.config import settings
 from app.dependencies.database import DBSessionDep
 from app.models import (
     Candidate,
+    CandidatePhoto,
     Exam,
     ExamRegistration,
     ExamSeries,
@@ -21,14 +26,23 @@ from app.schemas.candidate import (
     CandidateBulkUploadResponse,
     CandidateCreate,
     CandidateListResponse,
+    CandidatePhotoListResponse,
+    CandidatePhotoResponse,
     CandidateResponse,
     CandidateUpdate,
     ExamRegistrationResponse,
+    PhotoAlbumItem,
+    PhotoAlbumResponse,
+    PhotoBulkUploadError,
+    PhotoBulkUploadResponse,
     SubjectRegistrationCreate,
     SubjectRegistrationResponse,
     SubjectRequirementsValidationResponse,
     SubjectScoreResponse,
 )
+from app.services.photo_validation import PhotoValidationService
+from app.services.storage import LocalStorageBackend, StorageService
+from app.utils.file_utils import calculate_checksum
 from app.utils.score_utils import calculate_grade
 from app.services.candidate_upload import (
     CandidateUploadParseError,
@@ -40,6 +54,33 @@ from app.services.candidate_upload import (
 )
 
 router = APIRouter(prefix="/api/v1/candidates", tags=["candidates"])
+
+
+# Helper function to build CandidateResponse with active photo
+async def build_candidate_response(candidate: Candidate, session: DBSessionDep) -> CandidateResponse:
+    """Build CandidateResponse with active photo loaded."""
+    # Get active photo
+    active_photo_stmt = select(CandidatePhoto).where(
+        CandidatePhoto.candidate_id == candidate.id, CandidatePhoto.is_active.is_(True)
+    )
+    active_photo_result = await session.execute(active_photo_stmt)
+    active_photo = active_photo_result.scalar_one_or_none()
+
+    # Build response dict manually to avoid Pydantic trying to access non-existent active_photo attribute
+    response_data = {
+        "id": candidate.id,
+        "school_id": candidate.school_id,
+        "programme_id": candidate.programme_id,
+        "name": candidate.name,
+        "index_number": candidate.index_number,
+        "date_of_birth": candidate.date_of_birth,
+        "gender": candidate.gender,
+        "created_at": candidate.created_at,
+        "updated_at": candidate.updated_at,
+        "active_photo": CandidatePhotoResponse.model_validate(active_photo).model_dump() if active_photo else None,
+    }
+
+    return CandidateResponse(**response_data)
 
 
 # Validation Helper Functions
@@ -201,7 +242,7 @@ async def create_candidate(candidate: CandidateCreate, session: DBSessionDep) ->
     session.add(db_candidate)
     await session.commit()
     await session.refresh(db_candidate)
-    return CandidateResponse.model_validate(db_candidate)
+    return await build_candidate_response(db_candidate, session)
 
 
 @router.post("/bulk-upload", response_model=CandidateBulkUploadResponse, status_code=status.HTTP_200_OK)
@@ -504,8 +545,13 @@ async def list_candidates(
 
     total_pages = (total + page_size - 1) // page_size if total > 0 else 0
 
+    # Build responses with active photos
+    items = []
+    for candidate in candidates:
+        items.append(await build_candidate_response(candidate, session))
+
     return CandidateListResponse(
-        items=[CandidateResponse.model_validate(candidate) for candidate in candidates],
+        items=items,
         total=total,
         page=page,
         page_size=page_size,
@@ -521,7 +567,7 @@ async def get_candidate(candidate_id: int, session: DBSessionDep) -> CandidateRe
     candidate = result.scalar_one_or_none()
     if not candidate:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Candidate not found")
-    return CandidateResponse.model_validate(candidate)
+    return await build_candidate_response(candidate, session)
 
 
 @router.put("/{candidate_id}", response_model=CandidateResponse)
@@ -577,7 +623,7 @@ async def update_candidate(
 
     await session.commit()
     await session.refresh(candidate)
-    return CandidateResponse.model_validate(candidate)
+    return await build_candidate_response(candidate, session)
 
 
 @router.delete("/{candidate_id}", status_code=status.HTTP_204_NO_CONTENT)
@@ -1014,3 +1060,822 @@ async def list_exam_registration_subjects(
         )
 
     return result
+
+
+# Photo Management Endpoints
+
+# Create photo storage service instance
+photo_storage_service = StorageService()
+photo_storage_service._backend = LocalStorageBackend(base_path=settings.photo_storage_path)
+
+
+@router.post("/{candidate_id}/photos", response_model=CandidatePhotoResponse, status_code=status.HTTP_201_CREATED)
+async def upload_candidate_photo(
+    candidate_id: int,
+    session: DBSessionDep,
+    file: UploadFile = File(...),
+    is_active: bool = Form(True),
+) -> CandidatePhotoResponse:
+    """Upload a passport photo for a candidate."""
+    # Validate candidate exists
+    candidate_stmt = select(Candidate).where(Candidate.id == candidate_id)
+    candidate_result = await session.execute(candidate_stmt)
+    candidate = candidate_result.scalar_one_or_none()
+    if not candidate:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Candidate not found")
+
+    # Read file content
+    content = await file.read()
+
+    # Validate photo (file type, dimensions, file size)
+    PhotoValidationService.validate_all(content, file.content_type or "")
+
+    # If setting as active, delete old photos first (replace behavior - one photo per candidate)
+    # This must happen before duplicate check to allow replacing with the same file
+    if is_active:
+        old_photos_stmt = select(CandidatePhoto).where(
+            CandidatePhoto.candidate_id == candidate_id
+        )
+        old_photos_result = await session.execute(old_photos_stmt)
+        old_photos = old_photos_result.scalars().all()
+
+        # Delete old photo files and records
+        for old_photo in old_photos:
+            try:
+                # Delete the file from storage
+                await photo_storage_service.delete(old_photo.file_path)
+            except Exception as e:
+                # Log error but continue - file might not exist
+                logger = logging.getLogger(__name__)
+                logger.warning(f"Failed to delete old photo file {old_photo.file_path}: {e}")
+            # Delete the database record
+            await session.delete(old_photo)
+        # Commit deletions before proceeding
+        await session.commit()
+
+    # Calculate checksum
+    checksum = calculate_checksum(content)
+
+    # Check for duplicate (optional - can be configured)
+    # Only check duplicates from other candidates, not the current candidate (since we just deleted their old photos)
+    duplicate_stmt = select(CandidatePhoto).where(
+        CandidatePhoto.checksum == checksum,
+        CandidatePhoto.candidate_id != candidate_id
+    )
+    duplicate_result = await session.execute(duplicate_stmt)
+    existing_photo = duplicate_result.scalar_one_or_none()
+
+    if existing_photo and settings.reject_duplicate_files:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=f"Photo already exists for another candidate. Duplicate of photo ID: {existing_photo.id}",
+        )
+
+    # Save photo file
+    file_path, _ = await photo_storage_service.save(content, file.filename or "photo.jpg")
+
+    # Create photo record
+    db_photo = CandidatePhoto(
+        candidate_id=candidate_id,
+        file_path=file_path,
+        file_name=file.filename or "photo.jpg",
+        mime_type=file.content_type or "image/jpeg",
+        checksum=checksum,
+        is_active=is_active,
+    )
+    session.add(db_photo)
+    await session.commit()
+    await session.refresh(db_photo)
+
+    return CandidatePhotoResponse.model_validate(db_photo)
+
+
+@router.post("/photos/bulk-upload", response_model=PhotoBulkUploadResponse, status_code=status.HTTP_200_OK)
+async def bulk_upload_photos(
+    session: DBSessionDep,
+    files: list[UploadFile] = File(...),
+    exam_id: int = Form(...),
+) -> PhotoBulkUploadResponse:
+    """Bulk upload photos for candidates. Photos are matched by index_number (from filename) and exam_id."""
+    import re
+    from pathlib import Path
+
+    # Validate exam exists
+    exam_stmt = select(Exam).where(Exam.id == exam_id)
+    exam_result = await session.execute(exam_stmt)
+    exam = exam_result.scalar_one_or_none()
+    if not exam:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Exam not found")
+
+    total = len(files)
+    successful = 0
+    failed = 0
+    skipped = 0
+    errors: list[PhotoBulkUploadError] = []
+
+    # Process each file
+    for file in files:
+        filename = file.filename or "unknown"
+        index_number = None
+
+        try:
+            # Extract index_number from filename (remove extension)
+            # Expected format: "074221250034.jpg" or "074221250034" or "074221250034_photo.jpg"
+            file_stem = Path(filename).stem
+            # Try to extract index_number - it should be numeric
+            # Remove common suffixes like "_photo", "_img", etc.
+            index_match = re.match(r"^(\d+)(?:_(?:photo|img|image|pic))?$", file_stem, re.IGNORECASE)
+            if index_match:
+                index_number = index_match.group(1)
+            else:
+                # If no match, try the whole stem if it's all digits
+                if file_stem.isdigit():
+                    index_number = file_stem
+                else:
+                    errors.append(
+                        PhotoBulkUploadError(
+                            filename=filename,
+                            error_message="Could not extract index number from filename. Expected format: 'index_number.jpg' (e.g., '074221250034.jpg')",
+                        )
+                    )
+                    skipped += 1
+                    continue
+
+            # Read file content
+            content = await file.read()
+
+            # Validate photo (file type, dimensions, file size)
+            try:
+                PhotoValidationService.validate_all(content, file.content_type or "")
+            except HTTPException as e:
+                errors.append(
+                    PhotoBulkUploadError(
+                        filename=filename,
+                        index_number=index_number,
+                        error_message=e.detail,
+                    )
+                )
+                failed += 1
+                continue
+
+            # Find candidate by index_number and exam_id
+            # Join through ExamRegistration to ensure candidate is registered for this exam
+            candidate_stmt = (
+                select(Candidate)
+                .join(ExamRegistration, Candidate.id == ExamRegistration.candidate_id)
+                .where(
+                    Candidate.index_number == index_number,
+                    ExamRegistration.exam_id == exam_id,
+                )
+            )
+            candidate_result = await session.execute(candidate_stmt)
+            candidate = candidate_result.scalar_one_or_none()
+
+            if not candidate:
+                errors.append(
+                    PhotoBulkUploadError(
+                        filename=filename,
+                        index_number=index_number,
+                        error_message=f"Candidate with index number '{index_number}' not found or not registered for this exam",
+                    )
+                )
+                failed += 1
+                continue
+
+            # Delete old photos for this candidate (replace behavior)
+            old_photos_stmt = select(CandidatePhoto).where(
+                CandidatePhoto.candidate_id == candidate.id
+            )
+            old_photos_result = await session.execute(old_photos_stmt)
+            old_photos = old_photos_result.scalars().all()
+
+            for old_photo in old_photos:
+                try:
+                    await photo_storage_service.delete(old_photo.file_path)
+                except Exception as e:
+                    logger = logging.getLogger(__name__)
+                    logger.warning(f"Failed to delete old photo file {old_photo.file_path}: {e}")
+                await session.delete(old_photo)
+
+            # Commit deletions before proceeding
+            await session.commit()
+
+            # Calculate checksum
+            checksum = calculate_checksum(content)
+
+            # Check for duplicate from other candidates (if enabled)
+            if settings.reject_duplicate_files:
+                duplicate_stmt = select(CandidatePhoto).where(
+                    CandidatePhoto.checksum == checksum,
+                    CandidatePhoto.candidate_id != candidate.id
+                )
+                duplicate_result = await session.execute(duplicate_stmt)
+                existing_photo = duplicate_result.scalar_one_or_none()
+
+                if existing_photo:
+                    errors.append(
+                        PhotoBulkUploadError(
+                            filename=filename,
+                            index_number=index_number,
+                            error_message=f"Photo already exists for another candidate. Duplicate of photo ID: {existing_photo.id}",
+                        )
+                    )
+                    failed += 1
+                    continue
+
+            # Save photo file
+            file_path, _ = await photo_storage_service.save(content, filename)
+
+            # Create photo record
+            db_photo = CandidatePhoto(
+                candidate_id=candidate.id,
+                file_path=file_path,
+                file_name=filename,
+                mime_type=file.content_type or "image/jpeg",
+                checksum=checksum,
+                is_active=True,
+            )
+            session.add(db_photo)
+            await session.commit()
+
+            successful += 1
+
+        except Exception as e:
+            logger = logging.getLogger(__name__)
+            logger.error(f"Unexpected error processing photo {filename}: {e}", exc_info=True)
+            errors.append(
+                PhotoBulkUploadError(
+                    filename=filename,
+                    index_number=index_number,
+                    error_message=f"Unexpected error: {str(e)}",
+                )
+            )
+            failed += 1
+            continue
+
+    return PhotoBulkUploadResponse(
+        total=total,
+        successful=successful,
+        failed=failed,
+        skipped=skipped,
+        errors=errors,
+    )
+
+
+@router.get("/{candidate_id}/photos", response_model=CandidatePhotoListResponse)
+async def list_candidate_photos(
+    candidate_id: int,
+    session: DBSessionDep,
+    page: int = Query(1, ge=1),
+    page_size: int = Query(20, ge=1, le=100),
+) -> CandidatePhotoListResponse:
+    """List all photos for a candidate."""
+    # Validate candidate exists
+    candidate_stmt = select(Candidate).where(Candidate.id == candidate_id)
+    candidate_result = await session.execute(candidate_stmt)
+    candidate = candidate_result.scalar_one_or_none()
+    if not candidate:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Candidate not found")
+
+    offset = (page - 1) * page_size
+
+    # Get total count
+    count_stmt = select(func.count(CandidatePhoto.id)).where(CandidatePhoto.candidate_id == candidate_id)
+    count_result = await session.execute(count_stmt)
+    total = count_result.scalar() or 0
+
+    # Get photos
+    stmt = (
+        select(CandidatePhoto)
+        .where(CandidatePhoto.candidate_id == candidate_id)
+        .offset(offset)
+        .limit(page_size)
+        .order_by(CandidatePhoto.is_active.desc(), CandidatePhoto.uploaded_at.desc())
+    )
+    result = await session.execute(stmt)
+    photos = result.scalars().all()
+
+    total_pages = (total + page_size - 1) // page_size if total > 0 else 0
+
+    return CandidatePhotoListResponse(
+        items=[CandidatePhotoResponse.model_validate(photo) for photo in photos],
+        total=total,
+        page=page,
+        page_size=page_size,
+        total_pages=total_pages,
+    )
+
+
+@router.get("/{candidate_id}/photos/active")
+async def get_active_candidate_photo(
+    candidate_id: int, session: DBSessionDep
+):
+    """Get the active photo for a candidate. Returns 204 No Content if no active photo exists."""
+    # Validate candidate exists
+    candidate_stmt = select(Candidate).where(Candidate.id == candidate_id)
+    candidate_result = await session.execute(candidate_stmt)
+    candidate = candidate_result.scalar_one_or_none()
+    if not candidate:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Candidate not found")
+
+    # Get active photo
+    photo_stmt = select(CandidatePhoto).where(
+        CandidatePhoto.candidate_id == candidate_id, CandidatePhoto.is_active.is_(True)
+    )
+    photo_result = await session.execute(photo_stmt)
+    photo = photo_result.scalar_one_or_none()
+
+    if not photo:
+        return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+    return CandidatePhotoResponse.model_validate(photo)
+
+
+@router.get("/{candidate_id}/photos/{photo_id}", response_model=CandidatePhotoResponse)
+async def get_candidate_photo(candidate_id: int, photo_id: int, session: DBSessionDep) -> CandidatePhotoResponse:
+    """Get a specific photo for a candidate."""
+    # Validate candidate exists
+    candidate_stmt = select(Candidate).where(Candidate.id == candidate_id)
+    candidate_result = await session.execute(candidate_stmt)
+    candidate = candidate_result.scalar_one_or_none()
+    if not candidate:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Candidate not found")
+
+    # Get photo
+    photo_stmt = select(CandidatePhoto).where(
+        CandidatePhoto.id == photo_id, CandidatePhoto.candidate_id == candidate_id
+    )
+    photo_result = await session.execute(photo_stmt)
+    photo = photo_result.scalar_one_or_none()
+    if not photo:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Photo not found")
+
+    return CandidatePhotoResponse.model_validate(photo)
+
+
+@router.delete("/{candidate_id}/photos/{photo_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_candidate_photo(candidate_id: int, photo_id: int, session: DBSessionDep) -> None:
+    """Delete a photo for a candidate."""
+    # Validate candidate exists
+    candidate_stmt = select(Candidate).where(Candidate.id == candidate_id)
+    candidate_result = await session.execute(candidate_stmt)
+    candidate = candidate_result.scalar_one_or_none()
+    if not candidate:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Candidate not found")
+
+    # Get photo
+    photo_stmt = select(CandidatePhoto).where(
+        CandidatePhoto.id == photo_id, CandidatePhoto.candidate_id == candidate_id
+    )
+    photo_result = await session.execute(photo_stmt)
+    photo = photo_result.scalar_one_or_none()
+    if not photo:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Photo not found")
+
+    # Delete file
+    try:
+        await photo_storage_service.delete(photo.file_path)
+    except Exception:
+        pass  # Continue even if file deletion fails
+
+    # Delete photo record
+    await session.delete(photo)
+    await session.commit()
+
+
+@router.put("/{candidate_id}/photos/{photo_id}/activate", response_model=CandidatePhotoResponse)
+async def activate_candidate_photo(candidate_id: int, photo_id: int, session: DBSessionDep) -> CandidatePhotoResponse:
+    """Set a photo as active for a candidate."""
+    # Validate candidate exists
+    candidate_stmt = select(Candidate).where(Candidate.id == candidate_id)
+    candidate_result = await session.execute(candidate_stmt)
+    candidate = candidate_result.scalar_one_or_none()
+    if not candidate:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Candidate not found")
+
+    # Get photo
+    photo_stmt = select(CandidatePhoto).where(
+        CandidatePhoto.id == photo_id, CandidatePhoto.candidate_id == candidate_id
+    )
+    photo_result = await session.execute(photo_stmt)
+    photo = photo_result.scalar_one_or_none()
+    if not photo:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Photo not found")
+
+    # Deactivate other photos
+    deactivate_stmt = select(CandidatePhoto).where(
+        CandidatePhoto.candidate_id == candidate_id,
+        CandidatePhoto.is_active.is_(True),
+        CandidatePhoto.id != photo_id,
+    )
+    deactivate_result = await session.execute(deactivate_stmt)
+    existing_active_photos = deactivate_result.scalars().all()
+    for existing_photo in existing_active_photos:
+        existing_photo.is_active = False
+
+    # Activate this photo
+    photo.is_active = True
+    await session.commit()
+    await session.refresh(photo)
+
+    return CandidatePhotoResponse.model_validate(photo)
+
+
+@router.get("/{candidate_id}/photos/{photo_id}/file")
+async def get_candidate_photo_file(candidate_id: int, photo_id: int, session: DBSessionDep) -> StreamingResponse:
+    """Retrieve the photo file for a candidate."""
+    # Validate candidate exists
+    candidate_stmt = select(Candidate).where(Candidate.id == candidate_id)
+    candidate_result = await session.execute(candidate_stmt)
+    candidate = candidate_result.scalar_one_or_none()
+    if not candidate:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Candidate not found")
+
+    # Get photo
+    photo_stmt = select(CandidatePhoto).where(
+        CandidatePhoto.id == photo_id, CandidatePhoto.candidate_id == candidate_id
+    )
+    photo_result = await session.execute(photo_stmt)
+    photo = photo_result.scalar_one_or_none()
+    if not photo:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Photo not found")
+
+    # Retrieve file
+    try:
+        # Check if file exists first
+        if not await photo_storage_service.exists(photo.file_path):
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND, detail="Photo file not found in storage"
+            )
+        file_content = await photo_storage_service.retrieve(photo.file_path)
+    except HTTPException:
+        # Re-raise HTTP exceptions (like 404)
+        raise
+    except (FileNotFoundError, OSError):
+        # Handle file system errors (file doesn't exist or other OS errors)
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Photo file not found in storage"
+        )
+    except Exception as e:
+        # Log unexpected errors for debugging
+        logger = logging.getLogger(__name__)
+        logger.error(f"Unexpected error retrieving photo file {photo.file_path}: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Failed to retrieve photo file: {str(e)}"
+        )
+
+    return StreamingResponse(
+        iter([file_content]),
+        media_type=photo.mime_type,
+        headers={"Content-Disposition": f'inline; filename="{photo.file_name}"'},
+    )
+
+
+# Photo Album Endpoint
+
+@router.get("/photos/album", response_model=PhotoAlbumResponse)
+async def get_photo_album(
+    session: DBSessionDep,
+    page: int = Query(1, ge=1),
+    page_size: int = Query(20, ge=1, le=10000),
+    school_id: int | None = Query(None, description="Filter by school ID"),
+    exam_id: int | None = Query(None, description="Filter by exam ID"),
+    programme_id: int | None = Query(None, description="Filter by programme ID"),
+    has_photo: bool | None = Query(None, description="Filter by presence of photo"),
+) -> PhotoAlbumResponse:
+    """Get photo album with pagination and filtering."""
+    offset = (page - 1) * page_size
+
+    # Build base query for candidates
+    base_stmt = select(Candidate, School)
+    base_stmt = base_stmt.join(School, Candidate.school_id == School.id)
+
+    # Apply filters
+    if school_id is not None:
+        base_stmt = base_stmt.where(Candidate.school_id == school_id)
+
+    if exam_id is not None:
+        base_stmt = base_stmt.join(ExamRegistration, Candidate.id == ExamRegistration.candidate_id).where(
+            ExamRegistration.exam_id == exam_id
+        )
+
+    if programme_id is not None:
+        base_stmt = base_stmt.where(Candidate.programme_id == programme_id)
+
+    # Get total count
+    count_stmt = select(func.count(func.distinct(Candidate.id)))
+    if school_id is not None:
+        count_stmt = count_stmt.where(Candidate.school_id == school_id)
+    if exam_id is not None:
+        count_stmt = count_stmt.join(ExamRegistration, Candidate.id == ExamRegistration.candidate_id).where(
+            ExamRegistration.exam_id == exam_id
+        )
+    if programme_id is not None:
+        count_stmt = count_stmt.where(Candidate.programme_id == programme_id)
+    count_result = await session.execute(count_stmt)
+    total = count_result.scalar() or 0
+
+    # If has_photo filter is applied, we need to get all candidates first to filter
+    if has_photo is not None:
+        # Get all candidates matching other filters
+        all_candidates_stmt = select(Candidate.id)
+        if school_id is not None:
+            all_candidates_stmt = all_candidates_stmt.where(Candidate.school_id == school_id)
+        if programme_id is not None:
+            all_candidates_stmt = all_candidates_stmt.where(Candidate.programme_id == programme_id)
+        if exam_id is not None:
+            all_candidates_stmt = all_candidates_stmt.join(
+                ExamRegistration, Candidate.id == ExamRegistration.candidate_id
+            ).where(ExamRegistration.exam_id == exam_id)
+
+        all_candidates_result = await session.execute(all_candidates_stmt)
+        all_candidate_ids = [row[0] for row in all_candidates_result.all()]
+
+        # Filter by photo presence
+        if has_photo:
+            # Get candidates with active photos
+            photos_stmt = select(CandidatePhoto.candidate_id).where(CandidatePhoto.is_active.is_(True))
+            if all_candidate_ids:
+                photos_stmt = photos_stmt.where(CandidatePhoto.candidate_id.in_(all_candidate_ids))
+            photos_result = await session.execute(photos_stmt)
+            candidate_ids_with_photos = {row[0] for row in photos_result.all()}
+            filtered_candidate_ids = [cid for cid in all_candidate_ids if cid in candidate_ids_with_photos]
+        else:
+            # Get candidates without active photos
+            photos_stmt = select(CandidatePhoto.candidate_id).where(CandidatePhoto.is_active.is_(True))
+            if all_candidate_ids:
+                photos_stmt = photos_stmt.where(CandidatePhoto.candidate_id.in_(all_candidate_ids))
+            photos_result = await session.execute(photos_stmt)
+            candidate_ids_with_photos = {row[0] for row in photos_result.all()}
+            filtered_candidate_ids = [cid for cid in all_candidate_ids if cid not in candidate_ids_with_photos]
+
+        # Update total and base query
+        total = len(filtered_candidate_ids)
+        if not filtered_candidate_ids:
+            return PhotoAlbumResponse(
+                items=[],
+                total=0,
+                page=page,
+                page_size=page_size,
+                total_pages=0,
+            )
+
+        base_stmt = base_stmt.where(Candidate.id.in_(filtered_candidate_ids))
+
+    # Get candidates
+    stmt = base_stmt.offset(offset).limit(page_size).order_by(Candidate.index_number)
+    result = await session.execute(stmt)
+    candidate_school_pairs = result.all()
+
+    # Build response items
+    items: list[PhotoAlbumItem] = []
+    for candidate, school in candidate_school_pairs:
+        # Get active photo for this candidate
+        photo_stmt = select(CandidatePhoto).where(
+            CandidatePhoto.candidate_id == candidate.id, CandidatePhoto.is_active.is_(True)
+        )
+        photo_result = await session.execute(photo_stmt)
+        photo = photo_result.scalar_one_or_none()
+
+        photo_response = CandidatePhotoResponse.model_validate(photo) if photo else None
+
+        items.append(
+            PhotoAlbumItem(
+                candidate_id=candidate.id,
+                candidate_name=candidate.name,
+                index_number=candidate.index_number,
+                school_id=school.id,
+                school_name=school.name,
+                school_code=school.code,
+                photo=photo_response,
+            )
+        )
+
+    total_pages = (total + page_size - 1) // page_size if total > 0 else 0
+
+    return PhotoAlbumResponse(
+        items=items,
+        total=total,
+        page=page,
+        page_size=page_size,
+        total_pages=total_pages,
+    )
+
+
+@router.get("/photos/album/pdf")
+async def generate_photo_album_pdf(
+    session: DBSessionDep,
+    exam_id: int = Query(..., description="Filter by exam ID (required)"),
+    school_id: int = Query(..., description="Filter by school ID (required)"),
+    programme_id: int | None = Query(None, description="Filter by programme ID"),
+    has_photo: bool | None = Query(None, description="Filter by presence of photo (default: only with photos)"),
+    search_query: str | None = Query(None, description="Optional search query to filter candidates by name, index number, or school"),
+    columns: int = Query(1, description="Number of columns (1 or 2)", ge=1, le=2),
+    rows_per_column: int = Query(10, description="Number of rows per column", ge=1, le=50),
+) -> StreamingResponse:
+    """Generate PDF photo album for filtered candidates."""
+    from app.services.pdf_generator import PdfGenerator, render_html, get_templates_base_url
+    from app.models import Programme
+    import base64
+
+    # Default to only candidates with photos if not specified
+    if has_photo is None:
+        has_photo = True
+
+    # Validate exam exists
+    exam_stmt = select(Exam).where(Exam.id == exam_id)
+    exam_result = await session.execute(exam_stmt)
+    exam = exam_result.scalar_one_or_none()
+    if not exam:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Exam not found")
+
+    # Validate school exists
+    school_stmt = select(School).where(School.id == school_id)
+    school_result = await session.execute(school_stmt)
+    school = school_result.scalar_one_or_none()
+    if not school:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="School not found")
+
+    # Get programme if specified
+    programme = None
+    if programme_id is not None:
+        programme_stmt = select(Programme).where(Programme.id == programme_id)
+        programme_result = await session.execute(programme_stmt)
+        programme = programme_result.scalar_one_or_none()
+
+    # Build query to get all candidates matching filters
+    base_stmt = select(Candidate, School)
+    base_stmt = base_stmt.join(School, Candidate.school_id == School.id)
+    base_stmt = base_stmt.where(Candidate.school_id == school_id)
+    base_stmt = base_stmt.join(ExamRegistration, Candidate.id == ExamRegistration.candidate_id).where(
+        ExamRegistration.exam_id == exam_id
+    )
+    if programme_id is not None:
+        base_stmt = base_stmt.where(Candidate.programme_id == programme_id)
+
+    # Get all candidates (no pagination for PDF)
+    stmt = base_stmt.order_by(Candidate.index_number)
+    result = await session.execute(stmt)
+    candidate_school_pairs = result.all()
+
+    # Apply search query filter if provided
+    if search_query:
+        search_lower = search_query.lower().strip()
+        candidate_school_pairs = [
+            (c, s)
+            for c, s in candidate_school_pairs
+            if (
+                search_lower in c.name.lower()
+                or search_lower in c.index_number.lower()
+                or search_lower in s.name.lower()
+                or search_lower in s.code.lower()
+            )
+        ]
+
+    # Filter by photo presence if needed
+    if has_photo is not None:
+        all_candidate_ids = [candidate.id for candidate, _ in candidate_school_pairs]
+        if has_photo:
+            # Get candidates with active photos
+            photos_stmt = select(CandidatePhoto.candidate_id).where(
+                CandidatePhoto.is_active.is_(True),
+                CandidatePhoto.candidate_id.in_(all_candidate_ids)
+            )
+            photos_result = await session.execute(photos_stmt)
+            candidate_ids_with_photos = {row[0] for row in photos_result.all()}
+            candidate_school_pairs = [
+                (c, s) for c, s in candidate_school_pairs if c.id in candidate_ids_with_photos
+            ]
+        else:
+            # Get candidates without active photos
+            photos_stmt = select(CandidatePhoto.candidate_id).where(CandidatePhoto.is_active.is_(True))
+            if all_candidate_ids:
+                photos_stmt = photos_stmt.where(CandidatePhoto.candidate_id.in_(all_candidate_ids))
+            photos_result = await session.execute(photos_stmt)
+            candidate_ids_with_photos = {row[0] for row in photos_result.all()}
+            candidate_school_pairs = [
+                (c, s) for c, s in candidate_school_pairs if c.id not in candidate_ids_with_photos
+            ]
+
+    if not candidate_school_pairs:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="No candidates found matching the filters"
+        )
+
+    # Prepare candidates data with photos
+    candidates_data = []
+    for candidate, _school in candidate_school_pairs:
+        # Get active photo for this candidate
+        photo_stmt = select(CandidatePhoto).where(
+            CandidatePhoto.candidate_id == candidate.id, CandidatePhoto.is_active.is_(True)
+        )
+        photo_result = await session.execute(photo_stmt)
+        photo = photo_result.scalar_one_or_none()
+
+        photo_url = None
+        if photo:
+            try:
+                # Read photo file and convert to base64 data URL
+                photo_content = await photo_storage_service.retrieve(photo.file_path)
+                photo_base64 = base64.b64encode(photo_content).decode('utf-8')
+                photo_url = f"data:{photo.mime_type};base64,{photo_base64}"
+            except Exception as e:
+                logger = logging.getLogger(__name__)
+                logger.warning(f"Failed to load photo for candidate {candidate.id}: {e}")
+
+        candidates_data.append({
+            "name": candidate.name,
+            "index_number": candidate.index_number,
+            "photo_url": photo_url,
+        })
+
+    # Prepare header context
+    exam_info = f"{exam.exam_type.value} {exam.series.value} {exam.year}"
+    school_info = f"{school.code} - {school.name}"
+    programme_info = programme.name if programme else None
+
+    header_context = {
+        "exam_info": exam_info,
+        "school_info": school_info,
+        "programme_info": programme_info,
+    }
+
+    # Prepare main content context with pagination
+    if columns == 2:
+        # Split candidates into pages (rows_per_column per column)
+        # Each page will have exactly rows_per_column candidates per column
+        pages = []
+        for i in range(0, len(candidates_data), rows_per_column * 2):
+            page_candidates = candidates_data[i:i + rows_per_column * 2]
+            left = page_candidates[:rows_per_column]
+            right = page_candidates[rows_per_column:rows_per_column * 2]
+
+            # Pad to ensure exactly rows_per_column per column
+            while len(left) < rows_per_column:
+                left.append(None)
+            while len(right) < rows_per_column:
+                right.append(None)
+
+            pages.append({
+                "candidates_left": left,
+                "candidates_right": right,
+                "page_number": len(pages) + 1,
+                "is_last": i + rows_per_column * 2 >= len(candidates_data),
+                "rows_per_column": rows_per_column,
+            })
+        main_context = {
+            "pages": pages,
+            "total_candidates": len(candidates_data),
+            "rows_per_column": rows_per_column,
+        }
+        main_template = "photo_album/main_2_columns.html"
+    else:
+        # Split candidates into pages
+        pages = []
+        for i in range(0, len(candidates_data), rows_per_column):
+            page_candidates = candidates_data[i:i + rows_per_column]
+            pages.append({
+                "candidates": page_candidates,
+                "page_number": len(pages) + 1,
+                "is_last": i + rows_per_column >= len(candidates_data),
+                "rows_per_column": rows_per_column,
+            })
+        main_context = {
+            "pages": pages,
+            "total_candidates": len(candidates_data),
+            "rows_per_column": rows_per_column,
+        }
+        main_template = "photo_album/main.html"
+
+    # Render templates
+    header_html = render_html(header_context, "photo_album/header.html")
+    main_html = render_html(main_context, main_template)
+
+    # Get base URL for templates
+    base_url = get_templates_base_url("photo_album")
+
+    # Generate PDF
+    pdf_generator = PdfGenerator(
+        main_html=main_html,
+        header_html=header_html,
+        base_url=base_url,
+        side_margin=1,
+        extra_vertical_margin=10,
+    )
+
+    pdf_bytes = pdf_generator.render_pdf()
+
+    # Generate filename
+    filename_parts = [school.code, exam.exam_type.value, str(exam.year)]
+    if programme:
+        filename_parts.append(programme.code or programme.name[:10])
+    filename = f"photo_album_{'_'.join(filename_parts)}.pdf"
+
+    return StreamingResponse(
+        iter([pdf_bytes]),
+        media_type="application/pdf",
+        headers={
+            "Content-Disposition": f'inline; filename="{filename}"',
+        },
+    )

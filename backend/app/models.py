@@ -230,6 +230,7 @@ class Candidate(Base):
     school = relationship("School", back_populates="candidates")
     programme = relationship("Programme", back_populates="candidates")
     exam_registrations = relationship("ExamRegistration", back_populates="candidate", cascade="all, delete-orphan")
+    photos = relationship("CandidatePhoto", back_populates="candidate", cascade="all, delete-orphan")
 
 
 class Exam(Base):
@@ -439,6 +440,24 @@ class SubjectScoreValidationIssue(Base):
 
     subject_score = relationship("SubjectScore")
     exam_subject = relationship("ExamSubject")
+
+
+class CandidatePhoto(Base):
+    """Model for candidate passport photographs."""
+
+    __tablename__ = "candidate_photos"
+    id = Column(Integer, primary_key=True)
+    candidate_id = Column(Integer, ForeignKey("candidates.id", ondelete="CASCADE"), nullable=False, index=True)
+    file_path = Column(String(512), nullable=False)
+    file_name = Column(String(255), nullable=False)
+    mime_type = Column(String(100), nullable=False)
+    checksum = Column(String(64), nullable=False, index=True)  # SHA256
+    is_active = Column(Boolean, default=True, nullable=False, index=True)
+    uploaded_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+
+    candidate = relationship("Candidate", back_populates="photos")
 
 
 class ProcessTracking(Base):
