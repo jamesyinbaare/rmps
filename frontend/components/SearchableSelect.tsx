@@ -1,7 +1,7 @@
 "use client";
 
 import * as React from "react";
-import { Check, ChevronsUpDown } from "lucide-react";
+import { Check, ChevronsUpDown, X } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import {
@@ -126,6 +126,14 @@ export function SearchableSelect({
     };
   }, [buttonRef, selectedOption]);
 
+  const handleClear = React.useCallback((e: React.MouseEvent) => {
+    e.stopPropagation();
+    e.preventDefault();
+    e.nativeEvent.stopImmediatePropagation();
+    onValueChange(undefined);
+    setOpen(false);
+  }, [onValueChange]);
+
   return (
     <Popover open={open} onOpenChange={setOpen}>
       <PopoverTrigger asChild>
@@ -136,11 +144,39 @@ export function SearchableSelect({
           aria-expanded={open}
           className={cn("w-full justify-between", className)}
           disabled={disabled}
+          onPointerDown={(e) => {
+            // Don't open popover if clicking on the clear button
+            if ((e.target as HTMLElement).closest('[data-clear-button]') ||
+                (e.target as HTMLElement).closest('[data-clear-container]')) {
+              e.preventDefault();
+              e.stopPropagation();
+            }
+          }}
         >
           <span className="truncate">
             {selectedOption ? displayText || selectedOption.label : placeholder}
           </span>
-          <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
+          <div className="flex items-center gap-1 ml-2 shrink-0">
+            {value && value !== "" && (
+              <div
+                data-clear-container
+                className="flex items-center"
+                onPointerDown={(e) => {
+                  e.stopPropagation();
+                  e.preventDefault();
+                }}
+                onClick={handleClear}
+              >
+                <X
+                  data-clear-button
+                  className="h-4 w-4 opacity-70 hover:opacity-100 cursor-pointer transition-opacity z-10 relative"
+                  role="button"
+                  tabIndex={-1}
+                />
+              </div>
+            )}
+            <ChevronsUpDown className="h-4 w-4 shrink-0 opacity-50" />
+          </div>
         </Button>
       </PopoverTrigger>
       <PopoverContent className="w-[var(--radix-popover-trigger-width)] p-0" align="start">

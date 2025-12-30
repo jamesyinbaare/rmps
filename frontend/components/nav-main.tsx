@@ -24,6 +24,7 @@ import { cn } from "@/lib/utils"
 type NavItem = {
   title: string
   url: string
+  icon?: LucideIcon
   items?: NavItem[]
 }
 
@@ -93,6 +94,7 @@ export function NavMain({
           <SidebarMenuSubItem key={subItem.title}>
             <SidebarMenuSubButton asChild isActive={subActive}>
               <Link href={subItem.url}>
+                {subItem.icon && <subItem.icon className="h-4 w-4" />}
                 <span>{subItem.title}</span>
               </Link>
             </SidebarMenuSubButton>
@@ -111,6 +113,7 @@ export function NavMain({
           <SidebarMenuSubItem>
             <CollapsibleTrigger asChild>
               <SidebarMenuSubButton isActive={subActive}>
+                {subItem.icon && <subItem.icon className="h-4 w-4" />}
                 <span>{subItem.title}</span>
                 <ChevronRight className="ml-auto transition-transform duration-200 group-data-[state=open]/nested-collapsible:rotate-90" />
               </SidebarMenuSubButton>

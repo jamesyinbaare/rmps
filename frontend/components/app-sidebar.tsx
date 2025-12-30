@@ -8,6 +8,7 @@ import {
   ClipboardCheck,
   Settings,
   ClipboardList,
+  Images,
 } from "lucide-react"
 
 import { NavMain } from "@/components/nav-main"
@@ -141,6 +142,11 @@ const navMain = [
     url: "/more",
     icon: Grid3x3,
     items: [
+      {
+        title: "Photo Album",
+        url: "/more/photo-album",
+        icon: Images,
+      },
       {
         title: "Upload Candidates",
         url: "/more/upload-candidates",
