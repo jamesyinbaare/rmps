@@ -26,6 +26,8 @@ dependencies = [
     "weasyprint>=67.0",
     "cachetools>=6.2.4",
     "scipy>=1.16.3",
+    "python-jose[cryptography]>=3.5.0",
+    "passlib[bcrypt]>=1.7.4",
 ]
 
 [dependency-groups]

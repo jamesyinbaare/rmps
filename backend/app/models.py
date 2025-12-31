@@ -1,5 +1,6 @@
 from datetime import datetime
 import enum
+import uuid
 
 from sqlalchemy import (
     ARRAY,
@@ -17,6 +18,7 @@ from sqlalchemy import (
     Text,
     UniqueConstraint,
 )
+from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import relationship
 
 from app.dependencies.database import Base
@@ -96,6 +98,26 @@ class DataExtractionMethod(enum.Enum):
     MANUAL_ENTRY_PHYSICAL = "MANUAL_ENTRY_PHYSICAL"
 
 
+class UserRole(enum.IntEnum):
+    """User roles with hierarchical permissions. Lower values have higher privileges."""
+    SUPER_ADMIN = 0
+    REGISTRAR = 10
+    OFFICER = 15
+    DATACLERK = 30
+
+    def __lt__(self, other: "UserRole") -> bool:
+        return self.value < other.value
+
+    def __le__(self, other: "UserRole") -> bool:
+        return self.value <= other.value
+
+    def __gt__(self, other: "UserRole") -> bool:
+        return self.value > other.value
+
+    def __ge__(self, other: "UserRole") -> bool:
+        return self.value >= other.value
+
+
 class Grade(enum.Enum):
     FAIL = "Fail"
     PASS = "Pass"
@@ -103,6 +125,19 @@ class Grade(enum.Enum):
     CREDIT = "Credit"
     UPPER_CREDIT = "Upper Credit"
     DISTINCTION = "Distinction"
+
+
+class User(Base):
+    __tablename__ = "users"
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    email = Column(String(255), unique=True, nullable=False, index=True)
+    hashed_password = Column(String(255), nullable=False)
+    full_name = Column(String(255), nullable=False)
+    role = Column(Enum(UserRole), nullable=False, default=UserRole.DATACLERK)
+    is_active = Column(Boolean, default=True, nullable=False)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+    last_login = Column(DateTime, nullable=True)
 
 
 class School(Base):
