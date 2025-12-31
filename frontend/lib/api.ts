@@ -64,6 +64,32 @@ function getAuthToken(): string | null {
 }
 
 /**
+ * Get refresh token from localStorage
+ */
+function getRefreshToken(): string | null {
+  if (typeof window === "undefined") return null;
+  return localStorage.getItem("refresh_token");
+}
+
+/**
+ * Set both access and refresh tokens in localStorage
+ */
+function setTokens(accessToken: string, refreshToken: string): void {
+  if (typeof window === "undefined") return;
+  localStorage.setItem("auth_token", accessToken);
+  localStorage.setItem("refresh_token", refreshToken);
+}
+
+/**
+ * Clear both tokens from localStorage
+ */
+function clearTokens(): void {
+  if (typeof window === "undefined") return;
+  localStorage.removeItem("auth_token");
+  localStorage.removeItem("refresh_token");
+}
+
+/**
  * Create headers with authentication token if available
  */
 function getAuthHeaders(): HeadersInit {
@@ -77,17 +103,124 @@ function getAuthHeaders(): HeadersInit {
   return headers;
 }
 
+/**
+ * Fetch with automatic token refresh on 401 errors.
+ * This wrapper handles token refresh and retries the request automatically.
+ */
+async function fetchWithAuth(
+  url: string,
+  options: RequestInit = {},
+  retryCount = 0
+): Promise<Response> {
+  const maxRetries = 1; // Only retry once after token refresh
+
+  // Add auth headers
+  const headers = new Headers(options.headers);
+  const token = getAuthToken();
+  if (token) {
+    headers.set("Authorization", `Bearer ${token}`);
+  }
+  if (!headers.has("Content-Type")) {
+    headers.set("Content-Type", "application/json");
+  }
+
+  const response = await fetch(url, {
+    ...options,
+    headers,
+  });
+
+  // If 401 and we have a refresh token, try to refresh
+  if (response.status === 401 && retryCount < maxRetries) {
+    const refreshToken = getRefreshToken();
+
+    if (refreshToken && !isRefreshing) {
+      try {
+        isRefreshing = true;
+
+        if (!refreshPromise) {
+          refreshPromise = refreshAccessToken();
+        }
+
+        await refreshPromise;
+
+        isRefreshing = false;
+        refreshPromise = null;
+
+        // Retry the original request with new token
+        return fetchWithAuth(url, options, retryCount + 1);
+      } catch (error) {
+        // Refresh failed
+        isRefreshing = false;
+        refreshPromise = null;
+        clearTokens();
+
+        if (typeof window !== "undefined" && window.location.pathname !== "/login") {
+          window.location.href = "/login?expired=true";
+        }
+      }
+    } else if (!refreshToken) {
+      // No refresh token - clear and redirect
+      clearTokens();
+      if (typeof window !== "undefined" && window.location.pathname !== "/login") {
+        window.location.href = "/login?expired=true";
+      }
+    }
+  }
+
+  return response;
+}
+
+// Track if we're currently refreshing to prevent multiple simultaneous refresh attempts
+let isRefreshing = false;
+let refreshPromise: Promise<TokenResponse> | null = null;
+
 async function handleResponse<T>(response: Response): Promise<T> {
   if (!response.ok) {
     // Handle 401 Unauthorized - token expired or invalid
     if (response.status === 401) {
-      // Handle token expiration - clear token and redirect
-      if (typeof window !== "undefined") {
-        localStorage.removeItem("auth_token");
-        // Only redirect if not already on login page
-        if (window.location.pathname !== "/login") {
-          // Redirect to login with expired parameter
-          window.location.href = "/login?expired=true";
+      // Try to refresh token if we have a refresh token
+      const refreshToken = getRefreshToken();
+
+      if (refreshToken && !isRefreshing) {
+        try {
+          // Start refresh process
+          isRefreshing = true;
+
+          // Use existing refresh promise if one is in progress
+          if (!refreshPromise) {
+            refreshPromise = refreshAccessToken();
+          }
+
+          await refreshPromise;
+
+          // Reset refresh state
+          isRefreshing = false;
+          refreshPromise = null;
+
+          // Note: We can't automatically retry from here, but tokens are updated
+          // The caller should retry the request, or use fetchWithAuth for automatic retry
+        } catch (error) {
+          // Refresh failed - clear tokens and redirect to login
+          isRefreshing = false;
+          refreshPromise = null;
+          clearTokens();
+
+          if (typeof window !== "undefined") {
+            // Only redirect if not already on login page
+            if (window.location.pathname !== "/login") {
+              window.location.href = "/login?expired=true";
+            }
+          }
+        }
+      } else if (!refreshToken) {
+        // No refresh token - clear tokens and redirect
+        clearTokens();
+
+        if (typeof window !== "undefined") {
+          // Only redirect if not already on login page
+          if (window.location.pathname !== "/login") {
+            window.location.href = "/login?expired=true";
+          }
         }
       }
     }
@@ -2435,6 +2568,7 @@ export interface LoginRequest {
 
 export interface TokenResponse {
   access_token: string;
+  refresh_token: string;
   token_type: string;
 }
 
@@ -2475,16 +2609,23 @@ export async function login(credentials: LoginRequest): Promise<TokenResponse> {
     throw new Error(errorDetail);
   }
 
-  return response.json();
+  const tokenData = await response.json();
+
+  // Store both tokens
+  if (typeof window !== "undefined") {
+    localStorage.setItem("auth_token", tokenData.access_token);
+    localStorage.setItem("refresh_token", tokenData.refresh_token);
+  }
+
+  return tokenData;
 }
 
 /**
  * Get current authenticated user information.
  */
 export async function getCurrentUser(): Promise<User> {
-  const response = await fetch(`${API_BASE_URL}/api/v1/auth/me`, {
+  const response = await fetchWithAuth(`${API_BASE_URL}/api/v1/auth/me`, {
     method: "GET",
-    headers: getAuthHeaders(),
   });
   return handleResponse<User>(response);
 }
@@ -2512,12 +2653,81 @@ export async function registerUser(data: {
 }
 
 /**
- * Logout user (clears token from localStorage).
+ * Refresh access token using refresh token.
  */
-export function logout(): void {
-  if (typeof window !== "undefined") {
-    localStorage.removeItem("auth_token");
+export async function refreshAccessToken(): Promise<TokenResponse> {
+  const refreshToken = getRefreshToken();
+
+  if (!refreshToken) {
+    throw new Error("No refresh token available");
   }
+
+  const response = await fetch(`${API_BASE_URL}/api/v1/auth/refresh`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({ refresh_token: refreshToken }),
+  });
+
+  if (!response.ok) {
+    // Refresh token expired or invalid - clear tokens
+    clearTokens();
+    let errorDetail = `HTTP error! status: ${response.status}`;
+
+    try {
+      const contentType = response.headers.get("content-type");
+      const text = await response.text();
+
+      if (contentType && contentType.includes("application/json") && text) {
+        try {
+          const error: ApiError = JSON.parse(text);
+          errorDetail = error.detail || text;
+        } catch {
+          errorDetail = text;
+        }
+      } else if (text) {
+        errorDetail = text;
+      }
+    } catch (e) {
+      errorDetail = `HTTP error! status: ${response.status}`;
+    }
+
+    throw new Error(errorDetail);
+  }
+
+  const tokenData = await response.json();
+
+  // Update stored tokens
+  setTokens(tokenData.access_token, tokenData.refresh_token);
+
+  return tokenData;
+}
+
+/**
+ * Logout user (revokes refresh token and clears tokens from localStorage).
+ */
+export async function logout(): Promise<void> {
+  const refreshToken = getRefreshToken();
+
+  // Try to revoke refresh token on backend
+  if (refreshToken) {
+    try {
+      await fetch(`${API_BASE_URL}/api/v1/auth/logout`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ refresh_token: refreshToken }),
+      });
+    } catch (error) {
+      // Ignore errors - still clear tokens locally
+      console.error("Error revoking refresh token:", error);
+    }
+  }
+
+  // Clear tokens from localStorage
+  clearTokens();
 }
 
 /**
@@ -2608,9 +2818,8 @@ export async function resetUserPassword(
  * Update current user's own profile (name only).
  */
 export async function updateCurrentUser(data: { full_name?: string }): Promise<User> {
-  const response = await fetch(`${API_BASE_URL}/api/v1/auth/me`, {
+  const response = await fetchWithAuth(`${API_BASE_URL}/api/v1/auth/me`, {
     method: "PUT",
-    headers: getAuthHeaders(),
     body: JSON.stringify(data),
   });
   return handleResponse<User>(response);
@@ -2623,9 +2832,8 @@ export async function changeCurrentUserPassword(
   currentPassword: string,
   newPassword: string
 ): Promise<void> {
-  const response = await fetch(`${API_BASE_URL}/api/v1/auth/me/change-password`, {
+  const response = await fetchWithAuth(`${API_BASE_URL}/api/v1/auth/me/change-password`, {
     method: "POST",
-    headers: getAuthHeaders(),
     body: JSON.stringify({
       current_password: currentPassword,
       new_password: newPassword,
