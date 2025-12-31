@@ -59,12 +59,19 @@ export function NavUser({
     setLogoutDialogOpen(true)
   }
 
-  const handleLogoutConfirm = () => {
-    logout()
-    toast.success("Logged out successfully")
-    setLogoutDialogOpen(false)
-    // Use window.location for immediate redirect to avoid stuck state
-    window.location.href = "/login"
+  const handleLogoutConfirm = async () => {
+    try {
+      await logout()
+      toast.success("Logged out successfully")
+      setLogoutDialogOpen(false)
+      // Use window.location for immediate redirect to avoid stuck state
+      window.location.href = "/login"
+    } catch (error) {
+      console.error("Logout error:", error)
+      // Still redirect even if logout fails
+      setLogoutDialogOpen(false)
+      window.location.href = "/login"
+    }
   }
 
   const handleAccount = () => {

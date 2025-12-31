@@ -52,8 +52,8 @@ export function LoginForm({
 
     try {
       const response = await login({ email, password })
-      // Store token in localStorage
-      localStorage.setItem("auth_token", response.access_token)
+      // Tokens are already stored by the login function
+      // Clear any existing refresh tokens (shouldn't be necessary, but good practice)
       // Reset logout notification flag on successful login
       resetLogoutNotification()
       toast.success("Login successful")
