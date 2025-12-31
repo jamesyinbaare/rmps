@@ -47,12 +47,51 @@ import type {
   RunValidationRequest,
   RunValidationResponse,
   ValidationIssuesFilters,
+  User,
+  UserUpdate,
+  UserPasswordReset,
+  UserListFilters,
 } from "@/types/document";
 
 export const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL || "http://localhost:8000";
 
+/**
+ * Get authentication token from localStorage
+ */
+function getAuthToken(): string | null {
+  if (typeof window === "undefined") return null;
+  return localStorage.getItem("auth_token");
+}
+
+/**
+ * Create headers with authentication token if available
+ */
+function getAuthHeaders(): HeadersInit {
+  const headers: HeadersInit = {
+    "Content-Type": "application/json",
+  };
+  const token = getAuthToken();
+  if (token) {
+    headers["Authorization"] = `Bearer ${token}`;
+  }
+  return headers;
+}
+
 async function handleResponse<T>(response: Response): Promise<T> {
   if (!response.ok) {
+    // Handle 401 Unauthorized - token expired or invalid
+    if (response.status === 401) {
+      // Handle token expiration - clear token and redirect
+      if (typeof window !== "undefined") {
+        localStorage.removeItem("auth_token");
+        // Only redirect if not already on login page
+        if (window.location.pathname !== "/login") {
+          // Redirect to login with expired parameter
+          window.location.href = "/login?expired=true";
+        }
+      }
+    }
+
     let errorDetail = `HTTP error! status: ${response.status}`;
     try {
       const contentType = response.headers.get("content-type");
@@ -74,6 +113,12 @@ async function handleResponse<T>(response: Response): Promise<T> {
       // If we can't read the response, use the default message
       errorDetail = `HTTP error! status: ${response.status}`;
     }
+
+    // For 401 errors, throw a specific error that won't show the generic error message
+    if (response.status === 401) {
+      throw new Error("Session expired. Please log in again.");
+    }
+
     throw new Error(errorDetail);
   }
   return response.json();
@@ -2379,4 +2424,215 @@ export async function compareBoundaryMethods(
     }
   );
   return handleResponse<MethodComparison>(response);
+}
+
+// Authentication API Functions
+
+export interface LoginRequest {
+  email: string;
+  password: string;
+}
+
+export interface TokenResponse {
+  access_token: string;
+  token_type: string;
+}
+
+/**
+ * Login user and get access token.
+ */
+export async function login(credentials: LoginRequest): Promise<TokenResponse> {
+  const response = await fetch(`${API_BASE_URL}/api/v1/auth/login`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(credentials),
+  });
+
+  // Handle login response separately to preserve actual error messages
+  if (!response.ok) {
+    let errorDetail = `HTTP error! status: ${response.status}`;
+
+    try {
+      const contentType = response.headers.get("content-type");
+      const text = await response.text();
+
+      if (contentType && contentType.includes("application/json") && text) {
+        try {
+          const error: ApiError = JSON.parse(text);
+          errorDetail = error.detail || text;
+        } catch {
+          errorDetail = text;
+        }
+      } else if (text) {
+        errorDetail = text;
+      }
+    } catch (e) {
+      errorDetail = `HTTP error! status: ${response.status}`;
+    }
+
+    throw new Error(errorDetail);
+  }
+
+  return response.json();
+}
+
+/**
+ * Get current authenticated user information.
+ */
+export async function getCurrentUser(): Promise<User> {
+  const response = await fetch(`${API_BASE_URL}/api/v1/auth/me`, {
+    method: "GET",
+    headers: getAuthHeaders(),
+  });
+  return handleResponse<User>(response);
+}
+
+/**
+ * Register a new user (requires Registrar or higher role).
+ */
+export async function registerUser(data: {
+  email: string;
+  password: string;
+  full_name: string;
+  role: UserRole;
+}): Promise<User> {
+  const response = await fetch(`${API_BASE_URL}/api/v1/auth/register`, {
+    method: "POST",
+    headers: getAuthHeaders(),
+    body: JSON.stringify({
+      email: data.email,
+      password: data.password,
+      full_name: data.full_name,
+      role: data.role, // FastAPI will convert string to UserRole enum
+    }),
+  });
+  return handleResponse<User>(response);
+}
+
+/**
+ * Logout user (clears token from localStorage).
+ */
+export function logout(): void {
+  if (typeof window !== "undefined") {
+    localStorage.removeItem("auth_token");
+  }
+}
+
+/**
+ * Check if user is authenticated.
+ */
+export function isAuthenticated(): boolean {
+  return getAuthToken() !== null;
+}
+
+// User Management API Functions
+
+/**
+ * List users with pagination and filters.
+ */
+export async function listUsers(
+  filters?: UserListFilters
+): Promise<User[]> {
+  const params = new URLSearchParams();
+  if (filters?.page) params.append("page", filters.page.toString());
+  if (filters?.page_size) params.append("page_size", filters.page_size.toString());
+  if (filters?.role) params.append("role", filters.role);
+  if (filters?.is_active !== undefined) params.append("is_active", filters.is_active.toString());
+  if (filters?.search) params.append("search", filters.search);
+
+  const response = await fetch(`${API_BASE_URL}/api/v1/users?${params.toString()}`, {
+    method: "GET",
+    headers: getAuthHeaders(),
+  });
+  return handleResponse<User[]>(response);
+}
+
+/**
+ * Get a single user by ID.
+ */
+export async function getUser(userId: string): Promise<User> {
+  const response = await fetch(`${API_BASE_URL}/api/v1/users/${userId}`, {
+    method: "GET",
+    headers: getAuthHeaders(),
+  });
+  return handleResponse<User>(response);
+}
+
+/**
+ * Update a user.
+ */
+export async function updateUser(userId: string, data: UserUpdate): Promise<User> {
+  const response = await fetch(`${API_BASE_URL}/api/v1/users/${userId}`, {
+    method: "PUT",
+    headers: getAuthHeaders(),
+    body: JSON.stringify(data),
+  });
+  return handleResponse<User>(response);
+}
+
+/**
+ * Delete a user (SUPER_ADMIN only).
+ */
+export async function deleteUser(userId: string): Promise<void> {
+  const response = await fetch(`${API_BASE_URL}/api/v1/users/${userId}`, {
+    method: "DELETE",
+    headers: getAuthHeaders(),
+  });
+  if (!response.ok) {
+    const error: ApiError = await response.json().catch(() => ({ detail: "An error occurred" }));
+    throw new Error(error.detail || `HTTP error! status: ${response.status}`);
+  }
+}
+
+/**
+ * Reset a user's password (SUPER_ADMIN only).
+ */
+export async function resetUserPassword(
+  userId: string,
+  newPassword: string
+): Promise<void> {
+  const response = await fetch(`${API_BASE_URL}/api/v1/users/${userId}/reset-password`, {
+    method: "POST",
+    headers: getAuthHeaders(),
+    body: JSON.stringify({ new_password: newPassword }),
+  });
+  if (!response.ok) {
+    const error: ApiError = await response.json().catch(() => ({ detail: "An error occurred" }));
+    throw new Error(error.detail || `HTTP error! status: ${response.status}`);
+  }
+}
+
+/**
+ * Update current user's own profile (name only).
+ */
+export async function updateCurrentUser(data: { full_name?: string }): Promise<User> {
+  const response = await fetch(`${API_BASE_URL}/api/v1/auth/me`, {
+    method: "PUT",
+    headers: getAuthHeaders(),
+    body: JSON.stringify(data),
+  });
+  return handleResponse<User>(response);
+}
+
+/**
+ * Change current user's own password.
+ */
+export async function changeCurrentUserPassword(
+  currentPassword: string,
+  newPassword: string
+): Promise<void> {
+  const response = await fetch(`${API_BASE_URL}/api/v1/auth/me/change-password`, {
+    method: "POST",
+    headers: getAuthHeaders(),
+    body: JSON.stringify({
+      current_password: currentPassword,
+      new_password: newPassword,
+    }),
+  });
+  if (!response.ok) {
+    const error: ApiError = await response.json().catch(() => ({ detail: "An error occurred" }));
+    throw new Error(error.detail || `HTTP error! status: ${response.status}`);
+  }
 }

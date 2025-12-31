@@ -1,6 +1,7 @@
 "use client";
 
-import { useRouter } from "next/navigation"
+import { useState } from "react";
+import { useRouter, useSearchParams } from "next/navigation"
 import { cn } from "@/lib/utils"
 import { Button } from "@/components/ui/button"
 import {
@@ -11,17 +12,68 @@ import {
   FieldSeparator,
 } from "@/components/ui/field"
 import { Input } from "@/components/ui/input"
+import { login } from "@/lib/api"
+import { toast } from "sonner"
+import { resetLogoutNotification } from "@/lib/auth-utils"
 
 export function LoginForm({
   className,
   ...props
 }: React.ComponentProps<"form">) {
   const router = useRouter()
+  const searchParams = useSearchParams()
+  const [loading, setLoading] = useState(false)
+  const [email, setEmail] = useState("")
+  const [password, setPassword] = useState("")
+  const [emailError, setEmailError] = useState<string>("")
+  const [passwordError, setPasswordError] = useState<string>("")
+  const [generalError, setGeneralError] = useState<string>("")
 
-  const handleSubmit = (e: React.FormEvent<HTMLFormElement>) => {
+  const handleSubmit = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault()
-    // Dummy login - just redirect to home
-    router.push("/")
+
+    // Clear previous errors
+    setEmailError("")
+    setPasswordError("")
+    setGeneralError("")
+
+    // Basic validation
+    if (!email.trim()) {
+      setEmailError("Email is required")
+      return
+    }
+
+    if (!password) {
+      setPasswordError("Password is required")
+      return
+    }
+
+    setLoading(true)
+
+    try {
+      const response = await login({ email, password })
+      // Store token in localStorage
+      localStorage.setItem("auth_token", response.access_token)
+      // Reset logout notification flag on successful login
+      resetLogoutNotification()
+      toast.success("Login successful")
+      // Redirect to intended destination or home page
+      // Use window.location for immediate redirect to avoid stuck state
+      const redirect = searchParams.get("redirect")
+      window.location.href = redirect || "/"
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : "Login failed"
+
+      // Display error message
+      setGeneralError(errorMessage)
+      toast.error(errorMessage)
+      console.error("Login error:", error)
+
+      // Clear password on error for security
+      setPassword("")
+    } finally {
+      setLoading(false)
+    }
   }
 
   return (
@@ -33,9 +85,32 @@ export function LoginForm({
             Enter your email below to login to your account
           </p>
         </div>
+        {generalError && (
+          <div className="rounded-md bg-destructive/15 border border-destructive/50 p-3 text-sm text-destructive">
+            {generalError}
+          </div>
+        )}
         <Field>
           <FieldLabel htmlFor="email">Email</FieldLabel>
-          <Input id="email" type="email" placeholder="m@example.com" required />
+          <Input
+            id="email"
+            type="email"
+            placeholder="m@example.com"
+            required
+            value={email}
+            onChange={(e) => {
+              setEmail(e.target.value)
+              if (emailError) setEmailError("")
+              if (generalError) setGeneralError("")
+            }}
+            disabled={loading}
+            className={emailError ? "border-destructive" : ""}
+            autoComplete="email"
+            data-form-type="other"
+          />
+          {emailError && (
+            <p className="text-sm text-destructive mt-1">{emailError}</p>
+          )}
         </Field>
         <Field>
           <div className="flex items-center">
@@ -47,10 +122,29 @@ export function LoginForm({
               Forgot your password?
             </a>
           </div>
-          <Input id="password" type="password" required />
+          <Input
+            id="password"
+            type="password"
+            required
+            value={password}
+            onChange={(e) => {
+              setPassword(e.target.value)
+              if (passwordError) setPasswordError("")
+              if (generalError) setGeneralError("")
+            }}
+            disabled={loading}
+            className={passwordError ? "border-destructive" : ""}
+            autoComplete="current-password"
+            data-form-type="other"
+          />
+          {passwordError && (
+            <p className="text-sm text-destructive mt-1">{passwordError}</p>
+          )}
         </Field>
         <Field>
-          <Button type="submit">Login</Button>
+          <Button type="submit" disabled={loading}>
+            {loading ? "Logging in..." : "Login"}
+          </Button>
         </Field>
         <FieldSeparator>Or continue with</FieldSeparator>
         <Field>
