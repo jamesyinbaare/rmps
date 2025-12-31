@@ -1,6 +1,7 @@
 from datetime import datetime, timedelta
 from typing import Any
 import hashlib
+import secrets
 
 import bcrypt
 from jose import JWTError, jwt
@@ -64,3 +65,38 @@ def verify_token(token: str) -> dict[str, Any] | None:
         return payload
     except JWTError:
         return None
+
+
+def create_refresh_token() -> str:
+    """Generate a secure random refresh token."""
+    # Generate a URL-safe random token (32 bytes = 43 characters when base64 encoded)
+    return secrets.token_urlsafe(32)
+
+
+def hash_refresh_token(token: str) -> str:
+    """Hash a refresh token using bcrypt before storage."""
+    # Prepare token for bcrypt (same approach as passwords)
+    token_bytes = token.encode("utf-8")
+    if len(token_bytes) <= 72:
+        prepared_token = token_bytes
+    else:
+        # Token too long, hash it first
+        prepared_token = hashlib.sha256(token_bytes).digest()
+
+    # Hash using bcrypt
+    salt = bcrypt.gensalt()
+    hashed = bcrypt.hashpw(prepared_token, salt)
+    return hashed.decode("utf-8")
+
+
+def verify_refresh_token_hash(plain_token: str, hashed_token: str) -> bool:
+    """Verify a plain refresh token against a hashed token."""
+    # Prepare the token the same way it was hashed
+    token_bytes = plain_token.encode("utf-8")
+    if len(token_bytes) <= 72:
+        prepared_token = token_bytes
+    else:
+        prepared_token = hashlib.sha256(token_bytes).digest()
+
+    # Verify using bcrypt
+    return bcrypt.checkpw(prepared_token, hashed_token.encode("utf-8"))

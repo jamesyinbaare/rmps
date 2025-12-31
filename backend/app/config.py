@@ -137,6 +137,8 @@ class Settings(BaseSettings):
     secret_key: str = "your-secret-key-change-in-production"  # Should be set via environment variable
     algorithm: str = "HS256"
     access_token_expire_minutes: int = 30
+    refresh_token_expire_days: int = 7
+    inactivity_timeout_minutes: int = 30  # For frontend reference
     password_min_length: int = 8
 
 

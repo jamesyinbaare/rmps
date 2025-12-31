@@ -10,6 +10,7 @@ from app.models import UserRole
 class Token(BaseModel):
     """JWT token response schema."""
     access_token: str
+    refresh_token: str
     token_type: str = "bearer"
 
 
@@ -17,6 +18,18 @@ class TokenData(BaseModel):
     """JWT token payload schema."""
     user_id: UUID | None = None
     email: str | None = None
+
+
+class RefreshTokenRequest(BaseModel):
+    """Refresh token request schema."""
+    refresh_token: str
+
+
+class TokenRefreshResponse(BaseModel):
+    """Token refresh response schema (same as Token)."""
+    access_token: str
+    refresh_token: str
+    token_type: str = "bearer"
 
 
 class UserLogin(BaseModel):
