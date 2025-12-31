@@ -133,6 +133,11 @@ class Settings(BaseSettings):
     photo_min_height: int = 200
     photo_max_file_size: int = 2 * 1024 * 1024  # 2MB
     photo_storage_path: str = "storage/photos"
+    # Authentication settings
+    secret_key: str = "your-secret-key-change-in-production"  # Should be set via environment variable
+    algorithm: str = "HS256"
+    access_token_expire_minutes: int = 30
+    password_min_length: int = 8
 
 
 settings = Settings()  # type: ignore

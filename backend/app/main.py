@@ -7,7 +7,7 @@ from fastapi import FastAPI, status
 from starlette.middleware.cors import CORSMiddleware
 
 from app.dependencies.database import get_sessionmanager, initialize_db
-from app.routers import candidates, documents, exams, grades, insights, pdf_generation_jobs, programmes, results, schools, scores, subjects, validation
+from app.routers import auth, candidates, documents, exams, grades, insights, pdf_generation_jobs, programmes, results, schools, scores, subjects, validation
 from app.services.reducto_queue import reducto_queue_service
 
 
@@ -36,6 +36,7 @@ app.add_middleware(
 )
 
 # Include routers
+app.include_router(auth.router)
 app.include_router(schools.router)
 app.include_router(subjects.router)
 app.include_router(exams.router)
