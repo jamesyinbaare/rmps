@@ -747,3 +747,43 @@ export interface ExamProgressResponse {
   overall_completion_percentage: number;
   overall_status: "complete" | "in_progress" | "pending";
 }
+
+// User Management Types
+export type UserRole = "SUPER_ADMIN" | "REGISTRAR" | "OFFICER" | "DATACLERK";
+
+export interface User {
+  id: string; // UUID
+  email: string;
+  full_name: string;
+  role: UserRole;
+  is_active: boolean;
+  created_at: string;
+  updated_at: string;
+  last_login: string | null;
+}
+
+export interface UserListResponse {
+  items: User[];
+  total: number;
+  page: number;
+  page_size: number;
+  total_pages: number;
+}
+
+export interface UserUpdate {
+  full_name?: string;
+  role?: UserRole;
+  is_active?: boolean;
+}
+
+export interface UserPasswordReset {
+  new_password: string;
+}
+
+export interface UserListFilters {
+  role?: UserRole;
+  is_active?: boolean;
+  search?: string;
+  page?: number;
+  page_size?: number;
+}
