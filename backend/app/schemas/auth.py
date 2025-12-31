@@ -1,5 +1,6 @@
 from datetime import datetime
 from typing import Optional
+from uuid import UUID
 
 from pydantic import BaseModel, EmailStr
 
@@ -14,7 +15,7 @@ class Token(BaseModel):
 
 class TokenData(BaseModel):
     """JWT token payload schema."""
-    user_id: int | None = None
+    user_id: UUID | None = None
     email: str | None = None
 
 
@@ -34,7 +35,7 @@ class UserCreate(BaseModel):
 
 class UserResponse(BaseModel):
     """User response schema (excludes password)."""
-    id: int
+    id: UUID
     email: str
     full_name: str
     role: UserRole

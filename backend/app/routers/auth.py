@@ -4,6 +4,7 @@ from fastapi import APIRouter, HTTPException, status
 from sqlalchemy import select
 
 from app.config import settings
+from app.core.cache import get_cached_user_by_email, set_cached_user
 from app.core.security import create_access_token, get_password_hash, verify_password
 from app.dependencies.auth import CurrentUserDep
 from app.dependencies.database import DBSessionDep
@@ -16,10 +17,14 @@ router = APIRouter(prefix="/api/v1/auth", tags=["authentication"])
 @router.post("/login", response_model=Token, status_code=status.HTTP_200_OK)
 async def login(user_credentials: UserLogin, session: DBSessionDep) -> Token:
     """Authenticate user and return JWT token."""
-    # Find user by email
-    stmt = select(User).where(User.email == user_credentials.email)
-    result = await session.execute(stmt)
-    user = result.scalar_one_or_none()
+    # Try to get user from cache first
+    user = get_cached_user_by_email(user_credentials.email)
+
+    # If not in cache, query database
+    if user is None:
+        stmt = select(User).where(User.email == user_credentials.email)
+        result = await session.execute(stmt)
+        user = result.scalar_one_or_none()
 
     # Verify user exists and password is correct
     if not user or not verify_password(user_credentials.password, user.hashed_password):
@@ -39,6 +44,9 @@ async def login(user_credentials: UserLogin, session: DBSessionDep) -> Token:
     # Update last_login
     user.last_login = datetime.utcnow()
     await session.commit()
+
+    # Update cache with fresh user data
+    set_cached_user(user)
 
     # Create access token
     access_token_expires = timedelta(minutes=30)
@@ -83,6 +91,9 @@ async def register(user_data: UserCreate, session: DBSessionDep) -> UserResponse
     session.add(new_user)
     await session.commit()
     await session.refresh(new_user)
+
+    # Cache the new user
+    set_cached_user(new_user)
 
     return UserResponse.model_validate(new_user)
 

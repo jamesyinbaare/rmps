@@ -1,9 +1,11 @@
 from typing import Annotated
+from uuid import UUID
 
 from fastapi import Depends, HTTPException, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from sqlalchemy import select
 
+from app.core.cache import get_cached_user, set_cached_user
 from app.core.security import verify_token
 from app.dependencies.database import DBSessionDep
 from app.models import User, UserRole
@@ -28,7 +30,7 @@ async def get_current_user(
             headers={"WWW-Authenticate": "Bearer"},
         )
 
-    # Extract user_id from token (JWT sub claim is a string)
+    # Extract user_id from token (JWT sub claim is a string UUID)
     user_id_str: str | None = payload.get("sub")
     if user_id_str is None:
         raise HTTPException(
@@ -37,7 +39,7 @@ async def get_current_user(
             headers={"WWW-Authenticate": "Bearer"},
         )
     try:
-        user_id = int(user_id_str)
+        user_id = UUID(user_id_str)
     except (ValueError, TypeError):
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
@@ -45,7 +47,12 @@ async def get_current_user(
             headers={"WWW-Authenticate": "Bearer"},
         )
 
-    # Get user from database
+    # Try to get user from cache first
+    user = get_cached_user(user_id)
+    if user is not None:
+        return user
+
+    # Get user from database if not in cache
     stmt = select(User).where(User.id == user_id)
     result = await session.execute(stmt)
     user = result.scalar_one_or_none()
@@ -56,6 +63,9 @@ async def get_current_user(
             detail="User not found",
             headers={"WWW-Authenticate": "Bearer"},
         )
+
+    # Cache the user for future requests
+    set_cached_user(user)
 
     return user
 
