@@ -7,6 +7,7 @@ from fastapi import FastAPI, status
 from starlette.middleware.cors import CORSMiddleware
 
 from app.dependencies.database import get_sessionmanager, initialize_db
+from app.initial_data import ensure_super_admin_user
 from app.routers import auth, candidates, documents, exams, grades, insights, pdf_generation_jobs, programmes, results, schools, scores, subjects, users, validation
 from app.services.reducto_queue import reducto_queue_service
 
@@ -17,6 +18,9 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     # Startup: Initialize database
     sessionmanager = get_sessionmanager()
     async with initialize_db(sessionmanager):
+        # Ensure SUPER_ADMIN user exists
+        async with sessionmanager.session() as session:
+            await ensure_super_admin_user(session)
         # Start Reducto queue worker
         reducto_queue_service.start_worker()
         yield
