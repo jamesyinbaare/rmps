@@ -140,6 +140,10 @@ class Settings(BaseSettings):
     refresh_token_expire_days: int = 7
     inactivity_timeout_minutes: int = 30  # For frontend reference
     password_min_length: int = 8
+    # Super admin initialization settings
+    super_admin_email: str = ""  # Required: Email for the initial SUPER_ADMIN user
+    super_admin_password: str = ""  # Required: Password for the initial SUPER_ADMIN user
+    super_admin_full_name: str = ""  # Required: Full name for the initial SUPER_ADMIN user
 
 
 settings = Settings()  # type: ignore
