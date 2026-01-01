@@ -30,11 +30,11 @@ target_metadata = Base.metadata
 # ... etc.
 env = settings.environment
 if env == "dev":
-    database_url = "postgresql+asyncpg://postgres:postgres@postgres:5432/icm_db" #settings.database_url
+    database_url = "postgresql+asyncpg://postgres:postgres@postgres:5432/sems_db" #settings.database_url
 elif env == "stg":
     db_pass = os.environ.get("DB_PASS", None)
     db_host = os.environ.get("DB_HOST", "")
-    db_name = os.environ.get("DB_NAME", "icm_db")
+    db_name = os.environ.get("DB_NAME", "sems_db")
     database_url = f"postgresql://postgres:{db_pass}@{db_host}/{db_name}"
 else:  # FIXME(james): support test & production environments by reading db creds from secrets manager
     raise ValueError(f"ENV {env} is not supported.")
