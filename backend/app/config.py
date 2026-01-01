@@ -146,4 +146,15 @@ class Settings(BaseSettings):
     super_admin_full_name: str = ""  # Required: Full name for the initial SUPER_ADMIN user
 
 
+class LoggingSettings(BaseSettings):
+    LOG_LEVEL: str = "INFO"
+    LOG_FORMAT: str = "text"  # "text" or "json"
+    ENV: str = "dev"  # dev | staging | prod
+
+    class Config:
+        env_prefix = "APP_"
+
+
+logging_settings = LoggingSettings()
+
 settings = Settings()  # type: ignore
