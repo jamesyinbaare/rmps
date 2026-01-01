@@ -23,7 +23,7 @@ annotate_icm.py
 pdf_utils.py
 generate_pdf.py
 .github/
-backend/sample_candidates_upload.csv
-create_sample_upload.py
-backend/app/add_test_unmatched_records.py
-grading_boundary_setting.ipynb
+sems/backend/sample_candidates_upload.csv
+sems/create_sample_upload.py
+sems/backend/app/add_test_unmatched_records.py
+sems/grading_boundary_setting.ipynb

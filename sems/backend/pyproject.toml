@@ -1,5 +1,5 @@
 [project]
-name = "icm-ms"
+name = "sems"
 version = "0.1.0"
 description = "Document Tracking System for Certificate II Examination to digitize and manage examination score sheets with automated data extraction and processing"
 readme = "README.md"

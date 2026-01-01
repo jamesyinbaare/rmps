@@ -1,0 +1,63 @@
+name: Setup Branch Protection
+
+on:
+  workflow_dispatch:
+    inputs:
+      branch:
+        description: 'Branch to protect (default: main)'
+        required: false
+        default: 'main'
+        type: string
+
+jobs:
+  setup-protection:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Configure branch protection rules
+        env:
+          # Use ADMIN_TOKEN if available (PAT with admin:repo scope), otherwise use GITHUB_TOKEN
+          GITHUB_TOKEN: ${{ secrets.ADMIN_TOKEN || secrets.GITHUB_TOKEN }}
+          BRANCH: ${{ github.event.inputs.branch || 'main' }}
+        run: |
+          echo "Setting up branch protection for branch: $BRANCH"
+
+          # Authenticate GitHub CLI
+          echo "$GITHUB_TOKEN" | gh auth login --with-token
+
+          # Configure branch protection using GitHub API
+          gh api \
+            repos/${{ github.repository }}/branches/$BRANCH/protection \
+            -X PUT \
+            -f required_status_checks='{"strict":true,"contexts":[]}' \
+            -f enforce_admins=true \
+            -f required_pull_request_reviews='{"required_approving_review_count":1,"dismiss_stale_reviews":true,"require_code_owner_reviews":false,"require_last_push_approval":false}' \
+            -f restrictions=null \
+            -f allow_force_pushes=false \
+            -f allow_deletions=false \
+            -f required_linear_history=true \
+            -f allow_squash_merge=true \
+            -f allow_merge_commit=false \
+            -f allow_rebase_merge=true \
+            -f block_creations=false \
+            -f required_conversation_resolution=true \
+            --jq '.'
+
+          echo "✅ Branch protection rules configured successfully for $BRANCH"
+
+          # Display configured rules
+          echo ""
+          echo "📋 Configured Protection Rules:"
+          echo "  ✓ Require pull request reviews (minimum 1 approval)"
+          echo "  ✓ Require status checks to pass before merging"
+          echo "  ✓ Require linear history (squash or rebase merge only)"
+          echo "  ✓ Prevent force pushes"
+          echo "  ✓ Prevent branch deletion"
+          echo "  ✓ Require branches to be up to date before merging"
+          echo "  ✓ Require conversation resolution before merging"
+          echo "  ✓ Enforce rules for administrators"

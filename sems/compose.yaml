@@ -2,14 +2,14 @@ services:
   fastapi-app:
     build:
       context: backend
-    container_name: fastapi-app
+    container_name: sems-fastapi-app
     ports:
       - "8000:80"
     env_file:
       - .env
     volumes:
-      - icm_storage_data:/app/storage/documents
-      - icm_score_sheets_data:/app/score_sheets
+      - sems_storage_data:/app/storage/documents
+      - sems_score_sheets_data:/app/score_sheets
     develop:
       watch:
         - action: sync
@@ -42,7 +42,7 @@ services:
     build:
       context: frontend
       dockerfile: Dockerfile
-    container_name: frontend-app
+    container_name: sems-frontend-app
     ports:
       - "3000:3000"
     environment:
@@ -70,18 +70,18 @@ services:
       start_period: 30s
       timeout: 10s
     volumes:
-      - icm_db_data:/var/lib/postgresql/data/pgdata
+      - sems_db_data:/var/lib/postgresql/data/pgdata
     env_file:
       - .env
     environment:
       - PGDATA=/var/lib/postgresql/data/pgdata
       - POSTGRES_PASSWORD=${POSTGRES_PASSWORD?Variable not set}
       - POSTGRES_USER=${POSTGRES_USER?Variable not set}
-      - POSTGRES_DB=${POSTGRES_DB?Variable not set}
+      - POSTGRES_DB=${POSTGRES_DB:-sems_db}
     ports:
       - "5432:5432"
 
 volumes:
-  icm_db_data:
-  icm_storage_data:
-  icm_score_sheets_data:
+  sems_db_data:
+  sems_storage_data:
+  sems_score_sheets_data:
