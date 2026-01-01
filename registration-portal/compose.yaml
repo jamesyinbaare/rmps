@@ -1,0 +1,91 @@
+services:
+  registration-backend:
+    build:
+      context: backend
+    container_name: registration-backend
+    ports:
+      - "8001:80"
+    env_file:
+      - .env
+    volumes:
+      - registration_storage_data:/app/storage/documents
+      - registration_photos_data:/app/storage/photos
+      - registration_exports_data:/app/storage/exports
+    develop:
+      watch:
+        - action: sync
+          path: ./backend
+          target: /app
+          ignore:
+            - ./backend/.venv/
+            - .venv
+        - action: rebuild
+          path: ./backend/pyproject.toml
+    restart: always
+    depends_on:
+      registration_postgres:
+        condition: service_healthy
+        restart: true
+      registration-prestart:
+        condition: service_completed_successfully
+
+  registration-prestart:
+    build:
+      context: backend
+    env_file:
+      - .env
+    command: bash app/scripts/prestart.sh
+    depends_on:
+      registration_postgres:
+        condition: service_healthy
+        restart: true
+
+  registration-frontend:
+    build:
+      context: frontend
+      dockerfile: Dockerfile
+    container_name: registration-frontend
+    ports:
+      - "3001:3001"
+    environment:
+      - NEXT_PUBLIC_API_BASE_URL=http://localhost:8001
+    develop:
+      watch:
+        - action: sync
+          path: ./frontend
+          target: /app
+          ignore:
+            - ./frontend/.next/
+            - ./frontend/node_modules/
+        - action: rebuild
+          path: ./frontend/package.json
+    depends_on:
+      - registration-backend
+    restart: always
+
+  registration_postgres:
+    image: postgres:18
+    restart: always
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 10s
+      retries: 5
+      start_period: 30s
+      timeout: 10s
+    volumes:
+      - registration_db_data:/var/lib/postgresql/data/pgdata
+    env_file:
+      - .env
+    environment:
+      - PGDATA=/var/lib/postgresql/data/pgdata
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD?Variable not set}
+      - POSTGRES_USER=${POSTGRES_USER?Variable not set}
+      - POSTGRES_DB=${REGISTRATION_POSTGRES_DB:-registration_portal_db}
+    ports:
+      - "5433:5432"
+
+volumes:
+  registration_db_data:
+  registration_storage_data:
+  registration_photos_data:
+  registration_exports_data:

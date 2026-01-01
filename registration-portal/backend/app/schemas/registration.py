@@ -1,0 +1,159 @@
+from datetime import date, datetime
+
+from pydantic import BaseModel, EmailStr, Field
+
+from app.models import RegistrationStatus
+
+
+class RegistrationCandidateBase(BaseModel):
+    """Base schema for registration candidate."""
+
+    name: str = Field(..., min_length=1, max_length=255)
+    date_of_birth: date | None = None
+    gender: str | None = Field(None, max_length=20)
+    programme_code: str | None = None
+    contact_email: EmailStr | None = None
+    contact_phone: str | None = Field(None, max_length=50)
+    address: str | None = None
+    national_id: str | None = Field(None, max_length=50)
+
+
+class RegistrationCandidateCreate(RegistrationCandidateBase):
+    """Schema for creating a registration candidate."""
+
+    subject_codes: list[str] = Field(default_factory=list, description="List of subject codes")
+
+
+class RegistrationCandidateUpdate(BaseModel):
+    """Schema for updating a registration candidate."""
+
+    name: str | None = Field(None, min_length=1, max_length=255)
+    date_of_birth: date | None = None
+    gender: str | None = Field(None, max_length=20)
+    programme_code: str | None = None
+    contact_email: EmailStr | None = None
+    contact_phone: str | None = Field(None, max_length=50)
+    address: str | None = None
+    national_id: str | None = Field(None, max_length=50)
+    subject_codes: list[str] | None = None
+
+
+class RegistrationSubjectSelectionResponse(BaseModel):
+    """Schema for subject selection response."""
+
+    id: int
+    subject_code: str
+    subject_name: str
+    series: int | None
+    created_at: datetime
+
+    class Config:
+        from_attributes = True
+
+
+class RegistrationCandidateResponse(RegistrationCandidateBase):
+    """Schema for registration candidate response."""
+
+    id: int
+    registration_exam_id: int
+    school_id: int | None = None
+    registration_number: str
+    index_number: str | None = None
+    registration_status: RegistrationStatus
+    registration_date: datetime
+    subject_selections: list[RegistrationSubjectSelectionResponse] = []
+    created_at: datetime
+    updated_at: datetime
+
+    class Config:
+        from_attributes = True
+
+
+class BulkUploadError(BaseModel):
+    """Schema for bulk upload error details."""
+
+    row_number: int
+    error_message: str
+    field: str | None = None
+
+
+class BulkUploadResponse(BaseModel):
+    """Schema for bulk upload response."""
+
+    total_rows: int
+    successful: int
+    failed: int
+    errors: list[BulkUploadError]
+
+
+class ExamRegistrationPeriodCreate(BaseModel):
+    """Schema for creating an exam registration period."""
+
+    registration_start_date: datetime
+    registration_end_date: datetime
+    allows_bulk_registration: bool = True
+    allows_private_registration: bool = True
+
+
+class ExamRegistrationPeriodUpdate(BaseModel):
+    """Schema for updating an exam registration period."""
+
+    registration_start_date: datetime | None = None
+    registration_end_date: datetime | None = None
+    is_active: bool | None = None
+    allows_bulk_registration: bool | None = None
+    allows_private_registration: bool | None = None
+
+
+class ExamRegistrationPeriodResponse(BaseModel):
+    """Schema for exam registration period response."""
+
+    id: int
+    registration_start_date: datetime
+    registration_end_date: datetime
+    is_active: bool
+    allows_bulk_registration: bool
+    allows_private_registration: bool
+    created_at: datetime
+    updated_at: datetime
+
+    class Config:
+        from_attributes = True
+
+
+class RegistrationExamCreate(BaseModel):
+    """Schema for creating a registration exam."""
+
+    exam_id_main_system: int | None = None
+    exam_type: str
+    exam_series: str
+    year: int
+    description: str | None = None
+    registration_period: ExamRegistrationPeriodCreate
+
+
+class RegistrationExamUpdate(BaseModel):
+    """Schema for updating a registration exam."""
+
+    exam_id_main_system: int | None = None
+    exam_type: str | None = None
+    exam_series: str | None = None
+    year: int | None = None
+    description: str | None = None
+
+
+class RegistrationExamResponse(BaseModel):
+    """Schema for registration exam response."""
+
+    id: int
+    exam_id_main_system: int | None = None
+    exam_type: str
+    exam_series: str
+    year: int
+    description: str | None = None
+    registration_period: ExamRegistrationPeriodResponse
+    created_at: datetime
+    updated_at: datetime
+
+    class Config:
+        from_attributes = True
