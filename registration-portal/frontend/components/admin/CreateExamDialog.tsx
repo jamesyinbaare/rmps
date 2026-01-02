@@ -12,6 +12,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import { DatePicker } from "@/components/ui/date-picker";
 import { createExam } from "@/lib/api";
 import { toast } from "sonner";
 import type { RegistrationExamCreate } from "@/types";
@@ -27,8 +28,8 @@ export function CreateExamDialog({ open, onOpenChange, onSuccess }: CreateExamDi
   const [examSeries, setExamSeries] = useState("");
   const [year, setYear] = useState("");
   const [description, setDescription] = useState("");
-  const [registrationStartDate, setRegistrationStartDate] = useState("");
-  const [registrationEndDate, setRegistrationEndDate] = useState("");
+  const [registrationStartDate, setRegistrationStartDate] = useState<Date | null>(null);
+  const [registrationEndDate, setRegistrationEndDate] = useState<Date | null>(null);
   const [allowsBulkRegistration, setAllowsBulkRegistration] = useState(true);
   const [allowsPrivateRegistration, setAllowsPrivateRegistration] = useState(true);
   const [loading, setLoading] = useState(false);
@@ -41,8 +42,11 @@ export function CreateExamDialog({ open, onOpenChange, onSuccess }: CreateExamDi
       return;
     }
 
+    // Set dates to start of day for comparison
     const startDate = new Date(registrationStartDate);
+    startDate.setHours(0, 0, 0, 0);
     const endDate = new Date(registrationEndDate);
+    endDate.setHours(23, 59, 59, 999); // End of day
 
     if (endDate <= startDate) {
       toast.error("Registration end date must be after start date");
@@ -52,14 +56,20 @@ export function CreateExamDialog({ open, onOpenChange, onSuccess }: CreateExamDi
     setLoading(true);
 
     try {
+      // Set start date to beginning of day and end date to end of day
+      const startDateTime = new Date(registrationStartDate);
+      startDateTime.setHours(0, 0, 0, 0);
+      const endDateTime = new Date(registrationEndDate);
+      endDateTime.setHours(23, 59, 59, 999);
+
       const examData: RegistrationExamCreate = {
         exam_type: examType,
         exam_series: examSeries,
         year: parseInt(year),
         description: description || null,
         registration_period: {
-          registration_start_date: startDate.toISOString(),
-          registration_end_date: endDate.toISOString(),
+          registration_start_date: startDateTime.toISOString(),
+          registration_end_date: endDateTime.toISOString(),
           allows_bulk_registration: allowsBulkRegistration,
           allows_private_registration: allowsPrivateRegistration,
         },
@@ -74,8 +84,8 @@ export function CreateExamDialog({ open, onOpenChange, onSuccess }: CreateExamDi
       setExamSeries("");
       setYear("");
       setDescription("");
-      setRegistrationStartDate("");
-      setRegistrationEndDate("");
+      setRegistrationStartDate(null);
+      setRegistrationEndDate(null);
       setAllowsBulkRegistration(true);
       setAllowsPrivateRegistration(true);
     } catch (error) {
@@ -143,28 +153,20 @@ export function CreateExamDialog({ open, onOpenChange, onSuccess }: CreateExamDi
               />
             </div>
             <div className="grid grid-cols-2 gap-4">
-              <div className="space-y-2">
-                <Label htmlFor="startDate">Registration Start Date *</Label>
-                <Input
-                  id="startDate"
-                  type="datetime-local"
-                  value={registrationStartDate}
-                  onChange={(e) => setRegistrationStartDate(e.target.value)}
-                  required
-                  disabled={loading}
-                />
-              </div>
-              <div className="space-y-2">
-                <Label htmlFor="endDate">Registration End Date *</Label>
-                <Input
-                  id="endDate"
-                  type="datetime-local"
-                  value={registrationEndDate}
-                  onChange={(e) => setRegistrationEndDate(e.target.value)}
-                  required
-                  disabled={loading}
-                />
-              </div>
+              <DatePicker
+                label="Registration Start Date *"
+                value={registrationStartDate}
+                onChange={setRegistrationStartDate}
+                placeholder="Select start date"
+                disabled={loading}
+              />
+              <DatePicker
+                label="Registration End Date *"
+                value={registrationEndDate}
+                onChange={setRegistrationEndDate}
+                placeholder="Select end date"
+                disabled={loading}
+              />
             </div>
             <div className="space-y-2">
               <Label className="flex items-center gap-2">
