@@ -1,5 +1,5 @@
 """Admin endpoints for system administrators."""
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Annotated
 from uuid import UUID
 
@@ -619,53 +619,72 @@ async def create_exam(
     exam_data: RegistrationExamCreate, session: DBSessionDep, current_user: SystemAdminDep
 ) -> RegistrationExamResponse:
     """Create a new exam with registration period."""
-    # Validate registration dates
-    if exam_data.registration_period.registration_end_date <= exam_data.registration_period.registration_start_date:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Registration end date must be after start date",
+    try:
+        # Ensure dates are timezone-naive for database storage
+        start_date = exam_data.registration_period.registration_start_date
+        end_date = exam_data.registration_period.registration_end_date
+
+        # Convert to UTC and remove timezone info if timezone-aware
+        if start_date.tzinfo is not None:
+            start_date = start_date.astimezone(timezone.utc).replace(tzinfo=None)
+        if end_date.tzinfo is not None:
+            end_date = end_date.astimezone(timezone.utc).replace(tzinfo=None)
+
+        # Validate registration dates
+        if end_date <= start_date:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Registration end date must be after start date",
+            )
+
+        # Check for duplicate exams (same exam_type, series, year)
+        stmt = select(RegistrationExam).where(
+            RegistrationExam.exam_type == exam_data.exam_type,
+            RegistrationExam.exam_series == exam_data.exam_series,
+            RegistrationExam.year == exam_data.year,
         )
+        result = await session.execute(stmt)
+        existing = result.scalar_one_or_none()
 
-    # Check for duplicate exams (same exam_type, series, year)
-    stmt = select(RegistrationExam).where(
-        RegistrationExam.exam_type == exam_data.exam_type,
-        RegistrationExam.exam_series == exam_data.exam_series,
-        RegistrationExam.year == exam_data.year,
-    )
-    result = await session.execute(stmt)
-    existing = result.scalar_one_or_none()
+        if existing:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Exam with type '{exam_data.exam_type}', series '{exam_data.exam_series}', and year {exam_data.year} already exists",
+            )
 
-    if existing:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Exam with type '{exam_data.exam_type}', series '{exam_data.exam_series}', and year {exam_data.year} already exists",
+        # Create registration period
+        registration_period = ExamRegistrationPeriod(
+            registration_start_date=start_date,
+            registration_end_date=end_date,
+            is_active=True,
+            allows_bulk_registration=exam_data.registration_period.allows_bulk_registration,
+            allows_private_registration=exam_data.registration_period.allows_private_registration,
         )
+        session.add(registration_period)
+        await session.flush()
 
-    # Create registration period
-    registration_period = ExamRegistrationPeriod(
-        registration_start_date=exam_data.registration_period.registration_start_date,
-        registration_end_date=exam_data.registration_period.registration_end_date,
-        is_active=True,
-        allows_bulk_registration=exam_data.registration_period.allows_bulk_registration,
-        allows_private_registration=exam_data.registration_period.allows_private_registration,
-    )
-    session.add(registration_period)
-    await session.flush()
+        # Create exam
+        new_exam = RegistrationExam(
+            exam_id_main_system=exam_data.exam_id_main_system,
+            exam_type=exam_data.exam_type,
+            exam_series=exam_data.exam_series,
+            year=exam_data.year,
+            description=exam_data.description,
+            registration_period_id=registration_period.id,
+        )
+        session.add(new_exam)
+        await session.commit()
+        await session.refresh(new_exam, ["registration_period"])
 
-    # Create exam
-    new_exam = RegistrationExam(
-        exam_id_main_system=exam_data.exam_id_main_system,
-        exam_type=exam_data.exam_type,
-        exam_series=exam_data.exam_series,
-        year=exam_data.year,
-        description=exam_data.description,
-        registration_period_id=registration_period.id,
-    )
-    session.add(new_exam)
-    await session.commit()
-    await session.refresh(new_exam, ["registration_period"])
-
-    return RegistrationExamResponse.model_validate(new_exam)
+        return RegistrationExamResponse.model_validate(new_exam)
+    except HTTPException:
+        raise
+    except Exception as e:
+        await session.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to create exam: {str(e)}",
+        )
 
 
 @router.get("/exams", response_model=list[RegistrationExamResponse])
