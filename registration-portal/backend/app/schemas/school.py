@@ -1,4 +1,23 @@
+from datetime import datetime
+from typing import Optional
 from pydantic import BaseModel, Field
+
+
+class BulkUploadError(BaseModel):
+    """Schema for bulk upload error details."""
+
+    row_number: int
+    error_message: str
+    field: str | None = None
+
+
+class BulkUploadResponse(BaseModel):
+    """Schema for bulk upload response."""
+
+    total_rows: int
+    successful: int
+    failed: int
+    errors: list[BulkUploadError]
 
 
 class SchoolCreate(BaseModel):
@@ -22,6 +41,47 @@ class SchoolResponse(BaseModel):
     code: str
     name: str
     is_active: bool
+    admin_count: int | None = None
+    candidate_count: int | None = None
+
+    class Config:
+        from_attributes = True
+
+
+class SchoolDetailResponse(SchoolResponse):
+    """Extended school response with timestamps."""
+
+    created_at: datetime
+    updated_at: datetime
+
+    class Config:
+        from_attributes = True
+
+
+class SchoolStatisticsResponse(BaseModel):
+    """Schema for school statistics."""
+
+    school_id: int
+    school_code: str
+    school_name: str
+    total_candidates: int
+    candidates_by_exam: dict[str, int]  # exam_id -> count
+    candidates_by_status: dict[str, int]  # status -> count
+    active_admin_count: int
+    total_exams: int
+
+    class Config:
+        from_attributes = True
+
+
+class SchoolListResponse(BaseModel):
+    """Paginated school list response."""
+
+    items: list[SchoolResponse]
+    total: int
+    page: int
+    page_size: int
+    total_pages: int
 
     class Config:
         from_attributes = True

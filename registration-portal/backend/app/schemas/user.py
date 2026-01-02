@@ -7,7 +7,7 @@ from app.models import PortalUserType
 
 
 class SchoolUserCreate(BaseModel):
-    """Schema for creating a school user (by school admin)."""
+    """Schema for creating a school user (by coordinator)."""
 
     email: EmailStr
     password: str
@@ -16,7 +16,7 @@ class SchoolUserCreate(BaseModel):
 
 
 class SchoolAdminUserCreate(BaseModel):
-    """Schema for creating a school admin user (by system admin)."""
+    """Schema for creating a coordinator (by system admin)."""
 
     email: EmailStr
     password: str
