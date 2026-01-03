@@ -84,6 +84,14 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 
     # Configure logging FIRST
     setup_logging()
+
+
+    import os
+    if os.getenv("DEBUG") == "true":
+        import debugpy
+        debugpy.listen(("0.0.0.0", 5678))
+        #debugpy.wait_for_client()
+
     # Startup: Initialize database
     sessionmanager = get_sessionmanager()
     async with initialize_db(sessionmanager):
@@ -161,6 +169,11 @@ app.include_router(public.router)
 app.include_router(admin.router)
 app.include_router(school.router)
 app.include_router(private.router)
+
+
+@app.get("/health", status_code=status.HTTP_200_OK)
+def health() -> dict[str, str]:
+    return {"status": "healthy"}
 
 
 @app.get("/", status_code=status.HTTP_200_OK)

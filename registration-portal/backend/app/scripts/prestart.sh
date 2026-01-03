@@ -7,7 +7,7 @@ set -x
 sleep 2
 
 # Run migrations
-alembic upgrade head
+uv run alembic upgrade head
 
 # Create initial data in DB (system admin user)
-python app/scripts/run_initial_data.py
+uv run python app/scripts/run_initial_data.py
