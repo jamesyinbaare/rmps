@@ -4,7 +4,8 @@ from typing import Annotated
 from uuid import UUID
 
 from fastapi import APIRouter, HTTPException, Query, status, UploadFile, File
-from sqlalchemy import select, func
+from fastapi.responses import StreamingResponse
+from sqlalchemy import select, func, delete, insert, update
 from sqlalchemy.orm import selectinload
 
 from app.dependencies.auth import CurrentUserDep, SystemAdminDep
@@ -19,6 +20,11 @@ from app.models import (
     ExportStatus,
     School,
     ExaminationSchedule,
+    Programme,
+    Subject,
+    SubjectType,
+    programme_subjects,
+    school_programmes,
 )
 from app.schemas.registration import (
     RegistrationExamCreate,
@@ -47,6 +53,43 @@ from app.schemas.schedule import (
 )
 from app.core.security import get_password_hash
 from app.config import settings
+from app.schemas.programme import (
+    ProgrammeCreate,
+    ProgrammeUpdate,
+    ProgrammeResponse,
+    ProgrammeListResponse,
+    ProgrammeSubjectAssociation,
+    ProgrammeSubjectAssociationCreate,
+    ProgrammeSubjectAssociationUpdate,
+    ProgrammeSubjectRequirements,
+    ProgrammeSubjectResponse,
+    ProgrammeBulkUploadResponse,
+    ProgrammeBulkUploadError,
+    SubjectChoiceGroup,
+)
+from app.schemas.subject import (
+    SubjectCreate,
+    SubjectUpdate,
+    SubjectResponse,
+    SubjectListResponse,
+    SubjectBulkUploadResponse,
+    SubjectBulkUploadError,
+)
+from app.services.programme_upload import (
+    ProgrammeUploadParseError,
+    ProgrammeUploadValidationError,
+    parse_programme_row,
+    parse_upload_file as parse_programme_upload_file,
+    validate_required_columns as validate_programme_columns,
+)
+from app.services.subject_upload import (
+    SubjectUploadParseError,
+    SubjectUploadValidationError,
+    parse_subject_row,
+    parse_upload_file as parse_subject_upload_file,
+    validate_required_columns as validate_subject_columns,
+)
+from app.services.template_generator import generate_programme_template, generate_subject_template
 
 router = APIRouter(prefix="/api/v1/admin", tags=["admin"])
 
@@ -309,6 +352,28 @@ async def bulk_upload_schools(
             detail=f"CSV must have headers: {', '.join(required_headers)}"
         )
 
+    # Find programmes column (comma-separated programme codes)
+    # Look for columns that might contain programme codes
+    programmes_column = None
+    possible_names = ['programme_codes', 'programmes', 'programme_list', 'programme_code']
+    for name in possible_names:
+        if name.lower() in [col.lower() for col in rows[0].keys()]:
+            # Find the actual column name (case-insensitive match)
+            for col in rows[0].keys():
+                if col.lower() == name.lower():
+                    programmes_column = col
+                    break
+            if programmes_column:
+                break
+
+    # Fallback: check for any column starting with "programme" (case-insensitive)
+    if not programmes_column:
+        for col in rows[0].keys():
+            col_lower = col.lower().strip()
+            if col_lower == "programme" or col_lower.startswith("programme_"):
+                programmes_column = col
+                break
+
     successful = 0
     failed = 0
     errors = []
@@ -336,6 +401,41 @@ async def bulk_upload_schools(
             if existing:
                 raise ValueError(f"School with code '{code}' already exists")
 
+            # Parse programme codes from comma-separated column
+            programme_codes = []
+            if programmes_column:
+                programmes_str = row.get(programmes_column, '').strip()
+                if programmes_str and programmes_str.lower() != 'nan':
+                    # Split by comma and trim whitespace from each value
+                    programme_codes = [
+                        pc.strip()
+                        for pc in programmes_str.split(',')
+                        if pc.strip()
+                    ]
+
+            # Validate and collect programme IDs
+            valid_programme_ids: list[int] = []
+            invalid_programme_codes: list[str] = []
+
+            if programme_codes:
+                for programme_code in programme_codes:
+                    programme_stmt = select(Programme).where(Programme.code == programme_code)
+                    programme_result = await session.execute(programme_stmt)
+                    programme = programme_result.scalar_one_or_none()
+                    if programme:
+                        valid_programme_ids.append(programme.id)
+                    else:
+                        invalid_programme_codes.append(programme_code)
+
+            # If there are invalid programme codes, record error but continue with school creation
+            if invalid_programme_codes:
+                errors.append(BulkUploadError(
+                    row_number=row_num,
+                    error_message=f"Programme codes not found: {', '.join(invalid_programme_codes)}",
+                    field="programme_codes"
+                ))
+                # Note: We continue to create the school even if some programme codes are invalid
+
             # Create school
             new_school = School(
                 code=code,
@@ -343,6 +443,25 @@ async def bulk_upload_schools(
                 is_active=True,
             )
             session.add(new_school)
+            await session.flush()  # Flush to get ID but don't commit yet
+
+            # Create school-programme associations for valid programmes
+            for programme_id in valid_programme_ids:
+                # Check if association already exists (shouldn't for new school, but check anyway)
+                assoc_stmt = select(school_programmes).where(
+                    school_programmes.c.school_id == new_school.id,
+                    school_programmes.c.programme_id == programme_id,
+                )
+                assoc_result = await session.execute(assoc_stmt)
+                existing_assoc = assoc_result.first()
+                if not existing_assoc:
+                    await session.execute(
+                        insert(school_programmes).values(
+                            school_id=new_school.id,
+                            programme_id=programme_id
+                        )
+                    )
+
             successful += 1
 
         except Exception as e:
@@ -781,3 +900,916 @@ async def delete_exam(exam_id: int, session: DBSessionDep, current_user: SystemA
     # Delete exam (registration period will be cascade deleted)
     await session.delete(exam)
     await session.commit()
+
+
+# Programme Management Endpoints
+
+@router.post("/programmes", response_model=ProgrammeResponse, status_code=status.HTTP_201_CREATED)
+async def create_programme(
+    programme: ProgrammeCreate, session: DBSessionDep, current_user: SystemAdminDep
+) -> ProgrammeResponse:
+    """Create a new programme."""
+    # Check if code already exists
+    stmt = select(Programme).where(Programme.code == programme.code)
+    result = await session.execute(stmt)
+    existing = result.scalar_one_or_none()
+    if existing:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST, detail=f"Programme with code {programme.code} already exists"
+        )
+
+    db_programme = Programme(code=programme.code, name=programme.name)
+    session.add(db_programme)
+    await session.commit()
+    await session.refresh(db_programme)
+    return ProgrammeResponse.model_validate(db_programme)
+
+
+@router.get("/programmes", response_model=ProgrammeListResponse)
+async def list_programmes(
+    session: DBSessionDep,
+    current_user: SystemAdminDep,
+    page: int = Query(1, ge=1),
+    page_size: int = Query(20, ge=1, le=100),
+) -> ProgrammeListResponse:
+    """List programmes with pagination."""
+    offset = (page - 1) * page_size
+
+    # Get total count
+    count_stmt = select(func.count(Programme.id))
+    count_result = await session.execute(count_stmt)
+    total = count_result.scalar() or 0
+
+    # Get programmes
+    stmt = select(Programme).offset(offset).limit(page_size).order_by(Programme.code)
+    result = await session.execute(stmt)
+    programmes = result.scalars().all()
+
+    total_pages = (total + page_size - 1) // page_size if total > 0 else 0
+
+    return ProgrammeListResponse(
+        items=[ProgrammeResponse.model_validate(programme) for programme in programmes],
+        total=total,
+        page=page,
+        page_size=page_size,
+        total_pages=total_pages,
+    )
+
+
+@router.get("/programmes/template")
+async def download_programme_template(current_user: SystemAdminDep) -> StreamingResponse:
+    """Download Excel template for programme upload."""
+    try:
+        template_bytes = generate_programme_template()
+        return StreamingResponse(
+            iter([template_bytes]),
+            media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            headers={"Content-Disposition": 'attachment; filename=programme_upload_template.xlsx'},
+        )
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to generate template: {str(e)}",
+        )
+
+
+@router.get("/programmes/{programme_id}", response_model=ProgrammeResponse)
+async def get_programme(
+    programme_id: int, session: DBSessionDep, current_user: SystemAdminDep
+) -> ProgrammeResponse:
+    """Get programme details."""
+    stmt = select(Programme).where(Programme.id == programme_id)
+    result = await session.execute(stmt)
+    programme = result.scalar_one_or_none()
+    if not programme:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Programme not found")
+    return ProgrammeResponse.model_validate(programme)
+
+
+@router.put("/programmes/{programme_id}", response_model=ProgrammeResponse)
+async def update_programme(
+    programme_id: int, programme_update: ProgrammeUpdate, session: DBSessionDep, current_user: SystemAdminDep
+) -> ProgrammeResponse:
+    """Update programme."""
+    stmt = select(Programme).where(Programme.id == programme_id)
+    result = await session.execute(stmt)
+    programme = result.scalar_one_or_none()
+    if not programme:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Programme not found")
+
+    # Check if code already exists (if updating code)
+    if programme_update.code is not None and programme_update.code != programme.code:
+        code_stmt = select(Programme).where(Programme.code == programme_update.code)
+        code_result = await session.execute(code_stmt)
+        existing = code_result.scalar_one_or_none()
+        if existing:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Programme with code {programme_update.code} already exists",
+            )
+
+    # Get fields that were actually provided in the update
+    update_data = programme_update.model_dump(exclude_unset=True)
+
+    if "name" in update_data:
+        programme.name = programme_update.name
+    if "code" in update_data:
+        programme.code = programme_update.code
+
+    await session.commit()
+    await session.refresh(programme)
+    return ProgrammeResponse.model_validate(programme)
+
+
+@router.delete("/programmes/{programme_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_programme(
+    programme_id: int, session: DBSessionDep, current_user: SystemAdminDep
+) -> None:
+    """Delete programme."""
+    stmt = select(Programme).where(Programme.id == programme_id)
+    result = await session.execute(stmt)
+    programme = result.scalar_one_or_none()
+    if not programme:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Programme not found")
+
+    await session.delete(programme)
+    await session.commit()
+
+
+@router.post("/programmes/bulk-upload", response_model=ProgrammeBulkUploadResponse, status_code=status.HTTP_200_OK)
+async def bulk_upload_programmes(
+    session: DBSessionDep, current_user: SystemAdminDep, file: UploadFile = File(...)
+) -> ProgrammeBulkUploadResponse:
+    """Bulk upload programmes from Excel or CSV file."""
+    # Read file content
+    file_content = await file.read()
+
+    # Parse file
+    try:
+        df = parse_programme_upload_file(file_content, file.filename or "unknown")
+        validate_programme_columns(df)
+    except (ProgrammeUploadParseError, ProgrammeUploadValidationError) as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+
+    # Process each row
+    total_rows = len(df)
+    successful = 0
+    failed = 0
+    errors: list[ProgrammeBulkUploadError] = []
+
+    for idx, row in df.iterrows():
+        row_number = int(idx) + 2  # +2 because Excel rows are 1-indexed and header is row 1
+        try:
+            # Parse row data
+            programme_data = parse_programme_row(row)
+
+            # Validate required fields
+            if not programme_data["code"]:
+                errors.append(
+                    ProgrammeBulkUploadError(
+                        row_number=row_number, error_message="Code is required", field="code"
+                    )
+                )
+                failed += 1
+                continue
+
+            if not programme_data["name"]:
+                errors.append(
+                    ProgrammeBulkUploadError(
+                        row_number=row_number, error_message="Name is required", field="name"
+                    )
+                )
+                failed += 1
+                continue
+
+            # Check if programme with code already exists
+            existing_stmt = select(Programme).where(Programme.code == programme_data["code"])
+            existing_result = await session.execute(existing_stmt)
+            existing = existing_result.scalar_one_or_none()
+            if existing:
+                errors.append(
+                    ProgrammeBulkUploadError(
+                        row_number=row_number,
+                        error_message=f"Programme with code '{programme_data['code']}' already exists",
+                        field="code",
+                    )
+                )
+                failed += 1
+                continue
+
+            # Create programme
+            db_programme = Programme(
+                code=programme_data["code"],
+                name=programme_data["name"],
+            )
+            session.add(db_programme)
+            await session.flush()  # Flush to get ID but don't commit yet
+            successful += 1
+
+        except Exception as e:
+            errors.append(
+                ProgrammeBulkUploadError(
+                    row_number=row_number,
+                    error_message=f"Unexpected error: {str(e)}",
+                    field=None,
+                )
+            )
+            failed += 1
+            continue
+
+    # Commit all successful inserts
+    try:
+        await session.commit()
+    except Exception as e:
+        await session.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to commit programmes: {str(e)}",
+        )
+
+    return ProgrammeBulkUploadResponse(
+        total_rows=total_rows, successful=successful, failed=failed, errors=errors
+    )
+
+
+# Programme-Subject Association Endpoints
+
+@router.get("/programmes/{programme_id}/subjects", response_model=list[ProgrammeSubjectResponse])
+async def list_programme_subjects(
+    programme_id: int, session: DBSessionDep, current_user: SystemAdminDep
+) -> list[ProgrammeSubjectResponse]:
+    """List subjects for a programme."""
+    stmt = select(Programme).where(Programme.id == programme_id)
+    result = await session.execute(stmt)
+    programme = result.scalar_one_or_none()
+    if not programme:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Programme not found")
+
+    # Get subjects via association
+    subject_stmt = (
+        select(
+            Subject,
+            programme_subjects.c.created_at,
+            programme_subjects.c.is_compulsory,
+            programme_subjects.c.choice_group_id,
+        )
+        .join(programme_subjects, Subject.id == programme_subjects.c.subject_id)
+        .where(programme_subjects.c.programme_id == programme_id)
+        .order_by(Subject.code)
+    )
+    subject_result = await session.execute(subject_stmt)
+    subjects_data = subject_result.all()
+
+    return [
+        ProgrammeSubjectResponse(
+            subject_id=subject.id,
+            subject_code=subject.code,
+            subject_name=subject.name,
+            subject_type=subject.subject_type,
+            is_compulsory=is_compulsory,
+            choice_group_id=choice_group_id,
+            created_at=created_at,
+        )
+        for subject, created_at, is_compulsory, choice_group_id in subjects_data
+    ]
+
+
+@router.get("/programmes/{programme_id}/subject-requirements", response_model=ProgrammeSubjectRequirements)
+async def get_programme_subject_requirements(
+    programme_id: int, session: DBSessionDep, current_user: SystemAdminDep
+) -> ProgrammeSubjectRequirements:
+    """Get all subject requirements for a programme (compulsory, optional groups, electives)."""
+    stmt = select(Programme).where(Programme.id == programme_id)
+    result = await session.execute(stmt)
+    programme = result.scalar_one_or_none()
+    if not programme:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Programme not found")
+
+    # Get all subjects for this programme
+    subject_stmt = (
+        select(
+            Subject,
+            programme_subjects.c.created_at,
+            programme_subjects.c.is_compulsory,
+            programme_subjects.c.choice_group_id,
+        )
+        .join(programme_subjects, Subject.id == programme_subjects.c.subject_id)
+        .where(programme_subjects.c.programme_id == programme_id)
+        .order_by(Subject.code)
+    )
+    subject_result = await session.execute(subject_stmt)
+    subjects_data = subject_result.all()
+
+    # Organize subjects into categories
+    compulsory_core = []
+    optional_core_by_group: dict[int, list[ProgrammeSubjectResponse]] = {}
+    electives = []
+
+    for subject, created_at, is_compulsory, choice_group_id in subjects_data:
+        subject_response = ProgrammeSubjectResponse(
+            subject_id=subject.id,
+            subject_code=subject.code,
+            subject_name=subject.name,
+            subject_type=subject.subject_type,
+            is_compulsory=is_compulsory,
+            choice_group_id=choice_group_id,
+            created_at=created_at,
+        )
+
+        if subject.subject_type == SubjectType.CORE:
+            if is_compulsory is True:
+                compulsory_core.append(subject_response)
+            elif is_compulsory is False and choice_group_id is not None:
+                if choice_group_id not in optional_core_by_group:
+                    optional_core_by_group[choice_group_id] = []
+                optional_core_by_group[choice_group_id].append(subject_response)
+        elif subject.subject_type == SubjectType.ELECTIVE:
+            electives.append(subject_response)
+
+    # Convert optional core groups to SubjectChoiceGroup list
+    optional_core_groups = [
+        SubjectChoiceGroup(choice_group_id=group_id, subjects=subjects)
+        for group_id, subjects in sorted(optional_core_by_group.items())
+    ]
+
+    return ProgrammeSubjectRequirements(
+        compulsory_core=compulsory_core,
+        optional_core_groups=optional_core_groups,
+        electives=electives,
+    )
+
+
+@router.post(
+    "/programmes/{programme_id}/subjects/{subject_id}",
+    response_model=ProgrammeSubjectAssociation,
+    status_code=status.HTTP_201_CREATED,
+)
+async def associate_subject_with_programme(
+    programme_id: int,
+    subject_id: int,
+    association_data: ProgrammeSubjectAssociationCreate,
+    session: DBSessionDep,
+    current_user: SystemAdminDep,
+) -> ProgrammeSubjectAssociation:
+    """Associate a subject with a programme."""
+    # Check programme exists
+    programme_stmt = select(Programme).where(Programme.id == programme_id)
+    result = await session.execute(programme_stmt)
+    programme = result.scalar_one_or_none()
+    if not programme:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Programme not found")
+
+    # Check subject exists
+    subject_stmt = select(Subject).where(Subject.id == subject_id)
+    result = await session.execute(subject_stmt)
+    subject = result.scalar_one_or_none()
+    if not subject:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Subject not found")
+
+    # Validate: is_compulsory should only be set for CORE subjects
+    if association_data.is_compulsory is not None and subject.subject_type != SubjectType.CORE:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="is_compulsory can only be set for CORE subjects. For ELECTIVE subjects, it should be NULL.",
+        )
+
+    # Validate: choice_group_id should only be set for optional CORE subjects
+    if association_data.choice_group_id is not None:
+        if subject.subject_type != SubjectType.CORE:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="choice_group_id can only be set for CORE subjects.",
+            )
+        if association_data.is_compulsory is True:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="choice_group_id can only be set for optional core subjects (is_compulsory=False).",
+            )
+
+    # Check if association already exists
+    assoc_stmt = select(programme_subjects).where(
+        programme_subjects.c.programme_id == programme_id, programme_subjects.c.subject_id == subject_id
+    )
+    result = await session.execute(assoc_stmt)
+    existing = result.first()
+    if existing:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST, detail="Subject already associated with programme"
+        )
+
+    # Create association
+    await session.execute(
+        insert(programme_subjects).values(
+            programme_id=programme_id,
+            subject_id=subject_id,
+            is_compulsory=association_data.is_compulsory,
+            choice_group_id=association_data.choice_group_id,
+        )
+    )
+    await session.commit()
+
+    return ProgrammeSubjectAssociation(
+        programme_id=programme_id,
+        subject_id=subject_id,
+        subject_type=subject.subject_type,
+        is_compulsory=association_data.is_compulsory,
+        choice_group_id=association_data.choice_group_id,
+    )
+
+
+@router.put(
+    "/programmes/{programme_id}/subjects/{subject_id}",
+    response_model=ProgrammeSubjectAssociation,
+)
+async def update_programme_subject_association(
+    programme_id: int,
+    subject_id: int,
+    association_update: ProgrammeSubjectAssociationUpdate,
+    session: DBSessionDep,
+    current_user: SystemAdminDep,
+) -> ProgrammeSubjectAssociation:
+    """Update the programme-subject association (is_compulsory and choice_group_id)."""
+    # Check association exists
+    assoc_stmt = select(programme_subjects).where(
+        programme_subjects.c.programme_id == programme_id, programme_subjects.c.subject_id == subject_id
+    )
+    result = await session.execute(assoc_stmt)
+    existing = result.first()
+    if not existing:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Subject association not found")
+
+    # Check subject exists
+    subject_stmt = select(Subject).where(Subject.id == subject_id)
+    result = await session.execute(subject_stmt)
+    subject = result.scalar_one_or_none()
+    if not subject:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Subject not found")
+
+    # Validate: is_compulsory should only be set for CORE subjects
+    if association_update.is_compulsory is not None and subject.subject_type != SubjectType.CORE:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="is_compulsory can only be set for CORE subjects. For ELECTIVE subjects, it should be NULL.",
+        )
+
+    # Validate: choice_group_id should only be set for optional CORE subjects
+    if association_update.choice_group_id is not None:
+        if subject.subject_type != SubjectType.CORE:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="choice_group_id can only be set for CORE subjects.",
+            )
+        # Check if is_compulsory is being set to True (conflict)
+        if association_update.is_compulsory is True:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="choice_group_id can only be set for optional core subjects (is_compulsory=False).",
+            )
+        # Check existing is_compulsory value if not being updated
+        if association_update.is_compulsory is None and existing.is_compulsory is True:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="choice_group_id can only be set for optional core subjects (is_compulsory=False).",
+            )
+
+    # Update association
+    update_values = {}
+    if association_update.is_compulsory is not None:
+        update_values["is_compulsory"] = association_update.is_compulsory
+    if association_update.choice_group_id is not None:
+        update_values["choice_group_id"] = association_update.choice_group_id
+
+    if update_values:
+        await session.execute(
+            update(programme_subjects)
+            .where(
+                programme_subjects.c.programme_id == programme_id,
+                programme_subjects.c.subject_id == subject_id,
+            )
+            .values(**update_values)
+        )
+        await session.commit()
+
+    # Get updated association
+    assoc_stmt = select(programme_subjects).where(
+        programme_subjects.c.programme_id == programme_id, programme_subjects.c.subject_id == subject_id
+    )
+    result = await session.execute(assoc_stmt)
+    updated = result.first()
+
+    return ProgrammeSubjectAssociation(
+        programme_id=programme_id,
+        subject_id=subject_id,
+        subject_type=subject.subject_type,
+        is_compulsory=updated.is_compulsory if updated else None,
+        choice_group_id=updated.choice_group_id if updated else None,
+    )
+
+
+@router.delete("/programmes/{programme_id}/subjects/{subject_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def remove_subject_association(
+    programme_id: int, subject_id: int, session: DBSessionDep, current_user: SystemAdminDep
+) -> None:
+    """Remove subject association from programme."""
+    # Check association exists
+    assoc_stmt = select(programme_subjects).where(
+        programme_subjects.c.programme_id == programme_id, programme_subjects.c.subject_id == subject_id
+    )
+    result = await session.execute(assoc_stmt)
+    existing = result.first()
+    if not existing:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Subject association not found")
+
+    await session.execute(
+        delete(programme_subjects).where(
+            programme_subjects.c.programme_id == programme_id, programme_subjects.c.subject_id == subject_id
+        )
+    )
+    await session.commit()
+
+
+# Subject Management Endpoints
+
+@router.post("/subjects", response_model=SubjectResponse, status_code=status.HTTP_201_CREATED)
+async def create_subject(
+    subject: SubjectCreate, session: DBSessionDep, current_user: SystemAdminDep
+) -> SubjectResponse:
+    """Create a new subject."""
+    # Check if code already exists
+    stmt = select(Subject).where(Subject.code == subject.code)
+    result = await session.execute(stmt)
+    existing = result.scalar_one_or_none()
+    if existing:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST, detail=f"Subject with code {subject.code} already exists"
+        )
+
+    # Check if original_code already exists (if provided)
+    if subject.original_code:
+        original_code_stmt = select(Subject).where(Subject.original_code == subject.original_code)
+        original_code_result = await session.execute(original_code_stmt)
+        existing_original = original_code_result.scalar_one_or_none()
+        if existing_original:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Subject with original_code {subject.original_code} already exists"
+            )
+
+    db_subject = Subject(
+        code=subject.code,
+        original_code=subject.original_code,
+        name=subject.name,
+        subject_type=subject.subject_type,
+    )
+    session.add(db_subject)
+    await session.commit()
+    await session.refresh(db_subject)
+    return SubjectResponse.model_validate(db_subject)
+
+
+@router.get("/subjects", response_model=SubjectListResponse)
+async def list_subjects(
+    session: DBSessionDep,
+    current_user: SystemAdminDep,
+    page: int = Query(1, ge=1),
+    page_size: int = Query(20, ge=1, le=100),
+) -> SubjectListResponse:
+    """List subjects with pagination."""
+    offset = (page - 1) * page_size
+
+    # Get total count
+    count_stmt = select(func.count(Subject.id))
+    count_result = await session.execute(count_stmt)
+    total = count_result.scalar() or 0
+
+    # Get subjects
+    stmt = select(Subject).offset(offset).limit(page_size).order_by(Subject.code)
+    result = await session.execute(stmt)
+    subjects = result.scalars().all()
+
+    total_pages = (total + page_size - 1) // page_size if total > 0 else 0
+
+    return SubjectListResponse(
+        items=[SubjectResponse.model_validate(subject) for subject in subjects],
+        total=total,
+        page=page,
+        page_size=page_size,
+        total_pages=total_pages,
+    )
+
+
+@router.get("/subjects/template")
+async def download_subject_template(current_user: SystemAdminDep) -> StreamingResponse:
+    """Download Excel template for subject upload."""
+    try:
+        template_bytes = generate_subject_template()
+        return StreamingResponse(
+            iter([template_bytes]),
+            media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            headers={"Content-Disposition": 'attachment; filename=subject_upload_template.xlsx'},
+        )
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to generate template: {str(e)}",
+        )
+
+
+@router.get("/subjects/{subject_id}", response_model=SubjectResponse)
+async def get_subject(
+    subject_id: int, session: DBSessionDep, current_user: SystemAdminDep
+) -> SubjectResponse:
+    """Get subject details."""
+    stmt = select(Subject).where(Subject.id == subject_id)
+    result = await session.execute(stmt)
+    subject = result.scalar_one_or_none()
+    if not subject:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Subject not found")
+    return SubjectResponse.model_validate(subject)
+
+
+@router.put("/subjects/{subject_id}", response_model=SubjectResponse)
+async def update_subject(
+    subject_id: int, subject_update: SubjectUpdate, session: DBSessionDep, current_user: SystemAdminDep
+) -> SubjectResponse:
+    """Update subject."""
+    stmt = select(Subject).where(Subject.id == subject_id)
+    result = await session.execute(stmt)
+    subject = result.scalar_one_or_none()
+    if not subject:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Subject not found")
+
+    # Check if code already exists (if updating code)
+    if subject_update.code is not None and subject_update.code != subject.code:
+        code_stmt = select(Subject).where(Subject.code == subject_update.code)
+        code_result = await session.execute(code_stmt)
+        existing = code_result.scalar_one_or_none()
+        if existing:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Subject with code {subject_update.code} already exists",
+            )
+
+    # Check if original_code already exists (if updating original_code)
+    if subject_update.original_code is not None and subject_update.original_code != subject.original_code:
+        if subject_update.original_code:  # Only check if not None and not empty
+            original_code_stmt = select(Subject).where(Subject.original_code == subject_update.original_code)
+            original_code_result = await session.execute(original_code_stmt)
+            existing_original = original_code_result.scalar_one_or_none()
+            if existing_original:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail=f"Subject with original_code {subject_update.original_code} already exists",
+                )
+
+    # Get fields that were actually provided in the update
+    update_data = subject_update.model_dump(exclude_unset=True)
+
+    if "name" in update_data:
+        subject.name = subject_update.name
+    if "code" in update_data:
+        subject.code = subject_update.code
+    if "original_code" in update_data:
+        subject.original_code = subject_update.original_code
+    if "subject_type" in update_data:
+        subject.subject_type = subject_update.subject_type
+
+    await session.commit()
+    await session.refresh(subject)
+    return SubjectResponse.model_validate(subject)
+
+
+@router.delete("/subjects/{subject_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_subject(
+    subject_id: int, session: DBSessionDep, current_user: SystemAdminDep
+) -> None:
+    """Delete subject."""
+    stmt = select(Subject).where(Subject.id == subject_id)
+    result = await session.execute(stmt)
+    subject = result.scalar_one_or_none()
+    if not subject:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Subject not found")
+
+    await session.delete(subject)
+    await session.commit()
+
+
+@router.post("/subjects/bulk-upload", response_model=SubjectBulkUploadResponse, status_code=status.HTTP_200_OK)
+async def bulk_upload_subjects(
+    session: DBSessionDep, current_user: SystemAdminDep, file: UploadFile = File(...)
+) -> SubjectBulkUploadResponse:
+    """Bulk upload subjects from Excel or CSV file."""
+    # Read file content
+    file_content = await file.read()
+
+    # Parse file
+    try:
+        df = parse_subject_upload_file(file_content, file.filename or "unknown")
+        validate_subject_columns(df)
+    except (SubjectUploadParseError, SubjectUploadValidationError) as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+
+    # Process each row
+    total_rows = len(df)
+    successful = 0
+    failed = 0
+    errors: list[SubjectBulkUploadError] = []
+    # Track codes within the batch for duplicate detection
+    batch_codes: set[str] = set()
+
+    for idx, row in df.iterrows():
+        row_number = int(idx) + 2  # +2 because Excel rows are 1-indexed and header is row 1
+        try:
+            # Parse row data
+            subject_data = parse_subject_row(row)
+
+            # Validate required fields
+            if not subject_data["code"]:
+                errors.append(
+                    SubjectBulkUploadError(
+                        row_number=row_number, error_message="Code is required", field="code"
+                    )
+                )
+                failed += 1
+                continue
+
+            if not subject_data["name"]:
+                errors.append(
+                    SubjectBulkUploadError(
+                        row_number=row_number, error_message="Name is required", field="name"
+                    )
+                )
+                failed += 1
+                continue
+
+            if not subject_data["subject_type"]:
+                errors.append(
+                    SubjectBulkUploadError(
+                        row_number=row_number,
+                        error_message="Subject type is required and must be CORE or ELECTIVE",
+                        field="subject_type",
+                    )
+                )
+                failed += 1
+                continue
+
+            # Check if subject with code already exists in database
+            existing_stmt = select(Subject).where(Subject.code == subject_data["code"])
+            existing_result = await session.execute(existing_stmt)
+            existing = existing_result.scalar_one_or_none()
+            if existing:
+                errors.append(
+                    SubjectBulkUploadError(
+                        row_number=row_number,
+                        error_message=f"Subject with code '{subject_data['code']}' already exists",
+                        field="code",
+                    )
+                )
+                failed += 1
+                continue
+
+            # Check for duplicates within the batch
+            if subject_data["code"] in batch_codes:
+                errors.append(
+                    SubjectBulkUploadError(
+                        row_number=row_number,
+                        error_message=f"Duplicate code '{subject_data['code']}' found in upload file",
+                        field="code",
+                    )
+                )
+                failed += 1
+                continue
+
+            # Validate programme_code if provided
+            programme = None
+            programme_code = subject_data.get("programme_code")
+            # Ensure programme_code is a valid string (not None, not empty, not NaN)
+            if programme_code and isinstance(programme_code, str) and programme_code.strip():
+                # Lookup programme by code
+                programme_stmt = select(Programme).where(Programme.code == programme_code.strip())
+                programme_result = await session.execute(programme_stmt)
+                programme = programme_result.scalar_one_or_none()
+                if not programme:
+                    errors.append(
+                        SubjectBulkUploadError(
+                            row_number=row_number,
+                            error_message=f"Programme with code '{programme_code}' not found",
+                            field="programme_code",
+                        )
+                    )
+                    failed += 1
+                    continue
+
+            # Create subject
+            db_subject = Subject(
+                code=subject_data["code"],
+                original_code=subject_data.get("original_code"),
+                name=subject_data["name"],
+                subject_type=subject_data["subject_type"],
+            )
+            session.add(db_subject)
+            await session.flush()  # Flush to get ID but don't commit yet
+
+            # Determine is_compulsory and choice_group_id based on subject type and choice_group_id
+            is_compulsory = None
+            choice_group_id = None
+
+            if subject_data["subject_type"] == SubjectType.CORE:
+                # If choice_group_id is provided, it's an optional core subject
+                parsed_choice_group_id = subject_data.get("choice_group_id")
+                if parsed_choice_group_id is not None:
+                    # Validate choice_group_id is a positive integer
+                    if isinstance(parsed_choice_group_id, int) and parsed_choice_group_id > 0:
+                        is_compulsory = False
+                        choice_group_id = parsed_choice_group_id
+                    else:
+                        # Invalid choice_group_id - treat as compulsory but log warning
+                        # This shouldn't happen if parsing is correct, but handle gracefully
+                        errors.append(
+                            SubjectBulkUploadError(
+                                row_number=row_number,
+                                error_message=f"Invalid choice_group_id '{parsed_choice_group_id}' for core subject. Must be a positive integer.",
+                                field="choice_group_id",
+                            )
+                        )
+                        failed += 1
+                        continue
+                else:
+                    # Default to compulsory if no choice_group_id
+                    is_compulsory = True
+
+            # For CORE subjects: if choice_group_id is specified, add to ALL programmes
+            # This ensures that subjects with the same choice_group_id are consistently
+            # applied across all programmes
+            if subject_data["subject_type"] == SubjectType.CORE:
+                # Get all programmes
+                all_programmes_stmt = select(Programme)
+                all_programmes_result = await session.execute(all_programmes_stmt)
+                all_programmes = all_programmes_result.scalars().all()
+
+                for prog in all_programmes:
+                    # Check if association already exists
+                    assoc_stmt = select(programme_subjects).where(
+                        programme_subjects.c.programme_id == prog.id,
+                        programme_subjects.c.subject_id == db_subject.id,
+                    )
+                    assoc_result = await session.execute(assoc_stmt)
+                    existing_assoc = assoc_result.first()
+                    if not existing_assoc:
+                        # Create association with the determined is_compulsory and choice_group_id
+                        await session.execute(
+                            insert(programme_subjects).values(
+                                programme_id=prog.id,
+                                subject_id=db_subject.id,
+                                is_compulsory=is_compulsory,
+                                choice_group_id=choice_group_id,
+                            )
+                        )
+            elif programme:
+                # For ELECTIVE subjects: only link to programme if programme_code was provided
+                # Check if association already exists
+                assoc_stmt = select(programme_subjects).where(
+                    programme_subjects.c.programme_id == programme.id,
+                    programme_subjects.c.subject_id == db_subject.id,
+                )
+                assoc_result = await session.execute(assoc_stmt)
+                existing_assoc = assoc_result.first()
+                if not existing_assoc:
+                    # Create association (electives don't have is_compulsory or choice_group_id)
+                    await session.execute(
+                        insert(programme_subjects).values(
+                            programme_id=programme.id,
+                            subject_id=db_subject.id,
+                            is_compulsory=None,
+                            choice_group_id=None,
+                        )
+                    )
+
+            # Track codes in batch for duplicate detection
+            batch_codes.add(subject_data["code"])
+            successful += 1
+
+        except Exception as e:
+            errors.append(
+                SubjectBulkUploadError(
+                    row_number=row_number,
+                    error_message=f"Unexpected error: {str(e)}",
+                    field=None,
+                )
+            )
+            failed += 1
+            continue
+
+    # Commit all successful inserts
+    try:
+        await session.commit()
+    except Exception as e:
+        await session.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to commit subjects: {str(e)}",
+        )
+
+    return SubjectBulkUploadResponse(
+        total_rows=total_rows, successful=successful, failed=failed, errors=errors
+    )

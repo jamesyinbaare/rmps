@@ -1,8 +1,67 @@
+from __future__ import annotations
+
 from datetime import date, datetime
 
 from pydantic import BaseModel, EmailStr, Field
 
 from app.models import RegistrationStatus
+
+
+class RegistrationCandidatePhotoResponse(BaseModel):
+    """Schema for registration candidate photo response."""
+
+    id: int
+    registration_candidate_id: int
+    file_name: str
+    mime_type: str
+    uploaded_at: datetime
+    created_at: datetime
+    updated_at: datetime
+
+    class Config:
+        from_attributes = True
+
+
+class PhotoAlbumItem(BaseModel):
+    """Schema for a single item in the photo album."""
+
+    candidate_id: int
+    candidate_name: str
+    registration_number: str
+    index_number: str | None
+    school_id: int | None
+    school_name: str | None
+    school_code: str | None
+    photo: RegistrationCandidatePhotoResponse | None = None
+
+
+class PhotoAlbumResponse(BaseModel):
+    """Schema for photo album response."""
+
+    items: list[PhotoAlbumItem]
+    total: int
+    page: int
+    page_size: int
+    total_pages: int
+
+
+class PhotoBulkUploadError(BaseModel):
+    """Schema for bulk photo upload error details."""
+
+    filename: str
+    registration_number: str | None = None
+    index_number: str | None = None
+    error_message: str
+
+
+class PhotoBulkUploadResponse(BaseModel):
+    """Schema for bulk photo upload response."""
+
+    total: int
+    successful: int
+    failed: int
+    skipped: int
+    errors: list[PhotoBulkUploadError]
 
 
 class RegistrationCandidateBase(BaseModel):
@@ -11,7 +70,8 @@ class RegistrationCandidateBase(BaseModel):
     name: str = Field(..., min_length=1, max_length=255)
     date_of_birth: date | None = None
     gender: str | None = Field(None, max_length=20)
-    programme_code: str | None = None
+    programme_code: str | None = None  # Kept for backward compatibility
+    programme_id: int | None = None
     contact_email: EmailStr | None = None
     contact_phone: str | None = Field(None, max_length=50)
     address: str | None = None
@@ -21,7 +81,8 @@ class RegistrationCandidateBase(BaseModel):
 class RegistrationCandidateCreate(RegistrationCandidateBase):
     """Schema for creating a registration candidate."""
 
-    subject_codes: list[str] = Field(default_factory=list, description="List of subject codes")
+    subject_codes: list[str] = Field(default_factory=list, description="List of subject codes (for backward compatibility)")
+    subject_ids: list[int] = Field(default_factory=list, description="List of subject IDs")
 
 
 class RegistrationCandidateUpdate(BaseModel):
@@ -30,18 +91,21 @@ class RegistrationCandidateUpdate(BaseModel):
     name: str | None = Field(None, min_length=1, max_length=255)
     date_of_birth: date | None = None
     gender: str | None = Field(None, max_length=20)
-    programme_code: str | None = None
+    programme_code: str | None = None  # Kept for backward compatibility
+    programme_id: int | None = None
     contact_email: EmailStr | None = None
     contact_phone: str | None = Field(None, max_length=50)
     address: str | None = None
     national_id: str | None = Field(None, max_length=50)
-    subject_codes: list[str] | None = None
+    subject_codes: list[str] | None = None  # Kept for backward compatibility
+    subject_ids: list[int] | None = None
 
 
 class RegistrationSubjectSelectionResponse(BaseModel):
     """Schema for subject selection response."""
 
     id: int
+    subject_id: int | None = None
     subject_code: str
     subject_name: str
     series: int | None
@@ -62,6 +126,7 @@ class RegistrationCandidateResponse(RegistrationCandidateBase):
     registration_status: RegistrationStatus
     registration_date: datetime
     subject_selections: list[RegistrationSubjectSelectionResponse] = []
+    exam: RegistrationExamResponse | None = None
     created_at: datetime
     updated_at: datetime
 

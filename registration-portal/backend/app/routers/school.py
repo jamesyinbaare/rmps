@@ -1,33 +1,89 @@
 """School portal endpoints for school users."""
 from datetime import datetime
+from pathlib import Path
 from typing import Annotated
+from uuid import UUID
+import io
+import csv
 
-from fastapi import APIRouter, HTTPException, status, UploadFile, File
-from sqlalchemy import select, and_
+from fastapi import APIRouter, HTTPException, status, UploadFile, File, Query, Depends, Form
+from fastapi.responses import StreamingResponse
+from sqlalchemy import select, and_, func, insert, delete
+from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
+import json
+import pandas as pd
 
-from app.dependencies.auth import SchoolUserWithSchoolDep, SchoolAdminDep
-from app.dependencies.database import DBSessionDep
+from app.dependencies.auth import SchoolUserWithSchoolDep, SchoolAdminDep, get_current_school_user
+from app.dependencies.database import DBSessionDep, get_db_session
 from app.models import (
+    PortalUser,
+    PortalUserType,
     RegistrationExam,
     ExamRegistrationPeriod,
     RegistrationCandidate,
     RegistrationStatus,
-    ExaminationSchedule,
+    School,
+    Programme,
+    Subject,
+    RegistrationCandidatePhoto,
+    RegistrationSubjectSelection,
+    school_programmes,
+    programme_subjects,
 )
 from app.schemas.registration import (
     RegistrationCandidateCreate,
     RegistrationCandidateUpdate,
     RegistrationCandidateResponse,
     BulkUploadResponse,
-    BulkUploadError,
     RegistrationExamResponse,
+    RegistrationCandidatePhotoResponse,
+    PhotoAlbumResponse,
+    PhotoAlbumItem,
+    PhotoBulkUploadResponse,
+    PhotoBulkUploadError,
 )
-from app.schemas.schedule import TimetableResponse, TimetableEntry
+from app.schemas.programme import (
+    ProgrammeResponse,
+    ProgrammeSubjectResponse,
+    ProgrammeSubjectRequirements,
+    SchoolProgrammeAssociation,
+)
+from app.services.template_generator import generate_candidate_template
+from app.schemas.user import SchoolUserCreate, UserUpdate
+from app.schemas.auth import UserResponse
+from app.core.security import get_password_hash
 from app.utils.registration import generate_unique_registration_number
 from app.config import settings
+from app.services.subject_selection import (
+    auto_select_subjects_for_programme,
+    validate_subject_selections,
+    get_programme_subjects_for_registration,
+)
+from app.services.photo_storage import PhotoStorageService, calculate_checksum
+from app.services.photo_validation import PhotoValidationService
+import logging
+
+logger = logging.getLogger(__name__)
+
+# Create photo storage service instance
+photo_storage_service = PhotoStorageService()
 
 router = APIRouter(prefix="/api/v1/school", tags=["school"])
+
+# Maximum number of active users allowed per school
+MAX_ACTIVE_USERS_PER_SCHOOL = 5
+
+
+async def count_active_school_users(session: DBSessionDep, school_id: int) -> int:
+    """Count active users (SCHOOL_USER + SCHOOL_ADMIN) for a school."""
+    stmt = select(func.count(PortalUser.id)).where(
+        PortalUser.school_id == school_id,
+        PortalUser.is_active.is_(True),
+        PortalUser.user_type.in_([PortalUserType.SCHOOL_USER, PortalUserType.SCHOOL_ADMIN])
+    )
+    result = await session.execute(stmt)
+    return result.scalar_one() or 0
 
 
 @router.get("/exams", response_model=list[RegistrationExamResponse])
@@ -41,8 +97,8 @@ async def list_available_exams(
         select(RegistrationExam)
         .join(ExamRegistrationPeriod, RegistrationExam.registration_period_id == ExamRegistrationPeriod.id)
         .where(
-            ExamRegistrationPeriod.is_active == True,
-            ExamRegistrationPeriod.allows_bulk_registration == True,
+            ExamRegistrationPeriod.is_active.is_(True),
+            ExamRegistrationPeriod.allows_bulk_registration.is_(True),
             ExamRegistrationPeriod.registration_start_date <= now,
             ExamRegistrationPeriod.registration_end_date >= now,
         )
@@ -66,26 +122,97 @@ async def list_candidates(
     if exam_id:
         query = query.where(RegistrationCandidate.registration_exam_id == exam_id)
 
-    query = query.options(selectinload(RegistrationCandidate.subject_selections))
+    query = query.options(
+        selectinload(RegistrationCandidate.subject_selections),
+        selectinload(RegistrationCandidate.exam).selectinload(RegistrationExam.registration_period)
+    )
     result = await session.execute(query)
     candidates = result.scalars().all()
 
-    return [RegistrationCandidateResponse.model_validate(candidate) for candidate in candidates]
+    # Convert to response models, handling relationships to avoid lazy loading
+    response_list = []
+    for candidate in candidates:
+        # Build exam response if available
+        exam_response = None
+        if candidate.exam:
+            exam_response = {
+                "id": candidate.exam.id,
+                "exam_id_main_system": candidate.exam.exam_id_main_system,
+                "exam_type": candidate.exam.exam_type,
+                "exam_series": candidate.exam.exam_series,
+                "year": candidate.exam.year,
+                "description": candidate.exam.description,
+                "registration_period": {
+                    "id": candidate.exam.registration_period.id,
+                    "registration_start_date": candidate.exam.registration_period.registration_start_date,
+                    "registration_end_date": candidate.exam.registration_period.registration_end_date,
+                    "is_active": candidate.exam.registration_period.is_active,
+                    "allows_bulk_registration": candidate.exam.registration_period.allows_bulk_registration,
+                    "allows_private_registration": candidate.exam.registration_period.allows_private_registration,
+                    "created_at": candidate.exam.registration_period.created_at,
+                    "updated_at": candidate.exam.registration_period.updated_at,
+                },
+                "created_at": candidate.exam.created_at,
+                "updated_at": candidate.exam.updated_at,
+            }
+
+        candidate_dict = {
+            "id": candidate.id,
+            "registration_exam_id": candidate.registration_exam_id,
+            "school_id": candidate.school_id,
+            "name": candidate.name,
+            "registration_number": candidate.registration_number,
+            "index_number": candidate.index_number,
+            "date_of_birth": candidate.date_of_birth,
+            "gender": candidate.gender,
+            "programme_code": candidate.programme_code,
+            "contact_email": candidate.contact_email,
+            "contact_phone": candidate.contact_phone,
+            "address": candidate.address,
+            "national_id": candidate.national_id,
+            "registration_status": candidate.registration_status,
+            "registration_date": candidate.registration_date,
+            "subject_selections": [
+                {
+                    "id": sel.id,
+                    "subject_id": sel.subject_id,
+                    "subject_code": sel.subject_code,
+                    "subject_name": sel.subject_name,
+                    "series": sel.series,
+                    "created_at": sel.created_at,
+                }
+                for sel in (candidate.subject_selections or [])
+            ],
+            "exam": exam_response,
+            "created_at": candidate.created_at,
+            "updated_at": candidate.updated_at,
+        }
+        response_list.append(RegistrationCandidateResponse.model_validate(candidate_dict))
+
+    return response_list
 
 
 @router.post("/candidates", response_model=RegistrationCandidateResponse, status_code=status.HTTP_201_CREATED)
 async def register_candidate(
     candidate_data: RegistrationCandidateCreate,
-    exam_id: int,
-    session: DBSessionDep,
-    current_user: SchoolUserWithSchoolDep,
+    exam_id: Annotated[int, Query(..., description="The exam ID to register the candidate for")],
+    session: Annotated[AsyncSession, Depends(get_db_session)],
+    current_user: Annotated[PortalUser, Depends(get_current_school_user)],
 ) -> RegistrationCandidateResponse:
     """Register a single candidate (form submission)."""
+    # Validate dependencies are injected (FastAPI should inject these, but safety check)
+    if session is None or current_user is None:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Internal server error: dependencies not injected",
+        )
+
     # Validate exam exists and registration is open
     exam_stmt = (
         select(RegistrationExam)
         .join(ExamRegistrationPeriod, RegistrationExam.registration_period_id == ExamRegistrationPeriod.id)
         .where(RegistrationExam.id == exam_id)
+        .options(selectinload(RegistrationExam.registration_period))
     )
     exam_result = await session.execute(exam_stmt)
     exam = exam_result.scalar_one_or_none()
@@ -101,62 +228,1617 @@ async def register_candidate(
     ):
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Registration period is not open")
 
+    # Validate programme if provided
+    programme_id = candidate_data.programme_id
+    if programme_id:
+        # Check programme exists
+        programme_stmt = select(Programme).where(Programme.id == programme_id)
+        programme_result = await session.execute(programme_stmt)
+        programme = programme_result.scalar_one_or_none()
+        if not programme:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Programme not found")
+
+        # Validate programme is in school's programme list
+        if current_user.school_id:
+            assoc_stmt = select(school_programmes).where(
+                school_programmes.c.school_id == current_user.school_id,
+                school_programmes.c.programme_id == programme_id
+            )
+            assoc_result = await session.execute(assoc_stmt)
+            assoc_exists = assoc_result.first()
+            if not assoc_exists:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="Programme is not available for your school. Please contact your administrator.",
+                )
+
     # Generate unique registration number
     registration_number = await generate_unique_registration_number(session, exam_id)
 
     # Create candidate
-    new_candidate = RegistrationCandidate(
-        registration_exam_id=exam_id,
-        school_id=current_user.school_id,
-        portal_user_id=current_user.id,
-        name=candidate_data.name,
-        registration_number=registration_number,
-        date_of_birth=candidate_data.date_of_birth,
-        gender=candidate_data.gender,
-        programme_code=candidate_data.programme_code,
-        contact_email=candidate_data.contact_email,
-        contact_phone=candidate_data.contact_phone,
-        address=candidate_data.address,
-        national_id=candidate_data.national_id,
-        registration_status=RegistrationStatus.PENDING,
+    try:
+        new_candidate = RegistrationCandidate(
+            registration_exam_id=exam_id,
+            school_id=current_user.school_id,
+            portal_user_id=current_user.id,
+            name=candidate_data.name,
+            registration_number=registration_number,
+            date_of_birth=candidate_data.date_of_birth,
+            gender=candidate_data.gender,
+            programme_code=candidate_data.programme_code,  # Keep for backward compatibility
+            programme_id=programme_id,
+            contact_email=candidate_data.contact_email,
+            contact_phone=candidate_data.contact_phone,
+            address=candidate_data.address,
+            national_id=candidate_data.national_id,
+            registration_status=RegistrationStatus.PENDING,
+        )
+        session.add(new_candidate)
+        await session.flush()
+
+        # Handle subject selections
+        selected_subject_ids: list[int] = []
+
+        if programme_id:
+            # Auto-select compulsory core subjects only (not optional core subjects)
+            auto_selected = await auto_select_subjects_for_programme(session, programme_id, current_user.school_id)
+            selected_subject_ids.extend(auto_selected)
+
+            # For MAY/JUNE: Auto-select ALL elective subjects (they are compulsory)
+            from app.services.subject_selection import get_programme_subjects_for_registration, normalize_exam_series
+            normalized_series = normalize_exam_series(exam.exam_series)
+            is_may_june = normalized_series == "MAY/JUNE"
+            if is_may_june:
+                subjects_info = await get_programme_subjects_for_registration(session, programme_id)
+                selected_subject_ids.extend(subjects_info["electives"])
+
+        # Add any additional subjects from subject_ids (including optional core subjects selected by user)
+        if candidate_data.subject_ids:
+            selected_subject_ids.extend(candidate_data.subject_ids)
+
+        # Remove duplicates
+        selected_subject_ids = list(set(selected_subject_ids))
+
+        # Validate subject selections if programme is provided
+        if programme_id and selected_subject_ids:
+            is_valid, validation_errors = await validate_subject_selections(
+                session, programme_id, selected_subject_ids, exam.exam_series
+            )
+            if not is_valid:
+                await session.rollback()
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail=f"Subject selections do not meet programme requirements: {'; '.join(validation_errors)}",
+                )
+
+        # Create subject selections
+        for subject_id in selected_subject_ids:
+            # Get subject details
+            subject_stmt = select(Subject).where(Subject.id == subject_id)
+            subject_result = await session.execute(subject_stmt)
+            subject = subject_result.scalar_one_or_none()
+            if not subject:
+                continue  # Skip if subject not found
+
+            subject_selection = RegistrationSubjectSelection(
+                registration_candidate_id=new_candidate.id,
+                subject_id=subject_id,
+                subject_code=subject.code,  # Keep for backward compatibility
+                subject_name=subject.name,  # Keep for backward compatibility
+            )
+            session.add(subject_selection)
+
+        await session.commit()
+
+        # Refresh to get the ID and relationships
+        await session.refresh(new_candidate, ["subject_selections"])
+
+        # Create response dict with subject selections
+        candidate_dict = {
+            "id": new_candidate.id,
+            "registration_exam_id": new_candidate.registration_exam_id,
+            "school_id": new_candidate.school_id,
+            "name": new_candidate.name,
+            "registration_number": new_candidate.registration_number,
+            "index_number": new_candidate.index_number,
+            "date_of_birth": new_candidate.date_of_birth,
+            "gender": new_candidate.gender,
+            "programme_code": new_candidate.programme_code,
+            "programme_id": new_candidate.programme_id,
+            "contact_email": new_candidate.contact_email,
+            "contact_phone": new_candidate.contact_phone,
+            "address": new_candidate.address,
+            "national_id": new_candidate.national_id,
+            "registration_status": new_candidate.registration_status,
+            "registration_date": new_candidate.registration_date,
+            "subject_selections": [
+                {
+                    "id": sel.id,
+                    "subject_id": sel.subject_id,
+                    "subject_code": sel.subject_code,
+                    "subject_name": sel.subject_name,
+                    "series": sel.series,
+                    "created_at": sel.created_at,
+                }
+                for sel in (new_candidate.subject_selections or [])
+            ],
+            "created_at": new_candidate.created_at,
+            "updated_at": new_candidate.updated_at,
+        }
+        return RegistrationCandidateResponse.model_validate(candidate_dict)
+    except Exception:
+        await session.rollback()
+        raise
+
+
+@router.put("/candidates/{candidate_id}", response_model=RegistrationCandidateResponse, status_code=status.HTTP_200_OK)
+async def update_candidate(
+    candidate_id: int,
+    candidate_update: RegistrationCandidateUpdate,
+    session: DBSessionDep,
+    current_user: SchoolUserWithSchoolDep,
+) -> RegistrationCandidateResponse:
+    """Update a registration candidate's information and subject selections."""
+    # Validate candidate exists and belongs to school
+    candidate_stmt = (
+        select(RegistrationCandidate)
+        .where(RegistrationCandidate.id == candidate_id)
+        .options(
+            selectinload(RegistrationCandidate.exam).selectinload(RegistrationExam.registration_period),
+            selectinload(RegistrationCandidate.subject_selections),
+        )
     )
-    session.add(new_candidate)
-    await session.flush()
+    candidate_result = await session.execute(candidate_stmt)
+    candidate = candidate_result.scalar_one_or_none()
 
-    # Add subject selections
-    # TODO: Implement subject selection creation
+    if not candidate:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Candidate not found")
 
-    await session.commit()
-    await session.refresh(new_candidate, ["subject_selections"])
+    if current_user.school_id and candidate.school_id != current_user.school_id:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Candidate does not belong to your school",
+        )
 
-    return RegistrationCandidateResponse.model_validate(new_candidate)
+    # Check if registration period is still open (only if updating subject selections)
+    if candidate_update.subject_ids is not None:
+        if not candidate.exam or not candidate.exam.registration_period:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Cannot update subject selections: exam or registration period not found",
+            )
+
+        now = datetime.utcnow()
+        registration_period = candidate.exam.registration_period
+        if (
+            not registration_period.is_active
+            or registration_period.registration_start_date > now
+            or registration_period.registration_end_date < now
+        ):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Cannot update subject selections: registration period is not open",
+            )
+
+    try:
+        # Update basic candidate fields
+        update_data = candidate_update.model_dump(exclude_unset=True, exclude={"subject_ids", "subject_codes"})
+
+        for field, value in update_data.items():
+            if value is not None:
+                setattr(candidate, field, value)
+
+        # Handle programme update
+        if candidate_update.programme_id is not None:
+            # Validate programme exists and is available to school
+            if candidate_update.programme_id:
+                programme_stmt = select(Programme).where(Programme.id == candidate_update.programme_id)
+                programme_result = await session.execute(programme_stmt)
+                programme = programme_result.scalar_one_or_none()
+
+                if not programme:
+                    raise HTTPException(
+                        status_code=status.HTTP_400_BAD_REQUEST,
+                        detail=f"Programme with ID {candidate_update.programme_id} not found",
+                    )
+
+                # Verify programme is associated with school
+                if current_user.school_id:
+                    assoc_stmt = select(school_programmes).where(
+                        school_programmes.c.school_id == current_user.school_id,
+                        school_programmes.c.programme_id == programme.id,
+                    )
+                    assoc_result = await session.execute(assoc_stmt)
+                    if not assoc_result.first():
+                        raise HTTPException(
+                            status_code=status.HTTP_400_BAD_REQUEST,
+                            detail=f"Programme '{programme.code}' is not available for your school",
+                        )
+
+                candidate.programme_id = candidate_update.programme_id
+                candidate.programme_code = programme.code  # Keep for backward compatibility
+
+        # Handle subject selections update
+        if candidate_update.subject_ids is not None:
+            # Get current programme_id (might have been updated above)
+            programme_id = candidate.programme_id
+
+            # Validate subject selections if programme is provided
+            if programme_id:
+                is_valid, validation_errors = await validate_subject_selections(
+                    session, programme_id, candidate_update.subject_ids, candidate.exam.exam_series if candidate.exam else None
+                )
+                if not is_valid:
+                    raise HTTPException(
+                        status_code=status.HTTP_400_BAD_REQUEST,
+                        detail=f"Subject selections do not meet programme requirements: {'; '.join(validation_errors)}",
+                    )
+
+            # Delete existing subject selections
+            delete_stmt = delete(RegistrationSubjectSelection).where(
+                RegistrationSubjectSelection.registration_candidate_id == candidate_id
+            )
+            await session.execute(delete_stmt)
+
+            # Create new subject selections
+            for subject_id in candidate_update.subject_ids:
+                subject_stmt = select(Subject).where(Subject.id == subject_id)
+                subject_result = await session.execute(subject_stmt)
+                subject = subject_result.scalar_one_or_none()
+                if not subject:
+                    continue  # Skip if subject not found
+
+                subject_selection = RegistrationSubjectSelection(
+                    registration_candidate_id=candidate.id,
+                    subject_id=subject_id,
+                    subject_code=subject.code,  # Keep for backward compatibility
+                    subject_name=subject.name,  # Keep for backward compatibility
+                )
+                session.add(subject_selection)
+
+        await session.commit()
+        await session.refresh(candidate, ["subject_selections", "exam"])
+
+        # Create response dict with subject selections
+        candidate_dict = {
+            "id": candidate.id,
+            "registration_exam_id": candidate.registration_exam_id,
+            "school_id": candidate.school_id,
+            "name": candidate.name,
+            "registration_number": candidate.registration_number,
+            "index_number": candidate.index_number,
+            "date_of_birth": candidate.date_of_birth,
+            "gender": candidate.gender,
+            "programme_code": candidate.programme_code,
+            "programme_id": candidate.programme_id,
+            "contact_email": candidate.contact_email,
+            "contact_phone": candidate.contact_phone,
+            "address": candidate.address,
+            "national_id": candidate.national_id,
+            "registration_status": candidate.registration_status,
+            "registration_date": candidate.registration_date,
+            "subject_selections": [
+                {
+                    "id": sel.id,
+                    "subject_id": sel.subject_id,
+                    "subject_code": sel.subject_code,
+                    "subject_name": sel.subject_name,
+                    "series": sel.series,
+                    "created_at": sel.created_at,
+                }
+                for sel in (candidate.subject_selections or [])
+            ],
+            "created_at": candidate.created_at,
+            "updated_at": candidate.updated_at,
+        }
+        return RegistrationCandidateResponse.model_validate(candidate_dict)
+    except HTTPException:
+        await session.rollback()
+        raise
+    except Exception as e:
+        await session.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to update candidate: {str(e)}",
+        )
 
 
 @router.post("/candidates/bulk", response_model=BulkUploadResponse, status_code=status.HTTP_200_OK)
 async def bulk_upload_candidates(
-    exam_id: int,
+    exam_id: int = Form(...),
     file: UploadFile = File(...),
+    default_choice_group_selection: str | None = Form(None, description="Optional JSON mapping of {choice_group_id: subject_code} for default selections"),
     session: DBSessionDep = None,
     current_user: SchoolUserWithSchoolDep = None,
 ) -> BulkUploadResponse:
     """Bulk upload candidates via CSV/Excel."""
-    # TODO: Implement bulk upload processing
-    # - Parse CSV/Excel file
-    # - Validate data
-    # - Create candidates
-    # - Return success/failure report
-    raise HTTPException(status_code=status.HTTP_501_NOT_IMPLEMENTED, detail="Bulk upload not yet implemented")
+    from app.schemas.registration import BulkUploadError
+    from dateutil import parser as date_parser
+
+    if current_user.school_id is None:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="User must be associated with a school",
+        )
+
+    # Validate exam exists and registration is open
+    exam_stmt = (
+        select(RegistrationExam)
+        .join(ExamRegistrationPeriod, RegistrationExam.registration_period_id == ExamRegistrationPeriod.id)
+        .where(RegistrationExam.id == exam_id)
+        .options(selectinload(RegistrationExam.registration_period))
+    )
+    exam_result = await session.execute(exam_stmt)
+    exam = exam_result.scalar_one_or_none()
+
+    if not exam:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Exam not found")
+
+    now = datetime.utcnow()
+    if (
+        not exam.registration_period.is_active
+        or exam.registration_period.registration_start_date > now
+        or exam.registration_period.registration_end_date < now
+    ):
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Registration period is not open")
+
+    if not exam.registration_period.allows_bulk_registration:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Bulk registration is not allowed for this exam")
+
+    # Parse default choice group selection if provided
+    default_selections: dict[int, str] = {}
+    if default_choice_group_selection:
+        try:
+            default_selections = json.loads(default_choice_group_selection)
+            # Convert string keys to int for choice_group_id
+            default_selections = {int(k): v for k, v in default_selections.items()}
+        except (json.JSONDecodeError, ValueError) as e:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Invalid default_choice_group_selection format: {str(e)}"
+            )
+
+    # Read and parse file
+    file_content = await file.read()
+    filename = file.filename or "unknown"
+
+    try:
+        if filename.endswith('.csv'):
+            # Try different encodings
+            try:
+                text_content = file_content.decode('utf-8')
+            except UnicodeDecodeError:
+                text_content = file_content.decode('latin-1')
+
+            csv_reader = csv.DictReader(io.StringIO(text_content))
+            rows = list(csv_reader)
+
+            if not rows:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="CSV file is empty or has no data rows"
+                )
+
+            # Convert to DataFrame for easier processing
+            df = pd.DataFrame(rows)
+        elif filename.endswith(('.xlsx', '.xls')):
+            df = pd.read_excel(io.BytesIO(file_content), engine='openpyxl')
+        else:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="File must be CSV or Excel format (.csv, .xlsx, .xls)"
+            )
+    except Exception as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Error parsing file: {str(exc)}"
+        )
+
+    # Normalize column names (strip whitespace, handle case insensitivity)
+    df.columns = df.columns.str.strip()
+    column_mapping = {col.lower(): col for col in df.columns}
+
+    # Required columns
+    required_columns = ['name']
+    missing_columns = []
+    for req_col in required_columns:
+        if req_col.lower() not in column_mapping:
+            missing_columns.append(req_col)
+
+    if missing_columns:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Missing required columns: {', '.join(missing_columns)}"
+        )
+
+    # Process each row
+    total_rows = len(df)
+    successful = 0
+    failed = 0
+    errors: list[BulkUploadError] = []
+
+    for idx, row in df.iterrows():
+        row_number = int(idx) + 2  # +2 because rows are 1-indexed and header is row 1
+
+        try:
+            # Extract data with normalized column names
+            def get_col(key: str, default=None):
+                key_lower = key.lower()
+                if key_lower in column_mapping:
+                    value = row[column_mapping[key_lower]]
+                    return value if pd.notna(value) else default
+                return default
+
+            name = str(get_col('name', '')).strip()
+            if not name:
+                errors.append(BulkUploadError(
+                    row_number=row_number,
+                    error_message="Name is required",
+                    field="name"
+                ))
+                failed += 1
+                continue
+
+            # Parse date_of_birth if provided
+            date_of_birth = None
+            dob_str = get_col('date_of_birth') or get_col('dob')
+            if dob_str:
+                try:
+                    if isinstance(dob_str, str):
+                        date_of_birth = date_parser.parse(dob_str).date()
+                    elif isinstance(dob_str, datetime):
+                        date_of_birth = dob_str.date()
+                    elif hasattr(dob_str, 'date'):
+                        date_of_birth = dob_str.date()
+                except Exception:
+                    pass  # Keep as None if parsing fails
+
+            gender = get_col('gender')
+            if gender:
+                gender = str(gender).strip()
+
+            programme_code = get_col('programme_code') or get_col('programme')
+            if programme_code:
+                programme_code = str(programme_code).strip()
+
+            # Parse optional subjects (comma-separated subject codes)
+            optional_subjects_str = get_col('optional_subjects') or get_col('optional subjects')
+            optional_subject_codes = []
+            if optional_subjects_str:
+                optional_subject_codes = [s.strip() for s in str(optional_subjects_str).split(',') if s.strip()]
+
+            contact_email = get_col('contact_email') or get_col('email')
+            if contact_email:
+                contact_email = str(contact_email).strip() or None
+
+            contact_phone = get_col('contact_phone') or get_col('phone')
+            if contact_phone:
+                contact_phone = str(contact_phone).strip() or None
+
+            address = get_col('address')
+            if address:
+                address = str(address).strip() or None
+
+            national_id = get_col('national_id') or get_col('national id')
+            if national_id:
+                national_id = str(national_id).strip() or None
+
+            # Validate and get programme
+            programme_id = None
+            if programme_code:
+                programme_stmt = select(Programme).where(Programme.code == programme_code)
+                programme_result = await session.execute(programme_stmt)
+                programme = programme_result.scalar_one_or_none()
+
+                if not programme:
+                    errors.append(BulkUploadError(
+                        row_number=row_number,
+                        error_message=f"Programme with code '{programme_code}' not found",
+                        field="programme_code"
+                    ))
+                    failed += 1
+                    continue
+
+                # Verify programme is associated with school
+                assoc_stmt = select(school_programmes).where(
+                    school_programmes.c.school_id == current_user.school_id,
+                    school_programmes.c.programme_id == programme.id
+                )
+                assoc_result = await session.execute(assoc_stmt)
+                if not assoc_result.first():
+                    errors.append(BulkUploadError(
+                        row_number=row_number,
+                        error_message=f"Programme '{programme_code}' is not available for your school",
+                        field="programme_code"
+                    ))
+                    failed += 1
+                    continue
+
+                programme_id = programme.id
+
+            # Get subject selections
+            selected_subject_ids: list[int] = []
+
+            # Normalize exam series for comparison (needed for both programme and non-programme cases)
+            from app.services.subject_selection import normalize_exam_series
+            normalized_series = normalize_exam_series(exam.exam_series)
+            is_may_june = normalized_series == "MAY/JUNE"
+
+            if programme_id:
+                # Get programme subjects structure
+                subjects_info = await get_programme_subjects_for_registration(session, programme_id)
+
+                # Auto-select compulsory core subjects
+                selected_subject_ids.extend(subjects_info["compulsory_core"])
+
+                # For MAY/JUNE: Auto-select ALL elective subjects
+                if is_may_june:
+                    selected_subject_ids.extend(subjects_info["electives"])
+
+                # Handle optional core groups
+                # Check for CSV column with optional core group selections
+                choice_groups_col = get_col('optional_core_groups') or get_col('choice_groups')
+                csv_choice_groups: dict[int, str] = {}
+                if choice_groups_col:
+                    try:
+                        # Try to parse as JSON: {"1": "SUBJECT_CODE", "2": "SUBJECT_CODE"}
+                        csv_choice_groups = json.loads(str(choice_groups_col))
+                        csv_choice_groups = {int(k): v for k, v in csv_choice_groups.items()}
+                    except (json.JSONDecodeError, ValueError):
+                        # If not JSON, try individual columns like choice_group_1, choice_group_2
+                        for group_id in subjects_info["optional_core_groups"].keys():
+                            col_name = f'choice_group_{group_id}'
+                            col_value = get_col(col_name)
+                            if col_value:
+                                csv_choice_groups[group_id] = str(col_value).strip()
+
+                # Handle optional core groups - select one from each group if provided
+                for group_id, group_subject_ids in subjects_info["optional_core_groups"].items():
+                    selected_from_group = None
+
+                    # First priority: CSV column for this group (row-specific selection)
+                    if group_id in csv_choice_groups:
+                        subject_code = csv_choice_groups[group_id].strip()
+                        subject_stmt = select(Subject).where(Subject.code == subject_code)
+                        subject_result = await session.execute(subject_stmt)
+                        subject = subject_result.scalar_one_or_none()
+                        if subject and subject.id in group_subject_ids:
+                            selected_from_group = subject.id
+
+                    # Second priority: Check if row has optional subjects that match this group
+                    if not selected_from_group and optional_subject_codes:
+                        # Lookup subjects by code to find which group they belong to
+                        for code in optional_subject_codes:
+                            code_trimmed = code.strip()
+                            subject_stmt = select(Subject).where(Subject.code == code_trimmed)
+                            subject_result = await session.execute(subject_stmt)
+                            subject = subject_result.scalar_one_or_none()
+                            if subject and subject.id in group_subject_ids:
+                                selected_from_group = subject.id
+                                break
+
+                    # Third priority: Check default selections (from UI choice group selection)
+                    if not selected_from_group and group_id in default_selections:
+                        default_code = str(default_selections[group_id]).strip()
+                        subject_stmt = select(Subject).where(Subject.code == default_code)
+                        subject_result = await session.execute(subject_stmt)
+                        subject = subject_result.scalar_one_or_none()
+                        if subject and subject.id in group_subject_ids:
+                            selected_from_group = subject.id
+
+                    # Do NOT auto-select optional core subjects if not explicitly chosen
+                    # If not selected via CSV, default selections, or optional_subjects column, leave unselected
+
+                    # Add selected subject from this choice group to the candidate's subject selections
+                    if selected_from_group:
+                        selected_subject_ids.append(selected_from_group)
+
+            # Add optional subjects (electives or additional subjects) - only for NOV/DEC
+            # For MAY/JUNE, all electives are already auto-selected above
+            if not is_may_june and optional_subject_codes:
+                for code in optional_subject_codes:
+                    subject_stmt = select(Subject).where(Subject.code == code)
+                    subject_result = await session.execute(subject_stmt)
+                    subject = subject_result.scalar_one_or_none()
+                    if subject:
+                        if subject.id not in selected_subject_ids:
+                            selected_subject_ids.append(subject.id)
+                    # Note: We don't error if optional subject not found, just skip it
+
+            # Remove duplicates
+            selected_subject_ids = list(set(selected_subject_ids))
+
+            # Validate subject selections if programme is provided
+            if programme_id and selected_subject_ids:
+                is_valid, validation_errors = await validate_subject_selections(
+                    session, programme_id, selected_subject_ids, exam.exam_series
+                )
+                if not is_valid:
+                    errors.append(BulkUploadError(
+                        row_number=row_number,
+                        error_message=f"Subject selections do not meet programme requirements: {'; '.join(validation_errors)}",
+                        field="subjects"
+                    ))
+                    failed += 1
+                    continue
+
+            # Generate registration number
+            registration_number = await generate_unique_registration_number(session, exam_id)
+
+            # Create candidate
+            new_candidate = RegistrationCandidate(
+                registration_exam_id=exam_id,
+                school_id=current_user.school_id,
+                portal_user_id=current_user.id,
+                name=name,
+                registration_number=registration_number,
+                date_of_birth=date_of_birth,
+                gender=gender,
+                programme_code=programme_code,  # Keep for backward compatibility
+                programme_id=programme_id,
+                contact_email=contact_email,
+                contact_phone=contact_phone,
+                address=address,
+                national_id=national_id,
+                registration_status=RegistrationStatus.PENDING,
+            )
+            session.add(new_candidate)
+            await session.flush()
+
+            # Create subject selections
+            for subject_id in selected_subject_ids:
+                subject_stmt = select(Subject).where(Subject.id == subject_id)
+                subject_result = await session.execute(subject_stmt)
+                subject = subject_result.scalar_one_or_none()
+                if not subject:
+                    continue
+
+                subject_selection = RegistrationSubjectSelection(
+                    registration_candidate_id=new_candidate.id,
+                    subject_id=subject_id,
+                    subject_code=subject.code,
+                    subject_name=subject.name,
+                )
+                session.add(subject_selection)
+
+            successful += 1
+
+        except Exception as e:
+            errors.append(BulkUploadError(
+                row_number=row_number,
+                error_message=f"Error processing row: {str(e)}",
+                field=None
+            ))
+            failed += 1
+            continue
+
+    # Commit all successful candidates
+    try:
+        await session.commit()
+    except Exception as e:
+        await session.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error committing candidates: {str(e)}"
+        )
+
+    return BulkUploadResponse(
+        total_rows=total_rows,
+        successful=successful,
+        failed=failed,
+        errors=errors
+    )
 
 
-# Placeholder for other endpoints
-# - GET /candidates/{id}
-# - PUT /candidates/{id}
-# - DELETE /candidates/{id}
-# - GET /exams/{id}/timetable
-# - GET /timetables
-# - GET /timetables/{exam_id}/download
-# - POST /users (school admin only)
-# - GET /users
-# - PUT /users/{id}
-# - DELETE /users/{id}
-# - POST /candidates/{id}/photos/bulk
+@router.get("/candidates/template")
+async def download_candidate_template(current_user: SchoolUserWithSchoolDep) -> StreamingResponse:
+    """Download Excel template for candidate bulk upload."""
+    try:
+        template_bytes = generate_candidate_template()
+        return StreamingResponse(
+            iter([template_bytes]),
+            media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            headers={"Content-Disposition": 'attachment; filename=candidate_upload_template.xlsx'},
+        )
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to generate template: {str(e)}",
+        )
+
+
+@router.post("/users", response_model=UserResponse, status_code=status.HTTP_201_CREATED)
+async def create_school_user(
+    user_data: SchoolUserCreate,
+    session: DBSessionDep,
+    current_user: SchoolAdminDep,
+) -> UserResponse:
+    """Create a new SCHOOL_USER for the coordinator's school."""
+    # Ensure coordinator has a school
+    if current_user.school_id is None:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Coordinator must be associated with a school",
+        )
+
+    # Check active user count before creating
+    active_count = await count_active_school_users(session, current_user.school_id)
+    if active_count >= MAX_ACTIVE_USERS_PER_SCHOOL:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Cannot create user: You have reached the maximum of {MAX_ACTIVE_USERS_PER_SCHOOL} active users. Please deactivate an existing user first.",
+        )
+
+    # Ensure user_type is SCHOOL_USER (coordinators can only create SCHOOL_USER accounts)
+    if user_data.user_type != PortalUserType.SCHOOL_USER:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Coordinators can only create SCHOOL_USER accounts",
+        )
+
+    # Check if user already exists
+    stmt = select(PortalUser).where(PortalUser.email == user_data.email)
+    result = await session.execute(stmt)
+    existing_user = result.scalar_one_or_none()
+
+    if existing_user:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Email already registered",
+        )
+
+    # Validate password length
+    if len(user_data.password) < settings.password_min_length:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Password must be at least {settings.password_min_length} characters long",
+        )
+
+    # Create new user
+    hashed_password = get_password_hash(user_data.password)
+    new_user = PortalUser(
+        email=user_data.email,
+        hashed_password=hashed_password,
+        full_name=user_data.full_name,
+        user_type=PortalUserType.SCHOOL_USER,
+        school_id=current_user.school_id,
+        is_active=True,
+        created_by_user_id=current_user.id,
+    )
+
+    session.add(new_user)
+    await session.commit()
+    await session.refresh(new_user)
+
+    return UserResponse.model_validate(new_user)
+
+
+@router.get("/users", response_model=list[UserResponse])
+async def list_school_users(
+    session: DBSessionDep,
+    current_user: SchoolAdminDep,
+) -> list[UserResponse]:
+    """List all users (SCHOOL_USER + SCHOOL_ADMIN) for coordinator's school."""
+    # Ensure coordinator has a school
+    if current_user.school_id is None:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Coordinator must be associated with a school",
+        )
+
+    stmt = select(PortalUser).where(
+        PortalUser.school_id == current_user.school_id,
+        PortalUser.user_type.in_([PortalUserType.SCHOOL_USER, PortalUserType.SCHOOL_ADMIN])
+    ).order_by(PortalUser.created_at.desc())
+    result = await session.execute(stmt)
+    users = result.scalars().all()
+
+    return [UserResponse.model_validate(user) for user in users]
+
+
+@router.put("/users/{user_id}", response_model=UserResponse)
+async def update_school_user(
+    user_id: UUID,
+    user_update: UserUpdate,
+    session: DBSessionDep,
+    current_user: SchoolAdminDep,
+) -> UserResponse:
+    """Update user (deactivate/activate, update name) for coordinator's school."""
+    # Ensure coordinator has a school
+    if current_user.school_id is None:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Coordinator must be associated with a school",
+        )
+
+    # Get user and verify it belongs to coordinator's school
+    stmt = select(PortalUser).where(
+        PortalUser.id == user_id,
+        PortalUser.school_id == current_user.school_id,
+    )
+    result = await session.execute(stmt)
+    user = result.scalar_one_or_none()
+
+    if not user:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="User not found or does not belong to your school",
+        )
+
+    # Prevent coordinators from deactivating themselves
+    if user.id == current_user.id and user_update.is_active is False:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="You cannot deactivate your own account",
+        )
+
+    # Update fields if provided
+    if user_update.full_name is not None:
+        user.full_name = user_update.full_name
+    if user_update.is_active is not None:
+        user.is_active = user_update.is_active
+
+    await session.commit()
+    await session.refresh(user)
+
+    return UserResponse.model_validate(user)
+
+
+@router.get("/dashboard")
+async def get_school_dashboard(
+    session: DBSessionDep,
+    current_user: SchoolUserWithSchoolDep,
+):
+    """Get school dashboard statistics for school users (coordinators and regular users)."""
+    # Ensure user has a school
+    if current_user.school_id is None:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="School user must be associated with a school",
+        )
+
+    # Get school information
+    school_stmt = select(School).where(School.id == current_user.school_id)
+    school_result = await session.execute(school_stmt)
+    school = school_result.scalar_one_or_none()
+
+    if not school:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="School not found",
+        )
+
+    # Count active users
+    active_user_count = await count_active_school_users(session, current_user.school_id)
+
+    # Count total candidates
+    total_candidates_stmt = select(func.count(RegistrationCandidate.id)).where(
+        RegistrationCandidate.school_id == current_user.school_id
+    )
+    total_result = await session.execute(total_candidates_stmt)
+    total_candidates = total_result.scalar_one() or 0
+
+    # Count candidates by status
+    candidates_by_status_stmt = (
+        select(RegistrationCandidate.registration_status, func.count(RegistrationCandidate.id))
+        .where(RegistrationCandidate.school_id == current_user.school_id)
+        .group_by(RegistrationCandidate.registration_status)
+    )
+    status_result = await session.execute(candidates_by_status_stmt)
+    candidates_by_status = {row[0].value: row[1] for row in status_result.all()}
+
+    # Count distinct exams
+    total_exams_stmt = select(func.count(func.distinct(RegistrationCandidate.registration_exam_id))).where(
+        RegistrationCandidate.school_id == current_user.school_id
+    )
+    exams_result = await session.execute(total_exams_stmt)
+    total_exams = exams_result.scalar_one() or 0
+
+    return {
+        "school": {
+            "id": school.id,
+            "code": school.code,
+            "name": school.name,
+            "is_active": school.is_active,
+        },
+        "active_user_count": active_user_count,
+        "max_active_users": MAX_ACTIVE_USERS_PER_SCHOOL,
+        "total_candidates": total_candidates,
+        "candidates_by_status": candidates_by_status,
+        "total_exams": total_exams,
+    }
+
+
+# Programme Management Endpoints
+
+@router.get("/programmes/available", response_model=list[ProgrammeResponse])
+async def list_available_programmes(
+    session: DBSessionDep, current_user: SchoolUserWithSchoolDep
+) -> list[ProgrammeResponse]:
+    """List all available programmes in the system (for school coordinators to select from)."""
+    if current_user.school_id is None:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="User must be associated with a school",
+        )
+
+    # Get all programmes in the system (created by system admin)
+    programme_stmt = select(Programme).order_by(Programme.code)
+    programme_result = await session.execute(programme_stmt)
+    programmes = programme_result.scalars().all()
+
+    return [ProgrammeResponse.model_validate(programme) for programme in programmes]
+
+
+@router.get("/programmes", response_model=list[ProgrammeResponse])
+async def list_school_programmes(
+    session: DBSessionDep, current_user: SchoolUserWithSchoolDep
+) -> list[ProgrammeResponse]:
+    """List programmes available to the school (filtered by school's programmes)."""
+    if current_user.school_id is None:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="User must be associated with a school",
+        )
+
+    # Get programmes for this school
+    programme_stmt = (
+        select(Programme)
+        .join(school_programmes, Programme.id == school_programmes.c.programme_id)
+        .where(school_programmes.c.school_id == current_user.school_id)
+        .order_by(Programme.code)
+    )
+    programme_result = await session.execute(programme_stmt)
+    programmes = programme_result.scalars().all()
+
+    return [ProgrammeResponse.model_validate(programme) for programme in programmes]
+
+
+@router.post("/programmes/{programme_id}", response_model=SchoolProgrammeAssociation, status_code=status.HTTP_201_CREATED)
+async def associate_programme_with_school(
+    programme_id: int, session: DBSessionDep, current_user: SchoolUserWithSchoolDep
+) -> SchoolProgrammeAssociation:
+    """Associate a programme with the school (add to school's programme list)."""
+    if current_user.school_id is None:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="User must be associated with a school",
+        )
+
+    # Check programme exists
+    programme_stmt = select(Programme).where(Programme.id == programme_id)
+    result = await session.execute(programme_stmt)
+    programme = result.scalar_one_or_none()
+    if not programme:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Programme not found")
+
+    # Check if association already exists
+    assoc_stmt = select(school_programmes).where(
+        school_programmes.c.school_id == current_user.school_id, school_programmes.c.programme_id == programme_id
+    )
+    result = await session.execute(assoc_stmt)
+    existing = result.first()
+    if existing:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST, detail="Programme already associated with school"
+        )
+
+    # Create association
+    await session.execute(insert(school_programmes).values(school_id=current_user.school_id, programme_id=programme_id))
+    await session.commit()
+
+    return SchoolProgrammeAssociation(school_id=current_user.school_id, programme_id=programme_id)
+
+
+@router.delete("/programmes/{programme_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def remove_programme_from_school(
+    programme_id: int, session: DBSessionDep, current_user: SchoolUserWithSchoolDep
+) -> None:
+    """Remove programme from school."""
+    if current_user.school_id is None:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="User must be associated with a school",
+        )
+
+    # Check association exists
+    assoc_stmt = select(school_programmes).where(
+        school_programmes.c.school_id == current_user.school_id, school_programmes.c.programme_id == programme_id
+    )
+    result = await session.execute(assoc_stmt)
+    existing = result.first()
+    if not existing:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Programme association not found")
+
+    await session.execute(
+        delete(school_programmes).where(
+            school_programmes.c.school_id == current_user.school_id, school_programmes.c.programme_id == programme_id
+        )
+    )
+    await session.commit()
+
+
+@router.get("/programmes/{programme_id}", response_model=ProgrammeResponse)
+async def get_programme(
+    programme_id: int, session: DBSessionDep, current_user: SchoolUserWithSchoolDep
+) -> ProgrammeResponse:
+    """Get programme details (view-only for school users)."""
+    if current_user.school_id is None:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="User must be associated with a school",
+        )
+
+    # Verify programme is associated with school
+    assoc_stmt = select(school_programmes).where(
+        school_programmes.c.school_id == current_user.school_id, school_programmes.c.programme_id == programme_id
+    )
+    result = await session.execute(assoc_stmt)
+    existing = result.first()
+    if not existing:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Programme not found or not associated with school"
+        )
+
+    # Get programme
+    stmt = select(Programme).where(Programme.id == programme_id)
+    result = await session.execute(stmt)
+    programme = result.scalar_one_or_none()
+    if not programme:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Programme not found")
+
+    return ProgrammeResponse.model_validate(programme)
+
+
+@router.get("/programmes/{programme_id}/subjects", response_model=ProgrammeSubjectRequirements)
+async def get_programme_subjects(
+    programme_id: int, session: DBSessionDep, current_user: SchoolUserWithSchoolDep
+) -> ProgrammeSubjectRequirements:
+    """Get subjects for a programme (for registration UI)."""
+    if current_user.school_id is None:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="User must be associated with a school",
+        )
+
+    # Verify programme is associated with school
+    assoc_stmt = select(school_programmes).where(
+        school_programmes.c.school_id == current_user.school_id, school_programmes.c.programme_id == programme_id
+    )
+    result = await session.execute(assoc_stmt)
+    existing = result.first()
+    if not existing:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Programme not found or not associated with school"
+        )
+
+    # Get programme subject requirements
+    from app.schemas.programme import ProgrammeSubjectResponse, SubjectChoiceGroup
+
+    stmt = select(Programme).where(Programme.id == programme_id)
+    result = await session.execute(stmt)
+    programme = result.scalar_one_or_none()
+    if not programme:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Programme not found")
+
+    # Get all subjects for this programme
+    subject_stmt = (
+        select(
+            Subject,
+            programme_subjects.c.created_at,
+            programme_subjects.c.is_compulsory,
+            programme_subjects.c.choice_group_id,
+        )
+        .join(programme_subjects, Subject.id == programme_subjects.c.subject_id)
+        .where(programme_subjects.c.programme_id == programme_id)
+        .order_by(Subject.code)
+    )
+    subject_result = await session.execute(subject_stmt)
+    subjects_data = subject_result.all()
+
+    # Organize subjects into categories
+    compulsory_core = []
+    optional_core_by_group: dict[int, list[ProgrammeSubjectResponse]] = {}
+    electives = []
+
+    for subject, created_at, is_compulsory, choice_group_id in subjects_data:
+        subject_response = ProgrammeSubjectResponse(
+            subject_id=subject.id,
+            subject_code=subject.code,
+            subject_name=subject.name,
+            subject_type=subject.subject_type,
+            is_compulsory=is_compulsory,
+            choice_group_id=choice_group_id,
+            created_at=created_at,
+        )
+
+        from app.models import SubjectType
+        if subject.subject_type == SubjectType.CORE:
+            if is_compulsory is True:
+                compulsory_core.append(subject_response)
+            elif is_compulsory is False and choice_group_id is not None:
+                if choice_group_id not in optional_core_by_group:
+                    optional_core_by_group[choice_group_id] = []
+                optional_core_by_group[choice_group_id].append(subject_response)
+        elif subject.subject_type == SubjectType.ELECTIVE:
+            electives.append(subject_response)
+
+    # Convert optional core groups to SubjectChoiceGroup list
+    optional_core_groups = [
+        SubjectChoiceGroup(choice_group_id=group_id, subjects=subjects)
+        for group_id, subjects in sorted(optional_core_by_group.items())
+    ]
+
+    return ProgrammeSubjectRequirements(
+        compulsory_core=compulsory_core,
+        optional_core_groups=optional_core_groups,
+        electives=electives,
+    )
+
+
+# Photo Management Endpoints
+
+@router.post("/candidates/{candidate_id}/photos", response_model=RegistrationCandidatePhotoResponse, status_code=status.HTTP_201_CREATED)
+async def upload_candidate_photo(
+    candidate_id: int,
+    session: DBSessionDep,
+    current_user: SchoolUserWithSchoolDep,
+    file: UploadFile = File(...),
+) -> RegistrationCandidatePhotoResponse:
+    """Upload/replace photo for a candidate (automatically deletes existing photo if present)."""
+    # Validate candidate exists and belongs to school
+    candidate_stmt = select(RegistrationCandidate).where(RegistrationCandidate.id == candidate_id)
+    candidate_result = await session.execute(candidate_stmt)
+    candidate = candidate_result.scalar_one_or_none()
+    if not candidate:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Candidate not found")
+
+    if current_user.school_id and candidate.school_id != current_user.school_id:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Candidate does not belong to your school",
+        )
+
+    # Read file content
+    content = await file.read()
+
+    # Validate photo (file type, dimensions, file size)
+    PhotoValidationService.validate_all(content, file.content_type or "")
+
+    # Delete existing photo if present (one photo per candidate)
+    existing_photo_stmt = select(RegistrationCandidatePhoto).where(
+        RegistrationCandidatePhoto.registration_candidate_id == candidate_id
+    )
+    existing_photo_result = await session.execute(existing_photo_stmt)
+    existing_photo = existing_photo_result.scalar_one_or_none()
+
+    if existing_photo:
+        try:
+            # Delete the file from storage
+            await photo_storage_service.delete(existing_photo.file_path)
+        except Exception as e:
+            logger.warning(f"Failed to delete old photo file {existing_photo.file_path}: {e}")
+        # Delete the database record
+        await session.delete(existing_photo)
+        await session.commit()
+
+    # Calculate checksum
+    checksum = calculate_checksum(content)
+
+    # Rename file using candidate's registration number
+    original_filename = file.filename or "photo.jpg"
+    ext = Path(original_filename).suffix or ".jpg"
+    new_filename = f"{candidate.registration_number}{ext}" if candidate.registration_number else original_filename
+
+    # Save photo file (renamed using registration number)
+    file_path, _ = await photo_storage_service.save(
+        content, new_filename, candidate_id, candidate.registration_exam_id, candidate.registration_number
+    )
+
+    # Create photo record
+    db_photo = RegistrationCandidatePhoto(
+        registration_candidate_id=candidate_id,
+        file_path=file_path,
+        file_name=new_filename,
+        mime_type=file.content_type or "image/jpeg",
+        checksum=checksum,
+    )
+    session.add(db_photo)
+    await session.commit()
+    await session.refresh(db_photo)
+
+    return RegistrationCandidatePhotoResponse.model_validate(db_photo)
+
+
+@router.get("/candidates/{candidate_id}/photos", response_model=RegistrationCandidatePhotoResponse | None)
+async def get_candidate_photo(
+    candidate_id: int, session: DBSessionDep, current_user: SchoolUserWithSchoolDep
+) -> RegistrationCandidatePhotoResponse | None:
+    """Get candidate's photo (returns single photo or null)."""
+    # Validate candidate exists and belongs to school
+    candidate_stmt = select(RegistrationCandidate).where(RegistrationCandidate.id == candidate_id)
+    candidate_result = await session.execute(candidate_stmt)
+    candidate = candidate_result.scalar_one_or_none()
+    if not candidate:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Candidate not found")
+
+    if current_user.school_id and candidate.school_id != current_user.school_id:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Candidate does not belong to your school",
+        )
+
+    # Get photo
+    photo_stmt = select(RegistrationCandidatePhoto).where(
+        RegistrationCandidatePhoto.registration_candidate_id == candidate_id
+    )
+    photo_result = await session.execute(photo_stmt)
+    photo = photo_result.scalar_one_or_none()
+
+    if not photo:
+        return None
+
+    return RegistrationCandidatePhotoResponse.model_validate(photo)
+
+
+@router.get("/candidates/{candidate_id}/photos/file")
+async def get_candidate_photo_file(
+    candidate_id: int, session: DBSessionDep, current_user: SchoolUserWithSchoolDep
+) -> StreamingResponse:
+    """Get photo file."""
+    # Validate candidate exists and belongs to school
+    candidate_stmt = select(RegistrationCandidate).where(RegistrationCandidate.id == candidate_id)
+    candidate_result = await session.execute(candidate_stmt)
+    candidate = candidate_result.scalar_one_or_none()
+    if not candidate:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Candidate not found")
+
+    if current_user.school_id and candidate.school_id != current_user.school_id:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Candidate does not belong to your school",
+        )
+
+    # Get photo
+    photo_stmt = select(RegistrationCandidatePhoto).where(
+        RegistrationCandidatePhoto.registration_candidate_id == candidate_id
+    )
+    photo_result = await session.execute(photo_stmt)
+    photo = photo_result.scalar_one_or_none()
+    if not photo:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Photo not found")
+
+    # Retrieve file
+    try:
+        if not await photo_storage_service.exists(photo.file_path):
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND, detail="Photo file not found in storage"
+            )
+        file_content = await photo_storage_service.retrieve(photo.file_path)
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Unexpected error retrieving photo file {photo.file_path}: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Failed to retrieve photo file: {str(e)}"
+        )
+
+    return StreamingResponse(
+        iter([file_content]),
+        media_type=photo.mime_type,
+        headers={"Content-Disposition": f'inline; filename="{photo.file_name}"'},
+    )
+
+
+@router.delete("/candidates/{candidate_id}/photos", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_candidate_photo(
+    candidate_id: int, session: DBSessionDep, current_user: SchoolUserWithSchoolDep
+) -> None:
+    """Delete candidate's photo."""
+    # Validate candidate exists and belongs to school
+    candidate_stmt = select(RegistrationCandidate).where(RegistrationCandidate.id == candidate_id)
+    candidate_result = await session.execute(candidate_stmt)
+    candidate = candidate_result.scalar_one_or_none()
+    if not candidate:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Candidate not found")
+
+    if current_user.school_id and candidate.school_id != current_user.school_id:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Candidate does not belong to your school",
+        )
+
+    # Get photo
+    photo_stmt = select(RegistrationCandidatePhoto).where(
+        RegistrationCandidatePhoto.registration_candidate_id == candidate_id
+    )
+    photo_result = await session.execute(photo_stmt)
+    photo = photo_result.scalar_one_or_none()
+    if not photo:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Photo not found")
+
+    # Delete file from storage
+    try:
+        await photo_storage_service.delete(photo.file_path)
+    except Exception as e:
+        logger.warning(f"Failed to delete photo file {photo.file_path}: {e}")
+
+    # Delete database record
+    await session.delete(photo)
+    await session.commit()
+
+
+@router.post("/candidates/photos/bulk-upload", response_model=PhotoBulkUploadResponse, status_code=status.HTTP_200_OK)
+async def bulk_upload_photos(
+    session: DBSessionDep,
+    current_user: SchoolUserWithSchoolDep,
+    exam_id: int = Form(...),
+    files: list[UploadFile] = File(...),
+) -> PhotoBulkUploadResponse:
+    """Bulk upload photos (zip file with photos named by registration_number or index_number)."""
+    if current_user.school_id is None:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="User must be associated with a school",
+        )
+
+    # Validate exam exists
+    exam_stmt = select(RegistrationExam).where(RegistrationExam.id == exam_id)
+    exam_result = await session.execute(exam_stmt)
+    exam = exam_result.scalar_one_or_none()
+    if not exam:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Exam not found")
+
+    total = len(files)
+    successful = 0
+    failed = 0
+    skipped = 0
+    errors: list[PhotoBulkUploadError] = []
+
+    for file in files:
+        filename = file.filename or "unknown"
+        try:
+            # Read file content
+            content = await file.read()
+
+            # Validate photo
+            try:
+                PhotoValidationService.validate_all(content, file.content_type or "")
+            except HTTPException as e:
+                errors.append(
+                    PhotoBulkUploadError(
+                        filename=filename,
+                        registration_number=None,
+                        index_number=None,
+                        error_message=e.detail.get("message", "Photo validation failed") if isinstance(e.detail, dict) else str(e.detail),
+                    )
+                )
+                failed += 1
+                continue
+
+            # Extract registration number or index number from filename
+            # Prioritize registration_number over index_number
+            # Filename format: {registration_number}.jpg or {index_number}.jpg
+            base_name = filename.rsplit(".", 1)[0]  # Remove extension
+
+            # Try to find candidate by registration_number first, then index_number
+            candidate_stmt = select(RegistrationCandidate).where(
+                and_(
+                    RegistrationCandidate.registration_exam_id == exam_id,
+                    RegistrationCandidate.school_id == current_user.school_id,
+                    RegistrationCandidate.registration_number == base_name,
+                )
+            )
+            candidate_result = await session.execute(candidate_stmt)
+            candidate = candidate_result.scalar_one_or_none()
+
+            # If not found by registration_number, try index_number
+            if not candidate:
+                candidate_stmt = select(RegistrationCandidate).where(
+                    and_(
+                        RegistrationCandidate.registration_exam_id == exam_id,
+                        RegistrationCandidate.school_id == current_user.school_id,
+                        RegistrationCandidate.index_number == base_name,
+                    )
+                )
+            candidate_result = await session.execute(candidate_stmt)
+            candidate = candidate_result.scalar_one_or_none()
+
+            if not candidate:
+                errors.append(
+                    PhotoBulkUploadError(
+                        filename=filename,
+                        registration_number=None,
+                        index_number=None,
+                        error_message=f"No candidate found with registration_number or index_number matching '{base_name}'",
+                    )
+                )
+                failed += 1
+                continue
+
+            # Delete existing photo if present
+            existing_photo_stmt = select(RegistrationCandidatePhoto).where(
+                RegistrationCandidatePhoto.registration_candidate_id == candidate.id
+            )
+            existing_photo_result = await session.execute(existing_photo_stmt)
+            existing_photo = existing_photo_result.scalar_one_or_none()
+
+            if existing_photo:
+                try:
+                    await photo_storage_service.delete(existing_photo.file_path)
+                except Exception as e:
+                    logger.warning(f"Failed to delete old photo file {existing_photo.file_path}: {e}")
+                await session.delete(existing_photo)
+                await session.commit()
+
+            # Calculate checksum
+            checksum = calculate_checksum(content)
+
+            # Rename file using candidate's registration number
+            ext = Path(filename).suffix or ".jpg"
+            new_filename = f"{candidate.registration_number}{ext}" if candidate.registration_number else filename
+
+            # Save photo file (renamed using registration number)
+            file_path, _ = await photo_storage_service.save(
+                content, new_filename, candidate.id, exam_id, candidate.registration_number
+            )
+
+            # Create photo record
+            db_photo = RegistrationCandidatePhoto(
+                registration_candidate_id=candidate.id,
+                file_path=file_path,
+                file_name=new_filename,
+                mime_type=file.content_type or "image/jpeg",
+                checksum=checksum,
+            )
+            session.add(db_photo)
+            await session.commit()
+
+            successful += 1
+
+        except Exception as e:
+            logger.error(f"Unexpected error processing photo {filename}: {e}", exc_info=True)
+            errors.append(
+                PhotoBulkUploadError(
+                    filename=filename,
+                    registration_number=None,
+                    index_number=None,
+                    error_message=f"Unexpected error: {str(e)}",
+                )
+            )
+            failed += 1
+            continue
+
+    return PhotoBulkUploadResponse(
+        total=total,
+        successful=successful,
+        failed=failed,
+        skipped=skipped,
+        errors=errors,
+    )
+
+
+@router.get("/candidates/photos/album", response_model=PhotoAlbumResponse)
+async def get_photo_album(
+    session: DBSessionDep,
+    current_user: SchoolUserWithSchoolDep,
+    page: int = Query(1, ge=1),
+    page_size: int = Query(20, ge=1, le=10000),
+    exam_id: int | None = Query(None, description="Filter by exam ID"),
+    programme_id: int | None = Query(None, description="Filter by programme ID"),
+    has_photo: bool | None = Query(None, description="Filter by presence of photo"),
+) -> PhotoAlbumResponse:
+    """Get photo album with pagination and filtering."""
+    if current_user.school_id is None:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="User must be associated with a school",
+        )
+
+    offset = (page - 1) * page_size
+
+    # Build base query for candidates
+    base_stmt = select(RegistrationCandidate, School)
+    base_stmt = base_stmt.join(School, RegistrationCandidate.school_id == School.id)
+    base_stmt = base_stmt.where(RegistrationCandidate.school_id == current_user.school_id)
+
+    # Apply filters
+    if exam_id is not None:
+        base_stmt = base_stmt.where(RegistrationCandidate.registration_exam_id == exam_id)
+
+    if programme_id is not None:
+        base_stmt = base_stmt.where(RegistrationCandidate.programme_id == programme_id)
+
+    # Get total count
+    count_stmt = select(func.count(func.distinct(RegistrationCandidate.id)))
+    count_stmt = count_stmt.where(RegistrationCandidate.school_id == current_user.school_id)
+    if exam_id is not None:
+        count_stmt = count_stmt.where(RegistrationCandidate.registration_exam_id == exam_id)
+    if programme_id is not None:
+        count_stmt = count_stmt.where(RegistrationCandidate.programme_id == programme_id)
+    count_result = await session.execute(count_stmt)
+    total = count_result.scalar() or 0
+
+    # If has_photo filter is applied, we need to filter candidates
+    if has_photo is not None:
+        # Get all candidate IDs matching other filters
+        all_candidates_stmt = select(RegistrationCandidate.id)
+        all_candidates_stmt = all_candidates_stmt.where(RegistrationCandidate.school_id == current_user.school_id)
+        if exam_id is not None:
+            all_candidates_stmt = all_candidates_stmt.where(RegistrationCandidate.registration_exam_id == exam_id)
+        if programme_id is not None:
+            all_candidates_stmt = all_candidates_stmt.where(RegistrationCandidate.programme_id == programme_id)
+
+        all_candidates_result = await session.execute(all_candidates_stmt)
+        all_candidate_ids = [row[0] for row in all_candidates_result.all()]
+
+        # Filter by photo presence
+        if has_photo:
+            # Get candidates with photos
+            photos_stmt = select(RegistrationCandidatePhoto.registration_candidate_id)
+            if all_candidate_ids:
+                photos_stmt = photos_stmt.where(RegistrationCandidatePhoto.registration_candidate_id.in_(all_candidate_ids))
+            photos_result = await session.execute(photos_stmt)
+            candidate_ids_with_photos = {row[0] for row in photos_result.all()}
+            filtered_candidate_ids = [cid for cid in all_candidate_ids if cid in candidate_ids_with_photos]
+        else:
+            # Get candidates without photos
+            photos_stmt = select(RegistrationCandidatePhoto.registration_candidate_id)
+            if all_candidate_ids:
+                photos_stmt = photos_stmt.where(RegistrationCandidatePhoto.registration_candidate_id.in_(all_candidate_ids))
+            photos_result = await session.execute(photos_stmt)
+            candidate_ids_with_photos = {row[0] for row in photos_result.all()}
+            filtered_candidate_ids = [cid for cid in all_candidate_ids if cid not in candidate_ids_with_photos]
+
+        # Update total and base query
+        total = len(filtered_candidate_ids)
+        if not filtered_candidate_ids:
+            return PhotoAlbumResponse(
+                items=[],
+                total=0,
+                page=page,
+                page_size=page_size,
+                total_pages=0,
+            )
+
+        base_stmt = base_stmt.where(RegistrationCandidate.id.in_(filtered_candidate_ids))
+
+    # Get candidates
+    stmt = base_stmt.offset(offset).limit(page_size).order_by(RegistrationCandidate.registration_number)
+    result = await session.execute(stmt)
+    candidate_school_pairs = result.all()
+
+    # Build response items
+    items: list[PhotoAlbumItem] = []
+    for candidate, school in candidate_school_pairs:
+        # Get photo for this candidate
+        photo_stmt = select(RegistrationCandidatePhoto).where(
+            RegistrationCandidatePhoto.registration_candidate_id == candidate.id
+        )
+        photo_result = await session.execute(photo_stmt)
+        photo = photo_result.scalar_one_or_none()
+
+        photo_response = RegistrationCandidatePhotoResponse.model_validate(photo) if photo else None
+
+        items.append(
+            PhotoAlbumItem(
+                candidate_id=candidate.id,
+                candidate_name=candidate.name,
+                registration_number=candidate.registration_number,
+                index_number=candidate.index_number,
+                school_id=school.id if school else None,
+                school_name=school.name if school else None,
+                school_code=school.code if school else None,
+                photo=photo_response,
+            )
+        )
+
+    total_pages = (total + page_size - 1) // page_size if total > 0 else 0
+
+    return PhotoAlbumResponse(
+        items=items,
+        total=total,
+        page=page,
+        page_size=page_size,
+        total_pages=total_pages,
+    )

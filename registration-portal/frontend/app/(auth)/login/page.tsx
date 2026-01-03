@@ -1,18 +1,32 @@
 "use client";
 
 import { useEffect } from "react";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import { LoginForm } from "@/components/auth/LoginForm";
-import { isAuthenticated } from "@/lib/auth";
+import { isAuthenticated } from "@/lib/api";
+import { toast } from "sonner";
 
 export default function LoginPage() {
   const router = useRouter();
+  const searchParams = useSearchParams();
 
   useEffect(() => {
+    // Check if user was redirected due to token expiration
+    const expired = searchParams.get("expired");
+    if (expired === "true") {
+      toast.error("Your session has expired. Please log in again.");
+      // Remove the expired parameter from URL
+      const newSearchParams = new URLSearchParams(window.location.search);
+      newSearchParams.delete("expired");
+      const newUrl = window.location.pathname + (newSearchParams.toString() ? `?${newSearchParams.toString()}` : "");
+      window.history.replaceState({}, "", newUrl);
+    }
+
+    // If already authenticated, redirect to dashboard
     if (isAuthenticated()) {
       router.push("/dashboard");
     }
-  }, [router]);
+  }, [router, searchParams]);
 
   return (
     <div className="flex min-h-screen items-center justify-center bg-gray-50">
