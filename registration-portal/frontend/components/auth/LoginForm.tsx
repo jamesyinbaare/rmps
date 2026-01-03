@@ -5,7 +5,7 @@ import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { login } from "@/lib/api";
+import { login, getCurrentUser } from "@/lib/api";
 import { toast } from "sonner";
 
 export function LoginForm() {
@@ -21,7 +21,16 @@ export function LoginForm() {
     try {
       await login(email, password);
       toast.success("Login successful");
-      router.push("/dashboard");
+
+      // Get user info to determine redirect destination
+      const user = await getCurrentUser();
+
+      // Redirect school users (SCHOOL_ADMIN and SCHOOL_USER) to their school dashboard
+      if ((user.user_type === "SCHOOL_ADMIN" || user.user_type === "SCHOOL_USER") && user.school_id) {
+        router.push("/dashboard/my-school");
+      } else {
+        router.push("/dashboard");
+      }
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "Login failed");
     } finally {
