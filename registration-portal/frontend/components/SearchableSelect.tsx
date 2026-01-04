@@ -4,14 +4,7 @@ import * as React from "react";
 import { Check, ChevronsUpDown, X } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
-import {
-  Command,
-  CommandEmpty,
-  CommandGroup,
-  CommandInput,
-  CommandItem,
-  CommandList,
-} from "@/components/ui/command";
+import { Input } from "@/components/ui/input";
 import {
   Popover,
   PopoverContent,
@@ -45,10 +38,21 @@ export function SearchableSelect({
   searchPlaceholder = "Search...",
 }: SearchableSelectProps) {
   const [open, setOpen] = React.useState(false);
+  const [search, setSearch] = React.useState("");
   const [buttonRef, setButtonRef] = React.useState<HTMLButtonElement | null>(null);
   const [displayText, setDisplayText] = React.useState<string>("");
 
   const selectedOption = options.find((option) => option.value === value);
+
+  // Filter options based on search
+  const filteredOptions = React.useMemo(() => {
+    if (!search) return options;
+    const searchLower = search.toLowerCase();
+    return options.filter((option) =>
+      option.label.toLowerCase().includes(searchLower) ||
+      option.value.toLowerCase().includes(searchLower)
+    );
+  }, [options, search]);
 
   // Truncate text to fit button width
   React.useEffect(() => {
@@ -121,12 +125,18 @@ export function SearchableSelect({
     };
   }, [buttonRef, selectedOption]);
 
+  const handleSelect = React.useCallback((selectedValue: string) => {
+    onValueChange(selectedValue);
+    setOpen(false);
+    setSearch("");
+  }, [onValueChange]);
+
   const handleClear = React.useCallback((e: React.MouseEvent) => {
     e.stopPropagation();
     e.preventDefault();
     e.nativeEvent.stopImmediatePropagation();
     onValueChange(undefined);
-    setOpen(false);
+    setSearch("");
   }, [onValueChange]);
 
   // Prevent popover from opening when disabled or no options
@@ -136,6 +146,10 @@ export function SearchableSelect({
       return;
     }
     setOpen(newOpen);
+    if (!newOpen) {
+      // Clear search when closing
+      setSearch("");
+    }
   }, [disabled, options.length]);
 
   return (
@@ -187,46 +201,47 @@ export function SearchableSelect({
         </Button>
       </PopoverTrigger>
       <PopoverContent className="w-[var(--radix-popover-trigger-width)] p-0" align="start">
-        <Command shouldFilter={true}>
-          <CommandInput placeholder={searchPlaceholder} />
-          <CommandList>
-            <CommandEmpty>{emptyMessage}</CommandEmpty>
-            <CommandGroup>
-              {options.map((option) => {
-                const searchValue = `${option.label} ${option.value}`;
-                const isSelected = value === option.value;
-                const handleItemSelect = () => {
-                  // Toggle selection or select new value
-                  const newValue = isSelected ? undefined : option.value;
-                  onValueChange(newValue);
-                  // Close the popover
-                  setOpen(false);
-                };
-                return (
-                  <CommandItem
-                    key={option.value}
-                    value={searchValue}
-                    onSelect={handleItemSelect}
-                    onClick={(e) => {
-                      // Handle click events directly to ensure selection works
-                      e.preventDefault();
-                      e.stopPropagation();
-                      handleItemSelect();
-                    }}
-                  >
-                    <Check
-                      className={cn(
-                        "mr-2 h-4 w-4",
-                        isSelected ? "opacity-100" : "opacity-0"
-                      )}
-                    />
-                    {option.label}
-                  </CommandItem>
-                );
-              })}
-            </CommandGroup>
-          </CommandList>
-        </Command>
+        <div className="p-2">
+          <Input
+            placeholder={searchPlaceholder}
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            className="h-9"
+            onKeyDown={(e) => {
+              // Prevent closing popover when typing
+              e.stopPropagation();
+            }}
+          />
+        </div>
+        <div className="max-h-[300px] overflow-auto">
+          {filteredOptions.length === 0 ? (
+            <div className="px-2 py-1.5 text-sm text-muted-foreground text-center">
+              {emptyMessage}
+            </div>
+          ) : (
+            filteredOptions.map((option) => {
+              const isSelected = value === option.value;
+              return (
+                <div
+                  key={option.value}
+                  className={cn(
+                    "relative flex cursor-pointer select-none items-center rounded-sm px-2 py-1.5 text-sm outline-none hover:bg-accent hover:text-accent-foreground",
+                    isSelected && "bg-accent text-accent-foreground"
+                  )}
+                  onClick={() => handleSelect(option.value)}
+                >
+                  <Check
+                    className={cn(
+                      "mr-2 h-4 w-4 shrink-0",
+                      isSelected ? "opacity-100" : "opacity-0"
+                    )}
+                  />
+                  <span className="truncate">{option.label}</span>
+                </div>
+              );
+            })
+          )}
+        </div>
       </PopoverContent>
     </Popover>
   );

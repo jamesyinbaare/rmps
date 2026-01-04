@@ -4,7 +4,7 @@ import { Toaster } from "sonner";
 import { ThemeProvider } from "@/components/ctvet/ThemeProvider";
 
 export const metadata: Metadata = {
-  title: "Examination Registration Portal",
+  title: "CTVET Online Services",
   description: "Register for examinations",
 };
 

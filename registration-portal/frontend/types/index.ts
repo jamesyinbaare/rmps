@@ -23,6 +23,7 @@ export interface School {
   code: string;
   name: string;
   is_active?: boolean;
+  is_private_examination_center?: boolean;
   created_at?: string;
   updated_at?: string;
   admin_count?: number;
@@ -31,6 +32,7 @@ export interface School {
 
 export interface SchoolDetail extends School {
   is_active: boolean;
+  is_private_examination_center: boolean;
   created_at: string;
   updated_at: string;
 }
@@ -72,6 +74,7 @@ export interface CandidateListResponse {
 
 export interface RegistrationSubjectSelection {
   id: number;
+  subject_id: number | null;
   subject_code: string;
   subject_name: string;
   series: number | null;
@@ -89,11 +92,12 @@ export interface RegistrationCandidate {
   date_of_birth: string | null;
   gender: string | null;
   programme_code: string | null;
+  programme_id: number | null;
   contact_email: string | null;
   contact_phone: string | null;
   address: string | null;
   national_id: string | null;
-  registration_status: "PENDING" | "APPROVED" | "REJECTED";
+  registration_status: "PENDING" | "APPROVED" | "REJECTED" | "DRAFT";
   registration_date: string;
   created_at: string;
   updated_at: string;

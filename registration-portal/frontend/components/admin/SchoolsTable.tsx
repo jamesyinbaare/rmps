@@ -91,6 +91,7 @@ export function SchoolsTable({
               <TableHead>Code</TableHead>
               <TableHead>Name</TableHead>
               <TableHead>Status</TableHead>
+              <TableHead>Examination Center</TableHead>
               <TableHead className="text-right">Coordinator Count</TableHead>
               <TableHead className="text-right">Candidate Count</TableHead>
               <TableHead className="text-right">Actions</TableHead>
@@ -99,13 +100,13 @@ export function SchoolsTable({
           <TableBody>
             {loading ? (
               <TableRow>
-                <TableCell colSpan={6} className="text-center py-8 text-muted-foreground">
+                <TableCell colSpan={7} className="text-center py-8 text-muted-foreground">
                   Loading...
                 </TableCell>
               </TableRow>
             ) : data.items.length === 0 ? (
               <TableRow>
-                <TableCell colSpan={6} className="text-center py-8 text-muted-foreground">
+                <TableCell colSpan={7} className="text-center py-8 text-muted-foreground">
                   No schools found
                 </TableCell>
               </TableRow>
@@ -129,6 +130,17 @@ export function SchoolsTable({
                       }`}
                     >
                       {school.is_active ? "Active" : "Inactive"}
+                    </span>
+                  </TableCell>
+                  <TableCell>
+                    <span
+                      className={`inline-flex items-center rounded-full px-2 py-1 text-xs font-medium ${
+                        school.is_private_examination_center
+                          ? "bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-200"
+                          : "bg-muted text-muted-foreground"
+                      }`}
+                    >
+                      {school.is_private_examination_center ? "Yes" : "No"}
                     </span>
                   </TableCell>
                   <TableCell className="text-right">

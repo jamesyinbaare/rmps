@@ -3,11 +3,11 @@
 import { useEffect, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { LoginForm } from "@/components/auth/LoginForm";
-import { isAuthenticated, getCurrentUser, logout } from "@/lib/api";
+import { isAuthenticated, getCurrentUser } from "@/lib/api";
 import { toast } from "sonner";
 import { Navbar } from "@/components/layout/Navbar";
 
-export default function LoginPage() {
+export default function PrivateLoginPage() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const [checking, setChecking] = useState(true);
@@ -29,14 +29,20 @@ export default function LoginPage() {
       if (isAuthenticated()) {
         try {
           const user = await getCurrentUser();
-          // Prevent PRIVATE_USER from accessing staff login - log them out immediately
-          if (user.user_type === "PRIVATE_USER") {
-            await logout();
-            toast.error("Access to this page is restricted");
+          // Prevent SYSTEM_ADMIN, SCHOOL_ADMIN (coordinator), and SCHOOL_USER from accessing private portal
+          if (
+            user.user_type === "SYSTEM_ADMIN" ||
+            user.user_type === "SCHOOL_ADMIN" ||
+            user.user_type === "SCHOOL_USER"
+          ) {
+            toast.error("This portal is only accessible to private candidates.");
+            router.push("/dashboard");
             return;
           }
-          // Redirect other user types to their appropriate dashboards
-          router.push("/dashboard");
+          // Only PRIVATE_USER can access
+          if (user.user_type === "PRIVATE_USER") {
+            router.push("/dashboard/private");
+          }
         } catch (error) {
           // If we can't get user, just stay on login page
           console.error("Failed to get user:", error);
@@ -65,25 +71,36 @@ export default function LoginPage() {
       <div className="flex flex-1 items-center justify-center bg-gray-50">
         <div className="w-full max-w-md space-y-8 rounded-lg bg-white p-8 shadow-md">
           <div className="text-center">
-            <h1 className="text-3xl font-bold">CTVET Online Services</h1>
-            <p className="mt-2 text-gray-600">Staff Dashboard</p>
+            <h1 className="text-3xl font-bold">Private Candidate Portal</h1>
+            <p className="mt-2 text-gray-600">Login to access your registration dashboard</p>
           </div>
           <LoginForm
-            onLoginSuccess={async (user) => {
-              // Prevent PRIVATE_USER from logging in through staff login - log them out immediately
-              if (user.user_type === "PRIVATE_USER") {
-                await logout();
-                toast.error("Access to this page is restricted");
-                return false; // Suppress success message
-              }
-              // Redirect other user types to their appropriate dashboards
-              if ((user.user_type === "SCHOOL_ADMIN" || user.user_type === "SCHOOL_USER") && user.school_id) {
-                router.push("/dashboard/my-school");
-              } else {
+            onLoginSuccess={(user) => {
+              // Prevent SYSTEM_ADMIN, SCHOOL_ADMIN (coordinator), and SCHOOL_USER from accessing private portal
+              if (
+                user.user_type === "SYSTEM_ADMIN" ||
+                user.user_type === "SCHOOL_ADMIN" ||
+                user.user_type === "SCHOOL_USER"
+              ) {
+                toast.error("This portal is only accessible to private candidates. Please use the appropriate login page for your account type.");
+                // Redirect to main dashboard
                 router.push("/dashboard");
+                return;
+              }
+              // Only PRIVATE_USER can access
+              if (user.user_type === "PRIVATE_USER") {
+                router.push("/dashboard/private");
               }
             }}
           />
+          <div className="text-center text-sm">
+            <p className="text-muted-foreground">
+              Don't have an account?{" "}
+              <a href="/register-private-account" className="text-primary hover:underline">
+                Create one here
+              </a>
+            </p>
+          </div>
         </div>
       </div>
     </div>
