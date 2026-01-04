@@ -2,6 +2,7 @@ from datetime import datetime, timedelta
 
 from fastapi import APIRouter, HTTPException, status
 from sqlalchemy import select
+from sqlalchemy.orm import selectinload
 
 from app.config import settings
 from app.core.cache import get_cached_user_by_email, invalidate_user_cache, set_cached_user
@@ -15,8 +16,21 @@ from app.core.security import (
 )
 from app.dependencies.auth import CurrentUserDep, SystemAdminDep
 from app.dependencies.database import DBSessionDep
-from app.models import PortalUser, PortalUserType, RefreshToken
+from app.models import (
+    PortalUser,
+    PortalUserType,
+    RefreshToken,
+    RegistrationExam,
+    ExamRegistrationPeriod,
+    RegistrationCandidate,
+    RegistrationStatus,
+    School,
+    Subject,
+    RegistrationSubjectSelection,
+)
 from app.schemas.auth import (
+    PrivateUserRegistrationRequest,
+    PrivateUserRegistrationResponse,
     RefreshTokenRequest,
     Token,
     TokenRefreshResponse,
@@ -25,6 +39,14 @@ from app.schemas.auth import (
     UserResponse,
     UserPasswordChange,
     UserSelfUpdate,
+)
+from app.schemas.registration import RegistrationCandidateResponse
+from app.utils.registration import generate_unique_registration_number
+from app.services.subject_selection import (
+    auto_select_subjects_for_programme,
+    validate_subject_selections,
+    get_programme_subjects_for_registration,
+    normalize_exam_series,
 )
 
 router = APIRouter(prefix="/api/v1/auth", tags=["authentication"])
@@ -137,6 +159,244 @@ async def register(user_data: UserCreate, session: DBSessionDep) -> UserResponse
     set_cached_user(new_user)
 
     return UserResponse.model_validate(new_user)
+
+
+@router.post("/register-private", response_model=PrivateUserRegistrationResponse, status_code=status.HTTP_201_CREATED)
+async def register_private_user(
+    registration_data: PrivateUserRegistrationRequest, session: DBSessionDep
+) -> PrivateUserRegistrationResponse:
+    """Dedicated endpoint for private user registration with exam and candidate data."""
+    # Check if user already exists
+    stmt = select(PortalUser).where(PortalUser.email == registration_data.email)
+    result = await session.execute(stmt)
+    existing_user = result.scalar_one_or_none()
+
+    if existing_user:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Email already registered",
+        )
+
+    # Validate password length
+    if len(registration_data.password) < settings.password_min_length:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Password must be at least {settings.password_min_length} characters long",
+        )
+
+    # Validate exam exists and registration is open for private candidates
+    exam_stmt = (
+        select(RegistrationExam)
+        .join(ExamRegistrationPeriod, RegistrationExam.registration_period_id == ExamRegistrationPeriod.id)
+        .where(RegistrationExam.id == registration_data.exam_id)
+        .options(selectinload(RegistrationExam.registration_period))
+    )
+    exam_result = await session.execute(exam_stmt)
+    exam = exam_result.scalar_one_or_none()
+
+    if not exam:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Exam not found")
+
+    now = datetime.utcnow()
+    if (
+        not exam.registration_period.is_active
+        or exam.registration_period.registration_start_date > now
+        or exam.registration_period.registration_end_date < now
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST, detail="Registration period is not open"
+        )
+
+    if not exam.registration_period.allows_private_registration:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="This exam does not allow private candidate registration",
+        )
+
+    # Validate school is a private examination center
+    school_stmt = select(School).where(
+        School.id == registration_data.school_id,
+        School.is_active == True,
+        School.is_private_examination_center == True,
+    )
+    school_result = await session.execute(school_stmt)
+    school = school_result.scalar_one_or_none()
+
+    if not school:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Selected school is not available as an examination center for private candidates",
+        )
+
+    # Validate programme if provided
+    programme_id = registration_data.programme_id
+    if programme_id:
+        from app.models import Programme
+
+        programme_stmt = select(Programme).where(Programme.id == programme_id)
+        programme_result = await session.execute(programme_stmt)
+        programme = programme_result.scalar_one_or_none()
+        if not programme:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Programme not found")
+
+    # Validate subject selection
+    if not programme_id and not registration_data.subject_ids:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="At least one subject must be selected when no programme is selected",
+        )
+
+    # Create user account
+    hashed_password = get_password_hash(registration_data.password)
+    new_user = PortalUser(
+        email=registration_data.email,
+        hashed_password=hashed_password,
+        full_name=registration_data.full_name,
+        user_type=PortalUserType.PRIVATE_USER,
+        is_active=True,
+    )
+    session.add(new_user)
+    await session.flush()
+
+    # Generate unique registration number
+    registration_number = await generate_unique_registration_number(session, registration_data.exam_id)
+
+    # Create registration candidate
+    new_candidate = RegistrationCandidate(
+        registration_exam_id=registration_data.exam_id,
+        school_id=registration_data.school_id,
+        portal_user_id=new_user.id,
+        name=registration_data.name,
+        registration_number=registration_number,
+        date_of_birth=registration_data.date_of_birth,
+        gender=registration_data.gender,
+        programme_id=programme_id,
+        contact_email=registration_data.contact_email,
+        contact_phone=registration_data.contact_phone,
+        address=registration_data.address,
+        national_id=registration_data.national_id,
+        registration_status=RegistrationStatus.PENDING,
+    )
+    session.add(new_candidate)
+    await session.flush()
+
+    # Handle subject selections
+    selected_subject_ids: list[int] = []
+
+    if programme_id:
+        # Auto-select compulsory core subjects only (not optional core subjects)
+        auto_selected = await auto_select_subjects_for_programme(session, programme_id, None)
+        selected_subject_ids.extend(auto_selected)
+
+        # For MAY/JUNE: Auto-select ALL elective subjects (they are compulsory)
+        normalized_series = normalize_exam_series(exam.exam_series)
+        is_may_june = normalized_series == "MAY/JUNE"
+        if is_may_june:
+            subjects_info = await get_programme_subjects_for_registration(session, programme_id)
+            selected_subject_ids.extend(subjects_info["electives"])
+
+    # Add user-selected subjects (including optional core subjects or manual selections)
+    if registration_data.subject_ids:
+        selected_subject_ids.extend(registration_data.subject_ids)
+
+    # Remove duplicates
+    selected_subject_ids = list(set(selected_subject_ids))
+
+    # Validate subject selections if programme is provided
+    if programme_id and selected_subject_ids:
+        is_valid, validation_errors = await validate_subject_selections(
+            session, programme_id, selected_subject_ids, exam.exam_series
+        )
+        if not is_valid:
+            await session.rollback()
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Subject selections do not meet programme requirements: {'; '.join(validation_errors)}",
+            )
+
+    # Create subject selections
+    for subject_id in selected_subject_ids:
+        subject_stmt = select(Subject).where(Subject.id == subject_id)
+        subject_result = await session.execute(subject_stmt)
+        subject = subject_result.scalar_one_or_none()
+        if not subject:
+            continue
+
+        subject_selection = RegistrationSubjectSelection(
+            registration_candidate_id=new_candidate.id,
+            subject_id=subject_id,
+            subject_code=subject.code,
+            subject_name=subject.name,
+        )
+        session.add(subject_selection)
+
+    await session.flush()
+
+    # Create authentication tokens
+    access_token_expires = timedelta(minutes=settings.access_token_expire_minutes)
+    access_token = create_access_token(
+        data={"sub": str(new_user.id), "email": new_user.email}, expires_delta=access_token_expires
+    )
+
+    refresh_token_plain = create_refresh_token()
+    refresh_token_hashed = hash_refresh_token(refresh_token_plain)
+    refresh_token_expires = datetime.utcnow() + timedelta(days=settings.refresh_token_expire_days)
+
+    refresh_token_db = RefreshToken(
+        user_id=new_user.id,
+        token=refresh_token_hashed,
+        expires_at=refresh_token_expires,
+    )
+    session.add(refresh_token_db)
+
+    await session.commit()
+    await session.refresh(new_candidate, ["subject_selections"])
+
+    # Cache the new user
+    set_cached_user(new_user)
+
+    # Build response
+    candidate_dict = {
+        "id": new_candidate.id,
+        "registration_exam_id": new_candidate.registration_exam_id,
+        "school_id": new_candidate.school_id,
+        "name": new_candidate.name,
+        "registration_number": new_candidate.registration_number,
+        "index_number": new_candidate.index_number,
+        "date_of_birth": new_candidate.date_of_birth,
+        "gender": new_candidate.gender,
+        "programme_code": None,
+        "programme_id": new_candidate.programme_id,
+        "contact_email": new_candidate.contact_email,
+        "contact_phone": new_candidate.contact_phone,
+        "address": new_candidate.address,
+        "national_id": new_candidate.national_id,
+        "registration_status": new_candidate.registration_status,
+        "registration_date": new_candidate.registration_date,
+        "subject_selections": [
+            {
+                "id": sel.id,
+                "subject_id": sel.subject_id,
+                "subject_code": sel.subject_code,
+                "subject_name": sel.subject_name,
+                "series": sel.series,
+                "created_at": sel.created_at,
+            }
+            for sel in (new_candidate.subject_selections or [])
+        ],
+        "created_at": new_candidate.created_at,
+        "updated_at": new_candidate.updated_at,
+    }
+
+    return PrivateUserRegistrationResponse(
+        user=UserResponse.model_validate(new_user),
+        registration=candidate_dict,
+        token=Token(
+            access_token=access_token,
+            refresh_token=refresh_token_plain,
+            token_type="bearer",
+        ),
+    )
 
 
 @router.get("/me", response_model=UserResponse, status_code=status.HTTP_200_OK)

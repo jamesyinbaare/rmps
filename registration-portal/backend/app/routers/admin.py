@@ -255,6 +255,7 @@ async def list_schools(
             "code": school.code,
             "name": school.name,
             "is_active": school.is_active,
+            "is_private_examination_center": school.is_private_examination_center,
             "admin_count": counts["admin_count"],
             "candidate_count": counts["candidate_count"],
         }
@@ -302,6 +303,7 @@ async def create_school(
         code=school_data.code,
         name=school_data.name,
         is_active=True,
+        is_private_examination_center=school_data.is_private_examination_center,
     )
 
     session.add(new_school)
@@ -437,10 +439,17 @@ async def bulk_upload_schools(
                 # Note: We continue to create the school even if some programme codes are invalid
 
             # Create school
+            # Check for is_private_examination_center in CSV (optional field)
+            is_private_exam_center = False
+            if 'is_private_examination_center' in row:
+                exam_center_value = str(row.get('is_private_examination_center', '')).strip().lower()
+                is_private_exam_center = exam_center_value in ('true', '1', 'yes', 'y')
+
             new_school = School(
                 code=code,
                 name=name,
                 is_active=True,
+                is_private_examination_center=is_private_exam_center,
             )
             session.add(new_school)
             await session.flush()  # Flush to get ID but don't commit yet
@@ -726,6 +735,8 @@ async def update_school(
         school.name = school_update.name
     if school_update.is_active is not None:
         school.is_active = school_update.is_active
+    if school_update.is_private_examination_center is not None:
+        school.is_private_examination_center = school_update.is_private_examination_center
 
     await session.commit()
     await session.refresh(school)
