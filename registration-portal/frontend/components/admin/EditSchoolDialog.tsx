@@ -4,6 +4,7 @@ import { useState, useEffect } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Checkbox } from "@/components/ui/checkbox";
 import {
   Dialog,
   DialogContent,
@@ -31,12 +32,14 @@ export function EditSchoolDialog({
 }: EditSchoolDialogProps) {
   const [name, setName] = useState("");
   const [isActive, setIsActive] = useState(true);
+  const [isPrivateExaminationCenter, setIsPrivateExaminationCenter] = useState(false);
   const [loading, setLoading] = useState(false);
 
   useEffect(() => {
     if (school) {
       setName(school.name);
       setIsActive(school.is_active);
+      setIsPrivateExaminationCenter(school.is_private_examination_center ?? false);
     }
   }, [school, open]);
 
@@ -51,6 +54,7 @@ export function EditSchoolDialog({
       await updateSchool(school.id, {
         name,
         is_active: isActive,
+        is_private_examination_center: isPrivateExaminationCenter,
       });
       toast.success("School updated successfully");
       onSuccess();
@@ -90,19 +94,35 @@ export function EditSchoolDialog({
               />
             </div>
             <div className="space-y-2">
-              <Label htmlFor="isActive" className="flex items-center gap-2">
-                <input
+              <div className="flex items-center space-x-2">
+                <Checkbox
                   id="isActive"
-                  type="checkbox"
                   checked={isActive}
-                  onChange={(e) => setIsActive(e.target.checked)}
+                  onCheckedChange={(checked) => setIsActive(checked === true)}
                   disabled={loading}
-                  className="rounded border-gray-300"
                 />
-                Active
-              </Label>
+                <Label htmlFor="isActive" className="font-normal cursor-pointer">
+                  Active
+                </Label>
+              </div>
               <p className="text-xs text-muted-foreground">
                 Inactive schools cannot register candidates
+              </p>
+            </div>
+            <div className="space-y-2">
+              <div className="flex items-center space-x-2">
+                <Checkbox
+                  id="isPrivateExaminationCenter"
+                  checked={isPrivateExaminationCenter}
+                  onCheckedChange={(checked) => setIsPrivateExaminationCenter(checked === true)}
+                  disabled={loading}
+                />
+                <Label htmlFor="isPrivateExaminationCenter" className="font-normal cursor-pointer">
+                  Private Examination Center
+                </Label>
+              </div>
+              <p className="text-xs text-muted-foreground">
+                Allow this school to serve as an examination center for private candidates
               </p>
             </div>
           </div>

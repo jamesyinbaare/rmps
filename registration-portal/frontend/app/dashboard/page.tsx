@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { useRouter } from "next/navigation";
 import { getCurrentUser } from "@/lib/api";
 import type { User } from "@/types";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -10,12 +11,19 @@ import { Button } from "@/components/ui/button";
 
 export default function DashboardPage() {
   const [user, setUser] = useState<User | null>(null);
+  const router = useRouter();
 
   useEffect(() => {
     getCurrentUser()
-      .then(setUser)
+      .then((userData) => {
+        setUser(userData);
+        // Redirect private users to their dashboard
+        if (userData.user_type === "PRIVATE_USER") {
+          router.push("/dashboard/private");
+        }
+      })
       .catch(console.error);
-  }, []);
+  }, [router]);
 
   return (
     <div className="space-y-6">

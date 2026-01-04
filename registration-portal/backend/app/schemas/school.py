@@ -25,6 +25,7 @@ class SchoolCreate(BaseModel):
 
     code: str = Field(..., min_length=1, max_length=6)
     name: str = Field(..., min_length=1, max_length=255)
+    is_private_examination_center: bool = Field(default=False, description="Whether this school is available as an examination center for private candidates")
 
 
 class SchoolUpdate(BaseModel):
@@ -32,6 +33,7 @@ class SchoolUpdate(BaseModel):
 
     name: str | None = Field(None, min_length=1, max_length=255)
     is_active: bool | None = None
+    is_private_examination_center: bool | None = Field(None, description="Whether this school is available as an examination center for private candidates")
 
 
 class SchoolResponse(BaseModel):
@@ -41,6 +43,7 @@ class SchoolResponse(BaseModel):
     code: str
     name: str
     is_active: bool
+    is_private_examination_center: bool
     admin_count: int | None = None
     candidate_count: int | None = None
 

@@ -6,9 +6,14 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { login, getCurrentUser } from "@/lib/api";
+import type { User } from "@/types";
 import { toast } from "sonner";
 
-export function LoginForm() {
+interface LoginFormProps {
+  onLoginSuccess?: (user: User) => Promise<boolean | void> | boolean | void; // Return false to suppress success message
+}
+
+export function LoginForm({ onLoginSuccess }: LoginFormProps = {}) {
   const router = useRouter();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -20,13 +25,27 @@ export function LoginForm() {
 
     try {
       await login(email, password);
-      toast.success("Login successful");
 
       // Get user info to determine redirect destination
       const user = await getCurrentUser();
 
-      // Redirect school users (SCHOOL_ADMIN and SCHOOL_USER) to their school dashboard
-      if ((user.user_type === "SCHOOL_ADMIN" || user.user_type === "SCHOOL_USER") && user.school_id) {
+      // If custom handler provided, use it
+      if (onLoginSuccess) {
+        const result = onLoginSuccess(user);
+        const shouldShowSuccess = result instanceof Promise ? await result : result;
+        // Only show success message if handler returns true or undefined (not false)
+        if (shouldShowSuccess !== false) {
+          toast.success("Login successful");
+        }
+        setLoading(false);
+        return;
+      }
+
+      // Default redirect logic
+      toast.success("Login successful");
+      if (user.user_type === "PRIVATE_USER") {
+        router.push("/dashboard/private");
+      } else if ((user.user_type === "SCHOOL_ADMIN" || user.user_type === "SCHOOL_USER") && user.school_id) {
         router.push("/dashboard/my-school");
       } else {
         router.push("/dashboard");

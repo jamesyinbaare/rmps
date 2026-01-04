@@ -27,3 +27,4 @@ sems/backend/sample_candidates_upload.csv
 sems/create_sample_upload.py
 sems/backend/app/add_test_unmatched_records.py
 sems/grading_boundary_setting.ipynb
+.vscode/

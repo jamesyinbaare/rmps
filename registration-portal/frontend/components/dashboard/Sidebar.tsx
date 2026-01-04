@@ -52,6 +52,12 @@ export function Sidebar() {
   const isSchoolUser = user?.user_type === "SCHOOL_ADMIN" || user?.user_type === "SCHOOL_USER";
   const isCoordinator = user?.user_type === "SCHOOL_ADMIN";
   const isSystemAdmin = user?.user_type === "SYSTEM_ADMIN";
+  const isPrivateUser = user?.user_type === "PRIVATE_USER";
+
+  // Private users have their own dashboard and shouldn't see this sidebar
+  if (isPrivateUser) {
+    return null;
+  }
 
   const schoolUserNavItems = [
     { href: "/dashboard/my-school", label: "My School", icon: Building2 },

@@ -1,4 +1,6 @@
-from datetime import datetime
+from __future__ import annotations
+
+from datetime import date, datetime
 from uuid import UUID
 
 from pydantic import BaseModel, EmailStr, Field, field_validator
@@ -85,3 +87,42 @@ class UserPasswordChange(BaseModel):
 
     current_password: str
     new_password: str
+
+
+class PrivateUserRegistrationRequest(BaseModel):
+    """Schema for private user registration with exam and candidate data."""
+
+    # Account fields
+    email: EmailStr
+    password: str
+    full_name: str = Field(..., min_length=1, max_length=255)
+
+    # Exam and examination center selection
+    exam_id: int = Field(..., description="The exam ID to register for")
+    school_id: int = Field(..., description="The examination center (school) ID")
+
+    # Bio data
+    name: str = Field(..., min_length=1, max_length=255, description="Candidate's full name")
+    date_of_birth: date | None = Field(None, description="Date of birth")
+    gender: str | None = Field(None, max_length=20, description="Gender")
+    contact_email: EmailStr | None = Field(None, description="Contact email address")
+    contact_phone: str | None = Field(None, max_length=50, description="Contact phone number")
+    address: str | None = Field(None, description="Address")
+    national_id: str | None = Field(None, max_length=50, description="National ID number")
+
+    # Programme (optional)
+    programme_id: int | None = Field(None, description="Programme ID (optional)")
+
+    # Subjects
+    subject_ids: list[int] = Field(default_factory=list, description="List of subject IDs to register for")
+
+
+class PrivateUserRegistrationResponse(BaseModel):
+    """Schema for private user registration response."""
+
+    user: UserResponse
+    registration: dict  # Will be RegistrationCandidateResponse, using dict to avoid circular import
+    token: Token
+
+    class Config:
+        from_attributes = True

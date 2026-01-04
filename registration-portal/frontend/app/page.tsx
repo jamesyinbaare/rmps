@@ -17,21 +17,21 @@ export default function Home() {
           <div className="container mx-auto px-4">
             <div className="mx-auto max-w-3xl text-center">
               <h1 className="mb-6 text-5xl font-bold text-foreground">
-                Examination Registration Portal
+                CTVET Online Services
               </h1>
               <p className="mb-8 text-xl text-muted-foreground">
                 Register for technical and vocational education examinations with ease.
                 Manage your registrations and stay updated on examination schedules.
               </p>
               <div className="flex justify-center gap-4">
-                <Link href="/login">
+                <Link href="/register-private-account">
                   <Button size="lg">
-                    Get Started
+                    Register Now
                   </Button>
                 </Link>
-                <Link href="/examinations">
+                <Link href="/results">
                   <Button variant="outline" size="lg">
-                    View Examinations
+                    View Results
                   </Button>
                 </Link>
               </div>
@@ -93,12 +93,17 @@ export default function Home() {
                 Create an account or log in to begin registering for examinations.
               </p>
               <div className="flex justify-center gap-4">
-                <Link href="/login">
-                  <Button size="lg">Login</Button>
+                <Link href="/register-private-account">
+                  <Button size="lg">Register for Exam</Button>
                 </Link>
-                <Link href="/register">
+                <Link href="/login">
                   <Button variant="outline" size="lg">
-                    Create Account
+                    Staff Login
+                  </Button>
+                </Link>
+                <Link href="/login/private">
+                  <Button variant="outline" size="lg">
+                    Candidate Login
                   </Button>
                 </Link>
               </div>
@@ -111,7 +116,7 @@ export default function Home() {
       <footer className="border-t bg-muted/50 py-8">
         <div className="container mx-auto px-4">
           <div className="text-center text-sm text-muted-foreground">
-            <p>© {new Date().getFullYear()} CTVET Registration Portal. All rights reserved.</p>
+            <p>© {new Date().getFullYear()} CTVET Online Services. All rights reserved.</p>
             <p className="mt-2">
               Commission for Technical and Vocational Education and Training
             </p>

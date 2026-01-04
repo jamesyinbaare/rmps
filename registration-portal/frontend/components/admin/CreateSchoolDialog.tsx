@@ -4,6 +4,7 @@ import { useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Checkbox } from "@/components/ui/checkbox";
 import {
   Dialog,
   DialogContent,
@@ -28,6 +29,7 @@ export function CreateSchoolDialog({
 }: CreateSchoolDialogProps) {
   const [code, setCode] = useState("");
   const [name, setName] = useState("");
+  const [isPrivateExaminationCenter, setIsPrivateExaminationCenter] = useState(false);
   const [loading, setLoading] = useState(false);
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -59,6 +61,7 @@ export function CreateSchoolDialog({
       await createSchool({
         code: code.trim().toUpperCase(),
         name: name.trim(),
+        is_private_examination_center: isPrivateExaminationCenter,
       });
       toast.success("School created successfully");
       onSuccess();
@@ -66,6 +69,7 @@ export function CreateSchoolDialog({
       // Reset form
       setCode("");
       setName("");
+      setIsPrivateExaminationCenter(false);
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "Failed to create school");
     } finally {
@@ -107,6 +111,22 @@ export function CreateSchoolDialog({
                 maxLength={255}
               />
               <p className="text-xs text-muted-foreground">Maximum 255 characters</p>
+            </div>
+            <div className="space-y-2">
+              <div className="flex items-center space-x-2">
+                <Checkbox
+                  id="isPrivateExaminationCenter"
+                  checked={isPrivateExaminationCenter}
+                  onCheckedChange={(checked) => setIsPrivateExaminationCenter(checked === true)}
+                  disabled={loading}
+                />
+                <Label htmlFor="isPrivateExaminationCenter" className="font-normal cursor-pointer">
+                  Private Examination Center
+                </Label>
+              </div>
+              <p className="text-xs text-muted-foreground">
+                Allow this school to serve as an examination center for private candidates
+              </p>
             </div>
           </div>
           <DialogFooter>
