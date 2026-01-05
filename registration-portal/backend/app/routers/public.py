@@ -1,10 +1,10 @@
 """Public endpoints (no authentication required)."""
 import logging
-from fastapi import APIRouter, HTTPException, status
+from fastapi import APIRouter, HTTPException, status, File, UploadFile, Form, Request, Query
 from fastapi.responses import StreamingResponse
 from sqlalchemy import select, and_, or_, func
 from sqlalchemy.orm import selectinload
-from datetime import datetime
+from datetime import datetime, timedelta
 
 from app.dependencies.database import DBSessionDep
 from app.services.photo_storage import PhotoStorageService
@@ -740,3 +740,544 @@ async def generate_results_pdf_endpoint(
         media_type="application/pdf",
         headers={"Content-Disposition": f'attachment; filename="{filename}"'},
     )
+
+
+# Certificate Request Endpoints
+
+@router.post("/certificate-requests", status_code=status.HTTP_201_CREATED)
+async def submit_certificate_request(
+    request_type: str = Form(...),
+    index_number: str = Form(...),
+    exam_year: int = Form(...),
+    examination_center_id: int = Form(...),
+    national_id_number: str = Form(...),
+    delivery_method: str = Form(...),
+    contact_phone: str = Form(...),
+    contact_email: str | None = Form(None),
+    courier_address_line1: str | None = Form(None),
+    courier_address_line2: str | None = Form(None),
+    courier_city: str | None = Form(None),
+    courier_region: str | None = Form(None),
+    courier_postal_code: str | None = Form(None),
+    photograph: UploadFile = File(...),
+    national_id_scan: UploadFile = File(...),
+    session: DBSessionDep = None,
+) -> dict:
+    """Submit a certificate or attestation request."""
+    from app.schemas.certificate import CertificateRequestResponse
+    from app.services.certificate_service import create_certificate_request
+    from app.services.certificate_file_storage import CertificateFileStorageService
+    from app.models import CertificateRequestType, DeliveryMethod
+    from app.config import settings
+
+    try:
+        # Validate file types
+        allowed_mime_types = ["image/jpeg", "image/png", "image/jpg"]
+        if photograph.content_type not in allowed_mime_types:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Photograph must be JPEG or PNG image",
+            )
+        if national_id_scan.content_type not in allowed_mime_types:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="National ID scan must be JPEG or PNG image",
+            )
+
+        # Validate file sizes
+        photo_content = await photograph.read()
+        id_scan_content = await national_id_scan.read()
+
+        max_file_size = 5 * 1024 * 1024  # 5MB
+        if len(photo_content) > max_file_size:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Photograph file size exceeds 5MB limit",
+            )
+        if len(id_scan_content) > max_file_size:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="National ID scan file size exceeds 5MB limit",
+            )
+
+        # Parse enums
+        try:
+            request_type_enum = CertificateRequestType(request_type.lower())
+            delivery_method_enum = DeliveryMethod(delivery_method.lower())
+        except ValueError as e:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Invalid request_type or delivery_method: {e}",
+            )
+
+        # Validate courier address if delivery method is courier
+        if delivery_method_enum == DeliveryMethod.COURIER:
+            if not courier_address_line1 or not contact_phone:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="Courier delivery requires address_line1 and contact_phone",
+                )
+
+        # Create request data dictionary
+        request_data = {
+            "request_type": request_type_enum,
+            "index_number": index_number,
+            "exam_year": exam_year,
+            "examination_center_id": examination_center_id,
+            "national_id_number": national_id_number,
+            "delivery_method": delivery_method_enum,
+            "contact_phone": contact_phone,
+            "contact_email": contact_email,
+            "courier_address_line1": courier_address_line1,
+            "courier_address_line2": courier_address_line2,
+            "courier_city": courier_city,
+            "courier_region": courier_region,
+            "courier_postal_code": courier_postal_code,
+        }
+
+        # Generate request number first (needed for file storage organization)
+        from app.services.certificate_service import generate_request_number
+        request_number = await generate_request_number(session)
+
+        # Create a temporary request ID by creating request first without files, then updating
+        # We'll use a placeholder path temporarily
+        from app.models import CertificateRequest, RequestStatus, Invoice
+        from app.services.invoice_service import generate_invoice_number, calculate_invoice_amount
+        from decimal import Decimal
+
+        # Create certificate request with placeholder paths
+        certificate_request = CertificateRequest(
+            request_type=request_type_enum,
+            request_number=request_number,
+            index_number=index_number,
+            exam_year=exam_year,
+            examination_center_id=examination_center_id,
+            national_id_number=national_id_number,
+            national_id_file_path="temp",  # Temporary placeholder
+            photograph_file_path="temp",  # Temporary placeholder
+            delivery_method=delivery_method_enum,
+            contact_phone=contact_phone,
+            contact_email=contact_email,
+            courier_address_line1=courier_address_line1,
+            courier_address_line2=courier_address_line2,
+            courier_city=courier_city,
+            courier_region=courier_region,
+            courier_postal_code=courier_postal_code,
+            status=RequestStatus.PENDING_PAYMENT,
+        )
+        session.add(certificate_request)
+        await session.flush()
+        await session.refresh(certificate_request)
+
+        # Save files now that we have request ID
+        file_storage = CertificateFileStorageService()
+        photo_path, _ = await file_storage.save_photo(
+            photo_content,
+            photograph.filename or "photo.jpg",
+            certificate_request.id,
+        )
+        id_scan_path, _ = await file_storage.save_id_scan(
+            id_scan_content,
+            national_id_scan.filename or "id_scan.jpg",
+            certificate_request.id,
+        )
+
+        # Update request with actual file paths
+        certificate_request.photograph_file_path = photo_path
+        certificate_request.national_id_file_path = id_scan_path
+
+        # Calculate and create invoice
+        amount = calculate_invoice_amount(request_type_enum, delivery_method_enum)
+        invoice_number = await generate_invoice_number(session)
+        invoice = Invoice(
+            invoice_number=invoice_number,
+            certificate_request_id=certificate_request.id,
+            amount=Decimal(str(amount)),
+            currency="GHS",
+            status="pending",
+            due_date=datetime.utcnow().date() + timedelta(days=7),
+        )
+        session.add(invoice)
+        await session.flush()
+        await session.refresh(invoice)
+        await session.commit()
+        await session.refresh(certificate_request)
+
+        # Query examination center separately to avoid lazy loading issues
+        from app.models import School
+        examination_center_stmt = select(School).where(School.id == certificate_request.examination_center_id)
+        examination_center_result = await session.execute(examination_center_stmt)
+        examination_center = examination_center_result.scalar_one_or_none()
+
+        response_data = CertificateRequestResponse.model_validate(certificate_request)
+        if examination_center:
+            response_data.examination_center_name = examination_center.name
+
+        return response_data.model_dump()
+
+    except HTTPException:
+        raise
+    except ValueError as e:
+        await session.rollback()
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+    except Exception as e:
+        await session.rollback()
+        logger.error(f"Error creating certificate request: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to create certificate request",
+        )
+
+
+@router.get("/certificate-requests/{request_number}")
+async def get_certificate_request_status(
+    request_number: str,
+    session: DBSessionDep = None,
+) -> dict:
+    """Get certificate request status (public lookup)."""
+    from app.schemas.certificate import CertificateRequestPublicResponse
+    from app.services.certificate_service import get_certificate_request_by_number
+
+    from app.models import Invoice
+
+    request = await get_certificate_request_by_number(session, request_number)
+    if not request:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Certificate request not found",
+        )
+
+    # Query invoice separately since CertificateRequest doesn't have invoice relationship
+    from app.models import Payment
+    invoice_stmt = select(Invoice).where(Invoice.certificate_request_id == request.id)
+    invoice_result = await session.execute(invoice_stmt)
+    invoice = invoice_result.scalar_one_or_none()
+
+    # Query payment separately since CertificateRequest doesn't have payment relationship
+    payment_stmt = select(Payment).where(Payment.certificate_request_id == request.id)
+    payment_result = await session.execute(payment_stmt)
+    payment = payment_result.scalar_one_or_none()
+
+    response_data = CertificateRequestPublicResponse(
+        request_number=request.request_number,
+        request_type=request.request_type,
+        status=request.status,
+        invoice=invoice.model_dump() if invoice else None,
+        payment=payment.model_dump() if payment else None,
+        tracking_number=request.tracking_number,
+        created_at=request.created_at,
+        updated_at=request.updated_at,
+    )
+    return response_data.model_dump()
+
+
+@router.post("/certificate-requests/{request_number}/pay", status_code=status.HTTP_200_OK)
+async def initialize_payment(
+    request_number: str,
+    session: DBSessionDep = None,
+) -> dict:
+    """Initialize Paystack payment for certificate request."""
+    from app.schemas.certificate import PaymentInitializeResponse
+    from app.services.certificate_service import get_certificate_request_by_number
+    from app.services.payment_service import initialize_payment as init_payment
+    from decimal import Decimal
+
+    request = await get_certificate_request_by_number(session, request_number)
+    if not request:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Certificate request not found",
+        )
+
+    from app.models import Invoice
+
+    # Query invoice separately since CertificateRequest doesn't have invoice relationship
+    invoice_stmt = select(Invoice).where(Invoice.certificate_request_id == request.id)
+    invoice_result = await session.execute(invoice_stmt)
+    invoice = invoice_result.scalar_one_or_none()
+
+    if not invoice:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invoice not found for this request",
+        )
+
+    if invoice.status == "paid":
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invoice is already paid",
+        )
+
+    try:
+        from app.services.payment_service import initialize_payment as init_payment_service
+
+        result = await init_payment_service(
+            session,
+            invoice,
+            Decimal(str(invoice.amount)),
+            email=request.contact_email,
+            metadata={"request_number": request.request_number},
+        )
+        await session.flush()
+
+        # Update request with payment_id from result
+        request.payment_id = result["payment_id"]
+        await session.commit()
+
+        return PaymentInitializeResponse(**result).model_dump()
+
+    except ValueError as e:
+        await session.rollback()
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+    except Exception as e:
+        await session.rollback()
+        logger.error(f"Error initializing payment: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to initialize payment",
+        )
+
+
+@router.post("/certificate-requests/paystack-webhook")
+async def paystack_webhook(
+    request: Request,
+    session: DBSessionDep = None,
+) -> dict:
+    """Handle Paystack webhook events."""
+    from app.services.payment_service import verify_webhook_signature, process_webhook_event
+    from app.services.certificate_service import update_request_status
+    from app.models import RequestStatus
+
+    # Get signature from headers
+    signature = request.headers.get("X-Paystack-Signature", "")
+    if not signature:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Missing X-Paystack-Signature header",
+        )
+
+    # Read request body
+    body = await request.body()
+
+    # Verify signature
+    if not verify_webhook_signature(body, signature):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid webhook signature",
+        )
+
+    # Parse JSON
+    import json
+    try:
+        event_data = json.loads(body.decode("utf-8"))
+    except json.JSONDecodeError:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid JSON in webhook payload",
+        )
+
+    try:
+        payment = await process_webhook_event(session, event_data)
+        if payment:
+            # Refresh payment to ensure we have the latest status
+            await session.refresh(payment)
+
+            # Update certificate request status if payment successful
+            # Use enum comparison instead of value comparison for reliability
+            from app.models import PaymentStatus
+            logger.info(f"Webhook processed payment {payment.id}, status: {payment.status}, certificate_request_id: {payment.certificate_request_id}")
+
+            if payment.status == PaymentStatus.SUCCESS and payment.certificate_request_id:
+                logger.info(f"Updating certificate request {payment.certificate_request_id} status to PAID")
+                await update_request_status(
+                    session,
+                    payment.certificate_request_id,
+                    RequestStatus.PAID,
+                )
+                await session.flush()  # Ensure status update is flushed before commit
+
+                # Verify the update
+                from app.services.certificate_service import get_certificate_request_by_id
+                updated_request = await get_certificate_request_by_id(session, payment.certificate_request_id)
+                if updated_request:
+                    logger.info(f"Certificate request {payment.certificate_request_id} status updated to: {updated_request.status}")
+            await session.commit()
+            return {"status": "success"}
+        return {"status": "ignored"}
+
+    except Exception as e:
+        await session.rollback()
+        logger.error(f"Error processing webhook: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to process webhook",
+        )
+
+
+@router.get("/certificate-requests/{request_number}/verify-payment", status_code=status.HTTP_200_OK)
+async def verify_payment_callback(
+    request_number: str,
+    reference: str = Query(..., description="Paystack transaction reference"),
+    session: DBSessionDep = None,
+) -> dict:
+    """Verify payment status after Paystack redirect (callback)."""
+    from app.services.certificate_service import get_certificate_request_by_number, update_request_status
+    from app.services.payment_service import verify_payment
+    from app.models import RequestStatus, PaymentStatus
+    from app.models import Payment, Invoice
+
+    # Get certificate request
+    request = await get_certificate_request_by_number(session, request_number)
+    if not request:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Certificate request not found",
+        )
+
+    # Find payment by reference
+    payment_stmt = select(Payment).where(Payment.paystack_reference == reference)
+    payment_result = await session.execute(payment_stmt)
+    payment = payment_result.scalar_one_or_none()
+
+    if not payment:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Payment not found",
+        )
+
+    # Verify payment with Paystack
+    try:
+        paystack_response = await verify_payment(session, reference)
+
+        if paystack_response.get("status") and paystack_response.get("data", {}).get("status") == "success":
+            # Update payment status
+            payment.status = PaymentStatus.SUCCESS
+            payment.paystack_response = paystack_response
+            # Set paid_at to current time (timezone-naive)
+            from datetime import datetime
+            payment.paid_at = datetime.utcnow()
+
+            # Update invoice status
+            if payment.invoice_id:
+                invoice_stmt = select(Invoice).where(Invoice.id == payment.invoice_id)
+                invoice_result = await session.execute(invoice_stmt)
+                invoice = invoice_result.scalar_one_or_none()
+                if invoice:
+                    invoice.status = "paid"
+                    invoice.paid_at = payment.paid_at  # Use same naive datetime
+
+            # Update certificate request status
+            if request.status != RequestStatus.PAID:
+                await update_request_status(
+                    session,
+                    request.id,
+                    RequestStatus.PAID,
+                )
+
+            await session.commit()
+            logger.info(f"Payment verified and status updated for request {request_number}")
+
+            return {
+                "status": "success",
+                "message": "Payment verified successfully",
+                "request_status": "paid",
+            }
+        else:
+            # Payment failed or pending
+            payment.status = PaymentStatus.FAILED
+            await session.commit()
+            return {
+                "status": "failed",
+                "message": "Payment verification failed",
+            }
+
+    except Exception as e:
+        await session.rollback()
+        logger.error(f"Error verifying payment: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to verify payment",
+        )
+
+
+@router.get("/certificate-requests/{request_number}/invoice")
+async def download_invoice(
+    request_number: str,
+    session: DBSessionDep = None,
+) -> StreamingResponse:
+    """Download invoice PDF for certificate request."""
+    from app.services.certificate_service import get_certificate_request_by_number
+    from app.services.invoice_service import generate_invoice_pdf
+
+    from app.models import Invoice
+
+    request = await get_certificate_request_by_number(session, request_number)
+    if not request:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Certificate request not found",
+        )
+
+    # Query invoice separately since CertificateRequest doesn't have invoice relationship
+    invoice_stmt = select(Invoice).where(Invoice.certificate_request_id == request.id)
+    invoice_result = await session.execute(invoice_stmt)
+    invoice = invoice_result.scalar_one_or_none()
+
+    if not invoice:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Invoice not found for this request",
+        )
+
+    try:
+        pdf_bytes = await generate_invoice_pdf(invoice, request)
+        filename = f"invoice_{invoice.invoice_number}.pdf"
+        return StreamingResponse(
+            iter([pdf_bytes]),
+            media_type="application/pdf",
+            headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+        )
+    except Exception as e:
+        logger.error(f"Error generating invoice PDF: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to generate invoice PDF",
+        )
+
+
+@router.get("/examination-centers", response_model=list[dict])
+async def list_examination_centers_public(
+    session: DBSessionDep,
+    search: str | None = Query(None, description="Search schools by name or code"),
+) -> list[dict]:
+    """List all schools as examination centers for certificate requests (public endpoint).
+
+    Returns all schools regardless of active status, as users may request certificates
+    for schools that are no longer active.
+    """
+    from app.models import School
+
+    stmt = select(School)
+
+    # Apply search filter if provided
+    if search:
+        search_filter = (
+            School.name.ilike(f"%{search}%") |
+            School.code.ilike(f"%{search}%")
+        )
+        stmt = stmt.where(search_filter)
+
+    stmt = stmt.order_by(School.name)
+
+    result = await session.execute(stmt)
+    schools = result.scalars().all()
+
+    return [
+        {
+            "id": school.id,
+            "code": school.code,
+            "name": school.name,
+            "is_active": school.is_active,  # Include status for UI display
+        }
+        for school in schools
+    ]

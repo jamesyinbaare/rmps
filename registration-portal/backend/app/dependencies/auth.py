@@ -101,6 +101,7 @@ class UserTypeChecker:
 
 # Pre-configured user type dependencies
 system_admin_only = UserTypeChecker(allowed_types=[PortalUserType.SYSTEM_ADMIN])
+admin_or_above = UserTypeChecker(allowed_types=[PortalUserType.SYSTEM_ADMIN, PortalUserType.ADMIN])
 school_admin_or_above = UserTypeChecker(allowed_types=[PortalUserType.SYSTEM_ADMIN, PortalUserType.SCHOOL_ADMIN])
 school_users_or_above = UserTypeChecker(
     allowed_types=[PortalUserType.SYSTEM_ADMIN, PortalUserType.SCHOOL_ADMIN, PortalUserType.SCHOOL_USER]
@@ -111,12 +112,14 @@ all_authenticated = UserTypeChecker(
         PortalUserType.SCHOOL_ADMIN,
         PortalUserType.SCHOOL_USER,
         PortalUserType.PRIVATE_USER,
+        PortalUserType.ADMIN,
     ]
 )
 
 # Typed dependencies for use in route handlers
 CurrentUserDep = Annotated[PortalUser, Depends(get_current_active_user)]
 SystemAdminDep = Annotated[PortalUser, Depends(system_admin_only)]
+AdminDep = Annotated[PortalUser, Depends(admin_or_above)]  # SYSTEM_ADMIN or ADMIN
 SchoolAdminDep = Annotated[PortalUser, Depends(school_admin_or_above)]
 SchoolUserDep = Annotated[PortalUser, Depends(school_users_or_above)]
 

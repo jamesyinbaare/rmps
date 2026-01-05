@@ -19,6 +19,7 @@ dependencies = [
     "reportlab>=4.4.7",
     "python-dateutil>=2.9.0",
     "cachetools>=6.2.4",
+    "httpx>=0.28.1",
 ]
 
 [dependency-groups]
