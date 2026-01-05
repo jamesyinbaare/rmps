@@ -20,7 +20,7 @@ import {
   SheetTrigger,
 } from "@/components/ui/sheet";
 import { isAuthenticated, getCurrentUser } from "@/lib/api";
-import { GraduationCap, LogIn, User, Menu } from "lucide-react";
+import { GraduationCap, LogIn, User, Menu, Award } from "lucide-react";
 import { ThemeSwitcher } from "@/components/ctvet/ThemeSwitcher";
 import type { User as UserType } from "@/types";
 
@@ -80,6 +80,15 @@ export function Navbar() {
             }`}
           >
             Results
+          </Link>
+
+          <Link
+            href="/certificate-request"
+            className={`text-sm font-medium transition-colors hover:text-primary ${
+              pathname === "/certificate-request" ? "text-primary" : "text-muted-foreground"
+            }`}
+          >
+            Certificates
           </Link>
 
           <NavigationMenu>
@@ -189,6 +198,15 @@ export function Navbar() {
                   }`}
                 >
                   Results
+                </Link>
+                <Link
+                  href="/certificate-request"
+                  onClick={() => setMobileMenuOpen(false)}
+                  className={`text-sm font-medium transition-colors hover:text-primary ${
+                    pathname === "/certificate-request" ? "text-primary" : "text-muted-foreground"
+                  }`}
+                >
+                  Certificates
                 </Link>
                 <Link
                   href="/about"

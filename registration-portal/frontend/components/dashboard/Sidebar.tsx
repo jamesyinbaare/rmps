@@ -75,6 +75,7 @@ export function Sidebar() {
     { href: "/dashboard", label: "Dashboard", icon: GraduationCap },
     { href: "/dashboard/school-admins", label: "Coordinators", icon: Users },
     { href: "/dashboard/exams", label: "Exams", icon: GraduationCap },
+    { href: "/dashboard/admin/certificate-requests", label: "Certificate Requests", icon: FileText },
   ];
 
   const navItems = isSchoolUser ? schoolUserNavItems : systemAdminNavItems;
