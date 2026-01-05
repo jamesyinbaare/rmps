@@ -124,6 +124,10 @@ export interface RegistrationExam {
   year: number;
   description: string | null;
   registration_period: ExamRegistrationPeriod;
+  results_published: boolean;
+  results_published_at: string | null;
+  results_published_by_user_id: string | null;
+  has_index_numbers: boolean;
   created_at: string;
   updated_at: string;
 }
@@ -302,4 +306,152 @@ export interface PhotoBulkUploadResponse {
   failed: number;
   skipped: number;
   errors: PhotoBulkUploadError[];
+}
+
+// Results types
+export type Grade =
+  | "Fail"
+  | "Pass"
+  | "Lower Credit"
+  | "Credit"
+  | "Upper Credit"
+  | "Distinction"
+  | "Blocked"
+  | "Cancelled"
+  | "Absent";
+
+export type ResultBlockType =
+  | "CANDIDATE_ALL"
+  | "CANDIDATE_SUBJECT"
+  | "SCHOOL_ALL"
+  | "SCHOOL_SUBJECT";
+
+export interface CandidateResult {
+  id: number;
+  registration_candidate_id: number;
+  subject_id: number;
+  subject_code: string;
+  subject_name: string;
+  registration_exam_id: number;
+  exam_type: string;
+  exam_series: string;
+  exam_year: number;
+  grade: Grade;
+  is_published: boolean;
+  published_at: string | null;
+  published_by_user_id: string | null;
+  candidate_name: string;
+  candidate_index_number: string | null;
+  candidate_registration_number: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface CandidateResultBulkPublishItem {
+  registration_number: string;
+  index_number?: string | null;
+  subject_code: string;
+  grade: Grade;
+}
+
+export interface CandidateResultBulkPublish {
+  exam_id: number;
+  results: CandidateResultBulkPublishItem[];
+}
+
+export interface CandidateResultBulkPublishResponse {
+  total_processed: number;
+  successful: number;
+  failed: number;
+  errors: Array<{ row: string; error: string }>;
+}
+
+export interface ResultBlock {
+  id: number;
+  block_type: ResultBlockType;
+  registration_exam_id: number;
+  exam_type: string;
+  exam_series: string;
+  exam_year: number;
+  registration_candidate_id: number | null;
+  candidate_name: string | null;
+  candidate_registration_number: string | null;
+  school_id: number | null;
+  school_name: string | null;
+  school_code: string | null;
+  subject_id: number | null;
+  subject_code: string | null;
+  subject_name: string | null;
+  is_active: boolean;
+  blocked_by_user_id: string;
+  blocked_by_user_name: string;
+  reason: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface ResultBlockCreate {
+  block_type: ResultBlockType;
+  registration_exam_id: number;
+  registration_candidate_id?: number | null;
+  school_id?: number | null;
+  subject_id?: number | null;
+  reason?: string | null;
+}
+
+export interface PublicResultCheckRequest {
+  index_number?: string | null;
+  registration_number?: string | null;
+  exam_type: string;
+  exam_series: string;
+  year: number;
+}
+
+export interface PublicSubjectResult {
+  subject_code: string;
+  subject_name?: string | null;
+  grade: Grade | null;
+}
+
+export interface PublicResultResponse {
+  candidate_name: string;
+  index_number: string | null;
+  registration_number: string;
+  exam_type: string;
+  exam_series: string;
+  year: number;
+  results: PublicSubjectResult[];
+  exam_published: boolean;
+  school_name?: string | null;
+  school_code?: string | null;
+  programme_name?: string | null;
+  programme_code?: string | null;
+  photo_url?: string | null;
+}
+
+// Index Number Generation Job types
+export interface SchoolProgressItem {
+  school_id: number;
+  school_code: string;
+  school_name: string;
+  processed: number;
+  total: number;
+  status: "pending" | "processing" | "completed" | "failed";
+}
+
+export interface IndexNumberGenerationJob {
+  id: number;
+  exam_id: number;
+  status: "pending" | "processing" | "completed" | "failed";
+  replace_existing: boolean;
+  progress_current: number;
+  progress_total: number;
+  current_school_id: number | null;
+  current_school_name: string | null;
+  school_progress: SchoolProgressItem[] | null;
+  error_message: string | null;
+  created_by_user_id: string | null;
+  created_at: string;
+  updated_at: string;
+  completed_at: string | null;
 }

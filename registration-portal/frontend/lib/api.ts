@@ -23,6 +23,14 @@ import type {
   PhotoAlbumItem,
   PhotoBulkUploadResponse,
   RegistrationCandidatePhoto,
+  CandidateResult,
+  CandidateResultBulkPublish,
+  CandidateResultBulkPublishResponse,
+  ResultBlock,
+  ResultBlockCreate,
+  PublicResultCheckRequest,
+  PublicResultResponse,
+  IndexNumberGenerationJob,
 } from "@/types";
 
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL || "http://localhost:8001";
@@ -78,27 +86,14 @@ async function refreshAccessToken(): Promise<Token> {
   if (!response.ok) {
     // Refresh token expired or invalid - clear tokens
     clearTokens();
-    let errorDetail = `HTTP error! status: ${response.status}`;
 
-    try {
-      const contentType = response.headers.get("content-type");
-      const text = await response.text();
-
-      if (contentType && contentType.includes("application/json") && text) {
-        try {
-          const error = JSON.parse(text);
-          errorDetail = error.detail || text;
-        } catch {
-          errorDetail = text;
-        }
-      } else if (text) {
-        errorDetail = text;
-      }
-    } catch (e) {
-      errorDetail = `HTTP error! status: ${response.status}`;
+    // Provide user-friendly error message
+    if (response.status >= 500) {
+      throw new Error("The server is experiencing issues. Please try again later.");
+    } else {
+      // For auth errors, use a generic message
+      throw new Error("Your session has expired. Please log in again.");
     }
-
-    throw new Error(errorDetail);
   }
 
   const tokenData = await response.json();
@@ -152,9 +147,9 @@ async function fetchWithAuth(
     response = await fetch(`${API_BASE_URL}${url}`, fetchOptions);
   } catch (error) {
     // Handle network errors (e.g., backend server not running)
-    if (error instanceof TypeError && error.message === "Failed to fetch") {
+    if (error instanceof TypeError && (error.message === "Failed to fetch" || error.message.includes("fetch"))) {
       throw new Error(
-        `Unable to connect to the server. Please ensure the backend server is running on ${API_BASE_URL}`
+        "Unable to connect to the server. Please check your internet connection or try again later."
       );
     }
     throw error;
@@ -252,23 +247,53 @@ async function handleResponse<T>(response: Response): Promise<T> {
       }
     }
 
-    const error = await response.json().catch(() => ({ detail: response.statusText })) as { detail?: string };
-    throw new Error(error.detail || `HTTP error! status: ${response.status}`);
+    // Handle server errors with user-friendly messages
+    let errorMessage: string;
+    try {
+      const error = await response.json().catch(() => ({ detail: response.statusText })) as { detail?: string };
+      errorMessage = error.detail || response.statusText;
+    } catch {
+      errorMessage = response.statusText;
+    }
+
+    // Provide user-friendly error messages based on status code
+    if (response.status >= 500) {
+      errorMessage = "The server is experiencing issues. Please try again later.";
+    } else if (response.status === 404) {
+      errorMessage = errorMessage || "The requested resource was not found.";
+    } else if (response.status === 403) {
+      errorMessage = errorMessage || "You don't have permission to perform this action.";
+    } else if (response.status === 400) {
+      // Keep the original error message for validation errors (400)
+      errorMessage = errorMessage || "Invalid request. Please check your input.";
+    } else {
+      errorMessage = errorMessage || "An error occurred. Please try again.";
+    }
+
+    throw new Error(errorMessage);
   }
   return response.json();
 }
 
 // Auth API
 export async function login(email: string, password: string): Promise<Token> {
-  const response = await fetch(`${API_BASE_URL}/api/v1/auth/login`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ email, password }),
-  });
+  try {
+    const response = await fetch(`${API_BASE_URL}/api/v1/auth/login`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ email, password }),
+    });
 
-  const token = await handleResponse<Token>(response);
-  setTokens(token.access_token, token.refresh_token);
-  return token;
+    const token = await handleResponse<Token>(response);
+    setTokens(token.access_token, token.refresh_token);
+    return token;
+  } catch (error) {
+    // Handle network errors with user-friendly message
+    if (error instanceof TypeError && (error.message === "Failed to fetch" || error.message.includes("fetch"))) {
+      throw new Error("Unable to connect to the server. Please check your internet connection or try again later.");
+    }
+    throw error;
+  }
 }
 
 export async function getCurrentUser(): Promise<User> {
@@ -611,6 +636,91 @@ export async function getExam(id: number): Promise<RegistrationExam> {
   return handleResponse<RegistrationExam>(response);
 }
 
+export async function updateRegistrationPeriod(
+  examId: number,
+  data: {
+    registration_start_date?: string;
+    registration_end_date?: string;
+    is_active?: boolean;
+    allows_bulk_registration?: boolean;
+    allows_private_registration?: boolean;
+  }
+): Promise<void> {
+  const response = await fetchWithAuth(`/api/v1/admin/exams/${examId}/registration-period`, {
+    method: "PUT",
+    body: JSON.stringify(data),
+  });
+  await handleResponse(response);
+}
+
+export async function closeRegistrationPeriod(examId: number): Promise<void> {
+  const response = await fetchWithAuth(`/api/v1/admin/exams/${examId}/registration-period/close`, {
+    method: "POST",
+  });
+  await handleResponse(response);
+}
+
+export async function generateIndexNumbers(examId: number, replaceExisting: boolean = false): Promise<{
+  job_id: number;
+  exam_id: number;
+  message: string;
+}> {
+  const response = await fetchWithAuth(`/api/v1/admin/exams/${examId}/generate-index-numbers?replace_existing=${replaceExisting}`, {
+    method: "POST",
+  });
+  return handleResponse(response);
+}
+
+export async function getIndexNumberGenerationStatus(examId: number, jobId: number): Promise<IndexNumberGenerationJob> {
+  const response = await fetchWithAuth(`/api/v1/admin/exams/${examId}/generate-index-numbers/status/${jobId}`, {
+    method: "GET",
+  });
+  return handleResponse<IndexNumberGenerationJob>(response);
+}
+
+export async function getLatestIndexNumberGenerationStatus(examId: number): Promise<IndexNumberGenerationJob | null> {
+  const response = await fetchWithAuth(`/api/v1/admin/exams/${examId}/generate-index-numbers/status`, {
+    method: "GET",
+  });
+  return handleResponse<IndexNumberGenerationJob | null>(response);
+}
+
+export async function exportCandidates(examId: number): Promise<void> {
+  const token = getAccessToken();
+  const response = await fetch(`${API_BASE_URL}/api/v1/admin/exams/${examId}/candidates/export`, {
+    method: "GET",
+    headers: {
+      Authorization: `Bearer ${token}`,
+    },
+  });
+
+  if (!response.ok) {
+    const error = await response.json().catch(() => ({ detail: "Failed to export candidates" }));
+    throw new Error((error as { detail?: string }).detail || "Failed to export candidates");
+  }
+
+  // Get filename from Content-Disposition header or use default
+  const contentDisposition = response.headers.get("Content-Disposition");
+  let filename = `exam_${examId}_candidates.xlsx`;
+  if (contentDisposition) {
+    const filenameMatch = contentDisposition.match(/filename="?(.+)"?/i);
+    if (filenameMatch) {
+      filename = filenameMatch[1];
+    }
+  }
+
+  // Download the file
+  const blob = await response.blob();
+  const downloadUrl = window.URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = downloadUrl;
+  link.download = filename;
+  document.body.appendChild(link);
+  link.click();
+  document.body.removeChild(link);
+  window.URL.revokeObjectURL(downloadUrl);
+}
+
 // School API - For coordinators
 export interface SchoolUserCreate {
   email: string;
@@ -847,9 +957,23 @@ export async function removeSubjectFromProgramme(programmeId: number, subjectId:
 }
 
 export async function listAllSubjects(): Promise<Subject[]> {
-  const response = await fetchWithAuth("/api/v1/admin/subjects?page=1&page_size=1000");
-  const data = await handleResponse<SubjectListResponse>(response);
-  return data.items;
+  const allSubjects: Subject[] = [];
+  let page = 1;
+  const pageSize = 100; // Backend max is 100
+
+  while (true) {
+    const response = await fetchWithAuth(`/api/v1/admin/subjects?page=${page}&page_size=${pageSize}`);
+    const data = await handleResponse<SubjectListResponse>(response);
+    allSubjects.push(...data.items);
+
+    // If we got fewer items than page size, we're done
+    if (data.items.length < pageSize || page >= data.total_pages) {
+      break;
+    }
+    page++;
+  }
+
+  return allSubjects;
 }
 
 export async function deleteProgramme(programmeId: number): Promise<void> {
@@ -1038,4 +1162,179 @@ export async function getPrivatePhotoFile(registrationId: number): Promise<strin
   }
   const blob = await response.blob();
   return URL.createObjectURL(blob);
+}
+
+// Results API
+export async function publishResultsBulk(
+  data: CandidateResultBulkPublish
+): Promise<CandidateResultBulkPublishResponse> {
+  const response = await fetchWithAuth("/api/v1/admin/results/publish", {
+    method: "POST",
+    body: JSON.stringify(data),
+  });
+  return handleResponse<CandidateResultBulkPublishResponse>(response);
+}
+
+export async function uploadResultsBulk(
+  examId: number,
+  file: File
+): Promise<CandidateResultBulkPublishResponse> {
+  const formData = new FormData();
+  formData.append("exam_id", examId.toString());
+  formData.append("file", file);
+
+  const token = getAccessToken();
+  const response = await fetch(`${API_BASE_URL}/api/v1/admin/results/upload`, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${token}`,
+    },
+    body: formData,
+  });
+
+  if (!response.ok) {
+    const error = await response.json().catch(() => ({ detail: "Failed to upload results" }));
+    throw new Error((error as { detail?: string }).detail || "Failed to upload results");
+  }
+
+  return handleResponse<CandidateResultBulkPublishResponse>(response);
+}
+
+export async function publishResultsForExam(
+  examId: number,
+  schoolIds?: number[],
+  subjectIds?: number[]
+): Promise<CandidateResultBulkPublishResponse> {
+  const body: { school_ids?: number[]; subject_ids?: number[] } = {};
+  if (schoolIds && schoolIds.length > 0) body.school_ids = schoolIds;
+  if (subjectIds && subjectIds.length > 0) body.subject_ids = subjectIds;
+
+  const response = await fetchWithAuth(`/api/v1/admin/results/exams/${examId}/publish-results`, {
+    method: "POST",
+    body: Object.keys(body).length > 0 ? JSON.stringify(body) : undefined,
+  });
+  return handleResponse<CandidateResultBulkPublishResponse>(response);
+}
+
+export async function publishExamResults(examId: number): Promise<RegistrationExam> {
+  const response = await fetchWithAuth(`/api/v1/admin/results/exams/${examId}/publish`, {
+    method: "POST",
+  });
+  return handleResponse<RegistrationExam>(response);
+}
+
+export async function unpublishResultsForExam(
+  examId: number,
+  schoolIds?: number[],
+  subjectIds?: number[]
+): Promise<CandidateResultBulkPublishResponse> {
+  const body: { school_ids?: number[]; subject_ids?: number[] } = {};
+  if (schoolIds && schoolIds.length > 0) body.school_ids = schoolIds;
+  if (subjectIds && subjectIds.length > 0) body.subject_ids = subjectIds;
+
+  const response = await fetchWithAuth(`/api/v1/admin/results/exams/${examId}/unpublish-results`, {
+    method: "POST",
+    body: Object.keys(body).length > 0 ? JSON.stringify(body) : undefined,
+  });
+  return handleResponse<CandidateResultBulkPublishResponse>(response);
+}
+
+export async function unpublishExamResults(examId: number): Promise<RegistrationExam> {
+  const response = await fetchWithAuth(`/api/v1/admin/results/exams/${examId}/unpublish`, {
+    method: "POST",
+  });
+  return handleResponse<RegistrationExam>(response);
+}
+
+export async function listExamResults(
+  examId: number,
+  candidateId?: number,
+  subjectId?: number,
+  schoolId?: number
+): Promise<CandidateResult[]> {
+  const params = new URLSearchParams();
+  if (candidateId) params.append("candidate_id", candidateId.toString());
+  if (subjectId) params.append("subject_id", subjectId.toString());
+  if (schoolId) params.append("school_id", schoolId.toString());
+
+  const response = await fetchWithAuth(
+    `/api/v1/admin/results/${examId}${params.toString() ? `?${params.toString()}` : ""}`
+  );
+  return handleResponse<CandidateResult[]>(response);
+}
+
+export async function updateResult(
+  resultId: number,
+  grade: string
+): Promise<CandidateResult> {
+  const response = await fetchWithAuth(`/api/v1/admin/results/${resultId}`, {
+    method: "PUT",
+    body: JSON.stringify({ grade }),
+  });
+  return handleResponse<CandidateResult>(response);
+}
+
+export async function createResultBlock(data: ResultBlockCreate): Promise<ResultBlock> {
+  const response = await fetchWithAuth("/api/v1/admin/results/blocks", {
+    method: "POST",
+    body: JSON.stringify(data),
+  });
+  return handleResponse<ResultBlock>(response);
+}
+
+export async function listResultBlocks(
+  examId?: number,
+  isActive?: boolean
+): Promise<ResultBlock[]> {
+  const params = new URLSearchParams();
+  if (examId) params.append("exam_id", examId.toString());
+  if (isActive !== undefined) params.append("is_active", isActive.toString());
+
+  const response = await fetchWithAuth(
+    `/api/v1/admin/results/blocks${params.toString() ? `?${params.toString()}` : ""}`
+  );
+  return handleResponse<ResultBlock[]>(response);
+}
+
+export async function deleteResultBlock(blockId: number): Promise<void> {
+  const response = await fetchWithAuth(`/api/v1/admin/results/blocks/${blockId}`, {
+    method: "DELETE",
+  });
+  if (!response.ok) {
+    await handleResponse(response);
+  }
+}
+
+export async function checkPublicResults(
+  data: PublicResultCheckRequest
+): Promise<PublicResultResponse> {
+  const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL || "http://localhost:8001";
+  const response = await fetch(`${API_BASE_URL}/api/v1/public/results/check`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(data),
+  });
+  return handleResponse<PublicResultResponse>(response);
+}
+
+export async function generateResultsPDF(
+  data: PublicResultCheckRequest
+): Promise<Blob> {
+  const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL || "http://localhost:8001";
+  const response = await fetch(`${API_BASE_URL}/api/v1/public/results/pdf`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(data),
+  });
+
+  if (!response.ok) {
+    const error = await response.json().catch(() => ({ detail: "Failed to generate PDF" }));
+    throw new Error(error.detail || `Failed to generate PDF: ${response.statusText}`);
+  }
+
+  return response.blob();
 }

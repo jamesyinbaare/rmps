@@ -3,7 +3,7 @@ from datetime import datetime, timezone
 from typing import Annotated
 from uuid import UUID
 
-from fastapi import APIRouter, HTTPException, Query, status, UploadFile, File
+from fastapi import APIRouter, HTTPException, Query, status, UploadFile, File, Form, BackgroundTasks, Body
 from fastapi.responses import StreamingResponse
 from sqlalchemy import select, func, delete, insert, update
 from sqlalchemy.orm import selectinload
@@ -16,6 +16,7 @@ from app.models import (
     RegistrationExam,
     ExamRegistrationPeriod,
     RegistrationCandidate,
+    RegistrationSubjectSelection,
     RegistrationExport,
     ExportStatus,
     School,
@@ -25,12 +26,17 @@ from app.models import (
     SubjectType,
     programme_subjects,
     school_programmes,
+    IndexNumberGenerationJob,
+    IndexNumberGenerationJobStatus,
 )
 from app.schemas.registration import (
     RegistrationExamCreate,
     RegistrationExamUpdate,
     RegistrationExamResponse,
     ExamRegistrationPeriodUpdate,
+    ExamRegistrationPeriodResponse,
+    IndexNumberGenerationJobResponse,
+    SchoolProgressItem,
 )
 from app.schemas.user import SchoolAdminUserCreate, UserResponse, UserListResponse
 from app.schemas.school import (
@@ -46,6 +52,8 @@ from app.schemas.school import (
 from app.models import RegistrationStatus
 import csv
 import io
+import pandas as pd
+from sqlalchemy import and_
 from app.schemas.schedule import (
     ExaminationScheduleCreate,
     ExaminationScheduleUpdate,
@@ -90,6 +98,27 @@ from app.services.subject_upload import (
     validate_required_columns as validate_subject_columns,
 )
 from app.services.template_generator import generate_programme_template, generate_subject_template
+from app.schemas.result import (
+    CandidateResultBulkPublish,
+    CandidateResultBulkPublishResponse,
+    CandidateResultResponse,
+    CandidateResultUpdate,
+    ResultBlockCreate,
+    ResultBlockResponse,
+    PublishResultsFilterRequest,
+)
+from app.models import CandidateResult, ResultBlock, ResultBlockType, Grade
+from app.services.result_service import (
+    upload_results_bulk,
+    publish_results_bulk,
+    unpublish_results_bulk,
+    publish_exam_results,
+    unpublish_exam_results,
+    create_result_block,
+    check_result_blocks,
+    get_candidate_results,
+    unblock_result,
+)
 
 router = APIRouter(prefix="/api/v1/admin", tags=["admin"])
 
@@ -845,7 +874,19 @@ async def get_exam(exam_id: int, session: DBSessionDep, current_user: SystemAdmi
     if not exam:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Exam not found")
 
-    return RegistrationExamResponse.model_validate(exam)
+    # Check if any candidates have index numbers generated
+    index_numbers_count_stmt = select(func.count(RegistrationCandidate.id)).where(
+        RegistrationCandidate.registration_exam_id == exam_id,
+        RegistrationCandidate.index_number.isnot(None),
+        RegistrationCandidate.index_number != "",
+    )
+    index_numbers_result = await session.execute(index_numbers_count_stmt)
+    index_numbers_count = index_numbers_result.scalar() or 0
+
+    exam_response = RegistrationExamResponse.model_validate(exam)
+    exam_response.has_index_numbers = index_numbers_count > 0
+
+    return exam_response
 
 
 @router.put("/exams/{exam_id}", response_model=RegistrationExamResponse)
@@ -911,6 +952,547 @@ async def delete_exam(exam_id: int, session: DBSessionDep, current_user: SystemA
     # Delete exam (registration period will be cascade deleted)
     await session.delete(exam)
     await session.commit()
+
+
+@router.get("/exams/{exam_id}/candidates/export")
+async def export_candidates(
+    exam_id: int,
+    session: DBSessionDep,
+    current_user: SystemAdminDep,
+) -> StreamingResponse:
+    """Export registered candidates data as Excel file."""
+    # Verify exam exists
+    stmt = (
+        select(RegistrationExam)
+        .where(RegistrationExam.id == exam_id)
+        .options(selectinload(RegistrationExam.registration_period))
+    )
+    result = await session.execute(stmt)
+    exam = result.scalar_one_or_none()
+
+    if not exam:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Exam not found")
+
+    # Query candidates with all necessary relationships
+    candidates_stmt = (
+        select(RegistrationCandidate)
+        .where(RegistrationCandidate.registration_exam_id == exam_id)
+        .options(
+            selectinload(RegistrationCandidate.school),
+            selectinload(RegistrationCandidate.programme),
+            selectinload(RegistrationCandidate.subject_selections).selectinload(RegistrationSubjectSelection.subject),
+        )
+    )
+    candidates_result = await session.execute(candidates_stmt)
+    candidates = candidates_result.scalars().all()
+
+    # Build data for export
+    rows = []
+    for candidate in candidates:
+        # Get school code
+        school_code = candidate.school.code if candidate.school else ""
+
+        # Get programme code
+        programme_code = candidate.programme_code or (candidate.programme.code if candidate.programme else "")
+
+        # Get subject original codes (comma-separated)
+        subject_original_codes = []
+        if candidate.subject_selections:
+            for selection in candidate.subject_selections:
+                if selection.subject and selection.subject.original_code:
+                    subject_original_codes.append(selection.subject.original_code)
+        subject_original_codes_str = ",".join(sorted(subject_original_codes))
+
+        # Format date of birth
+        dob = candidate.date_of_birth.isoformat() if candidate.date_of_birth else ""
+
+        rows.append({
+            "registration_number": candidate.registration_number,
+            "index_number": candidate.index_number or "",
+            "school_code": school_code,
+            "programme_code": programme_code,
+            "name": candidate.name,
+            "dob": dob,
+            "subject_original_codes": subject_original_codes_str,
+        })
+
+    # Create DataFrame
+    df = pd.DataFrame(rows)
+
+    # If no candidates, return empty Excel file
+    if df.empty:
+        output = io.BytesIO()
+        df_empty = pd.DataFrame(columns=["registration_number", "index_number", "school_code", "programme_code", "name", "dob", "subject_original_codes"])
+        df_empty.to_excel(output, index=False, engine='openpyxl')
+        output.seek(0)
+        filename = f"exam_{exam_id}_candidates_{datetime.utcnow().strftime('%Y%m%d_%H%M%S')}.xlsx"
+        return StreamingResponse(
+            io.BytesIO(output.read()),
+            media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            headers={"Content-Disposition": f'attachment; filename="{filename}"'}
+        )
+
+    # Sort by school_code, then by index_number
+    # Convert index_number to numeric for proper numeric sorting (non-numeric values become NaN and sort to end)
+    df['_sort_index_numeric'] = pd.to_numeric(df['index_number'], errors='coerce')
+    # Sort by school_code first, then by numeric index_number, then by string index_number for non-numeric values
+    df = df.sort_values(
+        by=['school_code', '_sort_index_numeric', 'index_number'],
+        ascending=[True, True, True],
+        na_position='last'
+    )
+    # Drop temporary sorting column
+    df = df.drop(columns=['_sort_index_numeric'])
+
+    # Generate Excel file
+    output = io.BytesIO()
+    with pd.ExcelWriter(output, engine="openpyxl") as writer:
+        df.to_excel(writer, index=False, sheet_name="Candidates")
+    output.seek(0)
+
+    filename = f"exam_{exam_id}_candidates_{datetime.utcnow().strftime('%Y%m%d_%H%M%S')}.xlsx"
+
+    return StreamingResponse(
+        iter([output.getvalue()]),
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
+@router.put("/exams/{exam_id}/registration-period", response_model=ExamRegistrationPeriodResponse)
+async def update_registration_period(
+    exam_id: int,
+    period_update: ExamRegistrationPeriodUpdate,
+    session: DBSessionDep,
+    current_user: SystemAdminDep,
+) -> ExamRegistrationPeriodResponse:
+    """Extend or update registration period for an exam."""
+    # Get exam with registration period
+    stmt = (
+        select(RegistrationExam)
+        .where(RegistrationExam.id == exam_id)
+        .options(selectinload(RegistrationExam.registration_period))
+    )
+    result = await session.execute(stmt)
+    exam = result.scalar_one_or_none()
+
+    if not exam:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Exam not found")
+
+    registration_period = exam.registration_period
+    if not registration_period:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Registration period not found for this exam"
+        )
+
+    # Update fields
+    update_data = period_update.model_dump(exclude_unset=True)
+
+    # Handle date updates with timezone conversion
+    if "registration_start_date" in update_data and update_data["registration_start_date"]:
+        start_date = update_data["registration_start_date"]
+        if start_date.tzinfo is not None:
+            start_date = start_date.astimezone(timezone.utc).replace(tzinfo=None)
+        registration_period.registration_start_date = start_date
+
+    if "registration_end_date" in update_data and update_data["registration_end_date"]:
+        end_date = update_data["registration_end_date"]
+        if end_date.tzinfo is not None:
+            end_date = end_date.astimezone(timezone.utc).replace(tzinfo=None)
+        registration_period.registration_end_date = end_date
+
+        # If end_date is extended to the future and period was inactive, set is_active=True
+        new_end_date = registration_period.registration_end_date
+        now = datetime.utcnow()
+        # If the new end date is in the future and the period was inactive, activate it
+        if new_end_date > now and not registration_period.is_active and "is_active" not in update_data:
+            registration_period.is_active = True
+
+    if "is_active" in update_data:
+        registration_period.is_active = update_data["is_active"]
+    if "allows_bulk_registration" in update_data:
+        registration_period.allows_bulk_registration = update_data["allows_bulk_registration"]
+    if "allows_private_registration" in update_data:
+        registration_period.allows_private_registration = update_data["allows_private_registration"]
+
+    # Validate dates
+    if registration_period.registration_end_date <= registration_period.registration_start_date:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Registration end date must be after start date",
+        )
+
+    await session.commit()
+    await session.refresh(registration_period)
+
+    return ExamRegistrationPeriodResponse.model_validate(registration_period)
+
+
+@router.post("/exams/{exam_id}/registration-period/close", response_model=ExamRegistrationPeriodResponse)
+async def close_registration_period(
+    exam_id: int,
+    session: DBSessionDep,
+    current_user: SystemAdminDep,
+) -> ExamRegistrationPeriodResponse:
+    """Close registration period for an exam."""
+    # Get exam with registration period
+    stmt = (
+        select(RegistrationExam)
+        .where(RegistrationExam.id == exam_id)
+        .options(selectinload(RegistrationExam.registration_period))
+    )
+    result = await session.execute(stmt)
+    exam = result.scalar_one_or_none()
+
+    if not exam:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Exam not found")
+
+    registration_period = exam.registration_period
+    if not registration_period:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Registration period not found for this exam"
+        )
+
+    # Close registration: set is_active=False and end_date to current time
+    registration_period.is_active = False
+    registration_period.registration_end_date = datetime.utcnow()
+
+    await session.commit()
+    await session.refresh(registration_period)
+
+    return ExamRegistrationPeriodResponse.model_validate(registration_period)
+
+
+async def _process_index_numbers_background(job_id: int) -> None:
+    """Background task to process index number generation school by school."""
+    from app.dependencies.database import get_sessionmanager
+    import logging
+
+    logger = logging.getLogger(__name__)
+
+    sessionmanager = get_sessionmanager()
+    async with sessionmanager.session() as session:
+        try:
+            # Get job record
+            job_stmt = select(IndexNumberGenerationJob).where(IndexNumberGenerationJob.id == job_id)
+            job_result = await session.execute(job_stmt)
+            job = job_result.scalar_one_or_none()
+
+            if not job:
+                logger.error(f"Job {job_id} not found")
+                return
+
+            exam_id = job.exam_id
+            replace_existing = job.replace_existing
+
+            # Update job status to processing
+            job.status = IndexNumberGenerationJobStatus.PROCESSING
+            job.updated_at = datetime.utcnow()
+            await session.commit()
+
+            # Verify exam exists
+            exam_stmt = select(RegistrationExam).where(RegistrationExam.id == exam_id)
+            exam_result = await session.execute(exam_stmt)
+            exam = exam_result.scalar_one_or_none()
+
+            if not exam:
+                job.status = IndexNumberGenerationJobStatus.FAILED
+                job.error_message = "Exam not found"
+                job.completed_at = datetime.utcnow()
+                await session.commit()
+                return
+
+            # Build query based on replace_existing flag
+            candidates_stmt = (
+                select(RegistrationCandidate, School)
+                .join(School, RegistrationCandidate.school_id == School.id)
+                .where(RegistrationCandidate.registration_exam_id == exam_id)
+                .options(selectinload(RegistrationCandidate.school))
+            )
+
+            if not replace_existing:
+                # Only get candidates without index numbers
+                candidates_stmt = candidates_stmt.where(RegistrationCandidate.index_number.is_(None))
+
+            candidates_result = await session.execute(candidates_stmt)
+            candidate_rows = candidates_result.all()
+
+            if not candidate_rows:
+                job.status = IndexNumberGenerationJobStatus.COMPLETED
+                job.progress_current = 0
+                job.progress_total = 0
+                job.completed_at = datetime.utcnow()
+                await session.commit()
+                return
+
+            # Group candidates by school
+            candidates_by_school: dict[int, list[RegistrationCandidate]] = {}
+            school_map: dict[int, School] = {}
+
+            for candidate, school in candidate_rows:
+                if candidate.school_id:
+                    if candidate.school_id not in candidates_by_school:
+                        candidates_by_school[candidate.school_id] = []
+                        school_map[candidate.school_id] = school
+                    candidates_by_school[candidate.school_id].append(candidate)
+
+            # Initialize school progress tracking
+            total_candidates = len(candidate_rows)
+            job.progress_total = total_candidates
+            school_progress_list = []
+
+            for school_id in candidates_by_school.keys():
+                school = school_map[school_id]
+                school_progress_list.append({
+                    "school_id": school_id,
+                    "school_code": school.code,
+                    "school_name": school.name,
+                    "processed": 0,
+                    "total": len(candidates_by_school[school_id]),
+                    "status": "pending"
+                })
+
+            job.school_progress = school_progress_list
+            await session.commit()
+
+            # Process each school sequentially
+            for idx, (school_id, candidates) in enumerate(candidates_by_school.items()):
+                school = school_map[school_id]
+
+                # Update current school being processed
+                job.current_school_id = school_id
+                job.current_school_name = school.name
+
+                # Update school progress status to processing
+                # Need to create new list with new dicts to trigger SQLAlchemy change detection for JSON column
+                if job.school_progress:
+                    school_progress_updated = [dict(sp) for sp in job.school_progress]
+                    for sp in school_progress_updated:
+                        if sp["school_id"] == school_id:
+                            sp["status"] = "processing"
+                            break
+                    job.school_progress = school_progress_updated
+
+                await session.commit()
+
+                # Get last 5 digits of school code
+                school_code = school.code
+                if len(school_code) >= 5:
+                    last_5_digits = school_code[-5:]
+                else:
+                    # Pad with zeros if school code is shorter than 5 characters
+                    last_5_digits = school_code.zfill(5)
+
+                # Sort candidates alphabetically by name (case-insensitive)
+                candidates_sorted = sorted(candidates, key=lambda c: c.name.lower())
+
+                # Generate index numbers starting from {last_5_digits}01000
+                base_number = 1000  # Starting from 01000
+                for candidate in candidates_sorted:
+                    index_number = f"{last_5_digits}{base_number:05d}"
+                    candidate.index_number = index_number
+                    base_number += 1
+
+                # Update progress
+                job.progress_current += len(candidates_sorted)
+
+                # Update school progress
+                # Need to create new list with new dicts to trigger SQLAlchemy change detection for JSON column
+                if job.school_progress:
+                    school_progress_updated = [dict(sp) for sp in job.school_progress]
+                    for sp in school_progress_updated:
+                        if sp["school_id"] == school_id:
+                            sp["processed"] = len(candidates_sorted)
+                            sp["status"] = "completed"
+                            break
+                    job.school_progress = school_progress_updated
+
+                # Commit after each school to ensure progress is saved
+                await session.commit()
+
+            # Mark job as completed
+            job.status = IndexNumberGenerationJobStatus.COMPLETED
+            job.current_school_id = None
+            job.current_school_name = None
+            job.completed_at = datetime.utcnow()
+            await session.commit()
+
+        except Exception as e:
+            logger.error(f"Error in background index number generation for job {job_id}: {e}", exc_info=True)
+            await session.rollback()
+            # Try to update job status to failed
+            try:
+                job_stmt = select(IndexNumberGenerationJob).where(IndexNumberGenerationJob.id == job_id)
+                job_result = await session.execute(job_stmt)
+                job = job_result.scalar_one_or_none()
+                if job:
+                    job.status = IndexNumberGenerationJobStatus.FAILED
+                    job.error_message = str(e)
+                    job.completed_at = datetime.utcnow()
+                    await session.commit()
+            except Exception as update_error:
+                logger.error(f"Error updating job status: {update_error}", exc_info=True)
+
+
+@router.post("/exams/{exam_id}/generate-index-numbers")
+async def generate_index_numbers(
+    exam_id: int,
+    background_tasks: BackgroundTasks,
+    session: DBSessionDep,
+    current_user: SystemAdminDep,
+    replace_existing: bool = Query(False, description="If True, regenerate index numbers for all candidates, replacing existing ones"),
+) -> dict:
+    """Generate index numbers for candidates in an exam (queued, processes school by school)."""
+    # Verify exam exists
+    stmt = select(RegistrationExam).where(RegistrationExam.id == exam_id)
+    result = await session.execute(stmt)
+    exam = result.scalar_one_or_none()
+
+    if not exam:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Exam not found")
+
+    # Check if a job already exists for this exam (upsert)
+    existing_job_stmt = select(IndexNumberGenerationJob).where(
+        IndexNumberGenerationJob.exam_id == exam_id
+    ).order_by(IndexNumberGenerationJob.created_at.desc())
+    existing_job_result = await session.execute(existing_job_stmt)
+    existing_job = existing_job_result.scalar_one_or_none()
+
+    if existing_job:
+        # Update existing job
+        existing_job.status = IndexNumberGenerationJobStatus.PENDING
+        existing_job.replace_existing = replace_existing
+        existing_job.progress_current = 0
+        existing_job.progress_total = 0
+        existing_job.current_school_id = None
+        existing_job.current_school_name = None
+        existing_job.school_progress = None
+        existing_job.error_message = None
+        existing_job.completed_at = None
+        existing_job.created_by_user_id = current_user.id
+        existing_job.created_at = datetime.utcnow()
+        existing_job.updated_at = datetime.utcnow()
+        job = existing_job
+    else:
+        # Create new job record
+        job = IndexNumberGenerationJob(
+            exam_id=exam_id,
+            status=IndexNumberGenerationJobStatus.PENDING,
+            replace_existing=replace_existing,
+            created_by_user_id=current_user.id,
+        )
+        session.add(job)
+
+    await session.commit()
+    await session.refresh(job)
+
+    # Add background task to process index numbers
+    background_tasks.add_task(_process_index_numbers_background, job.id)
+
+    mode_text = "all candidates (replacing existing ones)" if replace_existing else "candidates without index numbers"
+    return {
+        "job_id": job.id,
+        "exam_id": exam_id,
+        "message": f"Index number generation has been queued and will be processed school by school in the background for {mode_text}",
+    }
+
+
+@router.get("/exams/{exam_id}/generate-index-numbers/status/{job_id}", response_model=IndexNumberGenerationJobResponse)
+async def get_index_number_generation_status(
+    exam_id: int,
+    job_id: int,
+    session: DBSessionDep,
+    current_user: SystemAdminDep,
+) -> IndexNumberGenerationJobResponse:
+    """Get the status of an index number generation job."""
+    # Verify exam exists
+    exam_stmt = select(RegistrationExam).where(RegistrationExam.id == exam_id)
+    exam_result = await session.execute(exam_stmt)
+    exam = exam_result.scalar_one_or_none()
+
+    if not exam:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Exam not found")
+
+    # Get job
+    job_stmt = select(IndexNumberGenerationJob).where(
+        IndexNumberGenerationJob.id == job_id,
+        IndexNumberGenerationJob.exam_id == exam_id,
+    )
+    job_result = await session.execute(job_stmt)
+    job = job_result.scalar_one_or_none()
+
+    if not job:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Job not found")
+
+    # Convert school_progress JSON to list of SchoolProgressItem if needed
+    school_progress_list = None
+    if job.school_progress:
+        school_progress_list = [SchoolProgressItem.model_validate(sp) for sp in job.school_progress]
+
+    return IndexNumberGenerationJobResponse(
+        id=job.id,
+        exam_id=job.exam_id,
+        status=job.status.value,
+        replace_existing=job.replace_existing,
+        progress_current=job.progress_current,
+        progress_total=job.progress_total,
+        current_school_id=job.current_school_id,
+        current_school_name=job.current_school_name,
+        school_progress=school_progress_list,
+        error_message=job.error_message,
+        created_by_user_id=str(job.created_by_user_id) if job.created_by_user_id else None,
+        created_at=job.created_at,
+        updated_at=job.updated_at,
+        completed_at=job.completed_at,
+    )
+
+
+@router.get("/exams/{exam_id}/generate-index-numbers/status", response_model=IndexNumberGenerationJobResponse | None)
+async def get_latest_index_number_generation_status(
+    exam_id: int,
+    session: DBSessionDep,
+    current_user: SystemAdminDep,
+) -> IndexNumberGenerationJobResponse | None:
+    """Get the latest index number generation job status for an exam."""
+    # Verify exam exists
+    exam_stmt = select(RegistrationExam).where(RegistrationExam.id == exam_id)
+    exam_result = await session.execute(exam_stmt)
+    exam = exam_result.scalar_one_or_none()
+
+    if not exam:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Exam not found")
+
+    # Get latest job for this exam
+    job_stmt = select(IndexNumberGenerationJob).where(
+        IndexNumberGenerationJob.exam_id == exam_id
+    ).order_by(IndexNumberGenerationJob.created_at.desc())
+    job_result = await session.execute(job_stmt)
+    job = job_result.scalar_one_or_none()
+
+    if not job:
+        return None
+
+    # Convert school_progress JSON to list of SchoolProgressItem if needed
+    school_progress_list = None
+    if job.school_progress:
+        school_progress_list = [SchoolProgressItem.model_validate(sp) for sp in job.school_progress]
+
+    return IndexNumberGenerationJobResponse(
+        id=job.id,
+        exam_id=job.exam_id,
+        status=job.status.value,
+        replace_existing=job.replace_existing,
+        progress_current=job.progress_current,
+        progress_total=job.progress_total,
+        current_school_id=job.current_school_id,
+        current_school_name=job.current_school_name,
+        school_progress=school_progress_list,
+        error_message=job.error_message,
+        created_by_user_id=str(job.created_by_user_id) if job.created_by_user_id else None,
+        created_at=job.created_at,
+        updated_at=job.updated_at,
+        completed_at=job.completed_at,
+    )
 
 
 # Programme Management Endpoints
@@ -1824,3 +2406,535 @@ async def bulk_upload_subjects(
     return SubjectBulkUploadResponse(
         total_rows=total_rows, successful=successful, failed=failed, errors=errors
     )
+
+
+# Results Management Endpoints
+
+@router.post("/results/publish", response_model=CandidateResultBulkPublishResponse, status_code=status.HTTP_200_OK)
+async def bulk_publish_results(
+    publish_data: CandidateResultBulkPublish,
+    session: DBSessionDep,
+    current_user: SystemAdminDep,
+) -> CandidateResultBulkPublishResponse:
+    """Bulk publish results for an exam (creates CandidateResult records)."""
+    try:
+        result = await publish_results_bulk(
+            session=session,
+            exam_id=publish_data.exam_id,
+            results=[r.model_dump() for r in publish_data.results],
+            published_by_user_id=current_user.id,
+        )
+        return CandidateResultBulkPublishResponse(**result)
+    except ValueError as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to publish results: {str(e)}",
+        )
+
+
+@router.post("/results/upload", response_model=CandidateResultBulkPublishResponse, status_code=status.HTTP_200_OK)
+async def bulk_upload_results(
+    exam_id: int = Form(...),
+    file: UploadFile = File(...),
+    session: DBSessionDep = None,
+    current_user: SystemAdminDep = None,
+) -> CandidateResultBulkPublishResponse:
+    """Bulk upload results from Excel file (creates CandidateResult records without publishing them)."""
+    # Read file content
+    file_content = await file.read()
+    filename = file.filename or "unknown"
+
+    # Verify file format
+    if not filename.endswith(('.xlsx', '.xls')):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="File must be Excel format (.xlsx or .xls)"
+        )
+
+    # Parse Excel file
+    try:
+        df = pd.read_excel(io.BytesIO(file_content), engine='openpyxl')
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Error parsing Excel file: {str(e)}"
+        )
+
+    if df.empty:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Excel file is empty or contains no data"
+        )
+
+    # Normalize column names (strip whitespace, handle case insensitivity)
+    df.columns = df.columns.str.strip()
+    column_mapping = {col.lower(): col for col in df.columns}
+
+    # Required columns
+    required_columns = ['registration_number', 'subject_code', 'grade']
+    missing_columns = []
+    for req_col in required_columns:
+        if req_col.lower() not in column_mapping:
+            missing_columns.append(req_col)
+
+    if missing_columns:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Missing required columns: {', '.join(missing_columns)}"
+        )
+
+    # Convert DataFrame to list of result dictionaries
+    results = []
+    for idx, row in df.iterrows():
+        registration_number = str(row[column_mapping['registration_number']]).strip() if pd.notna(row[column_mapping['registration_number']]) else None
+        subject_code = str(row[column_mapping['subject_code']]).strip() if pd.notna(row[column_mapping['subject_code']]) else None
+        grade_str = str(row[column_mapping['grade']]).strip() if pd.notna(row[column_mapping['grade']]) else None
+
+        # Optional index_number
+        index_number = None
+        if 'index_number' in column_mapping:
+            index_number_val = row[column_mapping['index_number']]
+            if pd.notna(index_number_val):
+                index_number = str(index_number_val).strip()
+
+        if not registration_number or not subject_code or not grade_str:
+            continue  # Skip rows with missing required data
+
+        results.append({
+            "registration_number": registration_number,
+            "subject_code": subject_code,
+            "grade": grade_str,
+            "index_number": index_number,
+        })
+
+    if not results:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="No valid results found in Excel file"
+        )
+
+    # Call upload_results_bulk service
+    try:
+        result = await upload_results_bulk(
+            session=session,
+            exam_id=exam_id,
+            results=results,
+            uploaded_by_user_id=current_user.id,
+        )
+        return CandidateResultBulkPublishResponse(**result)
+    except ValueError as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to upload results: {str(e)}",
+        )
+
+
+@router.post("/results/exams/{exam_id}/publish", response_model=RegistrationExamResponse, status_code=status.HTTP_200_OK)
+async def publish_exam_results_endpoint(
+    exam_id: int,
+    session: DBSessionDep,
+    current_user: SystemAdminDep,
+) -> RegistrationExamResponse:
+    """Mark exam as published (allows candidates to view results)."""
+    try:
+        exam = await publish_exam_results(session, exam_id, current_user.id)
+        return RegistrationExamResponse.model_validate(exam)
+    except ValueError as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to publish exam: {str(e)}",
+        )
+
+
+@router.post("/results/exams/{exam_id}/publish-results", response_model=CandidateResultBulkPublishResponse, status_code=status.HTTP_200_OK)
+async def publish_results_for_exam(
+    exam_id: int,
+    session: DBSessionDep,
+    current_user: SystemAdminDep,
+    filter_data: PublishResultsFilterRequest | None = Body(None),
+) -> CandidateResultBulkPublishResponse:
+    """Publish uploaded results for an exam with optional filters (all, by school, by subject, or combinations).
+
+    If no filter_data is provided (or empty body), publishes all unpublished results for the exam.
+    If filter_data is provided, publishes only results matching the filters (school_ids and/or subject_ids).
+    """
+    try:
+        school_ids = filter_data.school_ids if filter_data else None
+        subject_ids = filter_data.subject_ids if filter_data else None
+
+        result = await publish_results_bulk(
+            session=session,
+            exam_id=exam_id,
+            published_by_user_id=current_user.id,
+            school_ids=school_ids,
+            subject_ids=subject_ids,
+        )
+        return CandidateResultBulkPublishResponse(**result)
+    except ValueError as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to publish results: {str(e)}",
+        )
+
+
+@router.post("/results/exams/{exam_id}/unpublish-results", response_model=CandidateResultBulkPublishResponse, status_code=status.HTTP_200_OK)
+async def unpublish_results_for_exam(
+    exam_id: int,
+    session: DBSessionDep,
+    current_user: SystemAdminDep,
+    filter_data: PublishResultsFilterRequest | None = Body(None),
+) -> CandidateResultBulkPublishResponse:
+    """Unpublish results for an exam with optional filters (all, by school, by subject, or combinations).
+
+    If no filter_data is provided (or empty body), unpublishes all published results for the exam.
+    If filter_data is provided, unpublishes only results matching the filters (school_ids and/or subject_ids).
+    """
+    try:
+        school_ids = filter_data.school_ids if filter_data else None
+        subject_ids = filter_data.subject_ids if filter_data else None
+
+        result = await unpublish_results_bulk(
+            session=session,
+            exam_id=exam_id,
+            school_ids=school_ids,
+            subject_ids=subject_ids,
+        )
+        return CandidateResultBulkPublishResponse(**result)
+    except ValueError as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to unpublish results: {str(e)}",
+        )
+
+
+@router.post("/results/exams/{exam_id}/unpublish", response_model=RegistrationExamResponse, status_code=status.HTTP_200_OK)
+async def unpublish_exam_results_endpoint(
+    exam_id: int,
+    session: DBSessionDep,
+    current_user: SystemAdminDep,
+) -> RegistrationExamResponse:
+    """Unpublish exam results (prevents candidates from viewing)."""
+    try:
+        exam = await unpublish_exam_results(session, exam_id)
+        # Ensure registration_period is loaded
+        await session.refresh(exam, ["registration_period"])
+        return RegistrationExamResponse.model_validate(exam)
+    except ValueError as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+    except Exception as e:
+        import traceback
+        error_detail = str(e)
+        traceback.print_exc()
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to unpublish exam: {error_detail}",
+        )
+
+
+@router.get("/results/{exam_id}", response_model=list[CandidateResultResponse])
+async def list_exam_results(
+    exam_id: int,
+    session: DBSessionDep,
+    current_user: SystemAdminDep,
+    candidate_id: int | None = Query(None, description="Filter by candidate ID"),
+    subject_id: int | None = Query(None, description="Filter by subject ID"),
+    school_id: int | None = Query(None, description="Filter by school ID"),
+) -> list[CandidateResultResponse]:
+    """List all results for an exam (with optional filters)."""
+    # Verify exam exists
+    exam_stmt = select(RegistrationExam).where(RegistrationExam.id == exam_id)
+    exam_result = await session.execute(exam_stmt)
+    exam = exam_result.scalar_one_or_none()
+    if not exam:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Exam not found")
+
+    # Build query
+    stmt = (
+        select(CandidateResult)
+        .join(RegistrationCandidate, CandidateResult.registration_candidate_id == RegistrationCandidate.id)
+        .join(Subject, CandidateResult.subject_id == Subject.id)
+        .where(CandidateResult.registration_exam_id == exam_id)
+        .options(
+            selectinload(CandidateResult.candidate),
+            selectinload(CandidateResult.subject),
+        )
+    )
+
+    if candidate_id:
+        stmt = stmt.where(CandidateResult.registration_candidate_id == candidate_id)
+    if subject_id:
+        stmt = stmt.where(CandidateResult.subject_id == subject_id)
+    if school_id:
+        stmt = stmt.where(RegistrationCandidate.school_id == school_id)
+
+    result = await session.execute(stmt)
+    results = result.scalars().all()
+
+    # Build response
+    response_list = []
+    for r in results:
+        response_list.append(
+            CandidateResultResponse(
+                id=r.id,
+                registration_candidate_id=r.registration_candidate_id,
+                subject_id=r.subject_id,
+                subject_code=r.subject.code,
+                subject_name=r.subject.name,
+                registration_exam_id=r.registration_exam_id,
+                exam_type=exam.exam_type,
+                exam_series=exam.exam_series,
+                exam_year=exam.year,
+                grade=r.grade,
+                is_published=r.is_published,
+                published_at=r.published_at,
+                published_by_user_id=r.published_by_user_id,
+                candidate_name=r.candidate.name,
+                candidate_index_number=r.candidate.index_number,
+                candidate_registration_number=r.candidate.registration_number,
+                created_at=r.created_at,
+                updated_at=r.updated_at,
+            )
+        )
+
+    return response_list
+
+
+@router.put("/results/{result_id}", response_model=CandidateResultResponse)
+async def update_result(
+    result_id: int,
+    update_data: CandidateResultUpdate,
+    session: DBSessionDep,
+    current_user: SystemAdminDep,
+) -> CandidateResultResponse:
+    """Update individual result (can unblock by changing BLOCKED to regular grade)."""
+    result_stmt = select(CandidateResult).where(CandidateResult.id == result_id)
+    result = await session.execute(result_stmt)
+    candidate_result = result.scalar_one_or_none()
+
+    if not candidate_result:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Result not found")
+
+    # Update grade if provided
+    if update_data.grade is not None:
+        # If unblocking (changing from BLOCKED to regular grade)
+        if candidate_result.grade == Grade.BLOCKED and update_data.grade != Grade.BLOCKED:
+            candidate_result = await unblock_result(session, result_id, update_data.grade, current_user.id)
+        else:
+            candidate_result.grade = update_data.grade
+            candidate_result.published_by_user_id = current_user.id
+            candidate_result.updated_at = datetime.utcnow()
+
+    await session.commit()
+    await session.refresh(candidate_result)
+
+    # Get related data for response
+    exam_stmt = select(RegistrationExam).where(RegistrationExam.id == candidate_result.registration_exam_id)
+    exam_result = await session.execute(exam_stmt)
+    exam = exam_result.scalar_one()
+
+    subject_stmt = select(Subject).where(Subject.id == candidate_result.subject_id)
+    subject_result = await session.execute(subject_stmt)
+    subject = subject_result.scalar_one()
+
+    return CandidateResultResponse(
+        id=candidate_result.id,
+        registration_candidate_id=candidate_result.registration_candidate_id,
+        subject_id=candidate_result.subject_id,
+        subject_code=subject.code,
+        subject_name=subject.name,
+        registration_exam_id=candidate_result.registration_exam_id,
+        exam_type=exam.exam_type,
+        exam_series=exam.exam_series,
+        exam_year=exam.year,
+        grade=candidate_result.grade,
+        is_published=candidate_result.is_published,
+        published_at=candidate_result.published_at,
+        published_by_user_id=candidate_result.published_by_user_id,
+        candidate_name=candidate_result.candidate.name,
+        candidate_index_number=candidate_result.candidate.index_number,
+        candidate_registration_number=candidate_result.candidate.registration_number,
+        created_at=candidate_result.created_at,
+        updated_at=candidate_result.updated_at,
+    )
+
+
+@router.post("/results/blocks", response_model=ResultBlockResponse, status_code=status.HTTP_201_CREATED)
+async def create_result_block_endpoint(
+    block_data: ResultBlockCreate,
+    session: DBSessionDep,
+    current_user: SystemAdminDep,
+) -> ResultBlockResponse:
+    """Create result block (administrative blocking - prevents viewing)."""
+    try:
+        block = await create_result_block(
+            session=session,
+            block_type=block_data.block_type,
+            exam_id=block_data.registration_exam_id,
+            blocked_by_user_id=current_user.id,
+            candidate_id=block_data.registration_candidate_id,
+            school_id=block_data.school_id,
+            subject_id=block_data.subject_id,
+            reason=block_data.reason,
+        )
+
+        # Get related data for response
+        exam_stmt = select(RegistrationExam).where(RegistrationExam.id == block.registration_exam_id)
+        exam_result = await session.execute(exam_stmt)
+        exam = exam_result.scalar_one()
+
+        response_data = {
+            "id": block.id,
+            "block_type": block.block_type,
+            "registration_exam_id": block.registration_exam_id,
+            "exam_type": exam.exam_type,
+            "exam_series": exam.exam_series,
+            "exam_year": exam.year,
+            "registration_candidate_id": block.registration_candidate_id,
+            "candidate_name": None,
+            "candidate_registration_number": None,
+            "school_id": block.school_id,
+            "school_name": None,
+            "school_code": None,
+            "subject_id": block.subject_id,
+            "subject_code": None,
+            "subject_name": None,
+            "is_active": block.is_active,
+            "blocked_by_user_id": block.blocked_by_user_id,
+            "blocked_by_user_name": current_user.full_name,
+            "reason": block.reason,
+            "created_at": block.created_at,
+            "updated_at": block.updated_at,
+        }
+
+        if block.registration_candidate_id:
+            candidate_stmt = select(RegistrationCandidate).where(
+                RegistrationCandidate.id == block.registration_candidate_id
+            )
+            candidate_result = await session.execute(candidate_stmt)
+            candidate = candidate_result.scalar_one()
+            response_data["candidate_name"] = candidate.name
+            response_data["candidate_registration_number"] = candidate.registration_number
+
+        if block.school_id:
+            school_stmt = select(School).where(School.id == block.school_id)
+            school_result = await session.execute(school_stmt)
+            school = school_result.scalar_one()
+            response_data["school_name"] = school.name
+            response_data["school_code"] = school.code
+
+        if block.subject_id:
+            subject_stmt = select(Subject).where(Subject.id == block.subject_id)
+            subject_result = await session.execute(subject_stmt)
+            subject = subject_result.scalar_one()
+            response_data["subject_code"] = subject.code
+            response_data["subject_name"] = subject.name
+
+        return ResultBlockResponse(**response_data)
+    except ValueError as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to create block: {str(e)}",
+        )
+
+
+@router.get("/results/blocks", response_model=list[ResultBlockResponse])
+async def list_result_blocks(
+    session: DBSessionDep,
+    current_user: SystemAdminDep,
+    exam_id: int | None = Query(None, description="Filter by exam ID"),
+    is_active: bool | None = Query(None, description="Filter by active status"),
+) -> list[ResultBlockResponse]:
+    """List result blocks."""
+    stmt = (
+        select(ResultBlock)
+        .join(RegistrationExam, ResultBlock.registration_exam_id == RegistrationExam.id)
+        .options(
+            selectinload(ResultBlock.exam),
+            selectinload(ResultBlock.candidate),
+            selectinload(ResultBlock.school),
+            selectinload(ResultBlock.subject),
+            selectinload(ResultBlock.blocked_by),
+        )
+    )
+
+    if exam_id:
+        stmt = stmt.where(ResultBlock.registration_exam_id == exam_id)
+    if is_active is not None:
+        stmt = stmt.where(ResultBlock.is_active == is_active)
+
+    result = await session.execute(stmt)
+    blocks = result.scalars().all()
+
+    response_list = []
+    for block in blocks:
+        response_data = {
+            "id": block.id,
+            "block_type": block.block_type,
+            "registration_exam_id": block.registration_exam_id,
+            "exam_type": block.exam.exam_type,
+            "exam_series": block.exam.exam_series,
+            "exam_year": block.exam.year,
+            "registration_candidate_id": block.registration_candidate_id,
+            "candidate_name": None,
+            "candidate_registration_number": None,
+            "school_id": block.school_id,
+            "school_name": None,
+            "school_code": None,
+            "subject_id": block.subject_id,
+            "subject_code": None,
+            "subject_name": None,
+            "is_active": block.is_active,
+            "blocked_by_user_id": block.blocked_by_user_id,
+            "blocked_by_user_name": block.blocked_by.full_name if block.blocked_by else "Unknown",
+            "reason": block.reason,
+            "created_at": block.created_at,
+            "updated_at": block.updated_at,
+        }
+
+        if block.candidate:
+            response_data["candidate_name"] = block.candidate.name
+            response_data["candidate_registration_number"] = block.candidate.registration_number
+
+        if block.school:
+            response_data["school_name"] = block.school.name
+            response_data["school_code"] = block.school.code
+
+        if block.subject:
+            response_data["subject_code"] = block.subject.code
+            response_data["subject_name"] = block.subject.name
+
+        response_list.append(ResultBlockResponse(**response_data))
+
+    return response_list
+
+
+@router.delete("/results/blocks/{block_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_result_block(
+    block_id: int,
+    session: DBSessionDep,
+    current_user: SystemAdminDep,
+) -> None:
+    """Remove block (deactivate)."""
+    block_stmt = select(ResultBlock).where(ResultBlock.id == block_id)
+    block_result = await session.execute(block_stmt)
+    block = block_result.scalar_one_or_none()
+
+    if not block:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Block not found")
+
+    block.is_active = False
+    block.updated_at = datetime.utcnow()
+
+    await session.commit()
