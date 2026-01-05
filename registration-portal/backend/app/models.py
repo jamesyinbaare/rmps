@@ -16,7 +16,7 @@ from sqlalchemy import (
     Time,
     UniqueConstraint,
 )
-from sqlalchemy.dialects.postgresql import UUID
+from sqlalchemy.dialects.postgresql import UUID, JSON
 from sqlalchemy.orm import relationship
 
 from app.dependencies.database import Base
@@ -55,6 +55,32 @@ class ExamType(enum.Enum):
 class ExamSeries(enum.Enum):
     MAY_JUNE = "MAY/JUNE"
     NOV_DEC = "NOV/DEC"
+
+
+class Grade(enum.Enum):
+    FAIL = "Fail"
+    PASS = "Pass"
+    LOWER_CREDIT = "Lower Credit"
+    CREDIT = "Credit"
+    UPPER_CREDIT = "Upper Credit"
+    DISTINCTION = "Distinction"
+    BLOCKED = "Blocked"
+    CANCELLED = "Cancelled"
+    ABSENT = "Absent"
+
+
+class ResultBlockType(enum.Enum):
+    CANDIDATE_ALL = "CANDIDATE_ALL"
+    CANDIDATE_SUBJECT = "CANDIDATE_SUBJECT"
+    SCHOOL_ALL = "SCHOOL_ALL"
+    SCHOOL_SUBJECT = "SCHOOL_SUBJECT"
+
+
+class IndexNumberGenerationJobStatus(enum.Enum):
+    PENDING = "pending"
+    PROCESSING = "processing"
+    COMPLETED = "completed"
+    FAILED = "failed"
 
 
 class PortalUser(Base):
@@ -106,6 +132,7 @@ class School(Base):
     users = relationship("PortalUser", back_populates="school")
     candidates = relationship("RegistrationCandidate", back_populates="school")
     programmes = relationship("Programme", secondary="school_programmes", back_populates="schools")
+    result_blocks = relationship("ResultBlock", back_populates="school", cascade="all, delete-orphan")
 
 
 class RegistrationExam(Base):
@@ -118,6 +145,9 @@ class RegistrationExam(Base):
     year = Column(Integer, nullable=False)
     description = Column(Text, nullable=True)
     registration_period_id = Column(Integer, ForeignKey("exam_registration_periods.id", ondelete="CASCADE"), nullable=False, index=True)
+    results_published = Column(Boolean, default=False, nullable=False, index=True)
+    results_published_at = Column(DateTime, nullable=True)
+    results_published_by_user_id = Column(UUID(as_uuid=True), ForeignKey("portal_users.id", ondelete="SET NULL"), nullable=True, index=True)
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
 
@@ -125,6 +155,10 @@ class RegistrationExam(Base):
     candidates = relationship("RegistrationCandidate", back_populates="exam")
     schedules = relationship("ExaminationSchedule", back_populates="exam", cascade="all, delete-orphan")
     exports = relationship("RegistrationExport", back_populates="exam")
+    results = relationship("CandidateResult", back_populates="exam", cascade="all, delete-orphan")
+    result_blocks = relationship("ResultBlock", back_populates="exam", cascade="all, delete-orphan")
+    index_number_generation_jobs = relationship("IndexNumberGenerationJob", back_populates="exam", cascade="all, delete-orphan")
+    results_published_by = relationship("PortalUser", foreign_keys=[results_published_by_user_id])
 
 
 class ExamRegistrationPeriod(Base):
@@ -171,6 +205,8 @@ class RegistrationCandidate(Base):
     programme = relationship("Programme", back_populates="candidates")
     subject_selections = relationship("RegistrationSubjectSelection", back_populates="candidate", cascade="all, delete-orphan")
     photo = relationship("RegistrationCandidatePhoto", back_populates="candidate", uselist=False, cascade="all, delete-orphan")
+    results = relationship("CandidateResult", back_populates="candidate", cascade="all, delete-orphan")
+    result_blocks = relationship("ResultBlock", back_populates="candidate", cascade="all, delete-orphan")
 
 
 class RegistrationSubjectSelection(Base):
@@ -241,6 +277,10 @@ class Subject(Base):
     programmes = relationship("Programme", secondary="programme_subjects", back_populates="subjects")
     # One-to-many relationship with RegistrationSubjectSelection
     candidate_selections = relationship("RegistrationSubjectSelection", back_populates="subject")
+    # One-to-many relationship with CandidateResult
+    results = relationship("CandidateResult", back_populates="subject", cascade="all, delete-orphan")
+    # One-to-many relationship with ResultBlock
+    result_blocks = relationship("ResultBlock", back_populates="subject", cascade="all, delete-orphan")
 
 
 class Programme(Base):
@@ -300,3 +340,78 @@ class RegistrationCandidatePhoto(Base):
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
 
     candidate = relationship("RegistrationCandidate", back_populates="photo")
+
+
+class CandidateResult(Base):
+    """Model for candidate examination results."""
+
+    __tablename__ = "candidate_results"
+
+    id = Column(Integer, primary_key=True)
+    registration_candidate_id = Column(Integer, ForeignKey("registration_candidates.id", ondelete="CASCADE"), nullable=False, index=True)
+    subject_id = Column(Integer, ForeignKey("subjects.id", ondelete="CASCADE"), nullable=False, index=True)
+    registration_exam_id = Column(Integer, ForeignKey("registration_exams.id", ondelete="CASCADE"), nullable=False, index=True)
+    grade = Column(Enum(Grade), nullable=False)
+    is_published = Column(Boolean, default=False, nullable=False)
+    published_at = Column(DateTime, nullable=True)
+    published_by_user_id = Column(UUID(as_uuid=True), ForeignKey("portal_users.id", ondelete="SET NULL"), nullable=True, index=True)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+
+    candidate = relationship("RegistrationCandidate", back_populates="results")
+    subject = relationship("Subject", back_populates="results")
+    exam = relationship("RegistrationExam", back_populates="results")
+    published_by = relationship("PortalUser", foreign_keys=[published_by_user_id])
+
+    __table_args__ = (
+        UniqueConstraint("registration_candidate_id", "subject_id", "registration_exam_id", name="uq_candidate_subject_exam_result"),
+    )
+
+
+class ResultBlock(Base):
+    """Model for administratively blocking results."""
+
+    __tablename__ = "result_blocks"
+
+    id = Column(Integer, primary_key=True)
+    block_type = Column(Enum(ResultBlockType), nullable=False, index=True)
+    registration_exam_id = Column(Integer, ForeignKey("registration_exams.id", ondelete="CASCADE"), nullable=False, index=True)
+    registration_candidate_id = Column(Integer, ForeignKey("registration_candidates.id", ondelete="CASCADE"), nullable=True, index=True)
+    school_id = Column(Integer, ForeignKey("schools.id", ondelete="CASCADE"), nullable=True, index=True)
+    subject_id = Column(Integer, ForeignKey("subjects.id", ondelete="CASCADE"), nullable=True, index=True)
+    is_active = Column(Boolean, default=True, nullable=False, index=True)
+    blocked_by_user_id = Column(UUID(as_uuid=True), ForeignKey("portal_users.id", ondelete="SET NULL"), nullable=False, index=True)
+    reason = Column(Text, nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+
+    exam = relationship("RegistrationExam", back_populates="result_blocks")
+    candidate = relationship("RegistrationCandidate", back_populates="result_blocks")
+    school = relationship("School", back_populates="result_blocks")
+    subject = relationship("Subject", back_populates="result_blocks")
+    blocked_by = relationship("PortalUser", foreign_keys=[blocked_by_user_id])
+
+
+class IndexNumberGenerationJob(Base):
+    """Model for tracking index number generation jobs."""
+
+    __tablename__ = "index_number_generation_jobs"
+
+    id = Column(Integer, primary_key=True)
+    exam_id = Column(Integer, ForeignKey("registration_exams.id", ondelete="CASCADE"), nullable=False, index=True)
+    status = Column(Enum(IndexNumberGenerationJobStatus), default=IndexNumberGenerationJobStatus.PENDING, nullable=False, index=True)
+    replace_existing = Column(Boolean, default=False, nullable=False)
+    progress_current = Column(Integer, default=0, nullable=False)  # Number of candidates processed
+    progress_total = Column(Integer, default=0, nullable=False)  # Total number of candidates to process
+    current_school_id = Column(Integer, ForeignKey("schools.id", ondelete="SET NULL"), nullable=True)
+    current_school_name = Column(String(255), nullable=True)
+    school_progress = Column(JSON, nullable=True)  # JSON: [{school_id, school_code, school_name, processed, total, status}]
+    error_message = Column(Text, nullable=True)
+    created_by_user_id = Column(UUID(as_uuid=True), ForeignKey("portal_users.id", ondelete="SET NULL"), nullable=True, index=True)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False, index=True)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+    completed_at = Column(DateTime, nullable=True)
+
+    exam = relationship("RegistrationExam", back_populates="index_number_generation_jobs")
+    current_school = relationship("School", foreign_keys=[current_school_id])
+    created_by = relationship("PortalUser", foreign_keys=[created_by_user_id])

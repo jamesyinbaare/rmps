@@ -2,7 +2,8 @@ from __future__ import annotations
 
 from datetime import date, datetime
 
-from pydantic import BaseModel, EmailStr, Field
+from pydantic import BaseModel, EmailStr, Field, field_validator, ConfigDict
+from uuid import UUID
 
 from app.models import RegistrationStatus
 
@@ -18,8 +19,7 @@ class RegistrationCandidatePhotoResponse(BaseModel):
     created_at: datetime
     updated_at: datetime
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 class PhotoAlbumItem(BaseModel):
@@ -112,8 +112,7 @@ class RegistrationSubjectSelectionResponse(BaseModel):
     series: int | None
     created_at: datetime
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 class RegistrationCandidateResponse(RegistrationCandidateBase):
@@ -131,8 +130,7 @@ class RegistrationCandidateResponse(RegistrationCandidateBase):
     created_at: datetime
     updated_at: datetime
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 class BulkUploadError(BaseModel):
@@ -183,8 +181,7 @@ class ExamRegistrationPeriodResponse(BaseModel):
     created_at: datetime
     updated_at: datetime
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 class RegistrationExamCreate(BaseModel):
@@ -218,8 +215,55 @@ class RegistrationExamResponse(BaseModel):
     year: int
     description: str | None = None
     registration_period: ExamRegistrationPeriodResponse
+    results_published: bool = False
+    results_published_at: datetime | None = None
+    results_published_by_user_id: str | None = None
+    has_index_numbers: bool = False
     created_at: datetime
     updated_at: datetime
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
+
+    @field_validator('results_published_by_user_id', mode='before')
+    @classmethod
+    def convert_uuid_to_string(cls, v):
+        """Convert UUID to string if it's a UUID object."""
+        if v is None:
+            return None
+        if isinstance(v, UUID):
+            return str(v)
+        return v
+
+
+class SchoolProgressItem(BaseModel):
+    """Schema for school progress in index number generation."""
+
+    school_id: int
+    school_code: str
+    school_name: str
+    processed: int
+    total: int
+    status: str  # "pending", "processing", "completed", "failed"
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class IndexNumberGenerationJobResponse(BaseModel):
+    """Schema for index number generation job response."""
+
+    id: int
+    exam_id: int
+    status: str  # "pending", "processing", "completed", "failed"
+    replace_existing: bool
+    progress_current: int
+    progress_total: int
+    current_school_id: int | None
+    current_school_name: str | None
+    school_progress: list[SchoolProgressItem] | None
+    error_message: str | None
+    created_by_user_id: str | None
+    created_at: datetime
+    updated_at: datetime
+    completed_at: datetime | None
+
+    model_config = ConfigDict(from_attributes=True)
