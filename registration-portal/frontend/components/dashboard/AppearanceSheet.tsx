@@ -2,7 +2,7 @@
 
 import { useTheme } from "next-themes";
 import { useEffect, useState } from "react";
-import { Moon, Sun, Monitor } from "lucide-react";
+import { Moon, Sun, Monitor, Leaf } from "lucide-react";
 
 interface AppearanceSheetProps {
   open: boolean;
@@ -39,6 +39,12 @@ export function AppearanceSheet({ open, onOpenChange }: AppearanceSheetProps) {
       name: "System",
       icon: Monitor,
       description: "Use system theme",
+    },
+    {
+      id: "ctvet",
+      name: "CTVET",
+      icon: Leaf,
+      description: "Green primary theme",
     },
   ];
 

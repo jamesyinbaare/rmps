@@ -126,6 +126,73 @@
   --popover-foreground: #F8F9FA;
 }
 
+/* CTVET Theme - Light Mode with Green Primary */
+.ctvet {
+  --background: var(--ghana-off-white);
+  --foreground: var(--ghana-black);
+  --primary: #22C55E;
+  --primary-hover: #16A34A;
+  --primary-foreground: var(--ghana-white);
+  --secondary: var(--ghana-gold);
+  --secondary-hover: var(--ghana-rich-gold);
+  --secondary-foreground: var(--ghana-black);
+  --success: var(--ghana-green);
+  --success-hover: var(--ghana-forest-green);
+  --success-foreground: var(--ghana-white);
+  --accent: var(--ghana-volta-blue);
+  --accent-foreground: var(--ghana-white);
+  --card: var(--ghana-white);
+  --card-foreground: var(--ghana-black);
+  --border: var(--ghana-light-gray);
+  --input: var(--ghana-white);
+  --input-border: var(--ghana-slate);
+  --muted: var(--ghana-light-gray);
+  --muted-foreground: var(--ghana-slate);
+  --destructive: var(--ghana-red);
+  --destructive-foreground: var(--ghana-white);
+  --warning: var(--ghana-gold);
+  --warning-foreground: var(--ghana-black);
+  --ring: #22C55E;
+  --radius: 8px;
+
+  /* Popover colors */
+  --popover: var(--ghana-white);
+  --popover-foreground: var(--ghana-black);
+}
+
+/* CTVET Theme - Dark Mode with Green Primary */
+.ctvet.dark {
+  --background: #0F1419;
+  --foreground: #F8F9FA;
+  --primary: #10B981;
+  --primary-hover: #059669;
+  --primary-foreground: #FFFFFF;
+  --secondary: #FCD116;
+  --secondary-hover: #E6B80A;
+  --secondary-foreground: #000000;
+  --success: #2ECC71;
+  --success-hover: #006B3F;
+  --success-foreground: #FFFFFF;
+  --accent: #3498DB;
+  --accent-foreground: #FFFFFF;
+  --card: #1A1F2E;
+  --card-foreground: #F8F9FA;
+  --border: #2C3E50;
+  --input: #1A1F2E;
+  --input-border: #5D6D7E;
+  --muted: #2C3E50;
+  --muted-foreground: #95A5A6;
+  --destructive: #E63946;
+  --destructive-foreground: #FFFFFF;
+  --warning: #FCD116;
+  --warning-foreground: #000000;
+  --ring: #10B981;
+
+  /* Popover colors */
+  --popover: #1A1F2E;
+  --popover-foreground: #F8F9FA;
+}
+
 @layer base {
   * {
     @apply border-border;

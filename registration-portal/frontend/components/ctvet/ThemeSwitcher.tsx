@@ -2,7 +2,7 @@
 
 import { useTheme } from "next-themes";
 import { useEffect, useState } from "react";
-import { Moon, Sun, Monitor } from "lucide-react";
+import { Moon, Sun, Monitor, Leaf } from "lucide-react";
 
 export function ThemeSwitcher() {
   const { theme, setTheme } = useTheme();
@@ -52,6 +52,17 @@ export function ThemeSwitcher() {
         aria-label="System theme"
       >
         <Monitor className="h-4 w-4" />
+      </button>
+      <button
+        onClick={() => setTheme("ctvet")}
+        className={`p-2 rounded-md transition-colors ${
+          theme === "ctvet"
+            ? "bg-[var(--primary)] text-[var(--primary-foreground)]"
+            : "text-muted-foreground hover:text-foreground"
+        }`}
+        aria-label="CTVET green theme"
+      >
+        <Leaf className="h-4 w-4" />
       </button>
     </div>
   );
