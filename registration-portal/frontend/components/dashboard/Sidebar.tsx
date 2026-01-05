@@ -3,7 +3,7 @@
 import { useState, useEffect } from "react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
-import { Users, GraduationCap, Building2, MoreVertical, Settings, HelpCircle, Upload, UserPlus, FileText, BookOpen, BookMarked, Images } from "lucide-react";
+import { Users, GraduationCap, Building2, MoreVertical, Settings, HelpCircle, Upload, UserPlus, FileText, BookOpen, BookMarked, Images, Award, Shield } from "lucide-react";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -157,6 +157,19 @@ export function Sidebar() {
                 <Link href="/dashboard/admin/subjects" className="flex items-center">
                   <BookMarked className="mr-2 h-4 w-4" />
                   Subjects
+                </Link>
+              </DropdownMenuItem>
+              <DropdownMenuSeparator />
+              <DropdownMenuItem asChild>
+                <Link href="/dashboard/admin/results" className="flex items-center">
+                  <Award className="mr-2 h-4 w-4" />
+                  Results
+                </Link>
+              </DropdownMenuItem>
+              <DropdownMenuItem asChild>
+                <Link href="/dashboard/admin/results/blocks" className="flex items-center">
+                  <Shield className="mr-2 h-4 w-4" />
+                  Result Blocks
                 </Link>
               </DropdownMenuItem>
               <DropdownMenuSeparator />

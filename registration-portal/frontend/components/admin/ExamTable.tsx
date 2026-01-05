@@ -8,6 +8,9 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
+import { Button } from "@/components/ui/button";
+import { useRouter } from "next/navigation";
+import { Eye } from "lucide-react";
 import type { RegistrationExam } from "@/types";
 
 interface ExamTableProps {
@@ -15,6 +18,8 @@ interface ExamTableProps {
 }
 
 export function ExamTable({ exams }: ExamTableProps) {
+  const router = useRouter();
+
   const getRegistrationStatus = (exam: RegistrationExam) => {
     const now = new Date();
     const startDate = new Date(exam.registration_period.registration_start_date);
@@ -46,15 +51,17 @@ export function ExamTable({ exams }: ExamTableProps) {
           <TableHead>Exam Type</TableHead>
           <TableHead>Series</TableHead>
           <TableHead>Year</TableHead>
-          <TableHead>Registration Period</TableHead>
+          <TableHead>Registration Start</TableHead>
+          <TableHead>Registration End</TableHead>
           <TableHead>Status</TableHead>
           <TableHead>Created</TableHead>
+          <TableHead>Actions</TableHead>
         </TableRow>
       </TableHeader>
       <TableBody>
         {exams.length === 0 ? (
           <TableRow>
-            <TableCell colSpan={6} className="text-center text-gray-500">
+            <TableCell colSpan={8} className="text-center text-gray-500">
               No exams found
             </TableCell>
           </TableRow>
@@ -66,11 +73,11 @@ export function ExamTable({ exams }: ExamTableProps) {
                 <TableCell className="font-medium">{exam.exam_type}</TableCell>
                 <TableCell>{exam.exam_series}</TableCell>
                 <TableCell>{exam.year}</TableCell>
-                <TableCell>
-                  <div className="text-sm">
-                    <div>Start: {formatDate(exam.registration_period.registration_start_date)}</div>
-                    <div>End: {formatDate(exam.registration_period.registration_end_date)}</div>
-                  </div>
+                <TableCell className="text-sm">
+                  {formatDate(exam.registration_period.registration_start_date)}
+                </TableCell>
+                <TableCell className="text-sm">
+                  {formatDate(exam.registration_period.registration_end_date)}
                 </TableCell>
                 <TableCell>
                   <span className={`rounded-full px-2 py-1 text-xs ${status.color}`}>
@@ -78,6 +85,15 @@ export function ExamTable({ exams }: ExamTableProps) {
                   </span>
                 </TableCell>
                 <TableCell>{new Date(exam.created_at).toLocaleDateString()}</TableCell>
+                <TableCell>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => router.push(`/dashboard/exams/${exam.id}`)}
+                  >
+                    <Eye className="h-4 w-4" />
+                  </Button>
+                </TableCell>
               </TableRow>
             );
           })
