@@ -759,6 +759,7 @@ async def submit_certificate_request(
     courier_city: str | None = Form(None),
     courier_region: str | None = Form(None),
     courier_postal_code: str | None = Form(None),
+    service_type: str = Form("standard"),
     photograph: UploadFile = File(...),
     national_id_scan: UploadFile = File(...),
     session: DBSessionDep = None,
@@ -767,7 +768,7 @@ async def submit_certificate_request(
     from app.schemas.certificate import CertificateRequestResponse
     from app.services.certificate_service import create_certificate_request
     from app.services.certificate_file_storage import CertificateFileStorageService
-    from app.models import CertificateRequestType, DeliveryMethod
+    from app.models import CertificateRequestType, DeliveryMethod, ServiceType
     from app.config import settings
 
     try:
@@ -804,10 +805,11 @@ async def submit_certificate_request(
         try:
             request_type_enum = CertificateRequestType(request_type.lower())
             delivery_method_enum = DeliveryMethod(delivery_method.lower())
+            service_type_enum = ServiceType(service_type.lower())
         except ValueError as e:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail=f"Invalid request_type or delivery_method: {e}",
+                detail=f"Invalid request_type, delivery_method, or service_type: {e}",
             )
 
         # Validate courier address if delivery method is courier
@@ -833,6 +835,7 @@ async def submit_certificate_request(
             "courier_city": courier_city,
             "courier_region": courier_region,
             "courier_postal_code": courier_postal_code,
+            "service_type": service_type_enum,
         }
 
         # Generate request number first (needed for file storage organization)
@@ -887,7 +890,7 @@ async def submit_certificate_request(
         certificate_request.national_id_file_path = id_scan_path
 
         # Calculate and create invoice
-        amount = calculate_invoice_amount(request_type_enum, delivery_method_enum)
+        amount = calculate_invoice_amount(request_type_enum, delivery_method_enum, service_type_enum)
         invoice_number = await generate_invoice_number(session)
         invoice = Invoice(
             invoice_number=invoice_number,
@@ -949,6 +952,7 @@ async def get_certificate_request_status(
 
     # Query invoice separately since CertificateRequest doesn't have invoice relationship
     from app.models import Payment
+    from app.schemas.certificate import InvoiceResponse, PaymentResponse
     invoice_stmt = select(Invoice).where(Invoice.certificate_request_id == request.id)
     invoice_result = await session.execute(invoice_stmt)
     invoice = invoice_result.scalar_one_or_none()
@@ -958,12 +962,16 @@ async def get_certificate_request_status(
     payment_result = await session.execute(payment_stmt)
     payment = payment_result.scalar_one_or_none()
 
+    # Convert SQLAlchemy models to Pydantic schemas
+    invoice_response = InvoiceResponse.model_validate(invoice) if invoice else None
+    payment_response = PaymentResponse.model_validate(payment) if payment else None
+
     response_data = CertificateRequestPublicResponse(
         request_number=request.request_number,
         request_type=request.request_type,
         status=request.status,
-        invoice=invoice.model_dump() if invoice else None,
-        payment=payment.model_dump() if payment else None,
+        invoice=invoice_response,
+        payment=payment_response,
         tracking_number=request.tracking_number,
         created_at=request.created_at,
         updated_at=request.updated_at,
@@ -1177,11 +1185,12 @@ async def verify_payment_callback(
             await session.commit()
             logger.info(f"Payment verified and status updated for request {request_number}")
 
-            return {
-                "status": "success",
-                "message": "Payment verified successfully",
-                "request_status": "paid",
-            }
+            # Redirect to receipt page with request number
+            from fastapi.responses import RedirectResponse
+            from app.config import settings
+            callback_base_url = getattr(settings, 'paystack_callback_base_url', 'http://localhost:3001')
+            receipt_url = f"{callback_base_url}/certificate-request/receipt?request_number={request_number}"
+            return RedirectResponse(url=receipt_url, status_code=303)
         else:
             # Payment failed or pending
             payment.status = PaymentStatus.FAILED

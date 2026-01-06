@@ -38,6 +38,7 @@ class Settings(BaseSettings):
     certificate_request_price: float = 100  # Price for certificate requests
     attestation_request_price: float = 80  # Price for attestation requests
     courier_fee: float = 50  # Additional fee for courier delivery
+    express_service_multiplier: float = 1.5  # Multiplier for express service (e.g., 1.5x base price)
     # Certificate request file storage
     certificate_request_storage_path: str = "storage/certificate_requests"
 

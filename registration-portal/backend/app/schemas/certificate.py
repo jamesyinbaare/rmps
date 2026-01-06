@@ -12,6 +12,9 @@ from app.models import (
     RequestStatus,
     DeliveryMethod,
     PaymentStatus,
+    ServiceType,
+    TicketPriority,
+    TicketActivityType,
 )
 
 
@@ -31,6 +34,7 @@ class CertificateRequestBase(BaseModel):
     courier_city: str | None = Field(None, max_length=100)
     courier_region: str | None = Field(None, max_length=100)
     courier_postal_code: str | None = Field(None, max_length=20)
+    service_type: ServiceType = ServiceType.STANDARD
 
 
 class CertificateRequestCreate(CertificateRequestBase):
@@ -45,6 +49,8 @@ class CertificateRequestUpdate(BaseModel):
     status: RequestStatus | None = None
     tracking_number: str | None = Field(None, max_length=100)
     notes: str | None = None
+    assigned_to_user_id: str | None = None
+    priority: TicketPriority | None = None
 
 
 class CertificateRequestResponse(BaseModel):
@@ -74,10 +80,18 @@ class CertificateRequestResponse(BaseModel):
     processed_by_user_id: str | None = None
     dispatched_by_user_id: str | None = None
     dispatched_at: datetime | None = None
+    assigned_to_user_id: str | None = None
+    priority: TicketPriority = TicketPriority.MEDIUM
+    service_type: ServiceType = ServiceType.STANDARD
+    paid_at: datetime | None = None
+    in_process_at: datetime | None = None
+    ready_for_dispatch_at: datetime | None = None
+    received_at: datetime | None = None
+    completed_at: datetime | None = None
     created_at: datetime
     updated_at: datetime
 
-    @field_validator("processed_by_user_id", "dispatched_by_user_id", mode="before")
+    @field_validator("processed_by_user_id", "dispatched_by_user_id", "assigned_to_user_id", mode="before")
     @classmethod
     def convert_uuid_to_str(cls, v: UUID | str | None) -> str | None:
         """Convert UUID to string if needed."""
@@ -160,3 +174,68 @@ class CertificateRequestListResponse(BaseModel):
     page: int
     page_size: int
     total_pages: int
+
+
+class TicketActivityResponse(BaseModel):
+    """Schema for ticket activity response."""
+
+    id: int
+    ticket_id: int
+    activity_type: TicketActivityType
+    user_id: str | None = None
+    user_name: str | None = None
+    old_status: str | None = None
+    new_status: str | None = None
+    old_assigned_to: str | None = None
+    new_assigned_to: str | None = None
+    comment: str | None = None
+    created_at: datetime
+
+    @field_validator("user_id", "old_assigned_to", "new_assigned_to", mode="before")
+    @classmethod
+    def convert_uuid_to_str(cls, v: UUID | str | None) -> str | None:
+        """Convert UUID to string if needed."""
+        if v is None:
+            return None
+        if isinstance(v, UUID):
+            return str(v)
+        return v
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class TicketStatusHistoryResponse(BaseModel):
+    """Schema for ticket status history response."""
+
+    id: int
+    ticket_id: int
+    from_status: str | None = None
+    to_status: str
+    changed_by_user_id: str | None = None
+    changed_by_name: str | None = None
+    reason: str | None = None
+    created_at: datetime
+
+    @field_validator("changed_by_user_id", mode="before")
+    @classmethod
+    def convert_uuid_to_str(cls, v: UUID | str | None) -> str | None:
+        """Convert UUID to string if needed."""
+        if v is None:
+            return None
+        if isinstance(v, UUID):
+            return str(v)
+        return v
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class TicketAssignmentRequest(BaseModel):
+    """Schema for ticket assignment request."""
+
+    assigned_to_user_id: str
+
+
+class TicketCommentRequest(BaseModel):
+    """Schema for ticket comment request."""
+
+    comment: str = Field(..., min_length=1, max_length=5000)

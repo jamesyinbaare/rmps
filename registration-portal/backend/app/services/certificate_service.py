@@ -16,7 +16,13 @@ from app.models import (
     CertificateRequestType,
     RequestStatus,
     DeliveryMethod,
+    ServiceType,
+    TicketActivity,
+    TicketStatusHistory,
+    TicketActivityType,
+    TicketPriority,
 )
+from uuid import UUID
 from app.services.invoice_service import generate_invoice_number, calculate_invoice_amount
 from app.services.certificate_file_storage import CertificateFileStorageService
 
@@ -130,10 +136,16 @@ async def create_certificate_request(
     if not is_valid:
         raise ValueError(error_message or "Invalid request data")
 
+    # Get service type from request data, default to STANDARD
+    service_type = request_data.get("service_type", ServiceType.STANDARD)
+    if isinstance(service_type, str):
+        service_type = ServiceType(service_type.lower())
+
     # Calculate invoice amount
     amount = calculate_invoice_amount(
         request_data["request_type"],
         request_data["delivery_method"],
+        service_type,
     )
 
     # Create certificate request first (without invoice_id)
@@ -155,6 +167,7 @@ async def create_certificate_request(
         courier_region=request_data.get("courier_region"),
         courier_postal_code=request_data.get("courier_postal_code"),
         status=RequestStatus.PENDING_PAYMENT,
+        service_type=service_type,
     )
     session.add(certificate_request)
     await session.flush()
@@ -229,6 +242,7 @@ async def get_certificate_request_by_id(
             selectinload(CertificateRequest.examination_center),
             selectinload(CertificateRequest.processed_by),
             selectinload(CertificateRequest.dispatched_by),
+            selectinload(CertificateRequest.assigned_to),
         )
     )
     result = await session.execute(stmt)
@@ -243,7 +257,7 @@ async def update_request_status(
     notes: str | None = None,
 ) -> CertificateRequest:
     """
-    Update certificate request status.
+    Update certificate request status with history tracking.
 
     Args:
         session: Database session
@@ -259,14 +273,50 @@ async def update_request_status(
     if not request:
         raise ValueError(f"Certificate request {request_id} not found")
 
+    old_status = request.status
     request.status = status
+
+    # Update status-specific timestamp
+    now = datetime.utcnow()
+    if status == RequestStatus.PAID:
+        request.paid_at = now
+    elif status == RequestStatus.IN_PROCESS:
+        request.in_process_at = now
+    elif status == RequestStatus.READY_FOR_DISPATCH:
+        request.ready_for_dispatch_at = now
+    elif status == RequestStatus.RECEIVED:
+        request.received_at = now
+    elif status == RequestStatus.COMPLETED:
+        request.completed_at = now
+
+    # Record status history
+    status_history = TicketStatusHistory(
+        ticket_id=request_id,
+        from_status=old_status.value if old_status else None,
+        to_status=status.value,
+        changed_by_user_id=UUID(user_id) if user_id else None,
+        reason=notes,
+    )
+    session.add(status_history)
+
+    # Record activity
+    activity = TicketActivity(
+        ticket_id=request_id,
+        activity_type=TicketActivityType.STATUS_CHANGE,
+        user_id=UUID(user_id) if user_id else None,
+        old_status=old_status.value if old_status else None,
+        new_status=status.value,
+        comment=notes,
+    )
+    session.add(activity)
+
     if notes:
         request.notes = (request.notes or "") + f"\n{datetime.utcnow().isoformat()}: {notes}"
 
     await session.flush()
     await session.refresh(request)
 
-    logger.info(f"Updated certificate request {request.request_number} status to {status.value}")
+    logger.info(f"Updated certificate request {request.request_number} status from {old_status.value} to {status.value}")
     return request
 
 
@@ -293,8 +343,29 @@ async def begin_processing(
     if request.status != RequestStatus.PAID:
         raise ValueError(f"Request must be in PAID status to begin processing. Current status: {request.status.value}")
 
+    old_status = request.status
     request.status = RequestStatus.IN_PROCESS
-    request.processed_by_user_id = user_id
+    request.processed_by_user_id = UUID(user_id) if user_id else None
+    request.in_process_at = datetime.utcnow()
+
+    # Record status history
+    status_history = TicketStatusHistory(
+        ticket_id=request_id,
+        from_status=old_status.value,
+        to_status=RequestStatus.IN_PROCESS.value,
+        changed_by_user_id=UUID(user_id) if user_id else None,
+    )
+    session.add(status_history)
+
+    # Record activity
+    activity = TicketActivity(
+        ticket_id=request_id,
+        activity_type=TicketActivityType.STATUS_CHANGE,
+        user_id=UUID(user_id) if user_id else None,
+        old_status=old_status.value,
+        new_status=RequestStatus.IN_PROCESS.value,
+    )
+    session.add(activity)
 
     await session.flush()
     await session.refresh(request)
@@ -326,7 +397,28 @@ async def send_to_dispatch(
     if request.status != RequestStatus.IN_PROCESS:
         raise ValueError(f"Request must be in IN_PROCESS status. Current status: {request.status.value}")
 
+    old_status = request.status
     request.status = RequestStatus.READY_FOR_DISPATCH
+    request.ready_for_dispatch_at = datetime.utcnow()
+
+    # Record status history
+    status_history = TicketStatusHistory(
+        ticket_id=request_id,
+        from_status=old_status.value,
+        to_status=RequestStatus.READY_FOR_DISPATCH.value,
+        changed_by_user_id=UUID(user_id) if user_id else None,
+    )
+    session.add(status_history)
+
+    # Record activity
+    activity = TicketActivity(
+        ticket_id=request_id,
+        activity_type=TicketActivityType.STATUS_CHANGE,
+        user_id=UUID(user_id) if user_id else None,
+        old_status=old_status.value,
+        new_status=RequestStatus.READY_FOR_DISPATCH.value,
+    )
+    session.add(activity)
 
     await session.flush()
     await session.refresh(request)
@@ -360,11 +452,32 @@ async def dispatch_request(
     if request.status != RequestStatus.READY_FOR_DISPATCH:
         raise ValueError(f"Request must be in READY_FOR_DISPATCH status. Current status: {request.status.value}")
 
+    old_status = request.status
     request.status = RequestStatus.DISPATCHED
-    request.dispatched_by_user_id = user_id
+    request.dispatched_by_user_id = UUID(user_id) if user_id else None
     request.dispatched_at = datetime.utcnow()
     if tracking_number:
         request.tracking_number = tracking_number
+
+    # Record status history
+    status_history = TicketStatusHistory(
+        ticket_id=request_id,
+        from_status=old_status.value,
+        to_status=RequestStatus.DISPATCHED.value,
+        changed_by_user_id=UUID(user_id) if user_id else None,
+    )
+    session.add(status_history)
+
+    # Record activity
+    activity = TicketActivity(
+        ticket_id=request_id,
+        activity_type=TicketActivityType.STATUS_CHANGE,
+        user_id=UUID(user_id) if user_id else None,
+        old_status=old_status.value,
+        new_status=RequestStatus.DISPATCHED.value,
+        comment=f"Tracking number: {tracking_number}" if tracking_number else None,
+    )
+    session.add(activity)
 
     await session.flush()
     await session.refresh(request)
@@ -396,7 +509,28 @@ async def mark_received(
     if request.status != RequestStatus.DISPATCHED:
         raise ValueError(f"Request must be in DISPATCHED status. Current status: {request.status.value}")
 
+    old_status = request.status
     request.status = RequestStatus.RECEIVED
+    request.received_at = datetime.utcnow()
+
+    # Record status history
+    status_history = TicketStatusHistory(
+        ticket_id=request_id,
+        from_status=old_status.value,
+        to_status=RequestStatus.RECEIVED.value,
+        changed_by_user_id=UUID(user_id) if user_id else None,
+    )
+    session.add(status_history)
+
+    # Record activity
+    activity = TicketActivity(
+        ticket_id=request_id,
+        activity_type=TicketActivityType.STATUS_CHANGE,
+        user_id=UUID(user_id) if user_id else None,
+        old_status=old_status.value,
+        new_status=RequestStatus.RECEIVED.value,
+    )
+    session.add(activity)
 
     await session.flush()
     await session.refresh(request)
@@ -428,10 +562,267 @@ async def complete_request(
     if request.status != RequestStatus.RECEIVED:
         raise ValueError(f"Request must be in RECEIVED status. Current status: {request.status.value}")
 
+    old_status = request.status
     request.status = RequestStatus.COMPLETED
+    request.completed_at = datetime.utcnow()
+
+    # Record status history
+    status_history = TicketStatusHistory(
+        ticket_id=request_id,
+        from_status=old_status.value,
+        to_status=RequestStatus.COMPLETED.value,
+        changed_by_user_id=UUID(user_id) if user_id else None,
+    )
+    session.add(status_history)
+
+    # Record activity
+    activity = TicketActivity(
+        ticket_id=request_id,
+        activity_type=TicketActivityType.STATUS_CHANGE,
+        user_id=UUID(user_id) if user_id else None,
+        old_status=old_status.value,
+        new_status=RequestStatus.COMPLETED.value,
+    )
+    session.add(activity)
 
     await session.flush()
     await session.refresh(request)
 
     logger.info(f"Completed certificate request {request.request_number}")
     return request
+
+
+async def cancel_request(
+    session: AsyncSession,
+    request_id: int,
+    user_id: str,
+    reason: str | None = None,
+) -> CertificateRequest:
+    """
+    Cancel a certificate request (Admin action).
+
+    Can be cancelled from any status except COMPLETED or CANCELLED.
+
+    Args:
+        session: Database session
+        request_id: Request ID
+        user_id: Admin user ID
+        reason: Optional cancellation reason
+
+    Returns:
+        Updated CertificateRequest instance
+    """
+    request = await get_certificate_request_by_id(session, request_id)
+    if not request:
+        raise ValueError(f"Certificate request {request_id} not found")
+
+    if request.status == RequestStatus.COMPLETED:
+        raise ValueError("Cannot cancel a completed request")
+    if request.status == RequestStatus.CANCELLED:
+        raise ValueError("Request is already cancelled")
+
+    old_status = request.status
+    request.status = RequestStatus.CANCELLED
+
+    # Record status history
+    status_history = TicketStatusHistory(
+        ticket_id=request_id,
+        from_status=old_status.value,
+        to_status=RequestStatus.CANCELLED.value,
+        changed_by_user_id=UUID(user_id) if user_id else None,
+        reason=reason,
+    )
+    session.add(status_history)
+
+    # Record activity
+    activity = TicketActivity(
+        ticket_id=request_id,
+        activity_type=TicketActivityType.STATUS_CHANGE,
+        user_id=UUID(user_id) if user_id else None,
+        old_status=old_status.value,
+        new_status=RequestStatus.CANCELLED.value,
+        comment=reason or "Request cancelled",
+    )
+    session.add(activity)
+
+    await session.flush()
+    await session.refresh(request)
+
+    logger.info(f"Cancelled certificate request {request.request_number}")
+    return request
+
+
+async def assign_ticket(
+    session: AsyncSession,
+    request_id: int,
+    user_id: str,
+    assigned_to_user_id: str,
+) -> CertificateRequest:
+    """
+    Assign ticket to a user.
+
+    Args:
+        session: Database session
+        request_id: Request ID
+        user_id: User ID performing the assignment
+        assigned_to_user_id: User ID to assign ticket to
+
+    Returns:
+        Updated CertificateRequest instance
+    """
+    request = await get_certificate_request_by_id(session, request_id)
+    if not request:
+        raise ValueError(f"Certificate request {request_id} not found")
+
+    old_assigned_to = request.assigned_to_user_id
+    request.assigned_to_user_id = UUID(assigned_to_user_id) if assigned_to_user_id else None
+
+    # Record activity
+    activity = TicketActivity(
+        ticket_id=request_id,
+        activity_type=TicketActivityType.ASSIGNMENT,
+        user_id=UUID(user_id) if user_id else None,
+        old_assigned_to=old_assigned_to,
+        new_assigned_to=request.assigned_to_user_id,
+    )
+    session.add(activity)
+
+    await session.flush()
+    await session.refresh(request)
+
+    logger.info(f"Assigned ticket {request.request_number} to user {assigned_to_user_id}")
+    return request
+
+
+async def unassign_ticket(
+    session: AsyncSession,
+    request_id: int,
+    user_id: str,
+) -> CertificateRequest:
+    """
+    Unassign ticket (remove assignment).
+
+    Args:
+        session: Database session
+        request_id: Request ID
+        user_id: User ID performing the unassignment
+
+    Returns:
+        Updated CertificateRequest instance
+    """
+    request = await get_certificate_request_by_id(session, request_id)
+    if not request:
+        raise ValueError(f"Certificate request {request_id} not found")
+
+    old_assigned_to = request.assigned_to_user_id
+    request.assigned_to_user_id = None
+
+    # Record activity
+    activity = TicketActivity(
+        ticket_id=request_id,
+        activity_type=TicketActivityType.ASSIGNMENT,
+        user_id=UUID(user_id) if user_id else None,
+        old_assigned_to=old_assigned_to,
+        new_assigned_to=None,
+    )
+    session.add(activity)
+
+    await session.flush()
+    await session.refresh(request)
+
+    logger.info(f"Unassigned ticket {request.request_number}")
+    return request
+
+
+async def add_ticket_comment(
+    session: AsyncSession,
+    request_id: int,
+    user_id: str,
+    comment: str,
+) -> TicketActivity:
+    """
+    Add a comment to a ticket.
+
+    Args:
+        session: Database session
+        request_id: Request ID
+        user_id: User ID adding the comment
+        comment: Comment text
+
+    Returns:
+        Created TicketActivity instance
+    """
+    request = await get_certificate_request_by_id(session, request_id)
+    if not request:
+        raise ValueError(f"Certificate request {request_id} not found")
+
+    activity = TicketActivity(
+        ticket_id=request_id,
+        activity_type=TicketActivityType.COMMENT,
+        user_id=UUID(user_id) if user_id else None,
+        comment=comment,
+    )
+    session.add(activity)
+    await session.flush()
+    await session.refresh(activity)
+
+    logger.info(f"Added comment to ticket {request.request_number} by user {user_id}")
+    return activity
+
+
+async def get_ticket_activities(
+    session: AsyncSession,
+    request_id: int,
+    limit: int = 100,
+) -> list[TicketActivity]:
+    """
+    Get activity feed for a ticket.
+
+    Args:
+        session: Database session
+        request_id: Request ID
+        limit: Maximum number of activities to return
+
+    Returns:
+        List of TicketActivity instances
+    """
+    stmt = (
+        select(TicketActivity)
+        .where(TicketActivity.ticket_id == request_id)
+        .options(
+            selectinload(TicketActivity.user),
+        )
+        .order_by(TicketActivity.created_at.desc())
+        .limit(limit)
+    )
+    result = await session.execute(stmt)
+    return list(result.scalars().all())
+
+
+async def get_ticket_status_history(
+    session: AsyncSession,
+    request_id: int,
+    limit: int = 100,
+) -> list[TicketStatusHistory]:
+    """
+    Get status transition history for a ticket.
+
+    Args:
+        session: Database session
+        request_id: Request ID
+        limit: Maximum number of history entries to return
+
+    Returns:
+        List of TicketStatusHistory instances
+    """
+    stmt = (
+        select(TicketStatusHistory)
+        .where(TicketStatusHistory.ticket_id == request_id)
+        .options(
+            selectinload(TicketStatusHistory.changed_by),
+        )
+        .order_by(TicketStatusHistory.created_at.desc())
+        .limit(limit)
+    )
+    result = await session.execute(stmt)
+    return list(result.scalars().all())

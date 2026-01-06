@@ -1,0 +1,353 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Invoice - {{ invoice.invoice_number }}</title>
+    <style>
+        @page {
+            size: A4;
+            margin: 1.5cm 1.5cm;
+        }
+
+        body {
+            font-family: 'Helvetica', Arial, sans-serif;
+            font-size: 9.5pt;
+            color: #000;
+            line-height: 1.3;
+            margin: 0;
+            padding: 0;
+            position: relative;
+        }
+
+        .watermark {
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            width: 100%;
+            height: 100%;
+            background-image: url('img/logo-crest-only.png');
+            background-size: contain;
+            background-repeat: no-repeat;
+            background-position: center;
+            opacity: 0.03;
+            z-index: 0;
+            pointer-events: none;
+        }
+
+        .content-wrapper {
+            position: relative;
+            z-index: 1;
+        }
+
+        .header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            margin-bottom: 20px;
+            padding-bottom: 15px;
+            border-bottom: 2px solid #16a34a;
+        }
+
+        .logo-container {
+            display: flex;
+            align-items: center;
+        }
+
+        .logo {
+            height: 50px;
+            width: auto;
+        }
+
+        .title {
+            font-size: 24pt;
+            font-weight: bold;
+            color: #16a34a;
+            margin: 0;
+        }
+
+        .request-number-box {
+            background-color: #dcfce7;
+            border: 2px solid #16a34a;
+            border-radius: 8px;
+            padding: 12px;
+            margin: 15px 0;
+            text-align: center;
+        }
+
+        .request-number-label {
+            font-size: 10pt;
+            color: #15803d;
+            font-weight: bold;
+            margin-bottom: 4px;
+        }
+
+        .request-number-value {
+            font-size: 16pt;
+            font-weight: bold;
+            color: #15803d;
+            font-family: 'Courier New', monospace;
+            letter-spacing: 1px;
+        }
+
+        .request-number-note {
+            font-size: 8.5pt;
+            color: #64748b;
+            margin-top: 4px;
+            font-style: italic;
+        }
+
+        .invoice-info {
+            display: table;
+            width: 100%;
+            margin-bottom: 15px;
+        }
+
+        .invoice-info-row {
+            display: table-row;
+        }
+
+        .invoice-info-label {
+            display: table-cell;
+            font-weight: bold;
+            color: #4b5563;
+            padding: 4px 10px 4px 0;
+            width: 30%;
+        }
+
+        .invoice-info-value {
+            display: table-cell;
+            padding: 4px 0;
+        }
+
+        .section-title {
+            font-size: 12pt;
+            font-weight: bold;
+            color: #16a34a;
+            margin: 15px 0 8px 0;
+            padding-bottom: 4px;
+            border-bottom: 1px solid #cbd5e1;
+        }
+
+        .request-details {
+            display: table;
+            width: 100%;
+            margin-bottom: 15px;
+        }
+
+        .request-details-row {
+            display: table-row;
+        }
+
+        .request-details-label {
+            display: table-cell;
+            font-weight: bold;
+            color: #4b5563;
+            padding: 4px 10px 4px 0;
+            width: 30%;
+        }
+
+        .request-details-value {
+            display: table-cell;
+            padding: 4px 0;
+        }
+
+        .items-table {
+            width: 100%;
+            border-collapse: collapse;
+            margin: 15px 0;
+        }
+
+        .items-table th {
+            background-color: #16a34a;
+            color: white;
+            padding: 8px;
+            text-align: left;
+            font-weight: bold;
+            font-size: 10pt;
+        }
+
+        .items-table td {
+            padding: 8px;
+            border-bottom: 1px solid #e5e7eb;
+            font-size: 9.5pt;
+        }
+
+        .items-table tr:last-child td {
+            border-bottom: 2px solid #16a34a;
+        }
+
+        .text-right {
+            text-align: right;
+        }
+
+        .text-bold {
+            font-weight: bold;
+        }
+
+        .total-row {
+            background-color: #f0fdf4;
+        }
+
+        .total-row td {
+            font-weight: bold;
+            font-size: 10pt;
+        }
+
+        .payment-instructions {
+            background-color: #fef3c7;
+            border-left: 4px solid #f59e0b;
+            padding: 12px;
+            margin: 15px 0;
+            font-size: 9pt;
+        }
+
+        .payment-instructions-title {
+            font-weight: bold;
+            color: #92400e;
+            margin-bottom: 6px;
+        }
+
+        .footer {
+            margin-top: 20px;
+            padding-top: 15px;
+            border-top: 1px solid #e5e7eb;
+            text-align: center;
+            font-size: 8.5pt;
+            color: #6b7280;
+        }
+
+        .footer-note {
+            margin-top: 8px;
+            font-weight: bold;
+            color: #15803d;
+        }
+    </style>
+</head>
+<body>
+    <div class="watermark"></div>
+    <div class="content-wrapper">
+    <div class="header">
+        <div class="logo-container">
+            <img src="img/logo.jpg" alt="CTVET Logo" class="logo" />
+        </div>
+        <div class="title">INVOICE</div>
+    </div>
+
+    <!-- Prominent Request Number Display -->
+    <div class="request-number-box">
+        <div class="request-number-label">REQUEST NUMBER</div>
+        <div class="request-number-value">{{ certificate_request.request_number }}</div>
+        <div class="request-number-note">Use this number to track your request status</div>
+    </div>
+
+    <!-- Invoice Information -->
+    <div class="section-title">Invoice Information</div>
+    <div class="invoice-info">
+        <div class="invoice-info-row">
+            <div class="invoice-info-label">Invoice Number:</div>
+            <div class="invoice-info-value">{{ invoice.invoice_number }}</div>
+        </div>
+        <div class="invoice-info-row">
+            <div class="invoice-info-label">Invoice Date:</div>
+            <div class="invoice-info-value">{{ invoice.created_at.strftime('%B %d, %Y') }}</div>
+        </div>
+        <div class="invoice-info-row">
+            <div class="invoice-info-label">Due Date:</div>
+            <div class="invoice-info-value">{{ (invoice.due_date or invoice.created_at.date()).strftime('%B %d, %Y') }}</div>
+        </div>
+        <div class="invoice-info-row">
+            <div class="invoice-info-label">Status:</div>
+            <div class="invoice-info-value">{{ invoice.status.upper() }}</div>
+        </div>
+    </div>
+
+    <!-- Request Details -->
+    <div class="section-title">Request Details</div>
+    <div class="request-details">
+        <div class="request-details-row">
+            <div class="request-details-label">Request Type:</div>
+            <div class="request-details-value">
+                {% if certificate_request.request_type.value == 'certificate' %}
+                    Certificate Request
+                {% else %}
+                    Attestation Request
+                {% endif %}
+            </div>
+        </div>
+        <div class="request-details-row">
+            <div class="request-details-label">Index Number:</div>
+            <div class="request-details-value">{{ certificate_request.index_number }}</div>
+        </div>
+        <div class="request-details-row">
+            <div class="request-details-label">Examination Year:</div>
+            <div class="request-details-value">{{ certificate_request.exam_year }}</div>
+        </div>
+        <div class="request-details-row">
+            <div class="request-details-label">Delivery Method:</div>
+            <div class="request-details-value">{{ certificate_request.delivery_method.value.capitalize() }}</div>
+        </div>
+        <div class="request-details-row">
+            <div class="request-details-label">Service Type:</div>
+            <div class="request-details-value">{{ certificate_request.service_type.value.capitalize() }}</div>
+        </div>
+    </div>
+
+    <!-- Payment Details -->
+    <div class="section-title">Payment Details</div>
+    <table class="items-table">
+        <thead>
+            <tr>
+                <th>Description</th>
+                <th class="text-right">Amount ({{ invoice.currency }})</th>
+            </tr>
+        </thead>
+        <tbody>
+            <tr>
+                <td>
+                    {% if certificate_request.request_type.value == 'certificate' %}
+                        Certificate Request
+                    {% else %}
+                        Attestation Request
+                    {% endif %}
+                </td>
+                <td class="text-right">{{ "%.2f"|format(base_price) }}</td>
+            </tr>
+            {% if express_surcharge > 0 %}
+            <tr>
+                <td>Express Service Surcharge (50%)</td>
+                <td class="text-right">{{ "%.2f"|format(express_surcharge) }}</td>
+            </tr>
+            {% endif %}
+            {% if courier_fee > 0 %}
+            <tr>
+                <td>Courier Delivery Fee</td>
+                <td class="text-right">{{ "%.2f"|format(courier_fee) }}</td>
+            </tr>
+            {% endif %}
+            <tr class="total-row">
+                <td class="text-bold">Total Amount</td>
+                <td class="text-right text-bold">{{ "%.2f"|format(invoice.amount) }}</td>
+            </tr>
+        </tbody>
+    </table>
+
+    {% if invoice.status == 'pending' %}
+    <div class="payment-instructions">
+        <div class="payment-instructions-title">Payment Instructions:</div>
+        <div>Please make payment using the payment link provided. Your request will be processed after payment confirmation.</div>
+    </div>
+    {% endif %}
+
+    <div class="footer">
+        <div>This is a computer-generated invoice. No signature is required.</div>
+        <div class="footer-note">
+            Track your request status using Request Number: <strong>{{ certificate_request.request_number }}</strong><br/>
+            Visit the status check page on our website to view your request status.
+        </div>
+    </div>
+    </div>
+</body>
+</html>

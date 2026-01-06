@@ -46,13 +46,14 @@ async def initialize_payment(
     # Get callback URL from settings or use default
     callback_url = None
     if hasattr(settings, 'paystack_callback_base_url') and settings.paystack_callback_base_url:
-        # Build callback URL with request number for verification
+        # Build callback URL - redirect to receipt page after payment
         request_number = metadata.get("request_number") if metadata else None
         if request_number:
-            callback_url = f"{settings.paystack_callback_base_url}/api/v1/public/certificate-requests/{request_number}/verify-payment?reference=INV-{invoice.invoice_number}"
+            # Redirect to receipt page with request number
+            callback_url = f"{settings.paystack_callback_base_url}/certificate-request/receipt?request_number={request_number}"
         else:
-            # Fallback to frontend success page
-            callback_url = f"{settings.paystack_callback_base_url}/certificate-request?payment=success"
+            # Fallback to receipt page
+            callback_url = f"{settings.paystack_callback_base_url}/certificate-request/receipt"
 
     paystack_data = {
         "amount": int(amount * 100),  # Convert to kobo (cents) - Paystack uses smallest currency unit
