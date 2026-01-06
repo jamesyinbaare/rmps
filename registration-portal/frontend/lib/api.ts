@@ -1371,6 +1371,9 @@ export interface CertificateRequestListResponse {
 export async function listCertificateRequests(
   statusFilter?: string,
   requestType?: string,
+  assignedTo?: string,
+  priority?: string,
+  serviceType?: string,
   page: number = 1,
   pageSize: number = 20
 ): Promise<CertificateRequestListResponse> {
@@ -1380,6 +1383,15 @@ export async function listCertificateRequests(
   }
   if (requestType && requestType.trim() !== "") {
     params.append("request_type", requestType);
+  }
+  if (assignedTo && assignedTo.trim() !== "") {
+    params.append("assigned_to", assignedTo);
+  }
+  if (priority && priority.trim() !== "") {
+    params.append("priority", priority);
+  }
+  if (serviceType && serviceType.trim() !== "") {
+    params.append("service_type", serviceType);
   }
   params.append("page", page.toString());
   params.append("page_size", pageSize.toString());
@@ -1432,9 +1444,32 @@ export async function sendCertificateRequestToDispatch(requestId: number): Promi
   return handleResponse<CertificateRequestResponse>(response);
 }
 
+export async function dispatchRequest(
+  requestId: number,
+  trackingNumber?: string
+): Promise<CertificateRequestResponse> {
+  const response = await fetch(
+    `${API_BASE_URL}/api/v1/admin/dispatch/certificate-requests/${requestId}/dispatch`,
+    {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${getAccessToken()}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ tracking_number: trackingNumber || undefined }),
+    }
+  );
+  return handleResponse<CertificateRequestResponse>(response);
+}
+
 export async function updateCertificateRequest(
   requestId: number,
-  updateData: { notes?: string; tracking_number?: string }
+  updateData: {
+    notes?: string;
+    tracking_number?: string;
+    priority?: "low" | "medium" | "high" | "urgent";
+    assigned_to_user_id?: string | null;
+  }
 ): Promise<CertificateRequestResponse> {
   const response = await fetch(`${API_BASE_URL}/api/v1/admin/certificate-requests/${requestId}`, {
     method: "PUT",
@@ -1487,6 +1522,7 @@ export interface CertificateRequestCreate {
   courier_city?: string;
   courier_region?: string;
   courier_postal_code?: string;
+  service_type?: "standard" | "express";
 }
 
 export interface CertificateRequestResponse {
@@ -1505,6 +1541,14 @@ export interface CertificateRequestResponse {
   invoice_id?: number;
   payment_id?: number;
   tracking_number?: string;
+  assigned_to_user_id?: string;
+  priority: "low" | "medium" | "high" | "urgent";
+  service_type: "standard" | "express";
+  paid_at?: string;
+  in_process_at?: string;
+  ready_for_dispatch_at?: string;
+  received_at?: string;
+  completed_at?: string;
   created_at: string;
   updated_at: string;
 }
@@ -1536,6 +1580,7 @@ export async function submitCertificateRequest(
   if (data.courier_city) formData.append("courier_city", data.courier_city);
   if (data.courier_region) formData.append("courier_region", data.courier_region);
   if (data.courier_postal_code) formData.append("courier_postal_code", data.courier_postal_code);
+  formData.append("service_type", data.service_type || "standard");
   formData.append("photograph", photograph);
   formData.append("national_id_scan", nationalIdScan);
 
@@ -1574,4 +1619,190 @@ export async function downloadInvoice(requestNumber: string): Promise<Blob> {
   }
 
   return response.blob();
+}
+
+// Ticket Management Interfaces
+export interface TicketActivityResponse {
+  id: number;
+  ticket_id: number;
+  activity_type: "comment" | "status_change" | "assignment" | "note" | "system";
+  user_id?: string;
+  user_name?: string;
+  old_status?: string;
+  new_status?: string;
+  old_assigned_to?: string;
+  new_assigned_to?: string;
+  comment?: string;
+  created_at: string;
+}
+
+export interface TicketStatusHistoryResponse {
+  id: number;
+  ticket_id: number;
+  from_status?: string;
+  to_status: string;
+  changed_by_user_id?: string;
+  changed_by_name?: string;
+  reason?: string;
+  created_at: string;
+}
+
+export interface TicketAssignmentRequest {
+  assigned_to_user_id: string;
+}
+
+export interface TicketCommentRequest {
+  comment: string;
+}
+
+// Ticket Management API Functions
+export async function assignTicket(
+  requestId: number,
+  assignmentData: TicketAssignmentRequest
+): Promise<CertificateRequestResponse> {
+  const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL || "http://localhost:8001";
+  const token = localStorage.getItem("access_token");
+  const response = await fetch(`${API_BASE_URL}/api/v1/admin/certificate-requests/${requestId}/assign`, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${token}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(assignmentData),
+  });
+  return handleResponse<CertificateRequestResponse>(response);
+}
+
+export async function unassignTicket(requestId: number): Promise<CertificateRequestResponse> {
+  const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL || "http://localhost:8001";
+  const token = localStorage.getItem("access_token");
+  const response = await fetch(`${API_BASE_URL}/api/v1/admin/certificate-requests/${requestId}/unassign`, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${token}`,
+      "Content-Type": "application/json",
+    },
+  });
+  return handleResponse<CertificateRequestResponse>(response);
+}
+
+export async function addTicketComment(
+  requestId: number,
+  commentData: TicketCommentRequest
+): Promise<TicketActivityResponse> {
+  const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL || "http://localhost:8001";
+  const token = localStorage.getItem("access_token");
+  const response = await fetch(`${API_BASE_URL}/api/v1/admin/certificate-requests/${requestId}/comments`, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${token}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(commentData),
+  });
+  return handleResponse<TicketActivityResponse>(response);
+}
+
+export async function getTicketActivities(
+  requestId: number,
+  limit: number = 100
+): Promise<{ items: TicketActivityResponse[]; total: number }> {
+  const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL || "http://localhost:8001";
+  const token = localStorage.getItem("access_token");
+  const response = await fetch(
+    `${API_BASE_URL}/api/v1/admin/certificate-requests/${requestId}/activities?limit=${limit}`,
+    {
+      method: "GET",
+      headers: {
+        Authorization: `Bearer ${token}`,
+        "Content-Type": "application/json",
+      },
+    }
+  );
+  return handleResponse<{ items: TicketActivityResponse[]; total: number }>(response);
+}
+
+export async function getTicketStatusHistory(
+  requestId: number,
+  limit: number = 100
+): Promise<{ items: TicketStatusHistoryResponse[]; total: number }> {
+  const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL || "http://localhost:8001";
+  const token = localStorage.getItem("access_token");
+  const response = await fetch(
+    `${API_BASE_URL}/api/v1/admin/certificate-requests/${requestId}/status-history?limit=${limit}`,
+    {
+      method: "GET",
+      headers: {
+        Authorization: `Bearer ${token}`,
+        "Content-Type": "application/json",
+      },
+    }
+  );
+  return handleResponse<{ items: TicketStatusHistoryResponse[]; total: number }>(response);
+}
+
+// Status change API functions
+export async function markRequestReceived(requestId: number): Promise<CertificateRequestResponse> {
+  const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL || "http://localhost:8001";
+  const token = localStorage.getItem("access_token");
+  const response = await fetch(
+    `${API_BASE_URL}/api/v1/admin/dispatch/certificate-requests/${requestId}/mark-received`,
+    {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${token}`,
+        "Content-Type": "application/json",
+      },
+    }
+  );
+  return handleResponse<CertificateRequestResponse>(response);
+}
+
+export async function completeRequest(requestId: number): Promise<CertificateRequestResponse> {
+  const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL || "http://localhost:8001";
+  const token = localStorage.getItem("access_token");
+  const response = await fetch(
+    `${API_BASE_URL}/api/v1/admin/dispatch/certificate-requests/${requestId}/complete`,
+    {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${token}`,
+        "Content-Type": "application/json",
+      },
+    }
+  );
+  return handleResponse<CertificateRequestResponse>(response);
+}
+
+export async function cancelRequest(
+  requestId: number,
+  reason?: string
+): Promise<CertificateRequestResponse> {
+  const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL || "http://localhost:8001";
+  const token = localStorage.getItem("access_token");
+  const response = await fetch(`${API_BASE_URL}/api/v1/admin/certificate-requests/${requestId}/cancel`, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${token}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({ reason: reason || undefined }),
+  });
+  return handleResponse<CertificateRequestResponse>(response);
+}
+
+export async function resendPaymentLink(requestId: number): Promise<PaymentInitializeResponse> {
+  const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL || "http://localhost:8001";
+  const token = localStorage.getItem("access_token");
+  const response = await fetch(
+    `${API_BASE_URL}/api/v1/admin/certificate-requests/${requestId}/resend-payment-link`,
+    {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${token}`,
+        "Content-Type": "application/json",
+      },
+    }
+  );
+  return handleResponse<PaymentInitializeResponse>(response);
 }

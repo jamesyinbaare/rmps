@@ -42,8 +42,10 @@ import {
   PopoverTrigger,
 } from "@/components/ui/popover";
 import { Label } from "@/components/ui/label";
-import { Filter } from "lucide-react";
+import { Filter, User, Zap, Clock } from "lucide-react";
 import type { CertificateRequestResponse } from "@/lib/api";
+import { PriorityBadge } from "./PrioritySelector";
+import { QuickActions } from "./QuickActions";
 
 interface DataTableProps {
   data: CertificateRequestResponse[];
@@ -59,6 +61,20 @@ interface DataTableProps {
   onRequestTypeFilterChange: (type: string) => void;
   searchQuery: string;
   onSearchChange: (query: string) => void;
+  assignedToFilter?: string;
+  priorityFilter?: string;
+  serviceTypeFilter?: string;
+  myTicketsOnly?: boolean;
+  onAssignedToFilterChange?: (value: string | undefined) => void;
+  onPriorityFilterChange?: (value: string | undefined) => void;
+  onServiceTypeFilterChange?: (value: string | undefined) => void;
+  onMyTicketsOnlyChange?: (value: boolean) => void;
+  currentUserId?: string;
+  onAssign?: (requestId: number, userId: string) => void;
+  onUnassign?: (requestId: number) => void;
+  onPriorityChange?: (requestId: number, priority: "low" | "medium" | "high" | "urgent") => void;
+  onComment?: (requestId: number, comment: string) => void;
+  onRowClick?: (request: CertificateRequestResponse) => void;
 }
 
 const STATUS_OPTIONS = [
@@ -75,6 +91,18 @@ const STATUS_OPTIONS = [
 const REQUEST_TYPE_OPTIONS = [
   { value: "certificate", label: "Certificate" },
   { value: "attestation", label: "Attestation" },
+];
+
+const PRIORITY_OPTIONS = [
+  { value: "low", label: "Low" },
+  { value: "medium", label: "Medium" },
+  { value: "high", label: "High" },
+  { value: "urgent", label: "Urgent" },
+];
+
+const SERVICE_TYPE_OPTIONS = [
+  { value: "standard", label: "Standard" },
+  { value: "express", label: "Express" },
 ];
 
 const getStatusBadgeVariant = (status: string) => {
@@ -114,6 +142,20 @@ export function DataTable({
   onRequestTypeFilterChange,
   searchQuery,
   onSearchChange,
+  assignedToFilter,
+  priorityFilter,
+  serviceTypeFilter,
+  myTicketsOnly,
+  onAssignedToFilterChange,
+  onPriorityFilterChange,
+  onServiceTypeFilterChange,
+  onMyTicketsOnlyChange,
+  currentUserId,
+  onAssign,
+  onUnassign,
+  onPriorityChange,
+  onComment,
+  onRowClick,
 }: DataTableProps) {
   const [sorting, setSorting] = React.useState<SortingState>([]);
   const [columnFilters, setColumnFilters] = React.useState<ColumnFiltersState>([]);
@@ -228,9 +270,32 @@ export function DataTable({
         },
         cell: ({ row }) => {
           const status = row.getValue("status") as string;
+          const getStatusIcon = (status: string) => {
+            switch (status.toLowerCase()) {
+              case "pending_payment":
+                return "💳";
+              case "paid":
+                return "✅";
+              case "in_process":
+                return "⚙️";
+              case "ready_for_dispatch":
+                return "📦";
+              case "dispatched":
+                return "🚚";
+              case "received":
+                return "📬";
+              case "completed":
+                return "✔️";
+              case "cancelled":
+                return "❌";
+              default:
+                return "";
+            }
+          };
           return (
-            <Badge variant={getStatusBadgeVariant(status)}>
-              {status.replace(/_/g, " ").toUpperCase()}
+            <Badge variant={getStatusBadgeVariant(status)} className="flex items-center gap-1">
+              <span>{getStatusIcon(status)}</span>
+              <span>{status.replace(/_/g, " ").toUpperCase()}</span>
             </Badge>
           );
         },
@@ -240,12 +305,201 @@ export function DataTable({
         },
       },
       {
+        accessorKey: "priority",
+        header: () => {
+          return (
+            <Popover>
+              <PopoverTrigger asChild>
+                <Button variant="ghost" size="sm" className="h-8 px-2">
+                  Priority <Filter className="ml-2 h-3 w-3" />
+                </Button>
+              </PopoverTrigger>
+              <PopoverContent className="w-48 p-0" align="start">
+                <div className="p-2 space-y-2">
+                  {PRIORITY_OPTIONS.map((option) => (
+                    <div key={option.value} className="flex items-center space-x-2">
+                      <Checkbox
+                        checked={priorityFilter === option.value}
+                        onCheckedChange={() => onPriorityFilterChange?.(priorityFilter === option.value ? undefined : option.value)}
+                      />
+                      <Label className="text-sm font-normal cursor-pointer">
+                        {option.label}
+                      </Label>
+                    </div>
+                  ))}
+                  {priorityFilter && (
+                    <div className="pt-2 border-t">
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        className="w-full justify-start"
+                        onClick={() => onPriorityFilterChange?.(undefined)}
+                      >
+                        Clear filter
+                      </Button>
+                    </div>
+                  )}
+                </div>
+              </PopoverContent>
+            </Popover>
+          );
+        },
+        cell: ({ row }) => {
+          const priority = row.getValue("priority") as "low" | "medium" | "high" | "urgent";
+          return <PriorityBadge priority={priority} />;
+        },
+      },
+      {
+        accessorKey: "service_type",
+        header: () => {
+          return (
+            <Popover>
+              <PopoverTrigger asChild>
+                <Button variant="ghost" size="sm" className="h-8 px-2">
+                  Service <Filter className="ml-2 h-3 w-3" />
+                </Button>
+              </PopoverTrigger>
+              <PopoverContent className="w-48 p-0" align="start">
+                <div className="p-2 space-y-2">
+                  {SERVICE_TYPE_OPTIONS.map((option) => (
+                    <div key={option.value} className="flex items-center space-x-2">
+                      <Checkbox
+                        checked={serviceTypeFilter === option.value}
+                        onCheckedChange={() => onServiceTypeFilterChange?.(serviceTypeFilter === option.value ? undefined : option.value)}
+                      />
+                      <Label className="text-sm font-normal cursor-pointer">
+                        {option.label}
+                      </Label>
+                    </div>
+                  ))}
+                  {serviceTypeFilter && (
+                    <div className="pt-2 border-t">
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        className="w-full justify-start"
+                        onClick={() => onServiceTypeFilterChange?.(undefined)}
+                      >
+                        Clear filter
+                      </Button>
+                    </div>
+                  )}
+                </div>
+              </PopoverContent>
+            </Popover>
+          );
+        },
+        cell: ({ row }) => {
+          const serviceType = row.getValue("service_type") as "standard" | "express";
+          return (
+            <Badge variant={serviceType === "express" ? "default" : "outline"}>
+              <div className="flex items-center gap-1">
+                {serviceType === "express" ? (
+                  <Zap className="h-3 w-3" />
+                ) : (
+                  <Clock className="h-3 w-3" />
+                )}
+                <span className="capitalize">{serviceType}</span>
+              </div>
+            </Badge>
+          );
+        },
+      },
+      {
+        accessorKey: "assigned_to_user_id",
+        header: () => {
+          return (
+            <Popover>
+              <PopoverTrigger asChild>
+                <Button variant="ghost" size="sm" className="h-8 px-2">
+                  Assigned <Filter className="ml-2 h-3 w-3" />
+                </Button>
+              </PopoverTrigger>
+              <PopoverContent className="w-56 p-0" align="start">
+                <div className="p-2 space-y-2">
+                  {onMyTicketsOnlyChange && currentUserId && (
+                    <div className="flex items-center space-x-2 pb-2 border-b">
+                      <Checkbox
+                        checked={myTicketsOnly}
+                        onCheckedChange={(checked) => onMyTicketsOnlyChange(!!checked)}
+                      />
+                      <Label className="text-sm font-normal cursor-pointer">
+                        My Tickets Only
+                      </Label>
+                    </div>
+                  )}
+                  <div className="flex items-center space-x-2">
+                    <Checkbox
+                      checked={assignedToFilter === "unassigned"}
+                      onCheckedChange={() => onAssignedToFilterChange?.(assignedToFilter === "unassigned" ? undefined : "unassigned")}
+                    />
+                    <Label className="text-sm font-normal cursor-pointer">
+                      Unassigned
+                    </Label>
+                  </div>
+                  {assignedToFilter && (
+                    <div className="pt-2 border-t">
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        className="w-full justify-start"
+                        onClick={() => onAssignedToFilterChange?.(undefined)}
+                      >
+                        Clear filter
+                      </Button>
+                    </div>
+                  )}
+                </div>
+              </PopoverContent>
+            </Popover>
+          );
+        },
+        cell: ({ row }) => {
+          const assignedTo = row.getValue("assigned_to_user_id") as string | undefined;
+          const isAssignedToMe = assignedTo === currentUserId;
+          return (
+            <div className="flex items-center gap-2">
+              {assignedTo ? (
+                <>
+                  <User className="h-4 w-4 text-muted-foreground" />
+                  <span className="text-sm">
+                    {isAssignedToMe ? "Me" : `User ${assignedTo.substring(0, 8)}...`}
+                  </span>
+                </>
+              ) : (
+                <span className="text-sm text-muted-foreground">Unassigned</span>
+              )}
+            </div>
+          );
+        },
+      },
+      {
         accessorKey: "created_at",
         header: "Created",
         cell: ({ row }) => {
           const date = new Date(row.getValue("created_at"));
           return date.toLocaleDateString();
         },
+      },
+      {
+        id: "quick_actions",
+        header: "Quick Actions",
+        cell: ({ row }) => {
+          const request = row.original;
+          return (
+            <div className="opacity-0 group-hover:opacity-100 transition-opacity">
+              <QuickActions
+                request={request}
+                onAssign={onAssign}
+                onUnassign={onUnassign}
+                onPriorityChange={onPriorityChange}
+                onComment={onComment}
+                currentUserId={currentUserId}
+              />
+            </div>
+          );
+        },
+        enableSorting: false,
       },
       {
         id: "actions",
@@ -291,13 +545,27 @@ export function DataTable({
     [
       statusFilters,
       requestTypeFilters,
+      priorityFilter,
+      serviceTypeFilter,
+      assignedToFilter,
+      myTicketsOnly,
+      currentUserId,
       onStatusFilterChange,
       onRequestTypeFilterChange,
+      onPriorityFilterChange,
+      onServiceTypeFilterChange,
+      onAssignedToFilterChange,
+      onMyTicketsOnlyChange,
       onViewDetails,
       onDownloadPDF,
       onBeginProcess,
       onSendToDispatch,
       onUpdateNotes,
+      onAssign,
+      onUnassign,
+      onPriorityChange,
+      onComment,
+      onRowClick,
     ]
   );
 
@@ -357,7 +625,7 @@ export function DataTable({
     <div className="w-full space-y-4">
       <div className="flex items-center justify-between">
         <Input
-          placeholder="Search by request number, index, ID..."
+          placeholder="Search by request number, index, ID... (Ctrl+K)"
           value={searchQuery}
           onChange={(e) => onSearchChange(e.target.value)}
           className="max-w-sm"
@@ -413,7 +681,24 @@ export function DataTable({
               </TableRow>
             ) : table.getRowModel().rows?.length ? (
               table.getRowModel().rows.map((row) => (
-                <TableRow key={row.id} data-state={row.getIsSelected() && "selected"}>
+                <TableRow
+                  key={row.id}
+                  className="group cursor-pointer hover:bg-muted/50"
+                  data-state={row.getIsSelected() && "selected"}
+                  onClick={(e) => {
+                    // Don't trigger row click if clicking on interactive elements
+                    const target = e.target as HTMLElement;
+                    if (
+                      target.closest("button") ||
+                      target.closest("input") ||
+                      target.closest("[role='menuitem']") ||
+                      target.closest("[role='option']")
+                    ) {
+                      return;
+                    }
+                    onRowClick?.(row.original);
+                  }}
+                >
                   {row.getVisibleCells().map((cell) => (
                     <TableCell key={cell.id}>
                       {flexRender(cell.column.columnDef.cell, cell.getContext())}

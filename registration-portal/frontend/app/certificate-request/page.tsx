@@ -52,6 +52,7 @@ export default function CertificateRequestPage() {
   const [examinationCenterId, setExaminationCenterId] = useState("");
   const [nationalIdNumber, setNationalIdNumber] = useState("");
   const [deliveryMethod, setDeliveryMethod] = useState<DeliveryMethod>("pickup");
+  const [serviceType, setServiceType] = useState<"standard" | "express">("standard");
   const [contactPhone, setContactPhone] = useState("");
   const [contactEmail, setContactEmail] = useState("");
   const [courierAddressLine1, setCourierAddressLine1] = useState("");
@@ -181,6 +182,7 @@ export default function CertificateRequestPage() {
         examination_center_id: parseInt(examinationCenterId),
         national_id_number: nationalIdNumber.trim(),
         delivery_method: deliveryMethod,
+        service_type: serviceType,
         contact_phone: contactPhone.trim(),
         contact_email: contactEmail.trim() || undefined,
         courier_address_line1: deliveryMethod === "courier" ? courierAddressLine1.trim() : undefined,
@@ -506,6 +508,24 @@ export default function CertificateRequestPage() {
                   {currentStep === 4 && (
                     <div className="space-y-4">
                       <div className="space-y-2">
+                        <Label htmlFor="serviceType">Service Type *</Label>
+                        <Select
+                          value={serviceType}
+                          onValueChange={(value) => setServiceType(value as "standard" | "express")}
+                        >
+                          <SelectTrigger id="serviceType">
+                            <SelectValue placeholder="Select service type" />
+                          </SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="standard">Standard (5-10 business days)</SelectItem>
+                            <SelectItem value="express">Express (2-3 business days) - 50% surcharge</SelectItem>
+                          </SelectContent>
+                        </Select>
+                        <p className="text-xs text-muted-foreground">
+                          Express service provides faster processing for urgent requests
+                        </p>
+                      </div>
+                      <div className="space-y-2">
                         <Label htmlFor="deliveryMethod">Delivery Method *</Label>
                         <Select
                           value={deliveryMethod}
@@ -516,9 +536,52 @@ export default function CertificateRequestPage() {
                           </SelectTrigger>
                           <SelectContent>
                             <SelectItem value="pickup">Pickup</SelectItem>
-                            <SelectItem value="courier">Courier Service</SelectItem>
+                            <SelectItem value="courier">Courier Service (+GHS 50)</SelectItem>
                           </SelectContent>
                         </Select>
+                      </div>
+                      {/* Pricing Breakdown */}
+                      <div className="p-4 border rounded-lg bg-muted/50 space-y-2">
+                        <h4 className="font-semibold text-sm">Pricing Breakdown</h4>
+                        <div className="space-y-1 text-sm">
+                          <div className="flex justify-between">
+                            <span className="text-muted-foreground">
+                              {requestType === "certificate" ? "Certificate" : "Attestation"} (Base)
+                            </span>
+                            <span className="font-medium">
+                              GHS {requestType === "certificate" ? "100" : "80"}
+                            </span>
+                          </div>
+                          {serviceType === "express" && (
+                            <div className="flex justify-between text-primary">
+                              <span>Express Service Surcharge (50%)</span>
+                              <span className="font-medium">
+                                +GHS {requestType === "certificate" ? "50" : "40"}
+                              </span>
+                            </div>
+                          )}
+                          {deliveryMethod === "courier" && (
+                            <div className="flex justify-between">
+                              <span className="text-muted-foreground">Courier Fee</span>
+                              <span className="font-medium">+GHS 50</span>
+                            </div>
+                          )}
+                          <div className="pt-2 border-t flex justify-between font-semibold">
+                            <span>Total Amount</span>
+                            <span className="text-primary">
+                              GHS {(() => {
+                                let base = requestType === "certificate" ? 100 : 80;
+                                if (serviceType === "express") {
+                                  base = base * 1.5;
+                                }
+                                if (deliveryMethod === "courier") {
+                                  base += 50;
+                                }
+                                return base.toFixed(0);
+                              })()}
+                            </span>
+                          </div>
+                        </div>
                       </div>
                       <div className="space-y-2">
                         <Label htmlFor="contactPhone">Contact Phone *</Label>
@@ -618,8 +681,27 @@ export default function CertificateRequestPage() {
                             <p className="font-semibold">{examYear}</p>
                           </div>
                           <div>
+                            <p className="text-sm font-medium text-muted-foreground">Service Type</p>
+                            <p className="font-semibold capitalize">{serviceType}</p>
+                          </div>
+                          <div>
                             <p className="text-sm font-medium text-muted-foreground">Delivery Method</p>
                             <p className="font-semibold capitalize">{deliveryMethod}</p>
+                          </div>
+                          <div>
+                            <p className="text-sm font-medium text-muted-foreground">Total Amount</p>
+                            <p className="font-semibold text-primary">
+                              GHS {(() => {
+                                let base = requestType === "certificate" ? 100 : 80;
+                                if (serviceType === "express") {
+                                  base = base * 1.5;
+                                }
+                                if (deliveryMethod === "courier") {
+                                  base += 50;
+                                }
+                                return base.toFixed(0);
+                              })()}
+                            </p>
                           </div>
                           <div>
                             <p className="text-sm font-medium text-muted-foreground">Contact Phone</p>
