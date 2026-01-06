@@ -1,14 +1,15 @@
 """Admin endpoints for system administrators."""
+import logging
 from datetime import datetime, timezone
 from typing import Annotated
 from uuid import UUID
 
 from fastapi import APIRouter, HTTPException, Query, status, UploadFile, File, Form, BackgroundTasks, Body
 from fastapi.responses import StreamingResponse
-from sqlalchemy import select, func, delete, insert, update
+from sqlalchemy import select, func, delete, insert, update, cast, String, type_coerce
 from sqlalchemy.orm import selectinload
 
-from app.dependencies.auth import CurrentUserDep, SystemAdminDep
+from app.dependencies.auth import CurrentUserDep, SystemAdminDep, AdminDep
 from app.dependencies.database import DBSessionDep
 from app.models import (
     PortalUser,
@@ -121,6 +122,8 @@ from app.services.result_service import (
 )
 
 router = APIRouter(prefix="/api/v1/admin", tags=["admin"])
+
+logger = logging.getLogger(__name__)
 
 
 @router.post("/school-admin-users", response_model=UserResponse, status_code=status.HTTP_201_CREATED)
@@ -2938,3 +2941,1041 @@ async def delete_result_block(
     block.updated_at = datetime.utcnow()
 
     await session.commit()
+
+
+# Certificate Request Endpoints
+
+@router.get("/certificate-requests", status_code=status.HTTP_200_OK)
+async def list_certificate_requests(
+    session: DBSessionDep,
+    current_user: SystemAdminDep,
+    status_filter: str | None = Query(None, description="Filter by status"),
+    request_type: str | None = Query(None, description="Filter by request type (certificate/attestation)"),
+    assigned_to: str | None = Query(None, description="Filter by assigned user ID"),
+    priority: str | None = Query(None, description="Filter by priority (low/medium/high/urgent)"),
+    service_type: str | None = Query(None, description="Filter by service type (standard/express)"),
+    page: int = Query(1, ge=1),
+    page_size: int = Query(20, ge=1, le=100),
+) -> dict:
+    """List certificate requests with filters (System Admin)."""
+    from app.schemas.certificate import CertificateRequestListResponse, CertificateRequestResponse
+    from app.models import CertificateRequest, RequestStatus, CertificateRequestType, TicketPriority, ServiceType
+    from sqlalchemy import and_
+    from uuid import UUID
+
+    stmt = select(CertificateRequest).options(
+        selectinload(CertificateRequest.examination_center),
+        selectinload(CertificateRequest.assigned_to),
+    )
+
+    conditions = []
+    if status_filter and status_filter.strip():
+        # RequestStatus enum values are lowercase (e.g., "paid", "pending_payment")
+        # Database column is VARCHAR, so compare string directly
+        status_lower = status_filter.lower().strip()
+        # Validate the status value
+        valid_statuses = [s.value for s in RequestStatus]
+        if status_lower not in valid_statuses:
+            valid_values = ', '.join(valid_statuses)
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Invalid status filter: {status_filter}. Valid values: {valid_values}",
+            )
+        # Database column is VARCHAR, SQLAlchemy stores enum.value (lowercase string)
+        # Use cast to convert enum to text for comparison
+        conditions.append(cast(CertificateRequest.status, String).ilike(status_lower))
+
+    if request_type and request_type.strip():
+        # CertificateRequestType enum values are lowercase (e.g., "certificate", "attestation")
+        # Database column is VARCHAR, so compare string directly
+        type_lower = request_type.lower().strip()
+        # Validate the request_type value
+        valid_types = [t.value for t in CertificateRequestType]
+        if type_lower not in valid_types:
+            valid_values = ', '.join(valid_types)
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Invalid request_type filter: {request_type}. Valid values: {valid_values}",
+            )
+        # Database column is VARCHAR, SQLAlchemy stores enum.value (lowercase string)
+        # Use cast to convert enum to text for comparison
+        conditions.append(cast(CertificateRequest.request_type, String).ilike(type_lower))
+
+    if assigned_to and assigned_to.strip():
+        try:
+            assigned_to_uuid = UUID(assigned_to.strip())
+            conditions.append(CertificateRequest.assigned_to_user_id == assigned_to_uuid)
+        except ValueError:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Invalid assigned_to user ID format: {assigned_to}",
+            )
+
+    if priority and priority.strip():
+        priority_lower = priority.lower().strip()
+        valid_priorities = [p.value for p in TicketPriority]
+        if priority_lower not in valid_priorities:
+            valid_values = ', '.join(valid_priorities)
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Invalid priority filter: {priority}. Valid values: {valid_values}",
+            )
+        conditions.append(cast(CertificateRequest.priority, String).ilike(priority_lower))
+
+    if service_type and service_type.strip():
+        service_type_lower = service_type.lower().strip()
+        valid_service_types = [s.value for s in ServiceType]
+        if service_type_lower not in valid_service_types:
+            valid_values = ', '.join(valid_service_types)
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Invalid service_type filter: {service_type}. Valid values: {valid_values}",
+            )
+        conditions.append(cast(CertificateRequest.service_type, String).ilike(service_type_lower))
+
+    if conditions:
+        stmt = stmt.where(and_(*conditions))
+
+    # Get total count
+    count_stmt = select(func.count(CertificateRequest.id))
+    if conditions:
+        count_stmt = count_stmt.where(and_(*conditions))
+    total_result = await session.execute(count_stmt)
+    total = total_result.scalar() or 0
+
+    # Paginate
+    stmt = stmt.order_by(CertificateRequest.created_at.desc())
+    stmt = stmt.offset((page - 1) * page_size).limit(page_size)
+
+    result = await session.execute(stmt)
+    requests = list(result.scalars().all())
+
+    items = []
+    for req in requests:
+        item = CertificateRequestResponse.model_validate(req)
+        if req.examination_center:
+            item.examination_center_name = req.examination_center.name
+        items.append(item.model_dump())
+
+    total_pages = (total + page_size - 1) // page_size if total > 0 else 0
+
+    return CertificateRequestListResponse(
+        items=items,
+        total=total,
+        page=page,
+        page_size=page_size,
+        total_pages=total_pages,
+    ).model_dump()
+
+
+@router.get("/certificate-requests/statistics", status_code=status.HTTP_200_OK)
+async def get_certificate_request_statistics(
+    session: DBSessionDep,
+    current_user: SystemAdminDep,
+) -> dict:
+    """Get statistics about certificate requests (System Admin)."""
+    from app.models import CertificateRequest, RequestStatus, CertificateRequestType
+    from sqlalchemy import func, cast, String
+
+    # Get total count
+    total_stmt = select(func.count(CertificateRequest.id))
+    total_result = await session.execute(total_stmt)
+    total = total_result.scalar() or 0
+
+    # Get counts by status
+    status_counts = {}
+    for status in RequestStatus:
+        count_stmt = select(func.count(CertificateRequest.id)).where(
+            cast(CertificateRequest.status, String).ilike(status.value)
+        )
+        count_result = await session.execute(count_stmt)
+        status_counts[status.value] = count_result.scalar() or 0
+
+    # Get counts by request type
+    type_counts = {}
+    for req_type in CertificateRequestType:
+        count_stmt = select(func.count(CertificateRequest.id)).where(
+            cast(CertificateRequest.request_type, String).ilike(req_type.value)
+        )
+        count_result = await session.execute(count_stmt)
+        type_counts[req_type.value] = count_result.scalar() or 0
+
+    return {
+        "total": total,
+        "by_status": status_counts,
+        "by_type": type_counts,
+    }
+
+
+@router.get("/certificate-requests/{request_id}", status_code=status.HTTP_200_OK)
+async def get_certificate_request(
+    request_id: int,
+    session: DBSessionDep,
+    current_user: SystemAdminDep,
+) -> dict:
+    """Get certificate request details (System Admin)."""
+    from app.schemas.certificate import CertificateRequestResponse
+    from app.services.certificate_service import get_certificate_request_by_id
+
+    request = await get_certificate_request_by_id(session, request_id)
+    if not request:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Certificate request not found",
+        )
+
+    response = CertificateRequestResponse.model_validate(request)
+    if request.examination_center:
+        response.examination_center_name = request.examination_center.name
+
+    return response.model_dump()
+
+
+@router.get("/certificate-requests/{request_id}/pdf", status_code=status.HTTP_200_OK)
+async def download_certificate_request_pdf(
+    request_id: int,
+    session: DBSessionDep,
+    current_user: SystemAdminDep,
+) -> StreamingResponse:
+    """Download certificate request details as PDF (System Admin)."""
+    from app.services.certificate_service import get_certificate_request_by_id
+    from app.services.certificate_pdf_service import generate_certificate_request_pdf
+    from app.services.certificate_file_storage import CertificateFileStorageService
+    from app.models import Invoice, Payment
+    from sqlalchemy import select
+
+    request = await get_certificate_request_by_id(session, request_id)
+    if not request:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Certificate request not found",
+        )
+
+    # Ensure examination_center is loaded
+    if request.examination_center_id:
+        from app.models import School
+        school_stmt = select(School).where(School.id == request.examination_center_id)
+        school_result = await session.execute(school_stmt)
+        school = school_result.scalar_one_or_none()
+        if school:
+            request.examination_center = school
+
+    # Get invoice if exists
+    invoice = None
+    if request.id:
+        invoice_stmt = select(Invoice).where(Invoice.certificate_request_id == request.id)
+        invoice_result = await session.execute(invoice_stmt)
+        invoice = invoice_result.scalar_one_or_none()
+
+    # Get payment if exists
+    payment = None
+    if request.payment_id:
+        payment_stmt = select(Payment).where(Payment.id == request.payment_id)
+        payment_result = await session.execute(payment_stmt)
+        payment = payment_result.scalar_one_or_none()
+
+    # Retrieve photo and ID scan files
+    photo_data = None
+    id_scan_data = None
+    file_storage = CertificateFileStorageService()
+
+    try:
+        if request.photograph_file_path:
+            photo_data = await file_storage.retrieve(request.photograph_file_path)
+    except Exception as e:
+        logger.warning(f"Could not retrieve photo for request {request_id}: {e}")
+
+    try:
+        if request.national_id_file_path:
+            id_scan_data = await file_storage.retrieve(request.national_id_file_path)
+    except Exception as e:
+        logger.warning(f"Could not retrieve ID scan for request {request_id}: {e}")
+
+    # Generate PDF
+    try:
+        pdf_bytes = await generate_certificate_request_pdf(
+            request,
+            invoice,
+            payment,
+            photo_data=photo_data,
+            id_scan_data=id_scan_data,
+        )
+    except Exception as e:
+        logger.error(f"Failed to generate PDF: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to generate PDF document",
+        )
+
+    filename = f"certificate_request_{request.request_number}.pdf"
+    return StreamingResponse(
+        iter([pdf_bytes]),
+        media_type="application/pdf",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
+@router.post("/certificate-requests/{request_id}/begin-process", status_code=status.HTTP_200_OK)
+async def begin_process_certificate_request(
+    request_id: int,
+    session: DBSessionDep,
+    current_user: SystemAdminDep,
+) -> dict:
+    """Begin processing a certificate request (System Admin)."""
+    from app.schemas.certificate import CertificateRequestResponse
+    from app.services.certificate_service import begin_processing
+
+    try:
+        request = await begin_processing(session, request_id, str(current_user.id))
+        await session.commit()
+        await session.refresh(request)
+
+        response = CertificateRequestResponse.model_validate(request)
+        if request.examination_center:
+            response.examination_center_name = request.examination_center.name
+
+        return response.model_dump()
+    except ValueError as e:
+        await session.rollback()
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+    except Exception as e:
+        await session.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to begin processing: {str(e)}",
+        )
+
+
+@router.post("/certificate-requests/{request_id}/send-to-dispatch", status_code=status.HTTP_200_OK)
+async def send_to_dispatch(
+    request_id: int,
+    session: DBSessionDep,
+    current_user: SystemAdminDep,
+) -> dict:
+    """Mark certificate request as ready for dispatch (System Admin)."""
+    from app.schemas.certificate import CertificateRequestResponse
+    from app.services.certificate_service import send_to_dispatch
+
+    try:
+        request = await send_to_dispatch(session, request_id, str(current_user.id))
+        await session.commit()
+        await session.refresh(request)
+
+        response = CertificateRequestResponse.model_validate(request)
+        if request.examination_center:
+            response.examination_center_name = request.examination_center.name
+
+        return response.model_dump()
+    except ValueError as e:
+        await session.rollback()
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+    except Exception as e:
+        await session.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to send to dispatch: {str(e)}",
+        )
+
+
+@router.put("/certificate-requests/{request_id}", status_code=status.HTTP_200_OK)
+async def update_certificate_request(
+    request_id: int,
+    update_data: dict = Body(...),
+    session: DBSessionDep = None,
+    current_user: SystemAdminDep = None,
+) -> dict:
+    """Update certificate request (System Admin)."""
+    from app.schemas.certificate import CertificateRequestResponse, CertificateRequestUpdate
+    from app.services.certificate_service import get_certificate_request_by_id, update_request_status
+    from app.models import RequestStatus, TicketPriority
+    from uuid import UUID
+
+    request = await get_certificate_request_by_id(session, request_id)
+    if not request:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Certificate request not found",
+        )
+
+    # Update status with history tracking
+    if "status" in update_data:
+        try:
+            new_status = RequestStatus(update_data["status"])
+            await update_request_status(
+                session,
+                request_id,
+                new_status,
+                user_id=str(current_user.id) if current_user else None,
+                notes=update_data.get("notes"),
+            )
+        except ValueError as e:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Invalid status: {update_data['status']}",
+            )
+
+    if "tracking_number" in update_data:
+        request.tracking_number = update_data["tracking_number"]
+
+    if "notes" in update_data and "status" not in update_data:
+        request.notes = update_data["notes"]
+
+    if "assigned_to_user_id" in update_data:
+        assigned_to = update_data["assigned_to_user_id"]
+        if assigned_to:
+            try:
+                request.assigned_to_user_id = UUID(assigned_to)
+            except ValueError:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="Invalid assigned_to_user_id format",
+                )
+        else:
+            request.assigned_to_user_id = None
+
+    if "priority" in update_data:
+        try:
+            request.priority = TicketPriority(update_data["priority"])
+        except ValueError:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Invalid priority: {update_data['priority']}",
+            )
+
+    await session.commit()
+    await session.refresh(request)
+
+    response = CertificateRequestResponse.model_validate(request)
+    if request.examination_center:
+        response.examination_center_name = request.examination_center.name
+
+    return response.model_dump()
+
+
+# Ticket Management Endpoints
+
+@router.post("/certificate-requests/{request_id}/assign", status_code=status.HTTP_200_OK)
+async def assign_ticket(
+    request_id: int,
+    assignment_data: dict = Body(...),
+    session: DBSessionDep = None,
+    current_user: SystemAdminDep = None,
+) -> dict:
+    """Assign ticket to a user (System Admin)."""
+    from app.schemas.certificate import CertificateRequestResponse
+    from app.services.certificate_service import assign_ticket, get_certificate_request_by_id
+
+    request = await get_certificate_request_by_id(session, request_id)
+    if not request:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Certificate request not found",
+        )
+
+    assigned_to_user_id = assignment_data.get("assigned_to_user_id")
+    if not assigned_to_user_id:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="assigned_to_user_id is required",
+        )
+
+    try:
+        request = await assign_ticket(
+            session,
+            request_id,
+            str(current_user.id) if current_user else None,
+            assigned_to_user_id,
+        )
+        await session.commit()
+        await session.refresh(request)
+
+        response = CertificateRequestResponse.model_validate(request)
+        if request.examination_center:
+            response.examination_center_name = request.examination_center.name
+
+        return response.model_dump()
+    except ValueError as e:
+        await session.rollback()
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+    except Exception as e:
+        await session.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to assign ticket: {str(e)}",
+        )
+
+
+@router.post("/certificate-requests/{request_id}/unassign", status_code=status.HTTP_200_OK)
+async def unassign_ticket(
+    request_id: int,
+    session: DBSessionDep = None,
+    current_user: SystemAdminDep = None,
+) -> dict:
+    """Unassign ticket (System Admin)."""
+    from app.schemas.certificate import CertificateRequestResponse
+    from app.services.certificate_service import unassign_ticket, get_certificate_request_by_id
+
+    request = await get_certificate_request_by_id(session, request_id)
+    if not request:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Certificate request not found",
+        )
+
+    try:
+        request = await unassign_ticket(
+            session,
+            request_id,
+            str(current_user.id) if current_user else None,
+        )
+        await session.commit()
+        await session.refresh(request)
+
+        response = CertificateRequestResponse.model_validate(request)
+        if request.examination_center:
+            response.examination_center_name = request.examination_center.name
+
+        return response.model_dump()
+    except ValueError as e:
+        await session.rollback()
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+    except Exception as e:
+        await session.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to unassign ticket: {str(e)}",
+        )
+
+
+@router.post("/certificate-requests/{request_id}/comments", status_code=status.HTTP_201_CREATED)
+async def add_ticket_comment(
+    request_id: int,
+    comment_data: dict = Body(...),
+    session: DBSessionDep = None,
+    current_user: SystemAdminDep = None,
+) -> dict:
+    """Add a comment to a ticket (System Admin)."""
+    from app.schemas.certificate import TicketActivityResponse
+    from app.services.certificate_service import add_ticket_comment
+
+    comment = comment_data.get("comment")
+    if not comment:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="comment is required",
+        )
+
+    try:
+        activity = await add_ticket_comment(
+            session,
+            request_id,
+            str(current_user.id) if current_user else None,
+            comment,
+        )
+        await session.commit()
+        await session.refresh(activity)
+
+        response = TicketActivityResponse.model_validate(activity)
+        if activity.user:
+            response.user_name = activity.user.full_name
+
+        return response.model_dump()
+    except ValueError as e:
+        await session.rollback()
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+    except Exception as e:
+        await session.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to add comment: {str(e)}",
+        )
+
+
+@router.get("/certificate-requests/{request_id}/activities", status_code=status.HTTP_200_OK)
+async def get_ticket_activities(
+    request_id: int,
+    session: DBSessionDep = None,
+    current_user: SystemAdminDep = None,
+    limit: int = Query(100, ge=1, le=500),
+) -> dict:
+    """Get activity feed for a ticket (System Admin)."""
+    from app.schemas.certificate import TicketActivityResponse
+    from app.services.certificate_service import get_ticket_activities, get_certificate_request_by_id
+
+    request = await get_certificate_request_by_id(session, request_id)
+    if not request:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Certificate request not found",
+        )
+
+    activities = await get_ticket_activities(session, request_id, limit)
+
+    items = []
+    for activity in activities:
+        item = TicketActivityResponse.model_validate(activity)
+        if activity.user:
+            item.user_name = activity.user.full_name
+        items.append(item.model_dump())
+
+    return {"items": items, "total": len(items)}
+
+
+@router.get("/certificate-requests/{request_id}/status-history", status_code=status.HTTP_200_OK)
+async def get_ticket_status_history(
+    request_id: int,
+    session: DBSessionDep = None,
+    current_user: SystemAdminDep = None,
+    limit: int = Query(100, ge=1, le=500),
+) -> dict:
+    """Get status transition history for a ticket (System Admin)."""
+    from app.schemas.certificate import TicketStatusHistoryResponse
+    from app.services.certificate_service import get_ticket_status_history, get_certificate_request_by_id
+
+    request = await get_certificate_request_by_id(session, request_id)
+    if not request:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Certificate request not found",
+        )
+
+    history = await get_ticket_status_history(session, request_id, limit)
+
+    items = []
+    for entry in history:
+        item = TicketStatusHistoryResponse.model_validate(entry)
+        if entry.changed_by:
+            item.changed_by_name = entry.changed_by.full_name
+        items.append(item.model_dump())
+
+    return {"items": items, "total": len(items)}
+
+
+# Dispatch Endpoints (Admin staff)
+
+@router.get("/dispatch/certificate-requests", status_code=status.HTTP_200_OK)
+async def list_dispatch_requests(
+    session: DBSessionDep,
+    current_user: AdminDep,
+    page: int = Query(1, ge=1),
+    page_size: int = Query(20, ge=1, le=100),
+) -> dict:
+    """List certificate requests ready for dispatch (Admin)."""
+    from app.schemas.certificate import CertificateRequestListResponse, CertificateRequestResponse
+    from app.models import CertificateRequest, RequestStatus
+
+    # Database column is VARCHAR, use cast and ilike for case-insensitive comparison
+    stmt = (
+        select(CertificateRequest)
+        .where(cast(CertificateRequest.status, String).ilike(RequestStatus.READY_FOR_DISPATCH.value))
+        .options(
+            selectinload(CertificateRequest.examination_center),
+        )
+        .order_by(CertificateRequest.created_at.desc())
+    )
+
+    # Get total count
+    count_stmt = select(func.count(CertificateRequest.id)).where(
+        cast(CertificateRequest.status, String).ilike(RequestStatus.READY_FOR_DISPATCH.value)
+    )
+    total_result = await session.execute(count_stmt)
+    total = total_result.scalar() or 0
+
+    # Paginate
+    stmt = stmt.offset((page - 1) * page_size).limit(page_size)
+
+    result = await session.execute(stmt)
+    requests = list(result.scalars().all())
+
+    items = []
+    for req in requests:
+        item = CertificateRequestResponse.model_validate(req)
+        if req.examination_center:
+            item.examination_center_name = req.examination_center.name
+        items.append(item.model_dump())
+
+    total_pages = (total + page_size - 1) // page_size if total > 0 else 0
+
+    return CertificateRequestListResponse(
+        items=items,
+        total=total,
+        page=page,
+        page_size=page_size,
+        total_pages=total_pages,
+    ).model_dump()
+
+
+@router.post("/dispatch/certificate-requests/{request_id}/dispatch", status_code=status.HTTP_200_OK)
+async def dispatch_certificate_request(
+    request_id: int,
+    dispatch_data: dict | None = Body(None),
+    session: DBSessionDep = None,
+    current_user: AdminDep = None,
+) -> dict:
+    """Dispatch a certificate request (Admin)."""
+    from app.schemas.certificate import CertificateRequestResponse
+    from app.services.certificate_service import dispatch_request
+
+    try:
+        tracking_number = dispatch_data.get("tracking_number") if dispatch_data else None
+        request = await dispatch_request(session, request_id, str(current_user.id), tracking_number)
+        await session.commit()
+        await session.refresh(request)
+
+        response = CertificateRequestResponse.model_validate(request)
+        if request.examination_center:
+            response.examination_center_name = request.examination_center.name
+
+        return response.model_dump()
+    except ValueError as e:
+        await session.rollback()
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+    except Exception as e:
+        await session.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to dispatch request: {str(e)}",
+        )
+
+
+@router.post("/dispatch/certificate-requests/{request_id}/complete", status_code=status.HTTP_200_OK)
+async def complete_certificate_request(
+    request_id: int,
+    session: DBSessionDep,
+    current_user: AdminDep,
+) -> dict:
+    """Mark certificate request as completed (Admin)."""
+    from app.schemas.certificate import CertificateRequestResponse
+    from app.services.certificate_service import complete_request
+
+    try:
+        request = await complete_request(session, request_id, str(current_user.id))
+        await session.commit()
+        await session.refresh(request)
+
+        response = CertificateRequestResponse.model_validate(request)
+        if request.examination_center:
+            response.examination_center_name = request.examination_center.name
+
+        return response.model_dump()
+    except ValueError as e:
+        await session.rollback()
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+    except Exception as e:
+        await session.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to complete request: {str(e)}",
+        )
+
+
+@router.post("/dispatch/certificate-requests/{request_id}/mark-received", status_code=status.HTTP_200_OK)
+async def mark_received(
+    request_id: int,
+    session: DBSessionDep,
+    current_user: AdminDep,
+) -> dict:
+    """Mark certificate request as received (Admin)."""
+    from app.schemas.certificate import CertificateRequestResponse
+    from app.services.certificate_service import mark_received
+
+    try:
+        request = await mark_received(session, request_id, str(current_user.id))
+        await session.commit()
+        await session.refresh(request)
+
+        response = CertificateRequestResponse.model_validate(request)
+        if request.examination_center:
+            response.examination_center_name = request.examination_center.name
+
+        return response.model_dump()
+    except ValueError as e:
+        await session.rollback()
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+    except Exception as e:
+        await session.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to mark as received: {str(e)}",
+        )
+
+
+@router.post("/certificate-requests/{request_id}/cancel", status_code=status.HTTP_200_OK)
+async def cancel_certificate_request(
+    request_id: int,
+    cancel_data: dict | None = Body(None),
+    session: DBSessionDep = None,
+    current_user: AdminDep = None,
+) -> dict:
+    """Cancel a certificate request (Admin)."""
+    from app.schemas.certificate import CertificateRequestResponse
+    from app.services.certificate_service import cancel_request
+
+    try:
+        reason = cancel_data.get("reason") if cancel_data else None
+        request = await cancel_request(session, request_id, str(current_user.id), reason)
+        await session.commit()
+        await session.refresh(request)
+
+        response = CertificateRequestResponse.model_validate(request)
+        if request.examination_center:
+            response.examination_center_name = request.examination_center.name
+
+        return response.model_dump()
+    except ValueError as e:
+        await session.rollback()
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+    except Exception as e:
+        await session.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to cancel request: {str(e)}",
+        )
+
+
+@router.post("/certificate-requests/{request_id}/resend-payment-link", status_code=status.HTTP_200_OK)
+async def resend_payment_link(
+    request_id: int,
+    session: DBSessionDep,
+    current_user: AdminDep,
+) -> dict:
+    """Resend payment link for a certificate request (Admin)."""
+    from app.schemas.certificate import PaymentInitializeResponse
+    from app.services.certificate_service import get_certificate_request_by_id
+    from app.services.payment_service import initialize_payment
+    from app.models import Invoice, Payment, PaymentStatus, RequestStatus
+    from decimal import Decimal
+
+    request = await get_certificate_request_by_id(session, request_id)
+    if not request:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Certificate request not found",
+        )
+
+    if request.status != RequestStatus.PENDING_PAYMENT:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Request must be in PENDING_PAYMENT status. Current status: {request.status.value}",
+        )
+
+    # Get invoice
+    invoice_stmt = select(Invoice).where(Invoice.certificate_request_id == request.id)
+    invoice_result = await session.execute(invoice_stmt)
+    invoice = invoice_result.scalar_one_or_none()
+
+    if not invoice:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invoice not found for this request",
+        )
+
+    if invoice.status == "paid":
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invoice is already paid",
+        )
+
+    try:
+        # Check if there's an existing pending payment
+        if request.payment_id:
+            payment_stmt = select(Payment).where(Payment.id == request.payment_id)
+            payment_result = await session.execute(payment_stmt)
+            existing_payment = payment_result.scalar_one_or_none()
+
+            # If payment exists and is still pending, return existing link
+            if existing_payment and existing_payment.status == PaymentStatus.PENDING and existing_payment.paystack_authorization_url:
+                return {
+                    "payment_id": existing_payment.id,
+                    "authorization_url": existing_payment.paystack_authorization_url,
+                    "paystack_reference": existing_payment.paystack_reference,
+                    "message": "Existing payment link retrieved",
+                }
+
+        # Create a new payment
+        result = await initialize_payment(
+            session,
+            invoice,
+            Decimal(str(invoice.amount)),
+            email=request.contact_email,
+            metadata={"request_number": request.request_number},
+        )
+        await session.flush()
+
+        # Update request with payment_id
+        request.payment_id = result["payment_id"]
+        await session.commit()
+
+        return {
+            "payment_id": result["payment_id"],
+            "authorization_url": result["authorization_url"],
+            "paystack_reference": result["paystack_reference"],
+            "message": "New payment link generated",
+        }
+
+    except ValueError as e:
+        await session.rollback()
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+    except Exception as e:
+        await session.rollback()
+        logger.error(f"Error resending payment link: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to resend payment link: {str(e)}",
+        )
+
+
+# Reporting Endpoints
+
+@router.get("/certificate-requests/reports/summary")
+async def get_certificate_request_summary(
+    session: DBSessionDep,
+    current_user: AdminDep,
+    start_date: str | None = Query(None, description="Start date (YYYY-MM-DD)"),
+    end_date: str | None = Query(None, description="End date (YYYY-MM-DD)"),
+    period: str | None = Query(None, description="Period: weekly, monthly, yearly"),
+) -> dict:
+    """Get summary statistics for certificate requests (System Admin and Admin)."""
+    from app.services.reporting_service import get_request_statistics
+    from datetime import timedelta
+
+    # Calculate date range based on period if provided
+    start_dt = None
+    end_dt = None
+    if period:
+        today = datetime.utcnow().date()
+        if period == "weekly":
+            start_dt = datetime.combine(today - timedelta(days=7), datetime.min.time())
+            end_dt = datetime.utcnow()
+        elif period == "monthly":
+            start_dt = datetime.combine(today - timedelta(days=30), datetime.min.time())
+            end_dt = datetime.utcnow()
+        elif period == "yearly":
+            start_dt = datetime.combine(datetime(today.year, 1, 1).date(), datetime.min.time())
+            end_dt = datetime.utcnow()
+        else:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Invalid period. Must be: weekly, monthly, or yearly",
+            )
+    else:
+        if start_date:
+            try:
+                start_dt = datetime.fromisoformat(start_date)
+            except ValueError:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="Invalid start_date format. Use YYYY-MM-DD",
+                )
+        if end_date:
+            try:
+                end_dt = datetime.fromisoformat(end_date)
+            except ValueError:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="Invalid end_date format. Use YYYY-MM-DD",
+                )
+
+    try:
+        stats = await get_request_statistics(session, start_dt, end_dt)
+        return stats
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to generate statistics: {str(e)}",
+        )
+
+
+@router.get("/certificate-requests/reports/statistics")
+async def get_certificate_request_statistics(
+    session: DBSessionDep,
+    current_user: AdminDep,
+    start_date: str | None = Query(None, description="Start date (YYYY-MM-DD)"),
+    end_date: str | None = Query(None, description="End date (YYYY-MM-DD)"),
+) -> dict:
+    """Get detailed statistics with breakdowns (System Admin and Admin)."""
+    from app.services.reporting_service import get_request_statistics
+
+    start_dt = None
+    end_dt = None
+    if start_date:
+        try:
+            start_dt = datetime.fromisoformat(start_date)
+        except ValueError:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Invalid start_date format. Use YYYY-MM-DD",
+            )
+    if end_date:
+        try:
+            end_dt = datetime.fromisoformat(end_date)
+        except ValueError:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Invalid end_date format. Use YYYY-MM-DD",
+            )
+
+    try:
+        stats = await get_request_statistics(session, start_dt, end_dt)
+        return stats
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to generate statistics: {str(e)}",
+        )
+
+
+@router.get("/certificate-requests/reports/export")
+async def export_certificate_requests(
+    session: DBSessionDep,
+    current_user: AdminDep,
+    start_date: str | None = Query(None, description="Start date (YYYY-MM-DD)"),
+    end_date: str | None = Query(None, description="End date (YYYY-MM-DD)"),
+) -> StreamingResponse:
+    """Export certificate request data as CSV (System Admin and Admin)."""
+    from app.services.reporting_service import export_request_data
+    import csv
+    import io
+
+    start_dt = None
+    end_dt = None
+    if start_date:
+        try:
+            start_dt = datetime.fromisoformat(start_date)
+        except ValueError:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Invalid start_date format. Use YYYY-MM-DD",
+            )
+    if end_date:
+        try:
+            end_dt = datetime.fromisoformat(end_date)
+        except ValueError:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Invalid end_date format. Use YYYY-MM-DD",
+            )
+
+    try:
+        data = await export_request_data(session, start_dt, end_dt)
+
+        # Generate CSV
+        output = io.StringIO()
+        if data:
+            writer = csv.DictWriter(output, fieldnames=data[0].keys())
+            writer.writeheader()
+            writer.writerows(data)
+
+        csv_bytes = output.getvalue().encode("utf-8")
+        filename = f"certificate_requests_export_{datetime.utcnow().strftime('%Y%m%d_%H%M%S')}.csv"
+
+        return StreamingResponse(
+            iter([csv_bytes]),
+            media_type="text/csv",
+            headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+        )
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to export data: {str(e)}",
+        )

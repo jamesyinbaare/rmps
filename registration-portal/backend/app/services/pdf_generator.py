@@ -1,226 +1,230 @@
-"""Service for generating PDF documents."""
-import io
-from datetime import datetime
+"""PDF generation service using WeasyPrint."""
+import logging
 from pathlib import Path
-from typing import Optional
+from typing import Any
 
-from reportlab.lib import colors
-from reportlab.lib.pagesizes import A4
-from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
-from reportlab.lib.units import cm
-from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer, Image
-from reportlab.lib.enums import TA_CENTER, TA_LEFT
+from jinja2 import Environment, FileSystemLoader
+from weasyprint import CSS, HTML
 
-from app.schemas.result import PublicResultResponse
+from app.config import settings
+
+logger = logging.getLogger('weasyprint')
+logger.addHandler(logging.StreamHandler())
 
 
-def generate_results_pdf(results: PublicResultResponse, photo_data: Optional[bytes] = None) -> bytes:
+class PdfGenerator:
     """
-    Generate a PDF document for examination results.
+    Generate a PDF out of a rendered template, with the possibility to integrate nicely
+    a header and a footer if provided.
+
+    Notes:
+    ------
+    - When Weasyprint renders an html into a PDF, it goes though several intermediate steps.
+      Here, in this class, we deal mostly with a box representation: 1 `Document` have 1 `Page`
+      or more, each `Page` 1 `Box` or more. Each box can contain other box. Hence the recursive
+      method `get_element` for example.
+      For more, see:
+      https://weasyprint.readthedocs.io/en/stable/hacking.html#dive-into-the-source
+      https://weasyprint.readthedocs.io/en/stable/hacking.html#formatting-structure
+    - Warning: the logic of this class relies heavily on the internal Weasyprint API. This
+      snippet was written at the time of the release 47, it might break in the future.
+    - This generator draws its inspiration and, also a bit of its implementation, from this
+      discussion in the library github issues: https://github.com/Kozea/WeasyPrint/issues/92
+    """
+
+    OVERLAY_LAYOUT = "@page { margin: 2cm; margin-top: 1cm;}"
+
+    def __init__(
+        self,
+        main_html: str,
+        header_html: str | None = None,
+        footer_html: str | None = None,
+        base_url: str | None = None,
+        side_margin: int = 2,
+        extra_vertical_margin: int = 30,
+        external_stylesheets: list[CSS] | None = None,
+    ):
+        """
+        Parameters
+        ----------
+        main_html: str
+            An HTML file (most of the time a template rendered into a string) which represents
+            the core of the PDF to generate.
+        header_html: str
+            An optional header html.
+        footer_html: str
+            An optional footer html.
+        base_url: str
+            An absolute url or path to the page which serves as a reference to Weasyprint to fetch assets,
+            required to get our media.
+        side_margin: int, interpreted in cm, by default 2cm
+            The margin to apply on the core of the rendered PDF (i.e. main_html).
+        extra_vertical_margin: int, interpreted in pixel, by default 30 pixels
+            An extra margin to apply between the main content and header and the footer.
+            The goal is to avoid having the content of `main_html` touching the header or the
+            footer.
+        external_stylesheets: list[CSS]
+            Optional list of external CSS files to load.
+        """
+        self.main_html = main_html
+        self.header_html = header_html
+        self.footer_html = footer_html
+        self.base_url = base_url
+        self.side_margin = side_margin
+        self.extra_vertical_margin = extra_vertical_margin
+        self.external_stylesheets = external_stylesheets or []
+
+    def _compute_overlay_element(self, element: str):
+        """
+        Parameters
+        ----------
+        element: str
+            Either 'header' or 'footer'
+
+        Returns
+        -------
+        element_body: BlockBox
+            A Weasyprint pre-rendered representation of an html element
+        element_height: float
+            The height of this element, which will be then translated in a html height
+        """
+        # Use base_url if provided, otherwise use None
+        base_url = self.base_url if self.base_url else None
+        if base_url:
+            logger.debug(f"Rendering {element} with base_url: {base_url}")
+        else:
+            logger.warning(f"Rendering {element} without base_url - assets may not resolve correctly")
+
+        try:
+            html = HTML(
+                string=getattr(self, f"{element}_html"),
+                base_url=base_url,
+            )
+            # Include external stylesheets for header/footer too (for fonts, etc.)
+            stylesheets = self.external_stylesheets + [CSS(string=self.OVERLAY_LAYOUT)]
+            element_doc = html.render(stylesheets=stylesheets)
+        except Exception as e:
+            logger.error(f"Error rendering {element} HTML: {e}")
+            raise
+        element_page = element_doc.pages[0]
+        element_body = PdfGenerator.get_element(
+            element_page._page_box.all_children(), "body"
+        )
+        element_body = element_body.copy_with_children(element_body.all_children())
+        element_html = PdfGenerator.get_element(
+            element_page._page_box.all_children(), element
+        )
+
+        if element == "header":
+            element_height = element_html.height
+        if element == "footer":
+            element_height = element_page.height - element_html.position_y
+
+        return element_body, element_height
+
+    def _apply_overlay_on_main(self, main_doc, header_body=None, footer_body=None):
+        """
+        Insert the header and the footer in the main document.
+
+        Parameters
+        ----------
+        main_doc: Document
+            The top level representation for a PDF page in Weasyprint.
+        header_body: BlockBox
+            A representation for an html element in Weasyprint.
+        footer_body: BlockBox
+            A representation for an html element in Weasyprint.
+        """
+        for page in main_doc.pages:
+            page_body = PdfGenerator.get_element(page._page_box.all_children(), "body")
+
+            if header_body:
+                page_body.children += header_body.all_children()
+            if footer_body:
+                page_body.children += footer_body.all_children()
+
+    def render_pdf(self) -> bytes:
+        """
+        Returns
+        -------
+        pdf: a bytes sequence
+            The rendered PDF.
+        """
+        if self.header_html:
+            header_body, header_height = self._compute_overlay_element("header")
+        else:
+            header_body, header_height = None, 0
+        if self.footer_html:
+            footer_body, footer_height = self._compute_overlay_element("footer")
+        else:
+            footer_body, footer_height = None, 0
+
+        margins = "{header_size}px {side_margin} {footer_size}px {side_margin}".format(
+            header_size=header_height + self.extra_vertical_margin,
+            footer_size=footer_height + self.extra_vertical_margin,
+            side_margin=f"{self.side_margin}cm",
+        )
+        content_print_layout = f"@page {{ margin: {margins};}} "
+
+        # Use base_url if provided, otherwise use None (WeasyPrint will use current directory)
+        base_url = self.base_url if self.base_url else None
+        if base_url:
+            logger.debug(f"Rendering main HTML with base_url: {base_url}")
+        else:
+            logger.warning("Rendering main HTML without base_url - assets may not resolve correctly")
+
+        try:
+            html = HTML(
+                string=self.main_html,
+                base_url=base_url,
+            )
+            # Combine external stylesheets with page layout CSS
+            all_stylesheets = self.external_stylesheets + [CSS(string=content_print_layout)]
+            logger.debug(f"Using {len(all_stylesheets)} stylesheet(s) for main HTML")
+            # WeasyPrint will automatically load external CSS files referenced in <link> tags
+            # when base_url is set correctly, but we also load them explicitly here
+            main_doc = html.render(stylesheets=all_stylesheets)
+        except Exception as e:
+            logger.error(f"Error rendering main HTML: {e}")
+            raise
+
+        if self.header_html or self.footer_html:
+            self._apply_overlay_on_main(main_doc, header_body, footer_body)
+        pdf = main_doc.write_pdf()
+
+        return pdf
+
+    @staticmethod
+    def get_element(boxes, element: str):
+        """
+        Given a set of boxes representing the elements of a PDF page in a DOM-like way, find the
+        box which is named `element`.
+
+        Look at the notes of the class for more details on Weasyprint insides.
+        """
+        for box in boxes:
+            if box.element_tag == element:
+                return box
+            return PdfGenerator.get_element(box.all_children(), element)
+
+
+def render_html(context: dict[str, Any], template_path: str, templates_dir: Path | None = None) -> str:
+    """
+    Render an HTML template with the given context.
 
     Args:
-        results: PublicResultResponse containing the results data
-        photo_data: Optional bytes of candidate photo image
+        context: Dictionary of variables to pass to the template
+        template_path: Path to the template file relative to templates directory
+        templates_dir: Optional templates directory path (defaults to app/templates)
 
     Returns:
-        bytes: PDF file as bytes
+        Rendered HTML string
     """
-    buffer = io.BytesIO()
-    doc = SimpleDocTemplate(
-        buffer,
-        pagesize=A4,
-        rightMargin=1.5*cm,
-        leftMargin=1.5*cm,
-        topMargin=1*cm,
-        bottomMargin=1*cm,
-    )
+    if templates_dir is None:
+        # Default to app/templates if not specified
+        templates_dir = Path(__file__).parent.parent / "templates"
 
-    # Container for PDF elements
-    elements = []
-    styles = getSampleStyleSheet()
-
-    # Custom styles
-    title_style = ParagraphStyle(
-        'CustomTitle',
-        parent=styles['Heading1'],
-        fontSize=20,
-        textColor=colors.HexColor('#1e3a8a'),
-        spaceAfter=8,
-        alignment=TA_CENTER,
-        fontName='Helvetica-Bold',
-    )
-
-    heading_style = ParagraphStyle(
-        'CustomHeading',
-        parent=styles['Heading2'],
-        fontSize=16,
-        textColor=colors.HexColor('#1e40af'),
-        spaceAfter=6,
-        alignment=TA_LEFT,
-        fontName='Helvetica-Bold',
-    )
-
-    normal_style = ParagraphStyle(
-        'CustomNormal',
-        parent=styles['Normal'],
-        fontSize=11,
-        textColor=colors.HexColor('#000000'),
-        alignment=TA_LEFT,
-        leading=14,
-    )
-
-    small_style = ParagraphStyle(
-        'CustomSmall',
-        parent=styles['Normal'],
-        fontSize=9,
-        textColor=colors.HexColor('#4b5563'),
-        alignment=TA_LEFT,
-        leading=11,
-    )
-
-    disclaimer_style = ParagraphStyle(
-        'DisclaimerStyle',
-        parent=styles['Normal'],
-        fontSize=10,
-        textColor=colors.HexColor('#dc2626'),
-        alignment=TA_CENTER,
-        leading=12,
-        fontName='Helvetica-Bold',
-    )
-
-    # Logo at the top
-    try:
-        logo_path = Path(__file__).parent.parent / "img" / "logo.jpg"
-        if logo_path.exists():
-            logo_img = Image(str(logo_path), width=6*cm, height=None, kind='proportional')
-            elements.append(logo_img)
-            elements.append(Spacer(1, 0.4*cm))
-    except Exception:
-        # If logo cannot be loaded, continue without it
-        pass
-
-    # Header
-    header_text = Paragraph("EXAMINATION RESULTS", title_style)
-    elements.append(header_text)
-
-    exam_info_text = f"{results.exam_type} - {results.exam_series} {results.year}"
-    exam_info_para = Paragraph(exam_info_text, small_style)
-    elements.append(exam_info_para)
-    elements.append(Spacer(1, 0.5*cm))
-
-    # Candidate Information Section
-    # Build candidate details text
-    candidate_info_parts = [f"<b>{results.candidate_name}</b>"]
-    candidate_info_parts.append("")  # Empty line
-
-    if results.index_number:
-        candidate_info_parts.append(f"<b>Index Number:</b> {results.index_number}")
-    candidate_info_parts.append(f"<b>Registration Number:</b> {results.registration_number}")
-
-    candidate_info_parts.append("")  # Empty line
-
-    if results.school_name:
-        candidate_info_parts.append(f"<b>School:</b> {results.school_name}")
-    if results.programme_name:
-        candidate_info_parts.append(f"<b>Programme:</b> {results.programme_name}")
-
-    candidate_info_text = "<br/>".join(candidate_info_parts)
-    candidate_details_para = Paragraph(candidate_info_text, normal_style)
-
-    # Photo or placeholder
-    if photo_data:
-        try:
-            photo_io = io.BytesIO(photo_data)
-            photo_img = Image(photo_io, width=3.5*cm, height=4.2*cm, kind='proportional')
-            photo_cell = photo_img
-        except Exception:
-            photo_cell = Paragraph("<i>Photo not available</i>", small_style)
-    else:
-        photo_cell = Paragraph("<i>Photo not available</i>", small_style)
-
-    # Combine into table
-    candidate_table_data = [
-        [candidate_details_para, photo_cell]
-    ]
-
-    candidate_table = Table(candidate_table_data, colWidths=[12.5*cm, 4.5*cm])
-    candidate_table.setStyle(TableStyle([
-        ('VALIGN', (0, 0), (-1, -1), 'TOP'),
-        ('LEFTPADDING', (0, 0), (-1, -1), 0),
-        ('RIGHTPADDING', (0, 0), (-1, -1), 0),
-        ('TOPPADDING', (0, 0), (-1, -1), 8),
-        ('BOTTOMPADDING', (0, 0), (-1, -1), 8),
-    ]))
-
-    elements.append(candidate_table)
-    elements.append(Spacer(1, 0.6*cm))
-
-    # Results Table
-    results_heading = Paragraph("Examination Results", heading_style)
-    elements.append(results_heading)
-    elements.append(Spacer(1, 0.3*cm))
-
-    if not results.results:
-        elements.append(Paragraph("No results available for this examination.", normal_style))
-    else:
-        # Sort results: CORE subjects first, then ELECTIVE, then alphabetically
-        # Note: We don't have subject type in PublicSubjectResult, so we'll just sort by name
-        sorted_results = sorted(results.results, key=lambda x: (x.subject_name or x.subject_code))
-
-        # Table data
-        table_data = [['Subject', 'Grade']]
-        for result in sorted_results:
-            subject_name = result.subject_name or result.subject_code
-            # Grade is an enum, so get its value and convert to uppercase
-            grade = result.grade.value.upper() if result.grade else "PENDING"
-            table_data.append([subject_name, grade])
-
-        results_table = Table(table_data, colWidths=[13.5*cm, 3.5*cm])
-        results_table.setStyle(TableStyle([
-            # Header row
-            ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#e5e7eb')),
-            ('TEXTCOLOR', (0, 0), (-1, 0), colors.HexColor('#000000')),
-            ('ALIGN', (0, 0), (-1, -1), 'LEFT'),
-            ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
-            ('FONTSIZE', (0, 0), (-1, 0), 11),
-            ('BOTTOMPADDING', (0, 0), (-1, 0), 10),
-            ('TOPPADDING', (0, 0), (-1, 0), 10),
-            # Data rows
-            ('FONTNAME', (0, 1), (-1, -1), 'Helvetica'),
-            ('FONTSIZE', (0, 1), (-1, -1), 10),
-            ('GRID', (0, 0), (-1, -1), 0.5, colors.HexColor('#d1d5db')),
-            ('ROWBACKGROUNDS', (0, 1), (-1, -1), [colors.white, colors.HexColor('#f9fafb')]),
-            ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
-            ('LEFTPADDING', (0, 0), (-1, -1), 8),
-            ('RIGHTPADDING', (0, 0), (-1, -1), 8),
-            ('TOPPADDING', (0, 1), (-1, -1), 10),
-            ('BOTTOMPADDING', (0, 1), (-1, -1), 10),
-        ]))
-
-        elements.append(results_table)
-
-    elements.append(Spacer(1, 0.6*cm))
-
-    # Disclaimer
-    disclaimer_text = Paragraph(
-        "<b>NOTE: This is a provisional results document. The final results are those which will be printed on your certificate.</b>",
-        disclaimer_style
-    )
-    elements.append(disclaimer_text)
-    elements.append(Spacer(1, 0.4*cm))
-
-    # Footer
-    footer_text = Paragraph(
-        "This is a computer-generated document. No signature is required.",
-        small_style
-    )
-    elements.append(footer_text)
-
-    generated_date = datetime.now().strftime("%B %d, %Y")
-    date_text = Paragraph(f"Generated on {generated_date}", small_style)
-    elements.append(date_text)
-
-    # Build PDF
-    doc.build(elements)
-    buffer.seek(0)
-    return buffer.getvalue()
+    env = Environment(loader=FileSystemLoader(str(templates_dir)))
+    template = env.get_template(template_path)
+    html_output = template.render(context)
+    return html_output

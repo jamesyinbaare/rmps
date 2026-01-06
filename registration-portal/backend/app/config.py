@@ -29,6 +29,18 @@ class Settings(BaseSettings):
     system_admin_email: str = ""  # Required: Email for the initial SYSTEM_ADMIN user
     system_admin_password: str = ""  # Required: Password for the initial SYSTEM_ADMIN user
     system_admin_full_name: str = ""  # Required: Full name for the initial SYSTEM_ADMIN user
+    # Paystack settings
+    paystack_secret_key: str = ""  # Paystack secret key
+    paystack_public_key: str = ""  # Paystack public key (for frontend)
+    paystack_webhook_secret: str = ""  # Paystack webhook verification secret
+    paystack_callback_base_url: str = ""  # Base URL for payment callbacks (e.g., http://localhost:3001 or https://yourdomain.com)
+    # Certificate request pricing
+    certificate_request_price: float = 100  # Price for certificate requests
+    attestation_request_price: float = 80  # Price for attestation requests
+    courier_fee: float = 50  # Additional fee for courier delivery
+    express_service_multiplier: float = 1.5  # Multiplier for express service (e.g., 1.5x base price)
+    # Certificate request file storage
+    certificate_request_storage_path: str = "storage/certificate_requests"
 
 
 class LoggingSettings(BaseSettings):

@@ -10,6 +10,7 @@ from sqlalchemy import (
     Enum,
     ForeignKey,
     Integer,
+    Numeric,
     String,
     Table,
     Text,
@@ -27,6 +28,7 @@ class PortalUserType(enum.Enum):
     SCHOOL_ADMIN = "SCHOOL_ADMIN"
     SCHOOL_USER = "SCHOOL_USER"
     PRIVATE_USER = "PRIVATE_USER"
+    ADMIN = "ADMIN"  # Administration department staff
 
 
 class RegistrationStatus(enum.Enum):
@@ -81,6 +83,54 @@ class IndexNumberGenerationJobStatus(enum.Enum):
     PROCESSING = "processing"
     COMPLETED = "completed"
     FAILED = "failed"
+
+
+class CertificateRequestType(enum.Enum):
+    CERTIFICATE = "certificate"  # NOV/DEC only
+    ATTESTATION = "attestation"  # All candidates
+
+
+class RequestStatus(enum.Enum):
+    PENDING_PAYMENT = "pending_payment"
+    PAID = "paid"
+    IN_PROCESS = "in_process"
+    READY_FOR_DISPATCH = "ready_for_dispatch"
+    DISPATCHED = "dispatched"
+    RECEIVED = "received"
+    COMPLETED = "completed"
+    CANCELLED = "cancelled"
+
+
+class DeliveryMethod(enum.Enum):
+    PICKUP = "pickup"
+    COURIER = "courier"
+
+
+class PaymentStatus(enum.Enum):
+    PENDING = "pending"
+    SUCCESS = "success"
+    FAILED = "failed"
+    CANCELLED = "cancelled"
+
+
+class TicketPriority(enum.Enum):
+    LOW = "low"
+    MEDIUM = "medium"
+    HIGH = "high"
+    URGENT = "urgent"
+
+
+class ServiceType(enum.Enum):
+    STANDARD = "standard"
+    EXPRESS = "express"
+
+
+class TicketActivityType(enum.Enum):
+    COMMENT = "comment"
+    STATUS_CHANGE = "status_change"
+    ASSIGNMENT = "assignment"
+    NOTE = "note"
+    SYSTEM = "system"
 
 
 class PortalUser(Base):
@@ -415,3 +465,138 @@ class IndexNumberGenerationJob(Base):
     exam = relationship("RegistrationExam", back_populates="index_number_generation_jobs")
     current_school = relationship("School", foreign_keys=[current_school_id])
     created_by = relationship("PortalUser", foreign_keys=[created_by_user_id])
+
+
+
+
+class Invoice(Base):
+    """Model for invoices generated for certificate requests."""
+
+    __tablename__ = "invoices"
+
+    id = Column(Integer, primary_key=True)
+    invoice_number = Column(String(50), unique=True, nullable=False, index=True)  # Format: INV-YYYYMMDD-XXXXXX
+    certificate_request_id = Column(Integer, ForeignKey("certificate_requests.id", ondelete="CASCADE"), nullable=False, unique=True, index=True)
+    amount = Column(Numeric(10, 2), nullable=False)  # Invoice amount
+    currency = Column(String(3), default="GHS", nullable=False)  # Currency code
+    status = Column(String(20), default="pending", nullable=False, index=True)  # "pending", "paid", "cancelled"
+    due_date = Column(Date, nullable=True)
+    paid_at = Column(DateTime, nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+
+    certificate_request = relationship("CertificateRequest", uselist=False)
+
+
+class CertificateRequest(Base):
+    """Model for certificate and attestation requests."""
+
+    __tablename__ = "certificate_requests"
+
+    id = Column(Integer, primary_key=True)
+    request_type = Column(Enum(CertificateRequestType, create_constraint=False, values_callable=lambda x: [e.value for e in x]), nullable=False, index=True)
+    request_number = Column(String(50), unique=True, nullable=False, index=True)  # Format: REQ-YYYYMMDD-XXXXXX
+    index_number = Column(String(50), nullable=False, index=True)  # Candidate's examination index number
+    exam_year = Column(Integer, nullable=False, index=True)  # Year of examination
+    examination_center_id = Column(Integer, ForeignKey("schools.id", ondelete="SET NULL"), nullable=False, index=True)
+    national_id_number = Column(String(50), nullable=False, index=True)
+    national_id_file_path = Column(String(512), nullable=False)  # Path to uploaded ID scan
+    photograph_file_path = Column(String(512), nullable=False)  # Path to uploaded photograph
+    delivery_method = Column(Enum(DeliveryMethod, create_constraint=False, values_callable=lambda x: [e.value for e in x]), nullable=False)
+    contact_phone = Column(String(50), nullable=False)  # Required for courier
+    contact_email = Column(String(255), nullable=True)  # Optional
+    courier_address_line1 = Column(String(255), nullable=True)  # For courier delivery
+    courier_address_line2 = Column(String(255), nullable=True)
+    courier_city = Column(String(100), nullable=True)
+    courier_region = Column(String(100), nullable=True)
+    courier_postal_code = Column(String(20), nullable=True)
+    status = Column(Enum(RequestStatus, create_constraint=False, values_callable=lambda x: [e.value for e in x]), default=RequestStatus.PENDING_PAYMENT, nullable=False, index=True)
+    # invoice_id removed - Invoice.certificate_request_id is the owning side of the one-to-one relationship
+    payment_id = Column(Integer, ForeignKey("payments.id", ondelete="SET NULL"), nullable=True, index=True)
+    processed_by_user_id = Column(UUID(as_uuid=True), ForeignKey("portal_users.id", ondelete="SET NULL"), nullable=True, index=True)  # System Admin who processed
+    dispatched_by_user_id = Column(UUID(as_uuid=True), ForeignKey("portal_users.id", ondelete="SET NULL"), nullable=True, index=True)  # Admin who dispatched
+    dispatched_at = Column(DateTime, nullable=True)
+    tracking_number = Column(String(100), nullable=True)  # For courier delivery
+    notes = Column(Text, nullable=True)  # Internal notes
+    # Ticket management fields
+    assigned_to_user_id = Column(UUID(as_uuid=True), ForeignKey("portal_users.id", ondelete="SET NULL"), nullable=True, index=True)  # Active ticket assignment
+    priority = Column(Enum(TicketPriority, create_constraint=False, values_callable=lambda x: [e.value for e in x]), default=TicketPriority.MEDIUM, nullable=False, index=True)
+    service_type = Column(Enum(ServiceType, create_constraint=False, values_callable=lambda x: [e.value for e in x]), default=ServiceType.STANDARD, nullable=False, index=True)
+    # Status-specific timestamps
+    paid_at = Column(DateTime, nullable=True)
+    in_process_at = Column(DateTime, nullable=True)
+    ready_for_dispatch_at = Column(DateTime, nullable=True)
+    received_at = Column(DateTime, nullable=True)
+    completed_at = Column(DateTime, nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False, index=True)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+
+    examination_center = relationship("School", foreign_keys=[examination_center_id])
+    # invoice relationship removed - use Invoice.certificate_request back-reference instead
+    # payment relationship removed - use Payment.certificate_request back-reference instead
+    processed_by = relationship("PortalUser", foreign_keys=[processed_by_user_id])
+    dispatched_by = relationship("PortalUser", foreign_keys=[dispatched_by_user_id])
+    assigned_to = relationship("PortalUser", foreign_keys=[assigned_to_user_id])
+    activities = relationship("TicketActivity", back_populates="ticket", cascade="all, delete-orphan")
+    status_history = relationship("TicketStatusHistory", back_populates="ticket", cascade="all, delete-orphan")
+
+
+
+
+class Payment(Base):
+    """Model for payments processed through Paystack."""
+
+    __tablename__ = "payments"
+
+    id = Column(Integer, primary_key=True)
+    invoice_id = Column(Integer, ForeignKey("invoices.id", ondelete="SET NULL"), nullable=True, index=True)
+    certificate_request_id = Column(Integer, ForeignKey("certificate_requests.id", ondelete="CASCADE"), nullable=False, index=True)
+    paystack_reference = Column(String(100), unique=True, nullable=True, index=True)  # Paystack transaction reference
+    paystack_authorization_url = Column(String(512), nullable=True)  # Payment URL
+    amount = Column(Numeric(10, 2), nullable=False)  # Payment amount
+    currency = Column(String(3), default="GHS", nullable=False)
+    status = Column(Enum(PaymentStatus), default=PaymentStatus.PENDING, nullable=False, index=True)
+    paystack_response = Column(JSON, nullable=True)  # Full Paystack response for tracking
+    paid_at = Column(DateTime, nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False, index=True)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+
+    invoice = relationship("Invoice", foreign_keys=[invoice_id])
+    certificate_request = relationship("CertificateRequest", foreign_keys=[certificate_request_id])
+
+
+class TicketActivity(Base):
+    """Model for ticket activity/comment history."""
+
+    __tablename__ = "ticket_activities"
+
+    id = Column(Integer, primary_key=True)
+    ticket_id = Column(Integer, ForeignKey("certificate_requests.id", ondelete="CASCADE"), nullable=False, index=True)
+    activity_type = Column(Enum(TicketActivityType, create_constraint=False, values_callable=lambda x: [e.value for e in x]), nullable=False, index=True)
+    user_id = Column(UUID(as_uuid=True), ForeignKey("portal_users.id", ondelete="SET NULL"), nullable=True, index=True)
+    old_status = Column(String(50), nullable=True)
+    new_status = Column(String(50), nullable=True)
+    old_assigned_to = Column(UUID(as_uuid=True), nullable=True)
+    new_assigned_to = Column(UUID(as_uuid=True), nullable=True)
+    comment = Column(Text, nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False, index=True)
+
+    ticket = relationship("CertificateRequest", back_populates="activities")
+    user = relationship("PortalUser", foreign_keys=[user_id])
+
+
+class TicketStatusHistory(Base):
+    """Model for ticket status transition audit trail."""
+
+    __tablename__ = "ticket_status_history"
+
+    id = Column(Integer, primary_key=True)
+    ticket_id = Column(Integer, ForeignKey("certificate_requests.id", ondelete="CASCADE"), nullable=False, index=True)
+    from_status = Column(String(50), nullable=True)
+    to_status = Column(String(50), nullable=False)
+    changed_by_user_id = Column(UUID(as_uuid=True), ForeignKey("portal_users.id", ondelete="SET NULL"), nullable=True, index=True)
+    reason = Column(Text, nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False, index=True)
+
+    ticket = relationship("CertificateRequest", back_populates="status_history")
+    changed_by = relationship("PortalUser", foreign_keys=[changed_by_user_id])

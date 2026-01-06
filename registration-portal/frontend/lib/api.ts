@@ -359,6 +359,7 @@ export interface ExaminationCenter {
   id: number;
   code: string;
   name: string;
+  is_active?: boolean;
 }
 
 export async function listExaminationCenters(examId?: number): Promise<ExaminationCenter[]> {
@@ -369,6 +370,23 @@ export async function listExaminationCenters(examId?: number): Promise<Examinati
     `${API_BASE_URL}/api/v1/private/examination-centers${params.toString() ? `?${params.toString()}` : ""}`
   );
   return handleResponse<ExaminationCenter[]>(response);
+}
+
+export async function listExaminationCentersPublic(search?: string): Promise<ExaminationCenter[]> {
+  const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL || "http://localhost:8001";
+  const params = new URLSearchParams();
+  if (search) {
+    params.append("search", search);
+  }
+  const url = `${API_BASE_URL}/api/v1/public/examination-centers${params.toString() ? `?${params.toString()}` : ""}`;
+  const response = await fetch(url);
+
+  if (!response.ok) {
+    console.error("Failed to fetch examination centers");
+    return [];
+  }
+
+  return await response.json();
 }
 
 export interface SubjectListItem {
@@ -1337,4 +1355,454 @@ export async function generateResultsPDF(
   }
 
   return response.blob();
+}
+
+// Certificate Request API Functions
+
+// Admin Certificate Request Management
+export interface CertificateRequestListResponse {
+  items: CertificateRequestResponse[];
+  total: number;
+  page: number;
+  page_size: number;
+  total_pages: number;
+}
+
+export async function listCertificateRequests(
+  statusFilter?: string,
+  requestType?: string,
+  assignedTo?: string,
+  priority?: string,
+  serviceType?: string,
+  page: number = 1,
+  pageSize: number = 20
+): Promise<CertificateRequestListResponse> {
+  const params = new URLSearchParams();
+  if (statusFilter && statusFilter.trim() !== "") {
+    params.append("status_filter", statusFilter);
+  }
+  if (requestType && requestType.trim() !== "") {
+    params.append("request_type", requestType);
+  }
+  if (assignedTo && assignedTo.trim() !== "") {
+    params.append("assigned_to", assignedTo);
+  }
+  if (priority && priority.trim() !== "") {
+    params.append("priority", priority);
+  }
+  if (serviceType && serviceType.trim() !== "") {
+    params.append("service_type", serviceType);
+  }
+  params.append("page", page.toString());
+  params.append("page_size", pageSize.toString());
+
+  const response = await fetch(
+    `${API_BASE_URL}/api/v1/admin/certificate-requests?${params.toString()}`,
+    {
+      headers: {
+        Authorization: `Bearer ${getAccessToken()}`,
+      },
+    }
+  );
+  return handleResponse<CertificateRequestListResponse>(response);
+}
+
+export async function getCertificateRequestById(requestId: number): Promise<CertificateRequestResponse> {
+  const response = await fetch(`${API_BASE_URL}/api/v1/admin/certificate-requests/${requestId}`, {
+    headers: {
+      Authorization: `Bearer ${getAccessToken()}`,
+    },
+  });
+  return handleResponse<CertificateRequestResponse>(response);
+}
+
+export async function beginCertificateRequestProcess(requestId: number): Promise<CertificateRequestResponse> {
+  const response = await fetch(
+    `${API_BASE_URL}/api/v1/admin/certificate-requests/${requestId}/begin-process`,
+    {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${getAccessToken()}`,
+        "Content-Type": "application/json",
+      },
+    }
+  );
+  return handleResponse<CertificateRequestResponse>(response);
+}
+
+export async function sendCertificateRequestToDispatch(requestId: number): Promise<CertificateRequestResponse> {
+  const response = await fetch(
+    `${API_BASE_URL}/api/v1/admin/certificate-requests/${requestId}/send-to-dispatch`,
+    {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${getAccessToken()}`,
+        "Content-Type": "application/json",
+      },
+    }
+  );
+  return handleResponse<CertificateRequestResponse>(response);
+}
+
+export async function dispatchRequest(
+  requestId: number,
+  trackingNumber?: string
+): Promise<CertificateRequestResponse> {
+  const response = await fetch(
+    `${API_BASE_URL}/api/v1/admin/dispatch/certificate-requests/${requestId}/dispatch`,
+    {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${getAccessToken()}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ tracking_number: trackingNumber || undefined }),
+    }
+  );
+  return handleResponse<CertificateRequestResponse>(response);
+}
+
+export async function updateCertificateRequest(
+  requestId: number,
+  updateData: {
+    notes?: string;
+    tracking_number?: string;
+    priority?: "low" | "medium" | "high" | "urgent";
+    assigned_to_user_id?: string | null;
+  }
+): Promise<CertificateRequestResponse> {
+  const response = await fetch(`${API_BASE_URL}/api/v1/admin/certificate-requests/${requestId}`, {
+    method: "PUT",
+    headers: {
+      Authorization: `Bearer ${getAccessToken()}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(updateData),
+  });
+  return handleResponse<CertificateRequestResponse>(response);
+}
+
+export async function getCertificateRequestStatistics(): Promise<{
+  total: number;
+  by_status: Record<string, number>;
+  by_type: Record<string, number>;
+}> {
+  const response = await fetch(`${API_BASE_URL}/api/v1/admin/certificate-requests/statistics`, {
+    headers: {
+      Authorization: `Bearer ${getAccessToken()}`,
+    },
+  });
+  return handleResponse(response);
+}
+
+export async function downloadCertificateRequestPDF(requestId: number): Promise<Blob> {
+  const response = await fetch(`${API_BASE_URL}/api/v1/admin/certificate-requests/${requestId}/pdf`, {
+    headers: {
+      Authorization: `Bearer ${getAccessToken()}`,
+    },
+  });
+  if (!response.ok) {
+    const error = await response.json().catch(() => ({ detail: "Failed to download PDF" }));
+    throw new Error(error.detail || "Failed to download PDF");
+  }
+  return response.blob();
+}
+
+export interface CertificateRequestCreate {
+  request_type: "certificate" | "attestation";
+  index_number: string;
+  exam_year: number;
+  examination_center_id: number;
+  national_id_number: string;
+  delivery_method: "pickup" | "courier";
+  contact_phone: string;
+  contact_email?: string;
+  courier_address_line1?: string;
+  courier_address_line2?: string;
+  courier_city?: string;
+  courier_region?: string;
+  courier_postal_code?: string;
+  service_type?: "standard" | "express";
+}
+
+export interface CertificateRequestResponse {
+  id: number;
+  request_type: "certificate" | "attestation";
+  request_number: string;
+  index_number: string;
+  exam_year: number;
+  examination_center_id: number;
+  examination_center_name?: string;
+  national_id_number: string;
+  delivery_method: "pickup" | "courier";
+  contact_phone: string;
+  contact_email?: string;
+  status: string;
+  invoice_id?: number;
+  payment_id?: number;
+  tracking_number?: string;
+  assigned_to_user_id?: string;
+  priority: "low" | "medium" | "high" | "urgent";
+  service_type: "standard" | "express";
+  paid_at?: string;
+  in_process_at?: string;
+  ready_for_dispatch_at?: string;
+  received_at?: string;
+  completed_at?: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface PaymentInitializeResponse {
+  payment_id: number;
+  authorization_url: string;
+  paystack_reference: string;
+}
+
+export async function submitCertificateRequest(
+  data: CertificateRequestCreate,
+  photograph: File,
+  nationalIdScan: File
+): Promise<CertificateRequestResponse> {
+  const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL || "http://localhost:8001";
+  const formData = new FormData();
+
+  formData.append("request_type", data.request_type);
+  formData.append("index_number", data.index_number);
+  formData.append("exam_year", data.exam_year.toString());
+  formData.append("examination_center_id", data.examination_center_id.toString());
+  formData.append("national_id_number", data.national_id_number);
+  formData.append("delivery_method", data.delivery_method);
+  formData.append("contact_phone", data.contact_phone);
+  if (data.contact_email) formData.append("contact_email", data.contact_email);
+  if (data.courier_address_line1) formData.append("courier_address_line1", data.courier_address_line1);
+  if (data.courier_address_line2) formData.append("courier_address_line2", data.courier_address_line2);
+  if (data.courier_city) formData.append("courier_city", data.courier_city);
+  if (data.courier_region) formData.append("courier_region", data.courier_region);
+  if (data.courier_postal_code) formData.append("courier_postal_code", data.courier_postal_code);
+  formData.append("service_type", data.service_type || "standard");
+  formData.append("photograph", photograph);
+  formData.append("national_id_scan", nationalIdScan);
+
+  const response = await fetch(`${API_BASE_URL}/api/v1/public/certificate-requests`, {
+    method: "POST",
+    body: formData,
+  });
+
+  return handleResponse<CertificateRequestResponse>(response);
+}
+
+export async function getCertificateRequestStatus(requestNumber: string): Promise<any> {
+  const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL || "http://localhost:8001";
+  const response = await fetch(`${API_BASE_URL}/api/v1/public/certificate-requests/${requestNumber}`);
+  return handleResponse(response);
+}
+
+export async function initializePayment(requestNumber: string): Promise<PaymentInitializeResponse> {
+  const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL || "http://localhost:8001";
+  const response = await fetch(`${API_BASE_URL}/api/v1/public/certificate-requests/${requestNumber}/pay`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+    },
+  });
+  return handleResponse<PaymentInitializeResponse>(response);
+}
+
+export async function downloadInvoice(requestNumber: string): Promise<Blob> {
+  const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL || "http://localhost:8001";
+  const response = await fetch(`${API_BASE_URL}/api/v1/public/certificate-requests/${requestNumber}/invoice`);
+
+  if (!response.ok) {
+    const error = await response.json().catch(() => ({ detail: "Failed to download invoice" }));
+    throw new Error(error.detail || `Failed to download invoice: ${response.statusText}`);
+  }
+
+  return response.blob();
+}
+
+// Ticket Management Interfaces
+export interface TicketActivityResponse {
+  id: number;
+  ticket_id: number;
+  activity_type: "comment" | "status_change" | "assignment" | "note" | "system";
+  user_id?: string;
+  user_name?: string;
+  old_status?: string;
+  new_status?: string;
+  old_assigned_to?: string;
+  new_assigned_to?: string;
+  comment?: string;
+  created_at: string;
+}
+
+export interface TicketStatusHistoryResponse {
+  id: number;
+  ticket_id: number;
+  from_status?: string;
+  to_status: string;
+  changed_by_user_id?: string;
+  changed_by_name?: string;
+  reason?: string;
+  created_at: string;
+}
+
+export interface TicketAssignmentRequest {
+  assigned_to_user_id: string;
+}
+
+export interface TicketCommentRequest {
+  comment: string;
+}
+
+// Ticket Management API Functions
+export async function assignTicket(
+  requestId: number,
+  assignmentData: TicketAssignmentRequest
+): Promise<CertificateRequestResponse> {
+  const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL || "http://localhost:8001";
+  const token = localStorage.getItem("access_token");
+  const response = await fetch(`${API_BASE_URL}/api/v1/admin/certificate-requests/${requestId}/assign`, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${token}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(assignmentData),
+  });
+  return handleResponse<CertificateRequestResponse>(response);
+}
+
+export async function unassignTicket(requestId: number): Promise<CertificateRequestResponse> {
+  const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL || "http://localhost:8001";
+  const token = localStorage.getItem("access_token");
+  const response = await fetch(`${API_BASE_URL}/api/v1/admin/certificate-requests/${requestId}/unassign`, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${token}`,
+      "Content-Type": "application/json",
+    },
+  });
+  return handleResponse<CertificateRequestResponse>(response);
+}
+
+export async function addTicketComment(
+  requestId: number,
+  commentData: TicketCommentRequest
+): Promise<TicketActivityResponse> {
+  const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL || "http://localhost:8001";
+  const token = localStorage.getItem("access_token");
+  const response = await fetch(`${API_BASE_URL}/api/v1/admin/certificate-requests/${requestId}/comments`, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${token}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(commentData),
+  });
+  return handleResponse<TicketActivityResponse>(response);
+}
+
+export async function getTicketActivities(
+  requestId: number,
+  limit: number = 100
+): Promise<{ items: TicketActivityResponse[]; total: number }> {
+  const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL || "http://localhost:8001";
+  const token = localStorage.getItem("access_token");
+  const response = await fetch(
+    `${API_BASE_URL}/api/v1/admin/certificate-requests/${requestId}/activities?limit=${limit}`,
+    {
+      method: "GET",
+      headers: {
+        Authorization: `Bearer ${token}`,
+        "Content-Type": "application/json",
+      },
+    }
+  );
+  return handleResponse<{ items: TicketActivityResponse[]; total: number }>(response);
+}
+
+export async function getTicketStatusHistory(
+  requestId: number,
+  limit: number = 100
+): Promise<{ items: TicketStatusHistoryResponse[]; total: number }> {
+  const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL || "http://localhost:8001";
+  const token = localStorage.getItem("access_token");
+  const response = await fetch(
+    `${API_BASE_URL}/api/v1/admin/certificate-requests/${requestId}/status-history?limit=${limit}`,
+    {
+      method: "GET",
+      headers: {
+        Authorization: `Bearer ${token}`,
+        "Content-Type": "application/json",
+      },
+    }
+  );
+  return handleResponse<{ items: TicketStatusHistoryResponse[]; total: number }>(response);
+}
+
+// Status change API functions
+export async function markRequestReceived(requestId: number): Promise<CertificateRequestResponse> {
+  const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL || "http://localhost:8001";
+  const token = localStorage.getItem("access_token");
+  const response = await fetch(
+    `${API_BASE_URL}/api/v1/admin/dispatch/certificate-requests/${requestId}/mark-received`,
+    {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${token}`,
+        "Content-Type": "application/json",
+      },
+    }
+  );
+  return handleResponse<CertificateRequestResponse>(response);
+}
+
+export async function completeRequest(requestId: number): Promise<CertificateRequestResponse> {
+  const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL || "http://localhost:8001";
+  const token = localStorage.getItem("access_token");
+  const response = await fetch(
+    `${API_BASE_URL}/api/v1/admin/dispatch/certificate-requests/${requestId}/complete`,
+    {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${token}`,
+        "Content-Type": "application/json",
+      },
+    }
+  );
+  return handleResponse<CertificateRequestResponse>(response);
+}
+
+export async function cancelRequest(
+  requestId: number,
+  reason?: string
+): Promise<CertificateRequestResponse> {
+  const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL || "http://localhost:8001";
+  const token = localStorage.getItem("access_token");
+  const response = await fetch(`${API_BASE_URL}/api/v1/admin/certificate-requests/${requestId}/cancel`, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${token}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({ reason: reason || undefined }),
+  });
+  return handleResponse<CertificateRequestResponse>(response);
+}
+
+export async function resendPaymentLink(requestId: number): Promise<PaymentInitializeResponse> {
+  const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL || "http://localhost:8001";
+  const token = localStorage.getItem("access_token");
+  const response = await fetch(
+    `${API_BASE_URL}/api/v1/admin/certificate-requests/${requestId}/resend-payment-link`,
+    {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${token}`,
+        "Content-Type": "application/json",
+      },
+    }
+  );
+  return handleResponse<PaymentInitializeResponse>(response);
 }
