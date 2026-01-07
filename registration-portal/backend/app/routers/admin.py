@@ -3984,6 +3984,20 @@ async def generate_confirmation_response(
             detail=f"Cannot respond to this request in status: {confirmation_request.status.value}",
         )
 
+    # Check if response is signed - cannot modify signed responses
+    if confirmation_request.response_signed:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Cannot modify response. Response has been signed and is locked.",
+        )
+
+    # Check if response is signed - cannot modify signed responses
+    if confirmation_request.response_signed:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Cannot modify response. Response has been signed and is locked.",
+        )
+
     # Load relationships (invoice/payment) for template context
     stmt = (
         select(CertificateConfirmationRequest)
@@ -4103,6 +4117,67 @@ async def download_confirmation_response(
         media_type=media_type,
         headers={"Content-Disposition": f'attachment; filename="{filename}"'},
     )
+
+
+@router.post("/certificate-confirmations/{confirmation_id}/response/sign", status_code=status.HTTP_200_OK)
+async def sign_confirmation_response(
+    confirmation_id: int,
+    session: DBSessionDep,
+    current_user: SystemAdminDep,
+) -> dict:
+    """Sign a confirmation response to lock it from modification."""
+    from datetime import datetime
+    from app.services.certificate_confirmation_service import get_certificate_confirmation_by_id
+    from app.models import TicketActivity, TicketActivityType
+
+    confirmation_request = await get_certificate_confirmation_by_id(session, confirmation_id)
+    if not confirmation_request:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Certificate confirmation request not found")
+
+    if not confirmation_request.response_file_path:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Cannot sign response. No response file exists for this request.",
+        )
+
+    if confirmation_request.response_signed:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Response has already been signed.",
+        )
+
+    # Sign the response
+    confirmation_request.response_signed = True
+    confirmation_request.response_signed_at = datetime.utcnow()
+    confirmation_request.response_signed_by_user_id = current_user.id
+
+    # Create activity record
+    session.add(
+        TicketActivity(
+            ticket_type="certificate_confirmation_request",
+            ticket_id=confirmation_request.id,
+            activity_type=TicketActivityType.NOTE,
+            user_id=current_user.id,
+            comment="Response signed and locked",
+        )
+    )
+
+    try:
+        await session.commit()
+        await session.refresh(confirmation_request)
+    except Exception as e:
+        await session.rollback()
+        logger.error(f"Failed to sign response: {e}", exc_info=True)
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to sign response")
+
+    return {
+        "message": "Response signed successfully",
+        "confirmation_id": confirmation_request.id,
+        "request_number": confirmation_request.request_number,
+        "response_signed": True,
+        "response_signed_at": confirmation_request.response_signed_at.isoformat() if confirmation_request.response_signed_at else None,
+        "response_signed_by_user_id": str(confirmation_request.response_signed_by_user_id) if confirmation_request.response_signed_by_user_id else None,
+    }
 
 
 @router.post("/certificate-requests/{request_id}/begin-process", status_code=status.HTTP_200_OK)

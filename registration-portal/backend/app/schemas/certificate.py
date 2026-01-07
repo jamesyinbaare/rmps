@@ -287,6 +287,10 @@ class CertificateConfirmationRequestResponse(BaseModel):
     response_notes: str | None = None
     response_payload: dict[str, Any] | None = None
     has_response: bool = False
+    # Signing fields
+    response_signed: bool = False
+    response_signed_at: datetime | None = None
+    response_signed_by_user_id: str | None = None
     invoice_id: int | None = None
     payment_id: int | None = None
     # Ticket management fields (from mixin)
@@ -313,6 +317,7 @@ class CertificateConfirmationRequestResponse(BaseModel):
     @field_validator(
         "pdf_generated_by_user_id",
         "responded_by_user_id",
+        "response_signed_by_user_id",
         "assigned_to_user_id",
         "processed_by_user_id",
         "dispatched_by_user_id",

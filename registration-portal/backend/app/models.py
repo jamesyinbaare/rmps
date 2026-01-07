@@ -700,6 +700,10 @@ class CertificateConfirmationRequest(TicketRequestMixin, Base):
     responded_by_user_id = Column(UUID(as_uuid=True), ForeignKey("portal_users.id", ondelete="SET NULL"), nullable=True, index=True)
     response_notes = Column(Text, nullable=True)
     response_payload = Column(JSON, nullable=True)  # Optional: inputs used to generate template response
+    # Signing fields
+    response_signed = Column(Boolean, default=False, nullable=False, index=True)
+    response_signed_at = Column(DateTime, nullable=True)
+    response_signed_by_user_id = Column(UUID(as_uuid=True), ForeignKey("portal_users.id", ondelete="SET NULL"), nullable=True, index=True)
     invoice_id = Column(Integer, ForeignKey("invoices.id", ondelete="SET NULL"), nullable=True, index=True)
     payment_id = Column(Integer, ForeignKey("payments.id", ondelete="SET NULL"), nullable=True, index=True)
 
@@ -708,3 +712,4 @@ class CertificateConfirmationRequest(TicketRequestMixin, Base):
     user = relationship("PortalUser", foreign_keys=[user_id])
     pdf_generated_by = relationship("PortalUser", foreign_keys=[pdf_generated_by_user_id])
     responded_by = relationship("PortalUser", foreign_keys=[responded_by_user_id])
+    response_signed_by = relationship("PortalUser", foreign_keys=[response_signed_by_user_id])

@@ -43,6 +43,7 @@ class PdfGenerator:
         side_margin: int = 2,
         extra_vertical_margin: int = 30,
         external_stylesheets: list[CSS] | None = None,
+        header_first_page_only: bool = False,
     ):
         """
         Parameters
@@ -73,6 +74,7 @@ class PdfGenerator:
         self.side_margin = side_margin
         self.extra_vertical_margin = extra_vertical_margin
         self.external_stylesheets = external_stylesheets or []
+        self.header_first_page_only = header_first_page_only
 
     def _compute_overlay_element(self, element: str):
         """
@@ -115,14 +117,22 @@ class PdfGenerator:
             element_page._page_box.all_children(), element
         )
 
-        if element == "header":
-            element_height = element_html.height
-        if element == "footer":
-            element_height = element_page.height - element_html.position_y
+        if element_html is None:
+            logger.warning(f"Could not find {element} element in template. Using fallback height.")
+            # Use fallback height if element not found
+            if element == "header":
+                element_height = 80  # Approximate header height in pixels
+            else:  # footer
+                element_height = 100  # Approximate footer height in pixels
+        else:
+            if element == "header":
+                element_height = element_html.height
+            if element == "footer":
+                element_height = element_page.height - element_html.position_y
 
         return element_body, element_height
 
-    def _apply_overlay_on_main(self, main_doc, header_body=None, footer_body=None):
+    def _apply_overlay_on_main(self, main_doc, header_body=None, footer_body=None, header_first_page_only=False):
         """
         Insert the header and the footer in the main document.
 
@@ -134,11 +144,14 @@ class PdfGenerator:
             A representation for an html element in Weasyprint.
         footer_body: BlockBox
             A representation for an html element in Weasyprint.
+        header_first_page_only: bool
+            If True, header is only applied to the first page. Default: False (applied to all pages).
         """
-        for page in main_doc.pages:
+        for i, page in enumerate(main_doc.pages):
             page_body = PdfGenerator.get_element(page._page_box.all_children(), "body")
 
-            if header_body:
+            # Apply header only on first page if header_first_page_only is True
+            if header_body and (not header_first_page_only or i == 0):
                 page_body.children += header_body.all_children()
             if footer_body:
                 page_body.children += footer_body.all_children()
@@ -159,12 +172,26 @@ class PdfGenerator:
         else:
             footer_body, footer_height = None, 0
 
-        margins = "{header_size}px {side_margin} {footer_size}px {side_margin}".format(
-            header_size=header_height + self.extra_vertical_margin,
-            footer_size=footer_height + self.extra_vertical_margin,
-            side_margin=f"{self.side_margin}cm",
-        )
-        content_print_layout = f"@page {{ margin: {margins};}} "
+        # If header is first page only, only first page needs header margin, other pages don't
+        if self.header_first_page_only and header_body:
+            # First page with header, subsequent pages without
+            first_page_margin = "{header_size}px {side_margin} {footer_size}px {side_margin}".format(
+                header_size=header_height + self.extra_vertical_margin,
+                footer_size=footer_height + self.extra_vertical_margin,
+                side_margin=f"{self.side_margin}cm",
+            )
+            other_pages_margin = "{footer_size}px {side_margin} {footer_size}px {side_margin}".format(
+                footer_size=footer_height + self.extra_vertical_margin,
+                side_margin=f"{self.side_margin}cm",
+            )
+            content_print_layout = f"@page:first {{ margin: {first_page_margin};}} @page {{ margin: {other_pages_margin};}} "
+        else:
+            margins = "{header_size}px {side_margin} {footer_size}px {side_margin}".format(
+                header_size=header_height + self.extra_vertical_margin if header_body else 0,
+                footer_size=footer_height + self.extra_vertical_margin,
+                side_margin=f"{self.side_margin}cm",
+            )
+            content_print_layout = f"@page {{ margin: {margins};}} "
 
         # Use base_url if provided, otherwise use None (WeasyPrint will use current directory)
         base_url = self.base_url if self.base_url else None
@@ -189,7 +216,9 @@ class PdfGenerator:
             raise
 
         if self.header_html or self.footer_html:
-            self._apply_overlay_on_main(main_doc, header_body, footer_body)
+            # Header is only shown on first page, footer on all pages
+            header_first_page_only = getattr(self, 'header_first_page_only', False)
+            self._apply_overlay_on_main(main_doc, header_body, footer_body, header_first_page_only=header_first_page_only)
         pdf = main_doc.write_pdf()
 
         return pdf
@@ -205,7 +234,10 @@ class PdfGenerator:
         for box in boxes:
             if box.element_tag == element:
                 return box
-            return PdfGenerator.get_element(box.all_children(), element)
+            result = PdfGenerator.get_element(box.all_children(), element)
+            if result is not None:
+                return result
+        return None
 
 
 def render_html(context: dict[str, Any], template_path: str, templates_dir: Path | None = None) -> str:
