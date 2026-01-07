@@ -2,7 +2,8 @@
 
 import { useEffect, useState } from "react";
 import { getSchoolDashboard, getCurrentUser } from "@/lib/api";
-import type { User, SchoolDashboardData } from "@/types";
+import type { SchoolDashboardData } from "@/lib/api";
+import type { User } from "@/types";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Users, GraduationCap, UserPlus, AlertCircle, BookOpen } from "lucide-react";
 import Link from "next/link";

@@ -33,9 +33,10 @@ function formatRelativeTime(date: Date): string {
 interface TicketActivityFeedProps {
   ticketId: number;
   limit?: number;
+  ticketType?: "certificate_request" | "certificate_confirmation_request";
 }
 
-export function TicketActivityFeed({ ticketId, limit = 50 }: TicketActivityFeedProps) {
+export function TicketActivityFeed({ ticketId, limit = 50, ticketType }: TicketActivityFeedProps) {
   const [activities, setActivities] = useState<TicketActivityResponse[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -47,7 +48,7 @@ export function TicketActivityFeed({ ticketId, limit = 50 }: TicketActivityFeedP
       setLoading(true);
       setError(null);
       try {
-        const response = await getTicketActivities(ticketId, limit);
+        const response = await getTicketActivities(ticketId, limit, ticketType);
         setActivities(response.items);
       } catch (err) {
         setError(err instanceof Error ? err.message : "Failed to load activities");
@@ -58,7 +59,7 @@ export function TicketActivityFeed({ ticketId, limit = 50 }: TicketActivityFeedP
     };
 
     loadActivities();
-  }, [ticketId, limit]);
+  }, [ticketId, limit, ticketType]);
 
   const getActivityIcon = (type: string) => {
     switch (type) {

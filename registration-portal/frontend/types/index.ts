@@ -48,6 +48,20 @@ export interface SchoolStatistics {
   total_exams: number;
 }
 
+export interface SchoolDashboardData {
+  school: {
+    id: number;
+    code: string;
+    name: string;
+    is_active: boolean;
+  };
+  active_user_count: number;
+  max_active_users: number;
+  total_candidates: number;
+  candidates_by_status: Record<string, number>;
+  total_exams: number;
+}
+
 export interface SchoolListResponse {
   items: School[];
   total: number;
@@ -208,7 +222,7 @@ export interface ProgrammeSubjectRequirements {
 export interface BulkUploadError {
   row_number: number;
   error_message: string;
-  field: string | null;
+  field?: string | null;
 }
 
 export interface BulkUploadResponse {
@@ -430,19 +444,21 @@ export interface PublicResultResponse {
 }
 
 // Index Number Generation Job types
+export type IndexNumberGenerationJobStatus = "pending" | "processing" | "completed" | "failed";
+
 export interface SchoolProgressItem {
   school_id: number;
   school_code: string;
   school_name: string;
   processed: number;
   total: number;
-  status: "pending" | "processing" | "completed" | "failed";
+  status: IndexNumberGenerationJobStatus;
 }
 
 export interface IndexNumberGenerationJob {
   id: number;
   exam_id: number;
-  status: "pending" | "processing" | "completed" | "failed";
+  status: IndexNumberGenerationJobStatus;
   replace_existing: boolean;
   progress_current: number;
   progress_total: number;

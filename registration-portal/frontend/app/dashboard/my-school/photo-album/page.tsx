@@ -221,7 +221,7 @@ export default function PhotoAlbumPage() {
                 <span className="text-sm text-muted-foreground">Active filters:</span>
                 {selectedExamId && (
                   <span className="inline-flex items-center gap-1 px-2 py-1 bg-blue-100 text-blue-800 rounded-md text-xs">
-                    Exam: {exams.find((e) => e.id === selectedExamId)?.exam_type} {exams.find((e) => e.id === selectedExamId)?.series} {exams.find((e) => e.id === selectedExamId)?.year}
+                    Exam: {exams.find((e) => e.id === selectedExamId)?.exam_type} {exams.find((e) => e.id === selectedExamId)?.exam_series} {exams.find((e) => e.id === selectedExamId)?.year}
                     <X
                       className="h-3 w-3 cursor-pointer hover:text-blue-900"
                       onClick={() => {

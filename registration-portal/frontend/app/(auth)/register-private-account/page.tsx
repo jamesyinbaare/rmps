@@ -42,8 +42,9 @@ export default function PrivateAccountCreationPage() {
         user_type: "PRIVATE_USER",
       });
 
-      toast.success("Account created successfully! Please log in.");
-      router.push("/login/private");
+      toast.success("Account created successfully! Redirecting to login...");
+      // Redirect to login with a flag to go to certificate confirmation after login
+      router.push("/login/private?redirect=certificate-confirmation");
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "Failed to create account");
     } finally {

@@ -43,21 +43,19 @@ import {
 } from "@/components/ui/popover";
 import { Label } from "@/components/ui/label";
 import { Filter, User, Zap, Clock } from "lucide-react";
-import type { CertificateRequestResponse } from "@/lib/api";
+import type { CertificateRequestResponse, BulkCertificateConfirmationResponse, CertificateConfirmationRequestResponse } from "@/lib/api";
 import { PriorityBadge } from "./PrioritySelector";
 import { QuickActions } from "./QuickActions";
 
 interface DataTableProps {
-  data: CertificateRequestResponse[];
+  data: (CertificateRequestResponse | CertificateConfirmationRequestResponse | BulkCertificateConfirmationResponse)[];
   loading?: boolean;
-  onViewDetails: (requestId: number) => void;
+  onViewDetails: (requestId: number, requestObject?: CertificateRequestResponse | CertificateConfirmationRequestResponse) => void;
   onBeginProcess: (requestId: number) => void;
   onSendToDispatch: (requestId: number) => void;
-  onUpdateNotes: (request: CertificateRequestResponse) => void;
-  onDownloadPDF: (requestId: number) => void;
-  statusFilters: Set<string>;
+  onUpdateNotes: (request: CertificateRequestResponse | CertificateConfirmationRequestResponse | BulkCertificateConfirmationResponse) => void;
+  onDownloadPDF: (requestId: number, isBulkConfirmation?: boolean) => void;
   requestTypeFilters: Set<string>;
-  onStatusFilterChange: (status: string) => void;
   onRequestTypeFilterChange: (type: string) => void;
   searchQuery: string;
   onSearchChange: (query: string) => void;
@@ -77,20 +75,11 @@ interface DataTableProps {
   onRowClick?: (request: CertificateRequestResponse) => void;
 }
 
-const STATUS_OPTIONS = [
-  { value: "pending_payment", label: "Pending Payment" },
-  { value: "paid", label: "Paid" },
-  { value: "in_process", label: "In Process" },
-  { value: "ready_for_dispatch", label: "Ready for Dispatch" },
-  { value: "dispatched", label: "Dispatched" },
-  { value: "received", label: "Received" },
-  { value: "completed", label: "Completed" },
-  { value: "cancelled", label: "Cancelled" },
-];
-
 const REQUEST_TYPE_OPTIONS = [
   { value: "certificate", label: "Certificate" },
   { value: "attestation", label: "Attestation" },
+  { value: "confirmation", label: "Confirmation" },
+  { value: "verification", label: "Verification" },
 ];
 
 const PRIORITY_OPTIONS = [
@@ -105,7 +94,11 @@ const SERVICE_TYPE_OPTIONS = [
   { value: "express", label: "Express" },
 ];
 
-const getStatusBadgeVariant = (status: string) => {
+const getStatusBadgeVariant = (status: string | null | undefined) => {
+  // Handle null/undefined status
+  if (!status || typeof status !== "string") {
+    return "secondary";
+  }
   switch (status.toLowerCase()) {
     case "pending_payment":
       return "secondary";
@@ -136,9 +129,7 @@ export function DataTable({
   onSendToDispatch,
   onUpdateNotes,
   onDownloadPDF,
-  statusFilters,
   requestTypeFilters,
-  onStatusFilterChange,
   onRequestTypeFilterChange,
   searchQuery,
   onSearchChange,
@@ -162,7 +153,32 @@ export function DataTable({
   const [columnVisibility, setColumnVisibility] = React.useState<VisibilityState>({});
   const [rowSelection, setRowSelection] = React.useState({});
 
-  const columns: ColumnDef<CertificateRequestResponse>[] = React.useMemo(
+  // Helper functions to detect request types - using certificate_details as definitive field
+  const isConfirmationRequest = (item: any): boolean => {
+    // certificate_details is the definitive field that only exists on confirmation requests
+    return "certificate_details" in item && Array.isArray(item.certificate_details);
+  };
+
+  const isBulkConfirmationRequest = (item: any): boolean => {
+    if (!isConfirmationRequest(item)) return false;
+    return item.certificate_details.length > 1;
+  };
+
+  const getConfirmationRequestCount = (item: any): number => {
+    if (!isConfirmationRequest(item)) return 0;
+    return item.certificate_details.length;
+  };
+
+  const getRequestNumber = (item: any): string => {
+    if (isConfirmationRequest(item)) {
+      // Confirmation requests use request_number (unified model)
+      return item.request_number || "";
+    }
+    // Certificate/Attestation requests
+    return (item as CertificateRequestResponse).request_number || "";
+  };
+
+  const columns: ColumnDef<any>[] = React.useMemo(
     () => [
       {
         id: "select",
@@ -186,9 +202,34 @@ export function DataTable({
       {
         accessorKey: "request_number",
         header: "Request Number",
-        cell: ({ row }) => (
-          <div className="font-medium">{row.getValue("request_number")}</div>
-        ),
+        cell: ({ row }) => {
+          const item = row.original;
+          const isConfirmation = isConfirmationRequest(item);
+          const isBulk = isBulkConfirmationRequest(item);
+          const requestNumber = getRequestNumber(item);
+
+          if (isConfirmation) {
+            // Confirmation request - show bulk badge if applicable
+            const count = getConfirmationRequestCount(item);
+            return (
+              <div className="font-medium">
+                {requestNumber}
+                {isBulk && (
+                  <Badge variant="secondary" className="ml-2 text-xs">
+                    Bulk ({count})
+                  </Badge>
+                )}
+              </div>
+            );
+          }
+
+          // Certificate/Attestation request
+          return (
+            <div className="font-medium">
+              {requestNumber}
+            </div>
+          );
+        },
       },
       {
         accessorKey: "request_type",
@@ -219,12 +260,19 @@ export function DataTable({
           );
         },
         cell: ({ row }) => {
-          const type = row.getValue("request_type") as string;
-          return (
-            <Badge variant="outline">
-              {type === "certificate" ? "Certificate" : "Attestation"}
-            </Badge>
-          );
+          const type = (row.getValue("request_type") as string | undefined)?.toLowerCase();
+          const label =
+            type === "certificate"
+              ? "Certificate"
+              : type === "attestation"
+                ? "Attestation"
+                : type === "confirmation"
+                  ? "Confirmation"
+                  : type === "verification"
+                    ? "Verification"
+                    : "Unknown";
+
+          return <Badge variant="outline">{label}</Badge>;
         },
         filterFn: (row, id, value) => {
           if (requestTypeFilters.size === 0) return true;
@@ -232,44 +280,30 @@ export function DataTable({
         },
       },
       {
-        accessorKey: "index_number",
-        header: "Index Number",
-      },
-      {
-        accessorKey: "examination_center_name",
-        header: "Examination Center",
-        cell: ({ row }) => row.getValue("examination_center_name") || "N/A",
-      },
-      {
         accessorKey: "status",
-        header: () => {
-          return (
-            <Popover>
-              <PopoverTrigger asChild>
-                <Button variant="ghost" size="sm" className="h-8 px-2">
-                  Status <Filter className="ml-2 h-3 w-3" />
-                </Button>
-              </PopoverTrigger>
-              <PopoverContent className="w-56 p-0" align="start">
-                <div className="p-2 space-y-2">
-                  {STATUS_OPTIONS.map((option) => (
-                    <div key={option.value} className="flex items-center space-x-2">
-                      <Checkbox
-                        checked={statusFilters.has(option.value)}
-                        onCheckedChange={() => onStatusFilterChange(option.value)}
-                      />
-                      <Label className="text-sm font-normal cursor-pointer">
-                        {option.label}
-                      </Label>
-                    </div>
-                  ))}
-                </div>
-              </PopoverContent>
-            </Popover>
-          );
-        },
+        header: "Status",
         cell: ({ row }) => {
-          const status = row.getValue("status") as string;
+          const item = row.original;
+          const rawStatus = row.getValue("status");
+
+          // Handle individual confirmation requests which don't have a status field
+          // They inherit status from their parent bulk confirmation
+          let status: string;
+          if (item._type === "individual_confirmation") {
+            // Individual confirmation requests don't have status - use parent bulk confirmation status or default
+            const bulkConfirmationId = (item as any).bulk_certificate_confirmation_id;
+            // For now, use a default status. In the future, we could fetch the bulk confirmation status
+            status = "pending_payment"; // Default status for individual confirmations
+          } else {
+            // For regular requests and bulk confirmations, use the status field
+            status = (rawStatus as string) || "pending_payment";
+          }
+
+          // Ensure status is a string and handle null/undefined
+          if (!status || typeof status !== "string") {
+            status = "pending_payment";
+          }
+
           const getStatusIcon = (status: string) => {
             switch (status.toLowerCase()) {
               case "pending_payment":
@@ -298,10 +332,6 @@ export function DataTable({
               <span>{status.replace(/_/g, " ").toUpperCase()}</span>
             </Badge>
           );
-        },
-        filterFn: (row, id, value) => {
-          if (statusFilters.size === 0) return true;
-          return statusFilters.has(row.getValue(id));
         },
       },
       {
@@ -506,6 +536,11 @@ export function DataTable({
         enableHiding: false,
         cell: ({ row }) => {
           const request = row.original;
+          // Use helper functions to determine request type
+          const isConfirmation = isConfirmationRequest(request);
+          const isBulk = isBulkConfirmationRequest(request);
+          const isRegular = !isConfirmation;
+
           return (
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
@@ -517,12 +552,25 @@ export function DataTable({
               <DropdownMenuContent align="end">
                 <DropdownMenuLabel>Actions</DropdownMenuLabel>
                 <DropdownMenuSeparator />
-                <DropdownMenuItem onClick={() => onViewDetails(request.id)}>
+                <DropdownMenuItem onClick={() => {
+                  // Pass the request object directly to ensure correct identification
+                  onViewDetails(request.id, request);
+                }}>
                   View Details
                 </DropdownMenuItem>
-                <DropdownMenuItem onClick={() => onDownloadPDF(request.id)}>
-                  Download PDF
-                </DropdownMenuItem>
+                {/* Confirmation requests (bulk or single) may have PDFs */}
+                {isConfirmation && (
+                  <DropdownMenuItem onClick={() => onDownloadPDF(request.id, isBulk)}>
+                    Download PDF
+                  </DropdownMenuItem>
+                )}
+                {/* Regular certificate requests may have PDFs */}
+                {isRegular && (
+                  <DropdownMenuItem onClick={() => onDownloadPDF(request.id, false)}>
+                    Download PDF
+                  </DropdownMenuItem>
+                )}
+                {/* Individual confirmations don't have PDFs - they're part of bulk confirmation PDF */}
                 {request.status === "paid" && (
                   <DropdownMenuItem onClick={() => onBeginProcess(request.id)}>
                     Begin Process
@@ -543,14 +591,12 @@ export function DataTable({
       },
     ],
     [
-      statusFilters,
       requestTypeFilters,
       priorityFilter,
       serviceTypeFilter,
       assignedToFilter,
       myTicketsOnly,
       currentUserId,
-      onStatusFilterChange,
       onRequestTypeFilterChange,
       onPriorityFilterChange,
       onServiceTypeFilterChange,
@@ -575,27 +621,48 @@ export function DataTable({
       // Search filter
       if (searchQuery) {
         const query = searchQuery.toLowerCase();
-        const matchesSearch =
-          request.request_number.toLowerCase().includes(query) ||
-          request.index_number.toLowerCase().includes(query) ||
-          request.national_id_number.toLowerCase().includes(query) ||
-          request.examination_center_name?.toLowerCase().includes(query);
+        // Determine request type for search
+        const anyReq = request as any;
+        const isBulk = anyReq?._type === "bulk_confirmation" || !!anyReq?.bulk_request_number;
+        const isIndividual = anyReq?._type === "individual_confirmation";
+
+        let matchesSearch = false;
+
+        if (isBulk) {
+          const bulkRequest = request as BulkCertificateConfirmationResponse;
+          matchesSearch =
+            (bulkRequest.bulk_request_number?.toLowerCase().includes(query) ?? false) ||
+            (bulkRequest.contact_phone?.toLowerCase().includes(query) ?? false) ||
+            (bulkRequest.contact_email?.toLowerCase().includes(query) ?? false);
+        } else if (isIndividual) {
+          const individualRequest = request as any;
+          matchesSearch =
+            (individualRequest.request_number?.toLowerCase().includes(query) ?? false) ||
+            (individualRequest.candidate_name?.toLowerCase().includes(query) ?? false) ||
+            (individualRequest.candidate_index_number?.toLowerCase().includes(query) ?? false) ||
+            (individualRequest.school_name?.toLowerCase().includes(query) ?? false);
+        } else {
+          // Regular certificate request
+          const regularRequest = request as CertificateRequestResponse;
+          matchesSearch =
+            (regularRequest.request_number?.toLowerCase().includes(query) ?? false) ||
+            (regularRequest.national_id_number?.toLowerCase().includes(query) ?? false);
+        }
+
         if (!matchesSearch) return false;
       }
 
-      // Status filter
-      if (statusFilters.size > 0 && !statusFilters.has(request.status)) {
-        return false;
-      }
-
       // Request type filter
-      if (requestTypeFilters.size > 0 && !requestTypeFilters.has(request.request_type)) {
-        return false;
+      if (requestTypeFilters.size > 0) {
+        const requestType = (request as any).request_type;
+        if (requestType && !requestTypeFilters.has(requestType)) {
+          return false;
+        }
       }
 
       return true;
     });
-  }, [data, searchQuery, statusFilters, requestTypeFilters]);
+  }, [data, searchQuery, requestTypeFilters]);
 
   const table = useReactTable({
     data: filteredData,

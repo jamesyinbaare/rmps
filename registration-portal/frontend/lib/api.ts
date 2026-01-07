@@ -127,13 +127,13 @@ async function fetchWithAuth(
 
   // Create new options without headers to avoid conflicts
   const fetchOptions: RequestInit = {
-    method: options.method,
+    method: options.method || "GET",
     body: options.body,
     cache: options.cache,
-    credentials: options.credentials,
+    credentials: "include" as RequestCredentials, // Include credentials for CORS
     integrity: options.integrity,
     keepalive: options.keepalive,
-    mode: options.mode,
+    mode: "cors" as RequestMode, // Explicitly set CORS mode
     redirect: options.redirect,
     referrer: options.referrer,
     referrerPolicy: options.referrerPolicy,
@@ -142,14 +142,16 @@ async function fetchWithAuth(
     headers: headers as HeadersInit,
   };
 
+  const fullUrl = `${API_BASE_URL}${url}`;
+
   let response: Response;
   try {
-    response = await fetch(`${API_BASE_URL}${url}`, fetchOptions);
+    response = await fetch(fullUrl, fetchOptions);
   } catch (error) {
     // Handle network errors (e.g., backend server not running)
     if (error instanceof TypeError && (error.message === "Failed to fetch" || error.message.includes("fetch"))) {
       throw new Error(
-        "Unable to connect to the server. Please check your internet connection or try again later."
+        `Unable to connect to the server at ${API_BASE_URL}. Please check your internet connection or try again later.`
       );
     }
     throw error;
@@ -1370,16 +1372,22 @@ export interface CertificateRequestListResponse {
 
 export async function listCertificateRequests(
   statusFilter?: string,
+  statusMin?: string,
   requestType?: string,
   assignedTo?: string,
   priority?: string,
   serviceType?: string,
+  view?: "active" | "completed" | "cancelled" | "all",
+  includeBulkConfirmations: boolean = false,
   page: number = 1,
   pageSize: number = 20
 ): Promise<CertificateRequestListResponse> {
   const params = new URLSearchParams();
   if (statusFilter && statusFilter.trim() !== "") {
     params.append("status_filter", statusFilter);
+  }
+  if (statusMin && statusMin.trim() !== "") {
+    params.append("status_min", statusMin);
   }
   if (requestType && requestType.trim() !== "") {
     params.append("request_type", requestType);
@@ -1392,6 +1400,12 @@ export async function listCertificateRequests(
   }
   if (serviceType && serviceType.trim() !== "") {
     params.append("service_type", serviceType);
+  }
+  if (view && view !== "all") {
+    params.append("view", view);
+  }
+  if (includeBulkConfirmations) {
+    params.append("include_bulk_confirmations", "true");
   }
   params.append("page", page.toString());
   params.append("page_size", pageSize.toString());
@@ -1430,6 +1444,16 @@ export async function beginCertificateRequestProcess(requestId: number): Promise
   return handleResponse<CertificateRequestResponse>(response);
 }
 
+export async function beginCertificateConfirmationProcess(
+  confirmationId: number
+): Promise<CertificateConfirmationRequestResponse> {
+  const response = await fetchWithAuth(
+    `/api/v1/admin/certificate-confirmations/${confirmationId}/begin-process`,
+    { method: "POST" }
+  );
+  return handleResponse<CertificateConfirmationRequestResponse>(response);
+}
+
 export async function sendCertificateRequestToDispatch(requestId: number): Promise<CertificateRequestResponse> {
   const response = await fetch(
     `${API_BASE_URL}/api/v1/admin/certificate-requests/${requestId}/send-to-dispatch`,
@@ -1442,6 +1466,16 @@ export async function sendCertificateRequestToDispatch(requestId: number): Promi
     }
   );
   return handleResponse<CertificateRequestResponse>(response);
+}
+
+export async function sendCertificateConfirmationToDispatch(
+  confirmationId: number
+): Promise<CertificateConfirmationRequestResponse> {
+  const response = await fetchWithAuth(
+    `/api/v1/admin/certificate-confirmations/${confirmationId}/send-to-dispatch`,
+    { method: "POST" }
+  );
+  return handleResponse<CertificateConfirmationRequestResponse>(response);
 }
 
 export async function dispatchRequest(
@@ -1482,12 +1516,28 @@ export async function updateCertificateRequest(
   return handleResponse<CertificateRequestResponse>(response);
 }
 
-export async function getCertificateRequestStatistics(): Promise<{
+export async function getCertificateRequestStatistics(options?: {
+  period?: "last_week" | "last_month" | "last_year" | "custom";
+  startDate?: string;
+  endDate?: string;
+}): Promise<{
   total: number;
-  by_status: Record<string, number>;
-  by_type: Record<string, number>;
+  pending_payment: number;
+  completed: number;
 }> {
-  const response = await fetch(`${API_BASE_URL}/api/v1/admin/certificate-requests/statistics`, {
+  const params = new URLSearchParams();
+  if (options?.period) {
+    params.append("period", options.period);
+  }
+  if (options?.startDate) {
+    params.append("start_date", options.startDate);
+  }
+  if (options?.endDate) {
+    params.append("end_date", options.endDate);
+  }
+
+  const url = `${API_BASE_URL}/api/v1/admin/certificate-requests/statistics${params.toString() ? `?${params.toString()}` : ""}`;
+  const response = await fetch(url, {
     headers: {
       Authorization: `Bearer ${getAccessToken()}`,
     },
@@ -1509,12 +1559,12 @@ export async function downloadCertificateRequestPDF(requestId: number): Promise<
 }
 
 export interface CertificateRequestCreate {
-  request_type: "certificate" | "attestation";
+  request_type: "certificate" | "attestation" | "confirmation" | "verification";
   index_number: string;
   exam_year: number;
-  examination_center_id: number;
-  national_id_number: string;
-  delivery_method: "pickup" | "courier";
+  examination_center_id?: number;  // Optional for confirmation/verification
+  national_id_number?: string;  // Optional for confirmation/verification
+  delivery_method?: "pickup" | "courier";  // Optional for confirmation/verification
   contact_phone: string;
   contact_email?: string;
   courier_address_line1?: string;
@@ -1523,18 +1573,48 @@ export interface CertificateRequestCreate {
   courier_region?: string;
   courier_postal_code?: string;
   service_type?: "standard" | "express";
+  // Confirmation/Verification specific fields
+  candidate_name?: string;
+  candidate_index_number?: string;
+  school_name?: string;
+  programme_name?: string;
+  completion_year?: number;
+  certificate_file_path?: string;
+  candidate_photograph_file_path?: string;
+  request_details?: string;
+}
+
+export interface BulkCertificateRequestItem {
+  index_number?: string;  // Optional, can use candidate_index_number
+  candidate_index_number?: string;
+  exam_year?: number;  // Optional, can use completion_year
+  completion_year?: number;
+  candidate_name: string;
+  school_name: string;
+  programme_name: string;
+  request_details?: string;
+  certificate_file?: File;  // Optional certificate scan
+  candidate_photo_file?: File;  // Optional candidate photo
+}
+
+export interface BulkCertificateRequestCreate {
+  request_type: "confirmation" | "verification";
+  requests: BulkCertificateRequestItem[];
+  contact_phone: string;
+  contact_email?: string;
+  service_type?: "standard" | "express";
 }
 
 export interface CertificateRequestResponse {
   id: number;
-  request_type: "certificate" | "attestation";
+  request_type: "certificate" | "attestation" | "confirmation" | "verification";
   request_number: string;
   index_number: string;
   exam_year: number;
-  examination_center_id: number;
+  examination_center_id?: number | null;
   examination_center_name?: string;
-  national_id_number: string;
-  delivery_method: "pickup" | "courier";
+  national_id_number?: string | null;
+  delivery_method?: "pickup" | "courier" | null;
   contact_phone: string;
   contact_email?: string;
   status: string;
@@ -1551,6 +1631,15 @@ export interface CertificateRequestResponse {
   completed_at?: string;
   created_at: string;
   updated_at: string;
+  // Confirmation/Verification specific fields
+  candidate_name?: string;
+  candidate_index_number?: string;
+  school_name?: string;
+  programme_name?: string;
+  completion_year?: number;
+  certificate_file_path?: string;
+  candidate_photograph_file_path?: string;
+  request_details?: string;
 }
 
 export interface PaymentInitializeResponse {
@@ -1561,8 +1650,10 @@ export interface PaymentInitializeResponse {
 
 export async function submitCertificateRequest(
   data: CertificateRequestCreate,
-  photograph: File,
-  nationalIdScan: File
+  photograph?: File,
+  nationalIdScan?: File,
+  certificate?: File,
+  candidatePhotograph?: File
 ): Promise<CertificateRequestResponse> {
   const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL || "http://localhost:8001";
   const formData = new FormData();
@@ -1570,9 +1661,15 @@ export async function submitCertificateRequest(
   formData.append("request_type", data.request_type);
   formData.append("index_number", data.index_number);
   formData.append("exam_year", data.exam_year.toString());
-  formData.append("examination_center_id", data.examination_center_id.toString());
-  formData.append("national_id_number", data.national_id_number);
-  formData.append("delivery_method", data.delivery_method);
+  if (data.examination_center_id !== undefined) {
+    formData.append("examination_center_id", data.examination_center_id.toString());
+  }
+  if (data.national_id_number) {
+    formData.append("national_id_number", data.national_id_number);
+  }
+  if (data.delivery_method) {
+    formData.append("delivery_method", data.delivery_method);
+  }
   formData.append("contact_phone", data.contact_phone);
   if (data.contact_email) formData.append("contact_email", data.contact_email);
   if (data.courier_address_line1) formData.append("courier_address_line1", data.courier_address_line1);
@@ -1581,21 +1678,277 @@ export async function submitCertificateRequest(
   if (data.courier_region) formData.append("courier_region", data.courier_region);
   if (data.courier_postal_code) formData.append("courier_postal_code", data.courier_postal_code);
   formData.append("service_type", data.service_type || "standard");
-  formData.append("photograph", photograph);
-  formData.append("national_id_scan", nationalIdScan);
+
+  // Confirmation/Verification specific fields
+  if (data.candidate_name) formData.append("candidate_name", data.candidate_name);
+  if (data.candidate_index_number) formData.append("candidate_index_number", data.candidate_index_number);
+  if (data.school_name) formData.append("school_name", data.school_name);
+  if (data.programme_name) formData.append("programme_name", data.programme_name);
+  if (data.completion_year) formData.append("completion_year", data.completion_year.toString());
+  if (data.request_details) formData.append("request_details", data.request_details);
+
+  // File uploads
+  if (photograph) formData.append("photograph", photograph);
+  if (nationalIdScan) formData.append("national_id_scan", nationalIdScan);
+  if (certificate) formData.append("certificate", certificate);
+  if (candidatePhotograph) formData.append("candidate_photograph", candidatePhotograph);
+
+  // Include auth header if user is logged in
+  const headers: HeadersInit = {};
+  const token = getAccessToken();
+  if (token) {
+    headers["Authorization"] = `Bearer ${token}`;
+  }
 
   const response = await fetch(`${API_BASE_URL}/api/v1/public/certificate-requests`, {
     method: "POST",
+    headers,
     body: formData,
   });
 
   return handleResponse<CertificateRequestResponse>(response);
 }
 
+export async function submitBulkCertificateRequest(
+  data: BulkCertificateRequestCreate
+): Promise<{
+  bulk_request_number: string;
+  bulk_request_id: number;
+  total_amount: number;
+  invoice_number: string | null;
+  success: number;
+  failed: number;
+  individual_requests: Array<{ index: number; request_number: string; request_id: number }>;
+  errors: Array<{ index: number; error: string }>;
+}> {
+  const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL || "http://localhost:8001";
+
+  // Create FormData for multipart/form-data request
+  const formData = new FormData();
+
+  // Add form fields
+  formData.append("request_type", data.request_type);
+  formData.append("contact_phone", data.contact_phone);
+  if (data.contact_email) {
+    formData.append("contact_email", data.contact_email);
+  }
+  if (data.service_type) {
+    formData.append("service_type", data.service_type);
+  }
+
+  // Add requests as JSON string
+  const requestsData = data.requests.map((r) => ({
+    candidate_name: r.candidate_name,
+    candidate_index_number: r.candidate_index_number || r.index_number || "",
+    completion_year: r.completion_year || r.exam_year || new Date().getFullYear(),
+    school_name: r.school_name,
+    programme_name: r.programme_name,
+    request_details: r.request_details || "",
+  }));
+  formData.append("requests_json", JSON.stringify(requestsData));
+
+  // Add files with indexed names
+  data.requests.forEach((req, index) => {
+    if (req.certificate_file) {
+      formData.append(`certificate_${index}`, req.certificate_file);
+    }
+    if (req.candidate_photo_file) {
+      formData.append(`candidate_photo_${index}`, req.candidate_photo_file);
+    }
+  });
+
+  // Include auth header if user is logged in
+  const headers: HeadersInit = {};
+  const token = getAccessToken();
+  if (token) {
+    headers["Authorization"] = `Bearer ${token}`;
+  }
+  // Don't set Content-Type header - browser will set it with boundary for FormData
+
+  const response = await fetch(`${API_BASE_URL}/api/v1/public/certificate-requests/bulk`, {
+    method: "POST",
+    headers,
+    body: formData,
+  });
+
+  return handleResponse(response);
+}
+
+// Bulk Certificate Confirmation Types and Functions
+
+export interface CertificateConfirmationRequestResponse {
+  id: number;
+  request_number: string;
+  request_type: "confirmation" | "verification";
+  contact_phone: string;
+  contact_email?: string | null;
+  certificate_details: Array<{
+    candidate_name: string;
+    candidate_index_number?: string | null;
+    school_name: string;
+    programme_name: string;
+    completion_year: number;
+    certificate_file_path?: string | null;
+    candidate_photograph_file_path?: string | null;
+    request_details?: string | null;
+  }>;
+  pdf_file_path?: string | null;
+  pdf_generated_at?: string | null;
+  pdf_generated_by_user_id?: string | null;
+  invoice_id?: number | null;
+  payment_id?: number | null;
+  status: string;
+  priority: string;
+  service_type: string;
+  assigned_to_user_id?: string | null;
+  processed_by_user_id?: string | null;
+  dispatched_by_user_id?: string | null;
+  dispatched_at?: string | null;
+  tracking_number?: string | null;
+  notes?: string | null;
+  paid_at?: string | null;
+  in_process_at?: string | null;
+  ready_for_dispatch_at?: string | null;
+  received_at?: string | null;
+  completed_at?: string | null;
+  created_at: string;
+  updated_at: string;
+  invoice?: any;
+  payment?: any;
+}
+
+export interface BulkCertificateConfirmationResponse {
+  id: number;
+  bulk_request_number: string;
+  request_type: "confirmation" | "verification";
+  contact_phone: string;
+  contact_email?: string | null;
+  service_type: "standard" | "express";
+  status: string;
+  total_amount: number;
+  pdf_file_path?: string | null;
+  pdf_generated_at?: string | null;
+  pdf_generated_by_user_id?: string | null;
+  invoice_id?: number | null;
+  payment_id?: number | null;
+  assigned_to_user_id?: string | null;
+  priority: "low" | "medium" | "high" | "urgent";
+  processed_by_user_id?: string | null;
+  dispatched_by_user_id?: string | null;
+  dispatched_at?: string | null;
+  tracking_number?: string | null;
+  notes?: string | null;
+  paid_at?: string | null;
+  in_process_at?: string | null;
+  ready_for_dispatch_at?: string | null;
+  received_at?: string | null;
+  completed_at?: string | null;
+  created_at: string;
+  updated_at: string;
+  individual_requests: CertificateConfirmationRequestResponse[];
+  invoice?: any;
+  payment?: any;
+  _type?: "bulk_confirmation";  // To distinguish from regular requests
+}
+
+export async function getCertificateConfirmation(
+  confirmationId: number
+): Promise<CertificateConfirmationRequestResponse> {
+  const response = await fetchWithAuth(
+    `/api/v1/admin/certificate-confirmations/${confirmationId}`
+  );
+  return handleResponse<CertificateConfirmationRequestResponse>(response);
+}
+
+// Keep for backward compatibility but redirect to new function
+export async function getBulkCertificateConfirmation(
+  bulkConfirmationId: number
+): Promise<CertificateConfirmationRequestResponse> {
+  return getCertificateConfirmation(bulkConfirmationId);
+}
+
+export async function listBulkCertificateConfirmations(): Promise<BulkCertificateConfirmationResponse[]> {
+  const response = await fetchWithAuth(
+    `/api/v1/admin/certificate-requests?include_bulk_confirmations=true`
+  );
+  const data = await handleResponse<{ items: BulkCertificateConfirmationResponse[] }>(response);
+  return data.items.filter((item: any) => item._type === "bulk_confirmation");
+}
+
+export async function generateBulkConfirmationPDF(
+  confirmationId: number
+): Promise<{ message: string; file_path: string; pdf_generated_at: string | null }> {
+  // Use the unified endpoint (works for both single and bulk confirmations)
+  const response = await fetchWithAuth(
+    `/api/v1/admin/certificate-confirmations/${confirmationId}/generate-pdf`,
+    {
+      method: "POST",
+    }
+  );
+  return handleResponse(response);
+}
+
+export async function uploadBulkConfirmationPDF(
+  confirmationId: number,
+  pdfFile: File
+): Promise<{ message: string; file_path: string; pdf_generated_at: string | null }> {
+  const formData = new FormData();
+  formData.append("pdf_file", pdfFile);
+
+  const response = await fetchWithAuth(
+    `/api/v1/admin/certificate-confirmations/${confirmationId}/upload-pdf`,
+    {
+      method: "POST",
+      body: formData,
+    }
+  );
+  return handleResponse(response);
+}
+
+export async function downloadBulkConfirmationPDF(confirmationId: number): Promise<Blob> {
+  const response = await fetchWithAuth(
+    `/api/v1/admin/certificate-confirmations/${confirmationId}/pdf`
+  );
+  if (!response.ok) {
+    const error = await response.json().catch(() => ({ detail: "Failed to download PDF" }));
+    throw new Error(error.detail || "Failed to download PDF");
+  }
+  return response.blob();
+}
+
+export async function downloadBulkConfirmationPDFPublic(bulkRequestNumber: string): Promise<Blob> {
+  const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL || "http://localhost:8001";
+  const response = await fetch(
+    `${API_BASE_URL}/api/v1/public/certificate-confirmations/bulk/${bulkRequestNumber}/pdf`
+  );
+  if (!response.ok) {
+    const error = await response.json().catch(() => ({ detail: "Failed to download PDF" }));
+    throw new Error(error.detail || "Failed to download PDF");
+  }
+  return response.blob();
+}
+
 export async function getCertificateRequestStatus(requestNumber: string): Promise<any> {
   const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL || "http://localhost:8001";
   const response = await fetch(`${API_BASE_URL}/api/v1/public/certificate-requests/${requestNumber}`);
   return handleResponse(response);
+}
+
+export async function listMyCertificateRequests(
+  requestType?: "confirmation" | "verification",
+  statusFilter?: string,
+  page: number = 1,
+  pageSize: number = 20
+): Promise<CertificateRequestListResponse> {
+  const params = new URLSearchParams();
+  if (requestType) params.append("request_type", requestType);
+  if (statusFilter) params.append("status_filter", statusFilter);
+  params.append("page", page.toString());
+  params.append("page_size", pageSize.toString());
+
+  // fetchWithAuth already prepends API_BASE_URL, so just pass the path
+  const response = await fetchWithAuth(`/api/v1/private/certificate-requests?${params.toString()}`);
+  return handleResponse<CertificateRequestListResponse>(response);
 }
 
 export async function initializePayment(requestNumber: string): Promise<PaymentInitializeResponse> {
@@ -1705,12 +2058,17 @@ export async function addTicketComment(
 
 export async function getTicketActivities(
   requestId: number,
-  limit: number = 100
+  limit: number = 100,
+  ticketType?: "certificate_request" | "certificate_confirmation_request"
 ): Promise<{ items: TicketActivityResponse[]; total: number }> {
   const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL || "http://localhost:8001";
   const token = localStorage.getItem("access_token");
+  const params = new URLSearchParams({ limit: limit.toString() });
+  if (ticketType) {
+    params.append("ticket_type", ticketType);
+  }
   const response = await fetch(
-    `${API_BASE_URL}/api/v1/admin/certificate-requests/${requestId}/activities?limit=${limit}`,
+    `${API_BASE_URL}/api/v1/admin/certificate-requests/${requestId}/activities?${params.toString()}`,
     {
       method: "GET",
       headers: {
@@ -1789,6 +2147,29 @@ export async function cancelRequest(
     body: JSON.stringify({ reason: reason || undefined }),
   });
   return handleResponse<CertificateRequestResponse>(response);
+}
+
+export async function changeTicketStatusManual(
+  ticketId: number,
+  newStatus: "in_process" | "ready_for_dispatch" | "dispatched" | "received" | "completed",
+  reason: string,
+  ticketType?: "certificate_request" | "certificate_confirmation_request"
+): Promise<CertificateRequestResponse | CertificateConfirmationRequestResponse> {
+  const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL || "http://localhost:8001";
+  const token = localStorage.getItem("access_token");
+  const response = await fetch(`${API_BASE_URL}/api/v1/admin/tickets/${ticketId}/manual-status`, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${token}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      new_status: newStatus,
+      reason,
+      ticket_type: ticketType,
+    }),
+  });
+  return handleResponse(response);
 }
 
 export async function resendPaymentLink(requestId: number): Promise<PaymentInitializeResponse> {

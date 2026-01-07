@@ -41,7 +41,13 @@ export default function PrivateLoginPage() {
           }
           // Only PRIVATE_USER can access
           if (user.user_type === "PRIVATE_USER") {
-            router.push("/dashboard/private");
+            // Check if there's a redirect parameter
+            const redirect = searchParams.get("redirect");
+            if (redirect === "certificate-confirmation") {
+              router.push("/certificate-confirmation");
+            } else {
+              router.push("/dashboard/private");
+            }
           }
         } catch (error) {
           // If we can't get user, just stay on login page
@@ -89,7 +95,13 @@ export default function PrivateLoginPage() {
               }
               // Only PRIVATE_USER can access
               if (user.user_type === "PRIVATE_USER") {
-                router.push("/dashboard/private");
+                // Check if there's a redirect parameter
+                const redirect = searchParams.get("redirect");
+                if (redirect === "certificate-confirmation") {
+                  router.push("/certificate-confirmation");
+                } else {
+                  router.push("/dashboard/private");
+                }
               }
             }}
           />

@@ -6,13 +6,13 @@ import { Button } from "@/components/ui/button";
 import { X, Eye, Download, User, Calendar, FileText } from "lucide-react";
 import { PriorityBadge } from "./PrioritySelector";
 import { WorkflowProgress } from "./WorkflowProgress";
-import type { CertificateRequestResponse } from "@/lib/api";
+import type { CertificateRequestResponse, CertificateConfirmationRequestResponse } from "@/lib/api";
 import { cn } from "@/lib/utils";
 
 interface QuickPreviewProps {
-  request: CertificateRequestResponse | null;
+  request: CertificateRequestResponse | CertificateConfirmationRequestResponse | null;
   onClose: () => void;
-  onViewFull: (requestId: number) => void;
+  onViewFull: (requestId: number, requestObject?: CertificateRequestResponse | CertificateConfirmationRequestResponse) => void;
   onDownloadPDF?: (requestId: number) => void;
   currentUserId?: string;
 }
@@ -90,7 +90,7 @@ export function QuickPreview({
             <div>
               <span className="text-sm font-medium text-muted-foreground">Priority</span>
               <div className="mt-1">
-                <PriorityBadge priority={request.priority} />
+                <PriorityBadge priority={request.priority as any} />
               </div>
             </div>
             <div>
@@ -125,17 +125,21 @@ export function QuickPreview({
               <span className="font-medium text-muted-foreground">Type:</span>
               <span className="capitalize">{request.request_type}</span>
             </div>
-            <div className="text-sm">
-              <span className="font-medium text-muted-foreground">Index Number:</span>{" "}
-              {request.index_number}
-            </div>
-            <div className="text-sm">
-              <span className="font-medium text-muted-foreground">Exam Year:</span> {request.exam_year}
-            </div>
-            {request.examination_center_name && (
+            {(request as any).index_number && (
+              <div className="text-sm">
+                <span className="font-medium text-muted-foreground">Index Number:</span>{" "}
+                {(request as any).index_number}
+              </div>
+            )}
+            {(request as any).exam_year && (
+              <div className="text-sm">
+                <span className="font-medium text-muted-foreground">Exam Year:</span> {(request as any).exam_year}
+              </div>
+            )}
+            {(request as any).examination_center_name && (
               <div className="text-sm">
                 <span className="font-medium text-muted-foreground">Center:</span>{" "}
-                {request.examination_center_name}
+                {(request as any).examination_center_name}
               </div>
             )}
           </div>
@@ -155,7 +159,7 @@ export function QuickPreview({
 
           {/* Actions */}
           <div className="flex flex-col gap-2 pt-4 border-t">
-            <Button onClick={() => onViewFull(request.id)} className="w-full">
+            <Button onClick={() => onViewFull(request.id, request)} className="w-full">
               <Eye className="mr-2 h-4 w-4" />
               View Full Details
             </Button>

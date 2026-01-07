@@ -118,6 +118,18 @@ export function Navbar() {
                         </Link>
                       </NavigationMenuLink>
                     </li>
+                    <li>
+                      <NavigationMenuLink asChild>
+                        <Link
+                          href="/certificate-confirmation"
+                          className={`block rounded-md px-3 py-2 text-sm hover:bg-accent hover:text-accent-foreground ${
+                            pathname?.startsWith("/certificate-confirmation") ? "bg-accent text-accent-foreground" : ""
+                          }`}
+                        >
+                          Confirmation & Verification
+                        </Link>
+                      </NavigationMenuLink>
+                    </li>
                   </ul>
                 </NavigationMenuContent>
               </NavigationMenuItem>
@@ -269,6 +281,20 @@ export function Navbar() {
                       }`}
                     >
                       Check Status
+                    </Link>
+                    <Link
+                      href="/certificate-confirmation"
+                      onClick={() => {
+                        setMobileMenuOpen(false);
+                        setCertificateMenuOpen(false);
+                      }}
+                      className={`text-sm transition-colors hover:text-primary ${
+                        pathname?.startsWith("/certificate-confirmation")
+                          ? "text-primary font-medium"
+                          : "text-muted-foreground"
+                      }`}
+                    >
+                      Confirmation & Verification
                     </Link>
                   </CollapsibleContent>
                 </Collapsible>

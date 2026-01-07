@@ -11,7 +11,8 @@ import {
 import { Label } from "@/components/ui/label";
 import { Button } from "@/components/ui/button";
 import { User, UserX } from "lucide-react";
-import { getCurrentUser, type User as UserType } from "@/lib/api";
+import { getCurrentUser } from "@/lib/api";
+import type { User as UserType } from "@/types";
 import { toast } from "sonner";
 
 interface TicketAssignmentSelectorProps {
@@ -68,7 +69,7 @@ export function TicketAssignmentSelector({
           <SelectTrigger className="flex-1">
             <SelectValue placeholder="Select user...">
               {value === currentUser?.id
-                ? `Me (${currentUser.full_name || currentUser.email})`
+                ? `Me (${currentUser?.full_name || currentUser?.email || "me"})`
                 : value
                 ? `User ID: ${value.substring(0, 8)}...`
                 : "Unassigned"}
