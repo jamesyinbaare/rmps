@@ -1795,6 +1795,18 @@ export interface CertificateConfirmationRequestResponse {
   pdf_file_path?: string | null;
   pdf_generated_at?: string | null;
   pdf_generated_by_user_id?: string | null;
+  // Response metadata
+  response_file_path?: string | null;
+  response_file_name?: string | null;
+  response_mime_type?: string | null;
+  response_source?: string | null; // "upload" | "template"
+  responded_at?: string | null;
+  responded_by_user_id?: string | null;
+  response_notes?: string | null;
+  response_payload?: Record<string, any> | null;
+  response_signed?: boolean;
+  response_signed_at?: string | null;
+  response_signed_by_user_id?: string | null;
   invoice_id?: number | null;
   payment_id?: number | null;
   status: string;
@@ -1926,6 +1938,88 @@ export async function downloadBulkConfirmationPDFPublic(bulkRequestNumber: strin
     throw new Error(error.detail || "Failed to download PDF");
   }
   return response.blob();
+}
+
+// Response management functions
+export async function uploadConfirmationResponse(
+  confirmationId: number,
+  file: File,
+  notes?: string
+): Promise<{ message: string; confirmation_id: number; request_number: string; response_file_name?: string; responded_at?: string }> {
+  const formData = new FormData();
+  formData.append("response_file", file);
+  if (notes) {
+    formData.append("response_notes", notes);
+  }
+
+  const response = await fetchWithAuth(
+    `/api/v1/admin/certificate-confirmations/${confirmationId}/response/upload`,
+    {
+      method: "POST",
+      body: formData,
+    }
+  );
+  return handleResponse(response);
+}
+
+export async function generateConfirmationResponse(
+  confirmationId: number,
+  payload: {
+    letter?: {
+      subject?: string;
+      body?: string;
+      remarks?: string;
+      signatory_name?: string;
+      signatory_title?: string;
+    };
+    outcomes?: Record<string, { status?: string; remarks?: string }>;
+  }
+): Promise<{ message: string; confirmation_id: number; request_number: string; response_file_name?: string; responded_at?: string }> {
+  const response = await fetchWithAuth(
+    `/api/v1/admin/certificate-confirmations/${confirmationId}/response/generate`,
+    {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(payload),
+    }
+  );
+  return handleResponse(response);
+}
+
+export async function downloadConfirmationResponse(confirmationId: number): Promise<Blob> {
+  const response = await fetchWithAuth(
+    `/api/v1/admin/certificate-confirmations/${confirmationId}/response`
+  );
+  if (!response.ok) {
+    const error = await response.json().catch(() => ({ detail: "Failed to download response" }));
+    throw new Error(error.detail || "Failed to download response");
+  }
+  return response.blob();
+}
+
+export async function downloadConfirmationRequestPDF(confirmationId: number): Promise<Blob> {
+  const response = await fetchWithAuth(
+    `/api/v1/admin/certificate-confirmations/${confirmationId}/details.pdf`
+  );
+  if (!response.ok) {
+    const error = await response.json().catch(() => ({ detail: "Failed to download request PDF" }));
+    throw new Error(error.detail || "Failed to download request PDF");
+  }
+  return response.blob();
+}
+
+export async function signConfirmationResponse(
+  confirmationId: number
+): Promise<{ message: string; confirmation_id: number; request_number: string; response_signed: boolean; response_signed_at?: string; response_signed_by_user_id?: string }> {
+  const response = await fetchWithAuth(
+    `/api/v1/admin/certificate-confirmations/${confirmationId}/response/sign`,
+    {
+      method: "POST",
+    }
+  );
+  return handleResponse(response);
 }
 
 export async function getCertificateRequestStatus(requestNumber: string): Promise<any> {

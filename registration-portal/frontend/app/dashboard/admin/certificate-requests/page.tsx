@@ -69,6 +69,9 @@ import {
   uploadBulkConfirmationPDF,
   downloadBulkConfirmationPDF,
   changeTicketStatusManual,
+  downloadConfirmationResponse,
+  downloadConfirmationRequestPDF,
+  signConfirmationResponse,
   type CertificateRequestResponse,
   type CertificateRequestListResponse,
   type CertificateConfirmationRequestResponse,
@@ -82,6 +85,7 @@ import { WorkflowProgress } from "@/components/certificate-requests/WorkflowProg
 import { BulkActions } from "@/components/certificate-requests/BulkActions";
 import { QuickPreview } from "@/components/certificate-requests/QuickPreview";
 import { useKeyboardShortcuts } from "@/components/certificate-requests/KeyboardShortcuts";
+import { ResponseDialog } from "@/components/certificate-requests/ResponseDialog";
 import {
   FileText,
   Search,
@@ -106,6 +110,7 @@ import {
   User,
   Hash,
   Upload,
+  PenTool,
 } from "lucide-react";
 
 const STATUS_OPTIONS = [
@@ -175,6 +180,7 @@ export default function CertificateRequestsPage() {
   const [changeStatusDialogOpen, setChangeStatusDialogOpen] = useState(false);
   const [newStatus, setNewStatus] = useState<"in_process" | "ready_for_dispatch" | "dispatched" | "received" | "completed">("ready_for_dispatch");
   const [changeReason, setChangeReason] = useState("");
+  const [responseDialogOpen, setResponseDialogOpen] = useState(false);
 
   const loadRequests = async () => {
     setLoading(true);
@@ -543,6 +549,72 @@ export default function CertificateRequestsPage() {
     } catch (error: any) {
       toast.error(error.message || "Failed to upload PDF");
       console.error("Error uploading PDF:", error);
+    }
+  };
+
+  const handleDownloadResponsePDF = async (confirmationId: number) => {
+    try {
+      const blob = await downloadConfirmationResponse(confirmationId);
+      const url = window.URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `confirmation_response_${confirmationId}.pdf`;
+      document.body.appendChild(a);
+      a.click();
+      window.URL.revokeObjectURL(url);
+      document.body.removeChild(a);
+      toast.success("Response PDF downloaded successfully");
+    } catch (error: any) {
+      toast.error(error.message || "Failed to download response PDF");
+      console.error("Error downloading response PDF:", error);
+    }
+  };
+
+  const handleDownloadRequestPDF = async (confirmationId: number) => {
+    try {
+      const blob = await downloadConfirmationRequestPDF(confirmationId);
+      const url = window.URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `confirmation_request_${confirmationId}.pdf`;
+      document.body.appendChild(a);
+      a.click();
+      window.URL.revokeObjectURL(url);
+      document.body.removeChild(a);
+      toast.success("Request PDF downloaded successfully");
+    } catch (error: any) {
+      toast.error(error.message || "Failed to download request PDF");
+      console.error("Error downloading request PDF:", error);
+    }
+  };
+
+  const handleResponseSuccess = async () => {
+    loadRequests();
+    if (selectedConfirmationRequest) {
+      const updated = await getCertificateConfirmation(selectedConfirmationRequest.id);
+      setSelectedConfirmationRequest(updated);
+      setSelectedRequest(updated as any);
+    }
+  };
+
+  const handleSignResponse = async (confirmationId: number) => {
+    const confirmed = window.confirm(
+      "Are you sure you want to sign this response? Once signed, it cannot be modified."
+    );
+    if (!confirmed) return;
+
+    try {
+      await signConfirmationResponse(confirmationId);
+      toast.success("Response signed successfully");
+      loadRequests();
+      if (selectedConfirmationRequest?.id === confirmationId) {
+        const updated = await getCertificateConfirmation(confirmationId);
+        setSelectedConfirmationRequest(updated);
+        setSelectedRequest(updated as any);
+      }
+    } catch (error: any) {
+      toast.error(error.message || "Failed to sign response");
+      console.error("Error signing response:", error);
     }
   };
 
@@ -1417,8 +1489,103 @@ export default function CertificateRequestsPage() {
                 </div>
               </div>
 
+              {/* Response Section - for confirmation/verification requests */}
+              {(() => {
+                const requestType = getRequestType(selectedRequest);
+                if (requestType === "confirmation") {
+                  const confirmationRequest = selectedRequest as CertificateConfirmationRequestResponse;
+                  return (
+                    <div className="pt-4 border-t space-y-4">
+                      <h3 className="font-semibold">Response Management</h3>
+                      <div className="grid grid-cols-2 gap-4">
+                        <div>
+                          <Label>Response Status</Label>
+                          {confirmationRequest.response_file_path ? (
+                            <div className="space-y-1">
+                              <div className="flex items-center gap-2">
+                                <Badge variant="default">Response Available</Badge>
+                                {confirmationRequest.response_signed && (
+                                  <Badge variant="default" className="bg-green-600">
+                                    Signed & Locked
+                                  </Badge>
+                                )}
+                              </div>
+                              <p className="text-sm text-muted-foreground">
+                                {confirmationRequest.response_source === "upload" ? "Uploaded" : "Generated from Template"}
+                              </p>
+                              {confirmationRequest.response_file_name && (
+                                <p className="text-sm text-muted-foreground">
+                                  File: {confirmationRequest.response_file_name}
+                                </p>
+                              )}
+                              {confirmationRequest.responded_at && (
+                                <p className="text-sm text-muted-foreground">
+                                  Responded: {new Date(confirmationRequest.responded_at).toLocaleString()}
+                                </p>
+                              )}
+                              {confirmationRequest.response_signed && confirmationRequest.response_signed_at && (
+                                <p className="text-sm text-muted-foreground">
+                                  Signed: {new Date(confirmationRequest.response_signed_at).toLocaleString()}
+                                </p>
+                              )}
+                            </div>
+                          ) : (
+                            <Badge variant="outline">No Response Yet</Badge>
+                          )}
+                        </div>
+                        {confirmationRequest.response_notes && (
+                          <div>
+                            <Label>Response Notes</Label>
+                            <p className="text-sm">{confirmationRequest.response_notes}</p>
+                          </div>
+                        )}
+                      </div>
+                      <div className="flex gap-2 flex-wrap">
+                        <Button
+                          onClick={() => handleDownloadRequestPDF(confirmationRequest.id)}
+                          variant="outline"
+                        >
+                          <Download className="mr-2 h-4 w-4" />
+                          Download Request PDF
+                        </Button>
+                        {confirmationRequest.response_file_path ? (
+                          <Button
+                            onClick={() => handleDownloadResponsePDF(confirmationRequest.id)}
+                            variant="outline"
+                          >
+                            <Download className="mr-2 h-4 w-4" />
+                            Download Response PDF
+                          </Button>
+                        ) : null}
+                        {confirmationRequest.status !== "pending_payment" && confirmationRequest.status !== "cancelled" && (
+                          <Button
+                            onClick={() => setResponseDialogOpen(true)}
+                            variant="default"
+                            disabled={confirmationRequest.response_signed}
+                          >
+                            <FileText className="mr-2 h-4 w-4" />
+                            {confirmationRequest.response_file_path ? "Update Response" : "Respond"}
+                          </Button>
+                        )}
+                        {confirmationRequest.response_file_path && !confirmationRequest.response_signed && (
+                          <Button
+                            onClick={() => handleSignResponse(confirmationRequest.id)}
+                            variant="default"
+                            className="bg-green-600 hover:bg-green-700"
+                          >
+                            <PenTool className="mr-2 h-4 w-4" />
+                            Sign Response
+                          </Button>
+                        )}
+                      </div>
+                    </div>
+                  );
+                }
+                return null;
+              })()}
+
               {/* Activity Feed */}
-              <div className="pt-4">
+              <div className="pt-4 border-t">
                 <TicketActivityFeed
                   ticketId={selectedRequest.id}
                   ticketType={
@@ -1430,48 +1597,10 @@ export default function CertificateRequestsPage() {
               </div>
 
               <div className="flex gap-2 pt-4 flex-wrap">
-                {/* PDF Actions - different for bulk vs regular */}
+                {/* PDF Actions - for regular certificate requests only */}
                 {(() => {
                   const requestType = getRequestType(selectedRequest);
-                  if (requestType === "confirmation") {
-                    const confirmationRequest = selectedRequest as CertificateConfirmationRequestResponse;
-                    return (
-                      <>
-                        {confirmationRequest.pdf_file_path ? (
-                          <Button onClick={() => handleDownloadPDF(confirmationRequest.id, true)}>
-                            <Download className="mr-2 h-4 w-4" />
-                            Download PDF
-                          </Button>
-                        ) : (
-                          <>
-                            <Button onClick={() => handleGenerateBulkConfirmationPDF(confirmationRequest.id)}>
-                              <FileText className="mr-2 h-4 w-4" />
-                              Generate PDF
-                            </Button>
-                            <label className="cursor-pointer">
-                              <Button variant="outline" asChild>
-                                <span>
-                                  <Upload className="mr-2 h-4 w-4" />
-                                  Upload PDF
-                                </span>
-                              </Button>
-                              <input
-                                type="file"
-                                accept=".pdf"
-                                className="hidden"
-                                onChange={(e) => {
-                                  const file = e.target.files?.[0];
-                                  if (file) {
-                                    handleUploadBulkConfirmationPDF(confirmationRequest.id, file);
-                                  }
-                                }}
-                              />
-                            </label>
-                          </>
-                        )}
-                      </>
-                    );
-                  } else {
+                  if (requestType !== "confirmation") {
                     // Regular certificate request
                     return (
                       <Button onClick={() => handleDownloadPDF(selectedRequest.id, false)}>
@@ -1480,6 +1609,7 @@ export default function CertificateRequestsPage() {
                       </Button>
                     );
                   }
+                  return null;
                 })()}
                 {selectedRequest.status === "pending_payment" && (
                   <Button onClick={() => handleResendPaymentLink(selectedRequest.id)} variant="default">
@@ -1809,6 +1939,16 @@ export default function CertificateRequestsPage() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      {/* Response Dialog - for confirmation/verification requests */}
+      {selectedConfirmationRequest && (
+        <ResponseDialog
+          open={responseDialogOpen}
+          onOpenChange={setResponseDialogOpen}
+          confirmationRequest={selectedConfirmationRequest}
+          onSuccess={handleResponseSuccess}
+        />
+      )}
 
       {/* Quick Preview */}
       <QuickPreview
