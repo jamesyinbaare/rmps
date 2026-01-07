@@ -330,14 +330,19 @@
                     <td>Examination Year</td>
                     <td><strong>{{ certificate_request.exam_year }}</strong></td>
                 </tr>
+                {% if certificate_request.national_id_number %}
                 <tr>
                     <td>National ID Number</td>
                     <td>{{ certificate_request.national_id_number }}</td>
                 </tr>
+                {% endif %}
+                {% if examination_center_name and examination_center_name != "N/A" %}
                 <tr>
                     <td>Examination Center</td>
                     <td><strong>{{ examination_center_name }}</strong></td>
                 </tr>
+                {% endif %}
+                {% if certificate_request.delivery_method %}
                 <tr>
                     <td>Delivery Method</td>
                     <td>
@@ -349,6 +354,43 @@
                         {% endif %}
                     </td>
                 </tr>
+                {% endif %}
+                {% if certificate_request.candidate_name %}
+                <tr>
+                    <td>Candidate Name</td>
+                    <td><strong>{{ certificate_request.candidate_name }}</strong></td>
+                </tr>
+                {% endif %}
+                {% if certificate_request.candidate_index_number %}
+                <tr>
+                    <td>Candidate Index Number</td>
+                    <td><strong>{{ certificate_request.candidate_index_number }}</strong></td>
+                </tr>
+                {% endif %}
+                {% if certificate_request.completion_year %}
+                <tr>
+                    <td>Completion Year</td>
+                    <td><strong>{{ certificate_request.completion_year }}</strong></td>
+                </tr>
+                {% endif %}
+                {% if certificate_request.school_name %}
+                <tr>
+                    <td>School Name</td>
+                    <td><strong>{{ certificate_request.school_name }}</strong></td>
+                </tr>
+                {% endif %}
+                {% if certificate_request.programme_name %}
+                <tr>
+                    <td>Programme of Study</td>
+                    <td><strong>{{ certificate_request.programme_name }}</strong></td>
+                </tr>
+                {% endif %}
+                {% if certificate_request.request_details %}
+                <tr>
+                    <td>Request Details</td>
+                    <td>{{ certificate_request.request_details }}</td>
+                </tr>
+                {% endif %}
             </table>
         </div>
 
@@ -378,7 +420,7 @@
         </div>
 
         <!-- Courier Address -->
-        {% if certificate_request.delivery_method.value == 'courier' %}
+        {% if certificate_request.delivery_method and certificate_request.delivery_method.value == 'courier' %}
         {% if certificate_request.courier_address_line1 or certificate_request.courier_city or certificate_request.courier_region %}
         <div class="section-card">
             <div class="section-title">Courier Delivery Address</div>
@@ -503,6 +545,22 @@
         <div class="image-section">
             <h3>National ID Document</h3>
             <img src="data:image/jpeg;base64,{{ id_scan_base64 }}" alt="National ID Scan" />
+        </div>
+        {% endif %}
+
+        <!-- Certificate Scan (for confirmation/verification) -->
+        {% if certificate_base64 %}
+        <div class="image-section">
+            <h3>Certificate Scan</h3>
+            <img src="data:image/jpeg;base64,{{ certificate_base64 }}" alt="Certificate Scan" />
+        </div>
+        {% endif %}
+
+        <!-- Candidate Photograph (for confirmation/verification) -->
+        {% if candidate_photo_base64 %}
+        <div class="image-section">
+            <h3>Candidate Photograph</h3>
+            <img src="data:image/jpeg;base64,{{ candidate_photo_base64 }}" alt="Candidate Photograph" />
         </div>
         {% endif %}
 

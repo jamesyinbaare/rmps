@@ -42,6 +42,23 @@ async def initialize_payment(
     if not settings.paystack_secret_key:
         raise ValueError("Paystack secret key is not configured")
 
+    # Check if there's already a pending payment for this invoice
+    existing_payment_stmt = select(Payment).where(
+        Payment.invoice_id == invoice.id,
+        Payment.status == PaymentStatus.PENDING
+    ).order_by(Payment.created_at.desc())
+    existing_payment_result = await session.execute(existing_payment_stmt)
+    existing_payment = existing_payment_result.scalar_one_or_none()
+
+    # If a pending payment exists and has an authorization URL, return it
+    if existing_payment and existing_payment.paystack_authorization_url:
+        logger.info(f"Reusing existing pending payment {existing_payment.id} for invoice {invoice.id}")
+        return {
+            "payment_id": existing_payment.id,
+            "authorization_url": existing_payment.paystack_authorization_url,
+            "paystack_reference": existing_payment.paystack_reference or "",
+        }
+
     # Prepare Paystack transaction data
     # Get callback URL from settings or use default
     callback_url = None
@@ -55,15 +72,21 @@ async def initialize_payment(
             # Fallback to receipt page
             callback_url = f"{settings.paystack_callback_base_url}/certificate-request/receipt"
 
+    # Generate unique reference with timestamp to avoid duplicates
+    from datetime import datetime
+    timestamp = datetime.utcnow().strftime("%Y%m%d%H%M%S")
+    reference = f"INV-{invoice.invoice_number}-{timestamp}"
+
     paystack_data = {
         "amount": int(amount * 100),  # Convert to kobo (cents) - Paystack uses smallest currency unit
         "currency": invoice.currency,
-        "reference": f"INV-{invoice.invoice_number}",
+        "reference": reference,
         "callback_url": callback_url,  # Redirect URL after payment
         "metadata": {
             "invoice_id": invoice.id,
             "invoice_number": invoice.invoice_number,
             "certificate_request_id": invoice.certificate_request_id,
+            "certificate_confirmation_request_id": invoice.certificate_confirmation_request_id,
             **(metadata or {}),
         },
     }
@@ -97,9 +120,11 @@ async def initialize_payment(
             reference = data["reference"]
 
             # Create Payment record
+            # Determine which foreign key to use based on invoice relationships
             payment = Payment(
                 invoice_id=invoice.id,
                 certificate_request_id=invoice.certificate_request_id,
+                certificate_confirmation_request_id=invoice.certificate_confirmation_request_id,
                 paystack_reference=reference,
                 paystack_authorization_url=authorization_url,
                 amount=amount,
@@ -109,7 +134,7 @@ async def initialize_payment(
             )
             session.add(payment)
             await session.flush()
-            await session.refresh(payment)
+            # No need to refresh - payment.id is available after flush
 
             return {
                 "payment_id": payment.id,
@@ -271,6 +296,28 @@ async def process_webhook_event(
                 # Use the same naive datetime for invoice
                 invoice.paid_at = payment.paid_at
 
+                # Update request/confirmation status if payment successful
+                from app.models import CertificateConfirmationRequest, RequestStatus
+                if invoice.certificate_confirmation_request_id:
+                    confirmation_request_stmt = select(CertificateConfirmationRequest).where(
+                        CertificateConfirmationRequest.id == invoice.certificate_confirmation_request_id
+                    )
+                    confirmation_request_result = await session.execute(confirmation_request_stmt)
+                    confirmation_request = confirmation_request_result.scalar_one_or_none()
+                    if confirmation_request:
+                        confirmation_request.status = RequestStatus.PAID
+                        confirmation_request.paid_at = payment.paid_at
+                elif invoice.certificate_request_id:
+                    from app.models import CertificateRequest
+                    cert_request_stmt = select(CertificateRequest).where(
+                        CertificateRequest.id == invoice.certificate_request_id
+                    )
+                    cert_request_result = await session.execute(cert_request_stmt)
+                    cert_request = cert_request_result.scalar_one_or_none()
+                    if cert_request:
+                        cert_request.status = RequestStatus.PAID
+                        cert_request.paid_at = payment.paid_at
+
     elif event_type == "charge.failure":
         payment.status = PaymentStatus.FAILED
 
@@ -278,7 +325,8 @@ async def process_webhook_event(
     payment.paystack_response = event_data
 
     await session.flush()
-    await session.refresh(payment)
+    # Refresh to ensure all updated fields are loaded, but use expire_on_commit=False session behavior
+    # The payment object should already have all fields we need
 
     logger.info(f"Payment {payment.id} status updated to {payment.status.value} via webhook")
     return payment

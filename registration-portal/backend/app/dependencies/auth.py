@@ -11,6 +11,7 @@ from app.models import PortalUser, PortalUserType
 
 # HTTP Bearer token security scheme
 security = HTTPBearer()
+security_optional = HTTPBearer(auto_error=False)
 
 
 async def get_current_user(
@@ -59,6 +60,17 @@ async def get_current_user(
         )
 
     return user
+
+
+async def get_current_user_optional(
+    session: DBSessionDep,
+    credentials: HTTPAuthorizationCredentials | None = Depends(security_optional),
+) -> PortalUser | None:
+    """Return the current user if Authorization header is present; otherwise None."""
+    if credentials is None:
+        return None
+    # Reuse strict validation: invalid/expired tokens should still be 401
+    return await get_current_user(session=session, credentials=credentials)
 
 
 async def get_current_active_user(

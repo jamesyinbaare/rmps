@@ -79,6 +79,87 @@ class CertificateFileStorageService:
         relative_path = file_path.relative_to(self.base_path)
         return str(relative_path), checksum
 
+    async def save_certificate_scan(self, file_content: bytes, filename: str, request_id: int) -> tuple[str, str]:
+        """
+        Save certificate scan file and return (file_path, checksum).
+
+        Args:
+            file_content: Certificate scan file content as bytes
+            filename: Original filename
+            request_id: Certificate request ID
+
+        Returns:
+            Tuple of (relative_file_path, checksum)
+        """
+        file_path = self._generate_file_path(request_id, "certificate", filename)
+        checksum = calculate_checksum(file_content)
+
+        async with aiofiles.open(file_path, "wb") as f:
+            await f.write(file_content)
+
+        # Return path relative to base_path for storage
+        relative_path = file_path.relative_to(self.base_path)
+        return str(relative_path), checksum
+
+    async def save_candidate_photo(self, file_content: bytes, filename: str, request_id: int) -> tuple[str, str]:
+        """
+        Save candidate photograph file and return (file_path, checksum).
+
+        Args:
+            file_content: Candidate photo file content as bytes
+            filename: Original filename
+            request_id: Certificate request ID
+
+        Returns:
+            Tuple of (relative_file_path, checksum)
+        """
+        file_path = self._generate_file_path(request_id, "candidate_photo", filename)
+        checksum = calculate_checksum(file_content)
+
+        async with aiofiles.open(file_path, "wb") as f:
+            await f.write(file_content)
+
+        # Return path relative to base_path for storage
+        relative_path = file_path.relative_to(self.base_path)
+        return str(relative_path), checksum
+
+    async def save_pdf(self, file_content: bytes, filename: str, request_id: int) -> tuple[str, str]:
+        """
+        Save PDF file and return (file_path, checksum).
+
+        Args:
+            file_content: PDF file content as bytes
+            filename: Original filename
+            request_id: Certificate request ID
+
+        Returns:
+            Tuple of (relative_file_path, checksum)
+        """
+        file_path = self._generate_file_path(request_id, "pdf", filename)
+        checksum = calculate_checksum(file_content)
+
+        async with aiofiles.open(file_path, "wb") as f:
+            await f.write(file_content)
+
+        # Return path relative to base_path for storage
+        relative_path = file_path.relative_to(self.base_path)
+        return str(relative_path), checksum
+
+    async def save_response_file(self, file_content: bytes, filename: str, request_id: int) -> tuple[str, str]:
+        """
+        Save a response file (admin response) and return (file_path, checksum).
+
+        Stored under "{request_id}/response/".
+        """
+        file_path = self._generate_file_path(request_id, "response", filename)
+        checksum = calculate_checksum(file_content)
+
+        async with aiofiles.open(file_path, "wb") as f:
+            await f.write(file_content)
+
+        relative_path = file_path.relative_to(self.base_path)
+        return str(relative_path), checksum
+
     async def retrieve(self, file_path: str) -> bytes:
         """Retrieve file content."""
         full_path = self._resolve_path(file_path)

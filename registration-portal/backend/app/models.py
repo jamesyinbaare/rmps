@@ -17,7 +17,8 @@ from sqlalchemy import (
     Time,
     UniqueConstraint,
 )
-from sqlalchemy.dialects.postgresql import UUID, JSON
+from sqlalchemy.dialects.postgresql import JSON, UUID
+from sqlalchemy.ext.declarative import declared_attr
 from sqlalchemy.orm import relationship
 
 from app.dependencies.database import Base
@@ -88,6 +89,8 @@ class IndexNumberGenerationJobStatus(enum.Enum):
 class CertificateRequestType(enum.Enum):
     CERTIFICATE = "certificate"  # NOV/DEC only
     ATTESTATION = "attestation"  # All candidates
+    CONFIRMATION = "confirmation"  # Certificate confirmation/verification
+    VERIFICATION = "verification"  # Certificate verification
 
 
 class RequestStatus(enum.Enum):
@@ -131,6 +134,86 @@ class TicketActivityType(enum.Enum):
     ASSIGNMENT = "assignment"
     NOTE = "note"
     SYSTEM = "system"
+
+
+class TicketRequestMixin:
+    """Mixin class for common ticket/request management fields."""
+
+    @declared_attr
+    def status(cls):
+        return Column(Enum(RequestStatus, create_constraint=False, values_callable=lambda x: [e.value for e in x]), default=RequestStatus.PENDING_PAYMENT, nullable=False, index=True)
+
+    @declared_attr
+    def priority(cls):
+        return Column(Enum(TicketPriority, create_constraint=False, values_callable=lambda x: [e.value for e in x]), default=TicketPriority.MEDIUM, nullable=False, index=True)
+
+    @declared_attr
+    def service_type(cls):
+        return Column(Enum(ServiceType, create_constraint=False, values_callable=lambda x: [e.value for e in x]), default=ServiceType.STANDARD, nullable=False, index=True)
+
+    @declared_attr
+    def assigned_to_user_id(cls):
+        return Column(UUID(as_uuid=True), ForeignKey("portal_users.id", ondelete="SET NULL"), nullable=True, index=True)
+
+    @declared_attr
+    def processed_by_user_id(cls):
+        return Column(UUID(as_uuid=True), ForeignKey("portal_users.id", ondelete="SET NULL"), nullable=True, index=True)
+
+    @declared_attr
+    def dispatched_by_user_id(cls):
+        return Column(UUID(as_uuid=True), ForeignKey("portal_users.id", ondelete="SET NULL"), nullable=True, index=True)
+
+    @declared_attr
+    def dispatched_at(cls):
+        return Column(DateTime, nullable=True)
+
+    @declared_attr
+    def tracking_number(cls):
+        return Column(String(100), nullable=True)
+
+    @declared_attr
+    def notes(cls):
+        return Column(Text, nullable=True)
+
+    @declared_attr
+    def paid_at(cls):
+        return Column(DateTime, nullable=True)
+
+    @declared_attr
+    def in_process_at(cls):
+        return Column(DateTime, nullable=True)
+
+    @declared_attr
+    def ready_for_dispatch_at(cls):
+        return Column(DateTime, nullable=True)
+
+    @declared_attr
+    def received_at(cls):
+        return Column(DateTime, nullable=True)
+
+    @declared_attr
+    def completed_at(cls):
+        return Column(DateTime, nullable=True)
+
+    @declared_attr
+    def created_at(cls):
+        return Column(DateTime, default=datetime.utcnow, nullable=False, index=True)
+
+    @declared_attr
+    def updated_at(cls):
+        return Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+
+    @declared_attr
+    def assigned_to(cls):
+        return relationship("PortalUser", foreign_keys=[cls.assigned_to_user_id])
+
+    @declared_attr
+    def processed_by(cls):
+        return relationship("PortalUser", foreign_keys=[cls.processed_by_user_id])
+
+    @declared_attr
+    def dispatched_by(cls):
+        return relationship("PortalUser", foreign_keys=[cls.dispatched_by_user_id])
 
 
 class PortalUser(Base):
@@ -470,13 +553,14 @@ class IndexNumberGenerationJob(Base):
 
 
 class Invoice(Base):
-    """Model for invoices generated for certificate requests."""
+    """Model for invoices generated for certificate requests and confirmation requests."""
 
     __tablename__ = "invoices"
 
     id = Column(Integer, primary_key=True)
     invoice_number = Column(String(50), unique=True, nullable=False, index=True)  # Format: INV-YYYYMMDD-XXXXXX
-    certificate_request_id = Column(Integer, ForeignKey("certificate_requests.id", ondelete="CASCADE"), nullable=False, unique=True, index=True)
+    certificate_request_id = Column(Integer, ForeignKey("certificate_requests.id", ondelete="CASCADE"), nullable=True, unique=True, index=True)  # For Certificate/Attestation requests
+    certificate_confirmation_request_id = Column(Integer, ForeignKey("certificate_confirmation_requests.id", ondelete="CASCADE"), nullable=True, unique=True, index=True)  # For confirmation requests
     amount = Column(Numeric(10, 2), nullable=False)  # Invoice amount
     currency = Column(String(3), default="GHS", nullable=False)  # Currency code
     status = Column(String(20), default="pending", nullable=False, index=True)  # "pending", "paid", "cancelled"
@@ -485,10 +569,11 @@ class Invoice(Base):
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
 
-    certificate_request = relationship("CertificateRequest", uselist=False)
+    certificate_request = relationship("CertificateRequest", foreign_keys=[certificate_request_id], uselist=False)
+    certificate_confirmation_request = relationship("CertificateConfirmationRequest", foreign_keys=[certificate_confirmation_request_id], uselist=False)
 
 
-class CertificateRequest(Base):
+class CertificateRequest(TicketRequestMixin, Base):
     """Model for certificate and attestation requests."""
 
     __tablename__ = "certificate_requests"
@@ -498,11 +583,20 @@ class CertificateRequest(Base):
     request_number = Column(String(50), unique=True, nullable=False, index=True)  # Format: REQ-YYYYMMDD-XXXXXX
     index_number = Column(String(50), nullable=False, index=True)  # Candidate's examination index number
     exam_year = Column(Integer, nullable=False, index=True)  # Year of examination
-    examination_center_id = Column(Integer, ForeignKey("schools.id", ondelete="SET NULL"), nullable=False, index=True)
-    national_id_number = Column(String(50), nullable=False, index=True)
-    national_id_file_path = Column(String(512), nullable=False)  # Path to uploaded ID scan
-    photograph_file_path = Column(String(512), nullable=False)  # Path to uploaded photograph
-    delivery_method = Column(Enum(DeliveryMethod, create_constraint=False, values_callable=lambda x: [e.value for e in x]), nullable=False)
+    examination_center_id = Column(Integer, ForeignKey("schools.id", ondelete="SET NULL"), nullable=True, index=True)  # Nullable for confirmation/verification
+    national_id_number = Column(String(50), nullable=True, index=True)  # Nullable for confirmation/verification
+    national_id_file_path = Column(String(512), nullable=True)  # Path to uploaded ID scan (optional for confirmation/verification)
+    photograph_file_path = Column(String(512), nullable=True)  # Path to uploaded photograph (optional for confirmation/verification)
+    delivery_method = Column(Enum(DeliveryMethod, create_constraint=False, values_callable=lambda x: [e.value for e in x]), nullable=True)  # Nullable for confirmation/verification
+    # Confirmation/Verification specific fields
+    candidate_name = Column(String(255), nullable=True)  # Name of candidate whose certificate is being verified
+    candidate_index_number = Column(String(50), nullable=True, index=True)  # Candidate's index number (alternative to index_number for clarity)
+    school_name = Column(String(255), nullable=True)  # Free text school name
+    programme_name = Column(String(255), nullable=True)  # Free text programme name
+    completion_year = Column(Integer, nullable=True, index=True)  # Year the candidate completed/graduated from school
+    certificate_file_path = Column(String(512), nullable=True)  # Path to uploaded certificate scan
+    candidate_photograph_file_path = Column(String(512), nullable=True)  # Path to uploaded candidate photograph
+    request_details = Column(Text, nullable=True)  # Optional text detailing the request
     contact_phone = Column(String(50), nullable=False)  # Required for courier
     contact_email = Column(String(255), nullable=True)  # Optional
     courier_address_line1 = Column(String(255), nullable=True)  # For courier delivery
@@ -510,35 +604,12 @@ class CertificateRequest(Base):
     courier_city = Column(String(100), nullable=True)
     courier_region = Column(String(100), nullable=True)
     courier_postal_code = Column(String(20), nullable=True)
-    status = Column(Enum(RequestStatus, create_constraint=False, values_callable=lambda x: [e.value for e in x]), default=RequestStatus.PENDING_PAYMENT, nullable=False, index=True)
     # invoice_id removed - Invoice.certificate_request_id is the owning side of the one-to-one relationship
     payment_id = Column(Integer, ForeignKey("payments.id", ondelete="SET NULL"), nullable=True, index=True)
-    processed_by_user_id = Column(UUID(as_uuid=True), ForeignKey("portal_users.id", ondelete="SET NULL"), nullable=True, index=True)  # System Admin who processed
-    dispatched_by_user_id = Column(UUID(as_uuid=True), ForeignKey("portal_users.id", ondelete="SET NULL"), nullable=True, index=True)  # Admin who dispatched
-    dispatched_at = Column(DateTime, nullable=True)
-    tracking_number = Column(String(100), nullable=True)  # For courier delivery
-    notes = Column(Text, nullable=True)  # Internal notes
-    # Ticket management fields
-    assigned_to_user_id = Column(UUID(as_uuid=True), ForeignKey("portal_users.id", ondelete="SET NULL"), nullable=True, index=True)  # Active ticket assignment
-    priority = Column(Enum(TicketPriority, create_constraint=False, values_callable=lambda x: [e.value for e in x]), default=TicketPriority.MEDIUM, nullable=False, index=True)
-    service_type = Column(Enum(ServiceType, create_constraint=False, values_callable=lambda x: [e.value for e in x]), default=ServiceType.STANDARD, nullable=False, index=True)
-    # Status-specific timestamps
-    paid_at = Column(DateTime, nullable=True)
-    in_process_at = Column(DateTime, nullable=True)
-    ready_for_dispatch_at = Column(DateTime, nullable=True)
-    received_at = Column(DateTime, nullable=True)
-    completed_at = Column(DateTime, nullable=True)
-    created_at = Column(DateTime, default=datetime.utcnow, nullable=False, index=True)
-    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
 
     examination_center = relationship("School", foreign_keys=[examination_center_id])
     # invoice relationship removed - use Invoice.certificate_request back-reference instead
     # payment relationship removed - use Payment.certificate_request back-reference instead
-    processed_by = relationship("PortalUser", foreign_keys=[processed_by_user_id])
-    dispatched_by = relationship("PortalUser", foreign_keys=[dispatched_by_user_id])
-    assigned_to = relationship("PortalUser", foreign_keys=[assigned_to_user_id])
-    activities = relationship("TicketActivity", back_populates="ticket", cascade="all, delete-orphan")
-    status_history = relationship("TicketStatusHistory", back_populates="ticket", cascade="all, delete-orphan")
 
 
 
@@ -550,7 +621,8 @@ class Payment(Base):
 
     id = Column(Integer, primary_key=True)
     invoice_id = Column(Integer, ForeignKey("invoices.id", ondelete="SET NULL"), nullable=True, index=True)
-    certificate_request_id = Column(Integer, ForeignKey("certificate_requests.id", ondelete="CASCADE"), nullable=False, index=True)
+    certificate_request_id = Column(Integer, ForeignKey("certificate_requests.id", ondelete="CASCADE"), nullable=True, index=True)  # For Certificate/Attestation requests
+    certificate_confirmation_request_id = Column(Integer, ForeignKey("certificate_confirmation_requests.id", ondelete="CASCADE"), nullable=True, index=True)  # For confirmation requests
     paystack_reference = Column(String(100), unique=True, nullable=True, index=True)  # Paystack transaction reference
     paystack_authorization_url = Column(String(512), nullable=True)  # Payment URL
     amount = Column(Numeric(10, 2), nullable=False)  # Payment amount
@@ -563,6 +635,7 @@ class Payment(Base):
 
     invoice = relationship("Invoice", foreign_keys=[invoice_id])
     certificate_request = relationship("CertificateRequest", foreign_keys=[certificate_request_id])
+    certificate_confirmation_request = relationship("CertificateConfirmationRequest", foreign_keys=[certificate_confirmation_request_id])
 
 
 class TicketActivity(Base):
@@ -571,7 +644,8 @@ class TicketActivity(Base):
     __tablename__ = "ticket_activities"
 
     id = Column(Integer, primary_key=True)
-    ticket_id = Column(Integer, ForeignKey("certificate_requests.id", ondelete="CASCADE"), nullable=False, index=True)
+    ticket_type = Column(String(50), nullable=False, index=True)  # "certificate_request" or "certificate_confirmation_request"
+    ticket_id = Column(Integer, nullable=False, index=True)  # ID of the ticket (no foreign key for polymorphism)
     activity_type = Column(Enum(TicketActivityType, create_constraint=False, values_callable=lambda x: [e.value for e in x]), nullable=False, index=True)
     user_id = Column(UUID(as_uuid=True), ForeignKey("portal_users.id", ondelete="SET NULL"), nullable=True, index=True)
     old_status = Column(String(50), nullable=True)
@@ -581,7 +655,6 @@ class TicketActivity(Base):
     comment = Column(Text, nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False, index=True)
 
-    ticket = relationship("CertificateRequest", back_populates="activities")
     user = relationship("PortalUser", foreign_keys=[user_id])
 
 
@@ -591,12 +664,47 @@ class TicketStatusHistory(Base):
     __tablename__ = "ticket_status_history"
 
     id = Column(Integer, primary_key=True)
-    ticket_id = Column(Integer, ForeignKey("certificate_requests.id", ondelete="CASCADE"), nullable=False, index=True)
+    ticket_type = Column(String(50), nullable=False, index=True)  # "certificate_request" or "certificate_confirmation_request"
+    ticket_id = Column(Integer, nullable=False, index=True)  # ID of the ticket (no foreign key for polymorphism)
     from_status = Column(String(50), nullable=True)
     to_status = Column(String(50), nullable=False)
     changed_by_user_id = Column(UUID(as_uuid=True), ForeignKey("portal_users.id", ondelete="SET NULL"), nullable=True, index=True)
     reason = Column(Text, nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False, index=True)
 
-    ticket = relationship("CertificateRequest", back_populates="status_history")
     changed_by = relationship("PortalUser", foreign_keys=[changed_by_user_id])
+
+
+class CertificateConfirmationRequest(TicketRequestMixin, Base):
+    """Model for certificate confirmation requests. Single entry in certificate_details = single request, multiple entries = bulk request."""
+
+    __tablename__ = "certificate_confirmation_requests"
+
+    id = Column(Integer, primary_key=True)
+    request_number = Column(String(50), unique=True, nullable=False, index=True)  # Format: REQ-YYYYMMDD-XXXXXX or BULK-YYYYMMDD-XXXXXX
+    request_type = Column(Enum(CertificateRequestType, create_constraint=False, values_callable=lambda x: [e.value for e in x]), nullable=False, index=True)  # CONFIRMATION or VERIFICATION
+    user_id = Column(UUID(as_uuid=True), ForeignKey("portal_users.id", ondelete="SET NULL"), nullable=True, index=True)  # Logged-in user who created this request
+    contact_phone = Column(String(50), nullable=False)  # Requester's contact phone (may differ from user's account email)
+    contact_email = Column(String(255), nullable=True)  # Requester's contact email (may differ from user's account email)
+    certificate_details = Column(JSON, nullable=False)  # Array of certificate details. Single entry = single request, multiple = bulk
+    # Example structure: [{"candidate_name": "...", "candidate_index_number": "...", "school_name": "...", "programme_name": "...", "completion_year": 2020, "certificate_file_path": "...", "candidate_photograph_file_path": "...", "request_details": "..."}]
+    pdf_file_path = Column(String(512), nullable=True)  # Path to generated/uploaded PDF (the certificate confirmation document)
+    pdf_generated_at = Column(DateTime, nullable=True)
+    pdf_generated_by_user_id = Column(UUID(as_uuid=True), ForeignKey("portal_users.id", ondelete="SET NULL"), nullable=True, index=True)  # User who generated/uploaded PDF
+    # Response (admin-generated or uploaded) that the requester can view/download
+    response_file_path = Column(String(512), nullable=True)  # Path to stored response file (PDF or other)
+    response_file_name = Column(String(255), nullable=True)  # Original filename (or generated)
+    response_mime_type = Column(String(100), nullable=True)  # Content-Type for streaming
+    response_source = Column(String(20), nullable=True)  # "upload" | "template"
+    responded_at = Column(DateTime, nullable=True)
+    responded_by_user_id = Column(UUID(as_uuid=True), ForeignKey("portal_users.id", ondelete="SET NULL"), nullable=True, index=True)
+    response_notes = Column(Text, nullable=True)
+    response_payload = Column(JSON, nullable=True)  # Optional: inputs used to generate template response
+    invoice_id = Column(Integer, ForeignKey("invoices.id", ondelete="SET NULL"), nullable=True, index=True)
+    payment_id = Column(Integer, ForeignKey("payments.id", ondelete="SET NULL"), nullable=True, index=True)
+
+    invoice = relationship("Invoice", foreign_keys=[invoice_id], uselist=False)
+    payment = relationship("Payment", foreign_keys=[payment_id], uselist=False)
+    user = relationship("PortalUser", foreign_keys=[user_id])
+    pdf_generated_by = relationship("PortalUser", foreign_keys=[pdf_generated_by_user_id])
+    responded_by = relationship("PortalUser", foreign_keys=[responded_by_user_id])

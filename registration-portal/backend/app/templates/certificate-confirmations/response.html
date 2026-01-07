@@ -1,0 +1,88 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Certificate Confirmation Response</title>
+    <style>
+      body { font-family: Arial, sans-serif; font-size: 12px; color: #111; }
+      h1 { font-size: 18px; margin: 0 0 8px; }
+      .muted { color: #555; }
+      .meta { margin: 8px 0 16px; }
+      .meta-row { margin: 2px 0; }
+      table { width: 100%; border-collapse: collapse; margin-top: 10px; }
+      th, td { border: 1px solid #ddd; padding: 6px; vertical-align: top; }
+      th { background: #f5f5f5; text-align: left; }
+      .footer { margin-top: 18px; }
+      .sig { margin-top: 16px; }
+    </style>
+  </head>
+  <body>
+    <h1>Certificate {{ confirmation_request.request_type.value|upper }} Response</h1>
+    <div class="muted">Generated at: {{ generated_at }}</div>
+
+    <div class="meta">
+      <div class="meta-row"><strong>Request Number:</strong> {{ confirmation_request.request_number }}</div>
+      <div class="meta-row"><strong>Requester Email:</strong> {{ confirmation_request.contact_email or "N/A" }}</div>
+      <div class="meta-row"><strong>Requester Phone:</strong> {{ confirmation_request.contact_phone }}</div>
+      {% if invoice %}
+      <div class="meta-row"><strong>Invoice:</strong> {{ invoice.invoice_number }} ({{ invoice.status }})</div>
+      {% endif %}
+      {% if payment %}
+      <div class="meta-row"><strong>Payment:</strong> {{ payment.status.value if payment.status else payment.status }}</div>
+      {% endif %}
+    </div>
+
+    {% set letter = response_payload.get("letter") or {} %}
+    {% if letter.get("subject") %}
+      <div class="meta-row"><strong>Subject:</strong> {{ letter.get("subject") }}</div>
+    {% endif %}
+
+    {% if letter.get("body") %}
+      <div style="margin-top: 10px; white-space: pre-wrap;">{{ letter.get("body") }}</div>
+    {% elif letter.get("remarks") %}
+      <div style="margin-top: 10px; white-space: pre-wrap;">{{ letter.get("remarks") }}</div>
+    {% endif %}
+
+    <table>
+      <thead>
+        <tr>
+          <th style="width: 22%;">Candidate</th>
+          <th style="width: 14%;">Index No.</th>
+          <th style="width: 20%;">School</th>
+          <th style="width: 18%;">Programme</th>
+          <th style="width: 8%;">Year</th>
+          <th style="width: 18%;">Outcome</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for row in rows %}
+          <tr>
+            <td>{{ row.get("candidate_name") }}</td>
+            <td>{{ row.get("candidate_index_number") or "N/A" }}</td>
+            <td>{{ row.get("school_name") }}</td>
+            <td>{{ row.get("programme_name") }}</td>
+            <td>{{ row.get("completion_year") }}</td>
+            <td>
+              {% if row.get("outcome_status") %}
+                <div><strong>{{ row.get("outcome_status") }}</strong></div>
+              {% endif %}
+              {% if row.get("outcome_remarks") %}
+                <div class="muted">{{ row.get("outcome_remarks") }}</div>
+              {% endif %}
+              {% if not row.get("outcome_status") and not row.get("outcome_remarks") %}
+                <span class="muted">N/A</span>
+              {% endif %}
+            </td>
+          </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+
+    <div class="footer">
+      <div class="sig">
+        {% if letter.get("signatory_name") %}<div><strong>{{ letter.get("signatory_name") }}</strong></div>{% endif %}
+        {% if letter.get("signatory_title") %}<div class="muted">{{ letter.get("signatory_title") }}</div>{% endif %}
+      </div>
+    </div>
+  </body>
+</html>

@@ -6,6 +6,7 @@ from sqlalchemy.engine import Connection
 from sqlalchemy.ext.asyncio import async_engine_from_config
 
 from alembic import context
+import alembic_postgresql_enum
 
 from app.dependencies.database import Base
 from app.models import *  # noqa: E402, F403
