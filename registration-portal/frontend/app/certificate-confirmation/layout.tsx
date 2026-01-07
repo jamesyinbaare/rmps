@@ -6,7 +6,6 @@ import { isAuthenticated } from "@/lib/auth";
 import { getCurrentUser } from "@/lib/api";
 import type { User } from "@/types";
 import { toast } from "sonner";
-import Link from "next/link";
 import { Button } from "@/components/ui/button";
 import { Award, LogOut, Home } from "lucide-react";
 import { logout } from "@/lib/api";
@@ -101,28 +100,7 @@ export default function CertificateConfirmationLayout({
         </div>
       </header>
 
-      {/* Navigation */}
-      <nav className="border-b bg-gray-50">
-        <div className="container mx-auto px-4">
-          <div className="flex gap-1">
-            <Link href="/certificate-confirmation">
-              <Button variant="ghost" className="rounded-b-none">
-                Single Request
-              </Button>
-            </Link>
-            <Link href="/certificate-confirmation/bulk">
-              <Button variant="ghost" className="rounded-b-none">
-                Bulk Request
-              </Button>
-            </Link>
-            <Link href="/certificate-confirmation/requests">
-              <Button variant="ghost" className="rounded-b-none">
-                My Requests
-              </Button>
-            </Link>
-          </div>
-        </div>
-      </nav>
+      {/* Navigation - Removed old tabs as functionality is now consolidated in requests page */}
 
       {/* Main Content */}
       <main className="flex-1 bg-gray-50">

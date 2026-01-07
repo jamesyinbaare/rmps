@@ -1838,9 +1838,23 @@ export interface BulkCertificateConfirmationResponse {
   service_type: "standard" | "express";
   status: string;
   total_amount: number;
+  certificate_details?: Array<{
+    candidate_name: string;
+    candidate_index_number?: string;
+    school_name: string;
+    programme_name: string;
+    completion_year: number;
+    certificate_file_path?: string;
+    candidate_photograph_file_path?: string;
+    request_details?: string;
+  }>;
   pdf_file_path?: string | null;
   pdf_generated_at?: string | null;
   pdf_generated_by_user_id?: string | null;
+  response_file_path?: string | null;
+  response_file_name?: string | null;
+  response_source?: string | null;
+  responded_at?: string | null;
   invoice_id?: number | null;
   payment_id?: number | null;
   assigned_to_user_id?: string | null;
@@ -1857,7 +1871,7 @@ export interface BulkCertificateConfirmationResponse {
   completed_at?: string | null;
   created_at: string;
   updated_at: string;
-  individual_requests: CertificateConfirmationRequestResponse[];
+  individual_requests?: CertificateConfirmationRequestResponse[];
   invoice?: any;
   payment?: any;
   _type?: "bulk_confirmation";  // To distinguish from regular requests
@@ -1936,6 +1950,24 @@ export async function downloadBulkConfirmationPDFPublic(bulkRequestNumber: strin
   if (!response.ok) {
     const error = await response.json().catch(() => ({ detail: "Failed to download PDF" }));
     throw new Error(error.detail || "Failed to download PDF");
+  }
+  return response.blob();
+}
+
+export async function downloadConfirmationResponsePublic(requestNumber: string): Promise<Blob> {
+  const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL || "http://localhost:8001";
+  const token = localStorage.getItem("access_token");
+  const response = await fetch(
+    `${API_BASE_URL}/api/v1/private/certificate-confirmations/${requestNumber}/response`,
+    {
+      headers: token ? {
+        Authorization: `Bearer ${token}`,
+      } : {},
+    }
+  );
+  if (!response.ok) {
+    const error = await response.json().catch(() => ({ detail: "Failed to download response" }));
+    throw new Error(error.detail || "Failed to download response");
   }
   return response.blob();
 }
@@ -2280,4 +2312,64 @@ export async function resendPaymentLink(requestId: number): Promise<PaymentIniti
     }
   );
   return handleResponse<PaymentInitializeResponse>(response);
+}
+
+// Payment Reconciliation Types and Functions
+
+export interface PaymentReconciliationResponse {
+  message: string;
+  payment_id: number;
+  status: string;
+  paid_at?: string | null;
+  paystack_status?: string;
+}
+
+export interface PendingPayment {
+  payment_id: number;
+  paystack_reference: string;
+  amount: number;
+  currency: string;
+  status: string;
+  created_at: string;
+  request_number: string | null;
+  request_type: string | null;
+  invoice_id: number | null;
+  invoice_status: string | null;
+}
+
+export interface PendingPaymentsResponse {
+  count: number;
+  payments: PendingPayment[];
+  cutoff_time: string;
+}
+
+export async function reconcilePayment(paymentId: number): Promise<PaymentReconciliationResponse> {
+  const response = await fetchWithAuth(
+    `/api/v1/admin/payments/${paymentId}/reconcile`,
+    {
+      method: "POST",
+    }
+  );
+  return handleResponse<PaymentReconciliationResponse>(response);
+}
+
+export async function reconcilePaymentByReference(reference: string): Promise<PaymentReconciliationResponse> {
+  const params = new URLSearchParams();
+  params.append("reference", reference);
+  const response = await fetchWithAuth(
+    `/api/v1/admin/payments/reconcile-by-reference?${params.toString()}`,
+    {
+      method: "POST",
+    }
+  );
+  return handleResponse<PaymentReconciliationResponse>(response);
+}
+
+export async function listPendingPayments(hours: number = 24): Promise<PendingPaymentsResponse> {
+  const params = new URLSearchParams();
+  params.append("hours", hours.toString());
+  const response = await fetchWithAuth(
+    `/api/v1/admin/payments/pending-reconciliation?${params.toString()}`
+  );
+  return handleResponse<PendingPaymentsResponse>(response);
 }

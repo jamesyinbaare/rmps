@@ -72,6 +72,7 @@ import {
   downloadConfirmationResponse,
   downloadConfirmationRequestPDF,
   signConfirmationResponse,
+  reconcilePayment,
   type CertificateRequestResponse,
   type CertificateRequestListResponse,
   type CertificateConfirmationRequestResponse,
@@ -86,6 +87,7 @@ import { BulkActions } from "@/components/certificate-requests/BulkActions";
 import { QuickPreview } from "@/components/certificate-requests/QuickPreview";
 import { useKeyboardShortcuts } from "@/components/certificate-requests/KeyboardShortcuts";
 import { ResponseDialog } from "@/components/certificate-requests/ResponseDialog";
+import { PaymentReconciliationDialog } from "@/components/certificate-requests/PaymentReconciliationDialog";
 import {
   FileText,
   Search,
@@ -111,6 +113,7 @@ import {
   Hash,
   Upload,
   PenTool,
+  RefreshCw,
 } from "lucide-react";
 
 const STATUS_OPTIONS = [
@@ -149,6 +152,7 @@ export default function CertificateRequestsPage() {
   const [commentDialogOpen, setCommentDialogOpen] = useState(false);
   const [dispatchDialogOpen, setDispatchDialogOpen] = useState(false);
   const [cancelDialogOpen, setCancelDialogOpen] = useState(false);
+  const [reconciliationDialogOpen, setReconciliationDialogOpen] = useState(false);
   const [notes, setNotes] = useState("");
   const [comment, setComment] = useState("");
   const [trackingNumber, setTrackingNumber] = useState("");
@@ -895,6 +899,49 @@ export default function CertificateRequestsPage() {
     }
   };
 
+  const handleReconcilePayment = async (requestId: number) => {
+    try {
+      let paymentId: number | null = null;
+
+      // Check if it's a confirmation request
+      const confirmation = await getCertificateConfirmation(requestId).catch(() => null);
+      if (confirmation && (confirmation as any).payment_id) {
+        paymentId = (confirmation as any).payment_id;
+      } else {
+        // Try as certificate request
+        const request = await getCertificateRequestById(requestId).catch(() => null);
+        if (request && (request as any).payment_id) {
+          paymentId = (request as any).payment_id;
+        }
+      }
+
+      if (!paymentId) {
+        toast.error("No payment found for this request");
+        return;
+      }
+
+      const result = await reconcilePayment(paymentId);
+      toast.success(result.message || "Payment reconciled successfully");
+
+      // Refresh requests and selected request
+      loadRequests();
+      if (selectedRequest?.id === requestId) {
+        // Refresh based on request type
+        if (selectedConfirmationRequest) {
+          const updated = await getCertificateConfirmation(requestId);
+          setSelectedConfirmationRequest(updated);
+          setSelectedRequest(updated as any);
+        } else {
+          const updated = await getCertificateRequestById(requestId);
+          setSelectedRequest(updated);
+        }
+      }
+    } catch (error: any) {
+      toast.error(error.message || "Failed to reconcile payment");
+      console.error("Error reconciling payment:", error);
+    }
+  };
+
   const getStatusBadgeVariant = (status: string) => {
     switch (status.toLowerCase()) {
       case "pending_payment":
@@ -1007,9 +1054,19 @@ export default function CertificateRequestsPage() {
 
   return (
     <div className="space-y-6">
-      <div>
-        <h1 className="text-3xl font-bold">Requests</h1>
-        <p className="text-muted-foreground">Manage certificate requests and confirmation requests</p>
+      <div className="flex items-center justify-between">
+        <div>
+          <h1 className="text-3xl font-bold">Requests</h1>
+          <p className="text-muted-foreground">Manage certificate requests and confirmation requests</p>
+        </div>
+        <Button
+          onClick={() => setReconciliationDialogOpen(true)}
+          variant="outline"
+          className="flex items-center gap-2"
+        >
+          <RefreshCw className="h-4 w-4" />
+          Payment Reconciliation
+        </Button>
       </div>
 
       {/* Statistics Cards */}
@@ -1557,6 +1614,19 @@ export default function CertificateRequestsPage() {
                             Download Response PDF
                           </Button>
                         ) : null}
+                        {confirmationRequest.status === "pending_payment" && (
+                          <>
+                            {(confirmationRequest as any).payment_id && (
+                              <Button
+                                onClick={() => handleReconcilePayment(confirmationRequest.id)}
+                                variant="outline"
+                              >
+                                <RefreshCw className="mr-2 h-4 w-4" />
+                                Reconcile Payment
+                              </Button>
+                            )}
+                          </>
+                        )}
                         {confirmationRequest.status !== "pending_payment" && confirmationRequest.status !== "cancelled" && (
                           <Button
                             onClick={() => setResponseDialogOpen(true)}
@@ -1612,10 +1682,21 @@ export default function CertificateRequestsPage() {
                   return null;
                 })()}
                 {selectedRequest.status === "pending_payment" && (
-                  <Button onClick={() => handleResendPaymentLink(selectedRequest.id)} variant="default">
-                    <Mail className="mr-2 h-4 w-4" />
-                    Resend Payment Link
-                  </Button>
+                  <>
+                    <Button onClick={() => handleResendPaymentLink(selectedRequest.id)} variant="default">
+                      <Mail className="mr-2 h-4 w-4" />
+                      Resend Payment Link
+                    </Button>
+                    {(selectedRequest as any).payment_id && (
+                      <Button
+                        onClick={() => handleReconcilePayment(selectedRequest.id)}
+                        variant="outline"
+                      >
+                        <RefreshCw className="mr-2 h-4 w-4" />
+                        Reconcile Payment
+                      </Button>
+                    )}
+                  </>
                 )}
                 {selectedRequest.status === "paid" && (
                   <Button onClick={() => handleBeginProcess(selectedRequest.id)}>
@@ -1960,6 +2041,13 @@ export default function CertificateRequestsPage() {
         }}
         onDownloadPDF={handleDownloadPDF}
         currentUserId={currentUser?.id}
+      />
+
+      {/* Payment Reconciliation Dialog */}
+      <PaymentReconciliationDialog
+        open={reconciliationDialogOpen}
+        onOpenChange={setReconciliationDialogOpen}
+        onReconciled={loadRequests}
       />
     </div>
   );
