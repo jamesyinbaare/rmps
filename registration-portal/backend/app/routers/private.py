@@ -999,9 +999,6 @@ async def list_my_certificate_requests(
 
     logger = logging.getLogger(__name__)
 
-    # Log for debugging
-    logger.info(f"User {current_user.id} ({current_user.email}) requesting their certificate requests")
-
     # Filter by user_id for confirmation requests (primary method)
     # Also filter by email for backward compatibility with old requests
     user_email_lower = current_user.email.lower().strip() if current_user.email else None
@@ -1097,37 +1094,6 @@ async def list_my_certificate_requests(
         except ValueError:
             pass  # Already validated above
 
-    # Debug: Check what confirmation requests exist for this user
-    # First check the specific request number if mentioned
-    specific_request_stmt = select(
-        CertificateConfirmationRequest.id,
-        CertificateConfirmationRequest.request_number,
-        CertificateConfirmationRequest.user_id,
-        CertificateConfirmationRequest.contact_email,
-        CertificateConfirmationRequest.request_type
-    ).where(
-        CertificateConfirmationRequest.request_number == "REQ-20260106-000001"
-    ).limit(1)
-    specific_result = await session.execute(specific_request_stmt)
-    specific_row = specific_result.first()
-    if specific_row:
-        logger.info(f"Debug: Found request REQ-20260106-000001: user_id={specific_row.user_id}, contact_email={specific_row.contact_email}, matches_user_id={specific_row.user_id == current_user.id}, matches_email={specific_row.contact_email and specific_row.contact_email.lower().strip() == user_email_lower}")
-
-    # Check recent requests
-    debug_stmt = select(
-        CertificateConfirmationRequest.id,
-        CertificateConfirmationRequest.request_number,
-        CertificateConfirmationRequest.user_id,
-        CertificateConfirmationRequest.contact_email,
-        CertificateConfirmationRequest.request_type
-    ).where(
-        CertificateConfirmationRequest.request_type.in_([CertificateRequestType.CONFIRMATION, CertificateRequestType.VERIFICATION])
-    ).order_by(CertificateConfirmationRequest.created_at.desc()).limit(10)
-    debug_result = await session.execute(debug_stmt)
-    debug_rows = debug_result.all()
-    logger.info(f"Debug: Found {len(debug_rows)} total confirmation requests. Sample: {[(r.request_number, str(r.user_id), r.contact_email) for r in debug_rows[:5]]}")
-    logger.info(f"Debug: Looking for user_id={current_user.id} or email={user_email_lower}")
-
     conf_stmt = (
         select(CertificateConfirmationRequest)
         .where(and_(*conf_conditions) if conf_conditions else True)
@@ -1145,9 +1111,6 @@ async def list_my_certificate_requests(
         conf_count_stmt = select(func.count()).select_from(CertificateConfirmationRequest)
     conf_count_result = await session.execute(conf_count_stmt)
     conf_total = conf_count_result.scalar() or 0
-
-    # Log counts for debugging
-    logger.info(f"Found {cert_total} certificate requests and {conf_total} confirmation requests for user {current_user.email}")
 
     # Calculate total
     total = cert_total + conf_total

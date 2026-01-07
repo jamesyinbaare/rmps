@@ -5310,6 +5310,272 @@ async def resend_payment_link(
         )
 
 
+@router.post("/payments/{payment_id}/reconcile", status_code=status.HTTP_200_OK)
+async def reconcile_payment(
+    payment_id: int,
+    session: DBSessionDep,
+    current_user: SystemAdminDep,
+) -> dict:
+    """
+    Manually verify and reconcile a payment with Paystack (Admin).
+    This endpoint verifies the payment status with Paystack and updates the database accordingly.
+    """
+    from app.services.payment_service import verify_payment
+    from app.models import Payment, Invoice, PaymentStatus, RequestStatus
+    from app.services.certificate_service import update_request_status, get_certificate_request_by_id
+    from app.services.certificate_confirmation_service import (
+        get_certificate_confirmation_by_id,
+        update_confirmation_request_status,
+    )
+    from datetime import datetime, timezone
+    from sqlalchemy import select
+
+    # Get payment
+    payment_stmt = select(Payment).where(Payment.id == payment_id)
+    payment_result = await session.execute(payment_stmt)
+    payment = payment_result.scalar_one_or_none()
+
+    if not payment:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Payment not found",
+        )
+
+    if not payment.paystack_reference:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Payment does not have a Paystack reference",
+        )
+
+    try:
+        # Verify payment with Paystack
+        paystack_response = await verify_payment(session, payment.paystack_reference)
+
+        if not paystack_response.get("status"):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Paystack verification failed: {paystack_response.get('message', 'Unknown error')}",
+            )
+
+        paystack_data = paystack_response.get("data", {})
+        paystack_status = paystack_data.get("status")
+
+        # Update payment status based on Paystack response
+        if paystack_status == "success":
+            payment.status = PaymentStatus.SUCCESS
+            payment.paystack_response = paystack_response
+            # Use paid_at from Paystack if available, otherwise use current time
+            paid_at_str = paystack_data.get("paid_at")
+            if paid_at_str:
+                try:
+                    from dateutil import parser
+                    parsed_date = parser.parse(paid_at_str)
+                    # Convert to UTC and make it naive (database expects TIMESTAMP WITHOUT TIME ZONE)
+                    if parsed_date.tzinfo is not None:
+                        parsed_date = parsed_date.astimezone(timezone.utc).replace(tzinfo=None)
+                    payment.paid_at = parsed_date
+                except Exception:
+                    payment.paid_at = datetime.utcnow()
+            else:
+                payment.paid_at = datetime.utcnow()
+
+            # Update invoice status
+            if payment.invoice_id:
+                invoice_stmt = select(Invoice).where(Invoice.id == payment.invoice_id)
+                invoice_result = await session.execute(invoice_stmt)
+                invoice = invoice_result.scalar_one_or_none()
+                if invoice:
+                    invoice.status = "paid"
+                    invoice.paid_at = payment.paid_at
+
+            # Update request status
+            if payment.certificate_request_id:
+                request = await get_certificate_request_by_id(session, payment.certificate_request_id)
+                if request and request.status != RequestStatus.PAID:
+                    await update_request_status(
+                        session,
+                        payment.certificate_request_id,
+                        RequestStatus.PAID,
+                        user_id=str(current_user.id),
+                        notes=f"Payment reconciled by admin {current_user.email}",
+                    )
+
+            elif payment.certificate_confirmation_request_id:
+                confirmation_request = await get_certificate_confirmation_by_id(
+                    session, payment.certificate_confirmation_request_id
+                )
+                if confirmation_request and confirmation_request.status != RequestStatus.PAID:
+                    await update_confirmation_request_status(
+                        session,
+                        confirmation_request,
+                        RequestStatus.PAID,
+                        user_id=str(current_user.id),
+                        notes=f"Payment reconciled by admin {current_user.email}",
+                    )
+
+            await session.commit()
+            logger.info(f"Payment {payment_id} reconciled successfully by admin {current_user.email}")
+
+            return {
+                "message": "Payment reconciled successfully",
+                "payment_id": payment.id,
+                "status": payment.status.value,
+                "paid_at": payment.paid_at.isoformat() if payment.paid_at else None,
+            }
+
+        elif paystack_status == "failed":
+            payment.status = PaymentStatus.FAILED
+            payment.paystack_response = paystack_response
+            await session.commit()
+
+            return {
+                "message": "Payment verified as failed",
+                "payment_id": payment.id,
+                "status": payment.status.value,
+            }
+
+        else:
+            # Payment is still pending
+            return {
+                "message": f"Payment is still {paystack_status}",
+                "payment_id": payment.id,
+                "status": payment.status.value,
+                "paystack_status": paystack_status,
+            }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        await session.rollback()
+        logger.error(f"Error reconciling payment {payment_id}: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to reconcile payment: {str(e)}",
+        )
+
+
+@router.post("/payments/reconcile-by-reference", status_code=status.HTTP_200_OK)
+async def reconcile_payment_by_reference(
+    reference: str = Query(..., description="Paystack transaction reference or invoice number"),
+    session: DBSessionDep = None,
+    current_user: SystemAdminDep = None,
+) -> dict:
+    """
+    Reconcile a payment by Paystack reference or invoice number (Admin).
+    Finds the payment by reference or invoice number and verifies it with Paystack.
+    """
+    from app.models import Payment, Invoice
+    from sqlalchemy import select, or_
+
+    # Check if it's an invoice number (starts with INV-)
+    if reference.upper().startswith("INV-"):
+        # Find invoice by invoice number
+        invoice_stmt = select(Invoice).where(Invoice.invoice_number == reference.upper())
+        invoice_result = await session.execute(invoice_stmt)
+        invoice = invoice_result.scalar_one_or_none()
+
+        if not invoice:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Invoice not found for invoice number: {reference}",
+            )
+
+        # Find payment by invoice_id
+        payment_stmt = select(Payment).where(Payment.invoice_id == invoice.id)
+        payment_result = await session.execute(payment_stmt)
+        payment = payment_result.scalar_one_or_none()
+
+        if not payment:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Payment not found for invoice number: {reference}",
+            )
+    else:
+        # Find payment by Paystack reference
+        payment_stmt = select(Payment).where(Payment.paystack_reference == reference)
+        payment_result = await session.execute(payment_stmt)
+        payment = payment_result.scalar_one_or_none()
+
+        if not payment:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Payment not found for Paystack reference: {reference}",
+            )
+
+    # Call the reconcile endpoint
+    return await reconcile_payment(payment.id, session, current_user)
+
+
+@router.get("/payments/pending-reconciliation", status_code=status.HTTP_200_OK)
+async def list_pending_payments(
+    hours: int = Query(24, ge=1, le=168, description="Hours since payment creation to consider for reconciliation"),
+    session: DBSessionDep = None,
+    current_user: SystemAdminDep = None,
+) -> dict:
+    """
+    List payments that might need reconciliation (Admin).
+    Returns payments that are still pending but were created more than X hours ago.
+    """
+    from app.models import Payment, PaymentStatus, Invoice, CertificateRequest, CertificateConfirmationRequest
+    from sqlalchemy import select, and_
+    from datetime import datetime, timedelta
+    from sqlalchemy.orm import selectinload
+
+    cutoff_time = datetime.utcnow() - timedelta(hours=hours)
+
+    # Find pending payments older than cutoff
+    stmt = (
+        select(Payment)
+        .where(
+            and_(
+                Payment.status == PaymentStatus.PENDING,
+                Payment.created_at < cutoff_time,
+                Payment.paystack_reference.isnot(None),
+            )
+        )
+        .options(
+            selectinload(Payment.invoice),
+            selectinload(Payment.certificate_request),
+            selectinload(Payment.certificate_confirmation_request),
+        )
+        .order_by(Payment.created_at.desc())
+        .limit(100)
+    )
+
+    result = await session.execute(stmt)
+    payments = result.scalars().all()
+
+    payment_list = []
+    for payment in payments:
+        request_number = None
+        request_type = None
+        if payment.certificate_request_id and payment.certificate_request:
+            request_number = payment.certificate_request.request_number
+            request_type = "certificate_request"
+        elif payment.certificate_confirmation_request_id and payment.certificate_confirmation_request:
+            request_number = payment.certificate_confirmation_request.request_number
+            request_type = "certificate_confirmation_request"
+
+        payment_list.append({
+            "payment_id": payment.id,
+            "paystack_reference": payment.paystack_reference,
+            "amount": float(payment.amount),
+            "currency": payment.currency,
+            "status": payment.status.value,
+            "created_at": payment.created_at.isoformat(),
+            "request_number": request_number,
+            "request_type": request_type,
+            "invoice_id": payment.invoice_id,
+            "invoice_status": payment.invoice.status if payment.invoice else None,
+        })
+
+    return {
+        "count": len(payment_list),
+        "payments": payment_list,
+        "cutoff_time": cutoff_time.isoformat(),
+    }
+
+
 # Reporting Endpoints
 
 @router.get("/certificate-requests/reports/summary")

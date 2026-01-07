@@ -1558,55 +1558,61 @@ async def initialize_payment(
     # Check if it's a confirmation request (starts with BULK- or REQ-)
     if request_number.upper().startswith(("BULK-", "REQ-")):
         confirmation_request = await get_certificate_confirmation_by_number(session, request_number)
-        if confirmation_request:
-            # Get invoice (don't access relationship directly to avoid lazy loading issues)
-            invoice = None
-            if confirmation_request.invoice_id:
-                invoice_stmt = select(Invoice).where(Invoice.id == confirmation_request.invoice_id)
-                invoice_result = await session.execute(invoice_stmt)
-                invoice = invoice_result.scalar_one_or_none()
+        if not confirmation_request:
+            # If not found, raise error instead of continuing to check regular requests
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Certificate confirmation request not found",
+            )
 
-            if not invoice:
-                raise HTTPException(
-                    status_code=status.HTTP_400_BAD_REQUEST,
-                    detail="Invoice not found for this confirmation request",
-                )
+        # Get invoice (don't access relationship directly to avoid lazy loading issues)
+        invoice = None
+        if confirmation_request.invoice_id:
+            invoice_stmt = select(Invoice).where(Invoice.id == confirmation_request.invoice_id)
+            invoice_result = await session.execute(invoice_stmt)
+            invoice = invoice_result.scalar_one_or_none()
 
-            if invoice.status == "paid":
-                raise HTTPException(
-                    status_code=status.HTTP_400_BAD_REQUEST,
-                    detail="Invoice is already paid",
-                )
+        if not invoice:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Invoice not found for this confirmation request",
+            )
 
-            try:
-                result = await init_payment_service(
-                    session,
-                    invoice,
-                    Decimal(str(invoice.amount)),
-                    email=confirmation_request.contact_email,
-                    metadata={
-                        "request_number": confirmation_request.request_number,
-                        "confirmation_request_id": confirmation_request.id,
-                    },
-                )
-                await session.flush()
+        if invoice.status == "paid":
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Invoice is already paid",
+            )
 
-                # Update confirmation request with payment_id from result
-                confirmation_request.payment_id = result["payment_id"]
-                await session.commit()
+        try:
+            result = await init_payment_service(
+                session,
+                invoice,
+                Decimal(str(invoice.amount)),
+                email=confirmation_request.contact_email,
+                metadata={
+                    "request_number": confirmation_request.request_number,
+                    "confirmation_request_id": confirmation_request.id,
+                },
+            )
+            await session.flush()
 
-                return PaymentInitializeResponse(**result).model_dump()
+            # Update confirmation request with payment_id from result
+            confirmation_request.payment_id = result["payment_id"]
+            await session.commit()
 
-            except ValueError as e:
-                await session.rollback()
-                raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
-            except Exception as e:
-                await session.rollback()
-                logger.error(f"Error initializing payment: {e}", exc_info=True)
-                raise HTTPException(
-                    status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                    detail="Failed to initialize payment",
-                )
+            return PaymentInitializeResponse(**result).model_dump()
+
+        except ValueError as e:
+            await session.rollback()
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+        except Exception as e:
+            await session.rollback()
+            logger.error(f"Error initializing payment: {e}", exc_info=True)
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="Failed to initialize payment",
+            )
 
     # Regular certificate request
     request = await get_certificate_request_by_number(session, request_number)
