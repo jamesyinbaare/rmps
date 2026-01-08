@@ -48,14 +48,14 @@ async def generate_invoice_number(session: AsyncSession) -> str:
 
 def calculate_invoice_amount(
     request_type: CertificateRequestType,
-    delivery_method: DeliveryMethod,
+    delivery_method: DeliveryMethod | None,
     service_type: ServiceType = ServiceType.STANDARD,
 ) -> Decimal:
     """
     Calculate invoice amount based on request type, delivery method, and service type.
 
     Args:
-        request_type: Certificate or Attestation
+        request_type: Certificate, Attestation, Confirmation, or Verification
         delivery_method: Pickup or Courier
         service_type: Standard or Express
 
@@ -67,13 +67,20 @@ def calculate_invoice_amount(
         base_price = Decimal(str(settings.certificate_request_price))
     elif request_type == CertificateRequestType.ATTESTATION:
         base_price = Decimal(str(settings.attestation_request_price))
+    elif request_type == CertificateRequestType.CONFIRMATION:
+        # Use confirmation price if available, otherwise use attestation price
+        base_price = Decimal(str(getattr(settings, 'confirmation_request_price', settings.attestation_request_price)))
+    elif request_type == CertificateRequestType.VERIFICATION:
+        # Use verification price if available, otherwise use attestation price
+        base_price = Decimal(str(getattr(settings, 'verification_request_price', settings.attestation_request_price)))
 
     # Apply express service multiplier if express
     if service_type == ServiceType.EXPRESS:
         base_price = base_price * Decimal(str(settings.express_service_multiplier))
 
     courier_fee = Decimal(0)
-    if delivery_method == DeliveryMethod.COURIER:
+    # For confirmation/verification, delivery_method may be None (no courier fee)
+    if delivery_method and delivery_method == DeliveryMethod.COURIER:
         courier_fee = Decimal(str(settings.courier_fee))
 
     return base_price + courier_fee

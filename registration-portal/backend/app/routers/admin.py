@@ -6,6 +6,7 @@ from uuid import UUID
 
 from fastapi import APIRouter, HTTPException, Query, status, UploadFile, File, Form, BackgroundTasks, Body
 from fastapi.responses import StreamingResponse
+from pydantic import BaseModel, Field
 from sqlalchemy import select, func, delete, insert, update, cast, String, type_coerce
 from sqlalchemy.orm import selectinload
 
@@ -2950,30 +2951,77 @@ async def list_certificate_requests(
     session: DBSessionDep,
     current_user: SystemAdminDep,
     status_filter: str | None = Query(None, description="Filter by status"),
-    request_type: str | None = Query(None, description="Filter by request type (certificate/attestation)"),
+    status_min: str | None = Query(None, description="Minimum workflow status (includes this status and all later workflow statuses)"),
+    request_type: str | None = Query(None, description="Filter by request type (certificate/attestation/confirmation/verification)"),
     assigned_to: str | None = Query(None, description="Filter by assigned user ID"),
     priority: str | None = Query(None, description="Filter by priority (low/medium/high/urgent)"),
     service_type: str | None = Query(None, description="Filter by service type (standard/express)"),
+    view: str | None = Query(None, description="List view: active|completed|cancelled|all"),
+    include_bulk_confirmations: bool = Query(False, description="Include bulk confirmation requests in results"),
     page: int = Query(1, ge=1),
     page_size: int = Query(20, ge=1, le=100),
 ) -> dict:
-    """List certificate requests with filters (System Admin)."""
-    from app.schemas.certificate import CertificateRequestListResponse, CertificateRequestResponse
-    from app.models import CertificateRequest, RequestStatus, CertificateRequestType, TicketPriority, ServiceType
-    from sqlalchemy import and_
+    """
+    List certificate requests with filters (System Admin).
+
+    Returns Certificate/Attestation requests and confirmation requests.
+    When filtering by confirmation/verification types, confirmation requests are automatically included.
+    """
+    from app.schemas.certificate import (
+        CertificateRequestResponse,
+        CertificateConfirmationRequestResponse,
+        InvoiceResponse,
+        PaymentResponse,
+    )
+    from app.models import (
+        CertificateRequest,
+        CertificateConfirmationRequest,
+        RequestStatus,
+        CertificateRequestType,
+        TicketPriority,
+        ServiceType,
+    )
+    from sqlalchemy import and_, or_, case
     from uuid import UUID
 
+    status_rank: dict[str, int] = {
+        RequestStatus.CANCELLED.value: -1,
+        RequestStatus.PENDING_PAYMENT.value: 1,
+        RequestStatus.PAID.value: 2,
+        RequestStatus.IN_PROCESS.value: 3,
+        RequestStatus.READY_FOR_DISPATCH.value: 4,
+        RequestStatus.DISPATCHED.value: 5,
+        RequestStatus.RECEIVED.value: 6,
+        RequestStatus.COMPLETED.value: 7,
+    }
+
+    # Determine if we should include confirmation requests
+    should_include_confirmations = include_bulk_confirmations  # Parameter name kept for backward compatibility
+    if request_type:
+        type_lower = request_type.lower().strip()
+        if type_lower in ("confirmation", "verification"):
+            should_include_confirmations = True
+
+    # Query certificate requests (excluding confirmation/verification if showing bulk)
     stmt = select(CertificateRequest).options(
         selectinload(CertificateRequest.examination_center),
         selectinload(CertificateRequest.assigned_to),
     )
 
     conditions = []
+
+    # If including confirmation requests and filtering by confirmation/verification, exclude them from certificate requests
+    if should_include_confirmations and request_type:
+        type_lower = request_type.lower().strip()
+        if type_lower in ("confirmation", "verification"):
+            # Exclude confirmation/verification from CertificateRequest (they're in CertificateConfirmationRequest)
+            conditions.append(
+                ~cast(CertificateRequest.request_type, String).in_(["confirmation", "verification"])
+            )
+
+    # Exact status filter
     if status_filter and status_filter.strip():
-        # RequestStatus enum values are lowercase (e.g., "paid", "pending_payment")
-        # Database column is VARCHAR, so compare string directly
         status_lower = status_filter.lower().strip()
-        # Validate the status value
         valid_statuses = [s.value for s in RequestStatus]
         if status_lower not in valid_statuses:
             valid_values = ', '.join(valid_statuses)
@@ -2981,15 +3029,26 @@ async def list_certificate_requests(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail=f"Invalid status filter: {status_filter}. Valid values: {valid_values}",
             )
-        # Database column is VARCHAR, SQLAlchemy stores enum.value (lowercase string)
-        # Use cast to convert enum to text for comparison
         conditions.append(cast(CertificateRequest.status, String).ilike(status_lower))
 
+    # Minimum workflow status filter (paid => paid + above)
+    if status_min and status_min.strip():
+        status_min_lower = status_min.lower().strip()
+        if status_min_lower not in status_rank:
+            valid_values = ", ".join(status_rank.keys())
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Invalid status_min: {status_min}. Valid values: {valid_values}",
+            )
+        if status_min_lower == RequestStatus.CANCELLED.value:
+            conditions.append(cast(CertificateRequest.status, String).ilike(RequestStatus.CANCELLED.value))
+        else:
+            threshold = status_rank[status_min_lower]
+            allowed_statuses = [s for s, r in status_rank.items() if r >= threshold]
+            conditions.append(cast(CertificateRequest.status, String).in_(allowed_statuses))
+
     if request_type and request_type.strip():
-        # CertificateRequestType enum values are lowercase (e.g., "certificate", "attestation")
-        # Database column is VARCHAR, so compare string directly
         type_lower = request_type.lower().strip()
-        # Validate the request_type value
         valid_types = [t.value for t in CertificateRequestType]
         if type_lower not in valid_types:
             valid_values = ', '.join(valid_types)
@@ -2997,9 +3056,9 @@ async def list_certificate_requests(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail=f"Invalid request_type filter: {request_type}. Valid values: {valid_values}",
             )
-        # Database column is VARCHAR, SQLAlchemy stores enum.value (lowercase string)
-        # Use cast to convert enum to text for comparison
-        conditions.append(cast(CertificateRequest.request_type, String).ilike(type_lower))
+        # Only apply filter if not filtering for confirmation/verification (those are in bulk table)
+        if type_lower not in ("confirmation", "verification"):
+            conditions.append(cast(CertificateRequest.request_type, String).ilike(type_lower))
 
     if assigned_to and assigned_to.strip():
         try:
@@ -3033,78 +3092,369 @@ async def list_certificate_requests(
             )
         conditions.append(cast(CertificateRequest.service_type, String).ilike(service_type_lower))
 
+    # Apply view filter for certificate requests
+    if view:
+        view_lower = view.strip().lower()
+        if view_lower == "active":
+            conditions.append(~cast(CertificateRequest.status, String).in_([RequestStatus.COMPLETED.value, RequestStatus.CANCELLED.value]))
+        elif view_lower == "completed":
+            conditions.append(cast(CertificateRequest.status, String).ilike(RequestStatus.COMPLETED.value))
+        elif view_lower == "cancelled":
+            conditions.append(cast(CertificateRequest.status, String).ilike(RequestStatus.CANCELLED.value))
+        elif view_lower == "my_tickets":
+            conditions.append(CertificateRequest.assigned_to_user_id == current_user.id)
+        elif view_lower == "all":
+            pass
+        else:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid view. Must be: active, completed, cancelled, my_tickets, or all")
+
     if conditions:
         stmt = stmt.where(and_(*conditions))
 
-    # Get total count
+    # Get total count for certificate requests
     count_stmt = select(func.count(CertificateRequest.id))
     if conditions:
         count_stmt = count_stmt.where(and_(*conditions))
     total_result = await session.execute(count_stmt)
-    total = total_result.scalar() or 0
+    cert_request_total = total_result.scalar() or 0
 
-    # Paginate
-    stmt = stmt.order_by(CertificateRequest.created_at.desc())
-    stmt = stmt.offset((page - 1) * page_size).limit(page_size)
+    rank_case_cert = case(
+        *[(cast(CertificateRequest.status, String) == s, r) for s, r in status_rank.items()],
+        else_=999,
+    )
 
+    # If including confirmation requests, also query and merge them
+    cert_requests: list[CertificateRequest] = []
+    conf_requests: list[CertificateConfirmationRequest] = []
+
+    prefetch = page * page_size
+    stmt = stmt.order_by(rank_case_cert.desc(), CertificateRequest.created_at.desc()).limit(prefetch)
     result = await session.execute(stmt)
-    requests = list(result.scalars().all())
+    cert_requests = list(result.scalars().all())
 
-    items = []
-    for req in requests:
-        item = CertificateRequestResponse.model_validate(req)
-        if req.examination_center:
-            item.examination_center_name = req.examination_center.name
-        items.append(item.model_dump())
+    if should_include_confirmations:
+        # Query confirmation requests (unified model)
+        conf_stmt = select(CertificateConfirmationRequest).options(
+            selectinload(CertificateConfirmationRequest.invoice),
+            selectinload(CertificateConfirmationRequest.payment),
+            selectinload(CertificateConfirmationRequest.assigned_to),
+        )
+
+        conf_conditions = []
+
+        # Filter by request type if specified
+        if request_type:
+            type_lower = request_type.lower().strip()
+            if type_lower in ("confirmation", "verification"):
+                conf_conditions.append(cast(CertificateConfirmationRequest.request_type, String).ilike(type_lower))
+
+        # Apply same filters as certificate requests
+        if status_filter and status_filter.strip():
+            status_lower = status_filter.lower().strip()
+            conf_conditions.append(cast(CertificateConfirmationRequest.status, String).ilike(status_lower))
+
+        if status_min and status_min.strip():
+            status_min_lower = status_min.lower().strip()
+            if status_min_lower not in status_rank:
+                pass
+            elif status_min_lower == RequestStatus.CANCELLED.value:
+                conf_conditions.append(cast(CertificateConfirmationRequest.status, String).ilike(RequestStatus.CANCELLED.value))
+            else:
+                threshold = status_rank[status_min_lower]
+                allowed_statuses = [s for s, r in status_rank.items() if r >= threshold]
+                conf_conditions.append(cast(CertificateConfirmationRequest.status, String).in_(allowed_statuses))
+
+        if assigned_to and assigned_to.strip():
+            try:
+                assigned_to_uuid = UUID(assigned_to.strip())
+                conf_conditions.append(CertificateConfirmationRequest.assigned_to_user_id == assigned_to_uuid)
+            except ValueError:
+                pass
+
+        if priority and priority.strip():
+            priority_lower = priority.lower().strip()
+            conf_conditions.append(cast(CertificateConfirmationRequest.priority, String).ilike(priority_lower))
+
+        if service_type and service_type.strip():
+            service_type_lower = service_type.lower().strip()
+            conf_conditions.append(cast(CertificateConfirmationRequest.service_type, String).ilike(service_type_lower))
+
+        # Apply view filter for confirmation requests
+        if view:
+            view_lower = view.strip().lower()
+            if view_lower == "active":
+                conf_conditions.append(~cast(CertificateConfirmationRequest.status, String).in_([RequestStatus.COMPLETED.value, RequestStatus.CANCELLED.value]))
+            elif view_lower == "completed":
+                conf_conditions.append(cast(CertificateConfirmationRequest.status, String).ilike(RequestStatus.COMPLETED.value))
+            elif view_lower == "cancelled":
+                conf_conditions.append(cast(CertificateConfirmationRequest.status, String).ilike(RequestStatus.CANCELLED.value))
+            elif view_lower == "my_tickets":
+                conf_conditions.append(CertificateConfirmationRequest.assigned_to_user_id == current_user.id)
+            elif view_lower == "all":
+                pass
+
+        if conf_conditions:
+            conf_stmt = conf_stmt.where(and_(*conf_conditions))
+
+        # Get confirmation request count
+        conf_count_stmt = select(func.count(CertificateConfirmationRequest.id))
+        if conf_conditions:
+            conf_count_stmt = conf_count_stmt.where(and_(*conf_conditions))
+        conf_total_result = await session.execute(conf_count_stmt)
+        conf_total = conf_total_result.scalar() or 0
+
+        rank_case_conf = case(
+            *[(cast(CertificateConfirmationRequest.status, String) == s, r) for s, r in status_rank.items()],
+            else_=999,
+        )
+        conf_stmt = conf_stmt.order_by(rank_case_conf.desc(), CertificateConfirmationRequest.created_at.desc()).limit(prefetch)
+        conf_result = await session.execute(conf_stmt)
+        conf_requests = list(conf_result.scalars().all())
+
+        total = cert_request_total + conf_total
+    else:
+        total = cert_request_total
+
+    # Global merge ordering (rank desc, created_at desc) across both models
+    def _rank_of(status_val: str) -> int:
+        return status_rank.get(status_val, 999)
+
+    merged: list[tuple[int, datetime, str, object]] = []
+    for r in cert_requests:
+        merged.append((_rank_of(r.status.value), r.created_at, "certificate_request", r))
+    for r in conf_requests:
+        merged.append((_rank_of(r.status.value), r.created_at, "certificate_confirmation_request", r))
+
+    merged.sort(key=lambda x: (x[0], x[1]), reverse=True)
+    start = (page - 1) * page_size
+    end = start + page_size
+    page_slice = merged[start:end]
+
+    items: list[dict] = []
+    for _, __, ticket_type_val, obj in page_slice:
+        if ticket_type_val == "certificate_request":
+            req = obj  # type: ignore[assignment]
+            item = CertificateRequestResponse.model_validate(req)
+            if getattr(req, "examination_center", None):
+                item.examination_center_name = req.examination_center.name
+            items.append(item.model_dump())
+        else:
+            conf_req = obj  # type: ignore[assignment]
+            conf_item = CertificateConfirmationRequestResponse.model_validate(conf_req)
+            conf_dict = conf_item.model_dump()
+            is_bulk = (
+                len(conf_req.certificate_details) > 1
+                if isinstance(conf_req.certificate_details, list)
+                else False
+            )
+            conf_dict["_type"] = "bulk_confirmation" if is_bulk else "certificate_confirmation"
+            items.append(conf_dict)
 
     total_pages = (total + page_size - 1) // page_size if total > 0 else 0
 
-    return CertificateRequestListResponse(
-        items=items,
-        total=total,
-        page=page,
-        page_size=page_size,
-        total_pages=total_pages,
-    ).model_dump()
+    return {
+        "items": items,
+        "total": total,
+        "page": page,
+        "page_size": page_size,
+        "total_pages": total_pages,
+    }
 
 
 @router.get("/certificate-requests/statistics", status_code=status.HTTP_200_OK)
 async def get_certificate_request_statistics(
     session: DBSessionDep,
     current_user: SystemAdminDep,
+    period: str | None = Query(None, description="Period: last_week, last_month, last_year, or custom"),
+    start_date: str | None = Query(None, description="Start date (YYYY-MM-DD) for custom range"),
+    end_date: str | None = Query(None, description="End date (YYYY-MM-DD) for custom range"),
 ) -> dict:
-    """Get statistics about certificate requests (System Admin)."""
-    from app.models import CertificateRequest, RequestStatus, CertificateRequestType
+    """Get statistics about certificate requests (System Admin).
+
+    Returns:
+        - total: Total number of requests (both CertificateRequest and CertificateConfirmationRequest)
+        - pending_payment: Number of requests with status pending_payment
+        - completed: Number of requests with status completed
+    """
+    from app.models import CertificateRequest, CertificateConfirmationRequest, RequestStatus
     from sqlalchemy import func, cast, String
+    from datetime import datetime, timedelta
 
-    # Get total count
-    total_stmt = select(func.count(CertificateRequest.id))
-    total_result = await session.execute(total_stmt)
-    total = total_result.scalar() or 0
+    # Calculate date range based on period if provided
+    start_dt = None
+    end_dt = None
+    if period:
+        today = datetime.utcnow().date()
+        if period == "last_week":
+            start_dt = datetime.combine(today - timedelta(days=7), datetime.min.time())
+            end_dt = datetime.utcnow()
+        elif period == "last_month":
+            start_dt = datetime.combine(today - timedelta(days=30), datetime.min.time())
+            end_dt = datetime.utcnow()
+        elif period == "last_year":
+            start_dt = datetime.combine(today - timedelta(days=365), datetime.min.time())
+            end_dt = datetime.utcnow()
+        elif period == "custom":
+            if start_date:
+                try:
+                    start_dt = datetime.fromisoformat(start_date)
+                except ValueError:
+                    raise HTTPException(
+                        status_code=status.HTTP_400_BAD_REQUEST,
+                        detail="Invalid start_date format. Use YYYY-MM-DD",
+                    )
+            if end_date:
+                try:
+                    end_dt = datetime.fromisoformat(end_date)
+                except ValueError:
+                    raise HTTPException(
+                        status_code=status.HTTP_400_BAD_REQUEST,
+                        detail="Invalid end_date format. Use YYYY-MM-DD",
+                    )
+        else:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Invalid period. Must be: last_week, last_month, last_year, or custom",
+            )
+    else:
+        # If custom dates provided without period, use them
+        if start_date:
+            try:
+                start_dt = datetime.fromisoformat(start_date)
+            except ValueError:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="Invalid start_date format. Use YYYY-MM-DD",
+                )
+        if end_date:
+            try:
+                end_dt = datetime.fromisoformat(end_date)
+            except ValueError:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="Invalid end_date format. Use YYYY-MM-DD",
+                )
 
-    # Get counts by status
-    status_counts = {}
-    for status in RequestStatus:
-        count_stmt = select(func.count(CertificateRequest.id)).where(
-            cast(CertificateRequest.status, String).ilike(status.value)
-        )
-        count_result = await session.execute(count_stmt)
-        status_counts[status.value] = count_result.scalar() or 0
+    # Build date filter conditions
+    date_conditions_cert = []
+    date_conditions_conf = []
+    if start_dt:
+        date_conditions_cert.append(CertificateRequest.created_at >= start_dt)
+        date_conditions_conf.append(CertificateConfirmationRequest.created_at >= start_dt)
+    if end_dt:
+        date_conditions_cert.append(CertificateRequest.created_at <= end_dt)
+        date_conditions_conf.append(CertificateConfirmationRequest.created_at <= end_dt)
 
-    # Get counts by request type
-    type_counts = {}
-    for req_type in CertificateRequestType:
-        count_stmt = select(func.count(CertificateRequest.id)).where(
-            cast(CertificateRequest.request_type, String).ilike(req_type.value)
-        )
-        count_result = await session.execute(count_stmt)
-        type_counts[req_type.value] = count_result.scalar() or 0
+    # Get total count (both CertificateRequest and CertificateConfirmationRequest)
+    total_cert_stmt = select(func.count(CertificateRequest.id))
+    if date_conditions_cert:
+        total_cert_stmt = total_cert_stmt.where(and_(*date_conditions_cert))
+    total_cert_result = await session.execute(total_cert_stmt)
+    total_cert = total_cert_result.scalar() or 0
+
+    total_conf_stmt = select(func.count(CertificateConfirmationRequest.id))
+    if date_conditions_conf:
+        total_conf_stmt = total_conf_stmt.where(and_(*date_conditions_conf))
+    total_conf_result = await session.execute(total_conf_stmt)
+    total_conf = total_conf_result.scalar() or 0
+
+    total = total_cert + total_conf
+
+    # Get pending_payment count
+    pending_cert_stmt = select(func.count(CertificateRequest.id)).where(
+        cast(CertificateRequest.status, String).ilike(RequestStatus.PENDING_PAYMENT.value)
+    )
+    if date_conditions_cert:
+        pending_cert_stmt = pending_cert_stmt.where(and_(*date_conditions_cert))
+    pending_cert_result = await session.execute(pending_cert_stmt)
+    pending_cert = pending_cert_result.scalar() or 0
+
+    pending_conf_stmt = select(func.count(CertificateConfirmationRequest.id)).where(
+        cast(CertificateConfirmationRequest.status, String).ilike(RequestStatus.PENDING_PAYMENT.value)
+    )
+    if date_conditions_conf:
+        pending_conf_stmt = pending_conf_stmt.where(and_(*date_conditions_conf))
+    pending_conf_result = await session.execute(pending_conf_stmt)
+    pending_conf = pending_conf_result.scalar() or 0
+
+    pending_payment = pending_cert + pending_conf
+
+    # Get completed count
+    completed_cert_stmt = select(func.count(CertificateRequest.id)).where(
+        cast(CertificateRequest.status, String).ilike(RequestStatus.COMPLETED.value)
+    )
+    if date_conditions_cert:
+        completed_cert_stmt = completed_cert_stmt.where(and_(*date_conditions_cert))
+    completed_cert_result = await session.execute(completed_cert_stmt)
+    completed_cert = completed_cert_result.scalar() or 0
+
+    completed_conf_stmt = select(func.count(CertificateConfirmationRequest.id)).where(
+        cast(CertificateConfirmationRequest.status, String).ilike(RequestStatus.COMPLETED.value)
+    )
+    if date_conditions_conf:
+        completed_conf_stmt = completed_conf_stmt.where(and_(*date_conditions_conf))
+    completed_conf_result = await session.execute(completed_conf_stmt)
+    completed_conf = completed_conf_result.scalar() or 0
+
+    completed = completed_cert + completed_conf
 
     return {
         "total": total,
-        "by_status": status_counts,
-        "by_type": type_counts,
+        "pending_payment": pending_payment,
+        "completed": completed,
     }
+
+
+@router.get("/certificate-confirmations/{confirmation_id}", status_code=status.HTTP_200_OK)
+async def get_certificate_confirmation(
+    confirmation_id: int,
+    session: DBSessionDep,
+    current_user: SystemAdminDep,
+) -> dict:
+    """Get certificate confirmation request with all certificate details."""
+    from app.services.certificate_confirmation_service import get_certificate_confirmation_by_id
+    from app.schemas.certificate import CertificateConfirmationRequestResponse, InvoiceResponse, PaymentResponse
+    from app.models import Invoice, Payment
+
+    confirmation_request = await get_certificate_confirmation_by_id(session, confirmation_id)
+    if not confirmation_request:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Certificate confirmation request not found",
+        )
+
+    # Load relationships
+    from app.models import CertificateConfirmationRequest
+    stmt = select(CertificateConfirmationRequest).where(
+        CertificateConfirmationRequest.id == confirmation_id
+    ).options(
+        selectinload(CertificateConfirmationRequest.invoice),
+        selectinload(CertificateConfirmationRequest.payment),
+        selectinload(CertificateConfirmationRequest.assigned_to),
+        selectinload(CertificateConfirmationRequest.processed_by),
+        selectinload(CertificateConfirmationRequest.dispatched_by),
+    )
+    result = await session.execute(stmt)
+    confirmation_request = result.scalar_one_or_none()
+
+    if not confirmation_request:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Certificate confirmation request not found",
+        )
+
+    # Build response
+    response = CertificateConfirmationRequestResponse.model_validate(confirmation_request)
+
+    # Add invoice if exists
+    if confirmation_request.invoice:
+        response.invoice = InvoiceResponse.model_validate(confirmation_request.invoice)
+
+    # Add payment if exists
+    if confirmation_request.payment:
+        response.payment = PaymentResponse.model_validate(confirmation_request.payment)
+
+    return response.model_dump()
 
 
 @router.get("/certificate-requests/{request_id}", status_code=status.HTTP_200_OK)
@@ -3191,6 +3541,21 @@ async def download_certificate_request_pdf(
     except Exception as e:
         logger.warning(f"Could not retrieve ID scan for request {request_id}: {e}")
 
+    # Retrieve certificate and candidate photo files if available (for confirmation/verification)
+    certificate_data = None
+    candidate_photo_data = None
+    try:
+        if request.certificate_file_path:
+            certificate_data = await file_storage.retrieve(request.certificate_file_path)
+    except Exception as e:
+        logger.warning(f"Could not retrieve certificate scan for request {request_id}: {e}")
+
+    try:
+        if request.candidate_photograph_file_path:
+            candidate_photo_data = await file_storage.retrieve(request.candidate_photograph_file_path)
+    except Exception as e:
+        logger.warning(f"Could not retrieve candidate photo for request {request_id}: {e}")
+
     # Generate PDF
     try:
         pdf_bytes = await generate_certificate_request_pdf(
@@ -3199,6 +3564,8 @@ async def download_certificate_request_pdf(
             payment,
             photo_data=photo_data,
             id_scan_data=id_scan_data,
+            certificate_data=certificate_data,
+            candidate_photo_data=candidate_photo_data,
         )
     except Exception as e:
         logger.error(f"Failed to generate PDF: {e}", exc_info=True)
@@ -3215,17 +3582,796 @@ async def download_certificate_request_pdf(
     )
 
 
+# Bulk Certificate Confirmation PDF Endpoints
+
+@router.get("/certificate-confirmations/{confirmation_id}/details.pdf", status_code=status.HTTP_200_OK)
+async def download_confirmation_details_pdf(
+    confirmation_id: int,
+    session: DBSessionDep,
+    current_user: SystemAdminDep,
+) -> StreamingResponse:
+    """Download certificate confirmation/verification request details as a PDF (generated on demand; not saved)."""
+    from app.services.certificate_confirmation_service import get_certificate_confirmation_by_id
+    from app.services.bulk_certificate_confirmation_pdf_service import generate_bulk_certificate_confirmation_pdf
+    from app.models import Invoice, Payment, CertificateConfirmationRequest
+    from sqlalchemy import select
+    from sqlalchemy.orm import selectinload
+
+    confirmation_request = await get_certificate_confirmation_by_id(session, confirmation_id)
+    if not confirmation_request:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Certificate confirmation request not found",
+        )
+
+    # Load relationships
+    stmt = (
+        select(CertificateConfirmationRequest)
+        .where(CertificateConfirmationRequest.id == confirmation_id)
+        .options(
+            selectinload(CertificateConfirmationRequest.invoice),
+            selectinload(CertificateConfirmationRequest.payment),
+        )
+    )
+    result = await session.execute(stmt)
+    confirmation_request = result.scalar_one_or_none()
+    if not confirmation_request:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Certificate confirmation request not found",
+        )
+
+    invoice = confirmation_request.invoice
+    if not invoice and confirmation_request.invoice_id:
+        invoice_result = await session.execute(select(Invoice).where(Invoice.id == confirmation_request.invoice_id))
+        invoice = invoice_result.scalar_one_or_none()
+
+    payment = confirmation_request.payment
+    if not payment and confirmation_request.payment_id:
+        payment_result = await session.execute(select(Payment).where(Payment.id == confirmation_request.payment_id))
+        payment = payment_result.scalar_one_or_none()
+
+    certificate_details = (
+        confirmation_request.certificate_details
+        if isinstance(confirmation_request.certificate_details, list)
+        else []
+    )
+
+    try:
+        pdf_bytes = await generate_bulk_certificate_confirmation_pdf(
+            confirmation_request,
+            invoice=invoice,
+            payment=payment,
+            certificate_details=certificate_details,
+        )
+    except Exception as e:
+        logger.error(f"Failed to generate confirmation details PDF: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to generate PDF document",
+        )
+
+    filename = f"confirmation_details_{confirmation_request.request_number}.pdf"
+    return StreamingResponse(
+        iter([pdf_bytes]),
+        media_type="application/pdf",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+@router.post("/certificate-confirmations/{confirmation_id}/generate-pdf", status_code=status.HTTP_200_OK)
+async def generate_confirmation_pdf(
+    confirmation_id: int,
+    session: DBSessionDep,
+    current_user: SystemAdminDep,
+) -> dict:
+    """Generate certificate confirmation PDF from template."""
+    from app.services.certificate_confirmation_service import get_certificate_confirmation_by_id
+    from app.services.bulk_certificate_confirmation_pdf_service import (
+        generate_bulk_certificate_confirmation_pdf,
+        save_bulk_confirmation_pdf,
+    )
+    from app.models import Invoice, Payment
+    from sqlalchemy import select
+    from sqlalchemy.orm import selectinload
+
+    confirmation_request = await get_certificate_confirmation_by_id(session, confirmation_id)
+    if not confirmation_request:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Certificate confirmation request not found",
+        )
+
+    # Load relationships
+    from app.models import CertificateConfirmationRequest
+    stmt = select(CertificateConfirmationRequest).where(
+        CertificateConfirmationRequest.id == confirmation_id
+    ).options(
+        selectinload(CertificateConfirmationRequest.invoice),
+        selectinload(CertificateConfirmationRequest.payment),
+    )
+    result = await session.execute(stmt)
+    confirmation_request = result.scalar_one_or_none()
+
+    if not confirmation_request:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Certificate confirmation request not found",
+        )
+
+    # Get invoice if not loaded
+    invoice = confirmation_request.invoice
+    if not invoice and confirmation_request.invoice_id:
+        invoice_stmt = select(Invoice).where(Invoice.id == confirmation_request.invoice_id)
+        invoice_result = await session.execute(invoice_stmt)
+        invoice = invoice_result.scalar_one_or_none()
+
+    # Get payment if not loaded
+    payment = confirmation_request.payment
+    if not payment and confirmation_request.payment_id:
+        payment_stmt = select(Payment).where(Payment.id == confirmation_request.payment_id)
+        payment_result = await session.execute(payment_stmt)
+        payment = payment_result.scalar_one_or_none()
+
+    # Get certificate details from JSON field
+    certificate_details = confirmation_request.certificate_details if isinstance(confirmation_request.certificate_details, list) else []
+
+    # Generate PDF
+    try:
+        pdf_bytes = await generate_bulk_certificate_confirmation_pdf(
+            confirmation_request,
+            invoice=invoice,
+            payment=payment,
+            certificate_details=certificate_details,
+        )
+    except Exception as e:
+        logger.error(f"Failed to generate bulk confirmation PDF: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to generate PDF document",
+        )
+
+    # Save PDF
+    try:
+        file_path = await save_bulk_confirmation_pdf(
+            confirmation_request,
+            pdf_bytes,
+            generated_by_user_id=str(current_user.id),
+        )
+        await session.commit()
+    except Exception as e:
+        await session.rollback()
+        logger.error(f"Failed to save confirmation PDF: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to save PDF document",
+        )
+
+    return {
+        "message": "PDF generated successfully",
+        "file_path": file_path,
+        "pdf_generated_at": confirmation_request.pdf_generated_at.isoformat() if confirmation_request.pdf_generated_at else None,
+    }
+
+
+@router.post("/certificate-confirmations/{confirmation_id}/upload-pdf", status_code=status.HTTP_200_OK)
+async def upload_confirmation_pdf(
+    confirmation_id: int,
+    pdf_file: UploadFile = File(...),
+    session: DBSessionDep = None,
+    current_user: SystemAdminDep = None,
+) -> dict:
+    """Upload certificate confirmation PDF file."""
+    from app.services.certificate_confirmation_service import get_certificate_confirmation_by_id
+    from app.services.bulk_certificate_confirmation_pdf_service import save_bulk_confirmation_pdf
+    from app.services.certificate_file_storage import CertificateFileStorageService
+
+    confirmation_request = await get_certificate_confirmation_by_id(session, confirmation_id)
+    if not confirmation_request:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Certificate confirmation request not found",
+        )
+
+    # Validate file type
+    if pdf_file.content_type != "application/pdf":
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="File must be a PDF",
+        )
+
+    # Read file content
+    pdf_bytes = await pdf_file.read()
+
+    # Validate file size (max 50MB)
+    max_size = 50 * 1024 * 1024  # 50MB
+    if len(pdf_bytes) > max_size:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"File size exceeds maximum allowed size of {max_size / (1024 * 1024)}MB",
+        )
+
+    # Save PDF
+    try:
+        file_path = await save_bulk_confirmation_pdf(
+            confirmation_request,
+            pdf_bytes,
+            generated_by_user_id=str(current_user.id),
+        )
+        await session.commit()
+    except Exception as e:
+        await session.rollback()
+        logger.error(f"Failed to upload confirmation PDF: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to upload PDF document",
+        )
+
+    return {
+        "message": "PDF uploaded successfully",
+        "file_path": file_path,
+        "pdf_generated_at": confirmation_request.pdf_generated_at.isoformat() if confirmation_request.pdf_generated_at else None,
+    }
+
+
+@router.get("/certificate-confirmations/{confirmation_id}/pdf", status_code=status.HTTP_200_OK)
+async def download_confirmation_pdf(
+    confirmation_id: int,
+    session: DBSessionDep,
+    current_user: SystemAdminDep,
+) -> StreamingResponse:
+    """Download certificate confirmation PDF (Admin)."""
+    from app.services.certificate_confirmation_service import get_certificate_confirmation_by_id
+    from app.services.certificate_file_storage import CertificateFileStorageService
+
+    confirmation_request = await get_certificate_confirmation_by_id(session, confirmation_id)
+    if not confirmation_request:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Certificate confirmation request not found",
+        )
+
+    if not confirmation_request.pdf_file_path:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="PDF not found. Please generate or upload a PDF first.",
+        )
+
+    # Retrieve PDF from storage
+    file_storage = CertificateFileStorageService()
+    try:
+        pdf_bytes = await file_storage.retrieve(confirmation_request.pdf_file_path)
+    except Exception as e:
+        logger.error(f"Failed to retrieve confirmation PDF: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to retrieve PDF document",
+        )
+
+    filename = f"confirmation_{confirmation_request.request_number}.pdf"
+    return StreamingResponse(
+        iter([pdf_bytes]),
+        media_type="application/pdf",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
+@router.post("/certificate-confirmations/{confirmation_id}/response/upload", status_code=status.HTTP_200_OK)
+async def upload_confirmation_response(
+    confirmation_id: int,
+    response_file: UploadFile = File(...),
+    response_notes: str | None = Form(None),
+    session: DBSessionDep = None,
+    current_user: SystemAdminDep = None,
+) -> dict:
+    """Upload an admin response file for a certificate confirmation/verification request."""
+    from datetime import datetime
+    from app.models import CertificateConfirmationRequest, RequestStatus, TicketActivity, TicketActivityType
+    from app.services.certificate_confirmation_service import get_certificate_confirmation_by_id, update_confirmation_request_status
+    from app.services.certificate_file_storage import CertificateFileStorageService
+
+    confirmation_request = await get_certificate_confirmation_by_id(session, confirmation_id)
+    if not confirmation_request:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Certificate confirmation request not found")
+
+    if confirmation_request.status in (RequestStatus.PENDING_PAYMENT, RequestStatus.CANCELLED):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Cannot respond to this request in status: {confirmation_request.status.value}",
+        )
+
+    # Read file content
+    file_bytes = await response_file.read()
+
+    # Validate file size (max 50MB)
+    max_size = 50 * 1024 * 1024  # 50MB
+    if len(file_bytes) > max_size:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"File size exceeds maximum allowed size of {max_size / (1024 * 1024)}MB",
+        )
+
+    # Basic content-type allowlist (still allow unknown/empty types)
+    allowed_types = {
+        "application/pdf",
+        "image/jpeg",
+        "image/png",
+        "image/jpg",
+        "application/msword",
+        "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        "application/vnd.ms-excel",
+        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        "text/plain",
+    }
+    if response_file.content_type and response_file.content_type not in allowed_types:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Unsupported file type: {response_file.content_type}",
+        )
+
+    # Save response file
+    storage = CertificateFileStorageService()
+    filename = response_file.filename or f"confirmation_response_{confirmation_request.request_number}"
+    try:
+        response_path, _ = await storage.save_response_file(file_bytes, filename, confirmation_request.id)
+    except Exception as e:
+        logger.error(f"Failed to save response file: {e}", exc_info=True)
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to save response file")
+
+    # Update response metadata
+    confirmation_request.response_file_path = response_path
+    confirmation_request.response_file_name = filename
+    confirmation_request.response_mime_type = response_file.content_type or "application/octet-stream"
+    confirmation_request.response_source = "upload"
+    confirmation_request.responded_at = datetime.utcnow()
+    confirmation_request.responded_by_user_id = current_user.id
+    confirmation_request.response_notes = response_notes
+
+    # Mark as completed + audit trail
+    await update_confirmation_request_status(
+        session=session,
+        confirmation_request=confirmation_request,
+        status=RequestStatus.COMPLETED,
+        user_id=str(current_user.id),
+        notes=response_notes or f"Response uploaded: {filename}",
+    )
+
+    session.add(
+        TicketActivity(
+            ticket_type="certificate_confirmation_request",
+            ticket_id=confirmation_request.id,
+            activity_type=TicketActivityType.NOTE,
+            user_id=current_user.id,
+            comment=f"Response uploaded: {filename}",
+        )
+    )
+
+    try:
+        await session.commit()
+        await session.refresh(confirmation_request)
+    except Exception as e:
+        await session.rollback()
+        logger.error(f"Failed to commit response upload: {e}", exc_info=True)
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to save response")
+
+    return {
+        "message": "Response uploaded successfully",
+        "confirmation_id": confirmation_request.id,
+        "request_number": confirmation_request.request_number,
+        "response_file_name": confirmation_request.response_file_name,
+        "responded_at": confirmation_request.responded_at.isoformat() if confirmation_request.responded_at else None,
+    }
+
+
+@router.post("/certificate-confirmations/{confirmation_id}/response/generate", status_code=status.HTTP_200_OK)
+async def generate_confirmation_response(
+    confirmation_id: int,
+    payload: dict = Body(...),
+    session: DBSessionDep = None,
+    current_user: SystemAdminDep = None,
+) -> dict:
+    """Generate an admin response PDF from a template and store it as the request response."""
+    from datetime import datetime
+    from app.models import CertificateConfirmationRequest, Invoice, Payment, RequestStatus, TicketActivity, TicketActivityType
+    from app.services.certificate_confirmation_service import get_certificate_confirmation_by_id, update_confirmation_request_status
+    from app.services.certificate_confirmation_response_pdf_service import generate_confirmation_response_pdf
+    from app.services.certificate_file_storage import CertificateFileStorageService
+    from sqlalchemy import select
+    from sqlalchemy.orm import selectinload
+
+    confirmation_request = await get_certificate_confirmation_by_id(session, confirmation_id)
+    if not confirmation_request:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Certificate confirmation request not found")
+
+    if confirmation_request.status in (RequestStatus.PENDING_PAYMENT, RequestStatus.CANCELLED):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Cannot respond to this request in status: {confirmation_request.status.value}",
+        )
+
+    # Check if response is signed - cannot modify signed responses
+    if confirmation_request.response_signed:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Cannot modify response. Response has been signed and is locked.",
+        )
+
+    # Check if response is signed - cannot modify signed responses
+    if confirmation_request.response_signed:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Cannot modify response. Response has been signed and is locked.",
+        )
+
+    # Load relationships (invoice/payment) for template context
+    stmt = (
+        select(CertificateConfirmationRequest)
+        .where(CertificateConfirmationRequest.id == confirmation_id)
+        .options(
+            selectinload(CertificateConfirmationRequest.invoice),
+            selectinload(CertificateConfirmationRequest.payment),
+        )
+    )
+    result = await session.execute(stmt)
+    confirmation_request = result.scalar_one_or_none()
+    if not confirmation_request:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Certificate confirmation request not found")
+
+    invoice = confirmation_request.invoice
+    if not invoice and confirmation_request.invoice_id:
+        invoice_result = await session.execute(select(Invoice).where(Invoice.id == confirmation_request.invoice_id))
+        invoice = invoice_result.scalar_one_or_none()
+
+    payment = confirmation_request.payment
+    if not payment and confirmation_request.payment_id:
+        payment_result = await session.execute(select(Payment).where(Payment.id == confirmation_request.payment_id))
+        payment = payment_result.scalar_one_or_none()
+
+    # Generate PDF
+    try:
+        pdf_bytes = await generate_confirmation_response_pdf(
+            confirmation_request,
+            invoice=invoice,
+            payment=payment,
+            response_payload=payload,
+        )
+    except Exception as e:
+        logger.error(f"Failed to generate confirmation response PDF: {e}", exc_info=True)
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to generate response PDF")
+
+    # Save response file
+    storage = CertificateFileStorageService()
+    filename = f"confirmation_response_{confirmation_request.request_number}.pdf"
+    try:
+        response_path, _ = await storage.save_response_file(pdf_bytes, filename, confirmation_request.id)
+    except Exception as e:
+        logger.error(f"Failed to save generated response file: {e}", exc_info=True)
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to save response file")
+
+    confirmation_request.response_file_path = response_path
+    confirmation_request.response_file_name = filename
+    confirmation_request.response_mime_type = "application/pdf"
+    confirmation_request.response_source = "template"
+    confirmation_request.responded_at = datetime.utcnow()
+    confirmation_request.responded_by_user_id = current_user.id
+    confirmation_request.response_payload = payload
+
+    await update_confirmation_request_status(
+        session=session,
+        confirmation_request=confirmation_request,
+        status=RequestStatus.COMPLETED,
+        user_id=str(current_user.id),
+        notes="Response generated from template",
+    )
+
+    session.add(
+        TicketActivity(
+            ticket_type="certificate_confirmation_request",
+            ticket_id=confirmation_request.id,
+            activity_type=TicketActivityType.NOTE,
+            user_id=current_user.id,
+            comment="Response generated from template",
+        )
+    )
+
+    try:
+        await session.commit()
+        await session.refresh(confirmation_request)
+    except Exception as e:
+        await session.rollback()
+        logger.error(f"Failed to commit response generation: {e}", exc_info=True)
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to save response")
+
+    return {
+        "message": "Response generated successfully",
+        "confirmation_id": confirmation_request.id,
+        "request_number": confirmation_request.request_number,
+        "response_file_name": confirmation_request.response_file_name,
+        "responded_at": confirmation_request.responded_at.isoformat() if confirmation_request.responded_at else None,
+    }
+
+
+@router.get("/certificate-confirmations/{confirmation_id}/response", status_code=status.HTTP_200_OK)
+async def download_confirmation_response(
+    confirmation_id: int,
+    session: DBSessionDep,
+    current_user: SystemAdminDep,
+) -> StreamingResponse:
+    """Download stored admin response file for a confirmation/verification request (Admin)."""
+    from app.services.certificate_confirmation_service import get_certificate_confirmation_by_id
+    from app.services.certificate_file_storage import CertificateFileStorageService
+
+    confirmation_request = await get_certificate_confirmation_by_id(session, confirmation_id)
+    if not confirmation_request:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Certificate confirmation request not found")
+
+    if not confirmation_request.response_file_path:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Response not found for this request")
+
+    storage = CertificateFileStorageService()
+    try:
+        file_bytes = await storage.retrieve(confirmation_request.response_file_path)
+    except Exception as e:
+        logger.error(f"Failed to retrieve response file: {e}", exc_info=True)
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to retrieve response file")
+
+    filename = confirmation_request.response_file_name or f"confirmation_response_{confirmation_request.request_number}"
+    media_type = confirmation_request.response_mime_type or "application/octet-stream"
+    return StreamingResponse(
+        iter([file_bytes]),
+        media_type=media_type,
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
+@router.post("/certificate-confirmations/{confirmation_id}/response/sign", status_code=status.HTTP_200_OK)
+async def sign_confirmation_response(
+    confirmation_id: int,
+    session: DBSessionDep,
+    current_user: SystemAdminDep,
+) -> dict:
+    """Sign a confirmation response to lock it from modification."""
+    from datetime import datetime
+    from app.services.certificate_confirmation_service import get_certificate_confirmation_by_id
+    from app.models import TicketActivity, TicketActivityType
+
+    confirmation_request = await get_certificate_confirmation_by_id(session, confirmation_id)
+    if not confirmation_request:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Certificate confirmation request not found")
+
+    if not confirmation_request.response_file_path:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Cannot sign response. No response file exists for this request.",
+        )
+
+    if confirmation_request.response_signed:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Response has already been signed.",
+        )
+
+    # Sign the response
+    confirmation_request.response_signed = True
+    confirmation_request.response_signed_at = datetime.utcnow()
+    confirmation_request.response_signed_by_user_id = current_user.id
+
+    # Create activity record
+    session.add(
+        TicketActivity(
+            ticket_type="certificate_confirmation_request",
+            ticket_id=confirmation_request.id,
+            activity_type=TicketActivityType.NOTE,
+            user_id=current_user.id,
+            comment="Response signed and locked",
+        )
+    )
+
+    try:
+        await session.commit()
+        await session.refresh(confirmation_request)
+    except Exception as e:
+        await session.rollback()
+        logger.error(f"Failed to sign response: {e}", exc_info=True)
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to sign response")
+
+    return {
+        "message": "Response signed successfully",
+        "confirmation_id": confirmation_request.id,
+        "request_number": confirmation_request.request_number,
+        "response_signed": True,
+        "response_signed_at": confirmation_request.response_signed_at.isoformat() if confirmation_request.response_signed_at else None,
+        "response_signed_by_user_id": str(confirmation_request.response_signed_by_user_id) if confirmation_request.response_signed_by_user_id else None,
+    }
+
+
+@router.post("/certificate-confirmations/{confirmation_id}/response/revoke", status_code=status.HTTP_200_OK)
+async def revoke_confirmation_response(
+    confirmation_id: int,
+    revocation_reason: str = Body(..., embed=True, description="Reason for revoking the response"),
+    session: DBSessionDep = None,
+    current_user: SystemAdminDep = None,
+) -> dict:
+    """Revoke a signed confirmation response (System Admin). Once revoked, requesters can no longer view or download the response. Requires a reason."""
+    from datetime import datetime
+    from app.services.certificate_confirmation_service import get_certificate_confirmation_by_id
+    from app.models import TicketActivity, TicketActivityType
+
+    if not revocation_reason or not revocation_reason.strip():
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Revocation reason is required.",
+        )
+
+    confirmation_request = await get_certificate_confirmation_by_id(session, confirmation_id)
+    if not confirmation_request:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Certificate confirmation request not found")
+
+    if not confirmation_request.response_file_path:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Cannot revoke response. No response file exists for this request.",
+        )
+
+    if not confirmation_request.response_signed:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Cannot revoke response. Response must be signed before it can be revoked.",
+        )
+
+    if confirmation_request.response_revoked:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Response has already been revoked.",
+        )
+
+    # Revoke the response and clear signed status
+    confirmation_request.response_revoked = True
+    confirmation_request.response_revoked_at = datetime.utcnow()
+    confirmation_request.response_revoked_by_user_id = current_user.id
+    confirmation_request.response_revocation_reason = revocation_reason.strip()
+    # Remove signed and locked status when revoked
+    confirmation_request.response_signed = False
+    confirmation_request.response_signed_at = None
+    confirmation_request.response_signed_by_user_id = None
+
+    # Create activity record
+    session.add(
+        TicketActivity(
+            ticket_type="certificate_confirmation_request",
+            ticket_id=confirmation_request.id,
+            activity_type=TicketActivityType.NOTE,
+            user_id=current_user.id,
+            comment=f"Response revoked - requester access removed. Reason: {revocation_reason.strip()}",
+        )
+    )
+
+    try:
+        await session.commit()
+        await session.refresh(confirmation_request)
+    except Exception as e:
+        await session.rollback()
+        logger.error(f"Failed to revoke response: {e}", exc_info=True)
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to revoke response")
+
+    return {
+        "message": "Response revoked successfully",
+        "confirmation_id": confirmation_request.id,
+        "request_number": confirmation_request.request_number,
+        "response_revoked": True,
+        "response_revoked_at": confirmation_request.response_revoked_at.isoformat() if confirmation_request.response_revoked_at else None,
+        "response_revoked_by_user_id": str(confirmation_request.response_revoked_by_user_id) if confirmation_request.response_revoked_by_user_id else None,
+        "response_revocation_reason": confirmation_request.response_revocation_reason,
+    }
+
+
+@router.post("/certificate-confirmations/{confirmation_id}/response/unrevoke", status_code=status.HTTP_200_OK)
+async def unrevoke_confirmation_response(
+    confirmation_id: int,
+    session: DBSessionDep,
+    current_user: SystemAdminDep,
+) -> dict:
+    """Unrevoke a revoked confirmation response (System Admin). This allows the response to be signed again and made available to requesters."""
+    from app.services.certificate_confirmation_service import get_certificate_confirmation_by_id
+    from app.models import TicketActivity, TicketActivityType
+
+    confirmation_request = await get_certificate_confirmation_by_id(session, confirmation_id)
+    if not confirmation_request:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Certificate confirmation request not found")
+
+    if not confirmation_request.response_revoked:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Response is not revoked. Only revoked responses can be unrevoked.",
+        )
+
+    # Unrevoke the response
+    confirmation_request.response_revoked = False
+    confirmation_request.response_revoked_at = None
+    confirmation_request.response_revoked_by_user_id = None
+    confirmation_request.response_revocation_reason = None
+    # Note: We don't automatically re-sign the response. Admin needs to sign it again after corrections
+
+    # Create activity record
+    session.add(
+        TicketActivity(
+            ticket_type="certificate_confirmation_request",
+            ticket_id=confirmation_request.id,
+            activity_type=TicketActivityType.NOTE,
+            user_id=current_user.id,
+            comment="Response unrevoked - corrections made, ready for re-signing",
+        )
+    )
+
+    try:
+        await session.commit()
+        await session.refresh(confirmation_request)
+    except Exception as e:
+        await session.rollback()
+        logger.error(f"Failed to unrevoke response: {e}", exc_info=True)
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to unrevoke response")
+
+    return {
+        "message": "Response unrevoked successfully. The response can now be signed again after corrections.",
+        "confirmation_id": confirmation_request.id,
+        "request_number": confirmation_request.request_number,
+        "response_revoked": False,
+    }
+
+
 @router.post("/certificate-requests/{request_id}/begin-process", status_code=status.HTTP_200_OK)
 async def begin_process_certificate_request(
     request_id: int,
     session: DBSessionDep,
     current_user: SystemAdminDep,
+    ticket_type: str | None = Query(
+        None,
+        description="Optional ticket type override: 'certificate_request' or 'certificate_confirmation_request'",
+    ),
 ) -> dict:
     """Begin processing a certificate request (System Admin)."""
     from app.schemas.certificate import CertificateRequestResponse
     from app.services.certificate_service import begin_processing
 
     try:
+        # If explicitly asked, route to the right model/service.
+        if ticket_type and ticket_type.strip().lower() == "certificate_confirmation_request":
+            from app.schemas.certificate import CertificateConfirmationRequestResponse
+            from app.services.certificate_confirmation_service import begin_processing_confirmation
+
+            req = await begin_processing_confirmation(session, request_id, str(current_user.id))
+            await session.commit()
+            await session.refresh(req)
+            return CertificateConfirmationRequestResponse.model_validate(req).model_dump()
+
+        # Auto-detect confirmation requests (single or bulk): if a confirmation exists with this ID,
+        # prefer it (admin UI often uses the unified /certificate-requests routes for mixed lists).
+        from app.services.certificate_confirmation_service import get_certificate_confirmation_by_id, begin_processing_confirmation
+        from app.models import CertificateConfirmationRequest
+        from sqlalchemy.orm import selectinload
+
+        conf = await get_certificate_confirmation_by_id(session, request_id)
+        if conf:
+            # Any confirmation request (single or bulk) should use the confirmation service
+            from app.schemas.certificate import CertificateConfirmationRequestResponse
+
+            req = await begin_processing_confirmation(session, request_id, str(current_user.id))
+            await session.commit()
+
+            # Reload with relationships for proper serialization
+            stmt = select(CertificateConfirmationRequest).where(
+                CertificateConfirmationRequest.id == request_id
+            ).options(
+                selectinload(CertificateConfirmationRequest.invoice),
+                selectinload(CertificateConfirmationRequest.payment),
+            )
+            result = await session.execute(stmt)
+            req = result.scalar_one_or_none()
+            if not req:
+                raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Confirmation request not found after processing")
+
+            return CertificateConfirmationRequestResponse.model_validate(req).model_dump()
+
+        # Default: normal certificate/attestation request
         request = await begin_processing(session, request_id, str(current_user.id))
         await session.commit()
         await session.refresh(request)
@@ -3246,17 +4392,114 @@ async def begin_process_certificate_request(
         )
 
 
+@router.post("/certificate-confirmations/{confirmation_id}/begin-process", status_code=status.HTTP_200_OK)
+async def begin_process_confirmation_request(
+    confirmation_id: int,
+    session: DBSessionDep,
+    current_user: SystemAdminDep,
+) -> dict:
+    """Begin processing a confirmation/verification request (System Admin)."""
+    from app.schemas.certificate import CertificateConfirmationRequestResponse
+    from app.services.certificate_confirmation_service import begin_processing_confirmation
+    from app.models import CertificateConfirmationRequest
+    from sqlalchemy import select
+    from sqlalchemy.orm import selectinload
+
+    try:
+        await begin_processing_confirmation(session, confirmation_id, str(current_user.id))
+        await session.commit()
+
+        # Reload with relationships to avoid async lazy-load (MissingGreenlet) during Pydantic validation
+        stmt = (
+            select(CertificateConfirmationRequest)
+            .where(CertificateConfirmationRequest.id == confirmation_id)
+            .options(
+                selectinload(CertificateConfirmationRequest.invoice),
+                selectinload(CertificateConfirmationRequest.payment),
+            )
+        )
+        result = await session.execute(stmt)
+        req = result.scalar_one_or_none()
+        if not req:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Certificate confirmation request not found")
+
+        return CertificateConfirmationRequestResponse.model_validate(req).model_dump()
+    except ValueError as e:
+        await session.rollback()
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+    except Exception as e:
+        await session.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to begin processing: {str(e)}",
+        )
+
+
 @router.post("/certificate-requests/{request_id}/send-to-dispatch", status_code=status.HTTP_200_OK)
 async def send_to_dispatch(
     request_id: int,
     session: DBSessionDep,
     current_user: SystemAdminDep,
+    ticket_type: str | None = Query(
+        None,
+        description="Optional ticket type override: 'certificate_request' or 'certificate_confirmation_request'",
+    ),
 ) -> dict:
     """Mark certificate request as ready for dispatch (System Admin)."""
     from app.schemas.certificate import CertificateRequestResponse
     from app.services.certificate_service import send_to_dispatch
 
     try:
+        if ticket_type and ticket_type.strip().lower() == "certificate_confirmation_request":
+            from app.models import CertificateConfirmationRequest
+            from app.schemas.certificate import CertificateConfirmationRequestResponse
+            from app.services.certificate_confirmation_service import send_confirmation_to_dispatch
+            from sqlalchemy import select
+            from sqlalchemy.orm import selectinload
+
+            await send_confirmation_to_dispatch(session, request_id, str(current_user.id))
+            await session.commit()
+
+            stmt = (
+                select(CertificateConfirmationRequest)
+                .where(CertificateConfirmationRequest.id == request_id)
+                .options(
+                    selectinload(CertificateConfirmationRequest.invoice),
+                    selectinload(CertificateConfirmationRequest.payment),
+                )
+            )
+            result = await session.execute(stmt)
+            req = result.scalar_one_or_none()
+            if not req:
+                raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Certificate confirmation request not found")
+            return CertificateConfirmationRequestResponse.model_validate(req).model_dump()
+
+        # Auto-detect confirmation requests by ID and route them
+        from app.services.certificate_confirmation_service import get_certificate_confirmation_by_id, send_confirmation_to_dispatch
+        conf = await get_certificate_confirmation_by_id(session, request_id)
+        if conf:
+            from app.models import CertificateConfirmationRequest
+            from app.schemas.certificate import CertificateConfirmationRequestResponse
+            from sqlalchemy import select
+            from sqlalchemy.orm import selectinload
+
+            await send_confirmation_to_dispatch(session, request_id, str(current_user.id))
+            await session.commit()
+
+            stmt = (
+                select(CertificateConfirmationRequest)
+                .where(CertificateConfirmationRequest.id == request_id)
+                .options(
+                    selectinload(CertificateConfirmationRequest.invoice),
+                    selectinload(CertificateConfirmationRequest.payment),
+                )
+            )
+            result = await session.execute(stmt)
+            req = result.scalar_one_or_none()
+            if not req:
+                raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Certificate confirmation request not found")
+            return CertificateConfirmationRequestResponse.model_validate(req).model_dump()
+
         request = await send_to_dispatch(session, request_id, str(current_user.id))
         await session.commit()
         await session.refresh(request)
@@ -3277,6 +4520,47 @@ async def send_to_dispatch(
         )
 
 
+@router.post("/certificate-confirmations/{confirmation_id}/send-to-dispatch", status_code=status.HTTP_200_OK)
+async def send_confirmation_to_dispatch_admin(
+    confirmation_id: int,
+    session: DBSessionDep,
+    current_user: SystemAdminDep,
+) -> dict:
+    """Mark confirmation/verification request as ready for dispatch (System Admin)."""
+    from app.models import CertificateConfirmationRequest
+    from app.schemas.certificate import CertificateConfirmationRequestResponse
+    from app.services.certificate_confirmation_service import send_confirmation_to_dispatch
+    from sqlalchemy import select
+    from sqlalchemy.orm import selectinload
+
+    try:
+        await send_confirmation_to_dispatch(session, confirmation_id, str(current_user.id))
+        await session.commit()
+
+        stmt = (
+            select(CertificateConfirmationRequest)
+            .where(CertificateConfirmationRequest.id == confirmation_id)
+            .options(
+                selectinload(CertificateConfirmationRequest.invoice),
+                selectinload(CertificateConfirmationRequest.payment),
+            )
+        )
+        result = await session.execute(stmt)
+        req = result.scalar_one_or_none()
+        if not req:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Certificate confirmation request not found")
+        return CertificateConfirmationRequestResponse.model_validate(req).model_dump()
+    except ValueError as e:
+        await session.rollback()
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+    except Exception as e:
+        await session.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to send to dispatch: {str(e)}",
+        )
+
+
 @router.put("/certificate-requests/{request_id}", status_code=status.HTTP_200_OK)
 async def update_certificate_request(
     request_id: int,
@@ -3284,11 +4568,79 @@ async def update_certificate_request(
     session: DBSessionDep = None,
     current_user: SystemAdminDep = None,
 ) -> dict:
-    """Update certificate request (System Admin)."""
-    from app.schemas.certificate import CertificateRequestResponse, CertificateRequestUpdate
+    """Update certificate request or confirmation request (System Admin)."""
+    from app.schemas.certificate import CertificateRequestResponse, CertificateConfirmationRequestResponse
     from app.services.certificate_service import get_certificate_request_by_id, update_request_status
-    from app.models import RequestStatus, TicketPriority
+    from app.services.certificate_confirmation_service import get_certificate_confirmation_by_id, update_confirmation_request_status
+    from app.models import RequestStatus, TicketPriority, CertificateConfirmationRequest
+    from sqlalchemy import select
+    from sqlalchemy.orm import selectinload
     from uuid import UUID
+
+    # Auto-detect confirmation requests
+    conf = await get_certificate_confirmation_by_id(session, request_id)
+    if conf:
+        # Update confirmation request
+        if "status" in update_data:
+            try:
+                new_status = RequestStatus(update_data["status"])
+                await update_confirmation_request_status(
+                    session=session,
+                    confirmation_request=conf,
+                    status=new_status,
+                    user_id=str(current_user.id) if current_user else None,
+                    notes=update_data.get("notes"),
+                )
+            except ValueError as e:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail=f"Invalid status: {update_data['status']}",
+                )
+
+        if "tracking_number" in update_data:
+            conf.tracking_number = update_data["tracking_number"]
+
+        if "notes" in update_data and "status" not in update_data:
+            conf.notes = update_data["notes"]
+
+        if "assigned_to_user_id" in update_data:
+            assigned_to = update_data["assigned_to_user_id"]
+            if assigned_to:
+                try:
+                    conf.assigned_to_user_id = UUID(assigned_to)
+                except ValueError:
+                    raise HTTPException(
+                        status_code=status.HTTP_400_BAD_REQUEST,
+                        detail="Invalid assigned_to_user_id format",
+                    )
+            else:
+                conf.assigned_to_user_id = None
+
+        if "priority" in update_data:
+            try:
+                conf.priority = TicketPriority(update_data["priority"])
+            except ValueError:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail=f"Invalid priority: {update_data['priority']}",
+                )
+
+        await session.commit()
+
+        # Re-query with eager loading for serialization
+        stmt = (
+            select(CertificateConfirmationRequest)
+            .where(CertificateConfirmationRequest.id == request_id)
+            .options(
+                selectinload(CertificateConfirmationRequest.invoice),
+                selectinload(CertificateConfirmationRequest.payment),
+            )
+        )
+        result = await session.execute(stmt)
+        req = result.scalar_one_or_none()
+        if not req:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Confirmation request not found")
+        return CertificateConfirmationRequestResponse.model_validate(req).model_dump()
 
     request = await get_certificate_request_by_id(session, request_id)
     if not request:
@@ -3361,22 +4713,61 @@ async def assign_ticket(
     session: DBSessionDep = None,
     current_user: SystemAdminDep = None,
 ) -> dict:
-    """Assign ticket to a user (System Admin)."""
-    from app.schemas.certificate import CertificateRequestResponse
+    """Assign ticket to a user (System Admin). Supports both certificate requests and confirmation requests."""
+    from app.schemas.certificate import CertificateRequestResponse, CertificateConfirmationRequestResponse
     from app.services.certificate_service import assign_ticket, get_certificate_request_by_id
-
-    request = await get_certificate_request_by_id(session, request_id)
-    if not request:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Certificate request not found",
-        )
+    from app.services.certificate_confirmation_service import get_certificate_confirmation_by_id, assign_confirmation_ticket
+    from app.models import CertificateConfirmationRequest
+    from sqlalchemy import select
+    from sqlalchemy.orm import selectinload
 
     assigned_to_user_id = assignment_data.get("assigned_to_user_id")
     if not assigned_to_user_id:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="assigned_to_user_id is required",
+        )
+
+    # Auto-detect confirmation requests
+    conf = await get_certificate_confirmation_by_id(session, request_id)
+    if conf:
+        try:
+            req = await assign_confirmation_ticket(
+                session,
+                request_id,
+                str(current_user.id) if current_user else None,
+                assigned_to_user_id,
+            )
+            await session.commit()
+
+            stmt = (
+                select(CertificateConfirmationRequest)
+                .where(CertificateConfirmationRequest.id == request_id)
+                .options(
+                    selectinload(CertificateConfirmationRequest.invoice),
+                    selectinload(CertificateConfirmationRequest.payment),
+                )
+            )
+            result = await session.execute(stmt)
+            req = result.scalar_one_or_none()
+            if not req:
+                raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Confirmation request not found")
+            return CertificateConfirmationRequestResponse.model_validate(req).model_dump()
+        except ValueError as e:
+            await session.rollback()
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+        except Exception as e:
+            await session.rollback()
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=f"Failed to assign ticket: {str(e)}",
+            )
+
+    request = await get_certificate_request_by_id(session, request_id)
+    if not request:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Certificate request not found",
         )
 
     try:
@@ -3411,9 +4802,47 @@ async def unassign_ticket(
     session: DBSessionDep = None,
     current_user: SystemAdminDep = None,
 ) -> dict:
-    """Unassign ticket (System Admin)."""
-    from app.schemas.certificate import CertificateRequestResponse
+    """Unassign ticket (System Admin). Supports both certificate requests and confirmation requests."""
+    from app.schemas.certificate import CertificateRequestResponse, CertificateConfirmationRequestResponse
     from app.services.certificate_service import unassign_ticket, get_certificate_request_by_id
+    from app.services.certificate_confirmation_service import get_certificate_confirmation_by_id, unassign_confirmation_ticket
+    from app.models import CertificateConfirmationRequest
+    from sqlalchemy import select
+    from sqlalchemy.orm import selectinload
+
+    # Auto-detect confirmation requests
+    conf = await get_certificate_confirmation_by_id(session, request_id)
+    if conf:
+        try:
+            req = await unassign_confirmation_ticket(
+                session,
+                request_id,
+                str(current_user.id) if current_user else None,
+            )
+            await session.commit()
+
+            stmt = (
+                select(CertificateConfirmationRequest)
+                .where(CertificateConfirmationRequest.id == request_id)
+                .options(
+                    selectinload(CertificateConfirmationRequest.invoice),
+                    selectinload(CertificateConfirmationRequest.payment),
+                )
+            )
+            result = await session.execute(stmt)
+            req = result.scalar_one_or_none()
+            if not req:
+                raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Confirmation request not found")
+            return CertificateConfirmationRequestResponse.model_validate(req).model_dump()
+        except ValueError as e:
+            await session.rollback()
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+        except Exception as e:
+            await session.rollback()
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=f"Failed to unassign ticket: {str(e)}",
+            )
 
     request = await get_certificate_request_by_id(session, request_id)
     if not request:
@@ -3454,9 +4883,10 @@ async def add_ticket_comment(
     session: DBSessionDep = None,
     current_user: SystemAdminDep = None,
 ) -> dict:
-    """Add a comment to a ticket (System Admin)."""
+    """Add a comment to a ticket (System Admin). Supports both certificate requests and confirmation requests."""
     from app.schemas.certificate import TicketActivityResponse
     from app.services.certificate_service import add_ticket_comment
+    from app.services.certificate_confirmation_service import get_certificate_confirmation_by_id, add_confirmation_comment
 
     comment = comment_data.get("comment")
     if not comment:
@@ -3464,6 +4894,34 @@ async def add_ticket_comment(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="comment is required",
         )
+
+    # Auto-detect confirmation requests
+    conf = await get_certificate_confirmation_by_id(session, request_id)
+    if conf:
+        try:
+            activity = await add_confirmation_comment(
+                session,
+                request_id,
+                str(current_user.id) if current_user else None,
+                comment,
+            )
+            await session.commit()
+            await session.refresh(activity)
+
+            response = TicketActivityResponse.model_validate(activity)
+            if activity.user:
+                response.user_name = activity.user.full_name
+
+            return response.model_dump()
+        except ValueError as e:
+            await session.rollback()
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+        except Exception as e:
+            await session.rollback()
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=f"Failed to add comment: {str(e)}",
+            )
 
     try:
         activity = await add_ticket_comment(
@@ -3497,19 +4955,72 @@ async def get_ticket_activities(
     session: DBSessionDep = None,
     current_user: SystemAdminDep = None,
     limit: int = Query(100, ge=1, le=500),
+    ticket_type: str | None = Query(None, description="Ticket type: 'certificate_request' or 'certificate_confirmation_request'"),
 ) -> dict:
-    """Get activity feed for a ticket (System Admin)."""
+    """Get activity feed for a ticket (System Admin). Supports both certificate requests and confirmation requests."""
     from app.schemas.certificate import TicketActivityResponse
     from app.services.certificate_service import get_ticket_activities, get_certificate_request_by_id
+    from app.services.certificate_confirmation_service import get_certificate_confirmation_by_id
+    from app.models import TicketActivity, CertificateRequest, CertificateConfirmationRequest
+    from sqlalchemy import select, and_
+    from sqlalchemy.orm import selectinload
 
-    request = await get_certificate_request_by_id(session, request_id)
-    if not request:
+    # Determine ticket type
+    if not ticket_type:
+        # Try to find the request to determine type
+        cert_request = await get_certificate_request_by_id(session, request_id)
+        if cert_request:
+            ticket_type = "certificate_request"
+        else:
+            conf_request = await get_certificate_confirmation_by_id(session, request_id)
+            if conf_request:
+                ticket_type = "certificate_confirmation_request"
+            else:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail="Request not found",
+                )
+    elif ticket_type not in ("certificate_request", "certificate_confirmation_request"):
         raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Certificate request not found",
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid ticket_type. Must be 'certificate_request' or 'certificate_confirmation_request'",
         )
 
-    activities = await get_ticket_activities(session, request_id, limit)
+    # Verify request exists
+    if ticket_type == "certificate_request":
+        request = await get_certificate_request_by_id(session, request_id)
+        if not request:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Certificate request not found",
+            )
+        # Use existing service function which filters by ticket_type
+        activities = await get_ticket_activities(session, request_id, limit)
+    else:
+        # Confirmation request
+        request = await get_certificate_confirmation_by_id(session, request_id)
+        if not request:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Certificate confirmation request not found",
+            )
+        # Query activities for confirmation request
+        stmt = (
+            select(TicketActivity)
+            .where(
+                and_(
+                    TicketActivity.ticket_id == request_id,
+                    TicketActivity.ticket_type == "certificate_confirmation_request"
+                )
+            )
+            .options(
+                selectinload(TicketActivity.user),
+            )
+            .order_by(TicketActivity.created_at.desc())
+            .limit(limit)
+        )
+        result = await session.execute(stmt)
+        activities = list(result.scalars().all())
 
     items = []
     for activity in activities:
@@ -3528,18 +5039,41 @@ async def get_ticket_status_history(
     current_user: SystemAdminDep = None,
     limit: int = Query(100, ge=1, le=500),
 ) -> dict:
-    """Get status transition history for a ticket (System Admin)."""
+    """Get status transition history for a ticket (System Admin). Supports both certificate requests and confirmation requests."""
     from app.schemas.certificate import TicketStatusHistoryResponse
     from app.services.certificate_service import get_ticket_status_history, get_certificate_request_by_id
+    from app.services.certificate_confirmation_service import get_certificate_confirmation_by_id
+    from app.models import TicketStatusHistory
+    from sqlalchemy import select, and_
+    from sqlalchemy.orm import selectinload
 
-    request = await get_certificate_request_by_id(session, request_id)
-    if not request:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Certificate request not found",
+    # Auto-detect confirmation requests
+    conf = await get_certificate_confirmation_by_id(session, request_id)
+    if conf:
+        stmt = (
+            select(TicketStatusHistory)
+            .where(
+                and_(
+                    TicketStatusHistory.ticket_id == request_id,
+                    TicketStatusHistory.ticket_type == "certificate_confirmation_request"
+                )
+            )
+            .options(
+                selectinload(TicketStatusHistory.changed_by),
+            )
+            .order_by(TicketStatusHistory.created_at.desc())
+            .limit(limit)
         )
-
-    history = await get_ticket_status_history(session, request_id, limit)
+        result = await session.execute(stmt)
+        history = list(result.scalars().all())
+    else:
+        request = await get_certificate_request_by_id(session, request_id)
+        if not request:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Certificate request not found",
+            )
+        history = await get_ticket_status_history(session, request_id, limit)
 
     items = []
     for entry in history:
@@ -3612,12 +5146,37 @@ async def dispatch_certificate_request(
     session: DBSessionDep = None,
     current_user: AdminDep = None,
 ) -> dict:
-    """Dispatch a certificate request (Admin)."""
-    from app.schemas.certificate import CertificateRequestResponse
+    """Dispatch a certificate request or confirmation request (Admin)."""
+    from app.schemas.certificate import CertificateRequestResponse, CertificateConfirmationRequestResponse
     from app.services.certificate_service import dispatch_request
+    from app.services.certificate_confirmation_service import get_certificate_confirmation_by_id, dispatch_confirmation_request
+    from app.models import CertificateConfirmationRequest
+    from sqlalchemy import select
+    from sqlalchemy.orm import selectinload
 
     try:
         tracking_number = dispatch_data.get("tracking_number") if dispatch_data else None
+
+        # Auto-detect confirmation requests
+        conf = await get_certificate_confirmation_by_id(session, request_id)
+        if conf:
+            req = await dispatch_confirmation_request(session, request_id, str(current_user.id), tracking_number)
+            await session.commit()
+
+            stmt = (
+                select(CertificateConfirmationRequest)
+                .where(CertificateConfirmationRequest.id == request_id)
+                .options(
+                    selectinload(CertificateConfirmationRequest.invoice),
+                    selectinload(CertificateConfirmationRequest.payment),
+                )
+            )
+            result = await session.execute(stmt)
+            req = result.scalar_one_or_none()
+            if not req:
+                raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Confirmation request not found")
+            return CertificateConfirmationRequestResponse.model_validate(req).model_dump()
+
         request = await dispatch_request(session, request_id, str(current_user.id), tracking_number)
         await session.commit()
         await session.refresh(request)
@@ -3644,11 +5203,35 @@ async def complete_certificate_request(
     session: DBSessionDep,
     current_user: AdminDep,
 ) -> dict:
-    """Mark certificate request as completed (Admin)."""
-    from app.schemas.certificate import CertificateRequestResponse
+    """Mark certificate request or confirmation request as completed (Admin)."""
+    from app.schemas.certificate import CertificateRequestResponse, CertificateConfirmationRequestResponse
     from app.services.certificate_service import complete_request
+    from app.services.certificate_confirmation_service import get_certificate_confirmation_by_id, complete_confirmation_request
+    from app.models import CertificateConfirmationRequest
+    from sqlalchemy import select
+    from sqlalchemy.orm import selectinload
 
     try:
+        # Auto-detect confirmation requests
+        conf = await get_certificate_confirmation_by_id(session, request_id)
+        if conf:
+            req = await complete_confirmation_request(session, request_id, str(current_user.id))
+            await session.commit()
+
+            stmt = (
+                select(CertificateConfirmationRequest)
+                .where(CertificateConfirmationRequest.id == request_id)
+                .options(
+                    selectinload(CertificateConfirmationRequest.invoice),
+                    selectinload(CertificateConfirmationRequest.payment),
+                )
+            )
+            result = await session.execute(stmt)
+            req = result.scalar_one_or_none()
+            if not req:
+                raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Confirmation request not found")
+            return CertificateConfirmationRequestResponse.model_validate(req).model_dump()
+
         request = await complete_request(session, request_id, str(current_user.id))
         await session.commit()
         await session.refresh(request)
@@ -3675,11 +5258,35 @@ async def mark_received(
     session: DBSessionDep,
     current_user: AdminDep,
 ) -> dict:
-    """Mark certificate request as received (Admin)."""
-    from app.schemas.certificate import CertificateRequestResponse
+    """Mark certificate request or confirmation request as received (Admin)."""
+    from app.schemas.certificate import CertificateRequestResponse, CertificateConfirmationRequestResponse
     from app.services.certificate_service import mark_received
+    from app.services.certificate_confirmation_service import get_certificate_confirmation_by_id, mark_confirmation_received
+    from app.models import CertificateConfirmationRequest
+    from sqlalchemy import select
+    from sqlalchemy.orm import selectinload
 
     try:
+        # Auto-detect confirmation requests
+        conf = await get_certificate_confirmation_by_id(session, request_id)
+        if conf:
+            req = await mark_confirmation_received(session, request_id, str(current_user.id))
+            await session.commit()
+
+            stmt = (
+                select(CertificateConfirmationRequest)
+                .where(CertificateConfirmationRequest.id == request_id)
+                .options(
+                    selectinload(CertificateConfirmationRequest.invoice),
+                    selectinload(CertificateConfirmationRequest.payment),
+                )
+            )
+            result = await session.execute(stmt)
+            req = result.scalar_one_or_none()
+            if not req:
+                raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Confirmation request not found")
+            return CertificateConfirmationRequestResponse.model_validate(req).model_dump()
+
         request = await mark_received(session, request_id, str(current_user.id))
         await session.commit()
         await session.refresh(request)
@@ -3707,12 +5314,37 @@ async def cancel_certificate_request(
     session: DBSessionDep = None,
     current_user: AdminDep = None,
 ) -> dict:
-    """Cancel a certificate request (Admin)."""
-    from app.schemas.certificate import CertificateRequestResponse
+    """Cancel a certificate request or confirmation request (Admin)."""
+    from app.schemas.certificate import CertificateRequestResponse, CertificateConfirmationRequestResponse
     from app.services.certificate_service import cancel_request
+    from app.services.certificate_confirmation_service import get_certificate_confirmation_by_id, cancel_confirmation_request
+    from app.models import CertificateConfirmationRequest
+    from sqlalchemy import select
+    from sqlalchemy.orm import selectinload
 
     try:
         reason = cancel_data.get("reason") if cancel_data else None
+
+        # Auto-detect confirmation requests
+        conf = await get_certificate_confirmation_by_id(session, request_id)
+        if conf:
+            req = await cancel_confirmation_request(session, request_id, str(current_user.id), reason)
+            await session.commit()
+
+            stmt = (
+                select(CertificateConfirmationRequest)
+                .where(CertificateConfirmationRequest.id == request_id)
+                .options(
+                    selectinload(CertificateConfirmationRequest.invoice),
+                    selectinload(CertificateConfirmationRequest.payment),
+                )
+            )
+            result = await session.execute(stmt)
+            req = result.scalar_one_or_none()
+            if not req:
+                raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Confirmation request not found")
+            return CertificateConfirmationRequestResponse.model_validate(req).model_dump()
+
         request = await cancel_request(session, request_id, str(current_user.id), reason)
         await session.commit()
         await session.refresh(request)
@@ -3823,6 +5455,272 @@ async def resend_payment_link(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to resend payment link: {str(e)}",
         )
+
+
+@router.post("/payments/{payment_id}/reconcile", status_code=status.HTTP_200_OK)
+async def reconcile_payment(
+    payment_id: int,
+    session: DBSessionDep,
+    current_user: SystemAdminDep,
+) -> dict:
+    """
+    Manually verify and reconcile a payment with Paystack (Admin).
+    This endpoint verifies the payment status with Paystack and updates the database accordingly.
+    """
+    from app.services.payment_service import verify_payment
+    from app.models import Payment, Invoice, PaymentStatus, RequestStatus
+    from app.services.certificate_service import update_request_status, get_certificate_request_by_id
+    from app.services.certificate_confirmation_service import (
+        get_certificate_confirmation_by_id,
+        update_confirmation_request_status,
+    )
+    from datetime import datetime, timezone
+    from sqlalchemy import select
+
+    # Get payment
+    payment_stmt = select(Payment).where(Payment.id == payment_id)
+    payment_result = await session.execute(payment_stmt)
+    payment = payment_result.scalar_one_or_none()
+
+    if not payment:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Payment not found",
+        )
+
+    if not payment.paystack_reference:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Payment does not have a Paystack reference",
+        )
+
+    try:
+        # Verify payment with Paystack
+        paystack_response = await verify_payment(session, payment.paystack_reference)
+
+        if not paystack_response.get("status"):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Paystack verification failed: {paystack_response.get('message', 'Unknown error')}",
+            )
+
+        paystack_data = paystack_response.get("data", {})
+        paystack_status = paystack_data.get("status")
+
+        # Update payment status based on Paystack response
+        if paystack_status == "success":
+            payment.status = PaymentStatus.SUCCESS
+            payment.paystack_response = paystack_response
+            # Use paid_at from Paystack if available, otherwise use current time
+            paid_at_str = paystack_data.get("paid_at")
+            if paid_at_str:
+                try:
+                    from dateutil import parser
+                    parsed_date = parser.parse(paid_at_str)
+                    # Convert to UTC and make it naive (database expects TIMESTAMP WITHOUT TIME ZONE)
+                    if parsed_date.tzinfo is not None:
+                        parsed_date = parsed_date.astimezone(timezone.utc).replace(tzinfo=None)
+                    payment.paid_at = parsed_date
+                except Exception:
+                    payment.paid_at = datetime.utcnow()
+            else:
+                payment.paid_at = datetime.utcnow()
+
+            # Update invoice status
+            if payment.invoice_id:
+                invoice_stmt = select(Invoice).where(Invoice.id == payment.invoice_id)
+                invoice_result = await session.execute(invoice_stmt)
+                invoice = invoice_result.scalar_one_or_none()
+                if invoice:
+                    invoice.status = "paid"
+                    invoice.paid_at = payment.paid_at
+
+            # Update request status
+            if payment.certificate_request_id:
+                request = await get_certificate_request_by_id(session, payment.certificate_request_id)
+                if request and request.status != RequestStatus.PAID:
+                    await update_request_status(
+                        session,
+                        payment.certificate_request_id,
+                        RequestStatus.PAID,
+                        user_id=str(current_user.id),
+                        notes=f"Payment reconciled by admin {current_user.email}",
+                    )
+
+            elif payment.certificate_confirmation_request_id:
+                confirmation_request = await get_certificate_confirmation_by_id(
+                    session, payment.certificate_confirmation_request_id
+                )
+                if confirmation_request and confirmation_request.status != RequestStatus.PAID:
+                    await update_confirmation_request_status(
+                        session,
+                        confirmation_request,
+                        RequestStatus.PAID,
+                        user_id=str(current_user.id),
+                        notes=f"Payment reconciled by admin {current_user.email}",
+                    )
+
+            await session.commit()
+            logger.info(f"Payment {payment_id} reconciled successfully by admin {current_user.email}")
+
+            return {
+                "message": "Payment reconciled successfully",
+                "payment_id": payment.id,
+                "status": payment.status.value,
+                "paid_at": payment.paid_at.isoformat() if payment.paid_at else None,
+            }
+
+        elif paystack_status == "failed":
+            payment.status = PaymentStatus.FAILED
+            payment.paystack_response = paystack_response
+            await session.commit()
+
+            return {
+                "message": "Payment verified as failed",
+                "payment_id": payment.id,
+                "status": payment.status.value,
+            }
+
+        else:
+            # Payment is still pending
+            return {
+                "message": f"Payment is still {paystack_status}",
+                "payment_id": payment.id,
+                "status": payment.status.value,
+                "paystack_status": paystack_status,
+            }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        await session.rollback()
+        logger.error(f"Error reconciling payment {payment_id}: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to reconcile payment: {str(e)}",
+        )
+
+
+@router.post("/payments/reconcile-by-reference", status_code=status.HTTP_200_OK)
+async def reconcile_payment_by_reference(
+    reference: str = Query(..., description="Paystack transaction reference or invoice number"),
+    session: DBSessionDep = None,
+    current_user: SystemAdminDep = None,
+) -> dict:
+    """
+    Reconcile a payment by Paystack reference or invoice number (Admin).
+    Finds the payment by reference or invoice number and verifies it with Paystack.
+    """
+    from app.models import Payment, Invoice
+    from sqlalchemy import select, or_
+
+    # Check if it's an invoice number (starts with INV-)
+    if reference.upper().startswith("INV-"):
+        # Find invoice by invoice number
+        invoice_stmt = select(Invoice).where(Invoice.invoice_number == reference.upper())
+        invoice_result = await session.execute(invoice_stmt)
+        invoice = invoice_result.scalar_one_or_none()
+
+        if not invoice:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Invoice not found for invoice number: {reference}",
+            )
+
+        # Find payment by invoice_id
+        payment_stmt = select(Payment).where(Payment.invoice_id == invoice.id)
+        payment_result = await session.execute(payment_stmt)
+        payment = payment_result.scalar_one_or_none()
+
+        if not payment:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Payment not found for invoice number: {reference}",
+            )
+    else:
+        # Find payment by Paystack reference
+        payment_stmt = select(Payment).where(Payment.paystack_reference == reference)
+        payment_result = await session.execute(payment_stmt)
+        payment = payment_result.scalar_one_or_none()
+
+        if not payment:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Payment not found for Paystack reference: {reference}",
+            )
+
+    # Call the reconcile endpoint
+    return await reconcile_payment(payment.id, session, current_user)
+
+
+@router.get("/payments/pending-reconciliation", status_code=status.HTTP_200_OK)
+async def list_pending_payments(
+    hours: int = Query(24, ge=1, le=168, description="Hours since payment creation to consider for reconciliation"),
+    session: DBSessionDep = None,
+    current_user: SystemAdminDep = None,
+) -> dict:
+    """
+    List payments that might need reconciliation (Admin).
+    Returns payments that are still pending but were created more than X hours ago.
+    """
+    from app.models import Payment, PaymentStatus, Invoice, CertificateRequest, CertificateConfirmationRequest
+    from sqlalchemy import select, and_
+    from datetime import datetime, timedelta
+    from sqlalchemy.orm import selectinload
+
+    cutoff_time = datetime.utcnow() - timedelta(hours=hours)
+
+    # Find pending payments older than cutoff
+    stmt = (
+        select(Payment)
+        .where(
+            and_(
+                Payment.status == PaymentStatus.PENDING,
+                Payment.created_at < cutoff_time,
+                Payment.paystack_reference.isnot(None),
+            )
+        )
+        .options(
+            selectinload(Payment.invoice),
+            selectinload(Payment.certificate_request),
+            selectinload(Payment.certificate_confirmation_request),
+        )
+        .order_by(Payment.created_at.desc())
+        .limit(100)
+    )
+
+    result = await session.execute(stmt)
+    payments = result.scalars().all()
+
+    payment_list = []
+    for payment in payments:
+        request_number = None
+        request_type = None
+        if payment.certificate_request_id and payment.certificate_request:
+            request_number = payment.certificate_request.request_number
+            request_type = "certificate_request"
+        elif payment.certificate_confirmation_request_id and payment.certificate_confirmation_request:
+            request_number = payment.certificate_confirmation_request.request_number
+            request_type = "certificate_confirmation_request"
+
+        payment_list.append({
+            "payment_id": payment.id,
+            "paystack_reference": payment.paystack_reference,
+            "amount": float(payment.amount),
+            "currency": payment.currency,
+            "status": payment.status.value,
+            "created_at": payment.created_at.isoformat(),
+            "request_number": request_number,
+            "request_type": request_type,
+            "invoice_id": payment.invoice_id,
+            "invoice_status": payment.invoice.status if payment.invoice else None,
+        })
+
+    return {
+        "count": len(payment_list),
+        "payments": payment_list,
+        "cutoff_time": cutoff_time.isoformat(),
+    }
 
 
 # Reporting Endpoints
@@ -3978,4 +5876,145 @@ async def export_certificate_requests(
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to export data: {str(e)}",
+        )
+
+
+# -------------------------
+# Manual Status Change (Unified)
+# -------------------------
+class ManualStatusChangePayload(BaseModel):
+    new_status: str = Field(..., description="New status to set")
+    reason: str = Field(..., min_length=3, description="Reason for manual status change")
+    ticket_type: str | None = Field(
+        None,
+        description="Optional ticket type override: 'certificate_request' or 'certificate_confirmation_request'",
+    )
+
+
+@router.post("/tickets/{ticket_id}/manual-status", status_code=status.HTTP_200_OK)
+async def manual_status_change(
+    ticket_id: int,
+    payload: ManualStatusChangePayload = Body(...),
+    session: DBSessionDep = None,
+    current_user: SystemAdminDep = None,
+) -> dict:
+    """
+    Manually change ticket status after Begin Process with limited transitions.
+    Auto-detects ticket type unless overridden by payload.ticket_type.
+    """
+    from app.models import RequestStatus, CertificateConfirmationRequest
+    from app.schemas.certificate import (
+        CertificateRequestResponse,
+        CertificateConfirmationRequestResponse,
+    )
+    from app.services.certificate_service import (
+        get_certificate_request_by_id,
+        set_status_manual,
+    )
+    from app.services.certificate_confirmation_service import (
+        get_certificate_confirmation_by_id,
+        set_confirmation_status_manual,
+    )
+    from sqlalchemy import select
+    from sqlalchemy.orm import selectinload
+
+    try:
+        try:
+            new_status = RequestStatus(payload.new_status)
+        except Exception:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Invalid new_status: {payload.new_status}",
+            )
+
+        # Respect explicit type if provided
+        if payload.ticket_type and payload.ticket_type.strip().lower() in (
+            "certificate_confirmation_request",
+            "confirmation",
+        ):
+            # Confirmation path
+            req = await set_confirmation_status_manual(
+                session=session,
+                confirmation_id=ticket_id,
+                new_status=new_status,
+                user_id=str(current_user.id),
+                reason=payload.reason,
+            )
+            await session.commit()
+
+            # Eager-load invoice/payment to avoid lazy loading during serialization
+            stmt = (
+                select(CertificateConfirmationRequest)
+                .where(CertificateConfirmationRequest.id == ticket_id)
+                .options(
+                    selectinload(CertificateConfirmationRequest.invoice),
+                    selectinload(CertificateConfirmationRequest.payment),
+                )
+            )
+            result = await session.execute(stmt)
+            req = result.scalar_one_or_none()
+            if not req:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail="Certificate confirmation request not found",
+                )
+            return CertificateConfirmationRequestResponse.model_validate(req).model_dump()
+
+        # Auto-detect: if confirmation exists, use that
+        conf = await get_certificate_confirmation_by_id(session, ticket_id)
+        if conf:
+            req = await set_confirmation_status_manual(
+                session=session,
+                confirmation_id=ticket_id,
+                new_status=new_status,
+                user_id=str(current_user.id),
+                reason=payload.reason,
+            )
+            await session.commit()
+
+            stmt = (
+                select(CertificateConfirmationRequest)
+                .where(CertificateConfirmationRequest.id == ticket_id)
+                .options(
+                    selectinload(CertificateConfirmationRequest.invoice),
+                    selectinload(CertificateConfirmationRequest.payment),
+                )
+            )
+            result = await session.execute(stmt)
+            req = result.scalar_one_or_none()
+            if not req:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail="Certificate confirmation request not found",
+                )
+            return CertificateConfirmationRequestResponse.model_validate(req).model_dump()
+
+        # Fall back to certificate request
+        cert = await get_certificate_request_by_id(session, ticket_id)
+        if not cert:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Ticket not found",
+            )
+        cert = await set_status_manual(
+            session=session,
+            request_id=ticket_id,
+            new_status=new_status,
+            user_id=str(current_user.id),
+            reason=payload.reason,
+        )
+        await session.commit()
+        await session.refresh(cert)
+        return CertificateRequestResponse.model_validate(cert).model_dump()
+    except ValueError as e:
+        await session.rollback()
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+    except HTTPException:
+        # pass through
+        raise
+    except Exception as e:
+        await session.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to change status: {str(e)}",
         )

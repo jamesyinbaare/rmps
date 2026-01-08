@@ -49,7 +49,7 @@ import {
 } from "@/components/ui/alert-dialog";
 import { PrivateSubjectSelection } from "@/components/registration/PrivateSubjectSelection";
 
-type Step = 1 | 2 | 3 | 4 | 5 | 6;
+type Step = 1 | 2 | 3 | 4 | 5 | 6 | 7;
 
 const STEPS = [
   { number: 1, title: "Select Exam" },

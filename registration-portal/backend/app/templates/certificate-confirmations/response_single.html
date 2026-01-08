@@ -1,0 +1,107 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Certificate Confirmation Response</title>
+    <style>
+      body {
+        font-family: Arial, sans-serif;
+        font-size: 12px;
+        color: #111;
+        margin: 0;
+        padding: 0;
+        padding-top: 160px; /* Space for header and reference section */
+        padding-bottom: 100px; /* Space for fixed footer */
+      }
+
+      h1 {
+        font-size: 18px;
+        margin: 0 0 8px 0;
+      }
+
+      .muted {
+        color: #555;
+      }
+
+      .meta {
+        margin: 8px 0 16px;
+      }
+
+      .meta-row {
+        margin: 2px 0;
+      }
+
+      .certificate-info {
+        margin: 10px 0;
+        padding: 10px;
+        background: #f9f9f9;
+        border: 1px solid #ddd;
+      }
+
+      .info-row {
+        margin: 4px 0;
+      }
+
+      .info-label {
+        font-weight: bold;
+        display: inline-block;
+        min-width: 140px;
+      }
+
+      .sig {
+        margin-top: 16px;
+      }
+    </style>
+  </head>
+  <body>
+
+
+    {% set letter = response_payload.get("letter") or {} %}
+    {% if letter.get("subject") %}
+      <div class="meta-row" style="margin-top: 10px;"><u>{{ letter.get("subject") }}</u></div>
+    {% endif %}
+
+    {% if letter.get("body") %}
+      <div style="margin-top: 10px; white-space: pre-wrap;">{{ letter.get("body") }}</div>
+    {% elif letter.get("remarks") %}
+      <div style="margin-top: 10px; white-space: pre-wrap;">{{ letter.get("remarks") }}</div>
+    {% endif %}
+
+    {% if rows and rows|length > 0 %}
+      {% set row = rows[0] %}
+      <div class="certificate-info">
+        <div class="info-row"><span class="info-label">Candidate Name:</span> {{ row.get("candidate_name") or "N/A" }}</div>
+        <div class="info-row"><span class="info-label">Index Number:</span> {{ row.get("candidate_index_number") or "N/A" }}</div>
+        <div class="info-row"><span class="info-label">School:</span> {{ row.get("school_name") or "N/A" }}</div>
+        <div class="info-row"><span class="info-label">Programme:</span> {{ row.get("programme_name") or "N/A" }}</div>
+        <div class="info-row"><span class="info-label">Completion Year:</span> {{ row.get("completion_year") or "N/A" }}</div>
+        {% if row.get("outcome_status") or row.get("outcome_remarks") %}
+          <div class="info-row" style="margin-top: 8px; padding-top: 8px; border-top: 1px solid #ddd;">
+            <span class="info-label">Outcome:</span>
+            {% if row.get("outcome_status") %}
+              <strong>{{ row.get("outcome_status") }}</strong>
+            {% endif %}
+            {% if row.get("outcome_remarks") %}
+              <div class="muted" style="margin-top: 4px;">{{ row.get("outcome_remarks") }}</div>
+            {% endif %}
+          </div>
+        {% endif %}
+      </div>
+    {% endif %}
+
+    {% set signatory_text = letter.get("signatory") %}
+    {% if not signatory_text and (letter.get("signatory_name") or letter.get("signatory_title")) %}
+      {% if letter.get("signatory_name") and letter.get("signatory_title") %}
+        {% set signatory_text = letter.get("signatory_name") ~ ", " ~ letter.get("signatory_title") %}
+      {% elif letter.get("signatory_name") %}
+        {% set signatory_text = letter.get("signatory_name") %}
+      {% elif letter.get("signatory_title") %}
+        {% set signatory_text = letter.get("signatory_title") %}
+      {% endif %}
+    {% endif %}
+    {% if signatory_text %}
+      <div class="sig" style="text-align: left; white-space: pre-wrap;"><strong>{{ signatory_text }}</strong></div>
+    {% endif %}
+
+  </body>
+</html>

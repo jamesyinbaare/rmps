@@ -973,3 +973,366 @@ async def get_private_candidate_photo_file(
         media_type=photo.mime_type,
         headers={"Content-Disposition": f'inline; filename="{photo.file_name}"'},
     )
+
+
+# Certificate Confirmation/Verification Endpoints
+
+@router.get("/certificate-requests", response_model=dict)
+async def list_my_certificate_requests(
+    session: DBSessionDep,
+    current_user: CurrentUserDep,
+    request_type: str | None = Query(None, description="Filter by request type (confirmation/verification)"),
+    status_filter: str | None = Query(None, description="Filter by status"),
+    page: int = Query(1, ge=1),
+    page_size: int = Query(20, ge=1, le=100),
+) -> dict:
+    """List certificate confirmation/verification requests for the current private user (includes both individual and bulk requests)."""
+    if current_user.user_type != PortalUserType.PRIVATE_USER:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="This endpoint is for private users only")
+
+    from app.models import CertificateRequest, CertificateConfirmationRequest, CertificateRequestType, RequestStatus
+    from app.schemas.certificate import CertificateRequestResponse, CertificateConfirmationRequestResponse
+    from app.services.certificate_confirmation_service import get_certificate_confirmation_by_id
+    from sqlalchemy import and_, or_, func, cast, String
+    from sqlalchemy.orm import selectinload
+    import logging
+
+    logger = logging.getLogger(__name__)
+
+    # Filter by user_id for confirmation requests (primary method)
+    # Also filter by email for backward compatibility with old requests
+    user_email_lower = current_user.email.lower().strip() if current_user.email else None
+
+    # For certificate requests, filter by email (they don't have user_id yet)
+    cert_conditions = []
+    if user_email_lower:
+        cert_conditions.append(
+            func.lower(func.trim(func.coalesce(CertificateRequest.contact_email, ""))) == user_email_lower
+        )
+
+    # For confirmation requests, filter by user_id (primary) or email (fallback)
+    from sqlalchemy import or_
+    conf_conditions_user = [CertificateConfirmationRequest.user_id == current_user.id]
+    if user_email_lower:
+        # Also include requests with matching email for backward compatibility
+        conf_conditions_user.append(
+            func.lower(func.trim(func.coalesce(CertificateConfirmationRequest.contact_email, ""))) == user_email_lower
+        )
+
+    # Filter by request type (only confirmation/verification for private users)
+    request_type_enum = None
+    if request_type:
+        try:
+            request_type_enum = CertificateRequestType(request_type.lower())
+            if request_type_enum not in (CertificateRequestType.CONFIRMATION, CertificateRequestType.VERIFICATION):
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="Private users can only view confirmation and verification requests",
+                )
+            cert_conditions.append(cast(CertificateRequest.request_type, String).ilike(request_type_enum.value))
+        except ValueError:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Invalid request_type: {request_type}",
+            )
+    else:
+        # Default to only confirmation/verification
+        cert_conditions.append(
+            CertificateRequest.request_type.in_([CertificateRequestType.CONFIRMATION, CertificateRequestType.VERIFICATION])
+        )
+
+    # Filter by status for certificate requests
+    if status_filter:
+        try:
+            status_enum = RequestStatus(status_filter.lower())
+            cert_conditions.append(cast(CertificateRequest.status, String).ilike(status_enum.value))
+        except ValueError:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Invalid status: {status_filter}",
+            )
+
+    # Build query for individual certificate requests
+    cert_stmt = (
+        select(CertificateRequest)
+        .where(and_(*cert_conditions))
+        .options(
+            selectinload(CertificateRequest.examination_center),
+        )
+        .order_by(CertificateRequest.created_at.desc())
+    )
+
+    # Count total for certificate requests
+    cert_count_stmt = select(func.count()).select_from(CertificateRequest).where(and_(*cert_conditions))
+    cert_count_result = await session.execute(cert_count_stmt)
+    cert_total = cert_count_result.scalar() or 0
+
+    # Build query for confirmation requests - use user_id (primary) or email (fallback)
+    # Build the base condition: user_id match OR email match
+    base_conf_condition = None
+    if len(conf_conditions_user) > 1:
+        base_conf_condition = or_(*conf_conditions_user)
+    elif len(conf_conditions_user) == 1:
+        base_conf_condition = conf_conditions_user[0]
+
+    # If we have a base condition, add it to conf_conditions
+    conf_conditions = []
+    if base_conf_condition is not None:
+        conf_conditions.append(base_conf_condition)
+
+    if request_type_enum:
+        conf_conditions.append(cast(CertificateConfirmationRequest.request_type, String).ilike(request_type_enum.value))
+    else:
+        conf_conditions.append(
+            CertificateConfirmationRequest.request_type.in_([CertificateRequestType.CONFIRMATION, CertificateRequestType.VERIFICATION])
+        )
+
+    if status_filter:
+        try:
+            status_enum = RequestStatus(status_filter.lower())
+            conf_conditions.append(cast(CertificateConfirmationRequest.status, String).ilike(status_enum.value))
+        except ValueError:
+            pass  # Already validated above
+
+    conf_stmt = (
+        select(CertificateConfirmationRequest)
+        .where(and_(*conf_conditions) if conf_conditions else True)
+        .options(
+            selectinload(CertificateConfirmationRequest.invoice),
+            selectinload(CertificateConfirmationRequest.payment),
+        )
+        .order_by(CertificateConfirmationRequest.created_at.desc())
+    )
+
+    # Count total for confirmation requests
+    if conf_conditions:
+        conf_count_stmt = select(func.count()).select_from(CertificateConfirmationRequest).where(and_(*conf_conditions))
+    else:
+        conf_count_stmt = select(func.count()).select_from(CertificateConfirmationRequest)
+    conf_count_result = await session.execute(conf_count_stmt)
+    conf_total = conf_count_result.scalar() or 0
+
+    # Calculate total
+    total = cert_total + conf_total
+    offset = (page - 1) * page_size
+
+    # Fetch ALL results for both types (don't paginate here, paginate after combining)
+    cert_result = await session.execute(cert_stmt)
+    cert_requests = list(cert_result.scalars().all())
+
+    conf_result = await session.execute(conf_stmt)
+    confirmation_requests = list(conf_result.scalars().all())
+
+    # Convert to response models
+    request_responses = []
+
+    # Add individual certificate requests
+    for req in cert_requests:
+        response_data = CertificateRequestResponse.model_validate(req)
+        if req.examination_center:
+            response_data.examination_center_name = req.examination_center.name
+        request_responses.append(response_data.model_dump())
+
+    # Add confirmation requests (mark type based on certificate_details length)
+    for conf_req in confirmation_requests:
+        conf_response = CertificateConfirmationRequestResponse.model_validate(conf_req)
+        conf_dict = conf_response.model_dump()
+        conf_dict["has_response"] = bool(getattr(conf_req, "response_file_path", None))
+        # Do not expose internal storage paths to clients
+        conf_dict["response_file_path"] = None
+        # Mark as bulk if multiple certificate details, otherwise single confirmation
+        is_bulk = len(conf_req.certificate_details) > 1 if isinstance(conf_req.certificate_details, list) else False
+        conf_dict["_type"] = "bulk_confirmation" if is_bulk else "certificate_confirmation"
+        request_responses.append(conf_dict)
+
+    # Sort by created_at descending (most recent first)
+    request_responses.sort(key=lambda x: x["created_at"], reverse=True)
+
+    # Apply pagination to combined results
+    paginated_items = request_responses[offset:offset + page_size]
+
+    total_pages = (total + page_size - 1) // page_size if total > 0 else 0
+
+    return {
+        "items": paginated_items,
+        "total": total,
+        "page": page,
+        "page_size": page_size,
+        "total_pages": total_pages,
+    }
+
+
+@router.get("/certificate-confirmations/{confirmation_id}/details.pdf", status_code=status.HTTP_200_OK)
+async def download_my_confirmation_details_pdf(
+    confirmation_id: int,
+    session: DBSessionDep,
+    current_user: CurrentUserDep,
+) -> StreamingResponse:
+    """Download confirmation/verification request details as a PDF (generated on demand; not saved)."""
+    if current_user.user_type != PortalUserType.PRIVATE_USER:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="This endpoint is for private users only")
+
+    from app.models import CertificateConfirmationRequest, Invoice, Payment
+    from app.services.bulk_certificate_confirmation_pdf_service import generate_bulk_certificate_confirmation_pdf
+    from sqlalchemy import select
+    from sqlalchemy.orm import selectinload
+
+    stmt = (
+        select(CertificateConfirmationRequest)
+        .where(CertificateConfirmationRequest.id == confirmation_id)
+        .options(
+            selectinload(CertificateConfirmationRequest.invoice),
+            selectinload(CertificateConfirmationRequest.payment),
+        )
+    )
+    result = await session.execute(stmt)
+    confirmation_request = result.scalar_one_or_none()
+    if not confirmation_request:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Certificate confirmation request not found")
+
+    if not confirmation_request.user_id or confirmation_request.user_id != current_user.id:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="You do not have access to this request")
+
+    invoice = confirmation_request.invoice
+    if not invoice and confirmation_request.invoice_id:
+        invoice_result = await session.execute(select(Invoice).where(Invoice.id == confirmation_request.invoice_id))
+        invoice = invoice_result.scalar_one_or_none()
+
+    payment = confirmation_request.payment
+    if not payment and confirmation_request.payment_id:
+        payment_result = await session.execute(select(Payment).where(Payment.id == confirmation_request.payment_id))
+        payment = payment_result.scalar_one_or_none()
+
+    certificate_details = (
+        confirmation_request.certificate_details
+        if isinstance(confirmation_request.certificate_details, list)
+        else []
+    )
+
+    try:
+        pdf_bytes = await generate_bulk_certificate_confirmation_pdf(
+            confirmation_request,
+            invoice=invoice,
+            payment=payment,
+            certificate_details=certificate_details,
+        )
+    except Exception as e:
+        logger.error(f"Failed to generate confirmation details PDF: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to generate PDF document",
+        )
+
+    filename = f"confirmation_details_{confirmation_request.request_number}.pdf"
+    return StreamingResponse(
+        iter([pdf_bytes]),
+        media_type="application/pdf",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
+@router.get("/certificate-confirmations/{confirmation_id}/response", status_code=status.HTTP_200_OK)
+async def download_my_confirmation_response(
+    confirmation_id: int,
+    session: DBSessionDep,
+    current_user: CurrentUserDep,
+) -> StreamingResponse:
+    """Download the stored admin response file for a confirmation/verification request (authenticated requester only)."""
+    if current_user.user_type != PortalUserType.PRIVATE_USER:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="This endpoint is for private users only")
+
+    from app.models import CertificateConfirmationRequest
+    from app.services.certificate_file_storage import CertificateFileStorageService
+    from sqlalchemy import select
+
+    result = await session.execute(
+        select(CertificateConfirmationRequest).where(CertificateConfirmationRequest.id == confirmation_id)
+    )
+    confirmation_request = result.scalar_one_or_none()
+    if not confirmation_request:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Certificate confirmation request not found")
+
+    if not confirmation_request.user_id or confirmation_request.user_id != current_user.id:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="You do not have access to this request")
+
+    if not confirmation_request.response_file_path:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Response not available for this request")
+
+    if not confirmation_request.response_signed:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Response is not yet signed. Please wait for the response to be signed before downloading.",
+        )
+
+    if confirmation_request.response_revoked:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Response has been revoked and is no longer available for download.",
+        )
+
+    storage = CertificateFileStorageService()
+    try:
+        file_bytes = await storage.retrieve(confirmation_request.response_file_path)
+    except Exception as e:
+        logger.error(f"Failed to retrieve response file: {e}", exc_info=True)
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to retrieve response file")
+
+    filename = confirmation_request.response_file_name or f"confirmation_response_{confirmation_request.request_number}"
+    media_type = confirmation_request.response_mime_type or "application/octet-stream"
+    return StreamingResponse(
+        iter([file_bytes]),
+        media_type=media_type,
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
+@router.get("/certificate-confirmations/request/{request_number}/response", status_code=status.HTTP_200_OK)
+async def download_my_confirmation_response_by_number(
+    request_number: str,
+    session: DBSessionDep,
+    current_user: CurrentUserDep,
+) -> StreamingResponse:
+    """Download the stored admin response file for a confirmation/verification request by request number (authenticated requester only)."""
+    if current_user.user_type != PortalUserType.PRIVATE_USER:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="This endpoint is for private users only")
+
+    from app.models import CertificateConfirmationRequest
+    from app.services.certificate_file_storage import CertificateFileStorageService
+    from app.services.certificate_confirmation_service import get_certificate_confirmation_by_number
+
+    confirmation_request = await get_certificate_confirmation_by_number(session, request_number)
+    if not confirmation_request:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Certificate confirmation request not found")
+
+    if not confirmation_request.user_id or confirmation_request.user_id != current_user.id:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="You do not have access to this request")
+
+    if not confirmation_request.response_file_path:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Response not available for this request")
+
+    if not confirmation_request.response_signed:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Response is not yet signed. Please wait for the response to be signed before downloading.",
+        )
+
+    if confirmation_request.response_revoked:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Response has been revoked and is no longer available for download.",
+        )
+
+    storage = CertificateFileStorageService()
+    try:
+        file_bytes = await storage.retrieve(confirmation_request.response_file_path)
+    except Exception as e:
+        logger.error(f"Failed to retrieve response file: {e}", exc_info=True)
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to retrieve response file")
+
+    filename = confirmation_request.response_file_name or f"confirmation_response_{confirmation_request.request_number}"
+    media_type = confirmation_request.response_mime_type or "application/octet-stream"
+    return StreamingResponse(
+        iter([file_bytes]),
+        media_type=media_type,
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )

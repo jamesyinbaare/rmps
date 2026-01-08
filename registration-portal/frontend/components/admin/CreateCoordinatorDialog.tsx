@@ -35,7 +35,7 @@ export function CreateCoordinatorDialog({
   onOpenChange,
   onSuccess,
   defaultSchoolId,
-}: CreateSchoolAdminDialogProps) {
+}: CreateCoordinatorDialogProps) {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");

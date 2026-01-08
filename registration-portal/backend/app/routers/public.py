@@ -1,7 +1,8 @@
 """Public endpoints (no authentication required)."""
 import logging
-from fastapi import APIRouter, HTTPException, status, File, UploadFile, Form, Request, Query
+from fastapi import APIRouter, HTTPException, status, File, UploadFile, Form, Request, Query, Body, Depends
 from fastapi.responses import StreamingResponse
+from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from sqlalchemy import select, and_, or_, func
 from sqlalchemy.orm import selectinload
 from datetime import datetime, timedelta
@@ -749,9 +750,9 @@ async def submit_certificate_request(
     request_type: str = Form(...),
     index_number: str = Form(...),
     exam_year: int = Form(...),
-    examination_center_id: int = Form(...),
-    national_id_number: str = Form(...),
-    delivery_method: str = Form(...),
+    examination_center_id: int | None = Form(None),  # Optional for confirmation/verification
+    national_id_number: str | None = Form(None),  # Optional for confirmation/verification
+    delivery_method: str | None = Form(None),  # Optional for confirmation/verification
     contact_phone: str = Form(...),
     contact_email: str | None = Form(None),
     courier_address_line1: str | None = Form(None),
@@ -760,57 +761,147 @@ async def submit_certificate_request(
     courier_region: str | None = Form(None),
     courier_postal_code: str | None = Form(None),
     service_type: str = Form("standard"),
-    photograph: UploadFile = File(...),
-    national_id_scan: UploadFile = File(...),
+    photograph: UploadFile = File(None),  # Optional for confirmation/verification
+    national_id_scan: UploadFile = File(None),  # Optional for confirmation/verification
+    # Confirmation/Verification specific fields
+    candidate_name: str | None = Form(None),
+    candidate_index_number: str | None = Form(None),
+    school_name: str | None = Form(None),
+    programme_name: str | None = Form(None),
+    completion_year: int | None = Form(None),
+    certificate: UploadFile = File(None),  # Optional certificate scan
+    candidate_photograph: UploadFile = File(None),  # Optional candidate photo
+    request_details: str | None = Form(None),
+    credentials: HTTPAuthorizationCredentials | None = Depends(HTTPBearer(auto_error=False)),
     session: DBSessionDep = None,
 ) -> dict:
-    """Submit a certificate or attestation request."""
+    """Submit a certificate, attestation, confirmation, or verification request."""
     from app.schemas.certificate import CertificateRequestResponse
     from app.services.certificate_service import create_certificate_request
     from app.services.certificate_file_storage import CertificateFileStorageService
-    from app.models import CertificateRequestType, DeliveryMethod, ServiceType
+    from app.models import CertificateRequestType, DeliveryMethod, ServiceType, PortalUser, PortalUserType
     from app.config import settings
+    from app.dependencies.auth import get_current_user_optional
 
     try:
-        # Validate file types
-        allowed_mime_types = ["image/jpeg", "image/png", "image/jpg"]
-        if photograph.content_type not in allowed_mime_types:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Photograph must be JPEG or PNG image",
-            )
-        if national_id_scan.content_type not in allowed_mime_types:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="National ID scan must be JPEG or PNG image",
-            )
+        # Resolve optional current user (only required for confirmation/verification)
+        resolved_user: PortalUser | None = None
+        try:
+            resolved_user = await get_current_user_optional(session=session, credentials=credentials)
+        except HTTPException:
+            # If an Authorization header is present but invalid/expired, propagate 401
+            raise
 
-        # Validate file sizes
-        photo_content = await photograph.read()
-        id_scan_content = await national_id_scan.read()
-
-        max_file_size = 5 * 1024 * 1024  # 5MB
-        if len(photo_content) > max_file_size:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Photograph file size exceeds 5MB limit",
-            )
-        if len(id_scan_content) > max_file_size:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="National ID scan file size exceeds 5MB limit",
-            )
-
-        # Parse enums
+        # Parse enums first to check request type
         try:
             request_type_enum = CertificateRequestType(request_type.lower())
-            delivery_method_enum = DeliveryMethod(delivery_method.lower())
             service_type_enum = ServiceType(service_type.lower())
+            # delivery_method is optional for confirmation/verification
+            if delivery_method:
+                delivery_method_enum = DeliveryMethod(delivery_method.lower())
+            else:
+                delivery_method_enum = DeliveryMethod.PICKUP  # Default
         except ValueError as e:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail=f"Invalid request_type, delivery_method, or service_type: {e}",
             )
+
+        # Validate file uploads
+        photo_content = None
+        id_scan_content = None
+        certificate_content = None
+        candidate_photo_content = None
+        allowed_mime_types = ["image/jpeg", "image/png", "image/jpg"]
+        max_file_size = 5 * 1024 * 1024  # 5MB
+
+        if request_type_enum in (CertificateRequestType.CERTIFICATE, CertificateRequestType.ATTESTATION):
+            # Files are required for certificate/attestation
+            if not photograph or not national_id_scan:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="Photograph and national ID scan are required for certificate and attestation requests",
+                )
+
+            if photograph.content_type not in allowed_mime_types:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="Photograph must be JPEG or PNG image",
+                )
+            if national_id_scan.content_type not in allowed_mime_types:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="National ID scan must be JPEG or PNG image",
+                )
+
+            photo_content = await photograph.read()
+            id_scan_content = await national_id_scan.read()
+
+            if len(photo_content) > max_file_size:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="Photograph file size exceeds 5MB limit",
+                )
+            if len(id_scan_content) > max_file_size:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="National ID scan file size exceeds 5MB limit",
+                )
+        else:
+            # Files are optional for confirmation/verification
+            if photograph:
+                if photograph.content_type not in allowed_mime_types:
+                    raise HTTPException(
+                        status_code=status.HTTP_400_BAD_REQUEST,
+                        detail="Photograph must be JPEG or PNG image",
+                    )
+                photo_content = await photograph.read()
+                if len(photo_content) > max_file_size:
+                    raise HTTPException(
+                        status_code=status.HTTP_400_BAD_REQUEST,
+                        detail="Photograph file size exceeds 5MB limit",
+                    )
+
+            if national_id_scan:
+                if national_id_scan.content_type not in allowed_mime_types:
+                    raise HTTPException(
+                        status_code=status.HTTP_400_BAD_REQUEST,
+                        detail="National ID scan must be JPEG or PNG image",
+                    )
+                id_scan_content = await national_id_scan.read()
+                if len(id_scan_content) > max_file_size:
+                    raise HTTPException(
+                        status_code=status.HTTP_400_BAD_REQUEST,
+                        detail="National ID scan file size exceeds 5MB limit",
+                    )
+
+            # Handle certificate and candidate photo uploads for confirmation/verification
+            if certificate:
+                if certificate.content_type not in allowed_mime_types:
+                    raise HTTPException(
+                        status_code=status.HTTP_400_BAD_REQUEST,
+                        detail="Certificate scan must be JPEG or PNG image",
+                    )
+                certificate_content = await certificate.read()
+                if len(certificate_content) > max_file_size:
+                    raise HTTPException(
+                        status_code=status.HTTP_400_BAD_REQUEST,
+                        detail="Certificate scan file size exceeds 5MB limit",
+                    )
+
+            if candidate_photograph:
+                if candidate_photograph.content_type not in allowed_mime_types:
+                    raise HTTPException(
+                        status_code=status.HTTP_400_BAD_REQUEST,
+                        detail="Candidate photograph must be JPEG or PNG image",
+                    )
+                candidate_photo_content = await candidate_photograph.read()
+                if len(candidate_photo_content) > max_file_size:
+                    raise HTTPException(
+                        status_code=status.HTTP_400_BAD_REQUEST,
+                        detail="Candidate photograph file size exceeds 5MB limit",
+                    )
+
 
         # Validate courier address if delivery method is courier
         if delivery_method_enum == DeliveryMethod.COURIER:
@@ -820,103 +911,205 @@ async def submit_certificate_request(
                     detail="Courier delivery requires address_line1 and contact_phone",
                 )
 
-        # Create request data dictionary
-        request_data = {
-            "request_type": request_type_enum,
-            "index_number": index_number,
-            "exam_year": exam_year,
-            "examination_center_id": examination_center_id,
-            "national_id_number": national_id_number,
-            "delivery_method": delivery_method_enum,
-            "contact_phone": contact_phone,
-            "contact_email": contact_email,
-            "courier_address_line1": courier_address_line1,
-            "courier_address_line2": courier_address_line2,
-            "courier_city": courier_city,
-            "courier_region": courier_region,
-            "courier_postal_code": courier_postal_code,
-            "service_type": service_type_enum,
-        }
+        # Validate confirmation/verification specific fields
+        if request_type_enum in (CertificateRequestType.CONFIRMATION, CertificateRequestType.VERIFICATION):
+            # Disable guest creation: must be authenticated private user
+            if resolved_user is None:
+                raise HTTPException(
+                    status_code=status.HTTP_401_UNAUTHORIZED,
+                    detail="Authentication required for confirmation and verification requests",
+                )
+            if resolved_user.user_type != PortalUserType.PRIVATE_USER:
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail="Only private users can submit confirmation and verification requests",
+                )
+            if not candidate_name:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="candidate_name is required for confirmation and verification requests",
+                )
+            if not school_name:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="school_name is required for confirmation and verification requests",
+                )
+            if not programme_name:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="programme_name is required for confirmation and verification requests",
+                )
+            if not completion_year:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="completion_year is required for confirmation and verification requests",
+                )
+            if not candidate_index_number and not index_number:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="candidate_index_number or index_number is required for confirmation and verification requests",
+                )
+        else:
+            # Validate required fields for certificate/attestation
+            if not examination_center_id:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="examination_center_id is required for certificate and attestation requests",
+                )
+            if not national_id_number:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="national_id_number is required for certificate and attestation requests",
+                )
 
-        # Generate request number first (needed for file storage organization)
-        from app.services.certificate_service import generate_request_number
-        request_number = await generate_request_number(session)
+        # Check if this is a confirmation/verification request
+        if request_type_enum in (CertificateRequestType.CONFIRMATION, CertificateRequestType.VERIFICATION):
+            # Handle confirmation/verification requests - save to certificate_confirmation_requests table
+            from app.services.certificate_confirmation_service import create_certificate_confirmation
+            from app.schemas.certificate import CertificateConfirmationRequestResponse
 
-        # Create a temporary request ID by creating request first without files, then updating
-        # We'll use a placeholder path temporarily
-        from app.models import CertificateRequest, RequestStatus, Invoice
-        from app.services.invoice_service import generate_invoice_number, calculate_invoice_amount
-        from decimal import Decimal
+            # Disable guest creation: already enforced above
+            user_id = str(resolved_user.id) if resolved_user else None
 
-        # Create certificate request with placeholder paths
-        certificate_request = CertificateRequest(
-            request_type=request_type_enum,
-            request_number=request_number,
-            index_number=index_number,
-            exam_year=exam_year,
-            examination_center_id=examination_center_id,
-            national_id_number=national_id_number,
-            national_id_file_path="temp",  # Temporary placeholder
-            photograph_file_path="temp",  # Temporary placeholder
-            delivery_method=delivery_method_enum,
-            contact_phone=contact_phone,
-            contact_email=contact_email,
-            courier_address_line1=courier_address_line1,
-            courier_address_line2=courier_address_line2,
-            courier_city=courier_city,
-            courier_region=courier_region,
-            courier_postal_code=courier_postal_code,
-            status=RequestStatus.PENDING_PAYMENT,
-        )
-        session.add(certificate_request)
-        await session.flush()
-        await session.refresh(certificate_request)
+            # Prepare certificate_details array (single item for single request)
+            certificate_details = [{
+                "candidate_name": candidate_name,
+                "candidate_index_number": candidate_index_number or index_number,
+                "school_name": school_name,
+                "programme_name": programme_name,
+                "completion_year": completion_year,
+                "certificate_file_path": None,  # Will set after saving
+                "candidate_photograph_file_path": None,  # Will set after saving
+                "request_details": request_details,
+            }]
 
-        # Save files now that we have request ID
-        file_storage = CertificateFileStorageService()
-        photo_path, _ = await file_storage.save_photo(
-            photo_content,
-            photograph.filename or "photo.jpg",
-            certificate_request.id,
-        )
-        id_scan_path, _ = await file_storage.save_id_scan(
-            id_scan_content,
-            national_id_scan.filename or "id_scan.jpg",
-            certificate_request.id,
-        )
+            # Create confirmation request (will create invoice too)
+            confirmation_request = await create_certificate_confirmation(
+                session,
+                request_type=request_type_enum,
+                contact_phone=contact_phone,
+                contact_email=contact_email,
+                service_type=service_type_enum,
+                certificate_details=certificate_details,
+                user_id=user_id,
+            )
 
-        # Update request with actual file paths
-        certificate_request.photograph_file_path = photo_path
-        certificate_request.national_id_file_path = id_scan_path
+            # Save files and update certificate_details with file paths
+            file_storage = CertificateFileStorageService()
 
-        # Calculate and create invoice
-        amount = calculate_invoice_amount(request_type_enum, delivery_method_enum, service_type_enum)
-        invoice_number = await generate_invoice_number(session)
-        invoice = Invoice(
-            invoice_number=invoice_number,
-            certificate_request_id=certificate_request.id,
-            amount=Decimal(str(amount)),
-            currency="GHS",
-            status="pending",
-            due_date=datetime.utcnow().date() + timedelta(days=7),
-        )
-        session.add(invoice)
-        await session.flush()
-        await session.refresh(invoice)
-        await session.commit()
-        await session.refresh(certificate_request)
+            # Get current certificate_details and update with file paths
+            updated_certificate_details = confirmation_request.certificate_details.copy()
 
-        # Query examination center separately to avoid lazy loading issues
-        from app.models import School
-        examination_center_stmt = select(School).where(School.id == certificate_request.examination_center_id)
-        examination_center_result = await session.execute(examination_center_stmt)
-        examination_center = examination_center_result.scalar_one_or_none()
+            if certificate_content:
+                certificate_path, _ = await file_storage.save_certificate_scan(
+                    certificate_content,
+                    certificate.filename or "certificate.jpg",
+                    confirmation_request.id,
+                )
+                # Update certificate_details with file path
+                updated_certificate_details[0]["certificate_file_path"] = certificate_path
 
-        response_data = CertificateRequestResponse.model_validate(certificate_request)
-        if examination_center:
-            response_data.examination_center_name = examination_center.name
+            if candidate_photo_content:
+                candidate_photo_path, _ = await file_storage.save_candidate_photo(
+                    candidate_photo_content,
+                    candidate_photograph.filename or "candidate_photo.jpg",
+                    confirmation_request.id,
+                )
+                # Update certificate_details with file path
+                updated_certificate_details[0]["candidate_photograph_file_path"] = candidate_photo_path
 
-        return response_data.model_dump()
+            # Update the certificate_details field (reassign to trigger SQLAlchemy change detection)
+            confirmation_request.certificate_details = updated_certificate_details
+
+            # Commit file path updates
+            await session.commit()
+            await session.refresh(confirmation_request, ["invoice", "payment"])
+
+            # Return confirmation request response
+            response_data = CertificateConfirmationRequestResponse.model_validate(confirmation_request)
+            return response_data.model_dump()
+        else:
+            # Handle certificate/attestation requests - save to certificate_requests table (existing behavior)
+            # Create request data dictionary
+            request_data = {
+                "request_type": request_type_enum,
+                "index_number": index_number,
+                "exam_year": exam_year,
+                "examination_center_id": examination_center_id,
+                "national_id_number": national_id_number,
+                "delivery_method": delivery_method_enum,
+                "contact_phone": contact_phone,
+                "contact_email": contact_email,
+                "courier_address_line1": courier_address_line1,
+                "courier_address_line2": courier_address_line2,
+                "courier_city": courier_city,
+                "courier_region": courier_region,
+                "courier_postal_code": courier_postal_code,
+                "service_type": service_type_enum,
+            }
+
+            # Create request using service (will create invoice too)
+            certificate_request = await create_certificate_request(
+                session,
+                request_data,
+                photo_file_path=None,  # Will set after saving
+                id_scan_file_path=None,  # Will set after saving
+                certificate_file_path=None,  # Will set after saving
+                candidate_photo_file_path=None,  # Will set after saving
+            )
+
+            # Now save files and update paths
+            file_storage = CertificateFileStorageService()
+
+            if photo_content:
+                photo_path, _ = await file_storage.save_photo(
+                    photo_content,
+                    photograph.filename or "photo.jpg",
+                    certificate_request.id,
+                )
+                certificate_request.photograph_file_path = photo_path
+
+            if id_scan_content:
+                id_scan_path, _ = await file_storage.save_id_scan(
+                    id_scan_content,
+                    national_id_scan.filename or "id_scan.jpg",
+                    certificate_request.id,
+                )
+                certificate_request.national_id_file_path = id_scan_path
+
+            if certificate_content:
+                certificate_path, _ = await file_storage.save_certificate_scan(
+                    certificate_content,
+                    certificate.filename or "certificate.jpg",
+                    certificate_request.id,
+                )
+                certificate_request.certificate_file_path = certificate_path
+
+            if candidate_photo_content:
+                candidate_photo_path, _ = await file_storage.save_candidate_photo(
+                    candidate_photo_content,
+                    candidate_photograph.filename or "candidate_photo.jpg",
+                    certificate_request.id,
+                )
+                certificate_request.candidate_photograph_file_path = candidate_photo_path
+
+            # Commit file path updates
+            await session.commit()
+            await session.refresh(certificate_request)
+
+            # Query examination center separately to avoid lazy loading issues (if applicable)
+            from app.models import School
+            examination_center = None
+            if certificate_request.examination_center_id:
+                examination_center_stmt = select(School).where(School.id == certificate_request.examination_center_id)
+                examination_center_result = await session.execute(examination_center_stmt)
+                examination_center = examination_center_result.scalar_one_or_none()
+
+            response_data = CertificateRequestResponse.model_validate(certificate_request)
+            if examination_center:
+                response_data.examination_center_name = examination_center.name
+
+            return response_data.model_dump()
 
     except HTTPException:
         raise
@@ -932,17 +1125,389 @@ async def submit_certificate_request(
         )
 
 
+@router.post("/certificate-requests/bulk", status_code=status.HTTP_201_CREATED)
+async def submit_bulk_certificate_request(
+    request_type: str = Form(...),
+    contact_phone: str = Form(...),
+    contact_email: str | None = Form(None),
+    service_type: str = Form("standard"),
+    requests_json: str = Form(...),  # JSON string of requests array
+    http_request: Request = None,  # FastAPI will inject this automatically
+    credentials: HTTPAuthorizationCredentials | None = Depends(HTTPBearer(auto_error=False)),
+    session: DBSessionDep = None,
+) -> dict:
+    """Submit bulk confirmation or verification requests with optional file uploads."""
+    import json
+    from fastapi import UploadFile, File
+    from typing import List
+
+    from app.models import CertificateRequestType, ServiceType, PortalUser, PortalUserType
+    from app.services.certificate_confirmation_service import create_certificate_confirmation
+    from app.services.certificate_file_storage import CertificateFileStorageService
+    from sqlalchemy.orm import selectinload
+    from app.dependencies.auth import get_current_user_optional
+
+    # Resolve optional current user; bulk endpoint is confirmation/verification only so auth is required.
+    resolved_user: PortalUser | None = None
+    try:
+        resolved_user = await get_current_user_optional(session=session, credentials=credentials)
+    except HTTPException:
+        raise
+    if resolved_user is None:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Authentication required for bulk confirmation and verification requests",
+        )
+    if resolved_user.user_type != PortalUserType.PRIVATE_USER:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Only private users can submit bulk confirmation and verification requests",
+        )
+    user_id = str(resolved_user.id)
+
+    try:
+        # Parse requests JSON
+        try:
+            requests = json.loads(requests_json)
+        except json.JSONDecodeError:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Invalid JSON format for requests array",
+            )
+
+        if not isinstance(requests, list):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="requests must be an array",
+            )
+
+        # Parse form data to extract files with indexed names
+        # Files are sent as: certificate_0, certificate_1, candidate_photo_0, candidate_photo_1, etc.
+        certificate_files: dict[int, UploadFile] = {}
+        candidate_photo_files: dict[int, UploadFile] = {}
+
+        if http_request:
+            try:
+                form_data = await http_request.form()
+                for key, value in form_data.items():
+                    if isinstance(value, UploadFile):
+                        if key.startswith("certificate_"):
+                            try:
+                                index = int(key.replace("certificate_", ""))
+                                certificate_files[index] = value
+                            except ValueError:
+                                pass
+                        elif key.startswith("candidate_photo_"):
+                            try:
+                                index = int(key.replace("candidate_photo_", ""))
+                                candidate_photo_files[index] = value
+                            except ValueError:
+                                pass
+            except Exception as e:
+                logger.warning(f"Error parsing form data for files: {e}")
+
+        if not request_type or not requests:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="request_type and requests array are required",
+            )
+
+        if not contact_phone:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="contact_phone is required",
+            )
+
+        # Validate request type
+        try:
+            request_type_enum = CertificateRequestType(request_type.lower())
+            if request_type_enum not in (CertificateRequestType.CONFIRMATION, CertificateRequestType.VERIFICATION):
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="Bulk requests are only supported for confirmation and verification types",
+                )
+        except ValueError:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Invalid request_type. Must be 'confirmation' or 'verification'",
+            )
+
+        if not isinstance(requests, list) or len(requests) == 0:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="requests must be a non-empty array",
+            )
+
+        if len(requests) > 100:  # Limit bulk requests
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Maximum 100 requests allowed per bulk submission",
+            )
+
+        service_type_enum = ServiceType(service_type.lower()) if isinstance(service_type, str) else service_type
+
+        # Validate individual requests and prepare data
+        validated_requests = []
+        errors = []
+        file_storage = CertificateFileStorageService()
+
+        for idx, req in enumerate(requests):
+            try:
+                candidate_name = req.get("candidate_name")
+                candidate_index_number = req.get("candidate_index_number") or req.get("index_number")
+                completion_year = req.get("completion_year") or req.get("exam_year")
+                school_name = req.get("school_name")
+                programme_name = req.get("programme_name")
+                request_details = req.get("request_details")
+
+                # Validate required fields for confirmation/verification
+                # candidate_index_number is optional, so only check required fields
+                if not all([candidate_name, completion_year, school_name, programme_name]):
+                    errors.append({
+                        "index": idx,
+                        "error": "Missing required fields: candidate_name, completion_year (or exam_year), school_name, programme_name"
+                    })
+                    continue
+
+                # Prepare certificate detail dict (files will be added after request creation)
+                cert_detail = {
+                    "candidate_name": candidate_name,
+                    "candidate_index_number": candidate_index_number if candidate_index_number else None,
+                    "school_name": school_name,
+                    "programme_name": programme_name,
+                    "completion_year": int(completion_year),
+                    "certificate_file_path": None,
+                    "candidate_photograph_file_path": None,
+                    "request_details": request_details,
+                }
+
+                validated_requests.append(cert_detail)
+
+            except Exception as e:
+                errors.append({
+                    "index": idx,
+                    "error": str(e)
+                })
+                continue
+
+        if not validated_requests:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="No valid requests to create. All requests failed validation.",
+            )
+
+        # Create certificate confirmation request with certificate_details array
+        confirmation_request = await create_certificate_confirmation(
+            session,
+            request_type=request_type_enum,
+            contact_phone=contact_phone,
+            contact_email=contact_email,
+            service_type=service_type_enum,
+            certificate_details=validated_requests,
+            user_id=user_id,  # Pass user_id if user is logged in
+        )
+
+        # Save uploaded files and update certificate_details with file paths
+        updated_certificate_details = list(confirmation_request.certificate_details)
+
+        for idx, cert_detail in enumerate(updated_certificate_details):
+            # Save certificate scan if provided
+            if idx in certificate_files:
+                cert_file = certificate_files[idx]
+                cert_content = await cert_file.read()
+                if cert_content:
+                    cert_path, _ = await file_storage.save_certificate_scan(
+                        cert_content,
+                        cert_file.filename or f"certificate_{idx}.jpg",
+                        confirmation_request.id,
+                    )
+                    cert_detail["certificate_file_path"] = cert_path
+
+            # Save candidate photo if provided
+            if idx in candidate_photo_files:
+                photo_file = candidate_photo_files[idx]
+                photo_content = await photo_file.read()
+                if photo_content:
+                    photo_path, _ = await file_storage.save_candidate_photo(
+                        photo_content,
+                        photo_file.filename or f"candidate_photo_{idx}.jpg",
+                        confirmation_request.id,
+                    )
+                    cert_detail["candidate_photograph_file_path"] = photo_path
+
+        # Update certificate_details with file paths
+        confirmation_request.certificate_details = updated_certificate_details
+
+        await session.commit()
+
+        # Refresh to get relationships loaded
+        await session.refresh(confirmation_request, ["invoice"])
+
+        # Calculate total amount for response
+        from app.services.invoice_service import calculate_invoice_amount
+        from decimal import Decimal
+        total_amount = Decimal(0)
+        for _ in validated_requests:
+            amount = calculate_invoice_amount(
+                request_type=request_type_enum,
+                delivery_method=None,
+                service_type=service_type_enum,
+            )
+            total_amount += amount
+
+        return {
+            "bulk_request_number": confirmation_request.request_number,
+            "bulk_request_id": confirmation_request.id,
+            "total_amount": float(total_amount),
+            "invoice_number": confirmation_request.invoice.invoice_number if confirmation_request.invoice else None,
+            "success": len(validated_requests),
+            "failed": len(errors),
+            "individual_requests": [
+                {
+                    "index": idx,
+                    "candidate_name": req.get("candidate_name"),
+                    "candidate_index_number": req.get("candidate_index_number"),
+                }
+                for idx, req in enumerate(validated_requests)
+            ],
+            "errors": errors,
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        await session.rollback()
+        logger.error(f"Error creating certificate confirmation: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to create certificate confirmation",
+        )
+
+
+@router.get("/certificate-confirmations/{request_number}/pdf", status_code=status.HTTP_200_OK)
+async def download_confirmation_pdf_public(
+    request_number: str,
+    session: DBSessionDep = None,
+    credentials: HTTPAuthorizationCredentials | None = Depends(HTTPBearer(auto_error=False)),
+) -> StreamingResponse:
+    """Download certificate confirmation PDF (Public - for requester)."""
+    from app.services.certificate_confirmation_service import get_certificate_confirmation_by_number
+    from app.services.certificate_file_storage import CertificateFileStorageService
+    from app.dependencies.auth import get_current_user_optional
+    from app.models import PortalUser, PortalUserType
+
+    resolved_user: PortalUser | None = None
+    try:
+        resolved_user = await get_current_user_optional(session=session, credentials=credentials)
+    except HTTPException:
+        raise
+    if resolved_user is None:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Authentication required to download confirmation documents",
+        )
+    if resolved_user.user_type != PortalUserType.PRIVATE_USER:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Only private users can download confirmation documents",
+        )
+
+    confirmation_request = await get_certificate_confirmation_by_number(session, request_number)
+    if not confirmation_request:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Certificate confirmation request not found",
+        )
+
+    # Ownership check (authenticated requester only)
+    if not confirmation_request.user_id or confirmation_request.user_id != resolved_user.id:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="You do not have access to this confirmation request",
+        )
+
+    if not confirmation_request.pdf_file_path:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="PDF not found. The certificate confirmation document has not been generated yet.",
+        )
+
+    # Retrieve PDF from storage
+    file_storage = CertificateFileStorageService()
+    try:
+        pdf_bytes = await file_storage.retrieve(confirmation_request.pdf_file_path)
+    except Exception as e:
+        logger.error(f"Failed to retrieve confirmation PDF: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to retrieve PDF document",
+        )
+
+    filename = f"confirmation_{confirmation_request.request_number}.pdf"
+    return StreamingResponse(
+        iter([pdf_bytes]),
+        media_type="application/pdf",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
 @router.get("/certificate-requests/{request_number}")
 async def get_certificate_request_status(
     request_number: str,
     session: DBSessionDep = None,
 ) -> dict:
-    """Get certificate request status (public lookup)."""
-    from app.schemas.certificate import CertificateRequestPublicResponse
+    """Get certificate request status (public lookup). Supports both certificate requests and confirmation requests."""
+    from app.schemas.certificate import CertificateRequestPublicResponse, CertificateConfirmationRequestResponse
     from app.services.certificate_service import get_certificate_request_by_number
+    from app.services.certificate_confirmation_service import get_certificate_confirmation_by_number
+    from app.models import Invoice, Payment
+    from app.schemas.certificate import InvoiceResponse, PaymentResponse
+    from sqlalchemy.orm import selectinload
 
-    from app.models import Invoice
+    # Check if it's a confirmation request (starts with BULK- or REQ-)
+    if request_number.upper().startswith(("BULK-", "REQ-")):
+        confirmation_request = await get_certificate_confirmation_by_number(session, request_number)
+        if confirmation_request:
+            # Load relationships
+            from app.models import CertificateConfirmationRequest
+            stmt = select(CertificateConfirmationRequest).where(
+                CertificateConfirmationRequest.id == confirmation_request.id
+            ).options(
+                selectinload(CertificateConfirmationRequest.invoice),
+                selectinload(CertificateConfirmationRequest.payment),
+            )
+            result = await session.execute(stmt)
+            confirmation_request = result.scalar_one_or_none()
 
+            if confirmation_request:
+                # Convert to response format
+                confirmation_response = CertificateConfirmationRequestResponse.model_validate(confirmation_request)
+
+                # Add invoice and payment if they exist
+                if confirmation_request.invoice:
+                    confirmation_response.invoice = InvoiceResponse.model_validate(confirmation_request.invoice)
+                if confirmation_request.payment:
+                    confirmation_response.payment = PaymentResponse.model_validate(confirmation_request.payment)
+
+                response_dict = confirmation_response.model_dump()
+                # Public lookup should not expose internal storage paths or response content/metadata.
+                response_dict["pdf_file_path"] = None
+                response_dict["has_response"] = False
+                for k in (
+                    "response_file_path",
+                    "response_file_name",
+                    "response_mime_type",
+                    "response_source",
+                    "responded_at",
+                    "responded_by_user_id",
+                    "response_notes",
+                    "response_payload",
+                ):
+                    response_dict[k] = None
+                response_dict["_type"] = "certificate_confirmation"
+                return response_dict
+
+    # Handle individual certificate request
     request = await get_certificate_request_by_number(session, request_number)
     if not request:
         raise HTTPException(
@@ -951,8 +1516,6 @@ async def get_certificate_request_status(
         )
 
     # Query invoice separately since CertificateRequest doesn't have invoice relationship
-    from app.models import Payment
-    from app.schemas.certificate import InvoiceResponse, PaymentResponse
     invoice_stmt = select(Invoice).where(Invoice.certificate_request_id == request.id)
     invoice_result = await session.execute(invoice_stmt)
     invoice = invoice_result.scalar_one_or_none()
@@ -984,20 +1547,80 @@ async def initialize_payment(
     request_number: str,
     session: DBSessionDep = None,
 ) -> dict:
-    """Initialize Paystack payment for certificate request."""
+    """Initialize Paystack payment for certificate request or confirmation request."""
     from app.schemas.certificate import PaymentInitializeResponse
     from app.services.certificate_service import get_certificate_request_by_number
-    from app.services.payment_service import initialize_payment as init_payment
+    from app.services.certificate_confirmation_service import get_certificate_confirmation_by_number
+    from app.services.payment_service import initialize_payment as init_payment_service
+    from app.models import Invoice, CertificateConfirmationRequest, RequestStatus
     from decimal import Decimal
 
+    # Check if it's a confirmation request (starts with BULK- or REQ-)
+    if request_number.upper().startswith(("BULK-", "REQ-")):
+        confirmation_request = await get_certificate_confirmation_by_number(session, request_number)
+        if not confirmation_request:
+            # If not found, raise error instead of continuing to check regular requests
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Certificate confirmation request not found",
+            )
+
+        # Get invoice (don't access relationship directly to avoid lazy loading issues)
+        invoice = None
+        if confirmation_request.invoice_id:
+            invoice_stmt = select(Invoice).where(Invoice.id == confirmation_request.invoice_id)
+            invoice_result = await session.execute(invoice_stmt)
+            invoice = invoice_result.scalar_one_or_none()
+
+        if not invoice:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Invoice not found for this confirmation request",
+            )
+
+        if invoice.status == "paid":
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Invoice is already paid",
+            )
+
+        try:
+            result = await init_payment_service(
+                session,
+                invoice,
+                Decimal(str(invoice.amount)),
+                email=confirmation_request.contact_email,
+                metadata={
+                    "request_number": confirmation_request.request_number,
+                    "confirmation_request_id": confirmation_request.id,
+                },
+            )
+            await session.flush()
+
+            # Update confirmation request with payment_id from result
+            confirmation_request.payment_id = result["payment_id"]
+            await session.commit()
+
+            return PaymentInitializeResponse(**result).model_dump()
+
+        except ValueError as e:
+            await session.rollback()
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+        except Exception as e:
+            await session.rollback()
+            logger.error(f"Error initializing payment: {e}", exc_info=True)
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="Failed to initialize payment",
+            )
+
+    # Regular certificate request
     request = await get_certificate_request_by_number(session, request_number)
     if not request:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Certificate request not found",
         )
-
-    from app.models import Invoice
 
     # Query invoice separately since CertificateRequest doesn't have invoice relationship
     invoice_stmt = select(Invoice).where(Invoice.certificate_request_id == request.id)
@@ -1017,8 +1640,6 @@ async def initialize_payment(
         )
 
     try:
-        from app.services.payment_service import initialize_payment as init_payment_service
-
         result = await init_payment_service(
             session,
             invoice,
@@ -1095,20 +1716,60 @@ async def paystack_webhook(
             from app.models import PaymentStatus
             logger.info(f"Webhook processed payment {payment.id}, status: {payment.status}, certificate_request_id: {payment.certificate_request_id}")
 
-            if payment.status == PaymentStatus.SUCCESS and payment.certificate_request_id:
-                logger.info(f"Updating certificate request {payment.certificate_request_id} status to PAID")
-                await update_request_status(
-                    session,
-                    payment.certificate_request_id,
-                    RequestStatus.PAID,
-                )
-                await session.flush()  # Ensure status update is flushed before commit
+            if payment.status == PaymentStatus.SUCCESS:
+                # Handle certificate request
+                if payment.certificate_request_id:
+                    logger.info(f"Updating certificate request {payment.certificate_request_id} status to PAID")
+                    await update_request_status(
+                        session,
+                        payment.certificate_request_id,
+                        RequestStatus.PAID,
+                    )
+                    await session.flush()  # Ensure status update is flushed before commit
 
-                # Verify the update
-                from app.services.certificate_service import get_certificate_request_by_id
-                updated_request = await get_certificate_request_by_id(session, payment.certificate_request_id)
-                if updated_request:
-                    logger.info(f"Certificate request {payment.certificate_request_id} status updated to: {updated_request.status}")
+                    # Verify the update
+                    from app.services.certificate_service import get_certificate_request_by_id
+                    updated_request = await get_certificate_request_by_id(session, payment.certificate_request_id)
+                    if updated_request:
+                        logger.info(f"Certificate request {payment.certificate_request_id} status updated to: {updated_request.status}")
+
+                # Handle confirmation request
+                elif payment.certificate_confirmation_request_id:
+                    from app.services.certificate_confirmation_service import get_certificate_confirmation_by_id
+                    from app.models import TicketActivity, TicketStatusHistory, TicketActivityType
+                    from uuid import UUID
+                    from datetime import datetime
+
+                    logger.info(f"Updating confirmation request {payment.certificate_confirmation_request_id} status to PAID")
+                    confirmation_request = await get_certificate_confirmation_by_id(session, payment.certificate_confirmation_request_id)
+                    if confirmation_request:
+                        old_status = confirmation_request.status
+                        confirmation_request.status = RequestStatus.PAID
+                        confirmation_request.paid_at = payment.paid_at or datetime.utcnow()
+
+                        # Record status history
+                        status_history = TicketStatusHistory(
+                            ticket_type="certificate_confirmation_request",
+                            ticket_id=confirmation_request.id,
+                            from_status=old_status.value if old_status else None,
+                            to_status=RequestStatus.PAID.value,
+                            changed_by_user_id=None,  # System/automatic via payment
+                        )
+                        session.add(status_history)
+
+                        # Record activity
+                        activity = TicketActivity(
+                            ticket_type="certificate_confirmation_request",
+                            ticket_id=confirmation_request.id,
+                            activity_type=TicketActivityType.STATUS_CHANGE,
+                            user_id=None,  # System/automatic via payment
+                            old_status=old_status.value if old_status else None,
+                            new_status=RequestStatus.PAID.value,
+                            comment="Payment received via Paystack",
+                        )
+                        session.add(activity)
+                        await session.flush()
+                        logger.info(f"Confirmation request {payment.certificate_confirmation_request_id} status updated to: {confirmation_request.status}")
             await session.commit()
             return {"status": "success"}
         return {"status": "ignored"}

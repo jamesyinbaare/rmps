@@ -23,14 +23,14 @@ import { createSchoolAdmin, listSchools } from "@/lib/api";
 import { toast } from "sonner";
 import type { School } from "@/types";
 
-interface CreateCoordinatorDialogProps {
+interface CreateSchoolAdminDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   onSuccess: () => void;
   defaultSchoolId?: number;
 }
 
-export function CreateCoordinatorDialog({
+export function CreateSchoolAdminDialog({
   open,
   onOpenChange,
   onSuccess,

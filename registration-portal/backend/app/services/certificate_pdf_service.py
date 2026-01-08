@@ -14,6 +14,8 @@ async def generate_certificate_request_pdf(
     payment: Payment | None = None,
     photo_data: bytes | None = None,
     id_scan_data: bytes | None = None,
+    certificate_data: bytes | None = None,
+    candidate_photo_data: bytes | None = None,
 ) -> bytes:
     """
     Generate PDF document for certificate request details using WeasyPrint.
@@ -48,6 +50,20 @@ async def generate_certificate_request_pdf(
         except Exception:
             pass
 
+    certificate_base64 = None
+    if certificate_data:
+        try:
+            certificate_base64 = base64.b64encode(certificate_data).decode('utf-8')
+        except Exception:
+            pass
+
+    candidate_photo_base64 = None
+    if candidate_photo_data:
+        try:
+            candidate_photo_base64 = base64.b64encode(candidate_photo_data).decode('utf-8')
+        except Exception:
+            pass
+
     # Prepare template context
     context = {
         "certificate_request": certificate_request,
@@ -56,6 +72,8 @@ async def generate_certificate_request_pdf(
         "examination_center_name": examination_center_name,
         "photo_base64": photo_base64,
         "id_scan_base64": id_scan_base64,
+        "certificate_base64": certificate_base64,
+        "candidate_photo_base64": candidate_photo_base64,
         "generated_at": datetime.utcnow().strftime('%B %d, %Y at %H:%M:%S UTC'),
     }
 

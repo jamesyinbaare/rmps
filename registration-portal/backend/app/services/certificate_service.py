@@ -107,8 +107,10 @@ async def validate_request_data(
 async def create_certificate_request(
     session: AsyncSession,
     request_data: dict,
-    photo_file_path: str,
-    id_scan_file_path: str,
+    photo_file_path: str | None = None,
+    id_scan_file_path: str | None = None,
+    certificate_file_path: str | None = None,
+    candidate_photo_file_path: str | None = None,
 ) -> CertificateRequest:
     """
     Create a certificate request with invoice.
@@ -116,8 +118,10 @@ async def create_certificate_request(
     Args:
         session: Database session
         request_data: Dictionary with request fields
-        photo_file_path: Path to uploaded photograph
-        id_scan_file_path: Path to uploaded ID scan
+        photo_file_path: Path to uploaded photograph (optional for confirmation/verification)
+        id_scan_file_path: Path to uploaded ID scan (optional for confirmation/verification)
+        certificate_file_path: Path to uploaded certificate scan (optional, for confirmation/verification)
+        candidate_photo_file_path: Path to uploaded candidate photograph (optional, for confirmation/verification)
 
     Returns:
         Created CertificateRequest instance
@@ -125,16 +129,43 @@ async def create_certificate_request(
     # Generate request number
     request_number = await generate_request_number(session)
 
-    # Validate request data
-    is_valid, error_message = await validate_request_data(
-        session,
-        request_data["request_type"],
-        request_data["exam_year"],
-        request_data["examination_center_id"],
-        request_data["index_number"],
-    )
-    if not is_valid:
-        raise ValueError(error_message or "Invalid request data")
+    # Get request type enum
+    request_type_enum = request_data["request_type"]
+    if isinstance(request_type_enum, str):
+        request_type_enum = CertificateRequestType(request_type_enum.lower())
+
+    # Validate request data based on request type
+    if request_type_enum in (CertificateRequestType.CERTIFICATE, CertificateRequestType.ATTESTATION):
+        # For certificate/attestation, validate examination center
+        if not request_data.get("examination_center_id"):
+            raise ValueError("examination_center_id is required for certificate and attestation requests")
+
+        is_valid, error_message = await validate_request_data(
+            session,
+            request_type_enum,
+            request_data["exam_year"],
+            request_data["examination_center_id"],
+            request_data["index_number"],
+        )
+        if not is_valid:
+            raise ValueError(error_message or "Invalid request data")
+
+        # Validate file uploads for certificate/attestation requests
+        if not photo_file_path or not id_scan_file_path:
+            raise ValueError("Photograph and ID scan are required for certificate and attestation requests")
+    elif request_type_enum in (CertificateRequestType.CONFIRMATION, CertificateRequestType.VERIFICATION):
+        # For confirmation/verification, validate required fields
+        if not request_data.get("candidate_name"):
+            raise ValueError("candidate_name is required for confirmation and verification requests")
+        if not request_data.get("school_name"):
+            raise ValueError("school_name is required for confirmation and verification requests")
+        if not request_data.get("programme_name"):
+            raise ValueError("programme_name is required for confirmation and verification requests")
+        if not request_data.get("completion_year"):
+            raise ValueError("completion_year is required for confirmation and verification requests")
+        # Use candidate_index_number if provided, otherwise use index_number
+        if not request_data.get("candidate_index_number") and not request_data.get("index_number"):
+            raise ValueError("candidate_index_number or index_number is required for confirmation and verification requests")
 
     # Get service type from request data, default to STANDARD
     service_type = request_data.get("service_type", ServiceType.STANDARD)
@@ -142,23 +173,50 @@ async def create_certificate_request(
         service_type = ServiceType(service_type.lower())
 
     # Calculate invoice amount
+    # For confirmation/verification, delivery_method is None (no delivery needed)
+    # For certificate/attestation, use provided delivery_method or default to pickup
+    delivery_method = None
+    if request_type_enum in (CertificateRequestType.CERTIFICATE, CertificateRequestType.ATTESTATION):
+        delivery_method = request_data.get("delivery_method", DeliveryMethod.PICKUP)
+        if delivery_method:
+            if isinstance(delivery_method, str):
+                delivery_method = DeliveryMethod(delivery_method.lower())
+        else:
+            delivery_method = DeliveryMethod.PICKUP
+
     amount = calculate_invoice_amount(
-        request_data["request_type"],
-        request_data["delivery_method"],
+        request_type_enum,
+        delivery_method,
         service_type,
     )
 
     # Create certificate request first (without invoice_id)
+    # For confirmation/verification, delivery_method is None
+    # For certificate/attestation, use provided delivery_method or default to pickup
+    delivery_method_value = None
+    if request_type_enum in (CertificateRequestType.CERTIFICATE, CertificateRequestType.ATTESTATION):
+        delivery_method_value = request_data.get("delivery_method", DeliveryMethod.PICKUP)
+        if delivery_method_value:
+            if isinstance(delivery_method_value, str):
+                delivery_method_value = DeliveryMethod(delivery_method_value.lower())
+        else:
+            delivery_method_value = DeliveryMethod.PICKUP
+
+    # Use candidate_index_number if provided, otherwise use index_number
+    index_number_value = request_data.get("candidate_index_number") or request_data.get("index_number")
+    if not index_number_value:
+        index_number_value = request_data.get("index_number")
+
     certificate_request = CertificateRequest(
-        request_type=request_data["request_type"],
+        request_type=request_type_enum,
         request_number=request_number,
-        index_number=request_data["index_number"],
+        index_number=index_number_value,
         exam_year=request_data["exam_year"],
-        examination_center_id=request_data["examination_center_id"],
-        national_id_number=request_data["national_id_number"],
+        examination_center_id=request_data.get("examination_center_id"),
+        national_id_number=request_data.get("national_id_number"),
         national_id_file_path=id_scan_file_path,
         photograph_file_path=photo_file_path,
-        delivery_method=request_data["delivery_method"],
+        delivery_method=delivery_method_value if request_type_enum in (CertificateRequestType.CERTIFICATE, CertificateRequestType.ATTESTATION) else None,
         contact_phone=request_data["contact_phone"],
         contact_email=request_data.get("contact_email"),
         courier_address_line1=request_data.get("courier_address_line1"),
@@ -168,6 +226,15 @@ async def create_certificate_request(
         courier_postal_code=request_data.get("courier_postal_code"),
         status=RequestStatus.PENDING_PAYMENT,
         service_type=service_type,
+        # Confirmation/Verification specific fields
+        candidate_name=request_data.get("candidate_name"),
+        candidate_index_number=request_data.get("candidate_index_number"),
+        school_name=request_data.get("school_name"),
+        programme_name=request_data.get("programme_name"),
+        completion_year=request_data.get("completion_year"),
+        certificate_file_path=certificate_file_path,
+        candidate_photograph_file_path=candidate_photo_file_path,
+        request_details=request_data.get("request_details"),
     )
     session.add(certificate_request)
     await session.flush()
@@ -291,6 +358,7 @@ async def update_request_status(
 
     # Record status history
     status_history = TicketStatusHistory(
+        ticket_type="certificate_request",
         ticket_id=request_id,
         from_status=old_status.value if old_status else None,
         to_status=status.value,
@@ -301,6 +369,7 @@ async def update_request_status(
 
     # Record activity
     activity = TicketActivity(
+        ticket_type="certificate_request",
         ticket_id=request_id,
         activity_type=TicketActivityType.STATUS_CHANGE,
         user_id=UUID(user_id) if user_id else None,
@@ -319,6 +388,50 @@ async def update_request_status(
     logger.info(f"Updated certificate request {request.request_number} status from {old_status.value} to {status.value}")
     return request
 
+
+async def set_status_manual(
+    session: AsyncSession,
+    request_id: int,
+    new_status: RequestStatus,
+    user_id: str,
+    reason: str,
+) -> CertificateRequest:
+    """
+    Manually set status with limited, safe transitions after Begin Process.
+    Allowed transitions:
+      IN_PROCESS <-> READY_FOR_DISPATCH
+      READY_FOR_DISPATCH -> DISPATCHED
+      DISPATCHED <-> RECEIVED
+      RECEIVED -> COMPLETED
+    """
+    request = await get_certificate_request_by_id(session, request_id)
+    if not request:
+        raise ValueError(f"Certificate request {request_id} not found")
+
+    if request.status in (RequestStatus.PENDING_PAYMENT, RequestStatus.PAID):
+        raise ValueError("Manual status changes are only allowed after processing has begun (IN_PROCESS or later)")
+
+    if new_status == RequestStatus.CANCELLED:
+        raise ValueError("Use the cancel endpoint to cancel a request")
+
+    allowed_map: dict[RequestStatus, set[RequestStatus]] = {
+        RequestStatus.IN_PROCESS: {RequestStatus.READY_FOR_DISPATCH},
+        RequestStatus.READY_FOR_DISPATCH: {RequestStatus.IN_PROCESS, RequestStatus.DISPATCHED},
+        RequestStatus.DISPATCHED: {RequestStatus.RECEIVED},
+        RequestStatus.RECEIVED: {RequestStatus.DISPATCHED, RequestStatus.COMPLETED},
+    }
+    allowed_next = allowed_map.get(request.status, set())
+    if new_status not in allowed_next:
+        raise ValueError(f"Manual transition from {request.status.value} to {new_status.value} is not allowed")
+
+    # Reuse unified updater to ensure timestamps + audit are recorded
+    return await update_request_status(
+        session=session,
+        request_id=request_id,
+        status=new_status,
+        user_id=user_id,
+        notes=f"Manual: {reason}",
+    )
 
 async def begin_processing(
     session: AsyncSession,
@@ -350,6 +463,7 @@ async def begin_processing(
 
     # Record status history
     status_history = TicketStatusHistory(
+        ticket_type="certificate_request",
         ticket_id=request_id,
         from_status=old_status.value,
         to_status=RequestStatus.IN_PROCESS.value,
@@ -359,6 +473,7 @@ async def begin_processing(
 
     # Record activity
     activity = TicketActivity(
+        ticket_type="certificate_request",
         ticket_id=request_id,
         activity_type=TicketActivityType.STATUS_CHANGE,
         user_id=UUID(user_id) if user_id else None,
@@ -403,6 +518,7 @@ async def send_to_dispatch(
 
     # Record status history
     status_history = TicketStatusHistory(
+        ticket_type="certificate_request",
         ticket_id=request_id,
         from_status=old_status.value,
         to_status=RequestStatus.READY_FOR_DISPATCH.value,
@@ -412,6 +528,7 @@ async def send_to_dispatch(
 
     # Record activity
     activity = TicketActivity(
+        ticket_type="certificate_request",
         ticket_id=request_id,
         activity_type=TicketActivityType.STATUS_CHANGE,
         user_id=UUID(user_id) if user_id else None,
@@ -461,6 +578,7 @@ async def dispatch_request(
 
     # Record status history
     status_history = TicketStatusHistory(
+        ticket_type="certificate_request",
         ticket_id=request_id,
         from_status=old_status.value,
         to_status=RequestStatus.DISPATCHED.value,
@@ -470,6 +588,7 @@ async def dispatch_request(
 
     # Record activity
     activity = TicketActivity(
+        ticket_type="certificate_request",
         ticket_id=request_id,
         activity_type=TicketActivityType.STATUS_CHANGE,
         user_id=UUID(user_id) if user_id else None,
@@ -515,6 +634,7 @@ async def mark_received(
 
     # Record status history
     status_history = TicketStatusHistory(
+        ticket_type="certificate_request",
         ticket_id=request_id,
         from_status=old_status.value,
         to_status=RequestStatus.RECEIVED.value,
@@ -524,6 +644,7 @@ async def mark_received(
 
     # Record activity
     activity = TicketActivity(
+        ticket_type="certificate_request",
         ticket_id=request_id,
         activity_type=TicketActivityType.STATUS_CHANGE,
         user_id=UUID(user_id) if user_id else None,
@@ -568,6 +689,7 @@ async def complete_request(
 
     # Record status history
     status_history = TicketStatusHistory(
+        ticket_type="certificate_request",
         ticket_id=request_id,
         from_status=old_status.value,
         to_status=RequestStatus.COMPLETED.value,
@@ -577,6 +699,7 @@ async def complete_request(
 
     # Record activity
     activity = TicketActivity(
+        ticket_type="certificate_request",
         ticket_id=request_id,
         activity_type=TicketActivityType.STATUS_CHANGE,
         user_id=UUID(user_id) if user_id else None,
@@ -626,6 +749,7 @@ async def cancel_request(
 
     # Record status history
     status_history = TicketStatusHistory(
+        ticket_type="certificate_request",
         ticket_id=request_id,
         from_status=old_status.value,
         to_status=RequestStatus.CANCELLED.value,
@@ -636,6 +760,7 @@ async def cancel_request(
 
     # Record activity
     activity = TicketActivity(
+        ticket_type="certificate_request",
         ticket_id=request_id,
         activity_type=TicketActivityType.STATUS_CHANGE,
         user_id=UUID(user_id) if user_id else None,
@@ -679,6 +804,7 @@ async def assign_ticket(
 
     # Record activity
     activity = TicketActivity(
+        ticket_type="certificate_request",
         ticket_id=request_id,
         activity_type=TicketActivityType.ASSIGNMENT,
         user_id=UUID(user_id) if user_id else None,
@@ -719,6 +845,7 @@ async def unassign_ticket(
 
     # Record activity
     activity = TicketActivity(
+        ticket_type="certificate_request",
         ticket_id=request_id,
         activity_type=TicketActivityType.ASSIGNMENT,
         user_id=UUID(user_id) if user_id else None,
@@ -757,6 +884,7 @@ async def add_ticket_comment(
         raise ValueError(f"Certificate request {request_id} not found")
 
     activity = TicketActivity(
+        ticket_type="certificate_request",
         ticket_id=request_id,
         activity_type=TicketActivityType.COMMENT,
         user_id=UUID(user_id) if user_id else None,
@@ -788,7 +916,10 @@ async def get_ticket_activities(
     """
     stmt = (
         select(TicketActivity)
-        .where(TicketActivity.ticket_id == request_id)
+        .where(
+            TicketActivity.ticket_id == request_id,
+            TicketActivity.ticket_type == "certificate_request"
+        )
         .options(
             selectinload(TicketActivity.user),
         )
