@@ -3101,10 +3101,12 @@ async def list_certificate_requests(
             conditions.append(cast(CertificateRequest.status, String).ilike(RequestStatus.COMPLETED.value))
         elif view_lower == "cancelled":
             conditions.append(cast(CertificateRequest.status, String).ilike(RequestStatus.CANCELLED.value))
+        elif view_lower == "my_tickets":
+            conditions.append(CertificateRequest.assigned_to_user_id == current_user.id)
         elif view_lower == "all":
             pass
         else:
-            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid view. Must be: active, completed, cancelled, or all")
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid view. Must be: active, completed, cancelled, my_tickets, or all")
 
     if conditions:
         stmt = stmt.where(and_(*conditions))
@@ -3186,6 +3188,8 @@ async def list_certificate_requests(
                 conf_conditions.append(cast(CertificateConfirmationRequest.status, String).ilike(RequestStatus.COMPLETED.value))
             elif view_lower == "cancelled":
                 conf_conditions.append(cast(CertificateConfirmationRequest.status, String).ilike(RequestStatus.CANCELLED.value))
+            elif view_lower == "my_tickets":
+                conf_conditions.append(CertificateConfirmationRequest.assigned_to_user_id == current_user.id)
             elif view_lower == "all":
                 pass
 
@@ -4180,6 +4184,140 @@ async def sign_confirmation_response(
     }
 
 
+@router.post("/certificate-confirmations/{confirmation_id}/response/revoke", status_code=status.HTTP_200_OK)
+async def revoke_confirmation_response(
+    confirmation_id: int,
+    revocation_reason: str = Body(..., embed=True, description="Reason for revoking the response"),
+    session: DBSessionDep = None,
+    current_user: SystemAdminDep = None,
+) -> dict:
+    """Revoke a signed confirmation response (System Admin). Once revoked, requesters can no longer view or download the response. Requires a reason."""
+    from datetime import datetime
+    from app.services.certificate_confirmation_service import get_certificate_confirmation_by_id
+    from app.models import TicketActivity, TicketActivityType
+
+    if not revocation_reason or not revocation_reason.strip():
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Revocation reason is required.",
+        )
+
+    confirmation_request = await get_certificate_confirmation_by_id(session, confirmation_id)
+    if not confirmation_request:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Certificate confirmation request not found")
+
+    if not confirmation_request.response_file_path:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Cannot revoke response. No response file exists for this request.",
+        )
+
+    if not confirmation_request.response_signed:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Cannot revoke response. Response must be signed before it can be revoked.",
+        )
+
+    if confirmation_request.response_revoked:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Response has already been revoked.",
+        )
+
+    # Revoke the response and clear signed status
+    confirmation_request.response_revoked = True
+    confirmation_request.response_revoked_at = datetime.utcnow()
+    confirmation_request.response_revoked_by_user_id = current_user.id
+    confirmation_request.response_revocation_reason = revocation_reason.strip()
+    # Remove signed and locked status when revoked
+    confirmation_request.response_signed = False
+    confirmation_request.response_signed_at = None
+    confirmation_request.response_signed_by_user_id = None
+
+    # Create activity record
+    session.add(
+        TicketActivity(
+            ticket_type="certificate_confirmation_request",
+            ticket_id=confirmation_request.id,
+            activity_type=TicketActivityType.NOTE,
+            user_id=current_user.id,
+            comment=f"Response revoked - requester access removed. Reason: {revocation_reason.strip()}",
+        )
+    )
+
+    try:
+        await session.commit()
+        await session.refresh(confirmation_request)
+    except Exception as e:
+        await session.rollback()
+        logger.error(f"Failed to revoke response: {e}", exc_info=True)
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to revoke response")
+
+    return {
+        "message": "Response revoked successfully",
+        "confirmation_id": confirmation_request.id,
+        "request_number": confirmation_request.request_number,
+        "response_revoked": True,
+        "response_revoked_at": confirmation_request.response_revoked_at.isoformat() if confirmation_request.response_revoked_at else None,
+        "response_revoked_by_user_id": str(confirmation_request.response_revoked_by_user_id) if confirmation_request.response_revoked_by_user_id else None,
+        "response_revocation_reason": confirmation_request.response_revocation_reason,
+    }
+
+
+@router.post("/certificate-confirmations/{confirmation_id}/response/unrevoke", status_code=status.HTTP_200_OK)
+async def unrevoke_confirmation_response(
+    confirmation_id: int,
+    session: DBSessionDep,
+    current_user: SystemAdminDep,
+) -> dict:
+    """Unrevoke a revoked confirmation response (System Admin). This allows the response to be signed again and made available to requesters."""
+    from app.services.certificate_confirmation_service import get_certificate_confirmation_by_id
+    from app.models import TicketActivity, TicketActivityType
+
+    confirmation_request = await get_certificate_confirmation_by_id(session, confirmation_id)
+    if not confirmation_request:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Certificate confirmation request not found")
+
+    if not confirmation_request.response_revoked:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Response is not revoked. Only revoked responses can be unrevoked.",
+        )
+
+    # Unrevoke the response
+    confirmation_request.response_revoked = False
+    confirmation_request.response_revoked_at = None
+    confirmation_request.response_revoked_by_user_id = None
+    confirmation_request.response_revocation_reason = None
+    # Note: We don't automatically re-sign the response. Admin needs to sign it again after corrections
+
+    # Create activity record
+    session.add(
+        TicketActivity(
+            ticket_type="certificate_confirmation_request",
+            ticket_id=confirmation_request.id,
+            activity_type=TicketActivityType.NOTE,
+            user_id=current_user.id,
+            comment="Response unrevoked - corrections made, ready for re-signing",
+        )
+    )
+
+    try:
+        await session.commit()
+        await session.refresh(confirmation_request)
+    except Exception as e:
+        await session.rollback()
+        logger.error(f"Failed to unrevoke response: {e}", exc_info=True)
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to unrevoke response")
+
+    return {
+        "message": "Response unrevoked successfully. The response can now be signed again after corrections.",
+        "confirmation_id": confirmation_request.id,
+        "request_number": confirmation_request.request_number,
+        "response_revoked": False,
+    }
+
+
 @router.post("/certificate-requests/{request_id}/begin-process", status_code=status.HTTP_200_OK)
 async def begin_process_certificate_request(
     request_id: int,
@@ -4477,6 +4615,15 @@ async def update_certificate_request(
                     )
             else:
                 conf.assigned_to_user_id = None
+
+        if "priority" in update_data:
+            try:
+                conf.priority = TicketPriority(update_data["priority"])
+            except ValueError:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail=f"Invalid priority: {update_data['priority']}",
+                )
 
         await session.commit()
 

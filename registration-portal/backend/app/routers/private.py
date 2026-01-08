@@ -1258,6 +1258,70 @@ async def download_my_confirmation_response(
     if not confirmation_request.response_file_path:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Response not available for this request")
 
+    if not confirmation_request.response_signed:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Response is not yet signed. Please wait for the response to be signed before downloading.",
+        )
+
+    if confirmation_request.response_revoked:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Response has been revoked and is no longer available for download.",
+        )
+
+    storage = CertificateFileStorageService()
+    try:
+        file_bytes = await storage.retrieve(confirmation_request.response_file_path)
+    except Exception as e:
+        logger.error(f"Failed to retrieve response file: {e}", exc_info=True)
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to retrieve response file")
+
+    filename = confirmation_request.response_file_name or f"confirmation_response_{confirmation_request.request_number}"
+    media_type = confirmation_request.response_mime_type or "application/octet-stream"
+    return StreamingResponse(
+        iter([file_bytes]),
+        media_type=media_type,
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
+@router.get("/certificate-confirmations/request/{request_number}/response", status_code=status.HTTP_200_OK)
+async def download_my_confirmation_response_by_number(
+    request_number: str,
+    session: DBSessionDep,
+    current_user: CurrentUserDep,
+) -> StreamingResponse:
+    """Download the stored admin response file for a confirmation/verification request by request number (authenticated requester only)."""
+    if current_user.user_type != PortalUserType.PRIVATE_USER:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="This endpoint is for private users only")
+
+    from app.models import CertificateConfirmationRequest
+    from app.services.certificate_file_storage import CertificateFileStorageService
+    from app.services.certificate_confirmation_service import get_certificate_confirmation_by_number
+
+    confirmation_request = await get_certificate_confirmation_by_number(session, request_number)
+    if not confirmation_request:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Certificate confirmation request not found")
+
+    if not confirmation_request.user_id or confirmation_request.user_id != current_user.id:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="You do not have access to this request")
+
+    if not confirmation_request.response_file_path:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Response not available for this request")
+
+    if not confirmation_request.response_signed:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Response is not yet signed. Please wait for the response to be signed before downloading.",
+        )
+
+    if confirmation_request.response_revoked:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Response has been revoked and is no longer available for download.",
+        )
+
     storage = CertificateFileStorageService()
     try:
         file_bytes = await storage.retrieve(confirmation_request.response_file_path)

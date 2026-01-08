@@ -291,6 +291,11 @@ class CertificateConfirmationRequestResponse(BaseModel):
     response_signed: bool = False
     response_signed_at: datetime | None = None
     response_signed_by_user_id: str | None = None
+    # Revocation fields
+    response_revoked: bool = False
+    response_revoked_at: datetime | None = None
+    response_revoked_by_user_id: str | None = None
+    response_revocation_reason: str | None = None
     invoice_id: int | None = None
     payment_id: int | None = None
     # Ticket management fields (from mixin)
@@ -318,6 +323,7 @@ class CertificateConfirmationRequestResponse(BaseModel):
         "pdf_generated_by_user_id",
         "responded_by_user_id",
         "response_signed_by_user_id",
+        "response_revoked_by_user_id",
         "assigned_to_user_id",
         "processed_by_user_id",
         "dispatched_by_user_id",

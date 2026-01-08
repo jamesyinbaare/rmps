@@ -704,6 +704,11 @@ class CertificateConfirmationRequest(TicketRequestMixin, Base):
     response_signed = Column(Boolean, default=False, nullable=False, index=True)
     response_signed_at = Column(DateTime, nullable=True)
     response_signed_by_user_id = Column(UUID(as_uuid=True), ForeignKey("portal_users.id", ondelete="SET NULL"), nullable=True, index=True)
+    # Revocation fields
+    response_revoked = Column(Boolean, default=False, nullable=False, index=True)
+    response_revoked_at = Column(DateTime, nullable=True)
+    response_revoked_by_user_id = Column(UUID(as_uuid=True), ForeignKey("portal_users.id", ondelete="SET NULL"), nullable=True, index=True)
+    response_revocation_reason = Column(Text, nullable=True)  # Reason/note for revocation
     invoice_id = Column(Integer, ForeignKey("invoices.id", ondelete="SET NULL"), nullable=True, index=True)
     payment_id = Column(Integer, ForeignKey("payments.id", ondelete="SET NULL"), nullable=True, index=True)
 
@@ -713,3 +718,4 @@ class CertificateConfirmationRequest(TicketRequestMixin, Base):
     pdf_generated_by = relationship("PortalUser", foreign_keys=[pdf_generated_by_user_id])
     responded_by = relationship("PortalUser", foreign_keys=[responded_by_user_id])
     response_signed_by = relationship("PortalUser", foreign_keys=[response_signed_by_user_id])
+    response_revoked_by = relationship("PortalUser", foreign_keys=[response_revoked_by_user_id])
