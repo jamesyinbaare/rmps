@@ -45,8 +45,7 @@ export function ResponseDialog({
   // Template generation fields
   const [letterSubject, setLetterSubject] = useState("");
   const [letterBody, setLetterBody] = useState("");
-  const [signatoryName, setSignatoryName] = useState("");
-  const [signatoryTitle, setSignatoryTitle] = useState("");
+  const [signatory, setSignatory] = useState("");
 
   // Per-candidate outcomes (for bulk requests)
   const [outcomes, setOutcomes] = useState<Record<string, { status: string; remarks: string }>>({});
@@ -142,7 +141,7 @@ export function ResponseDialog({
       } = {};
 
       // Build letter payload
-      if (letterSubject || letterBody || signatoryName || signatoryTitle) {
+      if (letterSubject || letterBody || signatory) {
         payload.letter = {};
         if (letterSubject) payload.letter.subject = letterSubject;
         if (letterBody) {
@@ -151,8 +150,7 @@ export function ResponseDialog({
           // If only subject is provided, use it as remarks
           payload.letter.remarks = letterSubject;
         }
-        if (signatoryName) payload.letter.signatory_name = signatoryName;
-        if (signatoryTitle) payload.letter.signatory_title = signatoryTitle;
+        if (signatory) payload.letter.signatory = signatory;
       }
 
       // Build outcomes payload if there are any outcomes set
@@ -178,8 +176,7 @@ export function ResponseDialog({
       // Reset form
       setLetterSubject("");
       setLetterBody("");
-      setSignatoryName("");
-      setSignatoryTitle("");
+      setSignatory("");
       setOutcomes({});
     } catch (error: any) {
       toast.error(error.message || "Failed to generate response");
@@ -334,26 +331,19 @@ export function ResponseDialog({
                 />
               </div>
 
-              <div className="grid grid-cols-2 gap-4">
-                <div className="space-y-2">
-                  <Label htmlFor="signatory-name">Signatory Name (Optional)</Label>
-                  <Input
-                    id="signatory-name"
-                    placeholder="e.g., John Doe"
-                    value={signatoryName}
-                    onChange={(e) => setSignatoryName(e.target.value)}
-                  />
-                </div>
-
-                <div className="space-y-2">
-                  <Label htmlFor="signatory-title">Signatory Title (Optional)</Label>
-                  <Input
-                    id="signatory-title"
-                    placeholder="e.g., Director of Examinations"
-                    value={signatoryTitle}
-                    onChange={(e) => setSignatoryTitle(e.target.value)}
-                  />
-                </div>
+              <div className="space-y-2">
+                <Label htmlFor="signatory">Signatory (Optional)</Label>
+                <Textarea
+                  id="signatory"
+                  placeholder="e.g., John Doe&#10;Director of Examinations"
+                  value={signatory}
+                  onChange={(e) => setSignatory(e.target.value)}
+                  rows={3}
+                  className="text-left"
+                />
+                <p className="text-sm text-muted-foreground">
+                  Enter the signatory name and title (multi-line supported)
+                </p>
               </div>
 
               {isBulk && confirmationRequest.certificate_details && (
