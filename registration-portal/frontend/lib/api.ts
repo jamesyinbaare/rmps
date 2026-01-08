@@ -1377,7 +1377,7 @@ export async function listCertificateRequests(
   assignedTo?: string,
   priority?: string,
   serviceType?: string,
-  view?: "active" | "completed" | "cancelled" | "all",
+  view?: "active" | "completed" | "cancelled" | "all" | "my_tickets",
   includeBulkConfirmations: boolean = false,
   page: number = 1,
   pageSize: number = 20
@@ -1504,7 +1504,7 @@ export async function updateCertificateRequest(
     priority?: "low" | "medium" | "high" | "urgent";
     assigned_to_user_id?: string | null;
   }
-): Promise<CertificateRequestResponse> {
+): Promise<CertificateRequestResponse | CertificateConfirmationRequestResponse> {
   const response = await fetch(`${API_BASE_URL}/api/v1/admin/certificate-requests/${requestId}`, {
     method: "PUT",
     headers: {
@@ -1513,7 +1513,7 @@ export async function updateCertificateRequest(
     },
     body: JSON.stringify(updateData),
   });
-  return handleResponse<CertificateRequestResponse>(response);
+  return handleResponse<CertificateRequestResponse | CertificateConfirmationRequestResponse>(response);
 }
 
 export async function getCertificateRequestStatistics(options?: {
@@ -1804,9 +1804,14 @@ export interface CertificateConfirmationRequestResponse {
   responded_by_user_id?: string | null;
   response_notes?: string | null;
   response_payload?: Record<string, any> | null;
+  has_response?: boolean;
   response_signed?: boolean;
   response_signed_at?: string | null;
   response_signed_by_user_id?: string | null;
+  response_revoked?: boolean;
+  response_revoked_at?: string | null;
+  response_revoked_by_user_id?: string | null;
+  response_revocation_reason?: string | null;
   invoice_id?: number | null;
   payment_id?: number | null;
   status: string;
@@ -1855,6 +1860,13 @@ export interface BulkCertificateConfirmationResponse {
   response_file_name?: string | null;
   response_source?: string | null;
   responded_at?: string | null;
+  has_response?: boolean;
+  response_signed?: boolean;
+  response_signed_at?: string | null;
+  response_revoked?: boolean;
+  response_revoked_at?: string | null;
+  response_revoked_by_user_id?: string | null;
+  response_revocation_reason?: string | null;
   invoice_id?: number | null;
   payment_id?: number | null;
   assigned_to_user_id?: string | null;
@@ -1958,7 +1970,7 @@ export async function downloadConfirmationResponsePublic(requestNumber: string):
   const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL || "http://localhost:8001";
   const token = localStorage.getItem("access_token");
   const response = await fetch(
-    `${API_BASE_URL}/api/v1/private/certificate-confirmations/${requestNumber}/response`,
+    `${API_BASE_URL}/api/v1/private/certificate-confirmations/request/${requestNumber}/response`,
     {
       headers: token ? {
         Authorization: `Bearer ${token}`,
@@ -1970,6 +1982,25 @@ export async function downloadConfirmationResponsePublic(requestNumber: string):
     throw new Error(error.detail || "Failed to download response");
   }
   return response.blob();
+}
+
+export async function previewConfirmationResponsePublic(requestNumber: string): Promise<string> {
+  const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL || "http://localhost:8001";
+  const token = localStorage.getItem("access_token");
+  const response = await fetch(
+    `${API_BASE_URL}/api/v1/private/certificate-confirmations/request/${requestNumber}/response`,
+    {
+      headers: token ? {
+        Authorization: `Bearer ${token}`,
+      } : {},
+    }
+  );
+  if (!response.ok) {
+    const error = await response.json().catch(() => ({ detail: "Failed to preview response" }));
+    throw new Error(error.detail || "Failed to preview response");
+  }
+  const blob = await response.blob();
+  return window.URL.createObjectURL(blob);
 }
 
 // Response management functions
@@ -2047,6 +2078,35 @@ export async function signConfirmationResponse(
 ): Promise<{ message: string; confirmation_id: number; request_number: string; response_signed: boolean; response_signed_at?: string; response_signed_by_user_id?: string }> {
   const response = await fetchWithAuth(
     `/api/v1/admin/certificate-confirmations/${confirmationId}/response/sign`,
+    {
+      method: "POST",
+    }
+  );
+  return handleResponse(response);
+}
+
+export async function revokeConfirmationResponse(
+  confirmationId: number,
+  revocationReason: string
+): Promise<{ message: string; confirmation_id: number; request_number: string; response_revoked: boolean; response_revoked_at?: string; response_revoked_by_user_id?: string; response_revocation_reason?: string }> {
+  const response = await fetchWithAuth(
+    `/api/v1/admin/certificate-confirmations/${confirmationId}/response/revoke`,
+    {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ revocation_reason: revocationReason }),
+    }
+  );
+  return handleResponse(response);
+}
+
+export async function unrevokeConfirmationResponse(
+  confirmationId: number
+): Promise<{ message: string; confirmation_id: number; request_number: string; response_revoked: boolean }> {
+  const response = await fetchWithAuth(
+    `/api/v1/admin/certificate-confirmations/${confirmationId}/response/unrevoke`,
     {
       method: "POST",
     }

@@ -30,6 +30,7 @@ import {
   getBulkCertificateConfirmation,
   downloadBulkConfirmationPDFPublic,
   downloadConfirmationResponsePublic,
+  previewConfirmationResponsePublic,
   submitBulkCertificateRequest,
   type CertificateRequestResponse,
   type CertificateRequestListResponse,
@@ -498,32 +499,61 @@ export default function MyCertificateRequestsPage() {
                     <p>{bulkRequest.invoice.invoice_number}</p>
                   </div>
                 )}
-                {bulkRequest.response_file_path && (
+                {(bulkRequest.has_response || bulkRequest.response_file_path) && bulkRequest.response_signed && !bulkRequest.response_revoked && (
                   <div>
                     <p className="text-sm font-medium text-muted-foreground">Response Document</p>
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      onClick={async () => {
-                        try {
-                          const blob = await downloadConfirmationResponsePublic(bulkRequest.bulk_request_number);
-                          const url = window.URL.createObjectURL(blob);
-                          const a = document.createElement("a");
-                          a.href = url;
-                          a.download = bulkRequest.response_file_name || `response_${bulkRequest.bulk_request_number}.pdf`;
-                          document.body.appendChild(a);
-                          a.click();
-                          window.URL.revokeObjectURL(url);
-                          document.body.removeChild(a);
-                          toast.success("Response downloaded successfully");
-                        } catch (error: any) {
-                          toast.error(error.message || "Failed to download response");
-                        }
-                      }}
-                    >
-                      <FileText className="mr-2 h-4 w-4" />
-                      Download Response
-                    </Button>
+                    <div className="flex gap-2">
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={async () => {
+                          try {
+                            const url = await previewConfirmationResponsePublic(bulkRequest.bulk_request_number);
+                            window.open(url, "_blank");
+                          } catch (error: any) {
+                            toast.error(error.message || "Failed to preview response");
+                          }
+                        }}
+                      >
+                        <Eye className="mr-2 h-4 w-4" />
+                        Preview Response
+                      </Button>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={async () => {
+                          try {
+                            const blob = await downloadConfirmationResponsePublic(bulkRequest.bulk_request_number);
+                            const url = window.URL.createObjectURL(blob);
+                            const a = document.createElement("a");
+                            a.href = url;
+                            a.download = bulkRequest.response_file_name || `response_${bulkRequest.bulk_request_number}.pdf`;
+                            document.body.appendChild(a);
+                            a.click();
+                            window.URL.revokeObjectURL(url);
+                            document.body.removeChild(a);
+                            toast.success("Response downloaded successfully");
+                          } catch (error: any) {
+                            toast.error(error.message || "Failed to download response");
+                          }
+                        }}
+                      >
+                        <FileText className="mr-2 h-4 w-4" />
+                        Download Response
+                      </Button>
+                    </div>
+                  </div>
+                )}
+                {(bulkRequest.has_response || bulkRequest.response_file_path) && !bulkRequest.response_signed && (
+                  <div>
+                    <p className="text-sm font-medium text-muted-foreground">Response Document</p>
+                    <p className="text-sm text-muted-foreground">Response is pending signature</p>
+                  </div>
+                )}
+                {(bulkRequest.has_response || bulkRequest.response_file_path) && bulkRequest.response_signed && bulkRequest.response_revoked && (
+                  <div>
+                    <p className="text-sm font-medium text-muted-foreground">Response Document</p>
+                    <p className="text-sm text-red-600">Response has been revoked</p>
                   </div>
                 )}
                 <div>
@@ -704,6 +734,63 @@ export default function MyCertificateRequestsPage() {
                 <p className="text-sm font-medium text-muted-foreground">Created At</p>
                 <p>{new Date(regularRequest?.created_at || "").toLocaleString()}</p>
               </div>
+              {((regularRequest as any)?.has_response || (regularRequest as any)?.response_file_path) && (regularRequest as any)?.response_signed && !(regularRequest as any)?.response_revoked && (
+                <div className="col-span-2">
+                  <p className="text-sm font-medium text-muted-foreground">Response Document</p>
+                  <div className="flex gap-2">
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={async () => {
+                        try {
+                          const url = await previewConfirmationResponsePublic(regularRequest?.request_number || "");
+                          window.open(url, "_blank");
+                        } catch (error: any) {
+                          toast.error(error.message || "Failed to preview response");
+                        }
+                      }}
+                    >
+                      <Eye className="mr-2 h-4 w-4" />
+                      Preview Response
+                    </Button>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={async () => {
+                        try {
+                          const blob = await downloadConfirmationResponsePublic(regularRequest?.request_number || "");
+                          const url = window.URL.createObjectURL(blob);
+                          const a = document.createElement("a");
+                          a.href = url;
+                          a.download = (regularRequest as any).response_file_name || `response_${regularRequest?.request_number}.pdf`;
+                          document.body.appendChild(a);
+                          a.click();
+                          window.URL.revokeObjectURL(url);
+                          document.body.removeChild(a);
+                          toast.success("Response downloaded successfully");
+                        } catch (error: any) {
+                          toast.error(error.message || "Failed to download response");
+                        }
+                      }}
+                    >
+                      <FileText className="mr-2 h-4 w-4" />
+                      Download Response
+                    </Button>
+                  </div>
+                </div>
+              )}
+              {((regularRequest as any)?.has_response || (regularRequest as any)?.response_file_path) && !(regularRequest as any)?.response_signed && (
+                <div className="col-span-2">
+                  <p className="text-sm font-medium text-muted-foreground">Response Document</p>
+                  <p className="text-sm text-muted-foreground">Response is pending signature</p>
+                </div>
+              )}
+              {((regularRequest as any)?.has_response || (regularRequest as any)?.response_file_path) && (regularRequest as any)?.response_signed && (regularRequest as any)?.response_revoked && (
+                <div className="col-span-2">
+                  <p className="text-sm font-medium text-muted-foreground">Response Document</p>
+                  <p className="text-sm text-red-600">Response has been revoked</p>
+                </div>
+              )}
             </div>
 
             {regularRequest?.status === "pending_payment" && (
@@ -1237,29 +1324,51 @@ export default function MyCertificateRequestsPage() {
                                 Pay
                               </Button>
                             )}
-                            {isBulk && bulkRequest?.response_file_path && (
-                              <Button
-                                variant="outline"
-                                size="sm"
-                                onClick={async () => {
-                                  try {
-                                    const blob = await downloadConfirmationResponsePublic(requestNumber);
-                                    const url = window.URL.createObjectURL(blob);
-                                    const a = document.createElement("a");
-                                    a.href = url;
-                                    a.download = bulkRequest.response_file_name || `response_${requestNumber}.pdf`;
-                                    document.body.appendChild(a);
-                                    a.click();
-                                    window.URL.revokeObjectURL(url);
-                                    document.body.removeChild(a);
-                                    toast.success("Response downloaded successfully");
-                                  } catch (error: any) {
-                                    toast.error(error.message || "Failed to download response");
-                                  }
-                                }}
-                              >
-                                <FileText className="h-4 w-4" />
-                              </Button>
+                            {((isBulk && (bulkRequest?.has_response || bulkRequest?.response_file_path) && bulkRequest?.response_signed && !bulkRequest?.response_revoked) ||
+                              (!isBulk && ((request as any).has_response || (request as any).response_file_path) && (request as any).response_signed && !(request as any).response_revoked)) && (
+                              <>
+                                <Button
+                                  variant="outline"
+                                  size="sm"
+                                  onClick={async () => {
+                                    try {
+                                      const url = await previewConfirmationResponsePublic(requestNumber);
+                                      window.open(url, "_blank");
+                                    } catch (error: any) {
+                                      toast.error(error.message || "Failed to preview response");
+                                    }
+                                  }}
+                                  title="Preview Response"
+                                >
+                                  <Eye className="h-4 w-4" />
+                                </Button>
+                                <Button
+                                  variant="outline"
+                                  size="sm"
+                                  onClick={async () => {
+                                    try {
+                                      const blob = await downloadConfirmationResponsePublic(requestNumber);
+                                      const url = window.URL.createObjectURL(blob);
+                                      const a = document.createElement("a");
+                                      a.href = url;
+                                      const responseFileName = isBulk
+                                        ? bulkRequest?.response_file_name
+                                        : (request as any).response_file_name;
+                                      a.download = responseFileName || `response_${requestNumber}.pdf`;
+                                      document.body.appendChild(a);
+                                      a.click();
+                                      window.URL.revokeObjectURL(url);
+                                      document.body.removeChild(a);
+                                      toast.success("Response downloaded successfully");
+                                    } catch (error: any) {
+                                      toast.error(error.message || "Failed to download response");
+                                    }
+                                  }}
+                                  title="Download Response"
+                                >
+                                  <FileText className="h-4 w-4" />
+                                </Button>
+                              </>
                             )}
                           </div>
                         </TableCell>

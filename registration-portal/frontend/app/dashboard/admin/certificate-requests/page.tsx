@@ -72,6 +72,8 @@ import {
   downloadConfirmationResponse,
   downloadConfirmationRequestPDF,
   signConfirmationResponse,
+  revokeConfirmationResponse,
+  unrevokeConfirmationResponse,
   reconcilePayment,
   type CertificateRequestResponse,
   type CertificateRequestListResponse,
@@ -180,11 +182,14 @@ export default function CertificateRequestsPage() {
   const [pageSize] = useState(20);
   const [total, setTotal] = useState(0);
   const [totalPages, setTotalPages] = useState(0);
-  const [viewTab, setViewTab] = useState<"active" | "completed" | "cancelled" | "all">("active");
+  const [viewTab, setViewTab] = useState<"active" | "completed" | "cancelled" | "all" | "my_tickets">("active");
   const [changeStatusDialogOpen, setChangeStatusDialogOpen] = useState(false);
   const [newStatus, setNewStatus] = useState<"in_process" | "ready_for_dispatch" | "dispatched" | "received" | "completed">("ready_for_dispatch");
   const [changeReason, setChangeReason] = useState("");
   const [responseDialogOpen, setResponseDialogOpen] = useState(false);
+  const [revokeDialogOpen, setRevokeDialogOpen] = useState(false);
+  const [revocationReason, setRevocationReason] = useState("");
+  const [revokeConfirmationId, setRevokeConfirmationId] = useState<number | null>(null);
 
   const loadRequests = async () => {
     setLoading(true);
@@ -622,6 +627,58 @@ export default function CertificateRequestsPage() {
     }
   };
 
+  const handleRevokeResponse = (confirmationId: number) => {
+    setRevokeConfirmationId(confirmationId);
+    setRevocationReason("");
+    setRevokeDialogOpen(true);
+  };
+
+  const handleConfirmRevoke = async () => {
+    if (!revokeConfirmationId) return;
+    if (!revocationReason.trim()) {
+      toast.error("Please provide a reason for revoking the response");
+      return;
+    }
+
+    try {
+      await revokeConfirmationResponse(revokeConfirmationId, revocationReason.trim());
+      toast.success("Response revoked successfully");
+      setRevokeDialogOpen(false);
+      setRevocationReason("");
+      setRevokeConfirmationId(null);
+      loadRequests();
+      if (selectedConfirmationRequest?.id === revokeConfirmationId) {
+        const updated = await getCertificateConfirmation(revokeConfirmationId);
+        setSelectedConfirmationRequest(updated);
+        setSelectedRequest(updated as any);
+      }
+    } catch (error: any) {
+      toast.error(error.message || "Failed to revoke response");
+      console.error("Error revoking response:", error);
+    }
+  };
+
+  const handleUnrevokeResponse = async (confirmationId: number) => {
+    const confirmed = window.confirm(
+      "Are you sure you want to unrevoke this response? The response can then be signed again after corrections are made."
+    );
+    if (!confirmed) return;
+
+    try {
+      await unrevokeConfirmationResponse(confirmationId);
+      toast.success("Response unrevoked successfully");
+      loadRequests();
+      if (selectedConfirmationRequest?.id === confirmationId) {
+        const updated = await getCertificateConfirmation(confirmationId);
+        setSelectedConfirmationRequest(updated);
+        setSelectedRequest(updated as any);
+      }
+    } catch (error: any) {
+      toast.error(error.message || "Failed to unrevoke response");
+      console.error("Error unrevoking response:", error);
+    }
+  };
+
   const handleUpdateNotes = async () => {
     if (!selectedRequest) return;
     setUpdating(true);
@@ -716,12 +773,28 @@ export default function CertificateRequestsPage() {
 
   const handleUpdatePriority = async (requestId: number, priority: "low" | "medium" | "high" | "urgent") => {
     try {
+      // Determine type from current list or selected request
+      const requestInList = requests.find(r => r.id === requestId);
+      const requestType = requestInList ? getRequestType(requestInList) : getRequestType(selectedRequest);
+
       await updateCertificateRequest(requestId, { priority });
       toast.success("Priority updated");
       loadRequests();
       if (selectedRequest?.id === requestId) {
-        const updated = await getCertificateRequestById(requestId);
-        setSelectedRequest(updated);
+        if (requestType === "confirmation") {
+          const updated = await getCertificateConfirmation(requestId);
+          const updatedWithType = {
+            ...updated,
+            _type: updated.certificate_details && updated.certificate_details.length > 1
+              ? "bulk_confirmation"
+              : "certificate_confirmation",
+          };
+          setSelectedConfirmationRequest(updatedWithType);
+          setSelectedRequest(updatedWithType as any);
+        } else {
+          const updated = await getCertificateRequestById(requestId);
+          setSelectedRequest(updated);
+        }
       }
     } catch (error) {
       toast.error("Failed to update priority");
@@ -1163,7 +1236,7 @@ export default function CertificateRequestsPage() {
 
       {/* Focused View Tabs */}
       <div className="flex items-center gap-2">
-        {(["active","completed","cancelled","all"] as const).map(tab => (
+        {(["active","completed","cancelled","my_tickets","all"] as const).map(tab => (
           <Button
             key={tab}
             size="sm"
@@ -1174,7 +1247,7 @@ export default function CertificateRequestsPage() {
               loadRequests();
             }}
           >
-            {tab[0].toUpperCase() + tab.slice(1)}
+            {tab === "my_tickets" ? "My Tickets" : tab[0].toUpperCase() + tab.slice(1)}
           </Button>
         ))}
       </div>
@@ -1596,6 +1669,12 @@ export default function CertificateRequestsPage() {
                             <p className="text-sm">{confirmationRequest.response_notes}</p>
                           </div>
                         )}
+                        {confirmationRequest.response_revoked && confirmationRequest.response_revocation_reason && (
+                          <div>
+                            <Label className="text-red-600">Revocation Reason</Label>
+                            <p className="text-sm text-red-600">{confirmationRequest.response_revocation_reason}</p>
+                          </div>
+                        )}
                       </div>
                       <div className="flex gap-2 flex-wrap">
                         <Button
@@ -1645,6 +1724,25 @@ export default function CertificateRequestsPage() {
                           >
                             <PenTool className="mr-2 h-4 w-4" />
                             Sign Response
+                          </Button>
+                        )}
+                        {confirmationRequest.response_file_path && confirmationRequest.response_signed && !confirmationRequest.response_revoked && (
+                          <Button
+                            onClick={() => handleRevokeResponse(confirmationRequest.id)}
+                            variant="destructive"
+                          >
+                            <XCircle className="mr-2 h-4 w-4" />
+                            Revoke Response
+                          </Button>
+                        )}
+                        {confirmationRequest.response_file_path && confirmationRequest.response_revoked && (
+                          <Button
+                            onClick={() => handleUnrevokeResponse(confirmationRequest.id)}
+                            variant="default"
+                            className="bg-blue-600 hover:bg-blue-700"
+                          >
+                            <RefreshCw className="mr-2 h-4 w-4" />
+                            Unrevoke Response
                           </Button>
                         )}
                       </div>
@@ -2049,6 +2147,40 @@ export default function CertificateRequestsPage() {
         onOpenChange={setReconciliationDialogOpen}
         onReconciled={loadRequests}
       />
+
+      {/* Revoke Response Dialog */}
+      <Dialog open={revokeDialogOpen} onOpenChange={setRevokeDialogOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Revoke Response</DialogTitle>
+            <DialogDescription>
+              Are you sure you want to revoke this response? Once revoked, requesters will no longer be able to view or download it.
+              A reason is required for revoking the response.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4 py-4">
+            <div>
+              <Label htmlFor="revocation-reason">Reason for Revocation *</Label>
+              <Textarea
+                id="revocation-reason"
+                placeholder="Enter the reason for revoking this response..."
+                value={revocationReason}
+                onChange={(e) => setRevocationReason(e.target.value)}
+                rows={4}
+                className="mt-2"
+              />
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setRevokeDialogOpen(false)}>
+              Cancel
+            </Button>
+            <Button variant="destructive" onClick={handleConfirmRevoke} disabled={!revocationReason.trim()}>
+              Revoke Response
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
