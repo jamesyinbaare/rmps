@@ -1631,6 +1631,7 @@ export interface CertificateRequestCreate {
   request_type: "certificate" | "attestation" | "confirmation" | "verification";
   index_number: string;
   exam_year: number;
+  examination_series: "MAY/JUNE" | "NOV/DEC";  // Required for certificate/attestation
   examination_center_id?: number;  // Optional for confirmation/verification
   national_id_number?: string;  // Optional for confirmation/verification
   delivery_method?: "pickup" | "courier";  // Optional for confirmation/verification
@@ -1680,6 +1681,7 @@ export interface CertificateRequestResponse {
   request_number: string;
   index_number: string;
   exam_year: number;
+  examination_series: "MAY/JUNE" | "NOV/DEC";
   examination_center_id?: number | null;
   examination_center_name?: string;
   national_id_number?: string | null;
@@ -1739,6 +1741,9 @@ export async function submitCertificateRequest(
   formData.append("request_type", data.request_type);
   formData.append("index_number", data.index_number);
   formData.append("exam_year", data.exam_year.toString());
+  if (data.examination_series) {
+    formData.append("examination_series", data.examination_series);
+  }
   if (data.examination_center_id !== undefined) {
     formData.append("examination_center_id", data.examination_center_id.toString());
   }
