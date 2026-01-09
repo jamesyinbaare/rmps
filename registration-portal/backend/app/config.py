@@ -41,6 +41,16 @@ class Settings(BaseSettings):
     express_service_multiplier: float = 1.5  # Multiplier for express service (e.g., 1.5x base price)
     # Certificate request file storage
     certificate_request_storage_path: str = "storage/certificate_requests"
+    # PDF signing settings
+    pdf_signing_enabled: bool = True  # Feature flag for PDF signing (set to True and configure certificate to enable)
+    pdf_signing_certificate_path: str = ""  # Path to certificate file (.pem, .p12, .pfx)
+    pdf_signing_key_path: str = ""  # Path to private key file (if separate from certificate)
+    pdf_signing_certificate_password: str = ""  # Password for certificate (if password-protected)
+    pdf_signing_certificate_chain_path: str = ""  # Optional: Path to certificate chain file (intermediate/root CAs) for better verification
+    pdf_signing_reason: str = "Certificate Confirmation Response"  # Signing reason (visible in signature properties)
+    pdf_signing_location: str = "Ghana"  # Signing location (visible in signature properties)
+    pdf_signing_contact_info: str = ""  # Contact information (visible in signature properties)
+    pdf_signing_organization: str = ""  # Organization name (for certificate metadata)
 
 
 class LoggingSettings(BaseSettings):
