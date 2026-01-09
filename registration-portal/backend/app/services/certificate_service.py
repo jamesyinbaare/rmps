@@ -21,6 +21,7 @@ from app.models import (
     TicketStatusHistory,
     TicketActivityType,
     TicketPriority,
+    ExamSeries,
 )
 from uuid import UUID
 from app.services.invoice_service import generate_invoice_number, calculate_invoice_amount
@@ -69,6 +70,7 @@ async def validate_request_data(
     exam_year: int,
     examination_center_id: int,
     index_number: str,
+    examination_series: ExamSeries,
 ) -> tuple[bool, str | None]:
     """
     Validate certificate request data.
@@ -79,6 +81,7 @@ async def validate_request_data(
         exam_year: Year of examination
         examination_center_id: Examination center (school) ID
         index_number: Candidate index number
+        examination_series: Examination series (MAY/JUNE or NOV/DEC)
 
     Returns:
         Tuple of (is_valid, error_message)
@@ -91,10 +94,13 @@ async def validate_request_data(
     if not center:
         return False, "Examination center not found or inactive"
 
-    # Validate request type restrictions
-    # Certificate requests are only for NOV/DEC exams
-    # This validation can be enhanced to check actual exam records if needed
-    # For now, we'll allow the request and let the admin validate later
+    # Validate examination series based on request type
+    if request_type == CertificateRequestType.CERTIFICATE:
+        if examination_series != ExamSeries.NOV_DEC:
+            return False, "Certificate requests are only available for NOV/DEC examination series"
+    elif request_type == CertificateRequestType.ATTESTATION:
+        if examination_series not in (ExamSeries.MAY_JUNE, ExamSeries.NOV_DEC):
+            return False, "Attestation requests must be for MAY/JUNE or NOV/DEC examination series"
 
     # Validate year is reasonable
     current_year = datetime.utcnow().year
@@ -140,12 +146,21 @@ async def create_certificate_request(
         if not request_data.get("examination_center_id"):
             raise ValueError("examination_center_id is required for certificate and attestation requests")
 
+        # Validate examination_series is provided
+        if not request_data.get("examination_series"):
+            raise ValueError("examination_series is required for certificate and attestation requests")
+
+        examination_series = request_data["examination_series"]
+        if isinstance(examination_series, str):
+            examination_series = ExamSeries(examination_series.upper().replace("-", "/"))
+
         is_valid, error_message = await validate_request_data(
             session,
             request_type_enum,
             request_data["exam_year"],
             request_data["examination_center_id"],
             request_data["index_number"],
+            examination_series,
         )
         if not is_valid:
             raise ValueError(error_message or "Invalid request data")
@@ -207,11 +222,19 @@ async def create_certificate_request(
     if not index_number_value:
         index_number_value = request_data.get("index_number")
 
+    # Get examination_series for certificate/attestation requests
+    examination_series_value = None
+    if request_type_enum in (CertificateRequestType.CERTIFICATE, CertificateRequestType.ATTESTATION):
+        examination_series_value = request_data.get("examination_series")
+        if isinstance(examination_series_value, str):
+            examination_series_value = ExamSeries(examination_series_value.upper().replace("-", "/"))
+
     certificate_request = CertificateRequest(
         request_type=request_type_enum,
         request_number=request_number,
         index_number=index_number_value,
         exam_year=request_data["exam_year"],
+        examination_series=examination_series_value,
         examination_center_id=request_data.get("examination_center_id"),
         national_id_number=request_data.get("national_id_number"),
         national_id_file_path=id_scan_file_path,

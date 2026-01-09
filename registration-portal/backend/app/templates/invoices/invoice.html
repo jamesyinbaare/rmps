@@ -286,6 +286,10 @@
             <div class="request-details-value">{{ certificate_request.exam_year }}</div>
         </div>
         <div class="request-details-row">
+            <div class="request-details-label">Examination Series:</div>
+            <div class="request-details-value">{{ certificate_request.examination_series.value }}</div>
+        </div>
+        <div class="request-details-row">
             <div class="request-details-label">Delivery Method:</div>
             <div class="request-details-value">{{ certificate_request.delivery_method.value.capitalize() }}</div>
         </div>
