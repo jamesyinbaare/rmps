@@ -23,6 +23,11 @@ dependencies = [
     "cachetools>=6.2.4",
     "httpx>=0.28.1",
     "alembic-postgresql-enum>=1.8.0",
+    "asn1crypto>=1.5.1",
+    "cryptography>=46.0.3",
+    "endesive>=2.19.2",
+    "pypdf>=6.5.0",
+    "requests>=2.32.0",
 ]
 
 [dependency-groups]

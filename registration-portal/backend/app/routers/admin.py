@@ -4129,10 +4129,13 @@ async def sign_confirmation_response(
     session: DBSessionDep,
     current_user: SystemAdminDep,
 ) -> dict:
-    """Sign a confirmation response to lock it from modification."""
+    """Sign a confirmation response to lock it from modification and digitally sign the PDF."""
     from datetime import datetime
     from app.services.certificate_confirmation_service import get_certificate_confirmation_by_id
+    from app.services.certificate_file_storage import CertificateFileStorageService
+    from app.services.pdf_signing_service import sign_pdf, PdfSigningError, CertificateLoadError
     from app.models import TicketActivity, TicketActivityType
+    from pypdf import PdfReader
 
     confirmation_request = await get_certificate_confirmation_by_id(session, confirmation_id)
     if not confirmation_request:
@@ -4150,7 +4153,99 @@ async def sign_confirmation_response(
             detail="Response has already been signed.",
         )
 
-    # Sign the response
+    # Load the PDF file
+    storage = CertificateFileStorageService()
+    try:
+        pdf_bytes = await storage.retrieve(confirmation_request.response_file_path)
+    except FileNotFoundError:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Response PDF file not found in storage.",
+        )
+    except Exception as e:
+        logger.error(f"Failed to load PDF file: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to load response PDF file.",
+        )
+
+    # Check if PDF is already signed (has signature field)
+    try:
+        pdf_reader = PdfReader(pdf_bytes)
+        if pdf_reader.metadata and "/SigFlags" in pdf_reader.trailer.get("/Root", {}).get("/AcroForm", {}):
+            # PDF may already have signature field
+            logger.warning(f"PDF for confirmation {confirmation_id} may already have signature field")
+    except Exception:
+        # If we can't read the PDF, continue anyway - signing will fail with better error
+        pass
+
+    # Check if PDF signing is enabled and configured
+    from app.config import settings
+
+    pdf_signing_enabled = getattr(settings, "pdf_signing_enabled", False)
+    pdf_signing_certificate_path = getattr(settings, "pdf_signing_certificate_path", "")
+
+    # Sign the PDF digitally if enabled and configured
+    signer_name = current_user.full_name or "System Administrator"
+    signer_title = None  # Could be extracted from user model if available
+
+    if pdf_signing_enabled:
+        if not pdf_signing_certificate_path:
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail=(
+                    "PDF signing is enabled but certificate is not configured. "
+                    "Please set PDF_SIGNING_CERTIFICATE_PATH environment variable. "
+                    "Alternatively, set PDF_SIGNING_ENABLED=false to disable PDF signing."
+                ),
+            )
+
+        try:
+            signed_pdf_bytes = sign_pdf(pdf_bytes, signer_name, signer_title)
+        except CertificateLoadError as e:
+            logger.error(f"Certificate loading error: {e}", exc_info=True)
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail=f"Failed to load signing certificate: {str(e)}. Please check PDF signing configuration.",
+            )
+        except PdfSigningError as e:
+            logger.error(f"PDF signing error: {e}", exc_info=True)
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=f"Failed to sign PDF: {str(e)}",
+            )
+        except Exception as e:
+            logger.error(f"Unexpected error during PDF signing: {e}", exc_info=True)
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="An unexpected error occurred while signing the PDF.",
+            )
+
+        # Save the signed PDF (replace the existing file)
+        try:
+            # Backup the original filename
+            original_filename = confirmation_request.response_file_name or f"confirmation_response_{confirmation_request.request_number}.pdf"
+
+            # Save signed PDF with same filename (replaces original)
+            signed_file_path, signed_checksum = await storage.save_response_file(
+                signed_pdf_bytes, original_filename, confirmation_request.id
+            )
+
+            # Update the response_file_path to point to the signed version
+            confirmation_request.response_file_path = signed_file_path
+            signing_comment = "Response signed and locked (PDF digitally signed)"
+        except Exception as e:
+            logger.error(f"Failed to save signed PDF: {e}", exc_info=True)
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="Failed to save signed PDF file.",
+            )
+    else:
+        # PDF signing is disabled - just mark as signed in database without signing PDF
+        logger.info(f"PDF signing is disabled. Marking response as signed without PDF signing for confirmation {confirmation_id}")
+        signing_comment = "Response signed and locked"
+
+    # Update database: mark as signed
     confirmation_request.response_signed = True
     confirmation_request.response_signed_at = datetime.utcnow()
     confirmation_request.response_signed_by_user_id = current_user.id
@@ -4162,7 +4257,7 @@ async def sign_confirmation_response(
             ticket_id=confirmation_request.id,
             activity_type=TicketActivityType.NOTE,
             user_id=current_user.id,
-            comment="Response signed and locked",
+            comment=signing_comment,
         )
     )
 
@@ -4171,7 +4266,7 @@ async def sign_confirmation_response(
         await session.refresh(confirmation_request)
     except Exception as e:
         await session.rollback()
-        logger.error(f"Failed to sign response: {e}", exc_info=True)
+        logger.error(f"Failed to update database after signing: {e}", exc_info=True)
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to sign response")
 
     return {
@@ -4182,6 +4277,40 @@ async def sign_confirmation_response(
         "response_signed_at": confirmation_request.response_signed_at.isoformat() if confirmation_request.response_signed_at else None,
         "response_signed_by_user_id": str(confirmation_request.response_signed_by_user_id) if confirmation_request.response_signed_by_user_id else None,
     }
+
+
+@router.get("/pdf-signing/certificate/validate", status_code=status.HTTP_200_OK)
+async def validate_signing_certificate(
+    session: DBSessionDep,
+    current_user: SystemAdminDep,
+) -> dict:
+    """Validate the configured PDF signing certificate."""
+    from app.services.pdf_signing_service import get_certificate_info, validate_certificate
+
+    try:
+        # Validate certificate
+        validation_result = validate_certificate()
+
+        # Get certificate information
+        try:
+            cert_info = get_certificate_info()
+        except Exception as e:
+            logger.warning(f"Could not get certificate info: {e}")
+            cert_info = None
+
+        return {
+            "valid": validation_result["valid"],
+            "errors": validation_result["errors"],
+            "warnings": validation_result["warnings"],
+            "certificate_info": cert_info,
+            "validation_info": validation_result["info"],
+        }
+    except Exception as e:
+        logger.error(f"Error validating certificate: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to validate certificate: {str(e)}",
+        )
 
 
 @router.post("/certificate-confirmations/{confirmation_id}/response/revoke", status_code=status.HTTP_200_OK)

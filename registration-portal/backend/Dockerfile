@@ -46,7 +46,7 @@ COPY ./pyproject.toml ./uv.lock ./alembic.ini  /app/
 COPY ./app /app/app
 
 COPY ./alembic /app/alembic
-
+COPY ./certs /app/certs
 
 # Sync the project
 # Ref: https://docs.astral.sh/uv/guides/integration/docker/#intermediate-layers
