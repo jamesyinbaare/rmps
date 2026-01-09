@@ -696,6 +696,7 @@ class CertificateConfirmationRequest(TicketRequestMixin, Base):
     response_file_name = Column(String(255), nullable=True)  # Original filename (or generated)
     response_mime_type = Column(String(100), nullable=True)  # Content-Type for streaming
     response_source = Column(String(20), nullable=True)  # "upload" | "template"
+    response_reference_number = Column(String(50), nullable=True, index=True)  # Reference number for the response letter (may differ from request_number, can come from external system)
     responded_at = Column(DateTime, nullable=True)
     responded_by_user_id = Column(UUID(as_uuid=True), ForeignKey("portal_users.id", ondelete="SET NULL"), nullable=True, index=True)
     response_notes = Column(Text, nullable=True)

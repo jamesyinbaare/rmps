@@ -282,6 +282,7 @@ class CertificateConfirmationRequestResponse(BaseModel):
     response_file_name: str | None = None
     response_mime_type: str | None = None
     response_source: str | None = None  # "upload" | "template"
+    response_reference_number: str | None = None  # Reference number for the response letter (separate from request_number)
     responded_at: datetime | None = None
     responded_by_user_id: str | None = None
     response_notes: str | None = None

@@ -1800,6 +1800,7 @@ export interface CertificateConfirmationRequestResponse {
   response_file_name?: string | null;
   response_mime_type?: string | null;
   response_source?: string | null; // "upload" | "template"
+  response_reference_number?: string | null; // Reference number for the response letter (separate from request_number)
   responded_at?: string | null;
   responded_by_user_id?: string | null;
   response_notes?: string | null;
@@ -2030,12 +2031,15 @@ export async function generateConfirmationResponse(
   payload: {
     letter?: {
       subject?: string;
+      /** Body content in HTML format (rich text) or plain text (for backward compatibility) */
       body?: string;
       remarks?: string;
       signatory_name?: string;
       signatory_title?: string;
     };
     outcomes?: Record<string, { status?: string; remarks?: string }>;
+    /** Reference number for the response. Defaults to the request number if not provided. */
+    reference_number?: string;
   }
 ): Promise<{ message: string; confirmation_id: number; request_number: string; response_file_name?: string; responded_at?: string }> {
   const response = await fetchWithAuth(

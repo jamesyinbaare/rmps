@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useMemo } from "react";
+import { useState, useMemo, useEffect } from "react";
 import {
   Dialog,
   DialogContent,
@@ -16,8 +16,10 @@ import { Input } from "@/components/ui/input";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Badge } from "@/components/ui/badge";
 import { Alert, AlertDescription } from "@/components/ui/alert";
-import { Upload, FileText, Loader2, AlertCircle } from "lucide-react";
+import { RichTextEditor } from "@/components/ui/rich-text-editor";
+import { Upload, FileText, Loader2, AlertCircle, X, CheckCircle2 } from "lucide-react";
 import { toast } from "sonner";
+import { cn } from "@/lib/utils";
 import {
   uploadConfirmationResponse,
   generateConfirmationResponse,
@@ -41,14 +43,23 @@ export function ResponseDialog({
   const [generating, setGenerating] = useState(false);
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [uploadNotes, setUploadNotes] = useState("");
+  const [isDragging, setIsDragging] = useState(false);
 
   // Template generation fields
-  const [letterSubject, setLetterSubject] = useState("");
   const [letterBody, setLetterBody] = useState("");
-  const [signatory, setSignatory] = useState("");
+  // Response reference number (separate from request_number) - defaults to request_number if not provided
+  const [responseReferenceNumber, setResponseReferenceNumber] = useState(
+    confirmationRequest.response_reference_number || confirmationRequest.request_number
+  );
 
-  // Per-candidate outcomes (for bulk requests)
-  const [outcomes, setOutcomes] = useState<Record<string, { status: string; remarks: string }>>({});
+  // Reset response reference number when dialog opens or request changes
+  useEffect(() => {
+    if (open) {
+      setResponseReferenceNumber(
+        confirmationRequest.response_reference_number || confirmationRequest.request_number
+      );
+    }
+  }, [open, confirmationRequest.response_reference_number, confirmationRequest.request_number]);
 
   // Auto-detect single vs bulk
   const isBulk = useMemo(() => {
@@ -60,34 +71,81 @@ export function ResponseDialog({
   // Check if response is signed
   const isSigned = confirmationRequest.response_signed || false;
 
+  const validateAndSetFile = (file: File) => {
+    // Validate file type
+    const allowedTypes = [
+      "application/pdf",
+      "image/jpeg",
+      "image/png",
+      "image/jpg",
+      "application/msword",
+      "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+      "text/plain",
+    ];
+
+    if (!allowedTypes.includes(file.type)) {
+      toast.error("Unsupported file type. Please upload a PDF, image, or document file.");
+      return;
+    }
+
+    // Validate file size (50MB max)
+    const maxSize = 50 * 1024 * 1024;
+    if (file.size > maxSize) {
+      toast.error(`File size exceeds maximum allowed size of ${maxSize / (1024 * 1024)}MB`);
+      return;
+    }
+
+    setSelectedFile(file);
+  };
+
   const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (file) {
-      // Validate file type
-      const allowedTypes = [
-        "application/pdf",
-        "image/jpeg",
-        "image/png",
-        "image/jpg",
-        "application/msword",
-        "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-        "text/plain",
-      ];
-
-      if (!allowedTypes.includes(file.type)) {
-        toast.error("Unsupported file type. Please upload a PDF, image, or document file.");
-        return;
-      }
-
-      // Validate file size (50MB max)
-      const maxSize = 50 * 1024 * 1024;
-      if (file.size > maxSize) {
-        toast.error(`File size exceeds maximum allowed size of ${maxSize / (1024 * 1024)}MB`);
-        return;
-      }
-
-      setSelectedFile(file);
+      validateAndSetFile(file);
     }
+  };
+
+  const handleDragOver = (e: React.DragEvent<HTMLDivElement>) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setIsDragging(true);
+  };
+
+  const handleDragLeave = (e: React.DragEvent<HTMLDivElement>) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setIsDragging(false);
+  };
+
+  const handleDrop = (e: React.DragEvent<HTMLDivElement>) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setIsDragging(false);
+
+    const droppedFile = e.dataTransfer.files?.[0];
+    if (!droppedFile) return;
+    validateAndSetFile(droppedFile);
+  };
+
+  const handleDropZoneClick = () => {
+    const fileInput = document.getElementById("file-upload") as HTMLInputElement;
+    if (fileInput) {
+      fileInput.click();
+    }
+  };
+
+  const removeFile = () => {
+    setSelectedFile(null);
+    const fileInput = document.getElementById("file-upload") as HTMLInputElement;
+    if (fileInput) {
+      fileInput.value = "";
+    }
+  };
+
+  const formatFileSize = (bytes: number): string => {
+    if (bytes < 1024) return bytes + " B";
+    if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(2) + " KB";
+    return (bytes / (1024 * 1024)).toFixed(2) + " MB";
   };
 
   const handleUpload = async () => {
@@ -131,42 +189,22 @@ export function ResponseDialog({
     try {
       const payload: {
         letter?: {
-          subject?: string;
           body?: string;
-          remarks?: string;
-          signatory_name?: string;
-          signatory_title?: string;
         };
-        outcomes?: Record<string, { status?: string; remarks?: string }>;
+        reference_number?: string;
       } = {};
 
       // Build letter payload
-      if (letterSubject || letterBody || signatory) {
-        payload.letter = {};
-        if (letterSubject) payload.letter.subject = letterSubject;
-        if (letterBody) {
-          payload.letter.body = letterBody;
-        } else if (!letterBody && letterSubject) {
-          // If only subject is provided, use it as remarks
-          payload.letter.remarks = letterSubject;
-        }
-        if (signatory) payload.letter.signatory = signatory;
+      if (letterBody) {
+        payload.letter = {
+          body: letterBody,
+        };
       }
 
-      // Build outcomes payload if there are any outcomes set
-      const hasOutcomes = Object.keys(outcomes).some(
-        (key) => outcomes[key].status || outcomes[key].remarks
-      );
-      if (hasOutcomes) {
-        payload.outcomes = {};
-        for (const [key, value] of Object.entries(outcomes)) {
-          if (value.status || value.remarks) {
-            payload.outcomes[key] = {
-              status: value.status || undefined,
-              remarks: value.remarks || undefined,
-            };
-          }
-        }
+      // Add response reference number (separate from request_number)
+      // If provided, use it; backend will default to request_number if empty
+      if (responseReferenceNumber && responseReferenceNumber.trim()) {
+        payload.reference_number = responseReferenceNumber.trim();
       }
 
       await generateConfirmationResponse(confirmationRequest.id, payload);
@@ -174,10 +212,10 @@ export function ResponseDialog({
       onSuccess();
       onOpenChange(false);
       // Reset form
-      setLetterSubject("");
       setLetterBody("");
-      setSignatory("");
-      setOutcomes({});
+      setResponseReferenceNumber(
+        confirmationRequest.response_reference_number || confirmationRequest.request_number
+      );
     } catch (error: any) {
       toast.error(error.message || "Failed to generate response");
     } finally {
@@ -187,7 +225,7 @@ export function ResponseDialog({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-3xl max-h-[90vh] overflow-y-auto">
+      <DialogContent className="min-w-5xl min-h-[80vh] overflow-y-auto">
         <DialogHeader>
           <DialogTitle>Respond to Certificate {confirmationRequest.request_type === "confirmation" ? "Confirmation" : "Verification"} Request</DialogTitle>
           <DialogDescription>
@@ -207,32 +245,34 @@ export function ResponseDialog({
           </div>
         </DialogHeader>
 
-        {isSigned && (
-          <Alert>
-            <AlertCircle className="h-4 w-4" />
-            <AlertDescription>
-              <strong>Response is signed and locked.</strong> This response cannot be modified.
-              {confirmationRequest.response_signed_at && (
-                <> Signed on {new Date(confirmationRequest.response_signed_at).toLocaleString()}</>
-              )}
-            </AlertDescription>
-          </Alert>
-        )}
-        {hasExistingResponse && !isSigned && (
-          <Alert>
-            <AlertCircle className="h-4 w-4" />
-            <AlertDescription>
-              A response already exists for this request: <strong>{confirmationRequest.response_file_name}</strong>
-              {confirmationRequest.responded_at && (
-                <> (uploaded on {new Date(confirmationRequest.responded_at).toLocaleString()})</>
-              )}
-              . Uploading or generating a new response will replace it.
-            </AlertDescription>
-          </Alert>
-        )}
+        <div className="space-y-2 mt-4">
+          {isSigned && (
+            <Alert className="h-24 flex items-center py-2">
+              <AlertCircle className="h-4 w-4" />
+              <AlertDescription className="text-sm">
+                <strong>Response is signed and locked.</strong> This response cannot be modified.
+                {confirmationRequest.response_signed_at && (
+                  <> Signed on {new Date(confirmationRequest.response_signed_at).toLocaleString()}</>
+                )}
+              </AlertDescription>
+            </Alert>
+          )}
+          {hasExistingResponse && !isSigned && (
+            <Alert className="h-24 flex items-center py-2">
+              <AlertCircle className="h-4 w-4" />
+              <AlertDescription className="text-sm">
+                A response already exists: <strong>{confirmationRequest.response_file_name}</strong>
+                {confirmationRequest.responded_at && (
+                  <> (uploaded on {new Date(confirmationRequest.responded_at).toLocaleString()})</>
+                )}
+                . Uploading or generating a new response will replace it.
+              </AlertDescription>
+            </Alert>
+          )}
+        </div>
 
-        <Tabs defaultValue="upload" className="w-full">
-          <TabsList className="grid w-full grid-cols-2">
+        <Tabs defaultValue="upload" className="w-full flex flex-col h-[80%]">
+          <TabsList className="grid w-full grid-cols-2 shrink-0">
             <TabsTrigger value="upload" disabled={isSigned}>
               <Upload className="mr-2 h-4 w-4" />
               Upload Document
@@ -243,42 +283,98 @@ export function ResponseDialog({
             </TabsTrigger>
           </TabsList>
 
-          <TabsContent value="upload" className="space-y-4">
+          <TabsContent value="upload" className="space-y-4 mt-4 flex-1 overflow-y-auto min-h-0">
             {isSigned && (
               <div className="p-4 border rounded-md bg-muted text-center text-muted-foreground">
                 Response is signed and locked. Modification is not allowed.
               </div>
             )}
             <div className="space-y-2">
-              <Label htmlFor="file-upload">Response Document</Label>
-              <Input
-                id="file-upload"
-                type="file"
-                accept=".pdf,.doc,.docx,.jpg,.jpeg,.png,.txt"
-                onChange={handleFileSelect}
-              />
-              <p className="text-sm text-muted-foreground">
-                Accepted formats: PDF, Word documents, images, text files (Max 50MB)
-              </p>
-              {selectedFile && (
-                <div className="flex items-center gap-2 text-sm">
-                  <FileText className="h-4 w-4" />
-                  <span>{selectedFile.name}</span>
-                  <span className="text-muted-foreground">
-                    ({(selectedFile.size / 1024).toFixed(2)} KB)
-                  </span>
+              <Label>Response Document</Label>
+              {!selectedFile ? (
+                <div
+                  onClick={handleDropZoneClick}
+                  onDragOver={handleDragOver}
+                  onDragLeave={handleDragLeave}
+                  onDrop={handleDrop}
+                  className={cn(
+                    "relative border-2 border-dashed rounded-lg p-8 text-center cursor-pointer transition-colors",
+                    isDragging
+                      ? "border-primary bg-primary/5"
+                      : "border-muted-foreground/25 hover:border-primary/50 hover:bg-muted/50"
+                  )}
+                >
+                  <input
+                    id="file-upload"
+                    type="file"
+                    accept=".pdf,.doc,.docx,.jpg,.jpeg,.png,.txt"
+                    onChange={handleFileSelect}
+                    className="hidden"
+                    disabled={isSigned}
+                  />
+                  <div className="flex flex-col items-center gap-3">
+                    <div
+                      className={cn(
+                        "rounded-full p-3 transition-colors",
+                        isDragging ? "bg-primary/10" : "bg-muted"
+                      )}
+                    >
+                      <Upload
+                        className={cn(
+                          "h-6 w-6 transition-colors",
+                          isDragging ? "text-primary" : "text-muted-foreground"
+                        )}
+                      />
+                    </div>
+                    <div className="space-y-1">
+                      <p className="text-sm font-medium">
+                        {isDragging ? "Drop file here" : "Click to upload or drag and drop"}
+                      </p>
+                      <p className="text-xs text-muted-foreground">
+                        PDF, Word documents, images, or text files (Max 50MB)
+                      </p>
+                    </div>
+                  </div>
+                </div>
+              ) : (
+                <div className="border rounded-lg p-4 bg-muted/30">
+                  <div className="flex items-center justify-between gap-4">
+                    <div className="flex items-center gap-3 flex-1 min-w-0">
+                      <div className="shrink-0 rounded-lg bg-primary/10 p-2">
+                        <FileText className="h-5 w-5 text-primary" />
+                      </div>
+                      <div className="flex-1 min-w-0">
+                        <p className="text-sm font-medium truncate">{selectedFile.name}</p>
+                        <p className="text-xs text-muted-foreground">{formatFileSize(selectedFile.size)}</p>
+                      </div>
+                      <div className="shrink-0">
+                        <CheckCircle2 className="h-5 w-5 text-green-600" />
+                      </div>
+                    </div>
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="icon"
+                      onClick={removeFile}
+                      disabled={isSigned}
+                      className="h-8 w-8 shrink-0"
+                    >
+                      <X className="h-4 w-4" />
+                    </Button>
+                  </div>
                 </div>
               )}
             </div>
 
-            <div className="space-y-2">
-              <Label htmlFor="upload-notes">Notes (Optional)</Label>
+            <div className="space-y-1.5">
+              <Label htmlFor="upload-notes" className="text-sm">Notes (Optional)</Label>
               <Textarea
                 id="upload-notes"
                 placeholder="Add any notes about this response..."
                 value={uploadNotes}
                 onChange={(e) => setUploadNotes(e.target.value)}
-                rows={3}
+                rows={2}
+                className="text-sm"
               />
             </div>
 
@@ -293,119 +389,53 @@ export function ResponseDialog({
             </DialogFooter>
           </TabsContent>
 
-          <TabsContent value="template" className="space-y-4">
+          <TabsContent value="template" className="space-y-3 mt-4 flex-1 overflow-y-auto min-h-0">
             {isSigned && (
-              <div className="p-4 border rounded-md bg-muted text-center text-muted-foreground">
+              <div className="p-3 border rounded-md bg-muted text-center text-muted-foreground text-sm">
                 Response is signed and locked. Modification is not allowed.
               </div>
             )}
-            <div className="space-y-2">
-              <Label>Template Type</Label>
-              <Badge variant="outline">
-                {isBulk ? "Bulk Request Template" : "Single Request Template"}
-              </Badge>
-              <p className="text-sm text-muted-foreground">
-                The system will automatically use the appropriate template based on request type.
-              </p>
+            <div className="space-y-1.5">
+              <Label className="text-sm">Template Type</Label>
+              <div className="flex items-center gap-2">
+                <Badge variant="outline" className="text-xs">
+                  {isBulk ? "Bulk Request Template" : "Single Request Template"}
+                </Badge>
+              </div>
             </div>
 
-            <div className="space-y-4">
-              <div className="space-y-2">
-                <Label htmlFor="letter-subject">Subject (Optional)</Label>
+            <div className="space-y-3">
+              <div className="space-y-1.5">
+                <Label htmlFor="response-reference-number" className="text-sm">Response Reference Number</Label>
                 <Input
-                  id="letter-subject"
-                  placeholder="e.g., Certificate Verification Response"
-                  value={letterSubject}
-                  onChange={(e) => setLetterSubject(e.target.value)}
+                  id="response-reference-number"
+                  value={responseReferenceNumber}
+                  onChange={(e) => setResponseReferenceNumber(e.target.value)}
+                  placeholder={confirmationRequest.request_number}
+                  disabled={isSigned}
+                  className="h-9"
                 />
-              </div>
-
-              <div className="space-y-2">
-                <Label htmlFor="letter-body">Body / Remarks</Label>
-                <Textarea
-                  id="letter-body"
-                  placeholder="Enter the response content..."
-                  value={letterBody}
-                  onChange={(e) => setLetterBody(e.target.value)}
-                  rows={6}
-                />
-              </div>
-
-              <div className="space-y-2">
-                <Label htmlFor="signatory">Signatory (Optional)</Label>
-                <Textarea
-                  id="signatory"
-                  placeholder="e.g., John Doe&#10;Director of Examinations"
-                  value={signatory}
-                  onChange={(e) => setSignatory(e.target.value)}
-                  rows={3}
-                  className="text-left"
-                />
-                <p className="text-sm text-muted-foreground">
-                  Enter the signatory name and title (multi-line supported)
+                <p className="text-xs text-muted-foreground">
+                  Separate from request reference ({confirmationRequest.request_number}). Defaults to request reference if not provided.
                 </p>
               </div>
 
-              {isBulk && confirmationRequest.certificate_details && (
-                <div className="space-y-2">
-                  <Label>Per-Candidate Outcomes (Optional)</Label>
-                  <p className="text-sm text-muted-foreground">
-                    You can specify outcomes for individual candidates. Leave blank to skip.
-                  </p>
-                  <div className="space-y-3 max-h-48 overflow-y-auto border rounded-md p-3">
-                    {confirmationRequest.certificate_details.map((cert, index) => {
-                      // Use stripped index number as key to match backend lookup
-                      const indexNumber = (cert.candidate_index_number || "").trim() || `candidate_${index}`;
-                      const currentOutcome = outcomes[indexNumber] || { status: "", remarks: "" };
-
-                      return (
-                        <div key={index} className="border-b pb-3 last:border-b-0">
-                          <div className="font-medium text-sm mb-2">
-                            {cert.candidate_name} ({cert.candidate_index_number || "N/A"})
-                          </div>
-                          <div className="grid grid-cols-2 gap-2">
-                            <Input
-                              placeholder="Status (e.g., Verified, Not Found)"
-                              value={currentOutcome.status}
-                              onChange={(e) => {
-                                setOutcomes({
-                                  ...outcomes,
-                                  [indexNumber]: {
-                                    ...currentOutcome,
-                                    status: e.target.value,
-                                  },
-                                });
-                              }}
-                              className="text-sm"
-                            />
-                            <Input
-                              placeholder="Remarks"
-                              value={currentOutcome.remarks}
-                              onChange={(e) => {
-                                setOutcomes({
-                                  ...outcomes,
-                                  [indexNumber]: {
-                                    ...currentOutcome,
-                                    remarks: e.target.value,
-                                  },
-                                });
-                              }}
-                              className="text-sm"
-                            />
-                          </div>
-                        </div>
-                      );
-                    })}
-                  </div>
-                </div>
-              )}
+              <div className="space-y-1.5">
+                <Label htmlFor="letter-body" className="text-sm">Response Content</Label>
+                <RichTextEditor
+                  content={letterBody}
+                  onChange={(html) => setLetterBody(html)}
+                  placeholder="Enter the response content..."
+                  disabled={isSigned}
+                />
+              </div>
             </div>
 
             <DialogFooter>
               <Button variant="outline" onClick={() => onOpenChange(false)}>
                 Cancel
               </Button>
-              <Button onClick={handleGenerate} disabled={generating || (!letterBody && !letterSubject) || isSigned}>
+              <Button onClick={handleGenerate} disabled={generating || !letterBody || isSigned}>
                 {generating && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
                 Generate Response PDF
               </Button>
