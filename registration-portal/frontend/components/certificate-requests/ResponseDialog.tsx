@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useMemo } from "react";
+import { useState, useMemo, useEffect } from "react";
 import {
   Dialog,
   DialogContent,
@@ -16,6 +16,7 @@ import { Input } from "@/components/ui/input";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Badge } from "@/components/ui/badge";
 import { Alert, AlertDescription } from "@/components/ui/alert";
+import { RichTextEditor } from "@/components/ui/rich-text-editor";
 import { Upload, FileText, Loader2, AlertCircle } from "lucide-react";
 import { toast } from "sonner";
 import {
@@ -43,12 +44,20 @@ export function ResponseDialog({
   const [uploadNotes, setUploadNotes] = useState("");
 
   // Template generation fields
-  const [letterSubject, setLetterSubject] = useState("");
   const [letterBody, setLetterBody] = useState("");
-  const [signatory, setSignatory] = useState("");
+  // Response reference number (separate from request_number) - defaults to request_number if not provided
+  const [responseReferenceNumber, setResponseReferenceNumber] = useState(
+    confirmationRequest.response_reference_number || confirmationRequest.request_number
+  );
 
-  // Per-candidate outcomes (for bulk requests)
-  const [outcomes, setOutcomes] = useState<Record<string, { status: string; remarks: string }>>({});
+  // Reset response reference number when dialog opens or request changes
+  useEffect(() => {
+    if (open) {
+      setResponseReferenceNumber(
+        confirmationRequest.response_reference_number || confirmationRequest.request_number
+      );
+    }
+  }, [open, confirmationRequest.response_reference_number, confirmationRequest.request_number]);
 
   // Auto-detect single vs bulk
   const isBulk = useMemo(() => {
@@ -131,42 +140,22 @@ export function ResponseDialog({
     try {
       const payload: {
         letter?: {
-          subject?: string;
           body?: string;
-          remarks?: string;
-          signatory_name?: string;
-          signatory_title?: string;
         };
-        outcomes?: Record<string, { status?: string; remarks?: string }>;
+        reference_number?: string;
       } = {};
 
       // Build letter payload
-      if (letterSubject || letterBody || signatory) {
-        payload.letter = {};
-        if (letterSubject) payload.letter.subject = letterSubject;
-        if (letterBody) {
-          payload.letter.body = letterBody;
-        } else if (!letterBody && letterSubject) {
-          // If only subject is provided, use it as remarks
-          payload.letter.remarks = letterSubject;
-        }
-        if (signatory) payload.letter.signatory = signatory;
+      if (letterBody) {
+        payload.letter = {
+          body: letterBody,
+        };
       }
 
-      // Build outcomes payload if there are any outcomes set
-      const hasOutcomes = Object.keys(outcomes).some(
-        (key) => outcomes[key].status || outcomes[key].remarks
-      );
-      if (hasOutcomes) {
-        payload.outcomes = {};
-        for (const [key, value] of Object.entries(outcomes)) {
-          if (value.status || value.remarks) {
-            payload.outcomes[key] = {
-              status: value.status || undefined,
-              remarks: value.remarks || undefined,
-            };
-          }
-        }
+      // Add response reference number (separate from request_number)
+      // If provided, use it; backend will default to request_number if empty
+      if (responseReferenceNumber && responseReferenceNumber.trim()) {
+        payload.reference_number = responseReferenceNumber.trim();
       }
 
       await generateConfirmationResponse(confirmationRequest.id, payload);
@@ -174,10 +163,10 @@ export function ResponseDialog({
       onSuccess();
       onOpenChange(false);
       // Reset form
-      setLetterSubject("");
       setLetterBody("");
-      setSignatory("");
-      setOutcomes({});
+      setResponseReferenceNumber(
+        confirmationRequest.response_reference_number || confirmationRequest.request_number
+      );
     } catch (error: any) {
       toast.error(error.message || "Failed to generate response");
     } finally {
@@ -311,101 +300,38 @@ export function ResponseDialog({
 
             <div className="space-y-4">
               <div className="space-y-2">
-                <Label htmlFor="letter-subject">Subject (Optional)</Label>
+                <Label htmlFor="response-reference-number">Response Reference Number</Label>
                 <Input
-                  id="letter-subject"
-                  placeholder="e.g., Certificate Verification Response"
-                  value={letterSubject}
-                  onChange={(e) => setLetterSubject(e.target.value)}
-                />
-              </div>
-
-              <div className="space-y-2">
-                <Label htmlFor="letter-body">Body / Remarks</Label>
-                <Textarea
-                  id="letter-body"
-                  placeholder="Enter the response content..."
-                  value={letterBody}
-                  onChange={(e) => setLetterBody(e.target.value)}
-                  rows={6}
-                />
-              </div>
-
-              <div className="space-y-2">
-                <Label htmlFor="signatory">Signatory (Optional)</Label>
-                <Textarea
-                  id="signatory"
-                  placeholder="e.g., John Doe&#10;Director of Examinations"
-                  value={signatory}
-                  onChange={(e) => setSignatory(e.target.value)}
-                  rows={3}
-                  className="text-left"
+                  id="response-reference-number"
+                  value={responseReferenceNumber}
+                  onChange={(e) => setResponseReferenceNumber(e.target.value)}
+                  placeholder={confirmationRequest.request_number}
+                  disabled={isSigned}
                 />
                 <p className="text-sm text-muted-foreground">
-                  Enter the signatory name and title (multi-line supported)
+                  Reference number for the response letter. This is separate from the request reference number ({confirmationRequest.request_number}) and may come from an external system. If not provided, it will default to the request reference number.
                 </p>
               </div>
 
-              {isBulk && confirmationRequest.certificate_details && (
-                <div className="space-y-2">
-                  <Label>Per-Candidate Outcomes (Optional)</Label>
-                  <p className="text-sm text-muted-foreground">
-                    You can specify outcomes for individual candidates. Leave blank to skip.
-                  </p>
-                  <div className="space-y-3 max-h-48 overflow-y-auto border rounded-md p-3">
-                    {confirmationRequest.certificate_details.map((cert, index) => {
-                      // Use stripped index number as key to match backend lookup
-                      const indexNumber = (cert.candidate_index_number || "").trim() || `candidate_${index}`;
-                      const currentOutcome = outcomes[indexNumber] || { status: "", remarks: "" };
-
-                      return (
-                        <div key={index} className="border-b pb-3 last:border-b-0">
-                          <div className="font-medium text-sm mb-2">
-                            {cert.candidate_name} ({cert.candidate_index_number || "N/A"})
-                          </div>
-                          <div className="grid grid-cols-2 gap-2">
-                            <Input
-                              placeholder="Status (e.g., Verified, Not Found)"
-                              value={currentOutcome.status}
-                              onChange={(e) => {
-                                setOutcomes({
-                                  ...outcomes,
-                                  [indexNumber]: {
-                                    ...currentOutcome,
-                                    status: e.target.value,
-                                  },
-                                });
-                              }}
-                              className="text-sm"
-                            />
-                            <Input
-                              placeholder="Remarks"
-                              value={currentOutcome.remarks}
-                              onChange={(e) => {
-                                setOutcomes({
-                                  ...outcomes,
-                                  [indexNumber]: {
-                                    ...currentOutcome,
-                                    remarks: e.target.value,
-                                  },
-                                });
-                              }}
-                              className="text-sm"
-                            />
-                          </div>
-                        </div>
-                      );
-                    })}
-                  </div>
-                </div>
-              )}
+              <div className="space-y-2">
+                <Label htmlFor="letter-body">Response Content</Label>
+                <p className="text-sm text-muted-foreground">
+                  Enter the response content. You can use the rich text editor to format text, add tables, and include all necessary information.
+                </p>
+                <RichTextEditor
+                  content={letterBody}
+                  onChange={(html) => setLetterBody(html)}
+                  placeholder="Enter the response content..."
+                  disabled={isSigned}
+                />
+              </div>
             </div>
 
             <DialogFooter>
               <Button variant="outline" onClick={() => onOpenChange(false)}>
                 Cancel
               </Button>
-              <Button onClick={handleGenerate} disabled={generating || (!letterBody && !letterSubject) || isSigned}>
+              <Button onClick={handleGenerate} disabled={generating || !letterBody || isSigned}>
                 {generating && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
                 Generate Response PDF
               </Button>
