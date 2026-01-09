@@ -11,7 +11,7 @@ from app.dependencies.auth import CurrentUserDep
 from app.dependencies.database import DBSessionDep
 from app.models import (
     PortalUser,
-    PortalUserType,
+    Role,
     RegistrationExam,
     ExamRegistrationPeriod,
     RegistrationCandidate,
@@ -224,7 +224,7 @@ async def register_self(
     current_user: CurrentUserDep,
 ) -> RegistrationCandidateResponse:
     """Register self for an exam."""
-    if current_user.user_type != PortalUserType.PRIVATE_USER:
+    if current_user.role != Role.PublicUser:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="This endpoint is for private users only")
 
     # Validate exam exists and registration is open
@@ -408,7 +408,7 @@ async def list_own_registrations(
     session: DBSessionDep, current_user: CurrentUserDep
 ) -> list[RegistrationCandidateResponse]:
     """List own registrations."""
-    if current_user.user_type != PortalUserType.PRIVATE_USER:
+    if current_user.role != Role.PublicUser:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="This endpoint is for private users only")
 
     stmt = (
@@ -432,7 +432,7 @@ async def get_draft_registration(
     current_user: CurrentUserDep = None,
 ) -> RegistrationCandidateResponse | None:
     """Get draft registration for the current user."""
-    if current_user.user_type != PortalUserType.PRIVATE_USER:
+    if current_user.role != Role.PublicUser:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="This endpoint is for private users only")
 
     stmt = (
@@ -472,7 +472,7 @@ async def save_draft_registration(
     current_user: CurrentUserDep = None,
 ) -> RegistrationCandidateResponse:
     """Save or update draft registration."""
-    if current_user.user_type != PortalUserType.PRIVATE_USER:
+    if current_user.role != Role.PublicUser:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="This endpoint is for private users only")
 
     # Validate exam exists
@@ -646,7 +646,7 @@ async def submit_draft_registration(
     current_user: CurrentUserDep,
 ) -> RegistrationCandidateResponse:
     """Submit a draft registration (convert to PENDING)."""
-    if current_user.user_type != PortalUserType.PRIVATE_USER:
+    if current_user.role != Role.PublicUser:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="This endpoint is for private users only")
 
     # Get draft registration
@@ -752,7 +752,7 @@ async def enable_edit_registration(
     current_user: CurrentUserDep,
 ) -> RegistrationCandidateResponse:
     """Enable editing of a submitted registration by converting it back to DRAFT if registration period is still open."""
-    if current_user.user_type != PortalUserType.PRIVATE_USER:
+    if current_user.role != Role.PublicUser:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="This endpoint is for private users only")
 
     # Get registration - allow PENDING, APPROVED, or DRAFT (in case it was already converted)
@@ -816,7 +816,7 @@ async def upload_private_candidate_photo(
     file: UploadFile = File(...),
 ) -> RegistrationCandidatePhotoResponse:
     """Upload/replace photo for a draft registration (automatically deletes existing photo if present)."""
-    if current_user.user_type != PortalUserType.PRIVATE_USER:
+    if current_user.role != Role.PublicUser:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="This endpoint is for private users only")
 
     # Validate registration exists and belongs to current user
@@ -895,7 +895,7 @@ async def get_private_candidate_photo(
     current_user: CurrentUserDep,
 ) -> RegistrationCandidatePhotoResponse | None:
     """Get candidate's photo (returns single photo or null)."""
-    if current_user.user_type != PortalUserType.PRIVATE_USER:
+    if current_user.role != Role.PublicUser:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="This endpoint is for private users only")
 
     # Validate registration exists and belongs to current user
@@ -929,7 +929,7 @@ async def get_private_candidate_photo_file(
     current_user: CurrentUserDep,
 ) -> StreamingResponse:
     """Get photo file."""
-    if current_user.user_type != PortalUserType.PRIVATE_USER:
+    if current_user.role != Role.PublicUser:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="This endpoint is for private users only")
 
     # Validate registration exists and belongs to current user
@@ -987,7 +987,7 @@ async def list_my_certificate_requests(
     page_size: int = Query(20, ge=1, le=100),
 ) -> dict:
     """List certificate confirmation/verification requests for the current private user (includes both individual and bulk requests)."""
-    if current_user.user_type != PortalUserType.PRIVATE_USER:
+    if current_user.role != Role.PublicUser:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="This endpoint is for private users only")
 
     from app.models import CertificateRequest, CertificateConfirmationRequest, CertificateRequestType, RequestStatus
@@ -1169,7 +1169,7 @@ async def download_my_confirmation_details_pdf(
     current_user: CurrentUserDep,
 ) -> StreamingResponse:
     """Download confirmation/verification request details as a PDF (generated on demand; not saved)."""
-    if current_user.user_type != PortalUserType.PRIVATE_USER:
+    if current_user.role != Role.PublicUser:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="This endpoint is for private users only")
 
     from app.models import CertificateConfirmationRequest, Invoice, Payment
@@ -1238,7 +1238,7 @@ async def download_my_confirmation_response(
     current_user: CurrentUserDep,
 ) -> StreamingResponse:
     """Download the stored admin response file for a confirmation/verification request (authenticated requester only)."""
-    if current_user.user_type != PortalUserType.PRIVATE_USER:
+    if current_user.role != Role.PublicUser:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="This endpoint is for private users only")
 
     from app.models import CertificateConfirmationRequest
@@ -1293,7 +1293,7 @@ async def download_my_confirmation_response_by_number(
     current_user: CurrentUserDep,
 ) -> StreamingResponse:
     """Download the stored admin response file for a confirmation/verification request by request number (authenticated requester only)."""
-    if current_user.user_type != PortalUserType.PRIVATE_USER:
+    if current_user.role != Role.PublicUser:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="This endpoint is for private users only")
 
     from app.models import CertificateConfirmationRequest

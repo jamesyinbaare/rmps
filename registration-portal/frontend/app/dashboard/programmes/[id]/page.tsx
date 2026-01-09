@@ -69,7 +69,7 @@ export default function ProgrammeDetailPage() {
   const [newSubjectIsCompulsory, setNewSubjectIsCompulsory] = useState<boolean>(true);
   const [newSubjectChoiceGroup, setNewSubjectChoiceGroup] = useState<number | null>(null);
 
-  const isSystemAdmin = user?.user_type === "SYSTEM_ADMIN";
+  const isSystemAdmin = user?.role === "SystemAdmin";
 
   // Load programme data
   useEffect(() => {

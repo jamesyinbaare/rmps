@@ -31,16 +31,16 @@ export default function PrivateLoginPage() {
           const user = await getCurrentUser();
           // Prevent SYSTEM_ADMIN, SCHOOL_ADMIN (coordinator), and SCHOOL_USER from accessing private portal
           if (
-            user.user_type === "SYSTEM_ADMIN" ||
-            user.user_type === "SCHOOL_ADMIN" ||
-            user.user_type === "SCHOOL_USER"
+            user.role === "SystemAdmin" ||
+            user.role === "SchoolAdmin" ||
+            user.role === "User"
           ) {
             toast.error("This portal is only accessible to private candidates.");
             router.push("/dashboard");
             return;
           }
           // Only PRIVATE_USER can access
-          if (user.user_type === "PRIVATE_USER") {
+          if (user.role === "PublicUser") {
             // Check if there's a redirect parameter
             const redirect = searchParams.get("redirect");
             if (redirect === "certificate-confirmation") {
@@ -77,16 +77,16 @@ export default function PrivateLoginPage() {
       <div className="flex flex-1 items-center justify-center bg-gray-50">
         <div className="w-full max-w-md space-y-8 rounded-lg bg-white p-8 shadow-md">
           <div className="text-center">
-            <h1 className="text-3xl font-bold">Private Candidate Portal</h1>
-            <p className="mt-2 text-gray-600">Login to access your registration dashboard</p>
+            <h1 className="text-3xl font-bold">CTVET Portal</h1>
+            <p className="mt-2 text-gray-600">Login to access our online services.</p>
           </div>
           <LoginForm
             onLoginSuccess={(user) => {
               // Prevent SYSTEM_ADMIN, SCHOOL_ADMIN (coordinator), and SCHOOL_USER from accessing private portal
               if (
-                user.user_type === "SYSTEM_ADMIN" ||
-                user.user_type === "SCHOOL_ADMIN" ||
-                user.user_type === "SCHOOL_USER"
+                user.role === "SystemAdmin" ||
+                user.role === "SchoolAdmin" ||
+                user.role === "User"
               ) {
                 toast.error("This portal is only accessible to private candidates. Please use the appropriate login page for your account type.");
                 // Redirect to main dashboard
@@ -94,7 +94,7 @@ export default function PrivateLoginPage() {
                 return;
               }
               // Only PRIVATE_USER can access
-              if (user.user_type === "PRIVATE_USER") {
+              if (user.role === "PublicUser") {
                 // Check if there's a redirect parameter
                 const redirect = searchParams.get("redirect");
                 if (redirect === "certificate-confirmation") {

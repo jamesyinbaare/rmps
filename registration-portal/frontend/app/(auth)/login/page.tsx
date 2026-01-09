@@ -30,13 +30,18 @@ export default function LoginPage() {
         try {
           const user = await getCurrentUser();
           // Prevent PRIVATE_USER from accessing staff login - log them out immediately
-          if (user.user_type === "PRIVATE_USER") {
+          if (user.role === "PublicUser") {
             await logout();
             toast.error("Access to this page is restricted");
             return;
           }
-          // Redirect other user types to their appropriate dashboards
-          router.push("/dashboard");
+          // Redirect school users (SchoolAdmin, User) to their school dashboard
+          if (user.role === "SchoolAdmin" || user.role === "User") {
+            router.push("/dashboard/my-school");
+          } else {
+            // SystemAdmin, Director, DeputyDirector, PrincipalManager, and other admin roles go to main dashboard
+            router.push("/dashboard");
+          }
         } catch (error) {
           // If we can't get user, just stay on login page
           console.error("Failed to get user:", error);
@@ -65,21 +70,22 @@ export default function LoginPage() {
       <div className="flex flex-1 items-center justify-center bg-gray-50">
         <div className="w-full max-w-md space-y-8 rounded-lg bg-white p-8 shadow-md">
           <div className="text-center">
-            <h1 className="text-3xl font-bold">CTVET Online Services</h1>
-            <p className="mt-2 text-gray-600">Staff Dashboard</p>
+            <h1 className="text-3xl font-bold">CTVET Portal</h1>
+            <p className="mt-2 text-gray-600">Login to access our online services.</p>
           </div>
           <LoginForm
             onLoginSuccess={async (user) => {
               // Prevent PRIVATE_USER from logging in through staff login - log them out immediately
-              if (user.user_type === "PRIVATE_USER") {
+              if (user.role === "PublicUser") {
                 await logout();
                 toast.error("Access to this page is restricted");
                 return false; // Suppress success message
               }
-              // Redirect other user types to their appropriate dashboards
-              if ((user.user_type === "SCHOOL_ADMIN" || user.user_type === "SCHOOL_USER") && user.school_id) {
+              // Redirect school users (SchoolAdmin, User) to their school dashboard
+              if (user.role === "SchoolAdmin" || user.role === "User") {
                 router.push("/dashboard/my-school");
               } else {
+                // SystemAdmin, Director, DeputyDirector, PrincipalManager, and other admin roles go to main dashboard
                 router.push("/dashboard");
               }
             }}

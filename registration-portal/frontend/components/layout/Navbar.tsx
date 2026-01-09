@@ -188,7 +188,7 @@ export function Navbar() {
                 </Button>
               </Link>
             ) : authenticated ? (
-              <Link href={user?.user_type === "PRIVATE_USER" ? "/dashboard/private" : "/dashboard"}>
+              <Link href={user?.role === "PublicUser" ? "/dashboard/private" : "/dashboard"}>
                 <Button variant="outline" size="sm">
                   <User className="mr-2 h-4 w-4" />
                   Dashboard

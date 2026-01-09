@@ -133,6 +133,16 @@ class RegistrationCandidateResponse(RegistrationCandidateBase):
     model_config = ConfigDict(from_attributes=True)
 
 
+class CandidateListResponse(BaseModel):
+    """Schema for paginated candidate list response."""
+
+    items: list[RegistrationCandidateResponse]
+    total: int
+    page: int
+    page_size: int
+    total_pages: int
+
+
 class BulkUploadError(BaseModel):
     """Schema for bulk upload error details."""
 

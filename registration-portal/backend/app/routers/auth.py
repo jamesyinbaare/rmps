@@ -14,40 +14,39 @@ from app.core.security import (
     verify_password,
     verify_refresh_token_hash,
 )
-from app.dependencies.auth import CurrentUserDep, SystemAdminDep
+from app.dependencies.auth import CurrentUserDep
 from app.dependencies.database import DBSessionDep
 from app.models import (
-    PortalUser,
-    PortalUserType,
-    RefreshToken,
-    RegistrationExam,
     ExamRegistrationPeriod,
+    PortalUser,
+    RefreshToken,
     RegistrationCandidate,
+    RegistrationExam,
     RegistrationStatus,
+    RegistrationSubjectSelection,
+    Role,
     School,
     Subject,
-    RegistrationSubjectSelection,
 )
 from app.schemas.auth import (
     PrivateUserRegistrationRequest,
     PrivateUserRegistrationResponse,
+    PublicUserCreate,
     RefreshTokenRequest,
     Token,
     TokenRefreshResponse,
-    UserCreate,
     UserLogin,
     UserResponse,
     UserPasswordChange,
     UserSelfUpdate,
 )
-from app.schemas.registration import RegistrationCandidateResponse
-from app.utils.registration import generate_unique_registration_number
 from app.services.subject_selection import (
     auto_select_subjects_for_programme,
-    validate_subject_selections,
     get_programme_subjects_for_registration,
     normalize_exam_series,
+    validate_subject_selections,
 )
+from app.utils.registration import generate_unique_registration_number
 
 router = APIRouter(prefix="/api/v1/auth", tags=["authentication"])
 
@@ -114,15 +113,8 @@ async def login(user_credentials: UserLogin, session: DBSessionDep) -> Token:
 
 
 @router.post("/register", response_model=UserResponse, status_code=status.HTTP_201_CREATED)
-async def register(user_data: UserCreate, session: DBSessionDep) -> UserResponse:
-    """Public registration for private users only."""
-    # Only allow PRIVATE_USER registration via public endpoint
-    if user_data.user_type != PortalUserType.PRIVATE_USER:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="This endpoint is only for private user registration. Other user types must be created by administrators.",
-        )
-
+async def register(user_data: PublicUserCreate, session: DBSessionDep) -> UserResponse:
+    """Public registration endpoint. Unauthenticated users can only create PublicUser accounts."""
     # Check if user already exists
     stmt = select(PortalUser).where(PortalUser.email == user_data.email)
     result = await session.execute(stmt)
@@ -141,13 +133,13 @@ async def register(user_data: UserCreate, session: DBSessionDep) -> UserResponse
             detail=f"Password must be at least {settings.password_min_length} characters long",
         )
 
-    # Create new user
+    # Create new user - always PublicUser for public registration
     hashed_password = get_password_hash(user_data.password)
     new_user = PortalUser(
         email=user_data.email,
         hashed_password=hashed_password,
         full_name=user_data.full_name,
-        user_type=PortalUserType.PRIVATE_USER,
+        role=Role.PublicUser,  # Always PublicUser for unauthenticated registration
         is_active=True,
     )
 
@@ -216,8 +208,8 @@ async def register_private_user(
     # Validate school is a private examination center
     school_stmt = select(School).where(
         School.id == registration_data.school_id,
-        School.is_active == True,
-        School.is_private_examination_center == True,
+        School.is_active.is_(True),
+        School.is_private_examination_center.is_(True),
     )
     school_result = await session.execute(school_stmt)
     school = school_result.scalar_one_or_none()
@@ -252,7 +244,7 @@ async def register_private_user(
         email=registration_data.email,
         hashed_password=hashed_password,
         full_name=registration_data.full_name,
-        user_type=PortalUserType.PRIVATE_USER,
+        role=Role.PublicUser,
         is_active=True,
     )
     session.add(new_user)

@@ -34,7 +34,7 @@ export default function CertificateConfirmationLayout({
         setUser(userData);
 
         // Only PRIVATE_USER can access certificate confirmation
-        if (userData.user_type !== "PRIVATE_USER") {
+        if (userData.role !== "PublicUser") {
           toast.error("This portal is only accessible to private candidates.");
           router.push("/dashboard");
           return;

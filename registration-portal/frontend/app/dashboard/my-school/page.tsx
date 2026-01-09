@@ -67,7 +67,7 @@ export default function MySchoolDashboardPage() {
         </p>
       </div>
 
-      {user?.user_type === "SCHOOL_ADMIN" && isAtUserLimit && (
+      {user?.role === "SchoolAdmin" && isAtUserLimit && (
         <Alert variant="destructive">
           <AlertCircle className="h-4 w-4" />
           <AlertDescription>
@@ -77,55 +77,54 @@ export default function MySchoolDashboardPage() {
         </Alert>
       )}
 
-      <div className={`grid gap-6 ${user?.user_type === "SCHOOL_ADMIN" ? "md:grid-cols-4" : "md:grid-cols-2"}`}>
-        {user?.user_type === "SCHOOL_ADMIN" && (
-          <>
-            <Card>
-              <CardHeader>
-                <CardTitle className="flex items-center gap-2">
-                  <Users className="h-5 w-5" />
-                  Users
-                </CardTitle>
-              </CardHeader>
-              <CardContent>
-                <div className="space-y-2">
-                  <p className="text-2xl font-bold">{dashboardData.active_user_count}</p>
-                  <p className="text-sm text-muted-foreground">
-                    Active users ({userSlotsRemaining} slots remaining)
-                  </p>
-                  <Link href="/dashboard/my-school/users">
-                    <Button className="w-full mt-4" disabled={isAtUserLimit}>
-                      <UserPlus className="mr-2 h-4 w-4" />
-                      Manage Users
-                    </Button>
-                  </Link>
-                </div>
-              </CardContent>
-            </Card>
-            <Card>
-              <CardHeader>
-                <CardTitle className="flex items-center gap-2">
-                  <BookOpen className="h-5 w-5" />
-                  Programmes
-                </CardTitle>
-              </CardHeader>
-              <CardContent>
-                <div className="space-y-2">
-                  <p className="text-2xl font-bold">-</p>
-                  <p className="text-sm text-muted-foreground">
-                    Manage school programmes
-                  </p>
-                  <Link href="/dashboard/my-school/programmes">
-                    <Button className="w-full mt-4">
-                      <BookOpen className="mr-2 h-4 w-4" />
-                      Manage Programmes
-                    </Button>
-                  </Link>
-                </div>
-              </CardContent>
-            </Card>
-          </>
+      <div className={`grid gap-6 ${user?.role === "SchoolAdmin" ? "md:grid-cols-4" : "md:grid-cols-3"}`}>
+        {user?.role === "SchoolAdmin" && (
+          <Card>
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2">
+                <Users className="h-5 w-5" />
+                Users
+              </CardTitle>
+            </CardHeader>
+            <CardContent>
+              <div className="space-y-2">
+                <p className="text-2xl font-bold">{dashboardData.active_user_count}</p>
+                <p className="text-sm text-muted-foreground">
+                  Active users ({userSlotsRemaining} slots remaining)
+                </p>
+                <Link href="/dashboard/my-school/users">
+                  <Button className="w-full mt-4" disabled={isAtUserLimit}>
+                    <UserPlus className="mr-2 h-4 w-4" />
+                    Manage Users
+                  </Button>
+                </Link>
+              </div>
+            </CardContent>
+          </Card>
         )}
+
+        <Card>
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2">
+              <BookOpen className="h-5 w-5" />
+              Programmes
+            </CardTitle>
+          </CardHeader>
+          <CardContent>
+            <div className="space-y-2">
+              <p className="text-2xl font-bold">-</p>
+              <p className="text-sm text-muted-foreground">
+                {user?.role === "SchoolAdmin" ? "Manage school programmes" : "View school programmes"}
+              </p>
+              <Link href="/dashboard/my-school/programmes">
+                <Button className="w-full mt-4">
+                  <BookOpen className="mr-2 h-4 w-4" />
+                  {user?.role === "SchoolAdmin" ? "Manage Programmes" : "View Programmes"}
+                </Button>
+              </Link>
+            </div>
+          </CardContent>
+        </Card>
 
         <Card>
           <CardHeader>

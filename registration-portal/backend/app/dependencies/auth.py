@@ -7,7 +7,7 @@ from sqlalchemy import select
 
 from app.core.security import verify_token
 from app.dependencies.database import DBSessionDep
-from app.models import PortalUser, PortalUserType
+from app.models import PortalUser, Role
 
 # HTTP Bearer token security scheme
 security = HTTPBearer()
@@ -85,55 +85,74 @@ async def get_current_active_user(
     return current_user
 
 
-class UserTypeChecker:
-    """User type-based authorization checker."""
+class RoleChecker:
+    """Role-based authorization checker with hierarchical permissions."""
 
-    def __init__(self, allowed_types: list[PortalUserType]):
+    def __init__(self, min_role: Role):
         """
-        Initialize user type checker with allowed user types.
+        Initialize role checker with minimum required role.
 
         Args:
-            allowed_types: List of user types that are allowed to access the endpoint.
+            min_role: Minimum role required. Users with roles <= min_role are allowed.
+                     (Lower values = higher privileges: SystemAdmin=0, Director=10, ..., PublicUser=90)
         """
-        self.allowed_types = allowed_types
+        self.min_role = min_role
 
     async def __call__(
         self,
         current_user: Annotated[PortalUser, Depends(get_current_active_user)],
     ) -> PortalUser:
-        """Check if user's type is in the allowed list."""
-        if current_user.user_type not in self.allowed_types:
-            allowed_names = [ut.value for ut in self.allowed_types]
+        """
+        Check if user's role meets minimum requirement.
+
+        Since roles are hierarchical (lower value = higher privilege),
+        user.role <= min_role means user has sufficient privileges.
+        """
+        if current_user.role > self.min_role:
+            role_names = {
+                Role.SystemAdmin: "SystemAdmin",
+                Role.Director: "Director",
+                Role.DeputyDirector: "DeputyDirector",
+                Role.PrincipalManager: "PrincipalManager",
+                Role.SeniorManager: "SeniorManager",
+                Role.Manager: "Manager",
+                Role.Staff: "Staff",
+                Role.SchoolAdmin: "SchoolAdmin",
+                Role.User: "User",
+                Role.PublicUser: "PublicUser",
+            }
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
-                detail=f"Insufficient permissions. Required user type: {', '.join(allowed_names)}",
+                detail=f"Insufficient permissions. Required role: {role_names[self.min_role]} or higher",
             )
         return current_user
 
 
-# Pre-configured user type dependencies
-system_admin_only = UserTypeChecker(allowed_types=[PortalUserType.SYSTEM_ADMIN])
-admin_or_above = UserTypeChecker(allowed_types=[PortalUserType.SYSTEM_ADMIN, PortalUserType.ADMIN])
-school_admin_or_above = UserTypeChecker(allowed_types=[PortalUserType.SYSTEM_ADMIN, PortalUserType.SCHOOL_ADMIN])
-school_users_or_above = UserTypeChecker(
-    allowed_types=[PortalUserType.SYSTEM_ADMIN, PortalUserType.SCHOOL_ADMIN, PortalUserType.SCHOOL_USER]
-)
-all_authenticated = UserTypeChecker(
-    allowed_types=[
-        PortalUserType.SYSTEM_ADMIN,
-        PortalUserType.SCHOOL_ADMIN,
-        PortalUserType.SCHOOL_USER,
-        PortalUserType.PRIVATE_USER,
-        PortalUserType.ADMIN,
-    ]
-)
+# Pre-configured role dependencies
+system_admin_only = RoleChecker(min_role=Role.SystemAdmin)
+director_or_above = RoleChecker(min_role=Role.Director)
+deputy_director_or_above = RoleChecker(min_role=Role.DeputyDirector)
+principal_manager_or_above = RoleChecker(min_role=Role.PrincipalManager)
+senior_manager_or_above = RoleChecker(min_role=Role.SeniorManager)
+manager_or_above = RoleChecker(min_role=Role.Manager)
+staff_or_above = RoleChecker(min_role=Role.Staff)
+school_admin_or_above = RoleChecker(min_role=Role.SchoolAdmin)
+school_users_or_above = RoleChecker(min_role=Role.User)  # Allows SchoolAdmin and User
+all_authenticated = RoleChecker(min_role=Role.PublicUser)  # Allows all roles
 
 # Typed dependencies for use in route handlers
 CurrentUserDep = Annotated[PortalUser, Depends(get_current_active_user)]
 SystemAdminDep = Annotated[PortalUser, Depends(system_admin_only)]
-AdminDep = Annotated[PortalUser, Depends(admin_or_above)]  # SYSTEM_ADMIN or ADMIN
+DirectorDep = Annotated[PortalUser, Depends(director_or_above)]
+DeputyDirectorDep = Annotated[PortalUser, Depends(deputy_director_or_above)]
+PrincipalManagerDep = Annotated[PortalUser, Depends(principal_manager_or_above)]
+SeniorManagerDep = Annotated[PortalUser, Depends(senior_manager_or_above)]
+ManagerDep = Annotated[PortalUser, Depends(manager_or_above)]
+StaffDep = Annotated[PortalUser, Depends(staff_or_above)]
 SchoolAdminDep = Annotated[PortalUser, Depends(school_admin_or_above)]
 SchoolUserDep = Annotated[PortalUser, Depends(school_users_or_above)]
+# Keep AdminDep for backward compatibility (maps to Manager)
+AdminDep = Annotated[PortalUser, Depends(manager_or_above)]
 
 
 async def get_current_school_user(

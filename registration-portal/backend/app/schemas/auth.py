@@ -5,7 +5,7 @@ from uuid import UUID
 
 from pydantic import BaseModel, EmailStr, Field, field_validator
 
-from app.models import PortalUserType
+from app.models import Role
 
 
 class UserLogin(BaseModel):
@@ -37,27 +37,40 @@ class RefreshTokenRequest(BaseModel):
     refresh_token: str
 
 
-class UserCreate(BaseModel):
-    """Schema for creating a user."""
+class PublicUserCreate(BaseModel):
+    """Schema for public user registration (unauthenticated users can only create PublicUser accounts)."""
 
     email: EmailStr
     password: str
     full_name: str = Field(..., min_length=1, max_length=255)
-    user_type: PortalUserType
+
+
+class UserCreate(BaseModel):
+    """Schema for creating a user (admin use only)."""
+
+    email: EmailStr
+    password: str
+    full_name: str = Field(..., min_length=1, max_length=255)
+    role: Role
     school_id: int | None = None
 
-    @field_validator("user_type")
+    @field_validator("role", mode="before")
     @classmethod
-    def validate_user_type(cls, v: PortalUserType | str | int) -> PortalUserType:
-        """Normalize user_type to PortalUserType enum."""
-        if isinstance(v, PortalUserType):
+    def validate_role(cls, v: Role | str | int) -> Role:
+        """Normalize role to Role enum."""
+        if isinstance(v, Role):
             return v
         if isinstance(v, str):
             try:
-                return PortalUserType[v]
+                return Role[v]
             except KeyError:
-                raise ValueError(f"Invalid user type: {v}")
-        raise ValueError(f"Invalid user type. Expected PortalUserType enum or string, got {type(v)}")
+                raise ValueError(f"Invalid role: {v}. Valid roles are: {', '.join([r.name for r in Role])}")
+        if isinstance(v, int):
+            try:
+                return Role(v)
+            except ValueError:
+                raise ValueError(f"Invalid role value: {v}. Valid values are: {', '.join([str(r.value) for r in Role])}")
+        raise ValueError(f"Invalid role. Expected Role enum, string, or int, got {type(v)}")
 
 
 class UserResponse(BaseModel):
@@ -66,7 +79,7 @@ class UserResponse(BaseModel):
     id: UUID
     email: str
     full_name: str
-    user_type: PortalUserType
+    role: Role
     school_id: int | None = None
     is_active: bool
     created_at: datetime

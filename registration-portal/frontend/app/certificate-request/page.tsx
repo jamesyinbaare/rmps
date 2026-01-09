@@ -23,8 +23,9 @@ import {
   type ExaminationCenter,
 } from "@/lib/api";
 import { toast } from "sonner";
-import { Award, CheckCircle2, AlertCircle, FileText, Mail } from "lucide-react";
+import { Award, CheckCircle2, AlertCircle, FileText, Mail, X } from "lucide-react";
 import { Alert, AlertDescription } from "@/components/ui/alert";
+import { validatePassportPhoto, validateIdScan } from "@/lib/photo-validation";
 
 type RequestType = "certificate" | "attestation";
 type DeliveryMethod = "pickup" | "courier";
@@ -62,8 +63,16 @@ export default function CertificateRequestPage() {
   const [courierPostalCode, setCourierPostalCode] = useState("");
   const [photographFile, setPhotographFile] = useState<File | null>(null);
   const [photographPreview, setPhotographPreview] = useState<string | null>(null);
+  const [photographErrors, setPhotographErrors] = useState<string[]>([]);
+  const [photographValidating, setPhotographValidating] = useState(false);
+  const [photographDimensions, setPhotographDimensions] = useState<{ width: number; height: number } | null>(null);
+  const [photographInputKey, setPhotographInputKey] = useState(0);
   const [idScanFile, setIdScanFile] = useState<File | null>(null);
   const [idScanPreview, setIdScanPreview] = useState<string | null>(null);
+  const [idScanErrors, setIdScanErrors] = useState<string[]>([]);
+  const [idScanValidating, setIdScanValidating] = useState(false);
+  const [idScanDimensions, setIdScanDimensions] = useState<{ width: number; height: number } | null>(null);
+  const [idScanInputKey, setIdScanInputKey] = useState(0);
   const [requestNumber, setRequestNumber] = useState<string | null>(null);
 
   // Load examination centers (all schools, regardless of active status)
@@ -88,43 +97,93 @@ export default function CertificateRequestPage() {
   const currentYear = new Date().getFullYear();
   const years = Array.from({ length: 30 }, (_, i) => currentYear - i);
 
-  const handlePhotographChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handlePhotographChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
-    if (file) {
-      if (file.size > 5 * 1024 * 1024) {
-        toast.error("Photograph must be less than 5MB");
-        return;
+    if (!file) {
+      setPhotographFile(null);
+      setPhotographPreview(null);
+      setPhotographErrors([]);
+      setPhotographDimensions(null);
+      return;
+    }
+
+    setPhotographValidating(true);
+    setPhotographErrors([]);
+
+    try {
+      const validation = await validatePassportPhoto(file);
+
+      if (validation.isValid) {
+        setPhotographFile(file);
+        setPhotographErrors([]);
+        setPhotographDimensions(validation.dimensions || null);
+        const reader = new FileReader();
+        reader.onloadend = () => {
+          setPhotographPreview(reader.result as string);
+        };
+        reader.readAsDataURL(file);
+      } else {
+        setPhotographFile(null);
+        setPhotographPreview(null);
+        setPhotographErrors(validation.errors);
+        setPhotographDimensions(null);
+        setPhotographInputKey((prev) => prev + 1); // Reset file input
+        validation.errors.forEach((error) => toast.error(error));
       }
-      if (!file.type.startsWith("image/")) {
-        toast.error("Photograph must be an image file");
-        return;
-      }
-      setPhotographFile(file);
-      const reader = new FileReader();
-      reader.onloadend = () => {
-        setPhotographPreview(reader.result as string);
-      };
-      reader.readAsDataURL(file);
+    } catch (error) {
+      setPhotographFile(null);
+      setPhotographPreview(null);
+      const errorMsg = error instanceof Error ? error.message : "Failed to validate photograph";
+      setPhotographErrors([errorMsg]);
+      setPhotographInputKey((prev) => prev + 1); // Reset file input
+      toast.error(errorMsg);
+    } finally {
+      setPhotographValidating(false);
     }
   };
 
-  const handleIdScanChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleIdScanChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
-    if (file) {
-      if (file.size > 5 * 1024 * 1024) {
-        toast.error("ID scan must be less than 5MB");
-        return;
+    if (!file) {
+      setIdScanFile(null);
+      setIdScanPreview(null);
+      setIdScanErrors([]);
+      setIdScanDimensions(null);
+      return;
+    }
+
+    setIdScanValidating(true);
+    setIdScanErrors([]);
+
+    try {
+      const validation = await validateIdScan(file);
+
+      if (validation.isValid) {
+        setIdScanFile(file);
+        setIdScanErrors([]);
+        setIdScanDimensions(validation.dimensions || null);
+        const reader = new FileReader();
+        reader.onloadend = () => {
+          setIdScanPreview(reader.result as string);
+        };
+        reader.readAsDataURL(file);
+      } else {
+        setIdScanFile(null);
+        setIdScanPreview(null);
+        setIdScanErrors(validation.errors);
+        setIdScanDimensions(null);
+        setIdScanInputKey((prev) => prev + 1); // Reset file input
+        validation.errors.forEach((error) => toast.error(error));
       }
-      if (!file.type.startsWith("image/")) {
-        toast.error("ID scan must be an image file");
-        return;
-      }
-      setIdScanFile(file);
-      const reader = new FileReader();
-      reader.onloadend = () => {
-        setIdScanPreview(reader.result as string);
-      };
-      reader.readAsDataURL(file);
+    } catch (error) {
+      setIdScanFile(null);
+      setIdScanPreview(null);
+      const errorMsg = error instanceof Error ? error.message : "Failed to validate ID scan";
+      setIdScanErrors([errorMsg]);
+      setIdScanInputKey((prev) => prev + 1); // Reset file input
+      toast.error(errorMsg);
+    } finally {
+      setIdScanValidating(false);
     }
   };
 
@@ -140,8 +199,16 @@ export default function CertificateRequestPage() {
       return true;
     }
     if (step === 3) {
-      if (!nationalIdNumber.trim() || !photographFile || !idScanFile) {
-        toast.error("Please provide National ID number and upload both photograph and ID scan");
+      if (!nationalIdNumber.trim()) {
+        toast.error("Please provide National ID number");
+        return false;
+      }
+      if (!photographFile || photographErrors.length > 0) {
+        toast.error("Please upload a valid passport photograph that meets all requirements");
+        return false;
+      }
+      if (!idScanFile || idScanErrors.length > 0) {
+        toast.error("Please upload a valid National ID scan that meets all requirements");
         return false;
       }
       return true;
@@ -173,6 +240,23 @@ export default function CertificateRequestPage() {
   const handleSubmit = async () => {
     if (!validateStep(4)) return;
 
+    // Additional validation: ensure files are not being validated
+    if (photographValidating || idScanValidating) {
+      toast.error("Please wait for file validation to complete");
+      return;
+    }
+
+    // Ensure files exist and have no errors
+    if (!photographFile || photographErrors.length > 0) {
+      toast.error("Please upload a valid passport photograph");
+      return;
+    }
+
+    if (!idScanFile || idScanErrors.length > 0) {
+      toast.error("Please upload a valid National ID scan");
+      return;
+    }
+
     setSubmitting(true);
     try {
       const requestData: CertificateRequestCreate = {
@@ -192,8 +276,25 @@ export default function CertificateRequestPage() {
         courier_postal_code: deliveryMethod === "courier" ? courierPostalCode.trim() : undefined,
       };
 
-      if (!photographFile || !idScanFile) {
-        toast.error("Please upload both photograph and ID scan");
+      // Double-check files are valid before sending
+      if (!(photographFile instanceof File)) {
+        toast.error("Photograph file is invalid. Please re-upload it.");
+        return;
+      }
+
+      if (!(idScanFile instanceof File)) {
+        toast.error("ID scan file is invalid. Please re-upload it.");
+        return;
+      }
+
+      // Verify files have content
+      if (photographFile.size === 0) {
+        toast.error("Photograph file is empty. Please re-upload it.");
+        return;
+      }
+
+      if (idScanFile.size === 0) {
+        toast.error("ID scan file is empty. Please re-upload it.");
         return;
       }
 
@@ -263,8 +364,8 @@ export default function CertificateRequestPage() {
                           {step.number === 3 && (
                             <div className="text-sm text-muted-foreground mt-2">
                               <p>• Enter your National ID number</p>
-                              <p>• Upload a clear passport photograph</p>
-                              <p>• Upload a scan of your National ID</p>
+                              <p>• Upload passport photo (200-600px, max 2MB, JPEG/PNG)</p>
+                              <p>• Upload National ID scan (any size, max 5MB, JPEG/PNG)</p>
                             </div>
                           )}
                           {step.number === 4 && (
@@ -447,7 +548,7 @@ export default function CertificateRequestPage() {
 
                   {/* Step 3: Identification */}
                   {currentStep === 3 && (
-                    <div className="space-y-4">
+                    <div className="space-y-6">
                       <div className="space-y-2">
                         <Label htmlFor="nationalIdNumber">National ID Number *</Label>
                         <Input
@@ -457,49 +558,145 @@ export default function CertificateRequestPage() {
                           placeholder="Enter your National ID number"
                         />
                       </div>
-                      <div className="space-y-2">
-                        <Label htmlFor="photograph">Photograph *</Label>
-                        <div className="flex items-center gap-4">
-                          <Input
-                            id="photograph"
-                            type="file"
-                            accept="image/*"
-                            onChange={handlePhotographChange}
-                            className="flex-1"
-                          />
-                          {photographPreview && (
-                            <img
-                              src={photographPreview}
-                              alt="Photograph preview"
-                              className="w-20 h-20 object-cover rounded border"
-                            />
-                          )}
+
+                      {/* Passport Photograph */}
+                      <div className="space-y-3">
+                        <div className="space-y-2">
+                          <Label htmlFor="photograph">Passport Photograph *</Label>
+                          <div className="flex items-start gap-4">
+                            <div className="flex-1 space-y-2">
+                              <Input
+                                key={photographInputKey}
+                                id="photograph"
+                                type="file"
+                                accept="image/jpeg,image/jpg,image/png"
+                                onChange={handlePhotographChange}
+                                disabled={photographValidating}
+                                className={photographErrors.length > 0 ? "border-destructive" : ""}
+                              />
+                              {photographValidating && (
+                                <p className="text-xs text-muted-foreground">Validating image...</p>
+                              )}
+                              {photographPreview && photographErrors.length === 0 && (
+                                <div className="flex items-center gap-2 text-xs text-green-600">
+                                  <CheckCircle2 className="h-4 w-4" />
+                                  <span>Photo validated successfully</span>
+                                  {photographDimensions && (
+                                    <span className="text-muted-foreground">
+                                      ({photographDimensions.width}x{photographDimensions.height}px)
+                                    </span>
+                                  )}
+                                </div>
+                              )}
+                              {photographErrors.length > 0 && (
+                                <div className="space-y-1">
+                                  {photographErrors.map((error, idx) => (
+                                    <div key={idx} className="flex items-start gap-2 text-xs text-destructive">
+                                      <X className="h-4 w-4 mt-0.5 flex-shrink-0" />
+                                      <span>{error}</span>
+                                    </div>
+                                  ))}
+                                </div>
+                              )}
+                            </div>
+                            {photographPreview && (
+                              <div className="relative">
+                                <img
+                                  src={photographPreview}
+                                  alt="Photograph preview"
+                                  className="w-24 h-24 object-cover rounded border-2 border-primary"
+                                />
+                                {photographErrors.length === 0 && (
+                                  <div className="absolute -top-2 -right-2 bg-green-500 rounded-full p-1">
+                                    <CheckCircle2 className="h-4 w-4 text-white" />
+                                  </div>
+                                )}
+                              </div>
+                            )}
+                          </div>
                         </div>
-                        <p className="text-xs text-muted-foreground">
-                          Upload your passport photograph (Max 5MB, JPEG/PNG)
-                        </p>
+                        <Alert>
+                          <AlertCircle className="h-4 w-4" />
+                          <AlertDescription className="text-xs">
+                            <strong>Requirements:</strong>
+                            <ul className="list-disc list-inside mt-1 space-y-0.5">
+                              <li>Dimensions: 200x200px to 600x600px</li>
+                              <li>File size: Maximum 2MB</li>
+                              <li>Format: JPEG or PNG only</li>
+                              <li>Must be a clear, recent passport-style photograph</li>
+                            </ul>
+                          </AlertDescription>
+                        </Alert>
                       </div>
-                      <div className="space-y-2">
-                        <Label htmlFor="idScan">National ID Scan *</Label>
-                        <div className="flex items-center gap-4">
-                          <Input
-                            id="idScan"
-                            type="file"
-                            accept="image/*"
-                            onChange={handleIdScanChange}
-                            className="flex-1"
-                          />
-                          {idScanPreview && (
-                            <img
-                              src={idScanPreview}
-                              alt="ID scan preview"
-                              className="w-20 h-20 object-cover rounded border"
-                            />
-                          )}
+
+                      {/* National ID Scan */}
+                      <div className="space-y-3">
+                        <div className="space-y-2">
+                          <Label htmlFor="idScan">National ID Scan *</Label>
+                          <div className="flex items-start gap-4">
+                            <div className="flex-1 space-y-2">
+                              <Input
+                                key={idScanInputKey}
+                                id="idScan"
+                                type="file"
+                                accept="image/jpeg,image/jpg,image/png"
+                                onChange={handleIdScanChange}
+                                disabled={idScanValidating}
+                                className={idScanErrors.length > 0 ? "border-destructive" : ""}
+                              />
+                              {idScanValidating && (
+                                <p className="text-xs text-muted-foreground">Validating image...</p>
+                              )}
+                              {idScanPreview && idScanErrors.length === 0 && (
+                                <div className="flex items-center gap-2 text-xs text-green-600">
+                                  <CheckCircle2 className="h-4 w-4" />
+                                  <span>ID scan validated successfully</span>
+                                  {idScanDimensions && (
+                                    <span className="text-muted-foreground">
+                                      ({idScanDimensions.width}x{idScanDimensions.height}px)
+                                    </span>
+                                  )}
+                                </div>
+                              )}
+                              {idScanErrors.length > 0 && (
+                                <div className="space-y-1">
+                                  {idScanErrors.map((error, idx) => (
+                                    <div key={idx} className="flex items-start gap-2 text-xs text-destructive">
+                                      <X className="h-4 w-4 mt-0.5 flex-shrink-0" />
+                                      <span>{error}</span>
+                                    </div>
+                                  ))}
+                                </div>
+                              )}
+                            </div>
+                            {idScanPreview && (
+                              <div className="relative">
+                                <img
+                                  src={idScanPreview}
+                                  alt="ID scan preview"
+                                  className="w-24 h-24 object-cover rounded border-2 border-primary"
+                                />
+                                {idScanErrors.length === 0 && (
+                                  <div className="absolute -top-2 -right-2 bg-green-500 rounded-full p-1">
+                                    <CheckCircle2 className="h-4 w-4 text-white" />
+                                  </div>
+                                )}
+                              </div>
+                            )}
+                          </div>
                         </div>
-                        <p className="text-xs text-muted-foreground">
-                          Upload a scan of your National ID (Max 5MB, JPEG/PNG)
-                        </p>
+                        <Alert>
+                          <AlertCircle className="h-4 w-4" />
+                          <AlertDescription className="text-xs">
+                            <strong>Requirements:</strong>
+                            <ul className="list-disc list-inside mt-1 space-y-0.5">
+                              <li>File size: Maximum 5MB</li>
+                              <li>Format: JPEG or PNG only</li>
+                              <li>Any dimensions accepted</li>
+                              <li>Must be a clear, readable scan of your National ID</li>
+                            </ul>
+                          </AlertDescription>
+                        </Alert>
                       </div>
                     </div>
                   )}

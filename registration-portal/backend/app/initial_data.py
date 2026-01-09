@@ -2,7 +2,7 @@ from sqlalchemy import select
 
 from app.config import settings
 from app.core.security import get_password_hash
-from app.models import PortalUser, PortalUserType
+from app.models import PortalUser, Role
 
 
 async def ensure_system_admin_user(session) -> None:
@@ -24,7 +24,7 @@ async def ensure_system_admin_user(session) -> None:
         email=settings.system_admin_email,
         hashed_password=hashed_password,
         full_name=settings.system_admin_full_name,
-        user_type=PortalUserType.SYSTEM_ADMIN,
+        role=Role.SystemAdmin,
         is_active=True,
     )
     session.add(system_admin)

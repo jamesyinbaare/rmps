@@ -39,7 +39,6 @@ export default function PrivateAccountCreationPage() {
         email,
         password,
         full_name: fullName,
-        user_type: "PRIVATE_USER",
       });
 
       toast.success("Account created successfully! Redirecting to login...");
@@ -56,9 +55,9 @@ export default function PrivateAccountCreationPage() {
     <div className="flex min-h-screen items-center justify-center bg-gray-50 px-4">
       <Card className="w-full max-w-md">
         <CardHeader>
-          <CardTitle className="text-2xl">Create Private Candidate Account</CardTitle>
+          <CardTitle className="text-2xl">CTVET Portal</CardTitle>
           <CardDescription>
-            Create an account to start your examination registration process
+            Login to access our online services.
           </CardDescription>
         </CardHeader>
         <CardContent>

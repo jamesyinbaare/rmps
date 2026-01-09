@@ -161,7 +161,7 @@ export function UserManagement() {
                     <TableCell>{user.full_name}</TableCell>
                     <TableCell>
                       <span className="capitalize">
-                        {user.user_type === "SCHOOL_ADMIN" ? "Coordinator" : "School User"}
+                        {user.role === "SchoolAdmin" ? "Coordinator" : "School User"}
                       </span>
                     </TableCell>
                     <TableCell>

@@ -18,7 +18,7 @@ from app.dependencies.auth import SchoolUserWithSchoolDep, SchoolAdminDep, get_c
 from app.dependencies.database import DBSessionDep, get_db_session
 from app.models import (
     PortalUser,
-    PortalUserType,
+    Role,
     RegistrationExam,
     ExamRegistrationPeriod,
     RegistrationCandidate,
@@ -80,7 +80,7 @@ async def count_active_school_users(session: DBSessionDep, school_id: int) -> in
     stmt = select(func.count(PortalUser.id)).where(
         PortalUser.school_id == school_id,
         PortalUser.is_active.is_(True),
-        PortalUser.user_type.in_([PortalUserType.SCHOOL_USER, PortalUserType.SCHOOL_ADMIN])
+        PortalUser.role <= Role.SchoolAdmin
     )
     result = await session.execute(stmt)
     return result.scalar_one() or 0
@@ -969,8 +969,8 @@ async def create_school_user(
             detail=f"Cannot create user: You have reached the maximum of {MAX_ACTIVE_USERS_PER_SCHOOL} active users. Please deactivate an existing user first.",
         )
 
-    # Ensure user_type is SCHOOL_USER (coordinators can only create SCHOOL_USER accounts)
-    if user_data.user_type != PortalUserType.SCHOOL_USER:
+    # Ensure role is User (coordinators can only create User accounts)
+    if user_data.role != Role.User:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Coordinators can only create SCHOOL_USER accounts",
@@ -1000,7 +1000,7 @@ async def create_school_user(
         email=user_data.email,
         hashed_password=hashed_password,
         full_name=user_data.full_name,
-        user_type=PortalUserType.SCHOOL_USER,
+        role=Role.User,
         school_id=current_user.school_id,
         is_active=True,
         created_by_user_id=current_user.id,
@@ -1028,7 +1028,7 @@ async def list_school_users(
 
     stmt = select(PortalUser).where(
         PortalUser.school_id == current_user.school_id,
-        PortalUser.user_type.in_([PortalUserType.SCHOOL_USER, PortalUserType.SCHOOL_ADMIN])
+        PortalUser.role <= Role.SchoolAdmin
     ).order_by(PortalUser.created_at.desc())
     result = await session.execute(stmt)
     users = result.scalars().all()
@@ -1196,7 +1196,7 @@ async def list_school_programmes(
 
 @router.post("/programmes/{programme_id}", response_model=SchoolProgrammeAssociation, status_code=status.HTTP_201_CREATED)
 async def associate_programme_with_school(
-    programme_id: int, session: DBSessionDep, current_user: SchoolUserWithSchoolDep
+    programme_id: int, session: DBSessionDep, current_user: SchoolAdminDep
 ) -> SchoolProgrammeAssociation:
     """Associate a programme with the school (add to school's programme list)."""
     if current_user.school_id is None:
@@ -1232,7 +1232,7 @@ async def associate_programme_with_school(
 
 @router.delete("/programmes/{programme_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def remove_programme_from_school(
-    programme_id: int, session: DBSessionDep, current_user: SchoolUserWithSchoolDep
+    programme_id: int, session: DBSessionDep, current_user: SchoolAdminDep
 ) -> None:
     """Remove programme from school."""
     if current_user.school_id is None:
