@@ -14,7 +14,7 @@ from app.dependencies.auth import CurrentUserDep, SystemAdminDep, AdminDep
 from app.dependencies.database import DBSessionDep
 from app.models import (
     PortalUser,
-    PortalUserType,
+    Role,
     RegistrationExam,
     ExamRegistrationPeriod,
     RegistrationCandidate,
@@ -39,6 +39,7 @@ from app.schemas.registration import (
     ExamRegistrationPeriodResponse,
     IndexNumberGenerationJobResponse,
     SchoolProgressItem,
+    CandidateListResponse,
 )
 from app.schemas.user import SchoolAdminUserCreate, UserResponse, UserListResponse
 from app.schemas.school import (
@@ -164,7 +165,7 @@ async def create_school_admin_user(
         email=user_data.email,
         hashed_password=hashed_password,
         full_name=user_data.full_name,
-        user_type=PortalUserType.SCHOOL_ADMIN,
+        role=Role.SchoolAdmin,
         school_id=user_data.school_id,
         is_active=True,
         created_by_user_id=current_user.id,
@@ -179,8 +180,8 @@ async def create_school_admin_user(
 
 @router.get("/school-admin-users", response_model=list[UserResponse])
 async def list_school_admin_users(session: DBSessionDep, current_user: SystemAdminDep) -> list[UserResponse]:
-    """List all coordinators."""
-    stmt = select(PortalUser).where(PortalUser.user_type == PortalUserType.SCHOOL_ADMIN)
+    """List all coordinators. SystemAdmin only."""
+    stmt = select(PortalUser).where(PortalUser.role == Role.SchoolAdmin)
     result = await session.execute(stmt)
     users = result.scalars().all()
 
@@ -245,7 +246,7 @@ async def list_schools(
         )
         .where(
             PortalUser.school_id.in_(school_ids),
-            PortalUser.user_type == PortalUserType.SCHOOL_ADMIN,
+            PortalUser.role == Role.SchoolAdmin,
             PortalUser.is_active == True,
         )
         .group_by(PortalUser.school_id)
@@ -587,7 +588,7 @@ async def get_school_statistics(
     # Count active admin users
     active_admins_stmt = select(func.count(PortalUser.id)).where(
         PortalUser.school_id == school_id,
-        PortalUser.user_type == PortalUserType.SCHOOL_ADMIN,
+        PortalUser.role == Role.SchoolAdmin,
         PortalUser.is_active == True,
     )
     admins_result = await session.execute(active_admins_stmt)
@@ -627,7 +628,7 @@ async def get_school_admins(
 
     stmt = select(PortalUser).where(
         PortalUser.school_id == school_id,
-        PortalUser.user_type == PortalUserType.SCHOOL_ADMIN,
+        PortalUser.role == Role.SchoolAdmin,
     )
     result = await session.execute(stmt)
     users = result.scalars().all()
@@ -635,7 +636,7 @@ async def get_school_admins(
     return [UserResponse.model_validate(user) for user in users]
 
 
-@router.get("/schools/{school_id}/candidates", response_model=list[dict])
+@router.get("/schools/{school_id}/candidates", response_model=CandidateListResponse)
 async def get_school_candidates(
     school_id: int,
     session: DBSessionDep,
@@ -644,7 +645,7 @@ async def get_school_candidates(
     status: str | None = Query(None, description="Filter by registration status"),
     page: int = Query(1, ge=1),
     page_size: int = Query(50, ge=1, le=100),
-) -> dict:
+) -> CandidateListResponse:
     """List candidates for a school with pagination."""
     # Verify school exists
     school_stmt = select(School).where(School.id == school_id)
@@ -688,13 +689,13 @@ async def get_school_candidates(
 
     total_pages = (total + page_size - 1) // page_size
 
-    return {
-        "items": [RegistrationCandidateResponse.model_validate(c) for c in candidates],
-        "total": total,
-        "page": page,
-        "page_size": page_size,
-        "total_pages": total_pages,
-    }
+    return CandidateListResponse(
+        items=[RegistrationCandidateResponse.model_validate(c) for c in candidates],
+        total=total,
+        page=page,
+        page_size=page_size,
+        total_pages=total_pages,
+    )
 
 
 @router.get("/schools/{school_id}/exams", response_model=list[dict])

@@ -1,5 +1,6 @@
 """Public endpoints (no authentication required)."""
 import logging
+import os
 from fastapi import APIRouter, HTTPException, status, File, UploadFile, Form, Request, Query, Body, Depends
 from fastapi.responses import StreamingResponse
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
@@ -779,7 +780,7 @@ async def submit_certificate_request(
     from app.schemas.certificate import CertificateRequestResponse
     from app.services.certificate_service import create_certificate_request
     from app.services.certificate_file_storage import CertificateFileStorageService
-    from app.models import CertificateRequestType, DeliveryMethod, ServiceType, PortalUser, PortalUserType
+    from app.models import CertificateRequestType, DeliveryMethod, ServiceType, PortalUser, Role
     from app.config import settings
     from app.dependencies.auth import get_current_user_optional
 
@@ -817,32 +818,82 @@ async def submit_certificate_request(
 
         if request_type_enum in (CertificateRequestType.CERTIFICATE, CertificateRequestType.ATTESTATION):
             # Files are required for certificate/attestation
-            if not photograph or not national_id_scan:
+            # Check if files were actually uploaded (not None and have filename)
+            # FastAPI's File(None) creates an UploadFile even when no file is sent, but filename will be empty
+            if not photograph or not photograph.filename or photograph.filename == "":
                 raise HTTPException(
                     status_code=status.HTTP_400_BAD_REQUEST,
-                    detail="Photograph and national ID scan are required for certificate and attestation requests",
+                    detail="Photograph is required for certificate and attestation requests",
+                )
+            if not national_id_scan or not national_id_scan.filename or national_id_scan.filename == "":
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="National ID scan is required for certificate and attestation requests",
                 )
 
-            if photograph.content_type not in allowed_mime_types:
+            # Check if content_type exists and is valid
+            if not photograph.content_type or photograph.content_type not in allowed_mime_types:
+                logger.error(f"Invalid photograph content type: {photograph.content_type}")
                 raise HTTPException(
                     status_code=status.HTTP_400_BAD_REQUEST,
-                    detail="Photograph must be JPEG or PNG image",
+                    detail=f"Photograph must be JPEG or PNG image. Got: {photograph.content_type}",
                 )
-            if national_id_scan.content_type not in allowed_mime_types:
+            if not national_id_scan.content_type or national_id_scan.content_type not in allowed_mime_types:
+                logger.error(f"Invalid ID scan content type: {national_id_scan.content_type}")
                 raise HTTPException(
                     status_code=status.HTTP_400_BAD_REQUEST,
-                    detail="National ID scan must be JPEG or PNG image",
+                    detail=f"National ID scan must be JPEG or PNG image. Got: {national_id_scan.content_type}",
                 )
 
-            photo_content = await photograph.read()
-            id_scan_content = await national_id_scan.read()
-
-            if len(photo_content) > max_file_size:
+            try:
+                photo_content = await photograph.read()
+            except Exception as e:
+                logger.error(f"Error reading photograph file: {e}", exc_info=True)
                 raise HTTPException(
                     status_code=status.HTTP_400_BAD_REQUEST,
-                    detail="Photograph file size exceeds 5MB limit",
+                    detail=f"Failed to read photograph file: {str(e)}",
                 )
-            if len(id_scan_content) > max_file_size:
+
+            try:
+                id_scan_content = await national_id_scan.read()
+            except Exception as e:
+                logger.error(f"Error reading ID scan file: {e}", exc_info=True)
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail=f"Failed to read ID scan file: {str(e)}",
+                )
+
+            # Check if files have content
+            if not photo_content or len(photo_content) == 0:
+                logger.error("Photograph file is empty after reading")
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="Photograph file is empty or invalid",
+                )
+            if not id_scan_content or len(id_scan_content) == 0:
+                logger.error("ID scan file is empty after reading")
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="ID scan file is empty or invalid",
+                )
+
+            # Validate passport photograph using PhotoValidationService
+            # This validates: file type (JPEG/PNG), dimensions (200-600px), and file size (2MB max)
+            from app.services.photo_validation import PhotoValidationService
+            try:
+                PhotoValidationService.validate_all(photo_content, photograph.content_type or "")
+            except HTTPException:
+                raise  # Re-raise validation errors from PhotoValidationService
+            except Exception as e:
+                logger.error(f"PhotoValidationService error: {str(e)}", exc_info=True)
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail=f"Failed to validate photograph: {str(e)}",
+                )
+
+            # Validate ID scan: only file size (5MB max), any dimensions
+            id_scan_max_size = 5 * 1024 * 1024  # 5MB
+            if len(id_scan_content) > id_scan_max_size:
                 raise HTTPException(
                     status_code=status.HTTP_400_BAD_REQUEST,
                     detail="National ID scan file size exceeds 5MB limit",
@@ -919,7 +970,7 @@ async def submit_certificate_request(
                     status_code=status.HTTP_401_UNAUTHORIZED,
                     detail="Authentication required for confirmation and verification requests",
                 )
-            if resolved_user.user_type != PortalUserType.PRIVATE_USER:
+            if resolved_user.role != Role.PublicUser:
                 raise HTTPException(
                     status_code=status.HTTP_403_FORBIDDEN,
                     detail="Only private users can submit confirmation and verification requests",
@@ -1048,34 +1099,99 @@ async def submit_certificate_request(
                 "service_type": service_type_enum,
             }
 
-            # Create request using service (will create invoice too)
-            certificate_request = await create_certificate_request(
-                session,
-                request_data,
-                photo_file_path=None,  # Will set after saving
-                id_scan_file_path=None,  # Will set after saving
-                certificate_file_path=None,  # Will set after saving
-                candidate_photo_file_path=None,  # Will set after saving
-            )
-
-            # Now save files and update paths
+            # Save files FIRST with temporary ID, then create request, then move files to correct location
             file_storage = CertificateFileStorageService()
+
+            # Use a temporary request_id to save files initially
+            TEMP_REQUEST_ID = 0
+            photo_path = None
+            id_scan_path = None
 
             if photo_content:
                 photo_path, _ = await file_storage.save_photo(
                     photo_content,
                     photograph.filename or "photo.jpg",
-                    certificate_request.id,
+                    TEMP_REQUEST_ID,
                 )
-                certificate_request.photograph_file_path = photo_path
 
             if id_scan_content:
                 id_scan_path, _ = await file_storage.save_id_scan(
                     id_scan_content,
                     national_id_scan.filename or "id_scan.jpg",
-                    certificate_request.id,
+                    TEMP_REQUEST_ID,
                 )
-                certificate_request.national_id_file_path = id_scan_path
+
+            # Create request using service (will create invoice too) with file paths
+            try:
+                certificate_request = await create_certificate_request(
+                    session,
+                    request_data,
+                    photo_file_path=photo_path,
+                    id_scan_file_path=id_scan_path,
+                    certificate_file_path=None,
+                    candidate_photo_file_path=None,
+                )
+
+                # Now move files from temp location (0/) to correct location ({request_id}/)
+                if photo_path and certificate_request.id != TEMP_REQUEST_ID:
+                    # Re-save with correct ID
+                    photo_path_new, _ = await file_storage.save_photo(
+                        photo_content,
+                        photograph.filename or "photo.jpg",
+                        certificate_request.id,
+                    )
+                    # Delete old temp file
+                    try:
+                        temp_full_path = file_storage._resolve_path(photo_path)
+                        if temp_full_path.exists():
+                            os.remove(temp_full_path)
+                    except Exception as e:
+                        logger.warning(f"Could not delete temporary photo file: {e}")
+                    # Update request with new path
+                    certificate_request.photograph_file_path = photo_path_new
+                    photo_path = photo_path_new
+
+                if id_scan_path and certificate_request.id != TEMP_REQUEST_ID:
+                    # Re-save with correct ID
+                    id_scan_path_new, _ = await file_storage.save_id_scan(
+                        id_scan_content,
+                        national_id_scan.filename or "id_scan.jpg",
+                        certificate_request.id,
+                    )
+                    # Delete old temp file
+                    try:
+                        temp_full_path = file_storage._resolve_path(id_scan_path)
+                        if temp_full_path.exists():
+                            os.remove(temp_full_path)
+                    except Exception as e:
+                        logger.warning(f"Could not delete temporary ID scan file: {e}")
+                    # Update request with new path
+                    certificate_request.national_id_file_path = id_scan_path_new
+                    id_scan_path = id_scan_path_new
+
+                # Commit file path updates if we moved files
+                if (photo_path and certificate_request.id != TEMP_REQUEST_ID) or (id_scan_path and certificate_request.id != TEMP_REQUEST_ID):
+                    await session.commit()
+                    await session.refresh(certificate_request)
+
+            except Exception as e:
+                logger.error(f"Error creating certificate request: {e}", exc_info=True)
+                # Clean up saved files if request creation fails
+                if photo_path:
+                    try:
+                        temp_full_path = file_storage._resolve_path(photo_path)
+                        if temp_full_path.exists():
+                            os.remove(temp_full_path)
+                    except Exception:
+                        pass
+                if id_scan_path:
+                    try:
+                        temp_full_path = file_storage._resolve_path(id_scan_path)
+                        if temp_full_path.exists():
+                            os.remove(temp_full_path)
+                    except Exception:
+                        pass
+                raise
 
             if certificate_content:
                 certificate_path, _ = await file_storage.save_certificate_scan(
@@ -1141,7 +1257,7 @@ async def submit_bulk_certificate_request(
     from fastapi import UploadFile, File
     from typing import List
 
-    from app.models import CertificateRequestType, ServiceType, PortalUser, PortalUserType
+    from app.models import CertificateRequestType, ServiceType, PortalUser, Role
     from app.services.certificate_confirmation_service import create_certificate_confirmation
     from app.services.certificate_file_storage import CertificateFileStorageService
     from sqlalchemy.orm import selectinload
@@ -1158,7 +1274,7 @@ async def submit_bulk_certificate_request(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Authentication required for bulk confirmation and verification requests",
         )
-    if resolved_user.user_type != PortalUserType.PRIVATE_USER:
+    if resolved_user.role != Role.PublicUser:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Only private users can submit bulk confirmation and verification requests",
@@ -1394,7 +1510,7 @@ async def download_confirmation_pdf_public(
     from app.services.certificate_confirmation_service import get_certificate_confirmation_by_number
     from app.services.certificate_file_storage import CertificateFileStorageService
     from app.dependencies.auth import get_current_user_optional
-    from app.models import PortalUser, PortalUserType
+    from app.models import PortalUser, Role
 
     resolved_user: PortalUser | None = None
     try:
@@ -1406,7 +1522,7 @@ async def download_confirmation_pdf_public(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Authentication required to download confirmation documents",
         )
-    if resolved_user.user_type != PortalUserType.PRIVATE_USER:
+    if resolved_user.role != Role.PublicUser:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Only private users can download confirmation documents",
@@ -1555,11 +1671,10 @@ async def initialize_payment(
     from app.models import Invoice, CertificateConfirmationRequest, RequestStatus
     from decimal import Decimal
 
-    # Check if it's a confirmation request (starts with BULK- or REQ-)
-    if request_number.upper().startswith(("BULK-", "REQ-")):
+    # Check if it's a bulk confirmation request (starts with BULK-)
+    if request_number.upper().startswith("BULK-"):
         confirmation_request = await get_certificate_confirmation_by_number(session, request_number)
         if not confirmation_request:
-            # If not found, raise error instead of continuing to check regular requests
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail="Certificate confirmation request not found",
@@ -1614,7 +1729,62 @@ async def initialize_payment(
                 detail="Failed to initialize payment",
             )
 
-    # Regular certificate request
+    # For "REQ-" prefix, check both confirmation requests and regular certificate requests
+    # (Both use "REQ-" prefix, so we need to check both tables)
+    if request_number.upper().startswith("REQ-"):
+        # First check if it's a confirmation request
+        confirmation_request = await get_certificate_confirmation_by_number(session, request_number)
+        if confirmation_request:
+            # Get invoice (don't access relationship directly to avoid lazy loading issues)
+            invoice = None
+            if confirmation_request.invoice_id:
+                invoice_stmt = select(Invoice).where(Invoice.id == confirmation_request.invoice_id)
+                invoice_result = await session.execute(invoice_stmt)
+                invoice = invoice_result.scalar_one_or_none()
+
+            if not invoice:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="Invoice not found for this confirmation request",
+                )
+
+            if invoice.status == "paid":
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="Invoice is already paid",
+                )
+
+            try:
+                result = await init_payment_service(
+                    session,
+                    invoice,
+                    Decimal(str(invoice.amount)),
+                    email=confirmation_request.contact_email,
+                    metadata={
+                        "request_number": confirmation_request.request_number,
+                        "confirmation_request_id": confirmation_request.id,
+                    },
+                )
+                await session.flush()
+
+                # Update confirmation request with payment_id from result
+                confirmation_request.payment_id = result["payment_id"]
+                await session.commit()
+
+                return PaymentInitializeResponse(**result).model_dump()
+
+            except ValueError as e:
+                await session.rollback()
+                raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+            except Exception as e:
+                await session.rollback()
+                logger.error(f"Error initializing payment: {e}", exc_info=True)
+                raise HTTPException(
+                    status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                    detail="Failed to initialize payment",
+                )
+
+    # Regular certificate request (or REQ- that wasn't a confirmation request)
     request = await get_certificate_request_by_number(session, request_number)
     if not request:
         raise HTTPException(

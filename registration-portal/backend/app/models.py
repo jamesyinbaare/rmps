@@ -24,12 +24,30 @@ from sqlalchemy.orm import relationship
 from app.dependencies.database import Base
 
 
-class PortalUserType(enum.Enum):
-    SYSTEM_ADMIN = "SYSTEM_ADMIN"
-    SCHOOL_ADMIN = "SCHOOL_ADMIN"
-    SCHOOL_USER = "SCHOOL_USER"
-    PRIVATE_USER = "PRIVATE_USER"
-    ADMIN = "ADMIN"  # Administration department staff
+class Role(enum.IntEnum):
+    """User roles with hierarchical permissions. Lower values have higher privileges."""
+    SystemAdmin = 0
+    Director = 10
+    DeputyDirector = 20
+    PrincipalManager = 30
+    SeniorManager = 40
+    Manager = 50
+    Staff = 60
+    SchoolAdmin = 70
+    User = 80
+    PublicUser = 90
+
+    def __lt__(self, other: "Role") -> bool:
+        return self.value < other.value
+
+    def __le__(self, other: "Role") -> bool:
+        return self.value <= other.value
+
+    def __gt__(self, other: "Role") -> bool:
+        return self.value > other.value
+
+    def __ge__(self, other: "Role") -> bool:
+        return self.value >= other.value
 
 
 class RegistrationStatus(enum.Enum):
@@ -223,7 +241,7 @@ class PortalUser(Base):
     email = Column(String(255), unique=True, nullable=False, index=True)
     hashed_password = Column(String(255), nullable=False)
     full_name = Column(String(255), nullable=False)
-    user_type = Column(Enum(PortalUserType), nullable=False)
+    role = Column(Enum(Role), nullable=False)
     school_id = Column(Integer, ForeignKey("schools.id", ondelete="SET NULL"), nullable=True, index=True)
     created_by_user_id = Column(UUID(as_uuid=True), ForeignKey("portal_users.id", ondelete="SET NULL"), nullable=True)
     is_active = Column(Boolean, default=True, nullable=False)

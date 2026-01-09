@@ -17,7 +17,7 @@ class PhotoValidationService:
     @staticmethod
     def validate_file_type(content: bytes, mime_type: str) -> tuple[bool, str | None]:
         """
-        Validate that the file is a JPEG image.
+        Validate that the file is a JPEG or PNG image.
 
         Args:
             content: File content as bytes
@@ -26,8 +26,8 @@ class PhotoValidationService:
         Returns:
             tuple[bool, str | None]: (is_valid, error_message)
         """
-        if mime_type not in ("image/jpeg", "image/jpg"):
-            return False, f"File must be JPEG format. Got: {mime_type}"
+        if mime_type not in ("image/jpeg", "image/jpg", "image/png"):
+            return False, f"File must be JPEG or PNG format. Got: {mime_type}"
         return True, None
 
     @staticmethod

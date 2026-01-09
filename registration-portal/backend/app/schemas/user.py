@@ -3,7 +3,7 @@ from uuid import UUID
 
 from pydantic import BaseModel, EmailStr, Field
 
-from app.models import PortalUserType
+from app.models import Role
 
 
 class SchoolUserCreate(BaseModel):
@@ -12,7 +12,7 @@ class SchoolUserCreate(BaseModel):
     email: EmailStr
     password: str
     full_name: str = Field(..., min_length=1, max_length=255)
-    user_type: PortalUserType = PortalUserType.SCHOOL_USER
+    role: Role = Role.User
 
 
 class SchoolAdminUserCreate(BaseModel):
