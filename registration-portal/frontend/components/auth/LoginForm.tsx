@@ -43,11 +43,13 @@ export function LoginForm({ onLoginSuccess }: LoginFormProps = {}) {
 
       // Default redirect logic
       toast.success("Login successful");
-      if (user.user_type === "PRIVATE_USER") {
+      if (user.role === "PublicUser") {
         router.push("/dashboard/private");
-      } else if ((user.user_type === "SCHOOL_ADMIN" || user.user_type === "SCHOOL_USER") && user.school_id) {
+      } else if (user.role === "SchoolAdmin" || user.role === "User") {
+        // SchoolAdmin and User go directly to school dashboard
         router.push("/dashboard/my-school");
       } else {
+        // SystemAdmin, Director, DeputyDirector, PrincipalManager, and other admin roles go to main dashboard
         router.push("/dashboard");
       }
     } catch (error) {

@@ -3,7 +3,7 @@
 import { useState, useEffect } from "react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
-import { Users, GraduationCap, Building2, MoreVertical, Settings, HelpCircle, Upload, UserPlus, FileText, BookOpen, BookMarked, Images, Award, Shield } from "lucide-react";
+import { MoreVertical, Upload } from "lucide-react";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -15,6 +15,7 @@ import { Button } from "@/components/ui/button";
 import { BulkUploadSchoolsDialog } from "@/components/admin/BulkUploadSchoolsDialog";
 import { getCurrentUser, getSchoolDashboard } from "@/lib/api";
 import type { User, SchoolDashboardData } from "@/types";
+import { getMenuItemsForRole, getMoreActionsForRole, shouldShowMoreActions } from "@/lib/menu-config";
 
 export function Sidebar() {
   const pathname = usePathname();
@@ -31,7 +32,7 @@ export function Sidebar() {
         setUser(userData);
 
         // Load school data for school users
-        if (userData.user_type === "SCHOOL_ADMIN" || userData.user_type === "SCHOOL_USER") {
+        if (userData.role === "SchoolAdmin" || userData.role === "User") {
           try {
             const dashboard = await getSchoolDashboard();
             setSchoolData(dashboard);
@@ -49,36 +50,18 @@ export function Sidebar() {
     loadData();
   }, []);
 
-  const isSchoolUser = user?.user_type === "SCHOOL_ADMIN" || user?.user_type === "SCHOOL_USER";
-  const isCoordinator = user?.user_type === "SCHOOL_ADMIN";
-  const isSystemAdmin = user?.user_type === "SYSTEM_ADMIN";
-  const isPrivateUser = user?.user_type === "PRIVATE_USER";
+  const isSchoolUser = user?.role === "SchoolAdmin" || user?.role === "User";
+  const isPrivateUser = user?.role === "PublicUser";
 
   // Private users have their own dashboard and shouldn't see this sidebar
   if (isPrivateUser) {
     return null;
   }
 
-  const schoolUserNavItems = [
-    { href: "/dashboard/my-school", label: "My School", icon: Building2 },
-    { href: "/dashboard/my-school/register", label: "Registration", icon: FileText },
-    { href: "/dashboard/my-school/candidates", label: "Candidates", icon: GraduationCap },
-    { href: "/dashboard/my-school/photo-album", label: "Photo Album", icon: Images },
-    // Only coordinators can manage users and programmes
-    ...(isCoordinator ? [
-      { href: "/dashboard/my-school/users", label: "Users", icon: Users },
-      { href: "/dashboard/my-school/programmes", label: "Programmes", icon: BookOpen },
-    ] : []),
-  ];
-
-  const systemAdminNavItems = [
-    { href: "/dashboard", label: "Dashboard", icon: GraduationCap },
-    { href: "/dashboard/school-admins", label: "Coordinators", icon: Users },
-    { href: "/dashboard/exams", label: "Exams", icon: GraduationCap },
-    { href: "/dashboard/admin/certificate-requests", label: "Certificate Requests", icon: FileText },
-  ];
-
-  const navItems = isSchoolUser ? schoolUserNavItems : systemAdminNavItems;
+  // Dynamically get menu items based on user role
+  const navItems = getMenuItemsForRole(user?.role);
+  const moreActionsItems = getMoreActionsForRole(user?.role);
+  const showMoreActions = shouldShowMoreActions(user?.role);
 
   return (
     <div className="flex h-full w-64 flex-col border-r bg-gray-50">
@@ -119,7 +102,8 @@ export function Sidebar() {
           );
         })}
       </nav>
-      {isSystemAdmin && (
+      {/* Show More Actions menu dynamically based on role */}
+      {showMoreActions && moreActionsItems.length > 0 && (
         <div className="border-t p-4">
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
@@ -132,60 +116,44 @@ export function Sidebar() {
               </Button>
             </DropdownMenuTrigger>
             <DropdownMenuContent align="end" side="right" className="w-56">
-              <DropdownMenuItem asChild>
-                <Link href="/dashboard/schools" className="flex items-center">
-                  <Building2 className="mr-2 h-4 w-4" />
-                  Schools
-                </Link>
-              </DropdownMenuItem>
-              <DropdownMenuItem
-                onClick={(e) => {
-                  e.preventDefault();
-                  setBulkUploadOpen(true);
-                }}
-              >
-                <Upload className="mr-2 h-4 w-4" />
-                Bulk Upload Schools
-              </DropdownMenuItem>
-              <DropdownMenuSeparator />
-              <DropdownMenuItem asChild>
-                <Link href="/dashboard/admin/programmes" className="flex items-center">
-                  <BookOpen className="mr-2 h-4 w-4" />
-                  Programmes
-                </Link>
-              </DropdownMenuItem>
-              <DropdownMenuItem asChild>
-                <Link href="/dashboard/admin/subjects" className="flex items-center">
-                  <BookMarked className="mr-2 h-4 w-4" />
-                  Subjects
-                </Link>
-              </DropdownMenuItem>
-              <DropdownMenuSeparator />
-              <DropdownMenuItem asChild>
-                <Link href="/dashboard/admin/results" className="flex items-center">
-                  <Award className="mr-2 h-4 w-4" />
-                  Results
-                </Link>
-              </DropdownMenuItem>
-              <DropdownMenuItem asChild>
-                <Link href="/dashboard/admin/results/blocks" className="flex items-center">
-                  <Shield className="mr-2 h-4 w-4" />
-                  Result Blocks
-                </Link>
-              </DropdownMenuItem>
-              <DropdownMenuSeparator />
-              <DropdownMenuItem asChild>
-                <Link href="/dashboard/settings" className="flex items-center">
-                  <Settings className="mr-2 h-4 w-4" />
-                  Settings
-                </Link>
-              </DropdownMenuItem>
-              <DropdownMenuItem asChild>
-                <Link href="/dashboard/help" className="flex items-center">
-                  <HelpCircle className="mr-2 h-4 w-4" />
-                  Help & Support
-                </Link>
-              </DropdownMenuItem>
+              {moreActionsItems.map((item, index) => {
+                const Icon = item.icon;
+                const prevItem = index > 0 ? moreActionsItems[index - 1] : null;
+
+                // Add separator before certain items
+                const needsSeparator = prevItem && (
+                  (item.href.includes("/admin/programmes") && !prevItem.href.includes("/admin/programmes")) ||
+                  (item.href.includes("/admin/results") && !prevItem.href.includes("/admin/results")) ||
+                  (item.href.includes("/dashboard/settings") && !prevItem.href.includes("/dashboard/settings"))
+                );
+
+                return (
+                  <div key={item.href}>
+                    {needsSeparator && <DropdownMenuSeparator />}
+                    <DropdownMenuItem asChild>
+                      <Link href={item.href} className="flex items-center">
+                        <Icon className="mr-2 h-4 w-4" />
+                        {item.label}
+                      </Link>
+                    </DropdownMenuItem>
+                    {/* Add bulk upload after Schools item */}
+                    {item.href === "/dashboard/schools" && (
+                      <>
+                        <DropdownMenuItem
+                          onClick={(e) => {
+                            e.preventDefault();
+                            setBulkUploadOpen(true);
+                          }}
+                        >
+                          <Upload className="mr-2 h-4 w-4" />
+                          Bulk Upload Schools
+                        </DropdownMenuItem>
+                        {index < moreActionsItems.length - 1 && <DropdownMenuSeparator />}
+                      </>
+                    )}
+                  </div>
+                );
+              })}
             </DropdownMenuContent>
           </DropdownMenu>
           <BulkUploadSchoolsDialog

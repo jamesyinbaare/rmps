@@ -18,13 +18,13 @@ export function TopBar() {
 
   const getDashboardTitle = () => {
     if (!user) return "Dashboard";
-    switch (user.user_type) {
-      case "PRIVATE_USER":
+    switch (user.role) {
+      case "PublicUser":
         return "CTVET Private Candidate Examination Portal";
-      case "SCHOOL_ADMIN":
-      case "SCHOOL_USER":
+      case "SchoolAdmin":
+      case "User":
         return "School Dashboard";
-      case "SYSTEM_ADMIN":
+      case "SystemAdmin":
         return "Admin Dashboard";
       default:
         return "Staff Dashboard";

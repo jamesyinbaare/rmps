@@ -32,9 +32,9 @@ export default function PrivateDashboardLayout({
 
         // Prevent SYSTEM_ADMIN, SCHOOL_ADMIN (coordinator), and SCHOOL_USER from accessing private portal
         if (
-          userData.user_type === "SYSTEM_ADMIN" ||
-          userData.user_type === "SCHOOL_ADMIN" ||
-          userData.user_type === "SCHOOL_USER"
+          userData.role === "SystemAdmin" ||
+          userData.role === "SchoolAdmin" ||
+          userData.role === "User"
         ) {
           toast.error("This portal is only accessible to private candidates.");
           router.push("/dashboard");

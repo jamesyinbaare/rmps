@@ -1,10 +1,22 @@
 // TypeScript types matching backend schemas
 
+export type Role =
+  | "SystemAdmin"
+  | "Director"
+  | "DeputyDirector"
+  | "PrincipalManager"
+  | "SeniorManager"
+  | "Manager"
+  | "Staff"
+  | "SchoolAdmin"
+  | "User"
+  | "PublicUser";
+
 export interface User {
   id: string;
   email: string;
   full_name: string;
-  user_type: "SYSTEM_ADMIN" | "SCHOOL_ADMIN" | "SCHOOL_USER" | "PRIVATE_USER";
+  role: Role;
   school_id: number | null;
   is_active: boolean;
   created_at: string;

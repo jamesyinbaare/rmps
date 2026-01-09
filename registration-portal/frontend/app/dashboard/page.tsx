@@ -11,19 +11,83 @@ import { Button } from "@/components/ui/button";
 
 export default function DashboardPage() {
   const [user, setUser] = useState<User | null>(null);
+  const [redirecting, setRedirecting] = useState(false);
+  const [loading, setLoading] = useState(true);
   const router = useRouter();
 
   useEffect(() => {
+    let mounted = true;
+
     getCurrentUser()
       .then((userData) => {
+        if (!mounted) return;
+
         setUser(userData);
+        setLoading(false);
+
         // Redirect private users to their dashboard
-        if (userData.user_type === "PRIVATE_USER") {
+        if (userData.role === "PublicUser") {
+          setRedirecting(true);
           router.push("/dashboard/private");
+          return;
+        }
+
+        // Redirect school users (SchoolAdmin, User) to their school dashboard
+        if (userData.role === "SchoolAdmin" || userData.role === "User") {
+          setRedirecting(true);
+          router.push("/dashboard/my-school");
+          return;
         }
       })
-      .catch(console.error);
+      .catch((error) => {
+        console.error("Failed to get user:", error);
+        if (!mounted) return;
+
+        setLoading(false);
+        // If we can't get user, redirect to login
+        router.push("/login");
+      });
+
+    return () => {
+      mounted = false;
+    };
   }, [router]);
+
+  // Only show system admin dashboard for SystemAdmin, Director, DeputyDirector, PrincipalManager, and other admin roles
+  const isSystemAdmin = user?.role === "SystemAdmin" ||
+                        user?.role === "Director" ||
+                        user?.role === "DeputyDirector" ||
+                        user?.role === "PrincipalManager" ||
+                        user?.role === "SeniorManager" ||
+                        user?.role === "Manager" ||
+                        user?.role === "Staff";
+
+  // Show loading while checking user
+  if (loading) {
+    return (
+      <div className="flex min-h-screen items-center justify-center">
+        <div className="text-center">Loading...</div>
+      </div>
+    );
+  }
+
+  // If redirecting, show loading
+  if (redirecting) {
+    return (
+      <div className="flex min-h-screen items-center justify-center">
+        <div className="text-center">Redirecting...</div>
+      </div>
+    );
+  }
+
+  // If no user or not a system admin, the layout should have redirected, but show loading as fallback
+  if (!user || !isSystemAdmin) {
+    return (
+      <div className="flex min-h-screen items-center justify-center">
+        <div className="text-center">Loading...</div>
+      </div>
+    );
+  }
 
   return (
     <div className="space-y-6">

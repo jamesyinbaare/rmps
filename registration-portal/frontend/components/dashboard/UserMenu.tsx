@@ -49,7 +49,7 @@ export function UserMenu({ user }: UserMenuProps) {
       await logout();
       toast.success("Logged out successfully");
       // Redirect private candidates to home page, others to login
-      if (user.user_type === "PRIVATE_USER") {
+      if (user.role === "PublicUser") {
         router.push("/");
       } else {
         router.push("/login");
@@ -57,7 +57,7 @@ export function UserMenu({ user }: UserMenuProps) {
     } catch (error) {
       toast.error("Failed to logout");
       // Still redirect even if logout fails
-      if (user.user_type === "PRIVATE_USER") {
+      if (user.role === "PublicUser") {
         router.push("/");
       } else {
         router.push("/login");

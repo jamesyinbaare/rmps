@@ -1,5 +1,6 @@
 import type {
   User,
+  Role,
   Token,
   School,
   SchoolDetail,
@@ -252,8 +253,36 @@ async function handleResponse<T>(response: Response): Promise<T> {
     // Handle server errors with user-friendly messages
     let errorMessage: string;
     try {
-      const error = await response.json().catch(() => ({ detail: response.statusText })) as { detail?: string };
-      errorMessage = error.detail || response.statusText;
+      const error = await response.json().catch(() => ({ detail: response.statusText })) as {
+        detail?: string | { errors?: string[]; message?: string } | Array<{ loc: (string | number)[]; msg: string; type: string }>;
+        errors?: string[];
+        message?: string;
+      };
+
+      // Handle 422 validation errors (FastAPI format)
+      if (response.status === 422 && Array.isArray(error.detail)) {
+        const validationErrors = error.detail.map((err) => {
+          const field = err.loc[err.loc.length - 1];
+          return `${field}: ${err.msg}`;
+        });
+        errorMessage = validationErrors.join("; ");
+      } else if (typeof error.detail === "object" && error.detail !== null && !Array.isArray(error.detail) && "errors" in error.detail) {
+        // Handle PhotoValidationService error format: { detail: { errors: [...], message: "..." } }
+        const detail = error.detail as { errors?: string[]; message?: string };
+        if (detail.errors && Array.isArray(detail.errors)) {
+          errorMessage = detail.errors.join("; ");
+        } else {
+          errorMessage = detail.message || "Validation failed";
+        }
+      } else if (typeof error.detail === "string") {
+        errorMessage = error.detail;
+      } else if (error.errors && Array.isArray(error.errors)) {
+        errorMessage = error.errors.join("; ");
+      } else if (error.message) {
+        errorMessage = error.message;
+      } else {
+        errorMessage = response.statusText;
+      }
     } catch {
       errorMessage = response.statusText;
     }
@@ -265,6 +294,9 @@ async function handleResponse<T>(response: Response): Promise<T> {
       errorMessage = errorMessage || "The requested resource was not found.";
     } else if (response.status === 403) {
       errorMessage = errorMessage || "You don't have permission to perform this action.";
+    } else if (response.status === 422) {
+      // Keep the detailed validation error message for 422
+      errorMessage = errorMessage || "Validation error. Please check your input.";
     } else if (response.status === 400) {
       // Keep the original error message for validation errors (400)
       errorMessage = errorMessage || "Invalid request. Please check your input.";
@@ -298,25 +330,55 @@ export async function login(email: string, password: string): Promise<Token> {
   }
 }
 
-export async function getCurrentUser(): Promise<User> {
-  const response = await fetchWithAuth("/api/v1/auth/me");
-  return handleResponse<User>(response);
+// Role number to name mapping (matches backend Role IntEnum)
+const ROLE_MAP: Record<number, Role> = {
+  0: "SystemAdmin",
+  10: "Director",
+  20: "DeputyDirector",
+  30: "PrincipalManager",
+  40: "SeniorManager",
+  50: "Manager",
+  60: "Staff",
+  70: "SchoolAdmin",
+  80: "User",
+  90: "PublicUser",
+};
+
+// Transform user object to convert role number to role name
+function transformUser(user: any): User {
+  if (user && typeof user.role === "number") {
+    user.role = ROLE_MAP[user.role] || user.role;
+  }
+  return user as User;
 }
 
-export interface UserCreate {
+// Transform array of users
+function transformUsers(users: any[]): User[] {
+  return users.map(transformUser);
+}
+
+export async function getCurrentUser(): Promise<User> {
+  const response = await fetchWithAuth("/api/v1/auth/me");
+  const user = await handleResponse<User>(response);
+  return transformUser(user);
+}
+
+import type { Role } from "@/types";
+
+export interface PublicUserCreate {
   email: string;
   password: string;
   full_name: string;
-  user_type: "PRIVATE_USER" | "SCHOOL_ADMIN" | "SCHOOL_USER" | "SYSTEM_ADMIN";
 }
 
-export async function register(userData: UserCreate): Promise<User> {
+export async function register(userData: PublicUserCreate): Promise<User> {
   const response = await fetch(`${API_BASE_URL}/api/v1/auth/register`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(userData),
   });
-  return handleResponse<User>(response);
+  const user = await handleResponse<User>(response);
+  return transformUser(user);
 }
 
 // Private User Registration API
@@ -353,6 +415,7 @@ export async function registerPrivateUser(
   });
 
   const result = await handleResponse<PrivateUserRegistrationResponse>(response);
+  result.user = transformUser(result.user);
   setTokens(result.token.access_token, result.token.refresh_token);
   return result;
 }
@@ -538,7 +601,8 @@ export async function getSchoolStatistics(schoolId: number): Promise<SchoolStati
 
 export async function getSchoolAdmins(schoolId: number): Promise<User[]> {
   const response = await fetchWithAuth(`/api/v1/admin/schools/${schoolId}/admins`);
-  return handleResponse<User[]>(response);
+  const users = await handleResponse<User[]>(response);
+  return transformUsers(users);
 }
 
 // Alias for consistency with new terminology
@@ -624,7 +688,8 @@ export async function createSchoolAdmin(data: SchoolAdminCreate): Promise<User> 
     method: "POST",
     body: JSON.stringify(data),
   });
-  return handleResponse<User>(response);
+  const user = await handleResponse<User>(response);
+  return transformUser(user);
 }
 
 // Alias for consistency with new terminology
@@ -632,7 +697,8 @@ export const createCoordinator = createSchoolAdmin;
 
 export async function listSchoolAdmins(): Promise<User[]> {
   const response = await fetchWithAuth("/api/v1/admin/school-admin-users");
-  return handleResponse<User[]>(response);
+  const users = await handleResponse<User[]>(response);
+  return transformUsers(users);
 }
 
 // Alias for consistency with new terminology
@@ -777,12 +843,14 @@ export async function createSchoolUser(data: SchoolUserCreate): Promise<User> {
     method: "POST",
     body: JSON.stringify(data),
   });
-  return handleResponse<User>(response);
+  const user = await handleResponse<User>(response);
+  return transformUser(user);
 }
 
 export async function listSchoolUsers(): Promise<User[]> {
   const response = await fetchWithAuth("/api/v1/school/users");
-  return handleResponse<User[]>(response);
+  const users = await handleResponse<User[]>(response);
+  return transformUsers(users);
 }
 
 export async function updateSchoolUser(userId: string, data: SchoolUserUpdate): Promise<User> {
@@ -790,7 +858,8 @@ export async function updateSchoolUser(userId: string, data: SchoolUserUpdate): 
     method: "PUT",
     body: JSON.stringify(data),
   });
-  return handleResponse<User>(response);
+  const user = await handleResponse<User>(response);
+  return transformUser(user);
 }
 
 // School candidate registration
@@ -1655,6 +1724,15 @@ export async function submitCertificateRequest(
   certificate?: File,
   candidatePhotograph?: File
 ): Promise<CertificateRequestResponse> {
+  // For certificate/attestation requests, photograph and nationalIdScan are required
+  if (data.request_type === "certificate" || data.request_type === "attestation") {
+    if (!photograph) {
+      throw new Error("Photograph is required for certificate and attestation requests");
+    }
+    if (!nationalIdScan) {
+      throw new Error("National ID scan is required for certificate and attestation requests");
+    }
+  }
   const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL || "http://localhost:8001";
   const formData = new FormData();
 
@@ -1687,13 +1765,31 @@ export async function submitCertificateRequest(
   if (data.completion_year) formData.append("completion_year", data.completion_year.toString());
   if (data.request_details) formData.append("request_details", data.request_details);
 
-  // File uploads
-  if (photograph) formData.append("photograph", photograph);
-  if (nationalIdScan) formData.append("national_id_scan", nationalIdScan);
+  // File uploads - ensure files are always appended if provided
+  // Use the exact field names expected by the backend: "photograph" and "national_id_scan"
+  if (photograph) {
+    if (!(photograph instanceof File)) {
+      throw new Error("Photograph must be a File object");
+    }
+    formData.append("photograph", photograph, photograph.name);
+  } else {
+    throw new Error("Photograph file is required");
+  }
+
+  if (nationalIdScan) {
+    if (!(nationalIdScan instanceof File)) {
+      throw new Error("National ID scan must be a File object");
+    }
+    formData.append("national_id_scan", nationalIdScan, nationalIdScan.name);
+  } else {
+    throw new Error("National ID scan file is required");
+  }
+
   if (certificate) formData.append("certificate", certificate);
   if (candidatePhotograph) formData.append("candidate_photograph", candidatePhotograph);
 
   // Include auth header if user is logged in
+  // IMPORTANT: Do NOT set Content-Type header - browser must set it automatically with boundary for FormData
   const headers: HeadersInit = {};
   const token = getAccessToken();
   if (token) {
@@ -1702,7 +1798,7 @@ export async function submitCertificateRequest(
 
   const response = await fetch(`${API_BASE_URL}/api/v1/public/certificate-requests`, {
     method: "POST",
-    headers,
+    headers, // No Content-Type - browser will set multipart/form-data with boundary
     body: formData,
   });
 

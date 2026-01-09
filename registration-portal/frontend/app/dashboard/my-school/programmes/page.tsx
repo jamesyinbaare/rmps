@@ -2,9 +2,9 @@
 
 import { useState, useEffect, useCallback } from "react";
 import { useRouter } from "next/navigation";
-import { listSchoolProgrammes, associateProgrammeWithSchool, removeProgrammeFromSchool, listAvailableProgrammes } from "@/lib/api";
+import { listSchoolProgrammes, associateProgrammeWithSchool, removeProgrammeFromSchool, listAvailableProgrammes, getCurrentUser } from "@/lib/api";
 import { toast } from "sonner";
-import type { Programme, ProgrammeListResponse } from "@/types";
+import type { Programme, ProgrammeListResponse, User } from "@/types";
 import { BookOpen, Plus, X, Search, AlertTriangle } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -29,6 +29,7 @@ import {
 
 export default function SchoolProgrammesPage() {
   const router = useRouter();
+  const [user, setUser] = useState<User | null>(null);
   const [schoolProgrammes, setSchoolProgrammes] = useState<Programme[]>([]);
   const [allProgrammes, setAllProgrammes] = useState<Programme[]>([]);
   const [loading, setLoading] = useState(true);
@@ -39,6 +40,8 @@ export default function SchoolProgrammesPage() {
   const [deleting, setDeleting] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
   const [availableProgrammes, setAvailableProgrammes] = useState<Programme[]>([]);
+
+  const isSchoolAdmin = user?.role === "SchoolAdmin";
 
   const loadSchoolProgrammes = useCallback(async () => {
     setLoading(true);
@@ -65,6 +68,15 @@ export default function SchoolProgrammesPage() {
   }, []);
 
   useEffect(() => {
+    const loadUser = async () => {
+      try {
+        const userData = await getCurrentUser();
+        setUser(userData);
+      } catch (error) {
+        console.error("Failed to load user:", error);
+      }
+    };
+    loadUser();
     loadSchoolProgrammes();
     loadAllProgrammes();
   }, [loadSchoolProgrammes, loadAllProgrammes]);
@@ -142,13 +154,17 @@ export default function SchoolProgrammesPage() {
     <div className="space-y-6">
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-3xl font-bold">Manage Programmes</h1>
-          <p className="text-muted-foreground">Manage programmes available for your school</p>
+          <h1 className="text-3xl font-bold">{isSchoolAdmin ? "Manage Programmes" : "View Programmes"}</h1>
+          <p className="text-muted-foreground">
+            {isSchoolAdmin ? "Manage programmes available for your school" : "View programmes available for your school"}
+          </p>
         </div>
-        <Button onClick={() => setAddDialogOpen(true)}>
-          <Plus className="mr-2 h-4 w-4" />
-          Add Programme
-        </Button>
+        {isSchoolAdmin && (
+          <Button onClick={() => setAddDialogOpen(true)}>
+            <Plus className="mr-2 h-4 w-4" />
+            Add Programme
+          </Button>
+        )}
       </div>
 
       {/* Statistics Card */}
@@ -184,7 +200,7 @@ export default function SchoolProgrammesPage() {
                   <TableRow>
                     <TableHead>Code</TableHead>
                     <TableHead>Name</TableHead>
-                    <TableHead className="text-right">Actions</TableHead>
+                    {isSchoolAdmin && <TableHead className="text-right">Actions</TableHead>}
                   </TableRow>
                 </TableHeader>
                 <TableBody>
@@ -202,20 +218,22 @@ export default function SchoolProgrammesPage() {
                       >
                         {programme.name}
                       </TableCell>
-                      <TableCell className="text-right">
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            handleRemoveClick(programme);
-                          }}
-                          className="text-destructive hover:text-destructive"
-                        >
-                          <X className="mr-2 h-4 w-4" />
-                          Remove
-                        </Button>
-                      </TableCell>
+                      {isSchoolAdmin && (
+                        <TableCell className="text-right">
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              handleRemoveClick(programme);
+                            }}
+                            className="text-destructive hover:text-destructive"
+                          >
+                            <X className="mr-2 h-4 w-4" />
+                            Remove
+                          </Button>
+                        </TableCell>
+                      )}
                     </TableRow>
                   ))}
                 </TableBody>
