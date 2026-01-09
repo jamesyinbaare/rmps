@@ -50,6 +50,7 @@ export default function CertificateRequestPage() {
   const [requestType, setRequestType] = useState<RequestType>("certificate");
   const [indexNumber, setIndexNumber] = useState("");
   const [examYear, setExamYear] = useState("");
+  const [examinationSeries, setExaminationSeries] = useState<"MAY/JUNE" | "NOV/DEC">("NOV/DEC");
   const [examinationCenterId, setExaminationCenterId] = useState("");
   const [nationalIdNumber, setNationalIdNumber] = useState("");
   const [deliveryMethod, setDeliveryMethod] = useState<DeliveryMethod>("pickup");
@@ -92,6 +93,13 @@ export default function CertificateRequestPage() {
 
     loadCenters();
   }, []);
+
+  // Reset examination series to NOV/DEC when request type changes to certificate
+  useEffect(() => {
+    if (requestType === "certificate") {
+      setExaminationSeries("NOV/DEC");
+    }
+  }, [requestType]);
 
   // Generate current year and past years for exam year select
   const currentYear = new Date().getFullYear();
@@ -263,6 +271,7 @@ export default function CertificateRequestPage() {
         request_type: requestType,
         index_number: indexNumber.trim(),
         exam_year: parseInt(examYear),
+        examination_series: examinationSeries,
         examination_center_id: parseInt(examinationCenterId),
         national_id_number: nationalIdNumber.trim(),
         delivery_method: deliveryMethod,
@@ -494,6 +503,12 @@ export default function CertificateRequestPage() {
                             : "Attestations are available for all examination types."}
                         </AlertDescription>
                       </Alert>
+                      {/* Reset examination series when request type changes */}
+                      {requestType === "certificate" && examinationSeries !== "NOV/DEC" && (
+                        <div className="text-xs text-muted-foreground">
+                          Examination series will be set to NOV/DEC for certificate requests.
+                        </div>
+                      )}
                     </div>
                   )}
 
@@ -523,6 +538,33 @@ export default function CertificateRequestPage() {
                             ))}
                           </SelectContent>
                         </Select>
+                      </div>
+                      <div className="space-y-2">
+                        <Label htmlFor="examinationSeries">Examination Series *</Label>
+                        <Select
+                          value={examinationSeries}
+                          onValueChange={(value) => setExaminationSeries(value as "MAY/JUNE" | "NOV/DEC")}
+                          disabled={requestType === "certificate"}
+                        >
+                          <SelectTrigger id="examinationSeries">
+                            <SelectValue placeholder="Select examination series" />
+                          </SelectTrigger>
+                          <SelectContent>
+                            {requestType === "certificate" ? (
+                              <SelectItem value="NOV/DEC">NOV/DEC</SelectItem>
+                            ) : (
+                              <>
+                                <SelectItem value="MAY/JUNE">MAY/JUNE</SelectItem>
+                                <SelectItem value="NOV/DEC">NOV/DEC</SelectItem>
+                              </>
+                            )}
+                          </SelectContent>
+                        </Select>
+                        {requestType === "certificate" && (
+                          <p className="text-xs text-muted-foreground">
+                            Certificates are only available for NOV/DEC examinations.
+                          </p>
+                        )}
                       </div>
                       <div className="space-y-2">
                         <Label htmlFor="examinationCenter">Examination Center *</Label>

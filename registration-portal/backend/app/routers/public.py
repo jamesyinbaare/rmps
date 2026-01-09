@@ -751,6 +751,7 @@ async def submit_certificate_request(
     request_type: str = Form(...),
     index_number: str = Form(...),
     exam_year: int = Form(...),
+    examination_series: str = Form(...),  # Required for certificate/attestation
     examination_center_id: int | None = Form(None),  # Optional for confirmation/verification
     national_id_number: str | None = Form(None),  # Optional for confirmation/verification
     delivery_method: str | None = Form(None),  # Optional for confirmation/verification
@@ -780,7 +781,7 @@ async def submit_certificate_request(
     from app.schemas.certificate import CertificateRequestResponse
     from app.services.certificate_service import create_certificate_request
     from app.services.certificate_file_storage import CertificateFileStorageService
-    from app.models import CertificateRequestType, DeliveryMethod, ServiceType, PortalUser, Role
+    from app.models import CertificateRequestType, DeliveryMethod, ServiceType, PortalUser, Role, ExamSeries
     from app.config import settings
     from app.dependencies.auth import get_current_user_optional
 
@@ -802,6 +803,23 @@ async def submit_certificate_request(
                 delivery_method_enum = DeliveryMethod(delivery_method.lower())
             else:
                 delivery_method_enum = DeliveryMethod.PICKUP  # Default
+            # examination_series is required for certificate/attestation
+            if request_type_enum in (CertificateRequestType.CERTIFICATE, CertificateRequestType.ATTESTATION):
+                try:
+                    examination_series_enum = ExamSeries(examination_series.upper().replace("-", "/"))
+                except ValueError:
+                    raise HTTPException(
+                        status_code=status.HTTP_400_BAD_REQUEST,
+                        detail=f"Invalid examination_series: {examination_series}. Must be 'MAY/JUNE' or 'NOV/DEC'",
+                    )
+                # Validate: Certificate requests must be NOV_DEC only
+                if request_type_enum == CertificateRequestType.CERTIFICATE and examination_series_enum != ExamSeries.NOV_DEC:
+                    raise HTTPException(
+                        status_code=status.HTTP_400_BAD_REQUEST,
+                        detail="Certificate requests are only available for NOV/DEC examination series",
+                    )
+            else:
+                examination_series_enum = None  # Not used for confirmation/verification
         except ValueError as e:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
@@ -1002,6 +1020,11 @@ async def submit_certificate_request(
                 )
         else:
             # Validate required fields for certificate/attestation
+            if not examination_series:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="examination_series is required for certificate and attestation requests",
+                )
             if not examination_center_id:
                 raise HTTPException(
                     status_code=status.HTTP_400_BAD_REQUEST,
@@ -1086,6 +1109,7 @@ async def submit_certificate_request(
                 "request_type": request_type_enum,
                 "index_number": index_number,
                 "exam_year": exam_year,
+                "examination_series": examination_series_enum,
                 "examination_center_id": examination_center_id,
                 "national_id_number": national_id_number,
                 "delivery_method": delivery_method_enum,

@@ -15,6 +15,7 @@ from app.models import (
     ServiceType,
     TicketPriority,
     TicketActivityType,
+    ExamSeries,
 )
 
 
@@ -24,6 +25,7 @@ class CertificateRequestBase(BaseModel):
     request_type: CertificateRequestType
     index_number: str = Field(..., min_length=1, max_length=50)
     exam_year: int = Field(..., ge=2000, le=2100)
+    examination_series: ExamSeries
     examination_center_id: int | None = None  # Optional for confirmation/verification
     national_id_number: str | None = Field(None, min_length=1, max_length=50)  # Optional for confirmation/verification
     delivery_method: DeliveryMethod | None = None  # Optional for confirmation/verification
@@ -70,6 +72,7 @@ class CertificateRequestResponse(BaseModel):
     request_number: str
     index_number: str
     exam_year: int
+    examination_series: ExamSeries
     examination_center_id: int | None = None
     examination_center_name: str | None = None
     national_id_number: str | None = None

@@ -1546,6 +1546,10 @@ export default function CertificateRequestsPage() {
                     <p>{(selectedRequest as CertificateRequestResponse).exam_year || "N/A"}</p>
                   </div>
                   <div>
+                    <Label>Examination Series</Label>
+                    <p>{(selectedRequest as CertificateRequestResponse).examination_series || "N/A"}</p>
+                  </div>
+                  <div>
                     <Label>Examination Center</Label>
                     <p>{(selectedRequest as CertificateRequestResponse).examination_center_name || "N/A"}</p>
                   </div>

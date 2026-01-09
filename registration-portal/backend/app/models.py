@@ -601,6 +601,7 @@ class CertificateRequest(TicketRequestMixin, Base):
     request_number = Column(String(50), unique=True, nullable=False, index=True)  # Format: REQ-YYYYMMDD-XXXXXX
     index_number = Column(String(50), nullable=False, index=True)  # Candidate's examination index number
     exam_year = Column(Integer, nullable=False, index=True)  # Year of examination
+    examination_series = Column(Enum(ExamSeries, create_constraint=False, values_callable=lambda x: [e.value for e in x]), nullable=False, index=True)  # Examination series (MAY/JUNE or NOV/DEC)
     examination_center_id = Column(Integer, ForeignKey("schools.id", ondelete="SET NULL"), nullable=True, index=True)  # Nullable for confirmation/verification
     national_id_number = Column(String(50), nullable=True, index=True)  # Nullable for confirmation/verification
     national_id_file_path = Column(String(512), nullable=True)  # Path to uploaded ID scan (optional for confirmation/verification)

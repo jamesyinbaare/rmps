@@ -1,115 +1,146 @@
 "use client";
 
+import { useState, useEffect } from "react";
 import Link from "next/link";
-import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Navbar } from "@/components/layout/Navbar";
-import { GraduationCap, Users, Calendar, Shield } from "lucide-react";
+import { BookOpen, Award, ClipboardCheck, ArrowRight } from "lucide-react";
 
 export default function Home() {
+  const [displayText, setDisplayText] = useState("");
+  const [isDeleting, setIsDeleting] = useState(false);
+  const [wordIndex, setWordIndex] = useState(0);
+
+  const words = ["regulator", "promoter"];
+  const typingSpeed = 100;
+  const deletingSpeed = 50;
+  const pauseTime = 2000;
+
+  useEffect(() => {
+    const currentWord = words[wordIndex];
+
+    let timeout: NodeJS.Timeout;
+
+    if (!isDeleting) {
+      // Typing
+      if (displayText.length < currentWord.length) {
+        timeout = setTimeout(() => {
+          setDisplayText(currentWord.substring(0, displayText.length + 1));
+        }, typingSpeed);
+      } else {
+        // Finished typing, pause then start deleting
+        timeout = setTimeout(() => {
+          setIsDeleting(true);
+        }, pauseTime);
+      }
+    } else {
+      // Deleting
+      if (displayText.length > 0) {
+        timeout = setTimeout(() => {
+          setDisplayText(currentWord.substring(0, displayText.length - 1));
+        }, deletingSpeed);
+      } else {
+        // Finished deleting, switch to next word
+        setIsDeleting(false);
+        setWordIndex((prevIndex) => (prevIndex + 1) % words.length);
+      }
+    }
+
+    return () => {
+      if (timeout) clearTimeout(timeout);
+    };
+  }, [displayText, isDeleting, wordIndex]);
+
   return (
     <div className="flex min-h-screen flex-col">
       <Navbar />
 
       <main className="flex-1">
-        {/* Hero Section */}
-        <section className="bg-gradient-to-b from-primary/10 to-background py-20">
-          <div className="container mx-auto px-4">
-            <div className="mx-auto max-w-3xl text-center">
-              <h1 className="mb-6 text-5xl font-bold text-foreground">
-                CTVET Online Services
+        {/* Hero Section with Cards Overlay */}
+        <section className="relative bg-gradient-to-b from-primary/50 via-primary/20 to-background min-h-[50vh] flex items-center">
+          <div className="container mx-auto px-4 w-full">
+            {/* Hero Content */}
+            <div className="mx-auto max-w-4xl text-center pt-20 pb-32">
+              <h1 className="mb-6 text-5xl md:text-6xl font-bold text-foreground leading-[1.2] md:leading-[1.3]">
+                Commission for Technical and Vocational Education and Training
               </h1>
-              <p className="mb-8 text-xl text-muted-foreground">
-                Register for technical and vocational education examinations with ease.
-                Manage your registrations and stay updated on examination schedules.
+              <p className="mb-8 text-2xl md:text-3xl font-semibold text-foreground">
+                Ghana's{" "}
+                <span className="inline-block min-w-[120px] md:min-w-[150px] text-left">
+                  <span className="inline-block">{displayText}</span>
+                  <span className="animate-pulse ml-1">|</span>
+                </span>{" "}
+                of skills
               </p>
-              <div className="flex justify-center gap-4">
-                <Link href="/register-private-account">
-                  <Button size="lg">
-                    Register Now
-                  </Button>
-                </Link>
-                <Link href="/results">
-                  <Button variant="outline" size="lg">
-                    View Results
-                  </Button>
-                </Link>
+            </div>
+
+            {/* Services Cards Overlay */}
+            <div className="relative -mt-16 md:-mt-24 mb-8">
+              <div className="grid gap-6 md:gap-8 md:grid-cols-3 max-w-5xl mx-auto px-4">
+              <Link href="/examinations" className="group">
+                <Card className="h-full transition-all duration-300 hover:shadow-xl hover:scale-105 border-2 hover:border-primary/50 cursor-pointer shadow-lg bg-card">
+                  <CardHeader className="pb-4">
+                    <div className="mb-4 p-3 rounded-lg bg-primary/10 w-fit group-hover:bg-primary/20 transition-colors">
+                      <BookOpen className="h-12 w-12 text-primary" />
+                    </div>
+                    <CardTitle className="text-2xl mb-2 group-hover:text-primary transition-colors">Examinations</CardTitle>
+                    <CardDescription className="text-base">
+                      Access examination registration portals for schools and private candidates
+                    </CardDescription>
+                  </CardHeader>
+                  <CardContent>
+                    <div className="flex items-center text-primary font-medium group-hover:gap-2 transition-all">
+                      Explore Examinations
+                      <ArrowRight className="h-4 w-4 ml-1 group-hover:translate-x-1 transition-transform" />
+                    </div>
+                  </CardContent>
+                </Card>
+              </Link>
+
+              <Link href="/certificate" className="group">
+                <Card className="h-full transition-all duration-300 hover:shadow-xl hover:scale-105 border-2 hover:border-primary/50 cursor-pointer shadow-lg bg-card">
+                  <CardHeader className="pb-4">
+                    <div className="mb-4 p-3 rounded-lg bg-primary/10 w-fit group-hover:bg-primary/20 transition-colors">
+                      <Award className="h-12 w-12 text-primary" />
+                    </div>
+                    <CardTitle className="text-2xl mb-2 group-hover:text-primary transition-colors">Certificate</CardTitle>
+                    <CardDescription className="text-base">
+                      Request certificates, check status, and verify results
+                    </CardDescription>
+                  </CardHeader>
+                  <CardContent>
+                    <div className="flex items-center text-primary font-medium group-hover:gap-2 transition-all">
+                      View Certificate Services
+                      <ArrowRight className="h-4 w-4 ml-1 group-hover:translate-x-1 transition-transform" />
+                    </div>
+                  </CardContent>
+                </Card>
+              </Link>
+
+              <Link href="/results" className="group">
+                <Card className="h-full transition-all duration-300 hover:shadow-xl hover:scale-105 border-2 hover:border-primary/50 cursor-pointer shadow-lg bg-card">
+                  <CardHeader className="pb-4">
+                    <div className="mb-4 p-3 rounded-lg bg-primary/10 w-fit group-hover:bg-primary/20 transition-colors">
+                      <ClipboardCheck className="h-12 w-12 text-primary" />
+                    </div>
+                    <CardTitle className="text-2xl mb-2 group-hover:text-primary transition-colors">Results</CardTitle>
+                    <CardDescription className="text-base">
+                      Check your examination results
+                    </CardDescription>
+                  </CardHeader>
+                  <CardContent>
+                    <div className="flex items-center text-primary font-medium group-hover:gap-2 transition-all">
+                      View Results
+                      <ArrowRight className="h-4 w-4 ml-1 group-hover:translate-x-1 transition-transform" />
+                    </div>
+                  </CardContent>
+                </Card>
+              </Link>
               </div>
             </div>
           </div>
         </section>
 
-        {/* Features Section */}
-        <section className="py-20">
-          <div className="container mx-auto px-4">
-            <h2 className="mb-12 text-center text-3xl font-bold">Features</h2>
-            <div className="grid gap-6 md:grid-cols-2 lg:grid-cols-4">
-              <Card>
-                <CardHeader>
-                  <GraduationCap className="mb-2 h-10 w-10 text-primary" />
-                  <CardTitle>Easy Registration</CardTitle>
-                  <CardDescription>
-                    Register for examinations quickly and securely through our online portal.
-                  </CardDescription>
-                </CardHeader>
-              </Card>
-              <Card>
-                <CardHeader>
-                  <Users className="mb-2 h-10 w-10 text-primary" />
-                  <CardTitle>School Portal</CardTitle>
-                  <CardDescription>
-                    Schools can register multiple candidates efficiently with bulk upload options.
-                  </CardDescription>
-                </CardHeader>
-              </Card>
-              <Card>
-                <CardHeader>
-                  <Calendar className="mb-2 h-10 w-10 text-primary" />
-                  <CardTitle>Schedule Management</CardTitle>
-                  <CardDescription>
-                    View and download examination timetables for all registered subjects.
-                  </CardDescription>
-                </CardHeader>
-              </Card>
-              <Card>
-                <CardHeader>
-                  <Shield className="mb-2 h-10 w-10 text-primary" />
-                  <CardTitle>Secure & Reliable</CardTitle>
-                  <CardDescription>
-                    Your data is protected with industry-standard security measures.
-                  </CardDescription>
-                </CardHeader>
-              </Card>
-            </div>
-          </div>
-        </section>
-
-        {/* CTA Section */}
-        <section className="bg-primary/5 py-20">
-          <div className="container mx-auto px-4">
-            <div className="mx-auto max-w-2xl text-center">
-              <h2 className="mb-4 text-3xl font-bold">Ready to Get Started?</h2>
-              <p className="mb-8 text-lg text-muted-foreground">
-                Create an account or log in to begin registering for examinations.
-              </p>
-              <div className="flex justify-center gap-4">
-                <Link href="/register-private-account">
-                  <Button size="lg">Register for Exam</Button>
-                </Link>
-                <Link href="/login">
-                  <Button variant="outline" size="lg">
-                    Staff Login
-                  </Button>
-                </Link>
-                <Link href="/login/private">
-                  <Button variant="outline" size="lg">
-                    Candidate Login
-                  </Button>
-                </Link>
-              </div>
-            </div>
-          </div>
-        </section>
       </main>
 
       {/* Footer */}
