@@ -4047,6 +4047,14 @@ async def generate_confirmation_response(
         logger.error(f"Failed to save generated response file: {e}", exc_info=True)
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to save response file")
 
+    # Store response reference number (separate from request_number)
+    # If provided in payload, use it; otherwise default to request_number
+    response_reference_number = payload.get("reference_number")
+    if response_reference_number and response_reference_number.strip():
+        confirmation_request.response_reference_number = response_reference_number.strip()
+    else:
+        confirmation_request.response_reference_number = confirmation_request.request_number
+
     confirmation_request.response_file_path = response_path
     confirmation_request.response_file_name = filename
     confirmation_request.response_mime_type = "application/pdf"

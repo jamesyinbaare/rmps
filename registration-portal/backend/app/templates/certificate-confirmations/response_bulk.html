@@ -10,8 +10,11 @@
         color: #111;
         margin: 0;
         padding: 0;
-        padding-top: 160px; /* Space for header and reference section */
-        padding-bottom: 100px; /* Space for fixed footer */
+        padding-bottom: 50px; /* Space for fixed footer (reduced to half) */
+      }
+
+      .content-wrapper {
+        padding-top: 160px; /* Space for header and reference section on first page */
       }
 
       h1 {
@@ -51,70 +54,113 @@
       .sig {
         margin-top: 16px;
       }
+
+      /* Rich text content styles */
+      .rich-text-content {
+        margin-top: 10px;
+      }
+
+      .rich-text-content h1, .rich-text-content h2, .rich-text-content h3 {
+        font-weight: bold;
+        margin: 8px 0 4px 0;
+      }
+
+      .rich-text-content h1 {
+        font-size: 16px;
+      }
+
+      .rich-text-content h2 {
+        font-size: 14px;
+      }
+
+      .rich-text-content h3 {
+        font-size: 13px;
+      }
+
+      .rich-text-content p {
+        margin: 4px 0;
+        line-height: 1.4;
+      }
+
+      .rich-text-content ul, .rich-text-content ol {
+        margin: 4px 0;
+        padding-left: 20px;
+      }
+
+      .rich-text-content li {
+        margin: 2px 0;
+      }
+
+      .rich-text-content table {
+        width: 100%;
+        border-collapse: collapse;
+        margin: 8px 0;
+      }
+
+      .rich-text-content table th,
+      .rich-text-content table td {
+        border: 1px solid #ddd;
+        padding: 4px 6px;
+        text-align: left;
+      }
+
+      .rich-text-content table th {
+        background: #f5f5f5;
+        font-weight: bold;
+      }
+
+      .rich-text-content a {
+        color: #0066cc;
+        text-decoration: underline;
+      }
+
+      .rich-text-content strong {
+        font-weight: bold;
+      }
+
+      .rich-text-content em {
+        font-style: italic;
+      }
+
+      .rich-text-content u {
+        text-decoration: underline;
+      }
+
+      .rich-text-content[style*="text-align: center"] {
+        text-align: center;
+      }
+
+      .rich-text-content[style*="text-align: right"] {
+        text-align: right;
+      }
+
+      .rich-text-content[style*="text-align: left"] {
+        text-align: left;
+      }
     </style>
   </head>
   <body>
-
-
+    <div class="content-wrapper">
     {% set letter = response_payload.get("letter") or {} %}
-    {% if letter.get("subject") %}
-      <div class="meta-row"><strong><u>{{ letter.get("subject") }}</u></strong></div>
-    {% endif %}
-
     {% if letter.get("body") %}
-      <div style="margin-top: 10px; white-space: pre-wrap;">{{ letter.get("body") }}</div>
+      {% set body_content = letter.get("body") %}
+      {% if "<" in body_content and ">" in body_content %}
+        {# Content appears to be HTML #}
+        <div class="rich-text-content">{{ body_content | safe }}</div>
+      {% else %}
+        {# Plain text - maintain backward compatibility #}
+        <div style="margin-top: 10px; white-space: pre-wrap;">{{ body_content }}</div>
+      {% endif %}
     {% elif letter.get("remarks") %}
-      <div style="margin-top: 10px; white-space: pre-wrap;">{{ letter.get("remarks") }}</div>
-    {% endif %}
-
-    <table>
-      <thead>
-        <tr>
-          <th style="width: 22%;">Candidate</th>
-          <th style="width: 14%;">Index No.</th>
-          <th style="width: 20%;">School</th>
-          <th style="width: 18%;">Programme</th>
-          <th style="width: 8%;">Year</th>
-          <th style="width: 18%;">Outcome</th>
-        </tr>
-      </thead>
-      <tbody>
-        {% for row in rows %}
-          <tr>
-            <td>{{ row.get("candidate_name") }}</td>
-            <td>{{ row.get("candidate_index_number") or "N/A" }}</td>
-            <td>{{ row.get("school_name") }}</td>
-            <td>{{ row.get("programme_name") }}</td>
-            <td>{{ row.get("completion_year") }}</td>
-            <td>
-              {% if row.get("outcome_status") %}
-                <div><strong>{{ row.get("outcome_status") }}</strong></div>
-              {% endif %}
-              {% if row.get("outcome_remarks") %}
-                <div class="muted">{{ row.get("outcome_remarks") }}</div>
-              {% endif %}
-              {% if not row.get("outcome_status") and not row.get("outcome_remarks") %}
-                <span class="muted">N/A</span>
-              {% endif %}
-            </td>
-          </tr>
-        {% endfor %}
-      </tbody>
-    </table>
-
-    {% set signatory_text = letter.get("signatory") %}
-    {% if not signatory_text and (letter.get("signatory_name") or letter.get("signatory_title")) %}
-      {% if letter.get("signatory_name") and letter.get("signatory_title") %}
-        {% set signatory_text = letter.get("signatory_name") ~ ", " ~ letter.get("signatory_title") %}
-      {% elif letter.get("signatory_name") %}
-        {% set signatory_text = letter.get("signatory_name") %}
-      {% elif letter.get("signatory_title") %}
-        {% set signatory_text = letter.get("signatory_title") %}
+      {% set remarks_content = letter.get("remarks") %}
+      {% if "<" in remarks_content and ">" in remarks_content %}
+        {# Content appears to be HTML #}
+        <div class="rich-text-content">{{ remarks_content | safe }}</div>
+      {% else %}
+        {# Plain text - maintain backward compatibility #}
+        <div style="margin-top: 10px; white-space: pre-wrap;">{{ remarks_content }}</div>
       {% endif %}
     {% endif %}
-    {% if signatory_text %}
-      <div class="sig" style="text-align: left; white-space: pre-wrap;"><strong>{{ signatory_text }}</strong></div>
-    {% endif %}
-
+    </div>
   </body>
 </html>

@@ -55,8 +55,13 @@ async def generate_confirmation_response_pdf(
             }
         )
 
-    # Get reference number from response_payload or use request_number
-    reference_number = response_payload.get("reference_number") or confirmation_request.request_number
+    # Get reference number from stored response_reference_number, payload, or default to request_number
+    # Priority: response_reference_number (stored in DB) > payload > request_number
+    reference_number = (
+        confirmation_request.response_reference_number
+        or response_payload.get("reference_number")
+        or confirmation_request.request_number
+    )
     letter_date = datetime.utcnow()
     if response_payload.get("letter") and response_payload["letter"].get("date"):
         # If date is provided in payload, use it (assuming it's a string or datetime)
@@ -91,6 +96,7 @@ async def generate_confirmation_response_pdf(
     # Render header and footer templates
     header_html = render_html(context, "certificate-confirmations/response_header.html", templates_dir)
     footer_html = render_html(context, "certificate-confirmations/response_footer.html", templates_dir)
+    footer_subsequent_html = render_html(context, "certificate-confirmations/response_footer_subsequent.html", templates_dir)
 
     app_dir = Path(__file__).parent.parent.resolve()
     base_url = str(app_dir)
@@ -99,6 +105,7 @@ async def generate_confirmation_response_pdf(
         main_html=main_html,
         header_html=header_html,
         footer_html=footer_html,
+        footer_subsequent_html=footer_subsequent_html,
         base_url=base_url,
         side_margin=1.5,
         extra_vertical_margin=30,  # Increased to prevent overlap
