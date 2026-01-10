@@ -41,7 +41,14 @@ from app.schemas.registration import (
     SchoolProgressItem,
     CandidateListResponse,
 )
-from app.schemas.user import SchoolAdminUserCreate, UserResponse, UserListResponse
+from app.schemas.user import (
+    SchoolAdminUserCreate,
+    AdminUserCreate,
+    UserPasswordReset,
+    UserUpdate,
+    UserResponse,
+    UserListResponse,
+)
 from app.schemas.school import (
     SchoolResponse,
     SchoolDetailResponse,
@@ -63,6 +70,7 @@ from app.schemas.schedule import (
     ExaminationScheduleResponse,
 )
 from app.core.security import get_password_hash
+from app.core.cache import invalidate_user_cache
 from app.config import settings
 from app.schemas.programme import (
     ProgrammeCreate,
@@ -175,17 +183,479 @@ async def create_school_admin_user(
     await session.commit()
     await session.refresh(new_user)
 
-    return UserResponse.model_validate(new_user)
+    # Reload with school relationship to get school name
+    stmt_with_school = select(PortalUser).options(selectinload(PortalUser.school)).where(PortalUser.id == new_user.id)
+    result_with_school = await session.execute(stmt_with_school)
+    user_with_school = result_with_school.scalar_one()
+
+    user_dict = {
+        "id": user_with_school.id,
+        "email": user_with_school.email,
+        "full_name": user_with_school.full_name,
+        "role": user_with_school.role,
+        "school_id": user_with_school.school_id,
+        "school_name": user_with_school.school.name if user_with_school.school else None,
+        "is_active": user_with_school.is_active,
+        "created_at": user_with_school.created_at,
+        "updated_at": user_with_school.updated_at,
+    }
+    return UserResponse(**user_dict)
 
 
 @router.get("/school-admin-users", response_model=list[UserResponse])
 async def list_school_admin_users(session: DBSessionDep, current_user: SystemAdminDep) -> list[UserResponse]:
     """List all coordinators. SystemAdmin only."""
-    stmt = select(PortalUser).where(PortalUser.role == Role.SchoolAdmin)
+    stmt = select(PortalUser).options(selectinload(PortalUser.school)).where(PortalUser.role == Role.SchoolAdmin)
     result = await session.execute(stmt)
     users = result.scalars().all()
 
-    return [UserResponse.model_validate(user) for user in users]
+    user_responses = []
+    for user in users:
+        user_dict = {
+            "id": user.id,
+            "email": user.email,
+            "full_name": user.full_name,
+            "role": user.role,
+            "school_id": user.school_id,
+            "school_name": user.school.name if user.school else None,
+            "is_active": user.is_active,
+            "created_at": user.created_at,
+            "updated_at": user.updated_at,
+        }
+        user_responses.append(UserResponse(**user_dict))
+
+    return user_responses
+
+
+@router.get("/users", response_model=UserListResponse)
+async def list_users(
+    session: DBSessionDep,
+    current_user: SystemAdminDep,
+    page: int = Query(1, ge=1),
+    page_size: int = Query(20, ge=1, le=100),
+    role: Role | None = Query(None, description="Filter by role"),
+    is_active: bool | None = Query(None, description="Filter by active status"),
+    search: str | None = Query(None, description="Search by email or full name"),
+) -> UserListResponse:
+    """List all users with filters. SystemAdmin only.
+
+    Excludes PublicUser and User roles from results.
+    """
+    offset = (page - 1) * page_size
+    stmt = select(PortalUser).options(selectinload(PortalUser.school)).where(
+        PortalUser.role != Role.User,
+        PortalUser.role != Role.PublicUser,
+    )
+
+    # Apply filters
+    if role is not None:
+        stmt = stmt.where(PortalUser.role == role)
+    if is_active is not None:
+        stmt = stmt.where(PortalUser.is_active == is_active)
+    if search:
+        search_pattern = f"%{search}%"
+        stmt = stmt.where(
+            (PortalUser.email.ilike(search_pattern)) | (PortalUser.full_name.ilike(search_pattern))
+        )
+
+    # Get total count (rebuild query without eager loading for performance)
+    count_conditions = [
+        PortalUser.role != Role.User,
+        PortalUser.role != Role.PublicUser,
+    ]
+    if role is not None:
+        count_conditions.append(PortalUser.role == role)
+    if is_active is not None:
+        count_conditions.append(PortalUser.is_active == is_active)
+    if search:
+        search_pattern = f"%{search}%"
+        count_conditions.append(
+            (PortalUser.email.ilike(search_pattern)) | (PortalUser.full_name.ilike(search_pattern))
+        )
+
+    count_stmt = select(func.count(PortalUser.id)).where(and_(*count_conditions))
+    total_result = await session.execute(count_stmt)
+    total = total_result.scalar_one()
+
+    # Apply pagination and ordering
+    stmt = stmt.order_by(PortalUser.created_at.desc()).offset(offset).limit(page_size)
+    result = await session.execute(stmt)
+    users = result.scalars().all()
+
+    # Create user responses with school name
+    user_responses = []
+    for user in users:
+        user_dict = {
+            "id": user.id,
+            "email": user.email,
+            "full_name": user.full_name,
+            "role": user.role,
+            "school_id": user.school_id,
+            "school_name": user.school.name if user.school else None,
+            "is_active": user.is_active,
+            "created_at": user.created_at,
+            "updated_at": user.updated_at,
+        }
+        user_responses.append(UserResponse(**user_dict))
+
+    total_pages = (total + page_size - 1) // page_size if total > 0 else 0
+
+    return UserListResponse(
+        items=user_responses,
+        total=total,
+        page=page,
+        page_size=page_size,
+        total_pages=total_pages,
+    )
+
+
+@router.post("/users", response_model=UserResponse, status_code=status.HTTP_201_CREATED)
+async def create_admin_user(
+    user_data: AdminUserCreate,
+    session: DBSessionDep,
+    current_user: SystemAdminDep,
+) -> UserResponse:
+    """Create an admin user. SystemAdmin only.
+
+    Cannot create User or PublicUser roles (those are reserved for self-registration).
+    """
+    # Check if user already exists
+    stmt = select(PortalUser).where(PortalUser.email == user_data.email)
+    result = await session.execute(stmt)
+    existing_user = result.scalar_one_or_none()
+
+    if existing_user:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Email already registered",
+        )
+
+    # Validate school exists if school_id is provided
+    if user_data.school_id is not None:
+        school_stmt = select(School).where(School.id == user_data.school_id)
+        school_result = await session.execute(school_stmt)
+        school = school_result.scalar_one_or_none()
+
+        if not school:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="School not found")
+
+    # Validate password length
+    if len(user_data.password) < settings.password_min_length:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Password must be at least {settings.password_min_length} characters long",
+        )
+
+    # Create new user
+    hashed_password = get_password_hash(user_data.password)
+    new_user = PortalUser(
+        email=user_data.email,
+        hashed_password=hashed_password,
+        full_name=user_data.full_name,
+        role=user_data.role,
+        school_id=user_data.school_id,
+        is_active=True,
+        created_by_user_id=current_user.id,
+    )
+
+    session.add(new_user)
+    await session.commit()
+    await session.refresh(new_user)
+
+    # Reload with school relationship to get school name
+    stmt_with_school = select(PortalUser).options(selectinload(PortalUser.school)).where(PortalUser.id == new_user.id)
+    result_with_school = await session.execute(stmt_with_school)
+    user_with_school = result_with_school.scalar_one()
+
+    user_dict = {
+        "id": user_with_school.id,
+        "email": user_with_school.email,
+        "full_name": user_with_school.full_name,
+        "role": user_with_school.role,
+        "school_id": user_with_school.school_id,
+        "school_name": user_with_school.school.name if user_with_school.school else None,
+        "is_active": user_with_school.is_active,
+        "created_at": user_with_school.created_at,
+        "updated_at": user_with_school.updated_at,
+    }
+    return UserResponse(**user_dict)
+
+
+@router.put("/users/{user_id}", response_model=UserResponse)
+async def update_admin_user(
+    user_id: UUID,
+    user_update: UserUpdate,
+    session: DBSessionDep,
+    current_user: SystemAdminDep,
+) -> UserResponse:
+    """Update a user (deactivate/activate, update name). SystemAdmin only.
+
+    Prevents SystemAdmin from deactivating themselves.
+    """
+    stmt = select(PortalUser).where(PortalUser.id == user_id)
+    result = await session.execute(stmt)
+    user = result.scalar_one_or_none()
+
+    if not user:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
+
+    # Prevent SystemAdmin from deactivating themselves
+    if user_id == current_user.id and user_update.is_active is False:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="You cannot deactivate yourself",
+        )
+
+    # Update fields if provided
+    if user_update.full_name is not None:
+        user.full_name = user_update.full_name
+    if user_update.is_active is not None:
+        user.is_active = user_update.is_active
+
+    await session.commit()
+    await session.refresh(user)
+
+    # Reload with school relationship to get school name
+    stmt_with_school = select(PortalUser).options(selectinload(PortalUser.school)).where(PortalUser.id == user.id)
+    result_with_school = await session.execute(stmt_with_school)
+    user_with_school = result_with_school.scalar_one()
+
+    # Invalidate cache
+    invalidate_user_cache(user_id=user_with_school.id, email=user_with_school.email)
+
+    user_dict = {
+        "id": user_with_school.id,
+        "email": user_with_school.email,
+        "full_name": user_with_school.full_name,
+        "role": user_with_school.role,
+        "school_id": user_with_school.school_id,
+        "school_name": user_with_school.school.name if user_with_school.school else None,
+        "is_active": user_with_school.is_active,
+        "created_at": user_with_school.created_at,
+        "updated_at": user_with_school.updated_at,
+    }
+    return UserResponse(**user_dict)
+
+
+@router.post("/users/bulk-upload", response_model=BulkUploadResponse, status_code=status.HTTP_200_OK)
+async def bulk_upload_school_admin_users(
+    file: UploadFile = File(...),
+    session: DBSessionDep = None,
+    current_user: SystemAdminDep = None,
+) -> BulkUploadResponse:
+    """Bulk upload school admin users via CSV or Excel file.
+
+    Expected columns:
+    - Full_name: User's full name
+    - email_address: User's email address
+    - school_code: School code to associate the user with
+    - password: User's password (minimum 8 characters)
+    """
+    # Read file content
+    file_content = await file.read()
+    filename = file.filename or "unknown"
+
+    # Parse file
+    try:
+        if filename.endswith('.csv'):
+            # Try different encodings
+            try:
+                text_content = file_content.decode('utf-8')
+            except UnicodeDecodeError:
+                text_content = file_content.decode('latin-1')
+
+            csv_reader = csv.DictReader(io.StringIO(text_content))
+            rows = list(csv_reader)
+
+            if not rows:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="CSV file is empty or has no data rows"
+                )
+
+            # Convert to DataFrame for easier processing
+            df = pd.DataFrame(rows)
+        elif filename.endswith(('.xlsx', '.xls')):
+            df = pd.read_excel(io.BytesIO(file_content), engine='openpyxl')
+        else:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="File must be CSV or Excel format (.csv, .xlsx, .xls)"
+            )
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Error parsing file: {str(exc)}"
+        )
+
+    if df.empty:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="File is empty or contains no data"
+        )
+
+    # Normalize column names (strip whitespace, handle case insensitivity)
+    df.columns = df.columns.str.strip()
+    column_mapping = {col.lower(): col for col in df.columns}
+
+    # Required columns
+    required_columns = {
+        'full_name': ['full_name', 'full name', 'name'],
+        'email_address': ['email_address', 'email address', 'email'],
+        'school_code': ['school_code', 'school code', 'school'],
+        'password': ['password', 'pwd'],
+    }
+
+    missing_columns = []
+    column_map = {}
+
+    for key, possible_names in required_columns.items():
+        found = False
+        for name in possible_names:
+            if name.lower() in column_mapping:
+                column_map[key] = column_mapping[name.lower()]
+                found = True
+                break
+        if not found:
+            missing_columns.append(key)
+
+    if missing_columns:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Missing required columns: {', '.join(missing_columns)}. Found columns: {', '.join(df.columns.tolist())}"
+        )
+
+    successful = 0
+    failed = 0
+    errors: list[BulkUploadError] = []
+
+    # Track emails within the batch for duplicate detection
+    batch_emails: set[str] = set()
+
+    for idx, row in df.iterrows():
+        row_number = int(idx) + 2  # +2 because Excel/CSV is 1-indexed and has header
+        try:
+            # Extract values using mapped column names
+            full_name = str(row[column_map['full_name']]).strip() if pd.notna(row[column_map['full_name']]) else ""
+            email_address = str(row[column_map['email_address']]).strip().lower() if pd.notna(row[column_map['email_address']]) else ""
+            school_code = str(row[column_map['school_code']]).strip() if pd.notna(row[column_map['school_code']]) else ""
+            password = str(row[column_map['password']]).strip() if pd.notna(row[column_map['password']]) else ""
+
+            # Validate required fields
+            if not full_name:
+                raise ValueError("Full_name is required")
+            if not email_address:
+                raise ValueError("email_address is required")
+            if not school_code:
+                raise ValueError("school_code is required")
+            if not password:
+                raise ValueError("password is required")
+
+            # Validate email format
+            if '@' not in email_address or '.' not in email_address.split('@')[-1]:
+                raise ValueError(f"Invalid email format: {email_address}")
+
+            # Validate password length
+            if len(password) < settings.password_min_length:
+                raise ValueError(f"Password must be at least {settings.password_min_length} characters long")
+
+            # Validate full name length
+            if len(full_name) > 255:
+                raise ValueError("Full_name must be 255 characters or less")
+
+            # Check for duplicate email in batch
+            if email_address in batch_emails:
+                raise ValueError(f"Duplicate email in upload file: {email_address}")
+
+            # Check if user already exists
+            user_stmt = select(PortalUser).where(PortalUser.email == email_address)
+            user_result = await session.execute(user_stmt)
+            existing_user = user_result.scalar_one_or_none()
+
+            if existing_user:
+                raise ValueError(f"User with email '{email_address}' already exists")
+
+            # Look up school by code
+            school_stmt = select(School).where(School.code == school_code)
+            school_result = await session.execute(school_stmt)
+            school = school_result.scalar_one_or_none()
+
+            if not school:
+                raise ValueError(f"School with code '{school_code}' not found")
+
+            # Create user
+            hashed_password = get_password_hash(password)
+            new_user = PortalUser(
+                email=email_address,
+                hashed_password=hashed_password,
+                full_name=full_name,
+                role=Role.SchoolAdmin,
+                school_id=school.id,
+                is_active=True,
+                created_by_user_id=current_user.id,
+            )
+
+            session.add(new_user)
+            batch_emails.add(email_address)
+            successful += 1
+
+        except Exception as e:
+            failed += 1
+            errors.append(BulkUploadError(
+                row_number=row_number,
+                error_message=str(e),
+                field=None
+            ))
+
+    # Commit all successful users
+    try:
+        await session.commit()
+    except Exception as e:
+        # Rollback on commit error
+        await session.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error committing users: {str(e)}"
+        )
+
+    return BulkUploadResponse(
+        total_rows=len(df),
+        successful=successful,
+        failed=failed,
+        errors=errors
+    )
+
+
+@router.post("/users/{user_id}/reset-password", status_code=status.HTTP_204_NO_CONTENT)
+async def reset_user_password(
+    user_id: UUID,
+    password_reset: UserPasswordReset,
+    session: DBSessionDep,
+    current_user: SystemAdminDep,
+) -> None:
+    """Reset user password. SystemAdmin only."""
+    stmt = select(PortalUser).where(PortalUser.id == user_id)
+    result = await session.execute(stmt)
+    user = result.scalar_one_or_none()
+
+    if not user:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
+
+    # Validate password length
+    if len(password_reset.new_password) < settings.password_min_length:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Password must be at least {settings.password_min_length} characters long",
+        )
+
+    # Update password
+    user.hashed_password = get_password_hash(password_reset.new_password)
+    await session.commit()
+
+    # Invalidate cache
+    invalidate_user_cache(user_id=user.id, email=user.email)
 
 
 @router.get("/schools", response_model=SchoolListResponse)

@@ -11,6 +11,7 @@ import {
   Settings,
   HelpCircle,
   Upload,
+  UserCog,
 } from "lucide-react";
 import type { Role } from "@/types";
 import { LucideIcon } from "lucide-react";
@@ -35,6 +36,12 @@ export const systemAdminMenuItems: MenuItem[] = [
     href: "/dashboard/school-admins",
     label: "Coordinators",
     icon: Users,
+    roles: ["SystemAdmin", "Director", "DeputyDirector", "PrincipalManager", "SeniorManager", "Manager", "Staff"],
+  },
+  {
+    href: "/dashboard/admin/users",
+    label: "User Management",
+    icon: UserCog,
     roles: ["SystemAdmin", "Director", "DeputyDirector", "PrincipalManager", "SeniorManager", "Manager", "Staff"],
   },
   {
