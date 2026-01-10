@@ -33,7 +33,7 @@ export default function DashboardPage() {
         }
 
         // Redirect school users (SchoolAdmin, User) to their school dashboard
-        if (userData.role === "SchoolAdmin" || userData.role === "User") {
+        if (userData.role === "SchoolAdmin" || userData.role === "SchoolStaff") {
           setRedirecting(true);
           router.push("/dashboard/my-school");
           return;

@@ -31,8 +31,8 @@ export default function DashboardLayoutWrapper({
         try {
           const user = await getCurrentUser();
 
-          // Redirect school users (SchoolAdmin, User) to their school dashboard
-          if (user.role === "SchoolAdmin" || user.role === "User") {
+          // Redirect school users (SchoolAdmin, SchoolStaff) to their school dashboard
+          if (user.role === "SchoolAdmin" || user.role === "SchoolStaff") {
             router.push("/dashboard/my-school");
             setChecking(false);
             return;

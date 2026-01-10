@@ -45,7 +45,7 @@ export function LoginForm({ onLoginSuccess }: LoginFormProps = {}) {
       toast.success("Login successful");
       if (user.role === "PublicUser") {
         router.push("/dashboard/private");
-      } else if (user.role === "SchoolAdmin" || user.role === "User") {
+      } else if (user.role === "SchoolAdmin" || user.role === "SchoolStaff") {
         // SchoolAdmin and User go directly to school dashboard
         router.push("/dashboard/my-school");
       } else {

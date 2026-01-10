@@ -35,8 +35,8 @@ export default function LoginPage() {
             toast.error("Access to this page is restricted");
             return;
           }
-          // Redirect school users (SchoolAdmin, User) to their school dashboard
-          if (user.role === "SchoolAdmin" || user.role === "User") {
+          // Redirect school users (SchoolAdmin, SchoolStaff) to their school dashboard
+          if (user.role === "SchoolAdmin" || user.role === "SchoolStaff") {
             router.push("/dashboard/my-school");
           } else {
             // SystemAdmin, Director, DeputyDirector, PrincipalManager, and other admin roles go to main dashboard
@@ -82,7 +82,7 @@ export default function LoginPage() {
                 return false; // Suppress success message
               }
               // Redirect school users (SchoolAdmin, User) to their school dashboard
-              if (user.role === "SchoolAdmin" || user.role === "User") {
+              if (user.role === "SchoolAdmin" || user.role === "SchoolStaff") {
                 router.push("/dashboard/my-school");
               } else {
                 // SystemAdmin, Director, DeputyDirector, PrincipalManager, and other admin roles go to main dashboard

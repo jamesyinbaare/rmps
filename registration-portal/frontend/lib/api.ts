@@ -114,7 +114,7 @@ async function refreshAccessToken(): Promise<Token> {
  * Fetch with automatic token refresh on 401 errors.
  * This wrapper handles token refresh and retries the request automatically.
  */
-async function fetchWithAuth(
+export async function fetchWithAuth(
   url: string,
   options: RequestInit = {},
   retryCount = 0
@@ -204,7 +204,7 @@ async function fetchWithAuth(
   return response;
 }
 
-async function handleResponse<T>(response: Response): Promise<T> {
+export async function handleResponse<T>(response: Response): Promise<T> {
   if (!response.ok) {
     // Handle 401 Unauthorized - token expired or invalid
     if (response.status === 401) {
@@ -345,7 +345,7 @@ const ROLE_MAP: Record<number, Role> = {
   50: "Manager",
   60: "Staff",
   70: "SchoolAdmin",
-  80: "User",
+  80: "SchoolStaff",
   90: "PublicUser",
 };
 

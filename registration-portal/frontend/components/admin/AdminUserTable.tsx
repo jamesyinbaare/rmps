@@ -2,6 +2,7 @@
 
 import * as React from "react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import {
   ColumnDef,
   ColumnFiltersState,
@@ -14,7 +15,7 @@ import {
   getSortedRowModel,
   useReactTable,
 } from "@tanstack/react-table";
-import { ArrowUpDown, ChevronDown, MoreVertical, Key, Edit, UserCheck, UserX, ChevronLeft, ChevronRight } from "lucide-react";
+import { ArrowUpDown, ChevronDown, MoreVertical, Key, Edit, UserCheck, UserX, ChevronLeft, ChevronRight, Shield } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import {
@@ -63,7 +64,7 @@ const ROLE_DISPLAY_NAMES: Record<Role, string> = {
   Manager: "Manager",
   Staff: "Staff",
   SchoolAdmin: "School Admin",
-  User: "User",
+  SchoolStaff: "SchoolStaff",
   PublicUser: "Public User",
 };
 
@@ -75,6 +76,7 @@ export function AdminUserTable({
   onResetPassword,
   onToggleActive,
 }: AdminUserTableProps) {
+  const router = useRouter();
   const [sorting, setSorting] = React.useState<SortingState>([]);
   const [columnFilters, setColumnFilters] = React.useState<ColumnFiltersState>([]);
   const [columnVisibility, setColumnVisibility] = React.useState<VisibilityState>({});
@@ -243,6 +245,12 @@ export function AdminUserTable({
                     Reset Password
                   </DropdownMenuItem>
                 )}
+                <DropdownMenuItem
+                  onClick={() => router.push(`/dashboard/admin/permissions/users/${user.id}`)}
+                >
+                  <Shield className="mr-2 h-4 w-4" />
+                  Manage Permissions
+                </DropdownMenuItem>
                 {onToggleActive && (
                   <>
                     <DropdownMenuSeparator />

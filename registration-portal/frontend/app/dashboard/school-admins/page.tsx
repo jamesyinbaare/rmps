@@ -23,7 +23,7 @@ export default function CoordinatorsPage() {
         const user = await getCurrentUser();
         // Only SystemAdmin and other admin roles can access this page
         // SchoolAdmin and User should be redirected
-        if (user.role === "SchoolAdmin" || user.role === "User" || user.role === "PublicUser") {
+        if (user.role === "SchoolAdmin" || user.role === "SchoolStaff" || user.role === "PublicUser") {
           toast.error("Access denied. This page is only available to system administrators.");
           router.push("/dashboard/my-school");
           return;

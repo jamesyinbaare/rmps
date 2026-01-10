@@ -9,7 +9,7 @@ export type Role =
   | "Manager"
   | "Staff"
   | "SchoolAdmin"
-  | "User"
+  | "SchoolStaff"
   | "PublicUser";
 
 export interface User {

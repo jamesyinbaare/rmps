@@ -32,7 +32,7 @@ export function Sidebar() {
         setUser(userData);
 
         // Load school data for school users
-        if (userData.role === "SchoolAdmin" || userData.role === "User") {
+        if (userData.role === "SchoolAdmin" || userData.role === "SchoolStaff") {
           try {
             const dashboard = await getSchoolDashboard();
             setSchoolData(dashboard);
@@ -50,7 +50,7 @@ export function Sidebar() {
     loadData();
   }, []);
 
-  const isSchoolUser = user?.role === "SchoolAdmin" || user?.role === "User";
+  const isSchoolUser = user?.role === "SchoolAdmin" || user?.role === "SchoolStaff";
   const isPrivateUser = user?.role === "PublicUser";
 
   // Private users have their own dashboard and shouldn't see this sidebar
