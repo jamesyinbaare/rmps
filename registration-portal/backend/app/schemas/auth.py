@@ -81,6 +81,7 @@ class UserResponse(BaseModel):
     full_name: str
     role: Role
     school_id: int | None = None
+    school_name: str | None = None
     is_active: bool
     created_at: datetime
     updated_at: datetime
