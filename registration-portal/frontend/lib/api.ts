@@ -13,6 +13,11 @@ import type {
   RegistrationExam,
   RegistrationExamCreate,
   SchoolAdminCreate,
+  AdminUserCreate,
+  UserPasswordReset,
+  UserUpdate,
+  UserListResponse,
+  UserListFilters,
   Programme,
   ProgrammeListResponse,
   ProgrammeBulkUploadResponse,
@@ -363,7 +368,31 @@ export async function getCurrentUser(): Promise<User> {
   return transformUser(user);
 }
 
-import type { Role } from "@/types";
+export interface UserSelfUpdate {
+  full_name: string;
+}
+
+export interface UserPasswordChange {
+  current_password: string;
+  new_password: string;
+}
+
+export async function updateCurrentUser(data: UserSelfUpdate): Promise<User> {
+  const response = await fetchWithAuth("/api/v1/auth/me", {
+    method: "PUT",
+    body: JSON.stringify(data),
+  });
+  const user = await handleResponse<User>(response);
+  return transformUser(user);
+}
+
+export async function changeCurrentUserPassword(data: UserPasswordChange): Promise<void> {
+  const response = await fetchWithAuth("/api/v1/auth/me/change-password", {
+    method: "POST",
+    body: JSON.stringify(data),
+  });
+  await handleResponse<void>(response);
+}
 
 export interface PublicUserCreate {
   email: string;
@@ -683,6 +712,28 @@ export async function bulkUploadSchools(file: File): Promise<BulkUploadResponse>
   return handleResponse<BulkUploadResponse>(response);
 }
 
+export async function bulkUploadSchoolAdminUsers(file: File): Promise<BulkUploadResponse> {
+  const formData = new FormData();
+  formData.append("file", file);
+
+  const token = getAccessToken();
+  const headers = new Headers();
+
+  if (token) {
+    headers.set("Authorization", `Bearer ${token}`);
+  }
+  // Don't set Content-Type for FormData - browser will set it with boundary
+
+  const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL || "http://localhost:8001";
+  const response = await fetch(`${API_BASE_URL}/api/v1/admin/users/bulk-upload`, {
+    method: "POST",
+    headers,
+    body: formData,
+  });
+
+  return handleResponse<BulkUploadResponse>(response);
+}
+
 export async function createSchoolAdmin(data: SchoolAdminCreate): Promise<User> {
   const response = await fetchWithAuth("/api/v1/admin/school-admin-users", {
     method: "POST",
@@ -703,6 +754,60 @@ export async function listSchoolAdmins(): Promise<User[]> {
 
 // Alias for consistency with new terminology
 export const listCoordinators = listSchoolAdmins;
+
+// Admin user management functions
+export async function listAdminUsers(filters?: {
+  page?: number;
+  page_size?: number;
+  role?: string | null;
+  is_active?: boolean | null;
+  search?: string | null;
+}): Promise<UserListResponse> {
+  const params = new URLSearchParams();
+  if (filters?.page) params.append("page", filters.page.toString());
+  if (filters?.page_size) params.append("page_size", filters.page_size.toString());
+  if (filters?.role) params.append("role", filters.role);
+  if (filters?.is_active !== undefined && filters?.is_active !== null) {
+    params.append("is_active", filters.is_active.toString());
+  }
+  if (filters?.search) params.append("search", filters.search);
+
+  const queryString = params.toString();
+  const url = `/api/v1/admin/users${queryString ? `?${queryString}` : ""}`;
+  const response = await fetchWithAuth(url);
+  const result = await handleResponse<UserListResponse>(response);
+  // Transform the items in the response
+  return {
+    ...result,
+    items: transformUsers(result.items),
+  };
+}
+
+export async function createAdminUser(data: AdminUserCreate): Promise<User> {
+  const response = await fetchWithAuth("/api/v1/admin/users", {
+    method: "POST",
+    body: JSON.stringify(data),
+  });
+  const user = await handleResponse<User>(response);
+  return transformUser(user);
+}
+
+export async function updateAdminUser(userId: string, data: UserUpdate): Promise<User> {
+  const response = await fetchWithAuth(`/api/v1/admin/users/${userId}`, {
+    method: "PUT",
+    body: JSON.stringify(data),
+  });
+  const user = await handleResponse<User>(response);
+  return transformUser(user);
+}
+
+export async function resetUserPassword(userId: string, newPassword: string): Promise<void> {
+  const response = await fetchWithAuth(`/api/v1/admin/users/${userId}/reset-password`, {
+    method: "POST",
+    body: JSON.stringify({ new_password: newPassword }),
+  });
+  await handleResponse(response);
+}
 
 export async function createExam(data: RegistrationExamCreate): Promise<RegistrationExam> {
   const response = await fetchWithAuth("/api/v1/admin/exams", {

@@ -95,7 +95,14 @@ export function UserMenu({ user }: UserMenuProps) {
               </div>
             </div>
             <DropdownMenuSeparator className="my-2" />
-            <DropdownMenuItem className="text-base text-card-foreground mb-1">
+            <DropdownMenuItem
+              onClick={(e) => {
+                e.preventDefault();
+                router.push("/dashboard/settings");
+                setDropdownOpen(false);
+              }}
+              className="text-base text-card-foreground mb-1"
+            >
               <Settings className="mr-2 h-6 w-6 text-card-foreground" />
               <span>Profile Settings</span>
             </DropdownMenuItem>

@@ -18,6 +18,7 @@ export interface User {
   full_name: string;
   role: Role;
   school_id: number | null;
+  school_name?: string | null;
   is_active: boolean;
   created_at: string;
   updated_at: string;
@@ -177,6 +178,39 @@ export interface SchoolAdminCreate {
   password: string;
   full_name: string;
   school_id: number;
+}
+
+export interface AdminUserCreate {
+  email: string;
+  password: string;
+  full_name: string;
+  role: Role;
+  school_id?: number | null;
+}
+
+export interface UserPasswordReset {
+  new_password: string;
+}
+
+export interface UserUpdate {
+  full_name?: string;
+  is_active?: boolean;
+}
+
+export interface UserListFilters {
+  page?: number;
+  page_size?: number;
+  role?: Role | null;
+  is_active?: boolean | null;
+  search?: string | null;
+}
+
+export interface UserListResponse {
+  items: User[];
+  total: number;
+  page: number;
+  page_size: number;
+  total_pages: number;
 }
 
 export interface RegistrationCandidateCreate {
