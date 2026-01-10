@@ -51,6 +51,8 @@ class Settings(BaseSettings):
     pdf_signing_location: str = "Ghana"  # Signing location (visible in signature properties)
     pdf_signing_contact_info: str = ""  # Contact information (visible in signature properties)
     pdf_signing_organization: str = ""  # Organization name (for certificate metadata)
+    # Permission management settings
+    permission_management_min_role: str = "Director"  # Minimum role required to manage permissions (role name as string)
 
 
 class LoggingSettings(BaseSettings):

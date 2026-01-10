@@ -118,7 +118,7 @@ class RoleChecker:
                 Role.Manager: "Manager",
                 Role.Staff: "Staff",
                 Role.SchoolAdmin: "SchoolAdmin",
-                Role.User: "User",
+                Role.SchoolStaff: "SchoolStaff",
                 Role.PublicUser: "PublicUser",
             }
             raise HTTPException(
@@ -137,7 +137,7 @@ senior_manager_or_above = RoleChecker(min_role=Role.SeniorManager)
 manager_or_above = RoleChecker(min_role=Role.Manager)
 staff_or_above = RoleChecker(min_role=Role.Staff)
 school_admin_or_above = RoleChecker(min_role=Role.SchoolAdmin)
-school_users_or_above = RoleChecker(min_role=Role.User)  # Allows SchoolAdmin and User
+school_users_or_above = RoleChecker(min_role=Role.SchoolStaff)  # Allows SchoolAdmin and SchoolStaff
 all_authenticated = RoleChecker(min_role=Role.PublicUser)  # Allows all roles
 
 # Typed dependencies for use in route handlers

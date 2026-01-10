@@ -4,13 +4,14 @@ from datetime import datetime, timezone
 from typing import Annotated
 from uuid import UUID
 
-from fastapi import APIRouter, HTTPException, Query, status, UploadFile, File, Form, BackgroundTasks, Body
+from fastapi import APIRouter, HTTPException, Query, status, UploadFile, File, Form, BackgroundTasks, Body, Depends
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 from sqlalchemy import select, func, delete, insert, update, cast, String, type_coerce
 from sqlalchemy.orm import selectinload
 
 from app.dependencies.auth import CurrentUserDep, SystemAdminDep, AdminDep
+from app.dependencies.permissions import PermissionChecker
 from app.dependencies.database import DBSessionDep
 from app.models import (
     PortalUser,
@@ -230,20 +231,20 @@ async def list_school_admin_users(session: DBSessionDep, current_user: SystemAdm
 @router.get("/users", response_model=UserListResponse)
 async def list_users(
     session: DBSessionDep,
-    current_user: SystemAdminDep,
+    current_user: Annotated[PortalUser, Depends(PermissionChecker("user_management.view"))],
     page: int = Query(1, ge=1),
     page_size: int = Query(20, ge=1, le=100),
     role: Role | None = Query(None, description="Filter by role"),
     is_active: bool | None = Query(None, description="Filter by active status"),
     search: str | None = Query(None, description="Search by email or full name"),
 ) -> UserListResponse:
-    """List all users with filters. SystemAdmin only.
+    """List all users with filters. Requires user_management.view permission.
 
-    Excludes PublicUser and User roles from results.
+    Excludes PublicUser and SchoolStaff roles from results.
     """
     offset = (page - 1) * page_size
     stmt = select(PortalUser).options(selectinload(PortalUser.school)).where(
-        PortalUser.role != Role.User,
+        PortalUser.role != Role.SchoolStaff,
         PortalUser.role != Role.PublicUser,
     )
 
@@ -260,7 +261,7 @@ async def list_users(
 
     # Get total count (rebuild query without eager loading for performance)
     count_conditions = [
-        PortalUser.role != Role.User,
+        PortalUser.role != Role.SchoolStaff,
         PortalUser.role != Role.PublicUser,
     ]
     if role is not None:

@@ -12,7 +12,7 @@ class SchoolUserCreate(BaseModel):
     email: EmailStr
     password: str
     full_name: str = Field(..., min_length=1, max_length=255)
-    role: Role = Role.User
+    role: Role = Role.SchoolStaff
 
 
 class SchoolAdminUserCreate(BaseModel):
@@ -25,7 +25,7 @@ class SchoolAdminUserCreate(BaseModel):
 
 
 class AdminUserCreate(BaseModel):
-    """Schema for creating an admin user (by system admin). Excludes User and PublicUser roles."""
+    """Schema for creating an admin user (by system admin). Excludes SchoolStaff and PublicUser roles."""
 
     email: EmailStr
     password: str
@@ -36,7 +36,7 @@ class AdminUserCreate(BaseModel):
     @field_validator("role", mode="before")
     @classmethod
     def validate_role(cls, v: Role | str | int) -> Role:
-        """Normalize role to Role enum and validate it's not User or PublicUser."""
+        """Normalize role to Role enum and validate it's not SchoolStaff or PublicUser."""
         if isinstance(v, Role):
             role = v
         elif isinstance(v, str):
@@ -52,9 +52,9 @@ class AdminUserCreate(BaseModel):
         else:
             raise ValueError(f"Invalid role. Expected Role enum, string, or int, got {type(v)}")
 
-        # Reject User and PublicUser roles
-        if role == Role.User or role == Role.PublicUser:
-            raise ValueError("Cannot create User or PublicUser accounts. These roles are reserved for self-registration.")
+        # Reject SchoolStaff and PublicUser roles
+        if role == Role.SchoolStaff or role == Role.PublicUser:
+            raise ValueError("Cannot create SchoolStaff or PublicUser accounts. These roles are reserved for self-registration.")
 
         return role
 

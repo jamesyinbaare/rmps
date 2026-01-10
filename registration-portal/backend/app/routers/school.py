@@ -969,11 +969,11 @@ async def create_school_user(
             detail=f"Cannot create user: You have reached the maximum of {MAX_ACTIVE_USERS_PER_SCHOOL} active users. Please deactivate an existing user first.",
         )
 
-    # Ensure role is User (coordinators can only create User accounts)
-    if user_data.role != Role.User:
+    # Ensure role is SchoolStaff (coordinators can only create SchoolStaff accounts)
+    if user_data.role != Role.SchoolStaff:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
-            detail="Coordinators can only create SCHOOL_USER accounts",
+            detail="Coordinators can only create SchoolStaff accounts",
         )
 
     # Check if user already exists
@@ -1000,7 +1000,7 @@ async def create_school_user(
         email=user_data.email,
         hashed_password=hashed_password,
         full_name=user_data.full_name,
-        role=Role.User,
+        role=Role.SchoolStaff,
         school_id=current_user.school_id,
         is_active=True,
         created_by_user_id=current_user.id,
