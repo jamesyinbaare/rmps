@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
+import { Navbar } from "@/components/layout/Navbar";
 import { checkPublicResults, generateResultsPDF } from "@/lib/api";
 import type { PublicResultResponse, Grade } from "@/types";
 import { toast } from "sonner";
@@ -80,8 +81,13 @@ export default function ResultsDetailPage() {
 
   if (loading) {
     return (
-      <div className="container mx-auto py-8 px-4 max-w-5xl">
-        <div className="text-center py-12">Loading results...</div>
+      <div className="flex min-h-screen flex-col">
+        <Navbar />
+        <main className="flex-1">
+          <div className="space-y-6 max-w-4xl mx-auto px-4 py-8">
+            <div className="text-center py-12 text-muted-foreground">Loading results...</div>
+          </div>
+        </main>
       </div>
     );
   }
@@ -91,7 +97,9 @@ export default function ResultsDetailPage() {
   }
 
   return (
-    <>
+    <div className="flex min-h-screen flex-col">
+      <Navbar />
+      <main className="flex-1">
       <style>{`
         @media print {
           @page {
@@ -104,7 +112,7 @@ export default function ResultsDetailPage() {
           }
         }
       `}</style>
-      <div className="container mx-auto py-8 px-4 max-w-5xl print:p-0 print:max-w-full">
+      <div className="space-y-6 max-w-4xl mx-auto px-4 py-8 print:p-0 print:max-w-full">
 
       {/* Print Header - only visible when printing */}
       <div className="hidden print:block mb-2 text-center border-b pb-2">
@@ -115,11 +123,19 @@ export default function ResultsDetailPage() {
       </div>
 
       {/* Back button - hidden when printing */}
-      <div className="mb-6 no-print">
-        <Button variant="outline" onClick={() => router.push("/results")}>
+      <div className="no-print">
+        <Button variant="ghost" onClick={() => router.push("/results")}>
           <ArrowLeft className="mr-2 h-4 w-4" />
-          Back to Search
+          Back
         </Button>
+      </div>
+
+      {/* Header */}
+      <div className="no-print">
+        <h1 className="text-3xl font-bold">Examination Results</h1>
+        <p className="text-muted-foreground">
+          View your examination results and download or print your certificate
+        </p>
       </div>
 
       {/* Results Card */}
@@ -229,7 +245,7 @@ export default function ResultsDetailPage() {
       </Card>
 
       {/* Action buttons at bottom - hidden when printing */}
-      <div className="flex gap-4 mt-6 no-print justify-center">
+      <div className="flex gap-4 no-print justify-center">
         <Button onClick={handlePrint} size="lg">
           <Printer className="mr-2 h-5 w-5" />
           Print Results
@@ -246,6 +262,7 @@ export default function ResultsDetailPage() {
         <p className="mt-1">Generated on {new Date().toLocaleDateString()}</p>
       </div>
       </div>
-    </>
+      </main>
+    </div>
   );
 }
