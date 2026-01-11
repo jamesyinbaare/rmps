@@ -49,7 +49,7 @@ const ROLE_DISPLAY_NAMES: Record<Role, string> = {
   Manager: "Manager",
   Staff: "Staff",
   SchoolAdmin: "School Admin",
-  User: "User",
+  SchoolStaff: "SchoolStaff",
   PublicUser: "Public User",
 };
 

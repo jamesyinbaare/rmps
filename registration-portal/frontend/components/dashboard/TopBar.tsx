@@ -22,7 +22,7 @@ export function TopBar() {
       case "PublicUser":
         return "CTVET Private Candidate Examination Portal";
       case "SchoolAdmin":
-      case "User":
+      case "SchoolStaff":
         return "School Dashboard";
       case "SystemAdmin":
         return "Admin Dashboard";

@@ -10,8 +10,6 @@ import {
   Shield,
   Settings,
   HelpCircle,
-  Upload,
-  UserCog,
 } from "lucide-react";
 import type { Role } from "@/types";
 import { LucideIcon } from "lucide-react";
@@ -30,18 +28,6 @@ export const systemAdminMenuItems: MenuItem[] = [
     href: "/dashboard",
     label: "Dashboard",
     icon: GraduationCap,
-    roles: ["SystemAdmin", "Director", "DeputyDirector", "PrincipalManager", "SeniorManager", "Manager", "Staff"],
-  },
-  {
-    href: "/dashboard/school-admins",
-    label: "Coordinators",
-    icon: Users,
-    roles: ["SystemAdmin", "Director", "DeputyDirector", "PrincipalManager", "SeniorManager", "Manager", "Staff"],
-  },
-  {
-    href: "/dashboard/admin/users",
-    label: "User Management",
-    icon: UserCog,
     roles: ["SystemAdmin", "Director", "DeputyDirector", "PrincipalManager", "SeniorManager", "Manager", "Staff"],
   },
   {
@@ -91,7 +77,7 @@ export const systemAdminMoreActions: MenuItem[] = [
     roles: ["SystemAdmin", "Director", "DeputyDirector", "PrincipalManager", "SeniorManager", "Manager", "Staff"],
   },
   {
-    href: "/dashboard/settings",
+    href: "/dashboard/admin/settings",
     label: "Settings",
     icon: Settings,
     roles: ["SystemAdmin", "Director", "DeputyDirector", "PrincipalManager", "SeniorManager", "Manager", "Staff"],
@@ -110,31 +96,31 @@ export const schoolUserMenuItems: MenuItem[] = [
     href: "/dashboard/my-school",
     label: "My School",
     icon: Building2,
-    roles: ["SchoolAdmin", "User"],
+    roles: ["SchoolAdmin", "SchoolStaff"],
   },
   {
     href: "/dashboard/my-school/register",
     label: "Registration",
     icon: FileText,
-    roles: ["SchoolAdmin", "User"],
+    roles: ["SchoolAdmin", "SchoolStaff"],
   },
   {
     href: "/dashboard/my-school/candidates",
     label: "Candidates",
     icon: GraduationCap,
-    roles: ["SchoolAdmin", "User"],
+    roles: ["SchoolAdmin", "SchoolStaff"],
   },
   {
     href: "/dashboard/my-school/photo-album",
     label: "Photo Album",
     icon: Images,
-    roles: ["SchoolAdmin", "User"],
+    roles: ["SchoolAdmin", "SchoolStaff"],
   },
   {
     href: "/dashboard/my-school/programmes",
     label: "Programmes",
     icon: BookOpen,
-    roles: ["SchoolAdmin", "User"],
+    roles: ["SchoolAdmin", "SchoolStaff"],
   },
   {
     href: "/dashboard/my-school/users",
@@ -157,7 +143,7 @@ export function getMenuItemsForRole(role: Role | null | undefined): MenuItem[] {
   }
 
   // School user roles
-  if (role === "SchoolAdmin" || role === "User") {
+  if (role === "SchoolAdmin" || role === "SchoolStaff") {
     return schoolUserMenuItems.filter(item => {
       // Check if role has access
       if (!item.roles.includes(role)) return false;

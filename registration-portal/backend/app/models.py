@@ -34,7 +34,7 @@ class Role(enum.IntEnum):
     Manager = 50
     Staff = 60
     SchoolAdmin = 70
-    User = 80
+    SchoolStaff = 80
     PublicUser = 90
 
     def __lt__(self, other: "Role") -> bool:
@@ -253,6 +253,7 @@ class PortalUser(Base):
     created_by = relationship("PortalUser", remote_side=[id], foreign_keys=[created_by_user_id])
     refresh_tokens = relationship("RefreshToken", back_populates="user", cascade="all, delete-orphan")
     registered_candidates = relationship("RegistrationCandidate", back_populates="portal_user")
+    # user_permissions relationship will be defined after UserPermission class
 
 
 class RefreshToken(Base):
@@ -739,3 +740,52 @@ class CertificateConfirmationRequest(TicketRequestMixin, Base):
     responded_by = relationship("PortalUser", foreign_keys=[responded_by_user_id])
     response_signed_by = relationship("PortalUser", foreign_keys=[response_signed_by_user_id])
     response_revoked_by = relationship("PortalUser", foreign_keys=[response_revoked_by_user_id])
+
+
+class RolePermission(Base):
+    """Model for role-level permission overrides."""
+
+    __tablename__ = "role_permissions"
+
+    id = Column(Integer, primary_key=True)
+    role = Column(Enum(Role), nullable=False, index=True)
+    permission_key = Column(String(255), nullable=False, index=True)
+    granted = Column(Boolean, default=True, nullable=False)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    created_by_user_id = Column(UUID(as_uuid=True), ForeignKey("portal_users.id", ondelete="SET NULL"), nullable=True, index=True)
+
+    created_by = relationship("PortalUser", foreign_keys=[created_by_user_id])
+
+    __table_args__ = (
+        UniqueConstraint("role", "permission_key", name="uq_role_permission"),
+    )
+
+
+class UserPermission(Base):
+    """Model for user-level permission overrides."""
+
+    __tablename__ = "user_permissions"
+
+    id = Column(Integer, primary_key=True)
+    user_id = Column(UUID(as_uuid=True), ForeignKey("portal_users.id", ondelete="CASCADE"), nullable=False, index=True)
+    permission_key = Column(String(255), nullable=False, index=True)
+    granted = Column(Boolean, default=True, nullable=False)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    created_by_user_id = Column(UUID(as_uuid=True), ForeignKey("portal_users.id", ondelete="SET NULL"), nullable=True, index=True)
+    expires_at = Column(DateTime, nullable=True, index=True)  # Optional expiration for temporary permissions
+
+    user = relationship("PortalUser", foreign_keys=[user_id], back_populates="user_permissions")
+    created_by = relationship("PortalUser", foreign_keys=[created_by_user_id])
+
+    __table_args__ = (
+        UniqueConstraint("user_id", "permission_key", name="uq_user_permission"),
+    )
+
+
+# Define the relationship after both classes are defined to avoid forward reference issues
+PortalUser.user_permissions = relationship(
+    UserPermission,
+    foreign_keys=[UserPermission.user_id],
+    back_populates="user",
+    cascade="all, delete-orphan"
+)

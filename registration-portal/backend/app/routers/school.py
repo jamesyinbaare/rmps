@@ -72,15 +72,15 @@ photo_storage_service = PhotoStorageService()
 router = APIRouter(prefix="/api/v1/school", tags=["school"])
 
 # Maximum number of active users allowed per school
-MAX_ACTIVE_USERS_PER_SCHOOL = 5
+MAX_ACTIVE_USERS_PER_SCHOOL = 10
 
 
 async def count_active_school_users(session: DBSessionDep, school_id: int) -> int:
-    """Count active users (SCHOOL_USER + SCHOOL_ADMIN) for a school."""
+    """Count active users (SchoolAdmin + SchoolStaff) for a school."""
     stmt = select(func.count(PortalUser.id)).where(
         PortalUser.school_id == school_id,
         PortalUser.is_active.is_(True),
-        PortalUser.role <= Role.SchoolAdmin
+        PortalUser.role <= Role.SchoolStaff
     )
     result = await session.execute(stmt)
     return result.scalar_one() or 0
@@ -969,11 +969,11 @@ async def create_school_user(
             detail=f"Cannot create user: You have reached the maximum of {MAX_ACTIVE_USERS_PER_SCHOOL} active users. Please deactivate an existing user first.",
         )
 
-    # Ensure role is User (coordinators can only create User accounts)
-    if user_data.role != Role.User:
+    # Ensure role is SchoolStaff (coordinators can only create SchoolStaff accounts)
+    if user_data.role != Role.SchoolStaff:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
-            detail="Coordinators can only create SCHOOL_USER accounts",
+            detail="Coordinators can only create SchoolStaff accounts",
         )
 
     # Check if user already exists
@@ -1000,7 +1000,7 @@ async def create_school_user(
         email=user_data.email,
         hashed_password=hashed_password,
         full_name=user_data.full_name,
-        role=Role.User,
+        role=Role.SchoolStaff,
         school_id=current_user.school_id,
         is_active=True,
         created_by_user_id=current_user.id,
@@ -1018,7 +1018,7 @@ async def list_school_users(
     session: DBSessionDep,
     current_user: SchoolAdminDep,
 ) -> list[UserResponse]:
-    """List all users (SCHOOL_USER + SCHOOL_ADMIN) for coordinator's school."""
+    """List all users (SchoolAdmin + SchoolStaff) for coordinator's school."""
     # Ensure coordinator has a school
     if current_user.school_id is None:
         raise HTTPException(
@@ -1028,7 +1028,7 @@ async def list_school_users(
 
     stmt = select(PortalUser).where(
         PortalUser.school_id == current_user.school_id,
-        PortalUser.role <= Role.SchoolAdmin
+        PortalUser.role <= Role.SchoolStaff
     ).order_by(PortalUser.created_at.desc())
     result = await session.execute(stmt)
     users = result.scalars().all()

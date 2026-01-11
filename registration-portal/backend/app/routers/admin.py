@@ -1,16 +1,17 @@
 """Admin endpoints for system administrators."""
 import logging
 from datetime import datetime, timezone
-from typing import Annotated
+from typing import Annotated, Optional
 from uuid import UUID
 
-from fastapi import APIRouter, HTTPException, Query, status, UploadFile, File, Form, BackgroundTasks, Body
+from fastapi import APIRouter, HTTPException, Query, status, UploadFile, File, Form, BackgroundTasks, Body, Depends, Request
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 from sqlalchemy import select, func, delete, insert, update, cast, String, type_coerce
 from sqlalchemy.orm import selectinload
 
 from app.dependencies.auth import CurrentUserDep, SystemAdminDep, AdminDep
+from app.dependencies.permissions import PermissionChecker
 from app.dependencies.database import DBSessionDep
 from app.models import (
     PortalUser,
@@ -227,25 +228,85 @@ async def list_school_admin_users(session: DBSessionDep, current_user: SystemAdm
     return user_responses
 
 
+@router.get("/school-staff-users", response_model=list[UserResponse])
+async def list_school_staff_users(session: DBSessionDep, current_user: SystemAdminDep) -> list[UserResponse]:
+    """List all SchoolStaff users. SystemAdmin only."""
+    stmt = select(PortalUser).options(selectinload(PortalUser.school)).where(PortalUser.role == Role.SchoolStaff)
+    result = await session.execute(stmt)
+    users = result.scalars().all()
+
+    user_responses = []
+    for user in users:
+        user_dict = {
+            "id": user.id,
+            "email": user.email,
+            "full_name": user.full_name,
+            "role": user.role,
+            "school_id": user.school_id,
+            "school_name": user.school.name if user.school else None,
+            "is_active": user.is_active,
+            "created_at": user.created_at,
+            "updated_at": user.updated_at,
+        }
+        user_responses.append(UserResponse(**user_dict))
+
+    return user_responses
+
+
+@router.get("/public-users", response_model=list[UserResponse])
+async def list_public_users(session: DBSessionDep, current_user: SystemAdminDep) -> list[UserResponse]:
+    """List all PublicUser accounts. SystemAdmin only."""
+    stmt = select(PortalUser).options(selectinload(PortalUser.school)).where(PortalUser.role == Role.PublicUser)
+    result = await session.execute(stmt)
+    users = result.scalars().all()
+
+    user_responses = []
+    for user in users:
+        user_dict = {
+            "id": user.id,
+            "email": user.email,
+            "full_name": user.full_name,
+            "role": user.role,
+            "school_id": user.school_id,
+            "school_name": user.school.name if user.school else None,
+            "is_active": user.is_active,
+            "created_at": user.created_at,
+            "updated_at": user.updated_at,
+        }
+        user_responses.append(UserResponse(**user_dict))
+
+    return user_responses
+
+
 @router.get("/users", response_model=UserListResponse)
 async def list_users(
     session: DBSessionDep,
-    current_user: SystemAdminDep,
+    current_user: Annotated[PortalUser, Depends(PermissionChecker("user_management.view"))],
     page: int = Query(1, ge=1),
     page_size: int = Query(20, ge=1, le=100),
     role: Role | None = Query(None, description="Filter by role"),
     is_active: bool | None = Query(None, description="Filter by active status"),
     search: str | None = Query(None, description="Search by email or full name"),
 ) -> UserListResponse:
-    """List all users with filters. SystemAdmin only.
+    """List all users with filters. Requires user_management.view permission.
 
-    Excludes PublicUser and User roles from results.
+    By default, excludes PublicUser and SchoolStaff roles from results.
+    If role parameter is explicitly set to PublicUser or SchoolStaff, bypasses the exclusion.
     """
     offset = (page - 1) * page_size
-    stmt = select(PortalUser).options(selectinload(PortalUser.school)).where(
-        PortalUser.role != Role.User,
-        PortalUser.role != Role.PublicUser,
-    )
+
+    # Build base query conditions
+    # If role is explicitly PublicUser or SchoolStaff, allow it; otherwise exclude these roles
+    base_conditions = []
+    if role is None or (role != Role.PublicUser and role != Role.SchoolStaff):
+        base_conditions.extend([
+            PortalUser.role != Role.SchoolStaff,
+            PortalUser.role != Role.PublicUser,
+        ])
+
+    stmt = select(PortalUser).options(selectinload(PortalUser.school))
+    if base_conditions:
+        stmt = stmt.where(and_(*base_conditions))
 
     # Apply filters
     if role is not None:
@@ -259,10 +320,15 @@ async def list_users(
         )
 
     # Get total count (rebuild query without eager loading for performance)
-    count_conditions = [
-        PortalUser.role != Role.User,
-        PortalUser.role != Role.PublicUser,
-    ]
+    # Rebuild base conditions for count query (same logic as main query)
+    count_base_conditions = []
+    if role is None or (role != Role.PublicUser and role != Role.SchoolStaff):
+        count_base_conditions.extend([
+            PortalUser.role != Role.SchoolStaff,
+            PortalUser.role != Role.PublicUser,
+        ])
+
+    count_conditions = count_base_conditions.copy()
     if role is not None:
         count_conditions.append(PortalUser.role == role)
     if is_active is not None:
@@ -273,7 +339,9 @@ async def list_users(
             (PortalUser.email.ilike(search_pattern)) | (PortalUser.full_name.ilike(search_pattern))
         )
 
-    count_stmt = select(func.count(PortalUser.id)).where(and_(*count_conditions))
+    count_stmt = select(func.count(PortalUser.id))
+    if count_conditions:
+        count_stmt = count_stmt.where(and_(*count_conditions))
     total_result = await session.execute(count_stmt)
     total = total_result.scalar_one()
 
@@ -3326,15 +3394,29 @@ async def create_result_block_endpoint(
 
 @router.get("/results/blocks", response_model=list[ResultBlockResponse])
 async def list_result_blocks(
+    request: Request,
     session: DBSessionDep,
     current_user: SystemAdminDep,
-    exam_id: int | None = Query(None, description="Filter by exam ID"),
-    is_active: bool | None = Query(None, description="Filter by active status"),
+    is_active: Optional[bool] = Query(None, description="Filter by active status"),
 ) -> list[ResultBlockResponse]:
     """List result blocks."""
+    # Parse exam_id from raw query parameters to handle empty strings properly
+    # This bypasses FastAPI's automatic validation which fails on empty strings
+    exam_id_int: int | None = None
+    raw_exam_id = request.query_params.get("exam_id")
+    if raw_exam_id is not None and raw_exam_id.strip() != "":
+        try:
+            exam_id_int = int(raw_exam_id.strip())
+        except (ValueError, TypeError):
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="exam_id must be a valid integer",
+            )
+
+    # Use left join to handle cases where exam might not exist (data integrity issues)
     stmt = (
         select(ResultBlock)
-        .join(RegistrationExam, ResultBlock.registration_exam_id == RegistrationExam.id)
+        .outerjoin(RegistrationExam, ResultBlock.registration_exam_id == RegistrationExam.id)
         .options(
             selectinload(ResultBlock.exam),
             selectinload(ResultBlock.candidate),
@@ -3344,8 +3426,8 @@ async def list_result_blocks(
         )
     )
 
-    if exam_id:
-        stmt = stmt.where(ResultBlock.registration_exam_id == exam_id)
+    if exam_id_int:
+        stmt = stmt.where(ResultBlock.registration_exam_id == exam_id_int)
     if is_active is not None:
         stmt = stmt.where(ResultBlock.is_active == is_active)
 
@@ -3354,6 +3436,11 @@ async def list_result_blocks(
 
     response_list = []
     for block in blocks:
+        # Handle case where exam might not exist (shouldn't happen, but be defensive)
+        if not block.exam:
+            # Skip blocks with missing exams (data integrity issue)
+            continue
+
         response_data = {
             "id": block.id,
             "block_type": block.block_type,

@@ -66,12 +66,8 @@ export default function AdminResultBlocksPage() {
   useEffect(() => {
     loadExams();
     loadSchools();
-    loadBlocks();
+    // Don't load blocks automatically - user must select exam and search explicitly
   }, []);
-
-  useEffect(() => {
-    loadBlocks();
-  }, [selectedExamId]);
 
   const loadExams = async () => {
     try {
@@ -96,7 +92,11 @@ export default function AdminResultBlocksPage() {
   const loadBlocks = async () => {
     setLoading(true);
     try {
-      const blockList = await listResultBlocks(selectedExamId || undefined, true);
+      // Ensure we only pass valid exam IDs (not null, undefined, NaN, or 0)
+      const validExamId = selectedExamId && !isNaN(selectedExamId) && selectedExamId > 0
+        ? selectedExamId
+        : undefined;
+      const blockList = await listResultBlocks(validExamId, true);
       setBlocks(blockList);
     } catch (error) {
       toast.error("Failed to load blocks");
@@ -241,8 +241,13 @@ export default function AdminResultBlocksPage() {
               <div>
                 <Label>Examination</Label>
                 <Select
-                  value={formExamId?.toString() || ""}
-                  onValueChange={(v) => setFormExamId(parseInt(v))}
+                  value={formExamId?.toString() || undefined}
+                  onValueChange={(v) => {
+                    const parsedId = parseInt(v, 10);
+                    if (!isNaN(parsedId)) {
+                      setFormExamId(parsedId);
+                    }
+                  }}
                 >
                   <SelectTrigger>
                     <SelectValue placeholder="Select examination" />
@@ -324,31 +329,53 @@ export default function AdminResultBlocksPage() {
           <CardDescription>List of active result blocks</CardDescription>
         </CardHeader>
         <CardContent>
-          <div className="mb-4">
-            <Label>Filter by Examination</Label>
-            <Select
-              value={selectedExamId?.toString() || ""}
-              onValueChange={(v) => setSelectedExamId(v ? parseInt(v) : null)}
+          <div className="mb-4 flex items-end gap-3">
+            <div className="flex-1">
+              <Label>Select Examination</Label>
+              <Select
+                value={selectedExamId && !isNaN(selectedExamId) ? selectedExamId.toString() : ""}
+                onValueChange={(v) => {
+                  if (v === "" || v === "all") {
+                    setSelectedExamId(null);
+                    setBlocks([]); // Clear blocks when no exam selected
+                  } else {
+                    const parsedId = parseInt(v, 10);
+                    if (!isNaN(parsedId) && parsedId > 0) {
+                      setSelectedExamId(parsedId);
+                    } else {
+                      setSelectedExamId(null);
+                      setBlocks([]);
+                    }
+                  }
+                }}
+              >
+                <SelectTrigger className="w-[300px]">
+                  <SelectValue placeholder="Select an examination to search" />
+                </SelectTrigger>
+                <SelectContent>
+                  {exams.map((exam) => (
+                    <SelectItem key={exam.id} value={exam.id.toString()}>
+                      {exam.exam_type} ({exam.exam_series} {exam.year})
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            <Button
+              onClick={loadBlocks}
+              disabled={!selectedExamId || loading}
             >
-              <SelectTrigger className="w-[300px]">
-                <SelectValue placeholder="All examinations" />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="">All examinations</SelectItem>
-                {exams.map((exam) => (
-                  <SelectItem key={exam.id} value={exam.id.toString()}>
-                    {exam.exam_type} ({exam.exam_series} {exam.year})
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
+              Search
+            </Button>
           </div>
 
           {loading ? (
             <div className="text-center py-8">Loading blocks...</div>
           ) : blocks.length === 0 ? (
             <div className="text-center py-8 text-muted-foreground">
-              No active blocks found
+              {selectedExamId
+                ? "No active blocks found for the selected examination"
+                : "Please select an examination and click Search to view blocks"}
             </div>
           ) : (
             <div className="rounded-md border">

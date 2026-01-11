@@ -33,7 +33,7 @@ export default function PrivateLoginPage() {
           if (
             user.role === "SystemAdmin" ||
             user.role === "SchoolAdmin" ||
-            user.role === "User"
+            user.role === "SchoolStaff"
           ) {
             toast.error("This portal is only accessible to private candidates.");
             router.push("/dashboard");
@@ -86,7 +86,7 @@ export default function PrivateLoginPage() {
               if (
                 user.role === "SystemAdmin" ||
                 user.role === "SchoolAdmin" ||
-                user.role === "User"
+                user.role === "SchoolStaff"
               ) {
                 toast.error("This portal is only accessible to private candidates. Please use the appropriate login page for your account type.");
                 // Redirect to main dashboard

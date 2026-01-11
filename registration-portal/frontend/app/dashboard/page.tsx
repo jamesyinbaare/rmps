@@ -33,7 +33,7 @@ export default function DashboardPage() {
         }
 
         // Redirect school users (SchoolAdmin, User) to their school dashboard
-        if (userData.role === "SchoolAdmin" || userData.role === "User") {
+        if (userData.role === "SchoolAdmin" || userData.role === "SchoolStaff") {
           setRedirecting(true);
           router.push("/dashboard/my-school");
           return;
@@ -106,7 +106,7 @@ export default function DashboardPage() {
           </CardHeader>
           <CardContent>
             <p className="text-muted-foreground mb-4">Manage coordinator accounts</p>
-            <Link href="/dashboard/school-admins">
+            <Link href="/dashboard/admin/settings">
               <Button>Manage Coordinators</Button>
             </Link>
           </CardContent>

@@ -32,7 +32,7 @@ export function Sidebar() {
         setUser(userData);
 
         // Load school data for school users
-        if (userData.role === "SchoolAdmin" || userData.role === "User") {
+        if (userData.role === "SchoolAdmin" || userData.role === "SchoolStaff") {
           try {
             const dashboard = await getSchoolDashboard();
             setSchoolData(dashboard);
@@ -50,7 +50,7 @@ export function Sidebar() {
     loadData();
   }, []);
 
-  const isSchoolUser = user?.role === "SchoolAdmin" || user?.role === "User";
+  const isSchoolUser = user?.role === "SchoolAdmin" || user?.role === "SchoolStaff";
   const isPrivateUser = user?.role === "PublicUser";
 
   // Private users have their own dashboard and shouldn't see this sidebar
@@ -79,11 +79,15 @@ export function Sidebar() {
         {navItems.map((item) => {
           const Icon = item.icon;
           let isActive = false;
-          // Special handling for my-school base path - only active when exactly matching
-          if (item.href === "/dashboard/my-school") {
+          // Special handling for dashboard base path - only active when exactly matching
+          if (item.href === "/dashboard") {
+            isActive = pathname === "/dashboard";
+          } else if (item.href === "/dashboard/my-school") {
+            // Special handling for my-school base path - only active when exactly matching
             isActive = pathname === "/dashboard/my-school";
           } else {
-            // For other paths, check exact match or if pathname starts with the href
+            // For other paths, check exact match or if pathname starts with the href + "/"
+            // This ensures /dashboard/exams matches /dashboard/exams/... but /dashboard doesn't match everything
             isActive = pathname === item.href || pathname.startsWith(item.href + "/");
           }
           return (
@@ -124,7 +128,7 @@ export function Sidebar() {
                 const needsSeparator = prevItem && (
                   (item.href.includes("/admin/programmes") && !prevItem.href.includes("/admin/programmes")) ||
                   (item.href.includes("/admin/results") && !prevItem.href.includes("/admin/results")) ||
-                  (item.href.includes("/dashboard/settings") && !prevItem.href.includes("/dashboard/settings"))
+                  (item.href.includes("/dashboard/admin/settings") && !prevItem.href.includes("/dashboard/admin/settings"))
                 );
 
                 return (
