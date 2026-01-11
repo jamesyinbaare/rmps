@@ -55,7 +55,7 @@ export default function PermissionsPage() {
               User Permissions
             </CardTitle>
             <CardDescription>
-              Manage permissions for individual users. Navigate from the user management page.
+              Manage permissions for individual users. Navigate from the admin settings page.
             </CardDescription>
           </CardHeader>
           <CardContent>
@@ -68,9 +68,9 @@ export default function PermissionsPage() {
             <Button
               variant="outline"
               className="w-full mt-4"
-              onClick={() => router.push("/dashboard/admin/users")}
+              onClick={() => router.push("/dashboard/admin/settings")}
             >
-              Go to User Management
+              Go to Admin Settings
             </Button>
           </CardContent>
         </Card>

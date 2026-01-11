@@ -38,7 +38,7 @@ export function CreateSchoolUserDialog({
     e.preventDefault();
 
     if (isAtLimit) {
-      toast.error("Cannot create user: You have reached the maximum of 5 active users. Please deactivate an existing user first.");
+      toast.error("Cannot create user: You have reached the maximum of 10 active users. Please deactivate an existing user first.");
       return;
     }
 
@@ -136,7 +136,7 @@ export function CreateSchoolUserDialog({
             </div>
             {isAtLimit && (
               <div className="rounded-md bg-destructive/10 p-3 text-sm text-destructive">
-                You have reached the maximum of 5 active users. Please deactivate an existing user first.
+                You have reached the maximum of 10 active users. Please deactivate an existing user first.
               </div>
             )}
           </div>

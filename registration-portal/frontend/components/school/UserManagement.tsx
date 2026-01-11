@@ -83,7 +83,7 @@ export function UserManagement() {
         <div>
           <h2 className="text-2xl font-bold">User Management</h2>
           <p className="text-muted-foreground">
-            Manage users for your school. Maximum {dashboardData?.max_active_users || 5} active users.
+            Manage users for your school. Maximum {dashboardData?.max_active_users || 10} active users.
           </p>
         </div>
         <Button
@@ -99,7 +99,7 @@ export function UserManagement() {
         <Alert variant="destructive">
           <AlertCircle className="h-4 w-4" />
           <AlertDescription>
-            You have reached the maximum of {dashboardData?.max_active_users || 5} active users. Please
+            You have reached the maximum of {dashboardData?.max_active_users || 10} active users. Please
             deactivate an existing user before creating a new one.
           </AlertDescription>
         </Alert>

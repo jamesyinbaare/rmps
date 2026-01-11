@@ -10,9 +10,6 @@ import {
   Shield,
   Settings,
   HelpCircle,
-  Upload,
-  UserCog,
-  KeyRound,
 } from "lucide-react";
 import type { Role } from "@/types";
 import { LucideIcon } from "lucide-react";
@@ -32,24 +29,6 @@ export const systemAdminMenuItems: MenuItem[] = [
     label: "Dashboard",
     icon: GraduationCap,
     roles: ["SystemAdmin", "Director", "DeputyDirector", "PrincipalManager", "SeniorManager", "Manager", "Staff"],
-  },
-  {
-    href: "/dashboard/school-admins",
-    label: "Coordinators",
-    icon: Users,
-    roles: ["SystemAdmin", "Director", "DeputyDirector", "PrincipalManager", "SeniorManager", "Manager", "Staff"],
-  },
-  {
-    href: "/dashboard/admin/users",
-    label: "User Management",
-    icon: UserCog,
-    roles: ["SystemAdmin", "Director", "DeputyDirector", "PrincipalManager", "SeniorManager", "Manager", "Staff"],
-  },
-  {
-    href: "/dashboard/admin/permissions",
-    label: "Permissions",
-    icon: KeyRound,
-    roles: ["SystemAdmin", "Director", "DeputyDirector", "PrincipalManager"],
   },
   {
     href: "/dashboard/exams",
@@ -98,7 +77,7 @@ export const systemAdminMoreActions: MenuItem[] = [
     roles: ["SystemAdmin", "Director", "DeputyDirector", "PrincipalManager", "SeniorManager", "Manager", "Staff"],
   },
   {
-    href: "/dashboard/settings",
+    href: "/dashboard/admin/settings",
     label: "Settings",
     icon: Settings,
     roles: ["SystemAdmin", "Director", "DeputyDirector", "PrincipalManager", "SeniorManager", "Manager", "Staff"],

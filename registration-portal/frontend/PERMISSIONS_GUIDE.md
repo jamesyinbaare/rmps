@@ -68,10 +68,11 @@ Result: All Staff members now have user_management.edit permission
 ## Managing User Permissions
 
 ### Access
-1. Go to **`/dashboard/admin/users`**
-2. Find the user you want to manage
-3. Click the "..." menu on the user row
-4. Select "Manage Permissions"
+1. Go to **`/dashboard/admin/settings`**
+2. Select the appropriate user group tab (General Public, Coordinators, or CTVET Staff)
+3. Find the user you want to manage
+4. Click the "..." menu on the user row
+5. Select "Manage Permissions"
 
 Or navigate directly to: **`/dashboard/admin/permissions/users/{userId}`**
 
@@ -107,8 +108,9 @@ Or navigate directly to: **`/dashboard/admin/permissions/users/{userId}`**
 ```
 Scenario: Grant a Staff member temporary permission to delete users until end of year
 
-1. Navigate to User Management
-2. Find the Staff member
+1. Navigate to Admin Settings (/dashboard/admin/settings)
+2. Go to the CTVET Staff tab
+3. Find the Staff member
 3. Click "..." → "Manage Permissions"
 4. Find "user_management.delete" permission
 5. Click "Grant"

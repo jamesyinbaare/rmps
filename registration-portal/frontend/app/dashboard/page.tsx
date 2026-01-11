@@ -106,7 +106,7 @@ export default function DashboardPage() {
           </CardHeader>
           <CardContent>
             <p className="text-muted-foreground mb-4">Manage coordinator accounts</p>
-            <Link href="/dashboard/school-admins">
+            <Link href="/dashboard/admin/settings">
               <Button>Manage Coordinators</Button>
             </Link>
           </CardContent>

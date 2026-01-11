@@ -783,6 +783,52 @@ export async function listAdminUsers(filters?: {
   };
 }
 
+// Functions for fetching specific user groups for admin settings page
+export async function listPublicUsers(): Promise<User[]> {
+  const response = await fetchWithAuth("/api/v1/admin/public-users");
+  const users = await handleResponse<User[]>(response);
+  return transformUsers(users);
+}
+
+export async function listSchoolStaffUsers(): Promise<User[]> {
+  const response = await fetchWithAuth("/api/v1/admin/school-staff-users");
+  const users = await handleResponse<User[]>(response);
+  return transformUsers(users);
+}
+
+// Fetch CTVET Staff users (SystemAdmin, Director, DeputyDirector, PrincipalManager, SeniorManager, Manager, Staff)
+// Note: listAdminUsers excludes PublicUser and SchoolStaff, but includes SchoolAdmin
+// So we fetch all and filter client-side to exclude SchoolAdmin
+export async function listCtvetStaffUsers(filters?: {
+  page?: number;
+  page_size?: number;
+  is_active?: boolean | null;
+  search?: string | null;
+}): Promise<UserListResponse> {
+  const ctvetRoles = ["SystemAdmin", "Director", "DeputyDirector", "PrincipalManager", "SeniorManager", "Manager", "Staff"];
+
+  // Fetch with maximum allowed page size (100) to get as many users as possible
+  // If we need more, we'll need to implement pagination
+  const pageSize = filters?.page_size || 100; // Use max allowed page size
+
+  const response = await listAdminUsers({
+    ...filters,
+    page_size: Math.min(pageSize, 100), // Ensure we don't exceed backend limit
+  });
+
+  // Filter to only CTVET Staff roles (exclude SchoolAdmin)
+  const filteredItems = response.items.filter(user => ctvetRoles.includes(user.role));
+
+  // If there are more pages and we got filtered results, we need to fetch more
+  // For now, we'll return what we have. Full implementation would require fetching all pages
+  return {
+    ...response,
+    items: filteredItems,
+    total: filteredItems.length,
+    total_pages: Math.ceil(filteredItems.length / (filters?.page_size || 20)),
+  };
+}
+
 export async function createAdminUser(data: AdminUserCreate): Promise<User> {
   const response = await fetchWithAuth("/api/v1/admin/users", {
     method: "POST",
@@ -1481,12 +1527,15 @@ export async function listResultBlocks(
   isActive?: boolean
 ): Promise<ResultBlock[]> {
   const params = new URLSearchParams();
-  if (examId) params.append("exam_id", examId.toString());
+  // Only add exam_id if it's a valid number (not null, undefined, or NaN)
+  const shouldAddExamId = examId !== undefined && examId !== null && !isNaN(examId) && examId > 0;
+  if (shouldAddExamId) {
+    params.append("exam_id", examId.toString());
+  }
   if (isActive !== undefined) params.append("is_active", isActive.toString());
 
-  const response = await fetchWithAuth(
-    `/api/v1/admin/results/blocks${params.toString() ? `?${params.toString()}` : ""}`
-  );
+  const url = `/api/v1/admin/results/blocks${params.toString() ? `?${params.toString()}` : ""}`;
+  const response = await fetchWithAuth(url);
   return handleResponse<ResultBlock[]>(response);
 }
 

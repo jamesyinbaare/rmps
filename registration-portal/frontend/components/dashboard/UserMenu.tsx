@@ -98,7 +98,7 @@ export function UserMenu({ user }: UserMenuProps) {
             <DropdownMenuItem
               onClick={(e) => {
                 e.preventDefault();
-                router.push("/dashboard/settings");
+                router.push("/dashboard/profile-settings");
                 setDropdownOpen(false);
               }}
               className="text-base text-card-foreground mb-1"
