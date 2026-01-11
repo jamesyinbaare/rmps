@@ -231,7 +231,17 @@ async def register_private_user(
         if not programme:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Programme not found")
 
-    # Validate subject selection
+    # For NOV/DEC: require programme_id
+    from app.services.subject_selection import normalize_exam_series
+    normalized_series = normalize_exam_series(exam.exam_series)
+    is_nov_dec = normalized_series == "NOV/DEC"
+    if is_nov_dec and not programme_id:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Programme selection is required for NOV/DEC exams",
+        )
+
+    # Validate subject selection (for MAY/JUNE or when no programme)
     if not programme_id and not registration_data.subject_ids:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -275,13 +285,14 @@ async def register_private_user(
     # Handle subject selections
     selected_subject_ids: list[int] = []
 
-    if programme_id:
+    # For NOV/DEC: skip auto-selection (all subjects are optional)
+    # For MAY/JUNE: auto-select compulsory core and all electives
+    if programme_id and not is_nov_dec:
         # Auto-select compulsory core subjects only (not optional core subjects)
         auto_selected = await auto_select_subjects_for_programme(session, programme_id, None)
         selected_subject_ids.extend(auto_selected)
 
         # For MAY/JUNE: Auto-select ALL elective subjects (they are compulsory)
-        normalized_series = normalize_exam_series(exam.exam_series)
         is_may_june = normalized_series == "MAY/JUNE"
         if is_may_june:
             subjects_info = await get_programme_subjects_for_registration(session, programme_id)
@@ -295,7 +306,9 @@ async def register_private_user(
     selected_subject_ids = list(set(selected_subject_ids))
 
     # Validate subject selections if programme is provided
-    if programme_id and selected_subject_ids:
+    # For NOV/DEC: lenient validation (only enforce "at most one per group")
+    # For MAY/JUNE: strict validation (compulsory core + all electives required)
+    if programme_id:
         is_valid, validation_errors = await validate_subject_selections(
             session, programme_id, selected_subject_ids, exam.exam_series
         )

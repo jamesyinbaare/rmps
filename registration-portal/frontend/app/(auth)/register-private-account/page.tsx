@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -13,6 +13,7 @@ import Link from "next/link";
 
 export default function PrivateAccountCreationPage() {
   const router = useRouter();
+  const searchParams = useSearchParams();
   const [loading, setLoading] = useState(false);
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -42,8 +43,10 @@ export default function PrivateAccountCreationPage() {
       });
 
       toast.success("Account created successfully! Redirecting to login...");
-      // Redirect to login with a flag to go to certificate confirmation after login
-      router.push("/login/private?redirect=certificate-confirmation");
+      // Redirect to login with the redirect parameter if provided
+      const redirectParam = searchParams.get("redirect");
+      const redirectQuery = redirectParam ? `?redirect=${redirectParam}` : "";
+      router.push(`/login/private${redirectQuery}`);
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "Failed to create account");
     } finally {
@@ -130,7 +133,10 @@ export default function PrivateAccountCreationPage() {
 
           <div className="mt-4 text-center text-sm">
             <span className="text-muted-foreground">Already have an account? </span>
-            <Link href="/login/private" className="text-primary hover:underline">
+            <Link
+              href={`/login/private${searchParams.get("redirect") ? `?redirect=${searchParams.get("redirect")}` : ""}`}
+              className="text-primary hover:underline"
+            >
               Log in
             </Link>
           </div>

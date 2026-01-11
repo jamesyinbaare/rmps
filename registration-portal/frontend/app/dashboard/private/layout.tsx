@@ -22,7 +22,7 @@ export default function PrivateDashboardLayout({
       setMounted(true);
 
       if (!isAuthenticated()) {
-        router.push("/login/private");
+        router.push("/login/private?redirect=exam-registration");
         return;
       }
 
@@ -42,7 +42,7 @@ export default function PrivateDashboardLayout({
         }
       } catch (error) {
         console.error("Failed to get user:", error);
-        router.push("/login/private");
+        router.push("/login/private?redirect=exam-registration");
         return;
       }
 

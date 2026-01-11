@@ -109,8 +109,8 @@ export default function PrivateCandidateDashboard() {
     try {
       await enableEditRegistration(registration.id);
       toast.success("Registration unlocked for editing");
-      // Redirect to registration page with the registration ID
-      router.push(`/dashboard/private/register?registration_id=${registration.id}`);
+      // Redirect to registration page with the registration number
+      router.push(`/dashboard/private/register?registration_number=${registration.registration_number}`);
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "Failed to enable editing");
     }
@@ -212,19 +212,25 @@ export default function PrivateCandidateDashboard() {
                     <div className="mt-2">{getStatusBadge(registration.registration_status)}</div>
                   </div>
                     <div className="flex items-center gap-2">
-                      {canEdit && (
+                      {canEdit ? (
                         <Button
                           variant="default"
                           onClick={() => handleEditRegistration(registration)}
                           className="flex items-center gap-2"
                         >
                           <Edit className="h-4 w-4" />
-                          Edit
+                          Edit Application
+                        </Button>
+                      ) : (
+                        <Button
+                          variant="outline"
+                          disabled
+                          className="flex items-center gap-2"
+                          title="Registration period has ended. Applications can no longer be edited."
+                        >
+                          View Application
                         </Button>
                       )}
-                      <Link href={`/dashboard/private/registrations/${registration.id}`}>
-                        <Button variant="outline">View Details</Button>
-                      </Link>
                     </div>
                   </div>
                 );

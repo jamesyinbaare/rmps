@@ -149,11 +149,8 @@ async def validate_subject_selections(
     is_may_june = normalized_series == "MAY/JUNE"
     is_nov_dec = normalized_series == "NOV/DEC"
 
-    # For NOV/DEC: Check if at least one subject is registered
-    if is_nov_dec:
-        if len(selected_set) == 0:
-            errors.append("Must register at least one subject (core or elective)")
-            return False, errors
+    # For NOV/DEC: Allow empty subject list (all subjects are optional)
+    # Note: The validation now allows empty list for NOV/DEC to support the new requirement
 
     # Check compulsory core subjects (only for MAY/JUNE)
     if is_may_june:

@@ -35,7 +35,7 @@ import {
 } from "@/lib/api";
 import type { RegistrationExam, RegistrationCandidate } from "@/types";
 import { toast } from "sonner";
-import { Loader2, CheckCircle2, LogOut, User, Calendar, GraduationCap, BookOpen, Building2, Copy, AlertTriangle } from "lucide-react";
+import { Loader2, CheckCircle2, LogOut, User, Calendar, GraduationCap, BookOpen, Building2, Copy, AlertTriangle, AlertCircle, XCircle, Edit2 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import {
   AlertDialog,
@@ -108,11 +108,11 @@ export default function PrivateRegistrationPage() {
     loadExams();
     loadExistingRegistrations();
     const examIdParam = searchParams.get("exam_id");
-    const registrationIdParam = searchParams.get("registration_id");
+    const registrationNumberParam = searchParams.get("registration_number");
 
-    if (registrationIdParam) {
-      // Load submitted registration for editing
-      loadSubmittedRegistration(parseInt(registrationIdParam));
+    if (registrationNumberParam) {
+      // Load submitted registration for editing using registration number
+      loadSubmittedRegistrationByNumber(registrationNumberParam);
     } else if (examIdParam) {
       setSelectedExamId(parseInt(examIdParam));
       loadDraft(parseInt(examIdParam));
@@ -197,12 +197,21 @@ export default function PrivateRegistrationPage() {
     }
   };
 
-  const loadSubmittedRegistration = async (registrationId: number) => {
+  const loadSubmittedRegistrationByNumber = async (registrationNumber: string) => {
     try {
       setLoadingData(true);
-      // First, enable editing (converts submitted registration back to DRAFT if needed)
+      // Fetch all registrations to find the one with matching registration number
+      const regs = await listMyRegistrations();
+      const registration = regs.find((r) => r.registration_number === registrationNumber);
+
+      if (!registration) {
+        toast.error("Registration not found");
+        return;
+      }
+
+      // Enable editing (converts submitted registration back to DRAFT if needed)
       // This endpoint now also handles registrations that are already DRAFT
-      const updatedRegistration = await enableEditRegistration(registrationId);
+      const updatedRegistration = await enableEditRegistration(registration.id);
 
       // Now load it as a draft using the exam ID
       if (updatedRegistration.registration_exam_id) {
@@ -360,9 +369,17 @@ export default function PrivateRegistrationPage() {
       toast.error("Please enter your name");
       return;
     }
-    if (currentStep === 4 && selectedSubjectIds.length === 0) {
-      toast.error("Please select at least one subject");
-      return;
+    if (currentStep === 4) {
+      const exam = exams.find((e) => e.id === selectedExamId);
+      const isNovDec = exam?.exam_series?.toUpperCase().replace(/[-\s]/g, "/") === "NOV/DEC";
+      if (isNovDec && !programmeId) {
+        toast.error("Programme selection is required for NOV/DEC exams");
+        return;
+      }
+      if (selectedSubjectIds.length === 0) {
+        toast.error("Please select at least one subject");
+        return;
+      }
     }
 
     // Save draft before moving to next step (this now includes photo upload)
@@ -513,7 +530,21 @@ export default function PrivateRegistrationPage() {
       {/* Step Content */}
       <Card>
         <CardHeader>
-          <CardTitle>Step {currentStep}: {STEPS[currentStep - 1].title}</CardTitle>
+          <div className="flex items-center justify-between">
+            <CardTitle>Step {currentStep}: {STEPS[currentStep - 1].title}</CardTitle>
+            {saving && (
+              <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                <Loader2 className="h-4 w-4 animate-spin" />
+                <span>Saving...</span>
+              </div>
+            )}
+            {!saving && draftId && (
+              <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                <CheckCircle2 className="h-4 w-4 text-green-600" />
+                <span>Saved</span>
+              </div>
+            )}
+          </div>
           <CardDescription>
             {currentStep === 1 && "Select the examination you want to register for"}
             {currentStep === 2 && "Select your preferred examination center"}
@@ -715,6 +746,7 @@ export default function PrivateRegistrationPage() {
               selectedSubjectIds={selectedSubjectIds}
               onProgrammeChange={setProgrammeId}
               onSubjectIdsChange={setSelectedSubjectIds}
+              examSeries={exams.find((e) => e.id === selectedExamId)?.exam_series}
             />
           )}
 
@@ -796,10 +828,21 @@ export default function PrivateRegistrationPage() {
                 {/* Enhanced Candidate Information Card */}
                 <Card className="flex-1 flex flex-col">
                   <CardHeader>
-                    <CardTitle className="text-base flex items-center gap-2">
-                      <User className="h-4 w-4" />
-                      Candidate Information
-                    </CardTitle>
+                    <div className="flex items-center justify-between">
+                      <CardTitle className="text-base flex items-center gap-2">
+                        <User className="h-4 w-4" />
+                        Candidate Information
+                      </CardTitle>
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        onClick={() => setCurrentStep(3)}
+                        className="h-8"
+                      >
+                        <Edit2 className="h-4 w-4 mr-2" />
+                        Edit
+                      </Button>
+                    </div>
                   </CardHeader>
                   <CardContent>
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -897,7 +940,18 @@ export default function PrivateRegistrationPage() {
                 {/* Photo Section - Right Corner */}
                 <Card className="w-fit shrink-0 flex flex-col">
                   <CardHeader className="pb-3">
-                    <CardTitle className="text-base">Photo</CardTitle>
+                    <div className="flex items-center justify-between">
+                      <CardTitle className="text-base">Photo</CardTitle>
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        onClick={() => setCurrentStep(5)}
+                        className="h-8"
+                      >
+                        <Edit2 className="h-4 w-4 mr-2" />
+                        Edit
+                      </Button>
+                    </div>
                   </CardHeader>
                   <CardContent className="pt-0 flex-1 flex flex-col items-center justify-center gap-3">
                     {photoPreview ? (
@@ -934,6 +988,14 @@ export default function PrivateRegistrationPage() {
                     <BookOpen className="h-5 w-5" />
                     Registered Subjects
                   </h3>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => setCurrentStep(4)}
+                  >
+                    <Edit2 className="h-4 w-4 mr-2" />
+                    Edit Subjects
+                  </Button>
                 </div>
 
                 {loadedDraft?.subject_selections && loadedDraft.subject_selections.length > 0 ? (
