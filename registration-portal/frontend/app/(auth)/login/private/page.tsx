@@ -45,6 +45,8 @@ export default function PrivateLoginPage() {
             const redirect = searchParams.get("redirect");
             if (redirect === "certificate-confirmation") {
               router.push("/certificate-confirmation");
+            } else if (redirect === "exam-registration") {
+              router.push("/dashboard/private/register");
             } else {
               router.push("/dashboard/private");
             }
@@ -99,6 +101,8 @@ export default function PrivateLoginPage() {
                 const redirect = searchParams.get("redirect");
                 if (redirect === "certificate-confirmation") {
                   router.push("/certificate-confirmation");
+                } else if (redirect === "exam-registration") {
+                  router.push("/dashboard/private/register");
                 } else {
                   router.push("/dashboard/private");
                 }
@@ -108,7 +112,10 @@ export default function PrivateLoginPage() {
           <div className="text-center text-sm">
             <p className="text-muted-foreground">
               Don't have an account?{" "}
-              <a href="/register-private-account" className="text-primary hover:underline">
+              <a
+                href={`/register-private-account${searchParams.get("redirect") ? `?redirect=${searchParams.get("redirect")}` : ""}`}
+                className="text-primary hover:underline"
+              >
                 Create one here
               </a>
             </p>
