@@ -586,7 +586,21 @@ async def save_draft_registration(
 
         await session.commit()
         await session.refresh(existing_draft)
-        return RegistrationCandidateResponse.model_validate(existing_draft)
+
+        # Check price difference if candidate has paid and subjects changed
+        response = RegistrationCandidateResponse.model_validate(existing_draft)
+        if existing_draft.total_paid_amount and existing_draft.total_paid_amount > 0 and candidate_data.subject_ids is not None:
+            from app.services.registration_pricing_service import calculate_price_difference
+            price_diff = await calculate_price_difference(session, existing_draft.id, candidate_data.subject_ids)
+            response_dict = response.model_dump()
+            response_dict["price_difference"] = {
+                "new_total": float(price_diff["new_total"]),
+                "difference": float(price_diff["difference"]),
+                "requires_additional_payment": price_diff["requires_additional_payment"],
+            }
+            return RegistrationCandidateResponse(**response_dict)
+
+        return response
     else:
         # Create new draft
         # Generate temporary registration number (will be regenerated on submit)
@@ -649,6 +663,142 @@ async def save_draft_registration(
             )
 
         return RegistrationCandidateResponse.model_validate(reloaded_draft)
+
+
+@router.get("/registrations/{registration_id}/price")
+async def get_registration_price(
+    registration_id: int,
+    session: DBSessionDep,
+    current_user: CurrentUserDep,
+) -> dict:
+    """Calculate and return price for draft registration."""
+    if current_user.role != Role.PublicUser:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="This endpoint is for private users only")
+
+    # Get draft registration
+    stmt = (
+        select(RegistrationCandidate)
+        .where(
+            RegistrationCandidate.id == registration_id,
+            RegistrationCandidate.portal_user_id == current_user.id,
+        )
+        .options(selectinload(RegistrationCandidate.subject_selections))
+    )
+    result = await session.execute(stmt)
+    candidate = result.scalar_one_or_none()
+
+    if not candidate:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Registration not found")
+
+    from app.services.registration_pricing_service import calculate_registration_amount
+    from decimal import Decimal
+
+    price_breakdown = await calculate_registration_amount(session, candidate.id)
+    total_paid = Decimal(str(candidate.total_paid_amount or 0))
+    outstanding = max(Decimal("0"), price_breakdown["total"] - total_paid)
+
+    has_pricing = price_breakdown.get("has_pricing", False)
+
+    return {
+        "application_fee": float(price_breakdown["application_fee"]),
+        "subject_price": float(price_breakdown["subject_price"]) if price_breakdown["subject_price"] else None,
+        "tiered_price": float(price_breakdown["tiered_price"]) if price_breakdown["tiered_price"] else None,
+        "total": float(price_breakdown["total"]),
+        "pricing_model_used": price_breakdown["pricing_model_used"],
+        "payment_required": has_pricing,  # Only required if pricing is configured
+        "has_pricing": has_pricing,
+        "total_paid_amount": float(total_paid),
+        "outstanding_amount": float(outstanding),
+    }
+
+
+@router.post("/registrations/{registration_id}/pay")
+async def initialize_registration_payment(
+    registration_id: int,
+    session: DBSessionDep,
+    current_user: CurrentUserDep,
+) -> dict:
+    """Initialize payment for private candidate registration."""
+    if current_user.role != Role.PublicUser:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="This endpoint is for private users only")
+
+    # Get registration
+    stmt = (
+        select(RegistrationCandidate)
+        .where(
+            RegistrationCandidate.id == registration_id,
+            RegistrationCandidate.portal_user_id == current_user.id,
+        )
+        .options(selectinload(RegistrationCandidate.exam))
+        .options(selectinload(RegistrationCandidate.subject_selections))
+    )
+    result = await session.execute(stmt)
+    candidate = result.scalar_one_or_none()
+
+    if not candidate:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Registration not found")
+
+    from app.services.registration_pricing_service import calculate_registration_amount
+    from app.services.registration_invoice_service import (
+        create_registration_invoice,
+        create_additional_charge_invoice,
+    )
+    from app.services.payment_service import initialize_payment
+    from app.models import Invoice
+    from decimal import Decimal
+
+    # Calculate current total price
+    price_breakdown = await calculate_registration_amount(session, candidate.id)
+    current_total = price_breakdown["total"]
+    total_paid = Decimal(str(candidate.total_paid_amount or 0))
+    amount_to_pay = current_total - total_paid
+
+    if amount_to_pay <= 0:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="No payment required. Registration is already fully paid.",
+        )
+
+    # Get or create invoice
+    invoice_stmt = select(Invoice).where(
+        Invoice.registration_candidate_id == candidate.id,
+        Invoice.status == "pending"
+    ).order_by(Invoice.created_at.desc())
+    invoice_result = await session.execute(invoice_stmt)
+    invoice = invoice_result.scalar_one_or_none()
+
+    if not invoice:
+        # Create new invoice
+        if total_paid > 0:
+            # This is an additional charge
+            invoice = await create_additional_charge_invoice(session, candidate, amount_to_pay)
+        else:
+            # This is the initial invoice
+            invoice = await create_registration_invoice(session, candidate, current_total)
+    else:
+        # Update existing invoice amount if needed
+        if invoice.amount != amount_to_pay:
+            invoice.amount = amount_to_pay
+            await session.flush()
+
+    # Initialize payment
+    try:
+        payment_result = await initialize_payment(
+            session,
+            invoice,
+            amount_to_pay,
+            email=candidate.contact_email or current_user.email,
+            metadata={"registration_candidate_id": candidate.id},
+        )
+        await session.commit()
+        return payment_result
+    except Exception as e:
+        await session.rollback()
+        logger.error(f"Error initializing payment: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to initialize payment: {str(e)}",
+        )
 
 
 @router.post("/registrations/{registration_id}/submit", response_model=RegistrationCandidateResponse)
@@ -747,6 +897,21 @@ async def submit_draft_registration(
         registration_number = await generate_unique_registration_number(session, draft.registration_exam_id)
         draft.registration_number = registration_number
 
+    # For private candidates: Verify payment is completed
+    from app.services.registration_pricing_service import calculate_registration_amount
+    from decimal import Decimal
+
+    price_breakdown = await calculate_registration_amount(session, draft.id)
+    calculated_total = price_breakdown["total"]
+    total_paid = Decimal(str(draft.total_paid_amount or 0))
+
+    if total_paid < calculated_total:
+        outstanding = calculated_total - total_paid
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Payment required. Outstanding amount: {outstanding:.2f} GHS. Please complete payment before submitting.",
+        )
+
     # Change status to PENDING
     draft.registration_status = RegistrationStatus.PENDING
     draft.registration_date = datetime.utcnow()
@@ -775,7 +940,10 @@ async def enable_edit_registration(
             RegistrationCandidate.portal_user_id == current_user.id,
             RegistrationCandidate.registration_status.in_([RegistrationStatus.PENDING, RegistrationStatus.APPROVED, RegistrationStatus.DRAFT]),
         )
-        .options(selectinload(RegistrationCandidate.exam).selectinload(RegistrationExam.registration_period))
+        .options(
+            selectinload(RegistrationCandidate.exam).selectinload(RegistrationExam.registration_period),
+            selectinload(RegistrationCandidate.subject_selections)
+        )
     )
     result = await session.execute(stmt)
     registration = result.scalar_one_or_none()
@@ -788,7 +956,6 @@ async def enable_edit_registration(
 
     # If already DRAFT, just return it (no need to convert)
     if registration.registration_status == RegistrationStatus.DRAFT:
-        await session.refresh(registration, ["subject_selections"])
         return RegistrationCandidateResponse.model_validate(registration)
 
     # For PENDING/APPROVED, check if registration period is still open
@@ -812,8 +979,28 @@ async def enable_edit_registration(
 
     # Convert to DRAFT to allow editing
     registration.registration_status = RegistrationStatus.DRAFT
+
+    # Check price difference if candidate has paid
+    from app.services.registration_pricing_service import calculate_price_difference
+    from decimal import Decimal
+
+    if registration.total_paid_amount and registration.total_paid_amount > 0:
+        subject_ids = [s.subject_id for s in registration.subject_selections if s.subject_id]
+        price_diff = await calculate_price_difference(session, registration.id, subject_ids)
+
+        await session.commit()
+
+        response = RegistrationCandidateResponse.model_validate(registration)
+        # Add price difference info to response
+        response_dict = response.model_dump()
+        response_dict["price_difference"] = {
+            "new_total": float(price_diff["new_total"]),
+            "difference": float(price_diff["difference"]),
+            "requires_additional_payment": price_diff["requires_additional_payment"],
+        }
+        return RegistrationCandidateResponse(**response_dict)
+
     await session.commit()
-    await session.refresh(registration, ["subject_selections"])
 
     return RegistrationCandidateResponse.model_validate(registration)
 

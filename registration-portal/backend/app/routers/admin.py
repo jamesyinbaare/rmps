@@ -31,6 +31,9 @@ from app.models import (
     school_programmes,
     IndexNumberGenerationJob,
     IndexNumberGenerationJobStatus,
+    RegistrationApplicationFee,
+    SubjectPricing,
+    RegistrationTieredPricing,
 )
 from app.schemas.registration import (
     RegistrationExamCreate,
@@ -94,6 +97,18 @@ from app.schemas.subject import (
     SubjectListResponse,
     SubjectBulkUploadResponse,
     SubjectBulkUploadError,
+)
+from app.schemas.pricing import (
+    ApplicationFeeResponse,
+    ApplicationFeeCreate,
+    SubjectPricingResponse,
+    SubjectPricingCreate,
+    SubjectPricingBulkUpdate,
+    TieredPricingResponse,
+    TieredPricingCreate,
+    TieredPricingBulkUpdate,
+    ExamPricingResponse,
+    ImportPricingRequest,
 )
 from app.services.programme_upload import (
     ProgrammeUploadParseError,
@@ -1373,6 +1388,7 @@ async def create_exam(
             year=exam_data.year,
             description=exam_data.description,
             registration_period_id=registration_period.id,
+            pricing_model_preference=exam_data.pricing_model_preference or "auto",
         )
         session.add(new_exam)
         await session.commit()
@@ -1462,6 +1478,8 @@ async def update_exam(
         exam.year = exam_update.year
     if exam_update.description is not None:
         exam.description = exam_update.description
+    if exam_update.pricing_model_preference is not None:
+        exam.pricing_model_preference = exam_update.pricing_model_preference
 
     await session.commit()
     await session.refresh(exam, ["registration_period"])
@@ -1495,6 +1513,488 @@ async def delete_exam(exam_id: int, session: DBSessionDep, current_user: SystemA
     # Delete exam (registration period will be cascade deleted)
     await session.delete(exam)
     await session.commit()
+
+
+
+# Pricing Management Endpoints
+
+@router.get("/exams/{exam_id}/pricing", response_model=ExamPricingResponse)
+async def get_exam_pricing(
+    exam_id: int,
+    session: DBSessionDep,
+    current_user: SystemAdminDep,
+) -> ExamPricingResponse:
+    """Get all pricing for an exam."""
+    # Verify exam exists
+    exam_stmt = select(RegistrationExam).where(RegistrationExam.id == exam_id)
+    exam_result = await session.execute(exam_stmt)
+    exam = exam_result.scalar_one_or_none()
+
+    if not exam:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Exam not found")
+
+    # Get application fee
+    app_fee_stmt = select(RegistrationApplicationFee).where(
+        RegistrationApplicationFee.exam_id == exam_id
+    )
+    app_fee_result = await session.execute(app_fee_stmt)
+    application_fee = app_fee_result.scalar_one_or_none()
+
+    # Get subject pricing with subject details
+    subject_pricing_stmt = (
+        select(SubjectPricing)
+        .where(SubjectPricing.exam_id == exam_id)
+        .options(selectinload(SubjectPricing.subject))
+        .order_by(SubjectPricing.subject_id)
+    )
+    subject_pricing_result = await session.execute(subject_pricing_stmt)
+    subject_pricing_list = subject_pricing_result.scalars().all()
+
+    # Get tiered pricing
+    tiered_pricing_stmt = select(RegistrationTieredPricing).where(
+        RegistrationTieredPricing.exam_id == exam_id
+    ).order_by(RegistrationTieredPricing.min_subjects)
+    tiered_pricing_result = await session.execute(tiered_pricing_stmt)
+    tiered_pricing_list = tiered_pricing_result.scalars().all()
+
+    return ExamPricingResponse(
+        exam_id=exam_id,
+        application_fee=ApplicationFeeResponse.model_validate(application_fee) if application_fee else None,
+        subject_pricing=[SubjectPricingResponse.model_validate(sp) for sp in subject_pricing_list],
+        tiered_pricing=[TieredPricingResponse.model_validate(tp) for tp in tiered_pricing_list],
+    )
+
+
+@router.get("/exams/{exam_id}/pricing/application-fee", response_model=ApplicationFeeResponse)
+async def get_application_fee(
+    exam_id: int,
+    session: DBSessionDep,
+    current_user: SystemAdminDep,
+) -> ApplicationFeeResponse:
+    """Get application fee for an exam."""
+    # Verify exam exists
+    exam_stmt = select(RegistrationExam).where(RegistrationExam.id == exam_id)
+    exam_result = await session.execute(exam_stmt)
+    exam = exam_result.scalar_one_or_none()
+
+    if not exam:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Exam not found")
+
+    stmt = select(RegistrationApplicationFee).where(
+        RegistrationApplicationFee.exam_id == exam_id
+    )
+    result = await session.execute(stmt)
+    app_fee = result.scalar_one_or_none()
+
+    if not app_fee:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Application fee not found")
+
+    return ApplicationFeeResponse.model_validate(app_fee)
+
+
+@router.post("/exams/{exam_id}/pricing/application-fee", response_model=ApplicationFeeResponse)
+async def create_or_update_application_fee(
+    exam_id: int,
+    fee_data: ApplicationFeeCreate,
+    session: DBSessionDep,
+    current_user: SystemAdminDep,
+) -> ApplicationFeeResponse:
+    """Create or update application fee for an exam."""
+    # Verify exam exists
+    exam_stmt = select(RegistrationExam).where(RegistrationExam.id == exam_id)
+    exam_result = await session.execute(exam_stmt)
+    exam = exam_result.scalar_one_or_none()
+
+    if not exam:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Exam not found")
+
+    # Check if application fee exists
+    existing_stmt = select(RegistrationApplicationFee).where(
+        RegistrationApplicationFee.exam_id == exam_id
+    )
+    existing_result = await session.execute(existing_stmt)
+    existing_fee = existing_result.scalar_one_or_none()
+
+    if existing_fee:
+        # Update existing
+        existing_fee.fee = fee_data.fee
+        existing_fee.currency = fee_data.currency
+        existing_fee.is_active = fee_data.is_active
+        await session.commit()
+        await session.refresh(existing_fee)
+        return ApplicationFeeResponse.model_validate(existing_fee)
+    else:
+        # Create new
+        new_fee = RegistrationApplicationFee(
+            exam_id=exam_id,
+            fee=fee_data.fee,
+            currency=fee_data.currency,
+            is_active=fee_data.is_active,
+        )
+        session.add(new_fee)
+        await session.commit()
+        await session.refresh(new_fee)
+        return ApplicationFeeResponse.model_validate(new_fee)
+
+
+@router.delete("/exams/{exam_id}/pricing/application-fee", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_application_fee(
+    exam_id: int,
+    session: DBSessionDep,
+    current_user: SystemAdminDep,
+) -> None:
+    """Delete application fee for an exam."""
+    stmt = select(RegistrationApplicationFee).where(
+        RegistrationApplicationFee.exam_id == exam_id
+    )
+    result = await session.execute(stmt)
+    app_fee = result.scalar_one_or_none()
+
+    if not app_fee:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Application fee not found")
+
+    await session.delete(app_fee)
+    await session.commit()
+
+
+@router.get("/exams/{exam_id}/pricing/subjects", response_model=list[SubjectPricingResponse])
+async def get_subject_pricing(
+    exam_id: int,
+    session: DBSessionDep,
+    current_user: SystemAdminDep,
+) -> list[SubjectPricingResponse]:
+    """Get subject pricing for an exam."""
+    # Verify exam exists
+    exam_stmt = select(RegistrationExam).where(RegistrationExam.id == exam_id)
+    exam_result = await session.execute(exam_stmt)
+    exam = exam_result.scalar_one_or_none()
+
+    if not exam:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Exam not found")
+
+    stmt = (
+        select(SubjectPricing)
+        .where(SubjectPricing.exam_id == exam_id)
+        .options(selectinload(SubjectPricing.subject))
+        .order_by(SubjectPricing.subject_id)
+    )
+    result = await session.execute(stmt)
+    pricing_list = result.scalars().all()
+
+    return [SubjectPricingResponse.model_validate(p) for p in pricing_list]
+
+
+@router.post("/exams/{exam_id}/pricing/subjects", response_model=list[SubjectPricingResponse])
+async def create_or_update_subject_pricing(
+    exam_id: int,
+    pricing_data: SubjectPricingBulkUpdate,
+    session: DBSessionDep,
+    current_user: SystemAdminDep,
+) -> list[SubjectPricingResponse]:
+    """Create or update subject pricing for an exam (bulk operation)."""
+    # Verify exam exists
+    exam_stmt = select(RegistrationExam).where(RegistrationExam.id == exam_id)
+    exam_result = await session.execute(exam_stmt)
+    exam = exam_result.scalar_one_or_none()
+
+    if not exam:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Exam not found")
+
+    # Validate all subjects exist
+    subject_ids = [p.subject_id for p in pricing_data.pricing]
+    subjects_stmt = select(Subject).where(Subject.id.in_(subject_ids))
+    subjects_result = await session.execute(subjects_stmt)
+    existing_subjects = {s.id for s in subjects_result.scalars().all()}
+
+    missing_subjects = set(subject_ids) - existing_subjects
+    if missing_subjects:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Subjects not found: {', '.join(map(str, missing_subjects))}",
+        )
+
+    # Process each pricing entry
+    updated_pricing = []
+    for pricing_item in pricing_data.pricing:
+        # Check if pricing exists
+        existing_stmt = select(SubjectPricing).where(
+            SubjectPricing.exam_id == exam_id,
+            SubjectPricing.subject_id == pricing_item.subject_id,
+        )
+        existing_result = await session.execute(existing_stmt)
+        existing = existing_result.scalar_one_or_none()
+
+        if existing:
+            # Update existing
+            existing.price = pricing_item.price
+            existing.currency = pricing_item.currency
+            existing.is_active = pricing_item.is_active
+            await session.flush()
+            await session.refresh(existing, ["subject"])
+            updated_pricing.append(existing)
+        else:
+            # Create new
+            new_pricing = SubjectPricing(
+                exam_id=exam_id,
+                subject_id=pricing_item.subject_id,
+                price=pricing_item.price,
+                currency=pricing_item.currency,
+                is_active=pricing_item.is_active,
+            )
+            session.add(new_pricing)
+            await session.flush()
+            await session.refresh(new_pricing, ["subject"])
+            updated_pricing.append(new_pricing)
+
+    await session.commit()
+    return [SubjectPricingResponse.model_validate(p) for p in updated_pricing]
+
+
+@router.delete("/exams/{exam_id}/pricing/subjects/{subject_pricing_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_subject_pricing(
+    exam_id: int,
+    subject_pricing_id: int,
+    session: DBSessionDep,
+    current_user: SystemAdminDep,
+) -> None:
+    """Delete subject pricing."""
+    stmt = select(SubjectPricing).where(
+        SubjectPricing.id == subject_pricing_id,
+        SubjectPricing.exam_id == exam_id,
+    )
+    result = await session.execute(stmt)
+    subject_pricing = result.scalar_one_or_none()
+
+    if not subject_pricing:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Subject pricing not found")
+
+    await session.delete(subject_pricing)
+    await session.commit()
+
+
+@router.get("/exams/{exam_id}/pricing/tiered", response_model=list[TieredPricingResponse])
+async def get_tiered_pricing(
+    exam_id: int,
+    session: DBSessionDep,
+    current_user: SystemAdminDep,
+) -> list[TieredPricingResponse]:
+    """Get tiered pricing for an exam."""
+    # Verify exam exists
+    exam_stmt = select(RegistrationExam).where(RegistrationExam.id == exam_id)
+    exam_result = await session.execute(exam_stmt)
+    exam = exam_result.scalar_one_or_none()
+
+    if not exam:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Exam not found")
+
+    stmt = select(RegistrationTieredPricing).where(
+        RegistrationTieredPricing.exam_id == exam_id
+    ).order_by(RegistrationTieredPricing.min_subjects)
+    result = await session.execute(stmt)
+    pricing_list = result.scalars().all()
+
+    return [TieredPricingResponse.model_validate(p) for p in pricing_list]
+
+
+@router.post("/exams/{exam_id}/pricing/tiered", response_model=list[TieredPricingResponse])
+async def create_or_update_tiered_pricing(
+    exam_id: int,
+    pricing_data: TieredPricingBulkUpdate,
+    session: DBSessionDep,
+    current_user: SystemAdminDep,
+) -> list[TieredPricingResponse]:
+    """Create or update tiered pricing for an exam (bulk operation)."""
+    # Verify exam exists
+    exam_stmt = select(RegistrationExam).where(RegistrationExam.id == exam_id)
+    exam_result = await session.execute(exam_stmt)
+    exam = exam_result.scalar_one_or_none()
+
+    if not exam:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Exam not found")
+
+    # Validate no overlapping ranges
+    tiers = pricing_data.pricing
+    for i, tier1 in enumerate(tiers):
+        for tier2 in tiers[i + 1:]:
+            # Check for overlap
+            min1, max1 = tier1.min_subjects, tier1.max_subjects or float('inf')
+            min2, max2 = tier2.min_subjects, tier2.max_subjects or float('inf')
+            if not (max1 < min2 or max2 < min1):
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail=f"Tiered pricing ranges overlap: ({tier1.min_subjects}-{tier1.max_subjects or '∞'}) and ({tier2.min_subjects}-{tier2.max_subjects or '∞'})",
+                )
+
+    # Delete existing tiered pricing for this exam
+    delete_stmt = delete(RegistrationTieredPricing).where(
+        RegistrationTieredPricing.exam_id == exam_id
+    )
+    await session.execute(delete_stmt)
+
+    # Create new tiered pricing
+    created_pricing = []
+    for tier_item in tiers:
+        new_tier = RegistrationTieredPricing(
+            exam_id=exam_id,
+            min_subjects=tier_item.min_subjects,
+            max_subjects=tier_item.max_subjects,
+            price=tier_item.price,
+            currency=tier_item.currency,
+            is_active=tier_item.is_active,
+        )
+        session.add(new_tier)
+        await session.flush()
+        created_pricing.append(new_tier)
+
+    await session.commit()
+    return [TieredPricingResponse.model_validate(p) for p in created_pricing]
+
+
+@router.delete("/exams/{exam_id}/pricing/tiered/{tiered_pricing_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_tiered_pricing(
+    exam_id: int,
+    tiered_pricing_id: int,
+    session: DBSessionDep,
+    current_user: SystemAdminDep,
+) -> None:
+    """Delete tiered pricing."""
+    stmt = select(RegistrationTieredPricing).where(
+        RegistrationTieredPricing.id == tiered_pricing_id,
+        RegistrationTieredPricing.exam_id == exam_id,
+    )
+    result = await session.execute(stmt)
+    tiered_pricing = result.scalar_one_or_none()
+
+    if not tiered_pricing:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Tiered pricing not found")
+
+    await session.delete(tiered_pricing)
+    await session.commit()
+
+
+@router.post("/exams/{exam_id}/pricing/import", status_code=status.HTTP_200_OK)
+async def import_exam_pricing(
+    exam_id: int,
+    import_data: ImportPricingRequest,
+    session: DBSessionDep,
+    current_user: SystemAdminDep,
+) -> dict:
+    """Import pricing from another exam."""
+    # Verify target exam exists
+    target_exam_stmt = select(RegistrationExam).where(RegistrationExam.id == exam_id)
+    target_exam_result = await session.execute(target_exam_stmt)
+    target_exam = target_exam_result.scalar_one_or_none()
+
+    if not target_exam:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Target exam not found")
+
+    # Verify source exam exists
+    source_exam_stmt = select(RegistrationExam).where(RegistrationExam.id == import_data.source_exam_id)
+    source_exam_result = await session.execute(source_exam_stmt)
+    source_exam = source_exam_result.scalar_one_or_none()
+
+    if not source_exam:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Source exam not found")
+
+    if exam_id == import_data.source_exam_id:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Cannot import pricing from the same exam",
+        )
+
+    imported_count = 0
+
+    try:
+        # Import application fee
+        if import_data.import_application_fee:
+            source_fee_stmt = select(RegistrationApplicationFee).where(
+                RegistrationApplicationFee.exam_id == import_data.source_exam_id
+            )
+            source_fee_result = await session.execute(source_fee_stmt)
+            source_fee = source_fee_result.scalar_one_or_none()
+
+            if source_fee:
+                # Delete existing application fee for target exam
+                delete_fee_stmt = delete(RegistrationApplicationFee).where(
+                    RegistrationApplicationFee.exam_id == exam_id
+                )
+                await session.execute(delete_fee_stmt)
+
+                # Create new application fee
+                new_fee = RegistrationApplicationFee(
+                    exam_id=exam_id,
+                    fee=source_fee.fee,
+                    currency=source_fee.currency,
+                    is_active=source_fee.is_active,
+                )
+                session.add(new_fee)
+                imported_count += 1
+
+        # Import subject pricing
+        if import_data.import_subject_pricing:
+            source_subject_pricing_stmt = select(SubjectPricing).where(
+                SubjectPricing.exam_id == import_data.source_exam_id
+            )
+            source_subject_pricing_result = await session.execute(source_subject_pricing_stmt)
+            source_subject_pricing_list = source_subject_pricing_result.scalars().all()
+
+            if source_subject_pricing_list:
+                # Delete existing subject pricing for target exam
+                delete_subject_stmt = delete(SubjectPricing).where(
+                    SubjectPricing.exam_id == exam_id
+                )
+                await session.execute(delete_subject_stmt)
+
+                # Create new subject pricing
+                for source_sp in source_subject_pricing_list:
+                    new_sp = SubjectPricing(
+                        exam_id=exam_id,
+                        subject_id=source_sp.subject_id,
+                        price=source_sp.price,
+                        currency=source_sp.currency,
+                        is_active=source_sp.is_active,
+                    )
+                    session.add(new_sp)
+                imported_count += len(source_subject_pricing_list)
+
+        # Import tiered pricing
+        if import_data.import_tiered_pricing:
+            source_tiered_stmt = select(RegistrationTieredPricing).where(
+                RegistrationTieredPricing.exam_id == import_data.source_exam_id
+            )
+            source_tiered_result = await session.execute(source_tiered_stmt)
+            source_tiered_list = source_tiered_result.scalars().all()
+
+            if source_tiered_list:
+                # Delete existing tiered pricing for target exam
+                delete_tiered_stmt = delete(RegistrationTieredPricing).where(
+                    RegistrationTieredPricing.exam_id == exam_id
+                )
+                await session.execute(delete_tiered_stmt)
+
+                # Create new tiered pricing
+                for source_tp in source_tiered_list:
+                    new_tp = RegistrationTieredPricing(
+                        exam_id=exam_id,
+                        min_subjects=source_tp.min_subjects,
+                        max_subjects=source_tp.max_subjects,
+                        price=source_tp.price,
+                        currency=source_tp.currency,
+                        is_active=source_tp.is_active,
+                    )
+                    session.add(new_tp)
+                imported_count += len(source_tiered_list)
+
+        await session.commit()
+        return {"message": "Pricing imported successfully", "items_imported": imported_count}
+
+    except Exception as e:
+        await session.rollback()
+        logger.error(f"Error importing pricing: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to import pricing: {str(e)}",
+        )
 
 
 @router.get("/exams/{exam_id}/candidates/export")

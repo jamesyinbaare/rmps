@@ -63,14 +63,32 @@ async def initialize_payment(
     # Get callback URL from settings or use default
     callback_url = None
     if hasattr(settings, 'paystack_callback_base_url') and settings.paystack_callback_base_url:
-        # Build callback URL - redirect to receipt page after payment
-        request_number = metadata.get("request_number") if metadata else None
-        if request_number:
-            # Redirect to receipt page with request number
-            callback_url = f"{settings.paystack_callback_base_url}/certificate-request/receipt?request_number={request_number}"
+        # Build callback URL based on invoice type
+        if invoice.registration_candidate_id:
+            # For registration candidates, redirect to registration page with registration_number
+            # Payment status will be updated via webhook, and frontend will check status on return
+            # Get the registration candidate to get the registration_number
+            from app.models import RegistrationCandidate
+            candidate_stmt = select(RegistrationCandidate).where(
+                RegistrationCandidate.id == invoice.registration_candidate_id
+            )
+            candidate_result = await session.execute(candidate_stmt)
+            candidate = candidate_result.scalar_one_or_none()
+            if candidate and candidate.registration_number:
+                callback_url = f"{settings.paystack_callback_base_url}/dashboard/private/register?registration_number={candidate.registration_number}"
+            else:
+                # Registration number should always exist, but if not, redirect without params
+                # Frontend will load draft normally
+                callback_url = f"{settings.paystack_callback_base_url}/dashboard/private/register"
         else:
-            # Fallback to receipt page
-            callback_url = f"{settings.paystack_callback_base_url}/certificate-request/receipt"
+            # For certificate requests, use existing logic
+            request_number = metadata.get("request_number") if metadata else None
+            if request_number:
+                # Redirect to receipt page with request number
+                callback_url = f"{settings.paystack_callback_base_url}/certificate-request/receipt?request_number={request_number}"
+            else:
+                # Fallback to receipt page
+                callback_url = f"{settings.paystack_callback_base_url}/certificate-request/receipt"
 
     # Generate unique reference with timestamp to avoid duplicates
     from datetime import datetime
@@ -87,6 +105,7 @@ async def initialize_payment(
             "invoice_number": invoice.invoice_number,
             "certificate_request_id": invoice.certificate_request_id,
             "certificate_confirmation_request_id": invoice.certificate_confirmation_request_id,
+            "registration_candidate_id": invoice.registration_candidate_id,
             **(metadata or {}),
         },
     }
@@ -125,6 +144,7 @@ async def initialize_payment(
                 invoice_id=invoice.id,
                 certificate_request_id=invoice.certificate_request_id,
                 certificate_confirmation_request_id=invoice.certificate_confirmation_request_id,
+                registration_candidate_id=invoice.registration_candidate_id,
                 paystack_reference=reference,
                 paystack_authorization_url=authorization_url,
                 amount=amount,
@@ -317,6 +337,31 @@ async def process_webhook_event(
                     if cert_request:
                         cert_request.status = RequestStatus.PAID
                         cert_request.paid_at = payment.paid_at
+                elif invoice.registration_candidate_id:
+                    # Handle registration candidate payment
+                    from app.models import RegistrationCandidate, RegistrationStatus
+                    candidate_stmt = select(RegistrationCandidate).where(
+                        RegistrationCandidate.id == invoice.registration_candidate_id
+                    )
+                    candidate_result = await session.execute(candidate_stmt)
+                    candidate = candidate_result.scalar_one_or_none()
+                    if candidate:
+                        # Update total_paid_amount (increment by payment amount)
+                        current_paid = Decimal(str(candidate.total_paid_amount or 0))
+                        candidate.total_paid_amount = current_paid + payment.amount
+
+                        # Update status to PENDING only if this is the first payment (was DRAFT)
+                        # Don't change status if already PENDING or beyond (to preserve status for returning users)
+                        if candidate.registration_status == RegistrationStatus.DRAFT:
+                            candidate.registration_status = RegistrationStatus.PENDING
+                            candidate.registration_date = payment.paid_at or datetime.utcnow()
+
+                        logger.info(
+                            f"Updated registration candidate {candidate.id}: "
+                            f"total_paid_amount={candidate.total_paid_amount}, "
+                            f"status={candidate.registration_status.value}, "
+                            f"payment_amount={payment.amount}"
+                        )
 
     elif event_type == "charge.failure":
         payment.status = PaymentStatus.FAILED
