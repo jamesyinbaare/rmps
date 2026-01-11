@@ -109,8 +109,8 @@ export default function PrivateCandidateDashboard() {
     try {
       await enableEditRegistration(registration.id);
       toast.success("Registration unlocked for editing");
-      // Redirect to registration page with the registration ID
-      router.push(`/dashboard/private/register?registration_id=${registration.id}`);
+      // Redirect to registration page with the registration number
+      router.push(`/dashboard/private/register?registration_number=${registration.registration_number}`);
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "Failed to enable editing");
     }

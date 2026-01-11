@@ -408,39 +408,38 @@ export function PrivateSubjectSelection({
 
                 {programmeSubjects.optional_core_groups.length > 0 && (
                   <Collapsible open={optionalCoreOpen} onOpenChange={setOptionalCoreOpen}>
-                    <CollapsibleTrigger className="flex w-full items-center justify-between rounded-lg border p-3 hover:bg-muted/50 transition-colors">
-                      <div className="flex items-center gap-2">
-                        <Label className="font-semibold cursor-pointer">Optional Core Subjects</Label>
-                        {selectionSummary && (
-                          <Badge variant="outline" className="text-xs">
-                            {selectionSummary.optionalCore.selected}/{selectionSummary.optionalCore.total}
-                          </Badge>
+                    <div className="flex items-center gap-2">
+                      <CollapsibleTrigger className="flex flex-1 items-center justify-between rounded-lg border p-3 hover:bg-muted/50 transition-colors">
+                        <div className="flex items-center gap-2">
+                          <Label className="font-semibold cursor-pointer">Optional Core Subjects</Label>
+                          {selectionSummary && (
+                            <Badge variant="outline" className="text-xs">
+                              {selectionSummary.optionalCore.selected}/{selectionSummary.optionalCore.total}
+                            </Badge>
+                          )}
+                        </div>
+                        {optionalCoreOpen ? (
+                          <ChevronUp className="h-4 w-4 text-muted-foreground" />
+                        ) : (
+                          <ChevronDown className="h-4 w-4 text-muted-foreground" />
                         )}
-                        <Popover>
-                          <PopoverTrigger asChild onClick={(e) => e.stopPropagation()}>
-                            <button
-                              type="button"
-                              className="ml-1 text-muted-foreground hover:text-foreground"
-                              aria-label="Info about optional core subjects"
-                            >
-                              <Info className="h-4 w-4" />
-                            </button>
-                          </PopoverTrigger>
-                          <PopoverContent className="w-80">
-                            <p className="text-sm">
-                              {isNovDec
-                                ? "Optional: Select at most one subject from each group (or none). All subjects in optional groups are optional."
-                                : "Select exactly one subject from each group. All groups must have a selection."}
-                            </p>
-                          </PopoverContent>
-                        </Popover>
-                      </div>
-                      {optionalCoreOpen ? (
-                        <ChevronUp className="h-4 w-4 text-muted-foreground" />
-                      ) : (
-                        <ChevronDown className="h-4 w-4 text-muted-foreground" />
-                      )}
-                    </CollapsibleTrigger>
+                      </CollapsibleTrigger>
+                      <Popover>
+                        <PopoverTrigger
+                          className="text-muted-foreground hover:text-foreground h-auto p-2 border-0 bg-transparent"
+                          aria-label="Info about optional core subjects"
+                        >
+                          <Info className="h-4 w-4" />
+                        </PopoverTrigger>
+                        <PopoverContent className="w-80">
+                          <p className="text-sm">
+                            {isNovDec
+                              ? "Optional: Select at most one subject from each group (or none). All subjects in optional groups are optional."
+                              : "Select exactly one subject from each group. All groups must have a selection."}
+                          </p>
+                        </PopoverContent>
+                      </Popover>
+                    </div>
                     <CollapsibleContent className="mt-3 space-y-4">
                       {programmeSubjects.optional_core_groups.map((group) => {
                       // Find which subject from this group is currently selected

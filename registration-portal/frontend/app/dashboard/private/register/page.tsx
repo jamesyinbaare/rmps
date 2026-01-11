@@ -108,11 +108,11 @@ export default function PrivateRegistrationPage() {
     loadExams();
     loadExistingRegistrations();
     const examIdParam = searchParams.get("exam_id");
-    const registrationIdParam = searchParams.get("registration_id");
+    const registrationNumberParam = searchParams.get("registration_number");
 
-    if (registrationIdParam) {
-      // Load submitted registration for editing
-      loadSubmittedRegistration(parseInt(registrationIdParam));
+    if (registrationNumberParam) {
+      // Load submitted registration for editing using registration number
+      loadSubmittedRegistrationByNumber(registrationNumberParam);
     } else if (examIdParam) {
       setSelectedExamId(parseInt(examIdParam));
       loadDraft(parseInt(examIdParam));
@@ -197,12 +197,21 @@ export default function PrivateRegistrationPage() {
     }
   };
 
-  const loadSubmittedRegistration = async (registrationId: number) => {
+  const loadSubmittedRegistrationByNumber = async (registrationNumber: string) => {
     try {
       setLoadingData(true);
-      // First, enable editing (converts submitted registration back to DRAFT if needed)
+      // Fetch all registrations to find the one with matching registration number
+      const regs = await listMyRegistrations();
+      const registration = regs.find((r) => r.registration_number === registrationNumber);
+
+      if (!registration) {
+        toast.error("Registration not found");
+        return;
+      }
+
+      // Enable editing (converts submitted registration back to DRAFT if needed)
       // This endpoint now also handles registrations that are already DRAFT
-      const updatedRegistration = await enableEditRegistration(registrationId);
+      const updatedRegistration = await enableEditRegistration(registration.id);
 
       // Now load it as a draft using the exam ID
       if (updatedRegistration.registration_exam_id) {
