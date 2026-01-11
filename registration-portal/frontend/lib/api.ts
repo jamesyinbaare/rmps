@@ -554,6 +554,45 @@ export async function submitDraftRegistration(registrationId: number): Promise<R
   return handleResponse<RegistrationCandidate>(response);
 }
 
+export interface RegistrationPriceResponse {
+  application_fee: number;
+  subject_price: number | null;
+  tiered_price: number | null;
+  total: number;
+  pricing_model_used: string;
+  payment_required: boolean;
+  total_paid_amount: number;
+  outstanding_amount: number;
+}
+
+export interface PaymentInitializeResponse {
+  payment_id: number;
+  authorization_url: string;
+  paystack_reference: string;
+}
+
+export async function getRegistrationPrice(registrationId: number): Promise<RegistrationPriceResponse> {
+  const response = await fetchWithAuth(`/api/v1/private/registrations/${registrationId}/price`);
+  return handleResponse<RegistrationPriceResponse>(response);
+}
+
+export async function initializeRegistrationPayment(registrationId: number): Promise<PaymentInitializeResponse> {
+  const response = await fetchWithAuth(`/api/v1/private/registrations/${registrationId}/pay`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+  });
+  return handleResponse<PaymentInitializeResponse>(response);
+}
+
+export async function getRegistrationPaymentStatus(registrationId: number): Promise<{ total_paid_amount: number; outstanding_amount: number; has_pricing: boolean }> {
+  const priceData = await getRegistrationPrice(registrationId);
+  return {
+    total_paid_amount: priceData.total_paid_amount,
+    outstanding_amount: priceData.outstanding_amount,
+    has_pricing: priceData.has_pricing || false,
+  };
+}
+
 export async function enableEditRegistration(registrationId: number): Promise<RegistrationCandidate> {
   const response = await fetchWithAuth(`/api/v1/private/registrations/${registrationId}/edit`, {
     method: "POST",
@@ -565,6 +604,11 @@ export async function enableEditRegistration(registrationId: number): Promise<Re
 export async function listMyRegistrations(): Promise<RegistrationCandidate[]> {
   const response = await fetchWithAuth("/api/v1/private/registrations");
   return handleResponse<RegistrationCandidate[]>(response);
+}
+
+export async function getRegistration(registrationId: number): Promise<RegistrationCandidate> {
+  const response = await fetchWithAuth(`/api/v1/private/registrations/${registrationId}`);
+  return handleResponse<RegistrationCandidate>(response);
 }
 
 export async function logout(): Promise<void> {
@@ -871,6 +915,121 @@ export async function listExams(): Promise<RegistrationExam[]> {
 export async function getExam(id: number): Promise<RegistrationExam> {
   const response = await fetchWithAuth(`/api/v1/admin/exams/${id}`);
   return handleResponse<RegistrationExam>(response);
+}
+
+export async function updateExam(
+  id: number,
+  data: {
+    exam_id_main_system?: number | null;
+    exam_type?: string;
+    exam_series?: string;
+    year?: number;
+    description?: string | null;
+    pricing_model_preference?: string | null;
+  }
+): Promise<RegistrationExam> {
+  const response = await fetchWithAuth(`/api/v1/admin/exams/${id}`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(data),
+  });
+  return handleResponse<RegistrationExam>(response);
+}
+
+// Pricing Management API
+export async function getExamPricing(examId: number): Promise<ExamPricingResponse> {
+  const response = await fetchWithAuth(`/api/v1/admin/exams/${examId}/pricing`);
+  return handleResponse<ExamPricingResponse>(response);
+}
+
+export async function getApplicationFee(examId: number): Promise<ApplicationFeeResponse> {
+  const response = await fetchWithAuth(`/api/v1/admin/exams/${examId}/pricing/application-fee`);
+  return handleResponse<ApplicationFeeResponse>(response);
+}
+
+export async function createOrUpdateApplicationFee(
+  examId: number,
+  feeData: ApplicationFeeCreate
+): Promise<ApplicationFeeResponse> {
+  const response = await fetchWithAuth(`/api/v1/admin/exams/${examId}/pricing/application-fee`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(feeData),
+  });
+  return handleResponse<ApplicationFeeResponse>(response);
+}
+
+export async function deleteApplicationFee(examId: number): Promise<void> {
+  const response = await fetchWithAuth(`/api/v1/admin/exams/${examId}/pricing/application-fee`, {
+    method: "DELETE",
+  });
+  if (!response.ok) {
+    await handleResponse(response);
+  }
+}
+
+export async function getSubjectPricing(examId: number): Promise<SubjectPricingResponse[]> {
+  const response = await fetchWithAuth(`/api/v1/admin/exams/${examId}/pricing/subjects`);
+  return handleResponse<SubjectPricingResponse[]>(response);
+}
+
+export async function createOrUpdateSubjectPricing(
+  examId: number,
+  pricingData: SubjectPricingBulkUpdate
+): Promise<SubjectPricingResponse[]> {
+  const response = await fetchWithAuth(`/api/v1/admin/exams/${examId}/pricing/subjects`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(pricingData),
+  });
+  return handleResponse<SubjectPricingResponse[]>(response);
+}
+
+export async function deleteSubjectPricing(examId: number, subjectPricingId: number): Promise<void> {
+  const response = await fetchWithAuth(`/api/v1/admin/exams/${examId}/pricing/subjects/${subjectPricingId}`, {
+    method: "DELETE",
+  });
+  if (!response.ok) {
+    await handleResponse(response);
+  }
+}
+
+export async function getTieredPricing(examId: number): Promise<TieredPricingResponse[]> {
+  const response = await fetchWithAuth(`/api/v1/admin/exams/${examId}/pricing/tiered`);
+  return handleResponse<TieredPricingResponse[]>(response);
+}
+
+export async function createOrUpdateTieredPricing(
+  examId: number,
+  pricingData: TieredPricingBulkUpdate
+): Promise<TieredPricingResponse[]> {
+  const response = await fetchWithAuth(`/api/v1/admin/exams/${examId}/pricing/tiered`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(pricingData),
+  });
+  return handleResponse<TieredPricingResponse[]>(response);
+}
+
+export async function deleteTieredPricing(examId: number, tieredPricingId: number): Promise<void> {
+  const response = await fetchWithAuth(`/api/v1/admin/exams/${examId}/pricing/tiered/${tieredPricingId}`, {
+    method: "DELETE",
+  });
+  if (!response.ok) {
+    await handleResponse(response);
+  }
+}
+
+export async function importExamPricing(
+  examId: number,
+  importData: ImportPricingRequest
+): Promise<{ message: string; items_imported: number }> {
+  const response = await fetchWithAuth(`/api/v1/admin/exams/${examId}/pricing/import`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(importData),
+  });
+  return handleResponse<{ message: string; items_imported: number }>(response);
 }
 
 export async function updateRegistrationPeriod(

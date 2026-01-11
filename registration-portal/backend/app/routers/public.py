@@ -1908,9 +1908,23 @@ async def paystack_webhook(
             # Update certificate request status if payment successful
             # Use enum comparison instead of value comparison for reliability
             from app.models import PaymentStatus
-            logger.info(f"Webhook processed payment {payment.id}, status: {payment.status}, certificate_request_id: {payment.certificate_request_id}")
+            logger.info(
+                f"Webhook processed payment {payment.id}, status: {payment.status}, "
+                f"certificate_request_id: {payment.certificate_request_id}, "
+                f"registration_candidate_id: {payment.registration_candidate_id}"
+            )
 
             if payment.status == PaymentStatus.SUCCESS:
+                # Handle registration candidate payment (already handled in process_webhook_event)
+                # The candidate's total_paid_amount is updated in process_webhook_event
+                # We just need to commit the session, which happens at the end
+                if payment.registration_candidate_id:
+                    logger.info(
+                        f"Registration candidate {payment.registration_candidate_id} payment successful. "
+                        f"Payment amount: {payment.amount}"
+                    )
+
+                # Handle certificate request
                 # Handle certificate request
                 if payment.certificate_request_id:
                     logger.info(f"Updating certificate request {payment.certificate_request_id} status to PAID")

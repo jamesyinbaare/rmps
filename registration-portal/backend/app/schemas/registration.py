@@ -213,6 +213,7 @@ class RegistrationExamUpdate(BaseModel):
     exam_series: str | None = None
     year: int | None = None
     description: str | None = None
+    pricing_model_preference: str | None = Field(None, description="Pricing model: 'per_subject', 'tiered', or 'auto'")
 
 
 class RegistrationExamResponse(BaseModel):
@@ -228,6 +229,7 @@ class RegistrationExamResponse(BaseModel):
     results_published: bool = False
     results_published_at: datetime | None = None
     results_published_by_user_id: str | None = None
+    pricing_model_preference: str | None = None
     has_index_numbers: bool = False
     created_at: datetime
     updated_at: datetime

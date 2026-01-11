@@ -300,6 +300,7 @@ class RegistrationExam(Base):
     results_published = Column(Boolean, default=False, nullable=False, index=True)
     results_published_at = Column(DateTime, nullable=True)
     results_published_by_user_id = Column(UUID(as_uuid=True), ForeignKey("portal_users.id", ondelete="SET NULL"), nullable=True, index=True)
+    pricing_model_preference = Column(String(20), nullable=True, default="auto")  # "per_subject", "tiered", or "auto"
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
 
@@ -348,6 +349,7 @@ class RegistrationCandidate(Base):
     national_id = Column(String(50), nullable=True)
     registration_status = Column(Enum(RegistrationStatus), default=RegistrationStatus.PENDING, nullable=False, index=True)
     registration_date = Column(DateTime, default=datetime.utcnow, nullable=False)
+    total_paid_amount = Column(Numeric(10, 2), default=0, nullable=False)  # Track total amount paid across all payments
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
 
@@ -359,6 +361,8 @@ class RegistrationCandidate(Base):
     photo = relationship("RegistrationCandidatePhoto", back_populates="candidate", uselist=False, cascade="all, delete-orphan")
     results = relationship("CandidateResult", back_populates="candidate", cascade="all, delete-orphan")
     result_blocks = relationship("ResultBlock", back_populates="candidate", cascade="all, delete-orphan")
+    invoice = relationship("Invoice", uselist=False, back_populates="registration_candidate")
+    payments = relationship("Payment", back_populates="registration_candidate")
 
 
 class RegistrationSubjectSelection(Base):
@@ -569,10 +573,68 @@ class IndexNumberGenerationJob(Base):
     created_by = relationship("PortalUser", foreign_keys=[created_by_user_id])
 
 
+class SubjectPricing(Base):
+    """Model for per-subject pricing configuration."""
+
+    __tablename__ = "subject_pricing"
+
+    id = Column(Integer, primary_key=True)
+    subject_id = Column(Integer, ForeignKey("subjects.id", ondelete="CASCADE"), nullable=False, index=True)
+    exam_id = Column(Integer, ForeignKey("registration_exams.id", ondelete="CASCADE"), nullable=True, index=True)  # NULL = global pricing
+    price = Column(Numeric(10, 2), nullable=False)
+    currency = Column(String(3), default="GHS", nullable=False)
+    is_active = Column(Boolean, default=True, nullable=False, index=True)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+
+    subject = relationship("Subject")
+    exam = relationship("RegistrationExam", foreign_keys=[exam_id])
+
+    __table_args__ = (
+        UniqueConstraint("subject_id", "exam_id", name="uq_subject_pricing"),
+    )
+
+
+class RegistrationTieredPricing(Base):
+    """Model for tiered pricing based on number of subjects."""
+
+    __tablename__ = "registration_tiered_pricing"
+
+    id = Column(Integer, primary_key=True)
+    exam_id = Column(Integer, ForeignKey("registration_exams.id", ondelete="CASCADE"), nullable=True, index=True)  # NULL = global pricing
+    min_subjects = Column(Integer, nullable=False)
+    max_subjects = Column(Integer, nullable=True)  # NULL = unlimited
+    price = Column(Numeric(10, 2), nullable=False)
+    currency = Column(String(3), default="GHS", nullable=False)
+    is_active = Column(Boolean, default=True, nullable=False, index=True)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+
+    exam = relationship("RegistrationExam", foreign_keys=[exam_id])
+
+    __table_args__ = (
+        UniqueConstraint("exam_id", "min_subjects", "max_subjects", name="uq_tiered_pricing"),
+    )
+
+
+class RegistrationApplicationFee(Base):
+    """Model for application fee pricing configuration."""
+
+    __tablename__ = "registration_application_fees"
+
+    id = Column(Integer, primary_key=True)
+    exam_id = Column(Integer, ForeignKey("registration_exams.id", ondelete="CASCADE"), nullable=True, unique=True, index=True)  # NULL = global application fee
+    fee = Column(Numeric(10, 2), nullable=False)
+    currency = Column(String(3), default="GHS", nullable=False)
+    is_active = Column(Boolean, default=True, nullable=False, index=True)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+
+    exam = relationship("RegistrationExam", foreign_keys=[exam_id])
 
 
 class Invoice(Base):
-    """Model for invoices generated for certificate requests and confirmation requests."""
+    """Model for invoices generated for certificate requests, confirmation requests, and registration candidates."""
 
     __tablename__ = "invoices"
 
@@ -580,6 +642,7 @@ class Invoice(Base):
     invoice_number = Column(String(50), unique=True, nullable=False, index=True)  # Format: INV-YYYYMMDD-XXXXXX
     certificate_request_id = Column(Integer, ForeignKey("certificate_requests.id", ondelete="CASCADE"), nullable=True, unique=True, index=True)  # For Certificate/Attestation requests
     certificate_confirmation_request_id = Column(Integer, ForeignKey("certificate_confirmation_requests.id", ondelete="CASCADE"), nullable=True, unique=True, index=True)  # For confirmation requests
+    registration_candidate_id = Column(Integer, ForeignKey("registration_candidates.id", ondelete="SET NULL"), nullable=True, index=True)  # For registration candidates
     amount = Column(Numeric(10, 2), nullable=False)  # Invoice amount
     currency = Column(String(3), default="GHS", nullable=False)  # Currency code
     status = Column(String(20), default="pending", nullable=False, index=True)  # "pending", "paid", "cancelled"
@@ -590,6 +653,7 @@ class Invoice(Base):
 
     certificate_request = relationship("CertificateRequest", foreign_keys=[certificate_request_id], uselist=False)
     certificate_confirmation_request = relationship("CertificateConfirmationRequest", foreign_keys=[certificate_confirmation_request_id], uselist=False)
+    registration_candidate = relationship("RegistrationCandidate", foreign_keys=[registration_candidate_id])
 
 
 class CertificateRequest(TicketRequestMixin, Base):
@@ -643,6 +707,7 @@ class Payment(Base):
     invoice_id = Column(Integer, ForeignKey("invoices.id", ondelete="SET NULL"), nullable=True, index=True)
     certificate_request_id = Column(Integer, ForeignKey("certificate_requests.id", ondelete="CASCADE"), nullable=True, index=True)  # For Certificate/Attestation requests
     certificate_confirmation_request_id = Column(Integer, ForeignKey("certificate_confirmation_requests.id", ondelete="CASCADE"), nullable=True, index=True)  # For confirmation requests
+    registration_candidate_id = Column(Integer, ForeignKey("registration_candidates.id", ondelete="SET NULL"), nullable=True, index=True)  # For registration candidates
     paystack_reference = Column(String(100), unique=True, nullable=True, index=True)  # Paystack transaction reference
     paystack_authorization_url = Column(String(512), nullable=True)  # Payment URL
     amount = Column(Numeric(10, 2), nullable=False)  # Payment amount
@@ -656,6 +721,7 @@ class Payment(Base):
     invoice = relationship("Invoice", foreign_keys=[invoice_id])
     certificate_request = relationship("CertificateRequest", foreign_keys=[certificate_request_id])
     certificate_confirmation_request = relationship("CertificateConfirmationRequest", foreign_keys=[certificate_confirmation_request_id])
+    registration_candidate = relationship("RegistrationCandidate", foreign_keys=[registration_candidate_id])
 
 
 class TicketActivity(Base):
