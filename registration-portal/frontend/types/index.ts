@@ -154,6 +154,7 @@ export interface RegistrationExam {
   results_published: boolean;
   results_published_at: string | null;
   results_published_by_user_id: string | null;
+  pricing_model_preference: string | null;
   has_index_numbers: boolean;
   created_at: string;
   updated_at: string;
@@ -321,6 +322,84 @@ export interface SubjectBulkUploadResponse {
   successful: number;
   failed: number;
   errors: SubjectBulkUploadError[];
+}
+
+// Pricing types
+export interface ApplicationFeeResponse {
+  id: number;
+  exam_id: number | null;
+  fee: number;
+  currency: string;
+  is_active: boolean;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface ApplicationFeeCreate {
+  fee: number;
+  currency?: string;
+  is_active?: boolean;
+}
+
+export interface SubjectPricingResponse {
+  id: number;
+  subject_id: number;
+  exam_id: number | null;
+  price: number;
+  currency: string;
+  is_active: boolean;
+  created_at: string;
+  updated_at: string;
+  subject: Subject;
+}
+
+export interface SubjectPricingCreate {
+  subject_id: number;
+  price: number;
+  currency?: string;
+  is_active?: boolean;
+}
+
+export interface SubjectPricingBulkUpdate {
+  pricing: SubjectPricingCreate[];
+}
+
+export interface TieredPricingResponse {
+  id: number;
+  exam_id: number | null;
+  min_subjects: number;
+  max_subjects: number | null;
+  price: number;
+  currency: string;
+  is_active: boolean;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface TieredPricingCreate {
+  min_subjects: number;
+  max_subjects: number | null;
+  price: number;
+  currency?: string;
+  is_active?: boolean;
+}
+
+export interface TieredPricingBulkUpdate {
+  pricing: TieredPricingCreate[];
+}
+
+export interface ExamPricingResponse {
+  exam_id: number;
+  application_fee: ApplicationFeeResponse | null;
+  subject_pricing: SubjectPricingResponse[];
+  tiered_pricing: TieredPricingResponse[];
+}
+
+export interface ImportPricingRequest {
+  source_exam_id: number;
+  import_application_fee?: boolean;
+  import_subject_pricing?: boolean;
+  import_tiered_pricing?: boolean;
 }
 
 // Photo Album types

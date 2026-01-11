@@ -29,13 +29,16 @@ import {
   listMyRegistrations,
   enableEditRegistration,
   logout,
+  getRegistrationPrice,
+  initializeRegistrationPayment,
+  getRegistrationPaymentStatus,
   type ExaminationCenter,
   type SubjectListItem,
   type ProgrammeListItem,
 } from "@/lib/api";
 import type { RegistrationExam, RegistrationCandidate } from "@/types";
 import { toast } from "sonner";
-import { Loader2, CheckCircle2, LogOut, User, Calendar, GraduationCap, BookOpen, Building2, Copy, AlertTriangle, AlertCircle, XCircle, Edit2 } from "lucide-react";
+import { Loader2, CheckCircle2, LogOut, User, Calendar, GraduationCap, BookOpen, Building2, Copy, AlertTriangle, AlertCircle, XCircle, Edit2, Plus, Clock, CheckCircle } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import {
   AlertDialog,
@@ -56,8 +59,9 @@ const STEPS = [
   { number: 2, title: "Select Center" },
   { number: 3, title: "Bio Data" },
   { number: 4, title: "Subjects" },
-  { number: 5, title: "Documents & Photo" },
-  { number: 6, title: "Review" },
+  { number: 5, title: "Payment" },
+  { number: 6, title: "Documents & Photo" },
+  { number: 7, title: "Review" },
 ];
 
 export default function PrivateRegistrationPage() {
@@ -98,7 +102,23 @@ export default function PrivateRegistrationPage() {
   const [programmes, setProgrammes] = useState<ProgrammeListItem[]>([]);
   const [allSubjects, setAllSubjects] = useState<SubjectListItem[]>([]);
 
-  // Step 5: Documents & Photo
+  // Step 5: Payment
+  const [priceData, setPriceData] = useState<{
+    application_fee: number;
+    subject_price: number | null;
+    tiered_price: number | null;
+    total: number;
+    pricing_model_used: string;
+    payment_required: boolean;
+    has_pricing: boolean;
+    total_paid_amount: number;
+    outstanding_amount: number;
+  } | null>(null);
+  const [paymentAcknowledged, setPaymentAcknowledged] = useState(false);
+  const [loadingPrice, setLoadingPrice] = useState(false);
+  const [processingPayment, setProcessingPayment] = useState(false);
+
+  // Step 6: Documents & Photo
   const [photoFile, setPhotoFile] = useState<File | null>(null);
   const [photoPreview, setPhotoPreview] = useState<string | null>(null);
   const [hasExistingPhoto, setHasExistingPhoto] = useState(false);
@@ -125,9 +145,8 @@ export default function PrivateRegistrationPage() {
   const loadExistingRegistrations = async () => {
     try {
       const regs = await listMyRegistrations();
-      // Filter out drafts - only keep submitted registrations
-      const submitted = regs.filter((r) => r.registration_status !== "DRAFT");
-      setExistingRegistrations(submitted);
+      // Include all registrations (DRAFT, PENDING, APPROVED, REJECTED)
+      setExistingRegistrations(regs);
     } catch (error) {
       console.error("Failed to load existing registrations:", error);
     }
@@ -160,16 +179,14 @@ export default function PrivateRegistrationPage() {
     if (selectedSchoolId) completed.add(2);
     if (name && name.trim() !== "" && name !== "Draft") completed.add(3);
     if (selectedSubjectIds.length > 0) completed.add(4);
-    // Step 5 (photo) is optional, but if we have a photo file, preview, or existing photo, mark it as completed
-    if (photoFile || photoPreview || hasExistingPhoto) completed.add(5);
-    // Step 6 (review) is accessible if step 5 is reached
-    if (completed.has(5)) completed.add(6);
-    // Step 7 (submit) is accessible if all previous steps are completed
-    if (completed.has(1) && completed.has(2) && completed.has(3) && completed.has(4)) {
-      completed.add(7);
-    }
+    // Step 5 (payment) - check if payment is completed
+    if (priceData && priceData.outstanding_amount <= 0) completed.add(5);
+    // Step 6 (photo) is optional, but if we have a photo file, preview, or existing photo, mark it as completed
+    if (photoFile || photoPreview || hasExistingPhoto) completed.add(6);
+    // Step 7 (review) is accessible if payment is completed
+    if (completed.has(5)) completed.add(7);
     setCompletedSteps(completed);
-  }, [selectedExamId, selectedSchoolId, name, selectedSubjectIds, photoFile, photoPreview, hasExistingPhoto]);
+  }, [selectedExamId, selectedSchoolId, name, selectedSubjectIds, photoFile, photoPreview, hasExistingPhoto, priceData]);
 
   const loadExams = async () => {
     setLoadingData(true);
@@ -228,6 +245,93 @@ export default function PrivateRegistrationPage() {
     }
   };
 
+  const handleLoadRegistration = async (registration: RegistrationCandidate) => {
+    try {
+      setLoadingData(true);
+      // Enable editing (converts submitted registration back to DRAFT if needed)
+      const updatedRegistration = await enableEditRegistration(registration.id);
+
+      // Reload registrations list to reflect status changes
+      await loadExistingRegistrations();
+
+      // Load it as a draft using the exam ID
+      if (updatedRegistration.registration_exam_id) {
+        await loadDraft(updatedRegistration.registration_exam_id);
+        toast.success("Registration loaded for editing");
+      } else {
+        toast.error("Could not determine exam for this registration");
+      }
+    } catch (error) {
+      console.error("Failed to load registration:", error);
+      toast.error(error instanceof Error ? error.message : "Failed to load registration for editing");
+    } finally {
+      setLoadingData(false);
+    }
+  };
+
+  const handleStartNewRegistration = () => {
+    // Clear current state
+    setDraftId(null);
+    setLoadedDraft(null);
+    setSelectedExamId(null);
+    setSelectedSchoolId(null);
+    setName("");
+    setDateOfBirth("");
+    setGender("");
+    setContactEmail("");
+    setContactPhone("");
+    setAddress("");
+    setNationalId("");
+    setProgrammeId(null);
+    setSelectedSubjectIds([]);
+    setPhotoFile(null);
+    setPhotoPreview(null);
+    setHasExistingPhoto(false);
+    setPriceData(null);
+    setPaymentAcknowledged(false);
+    setExamLocked(false);
+    setCurrentStep(1);
+    setCompletedSteps(new Set());
+
+    // Load a fresh draft
+    loadDraft();
+  };
+
+  const getStatusBadge = (status: string) => {
+    switch (status) {
+      case "DRAFT":
+        return (
+          <span className="inline-flex items-center rounded-full bg-yellow-100 px-2 py-1 text-xs font-medium text-yellow-800 dark:bg-yellow-900 dark:text-yellow-200">
+            <Clock className="mr-1 h-3 w-3" />
+            Draft
+          </span>
+        );
+      case "PENDING":
+        return (
+          <span className="inline-flex items-center rounded-full bg-blue-100 px-2 py-1 text-xs font-medium text-blue-800 dark:bg-blue-900 dark:text-blue-200">
+            <Clock className="mr-1 h-3 w-3" />
+            Pending
+          </span>
+        );
+      case "APPROVED":
+        return (
+          <span className="inline-flex items-center rounded-full bg-green-100 px-2 py-1 text-xs font-medium text-green-800 dark:bg-green-900 dark:text-green-200">
+            <CheckCircle className="mr-1 h-3 w-3" />
+            Approved
+          </span>
+        );
+      case "REJECTED":
+        return (
+          <span className="inline-flex items-center rounded-full bg-red-100 px-2 py-1 text-xs font-medium text-red-800 dark:bg-red-900 dark:text-red-200">
+            <XCircle className="mr-1 h-3 w-3" />
+            Rejected
+          </span>
+        );
+      default:
+        return null;
+    }
+  };
+
   const loadDraft = async (examId?: number) => {
     try {
       const draft = await getDraftRegistration(examId);
@@ -282,17 +386,47 @@ export default function PrivateRegistrationPage() {
         if (draft.school_id) highestStep = 2;
         if (draft.name && draft.name.trim() !== "" && draft.name !== "Draft") highestStep = 3;
         if (draft.subject_selections && draft.subject_selections.length > 0) highestStep = 4;
-        // Step 5 is optional - if we have data up to step 4, allow navigation to step 5
-        // Step 6 (review) is accessible if all required data is present
-        // Set to the highest step that has data, but don't go beyond step 6 unless all required data is present
+
+        // Check payment status if we have subjects
+        if (draft.subject_selections && draft.subject_selections.length > 0 && draft.id) {
+          try {
+            const price = await getRegistrationPrice(draft.id);
+            setPriceData(price);
+            if (!price.has_pricing) {
+              // Skip payment step if pricing is not configured
+              highestStep = 6; // Skip to photo step
+            } else if (price.outstanding_amount <= 0) {
+              highestStep = 5; // Payment completed, can proceed to photo step
+            } else {
+              highestStep = 5; // Show payment step if outstanding
+            }
+          } catch (error) {
+            console.error("Failed to load price:", error);
+            // If price loading fails, assume no pricing and skip payment step
+            highestStep = 6;
+          }
+        } else if (highestStep >= 4) {
+          // If subjects selected but no price data yet, check if pricing is configured
+          // For now, default to showing payment step (will be skipped if no pricing)
+          highestStep = 5;
+        }
+
+        // If all required data and payment is complete (or not required), allow up to review step (7)
         if (draft.registration_exam_id && draft.school_id && draft.name &&
             draft.name.trim() !== "" && draft.name !== "Draft" &&
             draft.subject_selections && draft.subject_selections.length > 0) {
-          // All required data is present, allow up to review step (6)
-          highestStep = 6;
-        } else if (highestStep >= 4) {
-          // Have at least subjects, allow up to step 5
-          highestStep = 5;
+          try {
+            if (draft.id) {
+              const price = await getRegistrationPrice(draft.id);
+              if (!price.has_pricing || price.outstanding_amount <= 0) {
+                highestStep = 7; // All data and payment complete (or not required), allow review
+              }
+            }
+          } catch (error) {
+            console.error("Failed to check payment:", error);
+            // If price check fails, assume no pricing required and allow review
+            highestStep = 7;
+          }
         }
 
         setCurrentStep(highestStep);
@@ -386,8 +520,8 @@ export default function PrivateRegistrationPage() {
     await saveDraft();
 
     // Only advance if save was successful (saveDraft handles errors internally)
-    // Don't advance past step 6 (review) - user can submit from there
-    if (currentStep < 6) {
+    // Don't advance past step 7 (review) - user can submit from there
+    if (currentStep < 7) {
       setCurrentStep((currentStep + 1) as Step);
     }
   };
@@ -433,6 +567,57 @@ export default function PrivateRegistrationPage() {
     }
   };
 
+  // Load price data when entering payment step
+  useEffect(() => {
+    if (currentStep === 5 && draftId) {
+      loadPriceData();
+    }
+  }, [currentStep, draftId]);
+
+  // Skip payment step if pricing is not configured
+  useEffect(() => {
+    if (currentStep === 5 && priceData && !priceData.has_pricing) {
+      setCurrentStep(6);
+    }
+  }, [currentStep, priceData]);
+
+  const loadPriceData = async () => {
+    if (!draftId) return;
+    setLoadingPrice(true);
+    try {
+      const price = await getRegistrationPrice(draftId);
+      setPriceData(price);
+    } catch (error) {
+      toast.error("Failed to load price information");
+      console.error(error);
+    } finally {
+      setLoadingPrice(false);
+    }
+  };
+
+  const handleProceedToPayment = async () => {
+    if (!draftId) {
+      toast.error("No draft registration found");
+      return;
+    }
+
+    if (!paymentAcknowledged) {
+      toast.error("Please acknowledge the non-refundable policy");
+      return;
+    }
+
+    setProcessingPayment(true);
+    try {
+      const paymentResult = await initializeRegistrationPayment(draftId);
+      // Redirect to Paystack payment page
+      window.location.href = paymentResult.authorization_url;
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Failed to initialize payment");
+      console.error(error);
+      setProcessingPayment(false);
+    }
+  };
+
   const handlePhotoChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (file) {
@@ -456,6 +641,19 @@ export default function PrivateRegistrationPage() {
       return;
     }
 
+    // Check payment status before submission
+    try {
+      const paymentStatus = await getRegistrationPaymentStatus(draftId);
+      if (paymentStatus.outstanding_amount > 0) {
+        toast.error(`Payment required. Outstanding amount: ${paymentStatus.outstanding_amount.toFixed(2)} GHS. Please complete payment first.`);
+        setCurrentStep(5); // Navigate to payment step
+        return;
+      }
+    } catch (error) {
+      console.error("Failed to check payment status:", error);
+      // Continue with submission attempt - backend will validate
+    }
+
     setLoading(true);
     try {
       // Upload photo if provided (in case it wasn't uploaded during save)
@@ -473,20 +671,68 @@ export default function PrivateRegistrationPage() {
       toast.success("Registration submitted successfully!");
       router.push("/dashboard/private");
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : "Failed to submit registration");
+      const errorMessage = error instanceof Error ? error.message : "Failed to submit registration";
+      toast.error(errorMessage);
+      // If payment error, navigate to payment step
+      if (errorMessage.includes("Payment required") || errorMessage.includes("outstanding")) {
+        setCurrentStep(5);
+      }
     } finally {
       setLoading(false);
     }
   };
 
-  const progress = ((currentStep - 1) / 6) * 100;
+  const progress = ((currentStep - 1) / 7) * 100;
 
   return (
     <div className="container mx-auto max-w-4xl py-8">
-      <div className="mb-8">
-        <h1 className="text-3xl font-bold mb-2">Examination Registration</h1>
-        <p className="text-muted-foreground">Complete your registration step by step</p>
+      <div className="mb-8 flex items-start justify-between">
+        <div>
+          <h1 className="text-3xl font-bold mb-2">Examination Registration</h1>
+          <p className="text-muted-foreground">Complete your registration step by step</p>
+        </div>
+        <Button onClick={handleStartNewRegistration} variant="outline">
+          <Plus className="mr-2 h-4 w-4" />
+          Start New Registration
+        </Button>
       </div>
+
+      {/* Active Registrations List */}
+      {existingRegistrations.length > 0 && (
+        <Card className="mb-8">
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2">
+              <GraduationCap className="h-5 w-5" />
+              My Active Registrations
+            </CardTitle>
+            <CardDescription>Click on a registration to continue or edit</CardDescription>
+          </CardHeader>
+          <CardContent>
+            <div className="space-y-3">
+              {existingRegistrations.map((registration) => (
+                <div
+                  key={registration.id}
+                  className="flex items-center justify-between rounded-lg border p-4 hover:bg-muted/50 cursor-pointer transition-colors"
+                  onClick={() => handleLoadRegistration(registration)}
+                >
+                  <div className="flex-1">
+                    <p className="font-medium">
+                      {registration.exam
+                        ? `${registration.exam.exam_type} (${registration.exam.exam_series} ${registration.exam.year})`
+                        : "Exam"}
+                    </p>
+                    <p className="text-sm text-muted-foreground">
+                      Registration Number: {registration.registration_number}
+                    </p>
+                    <div className="mt-2">{getStatusBadge(registration.registration_status)}</div>
+                  </div>
+                  <Edit2 className="h-4 w-4 text-muted-foreground" />
+                </div>
+              ))}
+            </div>
+          </CardContent>
+        </Card>
+      )}
 
       {/* Progress Bar */}
       <div className="mb-8">
@@ -550,9 +796,9 @@ export default function PrivateRegistrationPage() {
             {currentStep === 2 && "Select your preferred examination center"}
             {currentStep === 3 && "Enter your personal information"}
             {currentStep === 4 && "Select subjects you want to register for"}
-            {currentStep === 5 && "Upload your passport photo and documents"}
-            {currentStep === 6 && "Review your registration before submitting"}
-            {currentStep === 7 && "Submit your registration"}
+            {currentStep === 5 && "Complete payment for your registration"}
+            {currentStep === 6 && "Upload your passport photo and documents"}
+            {currentStep === 7 && "Review your registration before submitting"}
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-6">
@@ -750,8 +996,148 @@ export default function PrivateRegistrationPage() {
             />
           )}
 
-          {/* Step 5: Documents & Photo */}
+          {/* Step 5: Payment */}
           {currentStep === 5 && (
+            <div className="space-y-6">
+              {loadingPrice ? (
+                <div className="flex items-center justify-center py-8">
+                  <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
+                  <span className="ml-2 text-muted-foreground">Loading price information...</span>
+                </div>
+              ) : priceData && priceData.has_pricing ? (
+                <>
+                  <div className="space-y-4">
+                    <h3 className="text-lg font-semibold">Payment Summary</h3>
+
+                    {/* Price Breakdown */}
+                    <Card>
+                      <CardContent className="pt-6">
+                        <div className="space-y-3">
+                          {priceData.application_fee > 0 && (
+                            <div className="flex justify-between items-center">
+                              <span className="text-sm text-muted-foreground">Application Fee</span>
+                              <span className="font-medium">{priceData.application_fee.toFixed(2)} GHS</span>
+                            </div>
+                          )}
+                          {priceData.tiered_price !== null && priceData.tiered_price > 0 && (
+                            <div className="flex justify-between items-center">
+                              <span className="text-sm text-muted-foreground">
+                                Subject Fees ({priceData.pricing_model_used === "tiered" ? "Tiered Pricing" : "Per Subject"})
+                              </span>
+                              <span className="font-medium">{priceData.tiered_price.toFixed(2)} GHS</span>
+                            </div>
+                          )}
+                          {priceData.subject_price !== null && priceData.subject_price > 0 && (
+                            <div className="flex justify-between items-center">
+                              <span className="text-sm text-muted-foreground">
+                                Subject Fees ({priceData.pricing_model_used === "per_subject" ? "Per Subject" : "Tiered Pricing"})
+                              </span>
+                              <span className="font-medium">{priceData.subject_price.toFixed(2)} GHS</span>
+                            </div>
+                          )}
+                          <div className="border-t pt-3 mt-3">
+                            <div className="flex justify-between items-center">
+                              <span className="font-semibold">Total Amount</span>
+                              <span className="text-lg font-bold">{priceData.total.toFixed(2)} GHS</span>
+                            </div>
+                          </div>
+                          {priceData.total_paid_amount > 0 && (
+                            <>
+                              <div className="flex justify-between items-center text-sm">
+                                <span className="text-muted-foreground">Amount Paid</span>
+                                <span className="text-green-600">{priceData.total_paid_amount.toFixed(2)} GHS</span>
+                              </div>
+                              <div className="flex justify-between items-center font-semibold border-t pt-2 mt-2">
+                                <span>Outstanding Amount</span>
+                                <span className={priceData.outstanding_amount > 0 ? "text-orange-600" : "text-green-600"}>
+                                  {priceData.outstanding_amount.toFixed(2)} GHS
+                                </span>
+                              </div>
+                            </>
+                          )}
+                        </div>
+                      </CardContent>
+                    </Card>
+
+                    {/* Non-refundable Notice */}
+                    <Card className="border-orange-200 bg-orange-50 dark:bg-orange-950 dark:border-orange-800">
+                      <CardContent className="pt-6">
+                        <div className="flex items-start gap-3">
+                          <AlertTriangle className="h-5 w-5 text-orange-600 shrink-0 mt-0.5" />
+                          <div className="flex-1">
+                            <h4 className="font-semibold text-orange-900 dark:text-orange-100 mb-2">
+                              Important: Non-Refundable Policy
+                            </h4>
+                            <p className="text-sm text-orange-800 dark:text-orange-200">
+                              All payments are non-refundable. Please review your subject selections carefully before proceeding with payment.
+                              If you make changes to your subjects after payment and the new price is higher, you will be required to pay the additional amount.
+                            </p>
+                          </div>
+                        </div>
+                        <div className="mt-4 flex items-center gap-2">
+                          <input
+                            type="checkbox"
+                            id="acknowledge-policy"
+                            checked={paymentAcknowledged}
+                            onChange={(e) => setPaymentAcknowledged(e.target.checked)}
+                            className="h-4 w-4 rounded border-gray-300"
+                          />
+                          <label htmlFor="acknowledge-policy" className="text-sm text-orange-800 dark:text-orange-200 cursor-pointer">
+                            I acknowledge that all payments are non-refundable and I have reviewed my selections
+                          </label>
+                        </div>
+                      </CardContent>
+                    </Card>
+
+                    {/* Payment Status */}
+                    {priceData.outstanding_amount <= 0 ? (
+                      <Card className="border-green-200 bg-green-50 dark:bg-green-950 dark:border-green-800">
+                        <CardContent className="pt-6">
+                          <div className="flex items-center gap-3">
+                            <CheckCircle2 className="h-5 w-5 text-green-600" />
+                            <div>
+                              <h4 className="font-semibold text-green-900 dark:text-green-100">
+                                Payment Completed
+                              </h4>
+                              <p className="text-sm text-green-800 dark:text-green-200">
+                                Your registration is fully paid. You can proceed to the next step.
+                              </p>
+                            </div>
+                          </div>
+                        </CardContent>
+                      </Card>
+                    ) : (
+                      <div className="space-y-4">
+                        <Button
+                          onClick={handleProceedToPayment}
+                          disabled={!paymentAcknowledged || processingPayment}
+                          className="w-full"
+                          size="lg"
+                        >
+                          {processingPayment ? (
+                            <>
+                              <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                              Processing...
+                            </>
+                          ) : (
+                            `Proceed to Payment - ${priceData.outstanding_amount.toFixed(2)} GHS`
+                          )}
+                        </Button>
+                      </div>
+                    )}
+                  </div>
+                </>
+              ) : (
+                <div className="text-center py-8 text-muted-foreground">
+                  <AlertCircle className="h-8 w-8 mx-auto mb-2" />
+                  <p>Unable to load price information. Please try again.</p>
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* Step 6: Documents & Photo */}
+          {currentStep === 6 && (
             <div className="space-y-4">
               <div className="space-y-2">
                 <Label htmlFor="photo">Passport Photo *</Label>
@@ -782,8 +1168,8 @@ export default function PrivateRegistrationPage() {
             </div>
           )}
 
-          {/* Step 6: Review */}
-          {currentStep === 6 && (
+          {/* Step 7: Review */}
+          {currentStep === 7 && (
             <div className="space-y-6">
               {/* Header Section - Similar to Dialog Header */}
               <div className="flex items-start gap-4 pb-4 border-b">
@@ -945,7 +1331,7 @@ export default function PrivateRegistrationPage() {
                       <Button
                         variant="ghost"
                         size="sm"
-                        onClick={() => setCurrentStep(5)}
+                        onClick={() => setCurrentStep(6)}
                         className="h-8"
                       >
                         <Edit2 className="h-4 w-4 mr-2" />
@@ -980,6 +1366,37 @@ export default function PrivateRegistrationPage() {
                   </CardContent>
                 </Card>
               </div>
+
+              {/* Payment Status Section */}
+              {priceData && (
+                <Card className="border-blue-200 bg-blue-50 dark:bg-blue-950 dark:border-blue-800">
+                  <CardContent className="pt-6">
+                    <div className="flex items-center justify-between">
+                      <div>
+                        <h4 className="font-semibold text-blue-900 dark:text-blue-100 mb-1">
+                          Payment Status
+                        </h4>
+                        <p className="text-sm text-blue-800 dark:text-blue-200">
+                          {priceData.outstanding_amount <= 0 ? (
+                            <>Payment Completed - {priceData.total_paid_amount.toFixed(2)} GHS paid</>
+                          ) : (
+                            <>Outstanding: {priceData.outstanding_amount.toFixed(2)} GHS</>
+                          )}
+                        </p>
+                      </div>
+                      {priceData.outstanding_amount > 0 && (
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          onClick={() => setCurrentStep(5)}
+                        >
+                          Complete Payment
+                        </Button>
+                      )}
+                    </div>
+                  </CardContent>
+                </Card>
+              )}
 
               {/* Subject Registrations Section */}
               <div>
@@ -1119,13 +1536,15 @@ export default function PrivateRegistrationPage() {
                   </>
                 )}
               </Button>
-              {currentStep < 6 ? (
-                <Button onClick={handleNext} disabled={loading || saving}>
+              {currentStep < 7 ? (
+                <Button onClick={handleNext} disabled={loading || saving || (currentStep === 5 && priceData && priceData.outstanding_amount > 0 && !paymentAcknowledged)}>
                   {saving ? (
                     <>
                       <Loader2 className="mr-2 h-4 w-4 animate-spin" />
                       Saving...
                     </>
+                  ) : currentStep === 5 && priceData && priceData.outstanding_amount > 0 ? (
+                    "Payment Required"
                   ) : (
                     "Save and Continue"
                   )}

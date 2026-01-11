@@ -10,6 +10,7 @@ import {
   Shield,
   Settings,
   HelpCircle,
+  DollarSign,
 } from "lucide-react";
 import type { Role } from "@/types";
 import { LucideIcon } from "lucide-react";
@@ -74,6 +75,12 @@ export const systemAdminMoreActions: MenuItem[] = [
     href: "/dashboard/admin/results/blocks",
     label: "Result Blocks",
     icon: Shield,
+    roles: ["SystemAdmin", "Director", "DeputyDirector", "PrincipalManager", "SeniorManager", "Manager", "Staff"],
+  },
+  {
+    href: "/dashboard/admin/fees",
+    label: "Fees Management",
+    icon: DollarSign,
     roles: ["SystemAdmin", "Director", "DeputyDirector", "PrincipalManager", "SeniorManager", "Manager", "Staff"],
   },
   {
