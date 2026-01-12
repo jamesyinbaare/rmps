@@ -1555,17 +1555,9 @@ async def download_candidate_index_slip(
             detail="Index number must be generated before downloading Index Slip",
         )
 
-    # Load photo
-    photo_data = None
-    if candidate.photo:
-        try:
-            photo_data = await photo_storage_service.retrieve(candidate.photo.file_path)
-        except Exception:
-            photo_data = None
-
-    # Generate PDF
+    # Generate PDF (service function will load photo if needed)
     try:
-        pdf_bytes = await generate_index_slip_pdf(candidate, session, photo_data)
+        pdf_bytes = await generate_index_slip_pdf(candidate, session, photo_data=None)
     except ValueError as e:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
     except Exception as e:
