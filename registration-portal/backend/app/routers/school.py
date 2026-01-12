@@ -111,6 +111,26 @@ async def list_available_exams(
     return [RegistrationExamResponse.model_validate(exam) for exam in exams]
 
 
+@router.get("/exams/all", response_model=list[RegistrationExamResponse])
+async def list_all_exams(
+    session: DBSessionDep, current_user: SchoolUserWithSchoolDep
+) -> list[RegistrationExamResponse]:
+    """List all exams that allow bulk registration (both open and closed) for viewing candidates."""
+    stmt = (
+        select(RegistrationExam)
+        .join(ExamRegistrationPeriod, RegistrationExam.registration_period_id == ExamRegistrationPeriod.id)
+        .where(
+            ExamRegistrationPeriod.allows_bulk_registration.is_(True),
+        )
+        .options(selectinload(RegistrationExam.registration_period))
+        .order_by(RegistrationExam.year.desc(), RegistrationExam.exam_type, RegistrationExam.exam_series)
+    )
+    result = await session.execute(stmt)
+    exams = result.scalars().all()
+
+    return [RegistrationExamResponse.model_validate(exam) for exam in exams]
+
+
 @router.get("/candidates", response_model=list[RegistrationCandidateResponse])
 async def list_candidates(
     session: DBSessionDep,

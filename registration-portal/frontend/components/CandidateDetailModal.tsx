@@ -209,7 +209,10 @@ export function CandidateDetailModal({
         .map((s) => s.subject_id)
         .filter((id): id is number => id !== null && id !== undefined);
       setSelectedSubjectIds(currentSubjectIds);
+
+      // Exit edit mode when candidate changes
       setEditingSubjects(false);
+      setEditingBio(false);
 
       // Initialize bio data
       setBioData({
@@ -221,7 +224,6 @@ export function CandidateDetailModal({
         address: candidate.address || "",
         national_id: candidate.national_id || "",
       });
-      setEditingBio(false);
     }
   }, [candidate?.id]);
 
@@ -418,6 +420,16 @@ export function CandidateDetailModal({
 
   const subjectSelections = candidate.subject_selections || [];
 
+  // Check if exam is closed
+  const isExamClosed = candidate.exam?.registration_period
+    ? (() => {
+        const isActive = candidate.exam.registration_period.is_active;
+        const now = new Date();
+        const endDate = new Date(candidate.exam.registration_period.registration_end_date);
+        return !isActive || now > endDate;
+      })()
+    : false;
+
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="max-w-6xl w-[95vw] max-h-[95vh] flex flex-col p-0 overflow-hidden">
@@ -524,7 +536,7 @@ export function CandidateDetailModal({
                     <User className="h-4 w-4" />
                     Candidate Information
                   </CardTitle>
-                  {!editingBio && (
+                  {!editingBio && !isExamClosed && (
                     <Button
                       variant="outline"
                       size="sm"
@@ -762,15 +774,17 @@ export function CandidateDetailModal({
                           <Badge className="bg-primary text-xs">Active</Badge>
                         </div>
                       </div>
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        className="w-full"
-                        onClick={() => setUploadDialogOpen(true)}
-                      >
-                        <Upload className="h-4 w-4 mr-2" />
-                        Change Photo
-                      </Button>
+                      {!isExamClosed && (
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          className="w-full"
+                          onClick={() => setUploadDialogOpen(true)}
+                        >
+                          <Upload className="h-4 w-4 mr-2" />
+                          Change Photo
+                        </Button>
+                      )}
                     </>
                   ) : (
                     <>
@@ -780,15 +794,17 @@ export function CandidateDetailModal({
                         </div>
                         <p className="text-xs mt-2 text-center">No photo available</p>
                       </div>
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        className="w-full"
-                        onClick={() => setUploadDialogOpen(true)}
-                      >
-                        <Upload className="h-4 w-4 mr-2" />
-                        Upload Photo
-                      </Button>
+                      {!isExamClosed && (
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          className="w-full"
+                          onClick={() => setUploadDialogOpen(true)}
+                        >
+                          <Upload className="h-4 w-4 mr-2" />
+                          Upload Photo
+                        </Button>
+                      )}
                     </>
                   )}
                 </CardContent>
@@ -802,7 +818,7 @@ export function CandidateDetailModal({
                   <BookOpen className="h-5 w-5" />
                   Registered Subjects
                 </h3>
-                {candidate?.programme_id && !editingSubjects && (
+                {candidate?.programme_id && !editingSubjects && !isExamClosed && (
                   <Button
                     variant="outline"
                     size="sm"
@@ -822,7 +838,7 @@ export function CandidateDetailModal({
                       <div className="text-center text-muted-foreground text-sm py-8">
                         <BookOpen className="h-12 w-12 mx-auto mb-3 opacity-50" />
                         <p>No subjects registered for this candidate.</p>
-                        {candidate?.programme_id && (
+                        {candidate?.programme_id && !isExamClosed && (
                           <Button
                             variant="outline"
                             size="sm"

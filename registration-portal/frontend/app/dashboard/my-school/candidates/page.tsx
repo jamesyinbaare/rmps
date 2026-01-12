@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState, useMemo } from "react";
-import { listSchoolCandidates, listAvailableExams, listSchoolProgrammes } from "@/lib/api";
+import { listSchoolCandidates, listAllExams, listSchoolProgrammes } from "@/lib/api";
 import type { RegistrationCandidate, RegistrationExam, Programme } from "@/types";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -72,7 +72,7 @@ export default function CandidatesPage() {
     try {
       setLoadingFilters(true);
       const [examsData, programmesData] = await Promise.all([
-        listAvailableExams(),
+        listAllExams(),
         listSchoolProgrammes(),
       ]);
       setExams(examsData);
@@ -285,7 +285,7 @@ export default function CandidatesPage() {
   return (
     <div className="space-y-6">
       <div className="border-b pb-4">
-        <div>
+          <div>
           <h2 className="text-2xl font-bold">Registration List</h2>
         </div>
       </div>
@@ -455,61 +455,61 @@ export default function CandidatesPage() {
                 </div>
               </div>
 
-              <Table>
-                <TableHeader>
-                  <TableRow>
-                    <TableHead>Name</TableHead>
-                    <TableHead>Registration Number</TableHead>
+          <Table>
+            <TableHeader>
+              <TableRow>
+                <TableHead>Name</TableHead>
+                <TableHead>Registration Number</TableHead>
                     <TableHead>Index Number</TableHead>
-                    <TableHead>Status</TableHead>
-                    <TableHead>Registration Date</TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
+                <TableHead>Status</TableHead>
+                <TableHead>Registration Date</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
                   {paginatedCandidates.length === 0 ? (
-                    <TableRow>
-                      <TableCell colSpan={5} className="text-center text-muted-foreground">
+                <TableRow>
+                  <TableCell colSpan={5} className="text-center text-muted-foreground">
                         No candidates found
-                      </TableCell>
-                    </TableRow>
-                  ) : (
+                  </TableCell>
+                </TableRow>
+              ) : (
                     paginatedCandidates.map((candidate) => (
-                      <TableRow
-                        key={candidate.id}
-                        className="cursor-pointer hover:bg-muted/50"
-                        onClick={() => {
-                          setSelectedCandidate(candidate);
-                          setDetailDialogOpen(true);
-                        }}
-                      >
-                        <TableCell className="font-medium">{candidate.name}</TableCell>
-                        <TableCell>{candidate.registration_number}</TableCell>
+                  <TableRow
+                    key={candidate.id}
+                    className="cursor-pointer hover:bg-muted/50"
+                    onClick={() => {
+                      setSelectedCandidate(candidate);
+                      setDetailDialogOpen(true);
+                    }}
+                  >
+                    <TableCell className="font-medium">{candidate.name}</TableCell>
+                    <TableCell>{candidate.registration_number}</TableCell>
                         <TableCell className="font-mono">
                           {candidate.index_number || (
                             <span className="text-muted-foreground italic">Not available</span>
                           )}
-                        </TableCell>
-                        <TableCell>
-                          <span
-                            className={`inline-flex items-center rounded-full px-2 py-1 text-xs font-medium ${
-                              candidate.registration_status === "APPROVED"
-                                ? "bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-300"
-                                : candidate.registration_status === "REJECTED"
-                                ? "bg-red-100 text-red-800 dark:bg-red-900 dark:text-red-300"
-                                : "bg-yellow-100 text-yellow-800 dark:bg-yellow-900 dark:text-yellow-300"
-                            }`}
-                          >
-                            {candidate.registration_status}
-                          </span>
-                        </TableCell>
-                        <TableCell>
-                          {new Date(candidate.registration_date).toLocaleDateString()}
-                        </TableCell>
-                      </TableRow>
-                    ))
-                  )}
-                </TableBody>
-              </Table>
+                    </TableCell>
+                    <TableCell>
+                      <span
+                        className={`inline-flex items-center rounded-full px-2 py-1 text-xs font-medium ${
+                          candidate.registration_status === "APPROVED"
+                            ? "bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-300"
+                            : candidate.registration_status === "REJECTED"
+                            ? "bg-red-100 text-red-800 dark:bg-red-900 dark:text-red-300"
+                            : "bg-yellow-100 text-yellow-800 dark:bg-yellow-900 dark:text-yellow-300"
+                        }`}
+                      >
+                        {candidate.registration_status}
+                      </span>
+                    </TableCell>
+                    <TableCell>
+                      {new Date(candidate.registration_date).toLocaleDateString()}
+                    </TableCell>
+                  </TableRow>
+                ))
+              )}
+            </TableBody>
+          </Table>
 
               {/* Pagination */}
               {totalCandidates > 0 && (

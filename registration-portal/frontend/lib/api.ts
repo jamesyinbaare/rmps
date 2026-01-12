@@ -1356,6 +1356,11 @@ export async function listAvailableExams(): Promise<RegistrationExam[]> {
   return handleResponse<RegistrationExam[]>(response);
 }
 
+export async function listAllExams(): Promise<RegistrationExam[]> {
+  const response = await fetchWithAuth("/api/v1/school/exams/all");
+  return handleResponse<RegistrationExam[]>(response);
+}
+
 // School API - Programme Management
 export async function listSchoolProgrammes(): Promise<Programme[]> {
   const response = await fetchWithAuth("/api/v1/school/programmes");
