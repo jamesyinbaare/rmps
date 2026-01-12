@@ -11,7 +11,10 @@ import {
   closeRegistrationPeriod,
   generateIndexNumbers,
   exportCandidates,
+  listExaminationSchedules,
+  deleteExaminationSchedule,
 } from "@/lib/api";
+import type { ExaminationSchedule } from "@/types";
 import { toast } from "sonner";
 import {
   ArrowLeft,
@@ -21,12 +24,18 @@ import {
   XCircle,
   Edit,
   Clock,
+  Plus,
+  Upload,
 } from "lucide-react";
 import type { RegistrationExam } from "@/types";
 import { UpdateRegistrationPeriodDialog } from "@/components/admin/UpdateRegistrationPeriodDialog";
 import { CloseRegistrationDialog } from "@/components/admin/CloseRegistrationDialog";
 import { GenerateIndexNumbersDialog } from "@/components/admin/GenerateIndexNumbersDialog";
 import { IndexNumberGenerationProgress } from "@/components/admin/IndexNumberGenerationProgress";
+import { ExaminationScheduleTable } from "@/components/admin/ExaminationScheduleTable";
+import { CreateScheduleDialog } from "@/components/admin/CreateScheduleDialog";
+import { EditScheduleDialog } from "@/components/admin/EditScheduleDialog";
+import { BulkUploadSchedulesDialog } from "@/components/admin/BulkUploadSchedulesDialog";
 
 export default function ExamDetailPage() {
   const params = useParams();
@@ -43,6 +52,12 @@ export default function ExamDetailPage() {
   const [generatingIndexNumbers, setGeneratingIndexNumbers] = useState(false);
   const [exporting, setExporting] = useState(false);
   const [currentJobId, setCurrentJobId] = useState<number | null>(null);
+  const [schedules, setSchedules] = useState<ExaminationSchedule[]>([]);
+  const [loadingSchedules, setLoadingSchedules] = useState(false);
+  const [createScheduleDialogOpen, setCreateScheduleDialogOpen] = useState(false);
+  const [editScheduleDialogOpen, setEditScheduleDialogOpen] = useState(false);
+  const [uploadSchedulesDialogOpen, setUploadSchedulesDialogOpen] = useState(false);
+  const [editingSchedule, setEditingSchedule] = useState<ExaminationSchedule | null>(null);
 
   const loadExam = async () => {
     if (isNaN(examId)) {
@@ -64,8 +79,24 @@ export default function ExamDetailPage() {
     }
   };
 
+  const loadSchedules = async () => {
+    if (isNaN(examId)) return;
+
+    setLoadingSchedules(true);
+    try {
+      const schedulesData = await listExaminationSchedules(examId);
+      setSchedules(schedulesData);
+    } catch (error) {
+      toast.error("Failed to load schedules");
+      console.error(error);
+    } finally {
+      setLoadingSchedules(false);
+    }
+  };
+
   useEffect(() => {
     loadExam();
+    loadSchedules();
     // Check if there's a job (completed or in progress) when page loads
     const checkForJob = async () => {
       try {
@@ -381,6 +412,55 @@ export default function ExamDetailPage() {
         loading={closing}
       />
 
+      {/* Timetable Management */}
+      <Card>
+        <CardHeader>
+          <div className="flex items-center justify-between">
+            <div>
+              <CardTitle>Examination Timetable</CardTitle>
+              <CardDescription>Manage examination schedules with dates, times, and papers</CardDescription>
+            </div>
+            <div className="flex gap-2">
+              <Button
+                onClick={() => setCreateScheduleDialogOpen(true)}
+                disabled={loadingSchedules}
+              >
+                <Plus className="mr-2 h-4 w-4" />
+                Add Schedule
+              </Button>
+              <Button
+                variant="outline"
+                onClick={() => setUploadSchedulesDialogOpen(true)}
+                disabled={loadingSchedules}
+              >
+                <Upload className="mr-2 h-4 w-4" />
+                Bulk Upload
+              </Button>
+            </div>
+          </div>
+        </CardHeader>
+        <CardContent>
+          <ExaminationScheduleTable
+            schedules={schedules}
+            loading={loadingSchedules}
+            onEdit={(schedule) => {
+              setEditingSchedule(schedule);
+              setEditScheduleDialogOpen(true);
+            }}
+            onDelete={async (scheduleId) => {
+              try {
+                await deleteExaminationSchedule(examId, scheduleId);
+                toast.success("Schedule deleted successfully");
+                await loadSchedules();
+              } catch (error) {
+                toast.error(error instanceof Error ? error.message : "Failed to delete schedule");
+                throw error;
+              }
+            }}
+          />
+        </CardContent>
+      </Card>
+
       {/* Generate Index Numbers Dialog */}
       <GenerateIndexNumbersDialog
         open={generateIndexDialogOpen}
@@ -389,6 +469,38 @@ export default function ExamDetailPage() {
         onConfirm={handleGenerateIndexNumbers}
         loading={generatingIndexNumbers}
       />
+
+      {/* Create Schedule Dialog */}
+      <CreateScheduleDialog
+        open={createScheduleDialogOpen}
+        onOpenChange={setCreateScheduleDialogOpen}
+        examId={examId}
+        onSuccess={loadSchedules}
+      />
+
+      {/* Bulk Upload Schedules Dialog */}
+      <BulkUploadSchedulesDialog
+        open={uploadSchedulesDialogOpen}
+        onOpenChange={setUploadSchedulesDialogOpen}
+        examId={examId}
+        onSuccess={loadSchedules}
+      />
+
+      {/* Edit Schedule Dialog */}
+      {editingSchedule && (
+        <EditScheduleDialog
+          open={editScheduleDialogOpen}
+          onOpenChange={(open) => {
+            setEditScheduleDialogOpen(open);
+            if (!open) {
+              setEditingSchedule(null);
+            }
+          }}
+          examId={examId}
+          schedule={editingSchedule}
+          onSuccess={loadSchedules}
+        />
+      )}
     </div>
   );
 }
