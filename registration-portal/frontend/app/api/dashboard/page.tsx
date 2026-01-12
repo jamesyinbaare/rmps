@@ -10,7 +10,7 @@ import {
   type CreditBalance,
   type ApiKey,
 } from "@/lib/api";
-import { Coins, Key, Search, Plus, TrendingUp, Activity, BarChart3 } from "lucide-react";
+import { Coins, Key, TrendingUp, Activity, BarChart3 } from "lucide-react";
 import Link from "next/link";
 import { toast } from "sonner";
 
@@ -160,69 +160,6 @@ export default function ApiDashboardPage() {
             <p className="text-xs text-slate-600 mt-1">
               {usageStats?.total_verifications || 0} verifications completed
             </p>
-          </CardContent>
-        </Card>
-      </div>
-
-      {/* Quick Actions */}
-      <div className="grid gap-6 md:grid-cols-3 mb-8">
-        <Card className="border-2 border-slate-200 hover:border-blue-300 transition-all shadow-md hover:shadow-xl">
-          <CardHeader className="bg-gradient-to-r from-blue-50 to-indigo-50 border-b">
-            <CardTitle className="flex items-center gap-2">
-              <Key className="h-5 w-5 text-blue-600" />
-              API Keys
-            </CardTitle>
-          </CardHeader>
-          <CardContent className="pt-6">
-            <p className="text-sm text-slate-600 mb-4">
-              Create and manage API keys for programmatic access to the verification API. Each key has its own rate limits and usage tracking.
-            </p>
-            <Link href="/api/dashboard/api-keys">
-              <Button className="w-full bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700">
-                <Key className="mr-2 h-4 w-4" />
-                Manage API Keys
-              </Button>
-            </Link>
-          </CardContent>
-        </Card>
-
-        <Card className="border-2 border-slate-200 hover:border-green-300 transition-all shadow-md hover:shadow-xl">
-          <CardHeader className="bg-gradient-to-r from-green-50 to-emerald-50 border-b">
-            <CardTitle className="flex items-center gap-2">
-              <Coins className="h-5 w-5 text-green-600" />
-              Credits
-            </CardTitle>
-          </CardHeader>
-          <CardContent className="pt-6">
-            <p className="text-sm text-slate-600 mb-4">
-              Purchase credits to use the verification API. Each verification request costs 1 credit. Monitor your usage and purchase more as needed.
-            </p>
-            <Link href="/api/dashboard/credits">
-              <Button className="w-full bg-gradient-to-r from-green-600 to-emerald-600 hover:from-green-700 hover:to-emerald-700">
-                <Coins className="mr-2 h-4 w-4" />
-                Manage Credits
-              </Button>
-            </Link>
-          </CardContent>
-        </Card>
-
-        <Card className="border-2 border-slate-200 hover:border-purple-300 transition-all shadow-md hover:shadow-xl">
-          <CardHeader className="bg-gradient-to-r from-purple-50 to-pink-50 border-b">
-            <CardTitle className="flex items-center gap-2">
-              <Search className="h-5 w-5 text-purple-600" />
-              Verify Results
-            </CardTitle>
-          </CardHeader>
-          <CardContent className="pt-6">
-            <p className="text-sm text-slate-600 mb-4">
-              Verify candidate examination results using the dashboard interface. Supports both single and bulk verification requests.
-            </p>
-            <Link href="/api/dashboard/verify">
-              <Button className="w-full bg-gradient-to-r from-purple-600 to-pink-600 hover:from-purple-700 hover:to-pink-700">
-                <Search className="mr-2 h-4 w-4" />
-                Verify Results
-              </Button>
-            </Link>
           </CardContent>
         </Card>
       </div>

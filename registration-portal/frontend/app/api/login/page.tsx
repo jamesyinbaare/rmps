@@ -5,7 +5,8 @@ import { useRouter, useSearchParams } from "next/navigation";
 import { LoginForm } from "@/components/auth/LoginForm";
 import { getCurrentUser, isAuthenticated, logout } from "@/lib/api";
 import { toast } from "sonner";
-import { Navbar } from "@/components/layout/Navbar";
+import { Key } from "lucide-react";
+import Image from "next/image";
 
 export default function ApiLoginPage() {
   const router = useRouter();
@@ -49,47 +50,78 @@ export default function ApiLoginPage() {
 
   if (checking) {
     return (
-      <div className="flex min-h-screen flex-col">
-        <Navbar />
-        <div className="flex flex-1 items-center justify-center bg-gray-50">
-          <div className="text-center">Loading...</div>
+      <div className="grid min-h-svh lg:grid-cols-2">
+        <div className="flex flex-col gap-4 p-6 md:p-10">
+          <div className="flex flex-1 items-center justify-center">
+            <div className="text-center">Loading...</div>
+          </div>
+        </div>
+        <div className="bg-muted relative hidden lg:flex items-center justify-center">
+          <div className="text-center text-muted-foreground">Loading...</div>
         </div>
       </div>
     );
   }
 
   return (
-    <div className="flex min-h-screen flex-col">
-      <Navbar />
-      <div className="flex flex-1 items-center justify-center bg-gray-50">
-        <div className="w-full max-w-md space-y-8 rounded-lg bg-white p-8 shadow-md">
-          <div className="text-center">
-            <h1 className="text-3xl font-bold">API Portal</h1>
-            <p className="mt-2 text-gray-600">Login to access the API dashboard</p>
-          </div>
-          <LoginForm
-            onLoginSuccess={(user) => {
-              // Only APIUSER can access
-              if (user.role !== "APIUSER") {
-                toast.error("This portal is only accessible to API users. Please use the appropriate login page for your account type.");
-                setTimeout(() => {
-                  window.location.replace("/login");
-                }, 1500);
-                return false;
-              }
-              // CRITICAL: Immediately redirect to API dashboard - blocking redirect
-              // This MUST happen before any other code executes
-              window.location.replace("/api/dashboard");
-              return false; // Prevent default redirect
-            }}
-          />
-          <div className="text-center text-sm">
-            <p className="text-gray-600">
-              Need an API account? Contact your system administrator.
-            </p>
+    <div className="grid min-h-svh lg:grid-cols-2">
+      {/* Left side - Login form */}
+      <div className="flex flex-col gap-4 p-6 md:p-10">
+        <div className="flex justify-center gap-2 md:justify-start">
+          <a href="#" className="flex items-center gap-2 font-medium">
+            <div className="bg-gradient-to-br from-blue-600 to-indigo-600 text-white flex size-6 items-center justify-center rounded-md">
+              <Key className="size-4" />
+            </div>
+            CTVET Results Verification Portal
+          </a>
+        </div>
+        <div className="flex flex-1 items-center justify-center">
+          <div className="w-full max-w-xs space-y-6">
+            {/* Crest logo at top */}
+            <div className="flex justify-center">
+              <div className="relative w-32 h-32">
+                <Image
+                  src="/logo-crest-only.png"
+                  alt="CTVET Crest"
+                  fill
+                  className="object-contain"
+                  priority
+                />
+              </div>
+            </div>
+            <div className="flex flex-col items-center gap-1 text-center">
+              <h1 className="text-2xl font-bold">Login to your account</h1>
+              <p className="text-muted-foreground text-sm text-balance">
+                Enter your credentials to access the API dashboard
+              </p>
+            </div>
+            <LoginForm
+              onLoginSuccess={(user) => {
+                // Only APIUSER can access
+                if (user.role !== "APIUSER") {
+                  toast.error("This portal is only accessible to API users. Please use the appropriate login page for your account type.");
+                  setTimeout(() => {
+                    window.location.replace("/login");
+                  }, 1500);
+                  return false;
+                }
+                // CRITICAL: Immediately redirect to API dashboard - blocking redirect
+                // This MUST happen before any other code executes
+                window.location.replace("/api/dashboard");
+                return false; // Prevent default redirect
+              }}
+            />
+            <div className="text-center text-sm text-muted-foreground">
+              <p>
+                Need an API account? Contact your system administrator.
+              </p>
+            </div>
           </div>
         </div>
       </div>
+
+      {/* Right side - Decorative background */}
+      <div className="bg-gradient-to-br from-slate-50 to-blue-50 relative hidden lg:block" />
     </div>
   );
 }

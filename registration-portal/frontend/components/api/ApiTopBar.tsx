@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
-import { Key, Coins, User, LogOut, Plus } from "lucide-react";
+import { Key, Coins, LogOut } from "lucide-react";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -55,14 +55,6 @@ export function ApiTopBar({ user, creditBalance }: ApiTopBarProps) {
     }
   };
 
-  const handleCreateApiKey = () => {
-    router.push("/api/dashboard/api-keys?create=true");
-  };
-
-  const handlePurchaseCredits = () => {
-    router.push("/api/dashboard/credits?purchase=true");
-  };
-
   const initials = getInitials(user.full_name);
 
   return (
@@ -75,13 +67,13 @@ export function ApiTopBar({ user, creditBalance }: ApiTopBarProps) {
               <Key className="h-5 w-5 text-white" />
             </div>
             <div>
-              <h1 className="text-lg font-bold text-slate-900">API Portal</h1>
+              <h1 className="text-lg font-bold text-slate-900">CTVET API Portal</h1>
               <p className="text-xs text-slate-500">Results Verification</p>
             </div>
           </div>
         </div>
 
-        {/* Right: Quick Actions & User Menu */}
+        {/* Right: Credit Balance & User Menu */}
         <div className="flex items-center gap-4">
           {/* Credit Balance Indicator */}
           {creditBalance && (
@@ -95,28 +87,6 @@ export function ApiTopBar({ user, creditBalance }: ApiTopBarProps) {
               </div>
             </div>
           )}
-
-          {/* Quick Actions */}
-          <div className="hidden md:flex items-center gap-2">
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={handleCreateApiKey}
-              className="border-blue-300 text-blue-700 hover:bg-blue-50"
-            >
-              <Plus className="mr-2 h-4 w-4" />
-              Create API Key
-            </Button>
-            <Button
-              variant="default"
-              size="sm"
-              onClick={handlePurchaseCredits}
-              className="bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700"
-            >
-              <Coins className="mr-2 h-4 w-4" />
-              Buy Credits
-            </Button>
-          </div>
 
           {/* User Menu */}
           <DropdownMenu>
@@ -134,27 +104,6 @@ export function ApiTopBar({ user, creditBalance }: ApiTopBarProps) {
                   <p className="text-xs text-slate-500">{user.email}</p>
                 </div>
               </DropdownMenuLabel>
-              <DropdownMenuSeparator />
-              <DropdownMenuItem
-                onClick={(e) => {
-                  e.preventDefault();
-                  handleCreateApiKey();
-                }}
-                className="text-slate-700"
-              >
-                <Key className="mr-2 h-4 w-4" />
-                <span>Create API Key</span>
-              </DropdownMenuItem>
-              <DropdownMenuItem
-                onClick={(e) => {
-                  e.preventDefault();
-                  handlePurchaseCredits();
-                }}
-                className="text-slate-700"
-              >
-                <Coins className="mr-2 h-4 w-4" />
-                <span>Purchase Credits</span>
-              </DropdownMenuItem>
               <DropdownMenuSeparator />
               <DropdownMenuItem
                 onClick={(e) => {
