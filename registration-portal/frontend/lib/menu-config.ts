@@ -11,6 +11,9 @@ import {
   Settings,
   HelpCircle,
   DollarSign,
+  Key,
+  Coins,
+  Search,
 } from "lucide-react";
 import type { Role } from "@/types";
 import { LucideIcon } from "lucide-react";
@@ -81,6 +84,12 @@ export const systemAdminMoreActions: MenuItem[] = [
     href: "/dashboard/admin/fees",
     label: "Fees Management",
     icon: DollarSign,
+    roles: ["SystemAdmin", "Director", "DeputyDirector", "PrincipalManager", "SeniorManager", "Manager", "Staff"],
+  },
+  {
+    href: "/dashboard/admin/api-users",
+    label: "API Users",
+    icon: Users,
     roles: ["SystemAdmin", "Director", "DeputyDirector", "PrincipalManager", "SeniorManager", "Manager", "Staff"],
   },
   {
@@ -162,6 +171,11 @@ export function getMenuItemsForRole(role: Role | null | undefined): MenuItem[] {
     });
   }
 
+  // API user role
+  if (role === "APIUSER") {
+    return apiUserMenuItems.filter(item => item.roles.includes(role));
+  }
+
   return [];
 }
 
@@ -177,6 +191,11 @@ export function getMoreActionsForRole(role: Role | null | undefined): MenuItem[]
   }
 
   // School users don't have "More Actions" menu
+  // API users don't have "More Actions" menu
+  if (role === "APIUSER") {
+    return [];
+  }
+
   return [];
 }
 
@@ -188,4 +207,14 @@ export function shouldShowMoreActions(role: Role | null | undefined): boolean {
 
   // Only system admin roles show "More Actions"
   return ["SystemAdmin", "Director", "DeputyDirector", "PrincipalManager", "SeniorManager", "Manager", "Staff"].includes(role);
+}
+
+/**
+ * Check if a role should show the sidebar
+ */
+export function shouldShowSidebar(role: Role | null | undefined): boolean {
+  if (!role) return false;
+
+  // All roles except PublicUser show sidebar
+  return role !== "PublicUser";
 }

@@ -19,6 +19,21 @@ export default function DashboardLayoutWrapper({
 
   useEffect(() => {
     const checkAuthAndRedirect = async () => {
+      // CRITICAL: Check API users FIRST before any state updates or rendering
+      if (isAuthenticated()) {
+        try {
+          const user = await getCurrentUser();
+          // CRITICAL: Redirect API users immediately - blocking redirect
+          if (user.role === "APIUSER") {
+            window.location.replace("/api/dashboard");
+            return; // Exit immediately, don't render anything
+          }
+        } catch (error) {
+          // If we can't get user, continue with normal flow
+          console.error("Failed to get user:", error);
+        }
+      }
+
       setMounted(true);
 
       if (!isAuthenticated()) {
@@ -26,31 +41,30 @@ export default function DashboardLayoutWrapper({
         return;
       }
 
-      // Only check role redirect for main dashboard page (not for my-school or private dashboards)
-      if (pathname === "/dashboard") {
-        try {
-          const user = await getCurrentUser();
+      try {
+        const user = await getCurrentUser();
 
+        // Only check role redirect for main dashboard page (not for my-school or private dashboards)
+        if (pathname === "/dashboard") {
           // Redirect school users (SchoolAdmin, SchoolStaff) to their school dashboard
           if (user.role === "SchoolAdmin" || user.role === "SchoolStaff") {
             router.push("/dashboard/my-school");
             setChecking(false);
             return;
           }
-
           // Redirect private users to their dashboard
           if (user.role === "PublicUser") {
             router.push("/dashboard/private");
             setChecking(false);
             return;
           }
-        } catch (error) {
-          console.error("Failed to get user:", error);
-          // If auth fails, redirect to login
-          router.push("/login");
-          setChecking(false);
-          return;
         }
+      } catch (error) {
+        console.error("Failed to get user:", error);
+        // If auth fails, redirect to login
+        router.push("/login");
+        setChecking(false);
+        return;
       }
 
       setChecking(false);

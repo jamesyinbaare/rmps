@@ -37,14 +37,20 @@ export function LoginForm({ onLoginSuccess }: LoginFormProps = {}) {
         if (shouldShowSuccess !== false) {
           toast.success("Login successful");
         }
+        // Always return early when custom handler is provided - prevents default redirect
+        // Don't set loading to false if redirecting (page will reload anyway)
         setLoading(false);
         return;
       }
 
-      // Default redirect logic
+      // Default redirect logic (only runs if no custom handler)
       toast.success("Login successful");
       if (user.role === "PublicUser") {
         router.push("/dashboard/private");
+      } else if (user.role === "APIUSER") {
+        // Use blocking redirect for API users
+        window.location.replace("/api/dashboard");
+        return; // Exit immediately
       } else if (user.role === "SchoolAdmin" || user.role === "SchoolStaff") {
         // SchoolAdmin and User go directly to school dashboard
         router.push("/dashboard/my-school");

@@ -36,6 +36,7 @@ export function Navbar() {
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [certificateMenuOpen, setCertificateMenuOpen] = useState(false);
   const [examinationsMenuOpen, setExaminationsMenuOpen] = useState(false);
+  const [partnersMenuOpen, setPartnersMenuOpen] = useState(false);
   const [user, setUser] = useState<UserType | null>(null);
 
   useEffect(() => {
@@ -173,6 +174,36 @@ export function Navbar() {
                           }`}
                         >
                           Certificate Confirmation/Verification
+                        </Link>
+                      </NavigationMenuLink>
+                    </li>
+                  </ul>
+                </NavigationMenuContent>
+              </NavigationMenuItem>
+            </NavigationMenuList>
+          </NavigationMenu>
+
+          <NavigationMenu viewport={false}>
+            <NavigationMenuList>
+              <NavigationMenuItem>
+                <NavigationMenuTrigger>Partners</NavigationMenuTrigger>
+                <NavigationMenuContent
+                  className="z-[100] min-w-[240px] rounded-md border shadow-xl"
+                  style={{
+                    backgroundColor: 'var(--popover)',
+                    color: 'var(--popover-foreground)'
+                  }}
+                >
+                  <ul className="w-[240px] p-4" style={{ backgroundColor: 'var(--popover)' }}>
+                    <li>
+                      <NavigationMenuLink asChild>
+                        <Link
+                          href="/api/login"
+                          className={`block rounded-md px-3 py-2 text-sm text-foreground hover:bg-accent hover:text-accent-foreground transition-colors ${
+                            pathname?.startsWith("/api/") ? "bg-accent text-accent-foreground" : ""
+                          }`}
+                        >
+                          Results Verification
                         </Link>
                       </NavigationMenuLink>
                     </li>
@@ -356,6 +387,32 @@ export function Navbar() {
                       }`}
                     >
                       Certificate Confirmation/Verification
+                    </Link>
+                  </CollapsibleContent>
+                </Collapsible>
+                <Collapsible open={partnersMenuOpen} onOpenChange={setPartnersMenuOpen}>
+                  <CollapsibleTrigger className="flex w-full items-center justify-between text-sm font-medium text-muted-foreground transition-colors hover:text-primary">
+                    Partners
+                    <ChevronDown
+                      className={`h-4 w-4 transition-transform ${
+                        partnersMenuOpen ? "rotate-180" : ""
+                      }`}
+                    />
+                  </CollapsibleTrigger>
+                  <CollapsibleContent className="ml-4 mt-2 flex flex-col gap-2">
+                    <Link
+                      href="/api/login"
+                      onClick={() => {
+                        setMobileMenuOpen(false);
+                        setPartnersMenuOpen(false);
+                      }}
+                      className={`text-sm transition-colors hover:text-primary ${
+                        pathname?.startsWith("/api/")
+                          ? "text-primary font-medium"
+                          : "text-muted-foreground"
+                      }`}
+                    >
+                      Results Verification
                     </Link>
                   </CollapsibleContent>
                 </Collapsible>
