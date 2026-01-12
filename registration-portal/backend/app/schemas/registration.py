@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from datetime import date, datetime
 
-from pydantic import BaseModel, EmailStr, Field, field_validator, ConfigDict
+from pydantic import BaseModel, EmailStr, Field, field_validator, model_validator, ConfigDict
 from uuid import UUID
 
 from app.models import RegistrationStatus
@@ -199,10 +199,29 @@ class RegistrationExamCreate(BaseModel):
 
     exam_id_main_system: int | None = None
     exam_type: str
-    exam_series: str
+    exam_series: str | None = None
     year: int
     description: str | None = None
+    pricing_model_preference: str | None = Field(None, description="Pricing model: 'per_subject', 'tiered', or 'auto'")
     registration_period: ExamRegistrationPeriodCreate
+
+    @model_validator(mode="after")
+    def validate_exam_series(self) -> RegistrationExamCreate:
+        """Validate exam_series is required for Certificate II Examinations and valid when provided."""
+        if self.exam_type == "Certificate II Examinations":
+            if not self.exam_series or self.exam_series.strip() == "":
+                raise ValueError("exam_series is required for Certificate II Examinations")
+            # Normalize the value
+            v_normalized = self.exam_series.upper().replace("-", "/").strip()
+            if v_normalized not in ("MAY/JUNE", "NOV/DEC"):
+                raise ValueError("exam_series must be either 'MAY/JUNE' or 'NOV/DEC' for Certificate II Examinations")
+            self.exam_series = v_normalized
+        else:
+            # For non-Certificate II Examinations exams, exam_series should be None or empty
+            if self.exam_series and self.exam_series.strip() != "":
+                raise ValueError(f"exam_series is not allowed for {self.exam_type} examinations. Only Certificate II Examinations have exam series.")
+            self.exam_series = None
+        return self
 
 
 class RegistrationExamUpdate(BaseModel):
@@ -222,7 +241,7 @@ class RegistrationExamResponse(BaseModel):
     id: int
     exam_id_main_system: int | None = None
     exam_type: str
-    exam_series: str
+    exam_series: str | None = None
     year: int
     description: str | None = None
     registration_period: ExamRegistrationPeriodResponse
@@ -231,6 +250,7 @@ class RegistrationExamResponse(BaseModel):
     results_published_by_user_id: str | None = None
     pricing_model_preference: str | None = None
     has_index_numbers: bool = False
+    candidate_count: int | None = None
     created_at: datetime
     updated_at: datetime
 

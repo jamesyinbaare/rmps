@@ -1382,18 +1382,27 @@ async def create_exam(
             )
 
         # Check for duplicate exams (same exam_type, series, year)
-        stmt = select(RegistrationExam).where(
-            RegistrationExam.exam_type == exam_data.exam_type,
-            RegistrationExam.exam_series == exam_data.exam_series,
-            RegistrationExam.year == exam_data.year,
-        )
+        # Handle nullable exam_series properly
+        if exam_data.exam_series:
+            stmt = select(RegistrationExam).where(
+                RegistrationExam.exam_type == exam_data.exam_type,
+                RegistrationExam.exam_series == exam_data.exam_series,
+                RegistrationExam.year == exam_data.year,
+            )
+        else:
+            stmt = select(RegistrationExam).where(
+                RegistrationExam.exam_type == exam_data.exam_type,
+                RegistrationExam.exam_series.is_(None),
+                RegistrationExam.year == exam_data.year,
+            )
         result = await session.execute(stmt)
         existing = result.scalar_one_or_none()
 
         if existing:
+            series_display = exam_data.exam_series if exam_data.exam_series else "N/A"
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail=f"Exam with type '{exam_data.exam_type}', series '{exam_data.exam_series}', and year {exam_data.year} already exists",
+                detail=f"Exam with type '{exam_data.exam_type}', series '{series_display}', and year {exam_data.year} already exists",
             )
 
         # Create registration period
@@ -1411,7 +1420,7 @@ async def create_exam(
         new_exam = RegistrationExam(
             exam_id_main_system=exam_data.exam_id_main_system,
             exam_type=exam_data.exam_type,
-            exam_series=exam_data.exam_series,
+            exam_series=exam_data.exam_series,  # Can be None for non-Certificate II exams
             year=exam_data.year,
             description=exam_data.description,
             registration_period_id=registration_period.id,
@@ -1419,12 +1428,21 @@ async def create_exam(
         )
         session.add(new_exam)
         await session.commit()
+        # #region agent log
+        try:
+            with open('/home/jyin/workspace/lazaar/.cursor/debug.log', 'a') as f:
+                import json
+                f.write(json.dumps({"sessionId":"debug-session","runId":"run1","hypothesisId":"D","location":"admin.py:1430","message":"after commit","data":{},"timestamp":int(__import__('time').time()*1000)}) + '\n')
+        except Exception as log_err:
+            logger.error(f"Debug log write failed: {log_err}")
+        # #endregion
         await session.refresh(new_exam, ["registration_period"])
 
         return RegistrationExamResponse.model_validate(new_exam)
     except HTTPException:
         raise
     except Exception as e:
+        logger.error(f"Error creating exam: {e}", exc_info=True)
         await session.rollback()
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -1469,8 +1487,16 @@ async def get_exam(exam_id: int, session: DBSessionDep, current_user: SystemAdmi
     index_numbers_result = await session.execute(index_numbers_count_stmt)
     index_numbers_count = index_numbers_result.scalar() or 0
 
+    # Count total candidates registered for this exam
+    candidate_count_stmt = select(func.count(RegistrationCandidate.id)).where(
+        RegistrationCandidate.registration_exam_id == exam_id
+    )
+    candidate_count_result = await session.execute(candidate_count_stmt)
+    candidate_count = candidate_count_result.scalar() or 0
+
     exam_response = RegistrationExamResponse.model_validate(exam)
     exam_response.has_index_numbers = index_numbers_count > 0
+    exam_response.candidate_count = candidate_count
 
     return exam_response
 
@@ -1494,13 +1520,67 @@ async def update_exam(
     if not exam:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Exam not found")
 
+    # Check if any of exam_type, year, or exam_series are being updated
+    is_updating_critical_fields = (
+        exam_update.exam_type is not None
+        or exam_update.year is not None
+        or exam_update.exam_series is not None
+    )
+
+    # If updating critical fields, check if candidates are registered
+    if is_updating_critical_fields:
+        candidates_stmt = select(func.count(RegistrationCandidate.id)).where(
+            RegistrationCandidate.registration_exam_id == exam_id
+        )
+        candidates_result = await session.execute(candidates_stmt)
+        candidate_count = candidates_result.scalar_one()
+
+        if candidate_count > 0:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Cannot update exam type, year, or series. There are {candidate_count} registered candidate(s) for this examination.",
+            )
+
+    # Determine the exam_type after update (use new value if provided, otherwise current)
+    updated_exam_type = exam_update.exam_type if exam_update.exam_type is not None else exam.exam_type
+
+    # Validate exam_series based on exam_type
+    if exam_update.exam_series is not None:
+        if updated_exam_type == "Certificate II Examinations":
+            # Normalize and validate exam_series for Certificate II Examinations
+            exam_series_normalized = exam_update.exam_series.upper().replace("-", "/").strip()
+            if exam_series_normalized not in ("MAY/JUNE", "NOV/DEC"):
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="exam_series must be either 'MAY/JUNE' or 'NOV/DEC' for Certificate II Examinations",
+                )
+            exam.exam_series = exam_series_normalized
+        else:
+            # For non-Certificate II exams, exam_series should be None
+            if exam_update.exam_series.strip() != "":
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail=f"exam_series is not allowed for {updated_exam_type} examinations. Only Certificate II Examinations have exam series.",
+                )
+            exam.exam_series = None
+    elif exam_update.exam_type is not None:
+        # If exam_type is being changed (but exam_series is not being updated), validate exam_series based on new type
+        if updated_exam_type == "Certificate II Examinations":
+            # If changing to Certificate II Examinations and exam_series is not provided, keep existing or require it
+            if exam.exam_series is None or exam.exam_series.strip() == "":
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="exam_series is required when changing exam_type to Certificate II Examinations",
+                )
+        else:
+            # If changing away from Certificate II Examinations, clear exam_series
+            exam.exam_series = None
+
     # Update fields if provided
     if exam_update.exam_id_main_system is not None:
         exam.exam_id_main_system = exam_update.exam_id_main_system
     if exam_update.exam_type is not None:
         exam.exam_type = exam_update.exam_type
-    if exam_update.exam_series is not None:
-        exam.exam_series = exam_update.exam_series
     if exam_update.year is not None:
         exam.year = exam_update.year
     if exam_update.description is not None:
@@ -1516,13 +1596,21 @@ async def update_exam(
 
 @router.delete("/exams/{exam_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_exam(exam_id: int, session: DBSessionDep, current_user: SystemAdminDep) -> None:
-    """Delete an exam (with validation to prevent deletion if candidates exist)."""
-    stmt = select(RegistrationExam).where(RegistrationExam.id == exam_id)
+    """Delete an exam (with validation to prevent deletion if registration has started or candidates exist)."""
+    stmt = (
+        select(RegistrationExam)
+        .where(RegistrationExam.id == exam_id)
+        .options(selectinload(RegistrationExam.registration_period))
+    )
     result = await session.execute(stmt)
     exam = result.scalar_one_or_none()
 
     if not exam:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Exam not found")
+
+    # Check if registration has started
+    now = datetime.utcnow()
+    registration_started = exam.registration_period.registration_start_date <= now
 
     # Check if there are any candidates registered for this exam
     candidates_stmt = select(func.count(RegistrationCandidate.id)).where(
@@ -1531,10 +1619,11 @@ async def delete_exam(exam_id: int, session: DBSessionDep, current_user: SystemA
     candidates_result = await session.execute(candidates_stmt)
     candidate_count = candidates_result.scalar_one()
 
-    if candidate_count > 0:
+    # Allow deletion only if: registration has not started OR nobody has registered
+    if registration_started and candidate_count > 0:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Cannot delete exam with {candidate_count} registered candidate(s). Please remove candidates first.",
+            detail=f"Cannot delete exam. Registration has started and there are {candidate_count} registered candidate(s).",
         )
 
     # Delete exam (registration period will be cascade deleted)
