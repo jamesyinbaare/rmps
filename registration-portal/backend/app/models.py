@@ -36,6 +36,7 @@ class Role(enum.IntEnum):
     SchoolAdmin = 70
     SchoolStaff = 80
     PublicUser = 90
+    APIUSER = 100
 
     def __lt__(self, other: "Role") -> bool:
         return self.value < other.value
@@ -152,6 +153,23 @@ class TicketActivityType(enum.Enum):
     ASSIGNMENT = "assignment"
     NOTE = "note"
     SYSTEM = "system"
+
+
+class CreditTransactionType(enum.Enum):
+    PURCHASE = "purchase"
+    ADMIN_ASSIGNMENT = "admin_assignment"
+    USAGE = "usage"
+    REFUND = "refund"
+
+
+class ApiRequestSource(enum.Enum):
+    API_KEY = "api_key"
+    DASHBOARD = "dashboard"
+
+
+class ApiRequestType(enum.Enum):
+    SINGLE = "single"
+    BULK = "bulk"
 
 
 class TicketRequestMixin:
@@ -849,6 +867,88 @@ class UserPermission(Base):
     )
 
 
+class UserCredit(Base):
+    """Model for user credit balance management."""
+
+    __tablename__ = "user_credits"
+
+    id = Column(Integer, primary_key=True)
+    user_id = Column(UUID(as_uuid=True), ForeignKey("portal_users.id", ondelete="CASCADE"), unique=True, nullable=False, index=True)
+    balance = Column(Numeric(10, 2), default=0, nullable=False)
+    total_purchased = Column(Numeric(10, 2), default=0, nullable=False)
+    total_used = Column(Numeric(10, 2), default=0, nullable=False)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+
+    user = relationship("PortalUser", back_populates="credit_account")
+    transactions = relationship("CreditTransaction", back_populates="user_credit", cascade="all, delete-orphan")
+
+
+class CreditTransaction(Base):
+    """Model for credit transaction history."""
+
+    __tablename__ = "credit_transactions"
+
+    id = Column(Integer, primary_key=True)
+    user_id = Column(UUID(as_uuid=True), ForeignKey("portal_users.id", ondelete="CASCADE"), nullable=False, index=True)
+    user_credit_id = Column(Integer, ForeignKey("user_credits.id", ondelete="CASCADE"), nullable=False, index=True)
+    transaction_type = Column(Enum(CreditTransactionType, create_constraint=False, values_callable=lambda x: [e.value for e in x]), nullable=False, index=True)
+    amount = Column(Numeric(10, 2), nullable=False)  # Positive for additions, negative for usage
+    balance_after = Column(Numeric(10, 2), nullable=False)
+    payment_id = Column(Integer, ForeignKey("payments.id", ondelete="SET NULL"), nullable=True, index=True)
+    assigned_by_user_id = Column(UUID(as_uuid=True), ForeignKey("portal_users.id", ondelete="SET NULL"), nullable=True, index=True)
+    description = Column(Text, nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False, index=True)
+
+    user = relationship("PortalUser", foreign_keys=[user_id])
+    user_credit = relationship("UserCredit", back_populates="transactions")
+    payment = relationship("Payment", foreign_keys=[payment_id])
+    assigned_by = relationship("PortalUser", foreign_keys=[assigned_by_user_id])
+
+
+class ApiKey(Base):
+    """Model for API key management."""
+
+    __tablename__ = "api_keys"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    user_id = Column(UUID(as_uuid=True), ForeignKey("portal_users.id", ondelete="CASCADE"), nullable=False, index=True)
+    key_hash = Column(String(255), nullable=False, index=True)
+    key_prefix = Column(String(20), nullable=False)  # First 8 characters for display
+    name = Column(String(255), nullable=False)
+    is_active = Column(Boolean, default=True, nullable=False, index=True)
+    last_used_at = Column(DateTime, nullable=True, index=True)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    rate_limit_per_minute = Column(Integer, default=60, nullable=False)
+    request_count = Column(Integer, default=0, nullable=False)
+    request_count_reset_at = Column(DateTime, nullable=True)
+    total_requests = Column(Integer, default=0, nullable=False)
+    total_verifications = Column(Integer, default=0, nullable=False)
+
+    user = relationship("PortalUser", back_populates="api_keys")
+    usage_records = relationship("ApiUsage", back_populates="api_key", cascade="all, delete-orphan")
+
+
+class ApiUsage(Base):
+    """Model for API usage tracking and billing."""
+
+    __tablename__ = "api_usage"
+
+    id = Column(Integer, primary_key=True)
+    api_key_id = Column(UUID(as_uuid=True), ForeignKey("api_keys.id", ondelete="CASCADE"), nullable=True, index=True)
+    user_id = Column(UUID(as_uuid=True), ForeignKey("portal_users.id", ondelete="CASCADE"), nullable=False, index=True)
+    request_source = Column(Enum(ApiRequestSource, create_constraint=False, values_callable=lambda x: [e.value for e in x]), nullable=False, index=True)
+    request_type = Column(Enum(ApiRequestType, create_constraint=False, values_callable=lambda x: [e.value for e in x]), nullable=False, index=True)
+    verification_count = Column(Integer, default=0, nullable=False)
+    request_timestamp = Column(DateTime, default=datetime.utcnow, nullable=False, index=True)
+    response_status = Column(Integer, nullable=False)
+    duration_ms = Column(Integer, nullable=False)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False, index=True)
+
+    api_key = relationship("ApiKey", back_populates="usage_records")
+    user = relationship("PortalUser", foreign_keys=[user_id])
+
+
 # Define the relationship after both classes are defined to avoid forward reference issues
 PortalUser.user_permissions = relationship(
     UserPermission,
@@ -856,3 +956,7 @@ PortalUser.user_permissions = relationship(
     back_populates="user",
     cascade="all, delete-orphan"
 )
+
+# Add relationships to PortalUser for new models
+PortalUser.credit_account = relationship("UserCredit", back_populates="user", uselist=False, cascade="all, delete-orphan")
+PortalUser.api_keys = relationship("ApiKey", back_populates="user", cascade="all, delete-orphan")

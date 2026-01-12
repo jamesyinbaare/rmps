@@ -25,7 +25,7 @@ class SchoolAdminUserCreate(BaseModel):
 
 
 class AdminUserCreate(BaseModel):
-    """Schema for creating an admin user (by system admin). Excludes SchoolStaff and PublicUser roles."""
+    """Schema for creating an admin user (by system admin). Excludes SchoolStaff and PublicUser roles. Allows APIUSER role."""
 
     email: EmailStr
     password: str
@@ -60,9 +60,11 @@ class AdminUserCreate(BaseModel):
 
     @model_validator(mode="after")
     def validate_school_id(self) -> "AdminUserCreate":
-        """Validate that school_id is provided when role is SchoolAdmin."""
+        """Validate that school_id is provided when role is SchoolAdmin, and not provided for APIUSER."""
         if self.role == Role.SchoolAdmin and self.school_id is None:
             raise ValueError("school_id is required when role is SchoolAdmin")
+        if self.role == Role.APIUSER and self.school_id is not None:
+            raise ValueError("school_id should not be provided when role is APIUSER")
         return self
 
 
