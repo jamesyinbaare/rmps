@@ -1,10 +1,10 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import { getPhotoAlbum, listAvailableExams, listSchoolProgrammes, getPhotoFile, bulkUploadPhotos } from "@/lib/api";
 import type { PhotoAlbumItem, RegistrationExam, Programme, PhotoBulkUploadResponse } from "@/types";
 import { toast } from "sonner";
-import { Search, User, Image as ImageIcon, Loader2, Upload, X, CheckCircle2, AlertCircle, FileText, Filter, ChevronDown, ChevronUp } from "lucide-react";
+import { Search, User, Image as ImageIcon, Loader2, Upload, X, CheckCircle2, AlertCircle, FileText, Filter, ChevronDown, ChevronUp, ChevronLeft, ChevronRight } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -22,6 +22,93 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { SearchableSelect } from "@/components/SearchableSelect";
+
+// Component to handle photo loading with authentication
+function PhotoImage({ candidateId, candidateName, hasPhoto }: { candidateId: number; candidateName: string; hasPhoto: boolean }) {
+  const [photoUrl, setPhotoUrl] = useState<string | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(false);
+  const urlRef = useRef<string | null>(null);
+
+  useEffect(() => {
+    if (!hasPhoto) {
+      setLoading(false);
+      return;
+    }
+
+    let isMounted = true;
+
+    async function loadPhoto() {
+      try {
+        const url = await getPhotoFile(candidateId);
+        if (isMounted) {
+          // Revoke old URL if it exists
+          if (urlRef.current) {
+            URL.revokeObjectURL(urlRef.current);
+          }
+          urlRef.current = url;
+          setPhotoUrl(url);
+          setError(false);
+        } else if (url) {
+          // Component unmounted, revoke the URL we just created
+          URL.revokeObjectURL(url);
+        }
+      } catch (err) {
+        if (isMounted) {
+          setError(true);
+        }
+      } finally {
+        if (isMounted) {
+          setLoading(false);
+        }
+      }
+    }
+
+    loadPhoto();
+
+    return () => {
+      isMounted = false;
+      if (urlRef.current) {
+        URL.revokeObjectURL(urlRef.current);
+        urlRef.current = null;
+      }
+    };
+  }, [candidateId, hasPhoto]);
+
+  if (!hasPhoto) {
+    return (
+      <div className="w-full h-full flex flex-col items-center justify-center bg-gray-50">
+        <User className="h-10 w-10 text-gray-300 mb-2" />
+        <span className="text-xs text-gray-400">No Photo</span>
+      </div>
+    );
+  }
+
+  if (loading) {
+    return (
+      <div className="w-full h-full flex items-center justify-center bg-gray-50">
+        <Loader2 className="h-6 w-6 animate-spin text-gray-400" />
+      </div>
+    );
+  }
+
+  if (error || !photoUrl) {
+    return (
+      <div className="w-full h-full flex flex-col items-center justify-center bg-gray-50">
+        <User className="h-10 w-10 text-gray-300 mb-2" />
+        <span className="text-xs text-gray-400">Failed to load</span>
+      </div>
+    );
+  }
+
+  return (
+    <img
+      src={photoUrl}
+      alt={candidateName}
+      className="w-full h-full object-cover transition-transform duration-200 hover:scale-110"
+    />
+  );
+}
 
 export default function PhotoAlbumPage() {
   const [items, setItems] = useState<PhotoAlbumItem[]>([]);
@@ -143,6 +230,80 @@ export default function PhotoAlbumPage() {
       (item.registration_number && item.registration_number.toLowerCase().includes(query))
     );
   });
+
+  // Get items with photos for navigation
+  const itemsWithPhotos = filteredItems.filter((item) => item.photo);
+
+  // Navigation functions
+  const navigateToPhoto = useCallback(async (direction: "prev" | "next") => {
+    if (!selectedPhoto) return;
+
+    const currentIndex = itemsWithPhotos.findIndex(
+      (item) => item.candidate_id === selectedPhoto.candidate_id
+    );
+
+    if (currentIndex === -1) return;
+
+    let newIndex: number;
+    if (direction === "prev") {
+      newIndex = currentIndex > 0 ? currentIndex - 1 : itemsWithPhotos.length - 1;
+    } else {
+      newIndex = currentIndex < itemsWithPhotos.length - 1 ? currentIndex + 1 : 0;
+    }
+
+    const newItem = itemsWithPhotos[newIndex];
+    if (newItem) {
+      // Clean up old photo URL
+      setPhotoUrl((prevUrl) => {
+        if (prevUrl) {
+          URL.revokeObjectURL(prevUrl);
+        }
+        return null;
+      });
+
+      setLoadingPhoto(true);
+      setSelectedPhoto(newItem);
+      try {
+        const url = await getPhotoFile(newItem.candidate_id);
+        if (url) {
+          setPhotoUrl(url);
+        } else {
+          toast.error("Photo file not found");
+        }
+      } catch (err) {
+        toast.error("Failed to load photo");
+      } finally {
+        setLoadingPhoto(false);
+      }
+    }
+  }, [selectedPhoto, itemsWithPhotos]);
+
+  // Keyboard navigation for photo viewer
+  useEffect(() => {
+    if (!selectedPhoto) return;
+
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "ArrowLeft") {
+        e.preventDefault();
+        navigateToPhoto("prev");
+      } else if (e.key === "ArrowRight") {
+        e.preventDefault();
+        navigateToPhoto("next");
+      } else if (e.key === "Escape") {
+        e.preventDefault();
+        setSelectedPhoto(null);
+        setPhotoUrl((prevUrl) => {
+          if (prevUrl) {
+            URL.revokeObjectURL(prevUrl);
+          }
+          return null;
+        });
+      }
+    };
+
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [selectedPhoto, navigateToPhoto]);
 
   const canLoadPhotos = selectedExamId !== null;
 
@@ -475,22 +636,11 @@ export default function PhotoAlbumPage() {
                   >
                     <CardContent className="p-3">
                       <div className="aspect-square relative bg-gradient-to-br from-gray-50 to-gray-100 rounded-lg overflow-hidden mb-3 border border-gray-200 shadow-inner">
-                        {item.photo ? (
-                          <img
-                            src={`${process.env.NEXT_PUBLIC_API_BASE_URL || "http://localhost:8001"}/api/v1/school/candidates/${item.candidate_id}/photos/file`}
-                            alt={item.candidate_name}
-                            className="w-full h-full object-cover transition-transform duration-200 hover:scale-110"
-                            onError={(e) => {
-                              (e.target as HTMLImageElement).src = "";
-                              (e.target as HTMLImageElement).style.display = "none";
-                            }}
-                          />
-                        ) : (
-                          <div className="w-full h-full flex flex-col items-center justify-center bg-gray-50">
-                            <User className="h-10 w-10 text-gray-300 mb-2" />
-                            <span className="text-xs text-gray-400">No Photo</span>
-                          </div>
-                        )}
+                        <PhotoImage
+                          candidateId={item.candidate_id}
+                          candidateName={item.candidate_name}
+                          hasPhoto={!!item.photo}
+                        />
                         {item.photo && (
                           <div className="absolute top-2 right-2 bg-blue-500 text-white text-[10px] px-1.5 py-0.5 rounded-full font-semibold">
                             Photo
@@ -684,6 +834,11 @@ export default function PhotoAlbumPage() {
           <DialogHeader>
             <DialogTitle>
               {selectedPhoto?.candidate_name} - {selectedPhoto?.index_number || selectedPhoto?.registration_number}
+              {itemsWithPhotos.length > 1 && selectedPhoto && (
+                <span className="text-sm font-normal text-muted-foreground ml-2">
+                  ({itemsWithPhotos.findIndex((item) => item.candidate_id === selectedPhoto.candidate_id) + 1} of {itemsWithPhotos.length})
+                </span>
+              )}
             </DialogTitle>
           </DialogHeader>
           {loadingPhoto ? (
@@ -692,7 +847,31 @@ export default function PhotoAlbumPage() {
             </div>
           ) : photoUrl && selectedPhoto ? (
             <div className="space-y-4">
-              <img src={photoUrl} alt={selectedPhoto.candidate_name} className="w-full h-auto rounded-lg" />
+              <div className="relative">
+                <img src={photoUrl} alt={selectedPhoto.candidate_name} className="w-full h-auto rounded-lg" />
+                {itemsWithPhotos.length > 1 && (
+                  <>
+                    <Button
+                      variant="outline"
+                      size="icon"
+                      className="absolute left-2 top-1/2 -translate-y-1/2 bg-white/90 hover:bg-white shadow-lg"
+                      onClick={() => navigateToPhoto("prev")}
+                      disabled={loadingPhoto}
+                    >
+                      <ChevronLeft className="h-6 w-6" />
+                    </Button>
+                    <Button
+                      variant="outline"
+                      size="icon"
+                      className="absolute right-2 top-1/2 -translate-y-1/2 bg-white/90 hover:bg-white shadow-lg"
+                      onClick={() => navigateToPhoto("next")}
+                      disabled={loadingPhoto}
+                    >
+                      <ChevronRight className="h-6 w-6" />
+                    </Button>
+                  </>
+                )}
+              </div>
               <div className="text-sm text-gray-600 space-y-1">
                 {selectedPhoto.school_name && (
                   <p>
@@ -710,6 +889,33 @@ export default function PhotoAlbumPage() {
                   </p>
                 )}
               </div>
+              {itemsWithPhotos.length > 1 && (
+                <div className="flex items-center justify-center gap-2 pt-2 border-t">
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => navigateToPhoto("prev")}
+                    disabled={loadingPhoto}
+                    className="gap-2"
+                  >
+                    <ChevronLeft className="h-4 w-4" />
+                    Previous
+                  </Button>
+                  <span className="text-sm text-muted-foreground px-4">
+                    {itemsWithPhotos.findIndex((item) => item.candidate_id === selectedPhoto.candidate_id) + 1} / {itemsWithPhotos.length}
+                  </span>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => navigateToPhoto("next")}
+                    disabled={loadingPhoto}
+                    className="gap-2"
+                  >
+                    Next
+                    <ChevronRight className="h-4 w-4" />
+                  </Button>
+                </div>
+              )}
             </div>
           ) : null}
         </DialogContent>
