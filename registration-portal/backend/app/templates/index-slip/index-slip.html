@@ -17,13 +17,53 @@
             line-height: 1.4;
             margin: 0;
             padding: 0;
+            position: relative;
+        }
+
+        .watermark {
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            width: 100%;
+            height: 100%;
+            background-image: url('img/logo-crest-only.png');
+            background-size: contain;
+            background-repeat: no-repeat;
+            background-position: center;
+            opacity: 0.03;
+            z-index: 0;
+            pointer-events: none;
+        }
+
+        .content-wrapper {
+            position: relative;
+            z-index: 1;
         }
 
         .header {
-            text-align: center;
+            display: flex;
+            align-items: center;
             margin-bottom: 20px;
             border-bottom: 2px solid #000;
             padding-bottom: 10px;
+        }
+
+        .header-logo-container {
+            display: flex;
+            align-items: center;
+            margin-right: 20px;
+        }
+
+        .header-logo {
+            height: 70px;
+            width: auto;
+        }
+
+        .header-title {
+            flex: 1;
+            text-align: center;
         }
 
         .header h1 {
@@ -68,6 +108,17 @@
 
         .info-cell {
             width: auto;
+        }
+
+        .qr-cell {
+            width: 150px;
+            text-align: center;
+            vertical-align: top;
+        }
+
+        .qr-cell img {
+            width: 120px;
+            height: 120px;
         }
 
         .info-row {
@@ -124,28 +175,6 @@
             text-align: center;
         }
 
-        .qr-section {
-            margin-top: 25px;
-            text-align: center;
-            border-top: 1px solid #000;
-            padding-top: 15px;
-        }
-
-        .qr-code {
-            display: inline-block;
-            margin: 10px;
-        }
-
-        .qr-code img {
-            width: 150px;
-            height: 150px;
-        }
-
-        .qr-note {
-            font-size: 8pt;
-            margin-top: 5px;
-            color: #666;
-        }
 
         .footer {
             margin-top: 30px;
@@ -158,9 +187,16 @@
     </style>
 </head>
 <body>
+    <div class="watermark"></div>
+    <div class="content-wrapper">
     <div class="header">
-        <h1>INDEX SLIP</h1>
-        <h2>{{ exam.exam_type }} - {{ exam.exam_series }} {{ exam.year }}</h2>
+        <div class="header-logo-container">
+            <img src="img/logo-crest-only.png" alt="CTVET Logo" class="header-logo" />
+        </div>
+        <div class="header-title">
+            <h1>INDEX SLIP</h1>
+            <h2>{{ exam.exam_type }} - {{ exam.exam_series }} {{ exam.year }}</h2>
+        </div>
     </div>
 
     <div class="candidate-info">
@@ -204,6 +240,9 @@
                 </div>
                 {% endif %}
             </div>
+            <div class="candidate-info-cell qr-cell">
+                <img src="data:image/png;base64,{{ qr_code_base64 }}" alt="QR Code">
+            </div>
         </div>
     </div>
 
@@ -217,7 +256,6 @@
                     <th>Subject Name</th>
                     <th>Paper</th>
                     <th>Time</th>
-                    <th>Venue</th>
                 </tr>
             </thead>
             <tbody>
@@ -233,25 +271,16 @@
                         - {{ entry.end_time.strftime('%H:%M') }}
                         {% endif %}
                     </td>
-                    <td>{{ entry.venue or 'TBA' }}</td>
                 </tr>
                 {% endfor %}
             </tbody>
         </table>
     </div>
 
-    <div class="qr-section">
-        <div class="qr-code">
-            <img src="data:image/png;base64,{{ qr_code_base64 }}" alt="QR Code">
-        </div>
-        <div class="qr-note">
-            Scan this QR code to view your registration information online
-        </div>
-    </div>
-
     <div class="footer">
         <p>This is an official document. Please bring this Index Slip to all examinations.</p>
         <p>Generated on {{ now.strftime('%d/%m/%Y %H:%M') }}</p>
+    </div>
     </div>
 </body>
 </html>

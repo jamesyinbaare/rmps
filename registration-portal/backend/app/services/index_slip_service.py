@@ -16,6 +16,9 @@ from app.models import (
     RegistrationCandidatePhoto,
     ExaminationSchedule,
     RegistrationSubjectSelection,
+    School,
+    RegistrationExam,
+    Subject,
 )
 from app.services.pdf_generator import PdfGenerator, render_html
 from app.services.photo_storage import PhotoStorageService
@@ -65,31 +68,48 @@ async def generate_index_slip_pdf(
     Returns:
         PDF file as bytes
     """
-    # Load candidate relationships
-    await session.refresh(
-        candidate,
-        [
-            "school",
-            "exam",
-            "photo",
-            "subject_selections",
-        ],
-    )
-
     # Ensure index number exists
     if not candidate.index_number:
         raise ValueError("Index number must be generated before creating Index Slip")
 
+    # Load candidate relationships explicitly (refresh doesn't work well with relationships in async)
+    # Query subject selections
+    subject_selections_stmt = select(RegistrationSubjectSelection).where(
+        RegistrationSubjectSelection.registration_candidate_id == candidate.id
+    )
+    subject_selections_result = await session.execute(subject_selections_stmt)
+    subject_selections = subject_selections_result.scalars().all()
+
+    # Query school if school_id is present
+    school = None
+    if candidate.school_id:
+        school_stmt = select(School).where(School.id == candidate.school_id)
+        school_result = await session.execute(school_stmt)
+        school = school_result.scalar_one_or_none()
+
+    # Query exam
+    exam_stmt = select(RegistrationExam).where(RegistrationExam.id == candidate.registration_exam_id)
+    exam_result = await session.execute(exam_stmt)
+    exam = exam_result.scalar_one_or_none()
+    if not exam:
+        raise ValueError("Registration exam not found")
+
     # Load photo if not provided
-    if photo_data is None and candidate.photo:
-        photo_service = PhotoStorageService()
-        try:
-            photo_data = await photo_service.retrieve(candidate.photo.file_path)
-        except Exception:
-            photo_data = None
+    if photo_data is None:
+        photo_stmt = select(RegistrationCandidatePhoto).where(
+            RegistrationCandidatePhoto.registration_candidate_id == candidate.id
+        )
+        photo_result = await session.execute(photo_stmt)
+        photo = photo_result.scalar_one_or_none()
+        if photo:
+            photo_service = PhotoStorageService()
+            try:
+                photo_data = await photo_service.retrieve(photo.file_path)
+            except Exception:
+                photo_data = None
 
     # Get examination schedules for registered subjects
-    subject_codes = [sel.subject_code for sel in candidate.subject_selections]
+    subject_codes = [sel.subject_code for sel in subject_selections]
 
     schedules_stmt = (
         select(ExaminationSchedule)
@@ -102,12 +122,23 @@ async def generate_index_slip_pdf(
     schedules_result = await session.execute(schedules_stmt)
     schedules = schedules_result.scalars().all()
 
+    # Get unique subject codes to look up original codes
+    unique_subject_codes = list(set([schedule.subject_code for schedule in schedules]))
+    subjects_stmt = select(Subject).where(Subject.code.in_(unique_subject_codes))
+    subjects_result = await session.execute(subjects_stmt)
+    subjects = subjects_result.scalars().all()
+
+    # Create a mapping of code -> original_code (fallback to code if original_code is None)
+    subject_code_map = {}
+    for subject in subjects:
+        subject_code_map[subject.code] = subject.original_code if subject.original_code else subject.code
+
     # Build schedule entries with papers
     schedule_entries = []
     for schedule in schedules:
         # Find matching subject selection
         subject_selection = next(
-            (sel for sel in candidate.subject_selections if sel.subject_code == schedule.subject_code),
+            (sel for sel in subject_selections if sel.subject_code == schedule.subject_code),
             None,
         )
         if subject_selection:
@@ -117,8 +148,12 @@ async def generate_index_slip_pdf(
                 paper_start_time = paper_info.get("start_time")
                 paper_end_time = paper_info.get("end_time")
 
+                # Use original_code if available, otherwise use code
+                display_subject_code = subject_code_map.get(schedule.subject_code, schedule.subject_code)
+
                 schedule_entries.append({
-                    "subject_code": schedule.subject_code,
+                    "subject_code": display_subject_code,  # Display code (original_code or code)
+                    "schedule_subject_code": schedule.subject_code,  # Keep original for grouping
                     "subject_name": schedule.subject_name,
                     "paper": paper_num,
                     "date": schedule.examination_date,
@@ -129,6 +164,51 @@ async def generate_index_slip_pdf(
 
     # Sort by date and time
     schedule_entries.sort(key=lambda x: (x["date"], x["start_time"]))
+
+    # Combine papers that start at the same time (same subject, date, and start_time)
+    combined_entries = []
+    i = 0
+    while i < len(schedule_entries):
+        current = schedule_entries[i]
+        papers_to_combine = [current["paper"]]
+        end_time = current["end_time"]
+
+        # Look ahead to find papers with the same subject, date, and start_time
+        # Use schedule_subject_code for grouping to ensure correct combination
+        j = i + 1
+        while j < len(schedule_entries):
+            next_entry = schedule_entries[j]
+            if (next_entry["schedule_subject_code"] == current["schedule_subject_code"] and
+                next_entry["date"] == current["date"] and
+                next_entry["start_time"] == current["start_time"]):
+                papers_to_combine.append(next_entry["paper"])
+                # Use the latest end_time
+                if next_entry["end_time"] and (not end_time or next_entry["end_time"] > end_time):
+                    end_time = next_entry["end_time"]
+                j += 1
+            else:
+                break
+
+        # Create combined entry
+        papers_to_combine.sort()
+        if len(papers_to_combine) > 1:
+            paper_display = " & ".join(str(p) for p in papers_to_combine)
+        else:
+            paper_display = str(papers_to_combine[0])
+
+        combined_entries.append({
+            "subject_code": current["subject_code"],
+            "subject_name": current["subject_name"],
+            "paper": paper_display,  # Now a string like "1 & 2" or "1"
+            "date": current["date"],
+            "start_time": current["start_time"],
+            "end_time": end_time,
+            "venue": current["venue"],
+        })
+
+        i = j  # Skip the combined entries
+
+    schedule_entries = combined_entries
 
     # Generate QR code
     frontend_url = settings.frontend_base_url.rstrip("/")
@@ -154,9 +234,9 @@ async def generate_index_slip_pdf(
     # Get examination center info
     center_name = "N/A"
     center_code = "N/A"
-    if candidate.school:
-        center_name = candidate.school.name
-        center_code = candidate.school.code
+    if school:
+        center_name = school.name
+        center_code = school.code
 
     # Prepare template context
     context = {
@@ -167,7 +247,7 @@ async def generate_index_slip_pdf(
         "schedule_entries": schedule_entries,
         "qr_code_base64": qr_code_base64,
         "qr_code_url": qr_code_url,
-        "exam": candidate.exam,
+        "exam": exam,
         "now": datetime.utcnow(),
     }
 
