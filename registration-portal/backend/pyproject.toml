@@ -28,6 +28,7 @@ dependencies = [
     "endesive>=2.19.2",
     "pypdf>=6.5.0",
     "requests>=2.32.0",
+    "qrcode[pil]>=8.2",
 ]
 
 [dependency-groups]

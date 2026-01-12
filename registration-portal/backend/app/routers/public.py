@@ -21,6 +21,7 @@ from app.models import (
     Grade,
     SubjectType,
     RegistrationCandidatePhoto,
+    ExaminationSchedule,
 )
 from app.schemas.registration import RegistrationExamResponse
 from app.schemas.result import (
@@ -545,6 +546,86 @@ async def get_public_candidate_photo(
         media_type=photo.mime_type,
         headers={"Content-Disposition": f'inline; filename="{photo.file_name}"'},
     )
+
+
+@router.get("/candidates/{index_number}/info")
+async def get_public_candidate_info(
+    index_number: str,
+    session: DBSessionDep,
+) -> dict:
+    """Get public candidate registration information (no authentication required)."""
+    # Find candidate by index number
+    candidate_stmt = select(RegistrationCandidate).where(
+        RegistrationCandidate.index_number == index_number
+    ).options(
+        selectinload(RegistrationCandidate.school),
+        selectinload(RegistrationCandidate.exam),
+        selectinload(RegistrationCandidate.photo),
+        selectinload(RegistrationCandidate.subject_selections),
+    )
+    candidate_result = await session.execute(candidate_stmt)
+    candidate = candidate_result.scalar_one_or_none()
+
+    if not candidate:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Candidate not found")
+
+    # Get examination schedules for registered subjects
+    subject_codes = [sel.subject_code for sel in candidate.subject_selections]
+
+    schedules_stmt = (
+        select(ExaminationSchedule)
+        .where(
+            ExaminationSchedule.registration_exam_id == candidate.registration_exam_id,
+            ExaminationSchedule.subject_code.in_(subject_codes),
+        )
+        .order_by(ExaminationSchedule.examination_date, ExaminationSchedule.examination_time)
+    )
+    schedules_result = await session.execute(schedules_stmt)
+    schedules = schedules_result.scalars().all()
+
+    # Build schedule entries with papers
+    schedule_entries = []
+    for schedule in schedules:
+        # Find matching subject selection
+        subject_selection = next(
+            (sel for sel in candidate.subject_selections if sel.subject_code == schedule.subject_code),
+            None,
+        )
+        if subject_selection:
+            papers_list = schedule.papers if schedule.papers else [{"paper": 1}]
+            for paper_info in papers_list:
+                paper_num = paper_info.get("paper", 1)
+                paper_start_time = paper_info.get("start_time")
+                paper_end_time = paper_info.get("end_time")
+
+                schedule_entries.append({
+                    "subject_code": schedule.subject_code,
+                    "subject_name": schedule.subject_name,
+                    "paper": paper_num,
+                    "date": schedule.examination_date.isoformat() if schedule.examination_date else None,
+                    "start_time": (paper_start_time or schedule.examination_time).isoformat() if (paper_start_time or schedule.examination_time) else None,
+                    "end_time": (paper_end_time or schedule.examination_end_time).isoformat() if (paper_end_time or schedule.examination_end_time) else None,
+                    "venue": schedule.venue,
+                })
+
+    # Sort by date and time
+    schedule_entries.sort(key=lambda x: (x["date"] or "", x["start_time"] or ""))
+
+    # Build response
+    response = {
+        "candidate_name": candidate.name,
+        "index_number": candidate.index_number,
+        "registration_number": candidate.registration_number,
+        "center_name": candidate.school.name if candidate.school else None,
+        "center_code": candidate.school.code if candidate.school else None,
+        "photo_url": f"/api/v1/public/candidates/{candidate.id}/photo" if candidate.photo else None,
+        "exam_type": candidate.exam.exam_type,
+        "exam_series": candidate.exam.exam_series,
+        "exam_year": candidate.exam.year,
+        "schedule_entries": schedule_entries,
+    }
+
+    return response
 
 
 @router.post("/results/pdf", response_class=StreamingResponse)

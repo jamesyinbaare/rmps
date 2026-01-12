@@ -37,6 +37,10 @@ import type {
   PublicResultCheckRequest,
   PublicResultResponse,
   IndexNumberGenerationJob,
+  ExaminationSchedule,
+  ExaminationScheduleCreate,
+  ExaminationScheduleUpdate,
+  ExaminationScheduleBulkUploadResponse,
 } from "@/types";
 
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL || "http://localhost:8001";
@@ -1079,6 +1083,131 @@ export async function getLatestIndexNumberGenerationStatus(examId: number): Prom
     method: "GET",
   });
   return handleResponse<IndexNumberGenerationJob | null>(response);
+}
+
+// Examination Schedule API
+export async function listExaminationSchedules(examId: number): Promise<ExaminationSchedule[]> {
+  const response = await fetchWithAuth(`/api/v1/admin/exams/${examId}/schedules`);
+  return handleResponse<ExaminationSchedule[]>(response);
+}
+
+export async function getExaminationSchedule(examId: number, scheduleId: number): Promise<ExaminationSchedule> {
+  const response = await fetchWithAuth(`/api/v1/admin/exams/${examId}/schedules/${scheduleId}`);
+  return handleResponse<ExaminationSchedule>(response);
+}
+
+export async function createExaminationSchedule(examId: number, data: ExaminationScheduleCreate): Promise<ExaminationSchedule> {
+  const response = await fetchWithAuth(`/api/v1/admin/exams/${examId}/schedules`, {
+    method: "POST",
+    body: JSON.stringify(data),
+  });
+  return handleResponse<ExaminationSchedule>(response);
+}
+
+export async function updateExaminationSchedule(
+  examId: number,
+  scheduleId: number,
+  data: ExaminationScheduleUpdate
+): Promise<ExaminationSchedule> {
+  const response = await fetchWithAuth(`/api/v1/admin/exams/${examId}/schedules/${scheduleId}`, {
+    method: "PUT",
+    body: JSON.stringify(data),
+  });
+  return handleResponse<ExaminationSchedule>(response);
+}
+
+export async function deleteExaminationSchedule(examId: number, scheduleId: number): Promise<void> {
+  const response = await fetchWithAuth(`/api/v1/admin/exams/${examId}/schedules/${scheduleId}`, {
+    method: "DELETE",
+  });
+  await handleResponse(response);
+}
+
+export async function uploadSchedulesBulk(examId: number, file: File): Promise<ExaminationScheduleBulkUploadResponse> {
+  const formData = new FormData();
+  formData.append("file", file);
+
+  const response = await fetchWithAuth(`/api/v1/admin/exams/${examId}/schedules/bulk-upload`, {
+    method: "POST",
+    body: formData,
+  });
+  return handleResponse<ExaminationScheduleBulkUploadResponse>(response);
+}
+
+export async function downloadScheduleTemplate(examId: number): Promise<Blob> {
+  const response = await fetchWithAuth(`/api/v1/admin/exams/${examId}/schedules/template`);
+  if (!response.ok) {
+    await handleResponse(response);
+  }
+  return response.blob();
+}
+
+// Index Slip Download API
+export async function downloadCandidateIndexSlip(candidateId: number): Promise<Blob> {
+  const token = getAccessToken();
+  const response = await fetch(`${API_BASE_URL}/api/v1/admin/candidates/${candidateId}/index-slip`, {
+    method: "GET",
+    headers: {
+      Authorization: `Bearer ${token}`,
+    },
+  });
+  if (!response.ok) {
+    await handleResponse(response);
+  }
+  return response.blob();
+}
+
+export async function downloadMyIndexSlip(registrationId: number): Promise<Blob> {
+  const token = getAccessToken();
+  const response = await fetch(`${API_BASE_URL}/api/v1/private/registrations/${registrationId}/index-slip`, {
+    method: "GET",
+    headers: {
+      Authorization: `Bearer ${token}`,
+    },
+  });
+  if (!response.ok) {
+    await handleResponse(response);
+  }
+  return response.blob();
+}
+
+export async function downloadSchoolCandidateIndexSlip(candidateId: number): Promise<Blob> {
+  const token = getAccessToken();
+  const response = await fetch(`${API_BASE_URL}/api/v1/school/candidates/${candidateId}/index-slip`, {
+    method: "GET",
+    headers: {
+      Authorization: `Bearer ${token}`,
+    },
+  });
+  if (!response.ok) {
+    await handleResponse(response);
+  }
+  return response.blob();
+}
+
+// Public candidate info API (no auth) - uses index_number
+export async function getPublicCandidateInfo(indexNumber: string): Promise<{
+  candidate_name: string;
+  index_number: string;
+  registration_number: string;
+  center_name: string | null;
+  center_code: string | null;
+  photo_url: string | null;
+  exam_type: string;
+  exam_series: string;
+  exam_year: number;
+  schedule_entries: Array<{
+    subject_code: string;
+    subject_name: string;
+    paper: number;
+    date: string;
+    start_time: string;
+    end_time: string | null;
+    venue: string | null;
+  }>;
+}> {
+  const response = await fetch(`${API_BASE_URL}/api/v1/public/candidates/${indexNumber}/info`);
+  return handleResponse(response);
 }
 
 export async function exportCandidates(examId: number): Promise<void> {

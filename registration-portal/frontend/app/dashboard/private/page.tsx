@@ -4,10 +4,10 @@ import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { getCurrentUser, getDraftRegistration, listMyRegistrations, enableEditRegistration } from "@/lib/api";
+import { getCurrentUser, getDraftRegistration, listMyRegistrations, enableEditRegistration, downloadMyIndexSlip } from "@/lib/api";
 import type { User, RegistrationCandidate } from "@/types";
 import { toast } from "sonner";
-import { GraduationCap, FileText, Plus, Clock, CheckCircle, XCircle, Edit } from "lucide-react";
+import { GraduationCap, FileText, Plus, Clock, CheckCircle, XCircle, Edit, Download } from "lucide-react";
 import Link from "next/link";
 
 export default function PrivateCandidateDashboard() {
@@ -116,6 +116,28 @@ export default function PrivateCandidateDashboard() {
     }
   };
 
+  const handleDownloadIndexSlip = async (registration: RegistrationCandidate) => {
+    if (!registration.index_number) {
+      toast.error("Index number not yet generated for this registration");
+      return;
+    }
+
+    try {
+      const blob = await downloadMyIndexSlip(registration.id);
+      const url = window.URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `index_slip_${registration.index_number}_${registration.exam?.year || "unknown"}.pdf`;
+      document.body.appendChild(a);
+      a.click();
+      window.URL.revokeObjectURL(url);
+      document.body.removeChild(a);
+      toast.success("Index Slip downloaded successfully");
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Failed to download Index Slip");
+    }
+  };
+
   if (loading) {
     return (
       <div className="flex min-h-screen items-center justify-center">
@@ -212,6 +234,16 @@ export default function PrivateCandidateDashboard() {
                     <div className="mt-2">{getStatusBadge(registration.registration_status)}</div>
                   </div>
                     <div className="flex items-center gap-2">
+                      {registration.index_number && (
+                        <Button
+                          variant="outline"
+                          onClick={() => handleDownloadIndexSlip(registration)}
+                          className="flex items-center gap-2"
+                        >
+                          <Download className="h-4 w-4" />
+                          Download Index Slip
+                        </Button>
+                      )}
                       {canEdit ? (
                         <Button
                           variant="default"

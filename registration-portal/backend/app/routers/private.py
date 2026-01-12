@@ -42,6 +42,8 @@ from app.schemas.programme import ProgrammeSubjectRequirements, ProgrammeSubject
 from app.models import programme_subjects
 from app.schemas.schedule import TimetableResponse, TimetableEntry
 from app.utils.registration import generate_unique_registration_number
+from app.services.index_slip_service import generate_index_slip_pdf
+from app.services.photo_storage import PhotoStorageService
 from app.services.subject_selection import (
     auto_select_subjects_for_programme,
     validate_subject_selections,
@@ -1171,6 +1173,61 @@ async def get_private_candidate_photo_file(
         iter([file_content]),
         media_type=photo.mime_type,
         headers={"Content-Disposition": f'inline; filename="{photo.file_name}"'},
+    )
+
+
+@router.get("/registrations/{registration_id}/index-slip")
+async def download_my_index_slip(
+    registration_id: int,
+    session: DBSessionDep,
+    current_user: CurrentUserDep,
+) -> StreamingResponse:
+    """Download Index Slip PDF for own registration (private candidate only)."""
+    if current_user.role != Role.PublicUser:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="This endpoint is for private users only")
+
+    # Get candidate registration
+    candidate_stmt = select(RegistrationCandidate).where(
+        RegistrationCandidate.id == registration_id,
+        RegistrationCandidate.portal_user_id == current_user.id,
+    )
+    candidate_result = await session.execute(candidate_stmt)
+    candidate = candidate_result.scalar_one_or_none()
+
+    if not candidate:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Registration not found")
+
+    if not candidate.index_number:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Index number must be generated before downloading Index Slip",
+        )
+
+    # Load photo
+    photo_data = None
+    if candidate.photo:
+        try:
+            photo_data = await photo_storage_service.retrieve(candidate.photo.file_path)
+        except Exception:
+            photo_data = None
+
+    # Generate PDF
+    try:
+        pdf_bytes = await generate_index_slip_pdf(candidate, session, photo_data)
+    except ValueError as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+    except Exception as e:
+        logger.error(f"Failed to generate Index Slip PDF: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to generate Index Slip PDF",
+        )
+
+    filename = f"index_slip_{candidate.index_number}.pdf"
+    return StreamingResponse(
+        iter([pdf_bytes]),
+        media_type="application/pdf",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
     )
 
 

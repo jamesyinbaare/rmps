@@ -596,3 +596,55 @@ export interface IndexNumberGenerationJob {
   updated_at: string;
   completed_at: string | null;
 }
+
+export interface ExaminationSchedule {
+  id: number;
+  registration_exam_id: number;
+  subject_code: string;
+  subject_name: string;
+  examination_date: string;
+  examination_time: string;
+  examination_end_time: string | null;
+  papers: Array<{ paper: number; start_time?: string; end_time?: string }>;
+  venue: string | null;
+  duration_minutes: number | null;
+  instructions: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface ExaminationScheduleCreate {
+  original_code: string;
+  examination_date: string;
+  examination_time: string;
+  examination_end_time?: string | null;
+  papers: Array<{ paper: number; start_time?: string; end_time?: string }>;
+  venue?: string | null;
+  duration_minutes?: number | null;
+  instructions?: string | null;
+}
+
+export interface ExaminationScheduleBulkUploadError {
+  row_number: number;
+  error_message: string;
+  field: string | null;
+}
+
+export interface ExaminationScheduleBulkUploadResponse {
+  total_rows: number;
+  successful: number;
+  failed: number;
+  errors: ExaminationScheduleBulkUploadError[];
+}
+
+export interface ExaminationScheduleUpdate {
+  subject_code?: string;
+  subject_name?: string;
+  examination_date?: string;
+  examination_time?: string;
+  examination_end_time?: string | null;
+  papers?: Array<{ paper: number; start_time?: string; end_time?: string }>;
+  venue?: string | null;
+  duration_minutes?: number | null;
+  instructions?: string | null;
+}

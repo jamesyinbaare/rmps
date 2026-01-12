@@ -39,7 +39,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Checkbox } from "@/components/ui/checkbox";
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
-import { Edit2, Save, X as XIcon } from "lucide-react";
+import { Edit2, Save, X as XIcon, FileText } from "lucide-react";
 
 interface CandidateDetailModalProps {
   candidate: RegistrationCandidate | null;
