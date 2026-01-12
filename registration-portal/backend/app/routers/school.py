@@ -167,6 +167,7 @@ async def list_candidates(
             "date_of_birth": candidate.date_of_birth,
             "gender": candidate.gender,
             "programme_code": candidate.programme_code,
+            "programme_id": candidate.programme_id,
             "contact_email": candidate.contact_email,
             "contact_phone": candidate.contact_phone,
             "address": candidate.address,
