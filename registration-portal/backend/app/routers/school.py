@@ -60,7 +60,8 @@ from app.services.subject_selection import (
     validate_subject_selections,
     get_programme_subjects_for_registration,
 )
-from app.services.photo_storage import PhotoStorageService, calculate_checksum
+from app.services.photo_storage import PhotoStorageService
+from app.services.index_slip_service import generate_index_slip_pdf
 from app.services.photo_validation import PhotoValidationService
 import logging
 
@@ -1527,6 +1528,58 @@ async def get_candidate_photo_file(
         iter([file_content]),
         media_type=photo.mime_type,
         headers={"Content-Disposition": f'inline; filename="{photo.file_name}"'},
+    )
+
+
+@router.get("/candidates/{candidate_id}/index-slip")
+async def download_candidate_index_slip(
+    candidate_id: int,
+    session: DBSessionDep,
+    current_user: SchoolUserWithSchoolDep,
+) -> StreamingResponse:
+    """Download Index Slip PDF for a candidate (school admin only)."""
+    # Get candidate and verify it belongs to the user's school
+    candidate_stmt = select(RegistrationCandidate).where(
+        RegistrationCandidate.id == candidate_id,
+        RegistrationCandidate.school_id == current_user.school_id,
+    )
+    candidate_result = await session.execute(candidate_stmt)
+    candidate = candidate_result.scalar_one_or_none()
+
+    if not candidate:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Candidate not found")
+
+    if not candidate.index_number:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Index number must be generated before downloading Index Slip",
+        )
+
+    # Load photo
+    photo_data = None
+    if candidate.photo:
+        try:
+            photo_data = await photo_storage_service.retrieve(candidate.photo.file_path)
+        except Exception:
+            photo_data = None
+
+    # Generate PDF
+    try:
+        pdf_bytes = await generate_index_slip_pdf(candidate, session, photo_data)
+    except ValueError as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+    except Exception as e:
+        logger.error(f"Failed to generate Index Slip PDF: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to generate Index Slip PDF",
+        )
+
+    filename = f"index_slip_{candidate.index_number}.pdf"
+    return StreamingResponse(
+        iter([pdf_bytes]),
+        media_type="application/pdf",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
     )
 
 

@@ -34,6 +34,7 @@ class Settings(BaseSettings):
     paystack_public_key: str = ""  # Paystack public key (for frontend)
     paystack_webhook_secret: str = ""  # Paystack webhook verification secret
     paystack_callback_base_url: str = ""  # Base URL for payment callbacks (e.g., http://localhost:3001 or https://yourdomain.com)
+    frontend_base_url: str = ""  # Base URL for frontend (e.g., http://localhost:3000 or https://yourdomain.com) - used for QR codes and public links
     # Certificate request pricing
     certificate_request_price: float = 100  # Price for certificate requests
     attestation_request_price: float = 80  # Price for attestation requests

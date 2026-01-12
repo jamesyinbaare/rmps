@@ -1,9 +1,13 @@
 """Utility for generating Excel template files for bulk uploads."""
 
 import io
+from typing import TYPE_CHECKING
 
 import pandas as pd
 from openpyxl.styles.numbers import FORMAT_TEXT
+
+if TYPE_CHECKING:
+    from sqlalchemy.ext.asyncio import AsyncSession
 
 
 def generate_programme_template() -> bytes:
@@ -97,5 +101,57 @@ def generate_candidate_template() -> bytes:
                     if cell.value is not None:
                         cell.value = str(cell.value)
 
+    output.seek(0)
+    return output.getvalue()
+
+
+async def generate_schedule_template(session: "AsyncSession") -> bytes:
+    """
+    Generate Excel template for schedule upload prepopulated with subjects.
+
+    Args:
+        session: Database session to query subjects
+
+    Returns:
+        Bytes of Excel file
+    """
+    from sqlalchemy import select
+    from app.models import Subject
+
+    # Query all subjects from the database
+    stmt = select(Subject).order_by(Subject.code)
+    result = await session.execute(stmt)
+    subjects = result.scalars().all()
+
+    # Prepare data with subjects from database
+    if subjects:
+        data = {
+            "original_code": [
+                subject.original_code if subject.original_code else subject.code for subject in subjects
+            ],
+            "subject_name": [subject.name for subject in subjects],
+            "examination_date": [""] * len(subjects),
+            "examination_time": [""] * len(subjects),
+            "examination_end_time": [""] * len(subjects),
+            "paper1": [False] * len(subjects),
+            "paper2": [False] * len(subjects),
+        }
+    else:
+        # If no subjects, create empty template with just headers
+        data = {
+            "original_code": [],
+            "subject_name": [],
+            "examination_date": [],
+            "examination_time": [],
+            "examination_end_time": [],
+            "paper1": [],
+            "paper2": [],
+        }
+
+    df = pd.DataFrame(data)
+
+    output = io.BytesIO()
+    with pd.ExcelWriter(output, engine="openpyxl") as writer:
+        df.to_excel(writer, index=False, sheet_name="Schedules")
     output.seek(0)
     return output.getvalue()

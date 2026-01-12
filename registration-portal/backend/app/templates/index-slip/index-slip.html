@@ -1,0 +1,257 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Index Slip - {{ candidate.index_number }}</title>
+    <style>
+        @page {
+            size: A4;
+            margin: 1.5cm 1.5cm;
+        }
+
+        body {
+            font-family: 'Helvetica', Arial, sans-serif;
+            font-size: 10pt;
+            color: #000;
+            line-height: 1.4;
+            margin: 0;
+            padding: 0;
+        }
+
+        .header {
+            text-align: center;
+            margin-bottom: 20px;
+            border-bottom: 2px solid #000;
+            padding-bottom: 10px;
+        }
+
+        .header h1 {
+            margin: 0;
+            font-size: 18pt;
+            font-weight: bold;
+        }
+
+        .header h2 {
+            margin: 5px 0 0 0;
+            font-size: 14pt;
+            font-weight: normal;
+        }
+
+        .candidate-info {
+            display: table;
+            width: 100%;
+            margin-bottom: 20px;
+        }
+
+        .candidate-info-row {
+            display: table-row;
+        }
+
+        .candidate-info-cell {
+            display: table-cell;
+            padding: 8px;
+            vertical-align: top;
+        }
+
+        .photo-cell {
+            width: 120px;
+            text-align: center;
+        }
+
+        .photo-cell img {
+            width: 100px;
+            height: 120px;
+            object-fit: cover;
+            border: 2px solid #000;
+        }
+
+        .info-cell {
+            width: auto;
+        }
+
+        .info-row {
+            margin-bottom: 8px;
+        }
+
+        .info-label {
+            font-weight: bold;
+            display: inline-block;
+            min-width: 140px;
+        }
+
+        .info-value {
+            display: inline-block;
+        }
+
+        .schedule-section {
+            margin-top: 25px;
+        }
+
+        .schedule-title {
+            font-size: 14pt;
+            font-weight: bold;
+            margin-bottom: 10px;
+            text-align: center;
+            border-bottom: 1px solid #000;
+            padding-bottom: 5px;
+        }
+
+        .schedule-table {
+            width: 100%;
+            border-collapse: collapse;
+            margin-top: 10px;
+        }
+
+        .schedule-table th,
+        .schedule-table td {
+            border: 1px solid #000;
+            padding: 8px;
+            text-align: left;
+        }
+
+        .schedule-table th {
+            background-color: #f0f0f0;
+            font-weight: bold;
+            text-align: center;
+        }
+
+        .schedule-table td {
+            font-size: 9pt;
+        }
+
+        .schedule-table .center {
+            text-align: center;
+        }
+
+        .qr-section {
+            margin-top: 25px;
+            text-align: center;
+            border-top: 1px solid #000;
+            padding-top: 15px;
+        }
+
+        .qr-code {
+            display: inline-block;
+            margin: 10px;
+        }
+
+        .qr-code img {
+            width: 150px;
+            height: 150px;
+        }
+
+        .qr-note {
+            font-size: 8pt;
+            margin-top: 5px;
+            color: #666;
+        }
+
+        .footer {
+            margin-top: 30px;
+            padding-top: 10px;
+            border-top: 1px solid #000;
+            font-size: 8pt;
+            text-align: center;
+            color: #666;
+        }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <h1>INDEX SLIP</h1>
+        <h2>{{ exam.exam_type }} - {{ exam.exam_series }} {{ exam.year }}</h2>
+    </div>
+
+    <div class="candidate-info">
+        <div class="candidate-info-row">
+            <div class="candidate-info-cell photo-cell">
+                {% if photo_base64 %}
+                <img src="{{ photo_base64 }}" alt="Candidate Photo">
+                {% else %}
+                <div style="width: 100px; height: 120px; border: 2px solid #000; display: flex; align-items: center; justify-content: center;">
+                    No Photo
+                </div>
+                {% endif %}
+            </div>
+            <div class="candidate-info-cell info-cell">
+                <div class="info-row">
+                    <span class="info-label">Name:</span>
+                    <span class="info-value">{{ candidate.name }}</span>
+                </div>
+                <div class="info-row">
+                    <span class="info-label">Index Number:</span>
+                    <span class="info-value"><strong>{{ candidate.index_number }}</strong></span>
+                </div>
+                <div class="info-row">
+                    <span class="info-label">Registration Number:</span>
+                    <span class="info-value">{{ candidate.registration_number }}</span>
+                </div>
+                <div class="info-row">
+                    <span class="info-label">Examination Center:</span>
+                    <span class="info-value">{{ center_name }} ({{ center_code }})</span>
+                </div>
+                {% if candidate.date_of_birth %}
+                <div class="info-row">
+                    <span class="info-label">Date of Birth:</span>
+                    <span class="info-value">{{ candidate.date_of_birth.strftime('%d/%m/%Y') }}</span>
+                </div>
+                {% endif %}
+                {% if candidate.gender %}
+                <div class="info-row">
+                    <span class="info-label">Gender:</span>
+                    <span class="info-value">{{ candidate.gender }}</span>
+                </div>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+
+    <div class="schedule-section">
+        <div class="schedule-title">EXAMINATION SCHEDULE</div>
+        <table class="schedule-table">
+            <thead>
+                <tr>
+                    <th>Date</th>
+                    <th>Subject Code</th>
+                    <th>Subject Name</th>
+                    <th>Paper</th>
+                    <th>Time</th>
+                    <th>Venue</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for entry in schedule_entries %}
+                <tr>
+                    <td class="center">{{ entry.date.strftime('%d/%m/%Y') }}</td>
+                    <td class="center">{{ entry.subject_code }}</td>
+                    <td>{{ entry.subject_name }}</td>
+                    <td class="center">Paper {{ entry.paper }}</td>
+                    <td class="center">
+                        {{ entry.start_time.strftime('%H:%M') }}
+                        {% if entry.end_time %}
+                        - {{ entry.end_time.strftime('%H:%M') }}
+                        {% endif %}
+                    </td>
+                    <td>{{ entry.venue or 'TBA' }}</td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+
+    <div class="qr-section">
+        <div class="qr-code">
+            <img src="data:image/png;base64,{{ qr_code_base64 }}" alt="QR Code">
+        </div>
+        <div class="qr-note">
+            Scan this QR code to view your registration information online
+        </div>
+    </div>
+
+    <div class="footer">
+        <p>This is an official document. Please bring this Index Slip to all examinations.</p>
+        <p>Generated on {{ now.strftime('%d/%m/%Y %H:%M') }}</p>
+    </div>
+</body>
+</html>

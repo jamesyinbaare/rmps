@@ -387,6 +387,7 @@ class ExaminationSchedule(Base):
     examination_date = Column(Date, nullable=False)
     examination_time = Column(Time, nullable=False)
     examination_end_time = Column(Time, nullable=True)
+    papers = Column(JSON, nullable=False, default=[{"paper": 1}])  # JSON array: [{"paper": 1}, {"paper": 2}] or [{"paper": 1, "start_time": "...", "end_time": "..."}, ...]
     venue = Column(String(255), nullable=True)
     duration_minutes = Column(Integer, nullable=True)
     instructions = Column(Text, nullable=True)

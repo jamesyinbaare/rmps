@@ -69,7 +69,11 @@ from app.schemas.schedule import (
     ExaminationScheduleCreate,
     ExaminationScheduleUpdate,
     ExaminationScheduleResponse,
+    ExaminationScheduleBulkUploadResponse,
+    ExaminationScheduleBulkUploadError,
 )
+from app.services.index_slip_service import generate_index_slip_pdf
+from app.services.photo_storage import PhotoStorageService
 from app.core.security import get_password_hash
 from app.core.cache import invalidate_user_cache
 from app.config import settings
@@ -109,7 +113,14 @@ from app.services.subject_upload import (
     parse_upload_file as parse_subject_upload_file,
     validate_required_columns as validate_subject_columns,
 )
-from app.services.template_generator import generate_programme_template, generate_subject_template
+from app.services.schedule_upload import (
+    ScheduleUploadParseError,
+    ScheduleUploadValidationError,
+    parse_schedule_row,
+    parse_upload_file as parse_schedule_upload_file,
+    validate_required_columns as validate_schedule_columns,
+)
+from app.services.template_generator import generate_programme_template, generate_subject_template, generate_schedule_template
 from app.schemas.result import (
     CandidateResultBulkPublish,
     CandidateResultBulkPublishResponse,
@@ -2035,6 +2046,417 @@ async def get_latest_index_number_generation_status(
         created_at=job.created_at,
         updated_at=job.updated_at,
         completed_at=job.completed_at,
+    )
+
+
+# Examination Schedule Management Endpoints
+
+@router.post("/exams/{exam_id}/schedules", response_model=ExaminationScheduleResponse, status_code=status.HTTP_201_CREATED)
+async def create_examination_schedule(
+    exam_id: int,
+    schedule_data: ExaminationScheduleCreate,
+    session: DBSessionDep,
+    current_user: SystemAdminDep,
+) -> ExaminationScheduleResponse:
+    """Create an examination schedule for an exam."""
+    # Verify exam exists
+    exam_stmt = select(RegistrationExam).where(RegistrationExam.id == exam_id)
+    exam_result = await session.execute(exam_stmt)
+    exam = exam_result.scalar_one_or_none()
+
+    if not exam:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Exam not found")
+
+    # Lookup subject by original_code
+    subject_stmt = select(Subject).where(Subject.original_code == schedule_data.original_code)
+    subject_result = await session.execute(subject_stmt)
+    subject = subject_result.scalar_one_or_none()
+
+    if not subject:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Subject with original_code '{schedule_data.original_code}' not found",
+        )
+
+    # Check for duplicate schedule (same subject code)
+    existing_stmt = select(ExaminationSchedule).where(
+        ExaminationSchedule.registration_exam_id == exam_id,
+        ExaminationSchedule.subject_code == subject.code,
+    )
+    existing_result = await session.execute(existing_stmt)
+    existing = existing_result.scalar_one_or_none()
+
+    if existing:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Schedule for subject {subject.code} already exists for this exam",
+        )
+
+    # Create schedule
+    new_schedule = ExaminationSchedule(
+        registration_exam_id=exam_id,
+        subject_code=subject.code,
+        subject_name=subject.name,
+        examination_date=schedule_data.examination_date,
+        examination_time=schedule_data.examination_time,
+        examination_end_time=schedule_data.examination_end_time,
+        papers=schedule_data.papers,
+        venue=schedule_data.venue,
+        duration_minutes=schedule_data.duration_minutes,
+        instructions=schedule_data.instructions,
+    )
+
+    session.add(new_schedule)
+    await session.commit()
+    await session.refresh(new_schedule)
+
+    return ExaminationScheduleResponse.model_validate(new_schedule)
+
+
+@router.get("/exams/{exam_id}/schedules", response_model=list[ExaminationScheduleResponse])
+async def list_examination_schedules(
+    exam_id: int,
+    session: DBSessionDep,
+    current_user: SystemAdminDep,
+) -> list[ExaminationScheduleResponse]:
+    """List all examination schedules for an exam."""
+    # Verify exam exists
+    exam_stmt = select(RegistrationExam).where(RegistrationExam.id == exam_id)
+    exam_result = await session.execute(exam_stmt)
+    exam = exam_result.scalar_one_or_none()
+
+    if not exam:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Exam not found")
+
+    # Get schedules
+    schedules_stmt = select(ExaminationSchedule).where(
+        ExaminationSchedule.registration_exam_id == exam_id
+    ).order_by(ExaminationSchedule.examination_date, ExaminationSchedule.examination_time)
+    schedules_result = await session.execute(schedules_stmt)
+    schedules = schedules_result.scalars().all()
+
+    return [ExaminationScheduleResponse.model_validate(schedule) for schedule in schedules]
+
+
+@router.get("/exams/{exam_id}/schedules/template")
+async def download_schedule_template(
+    exam_id: int, session: DBSessionDep, current_user: SystemAdminDep
+) -> StreamingResponse:
+    """Download schedule upload template prepopulated with subjects."""
+    try:
+        template_bytes = await generate_schedule_template(session)
+        return StreamingResponse(
+            iter([template_bytes]),
+            media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            headers={"Content-Disposition": "attachment; filename=schedule_upload_template.xlsx"},
+        )
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to generate template: {str(e)}",
+        )
+
+
+@router.get("/exams/{exam_id}/schedules/{schedule_id}", response_model=ExaminationScheduleResponse)
+async def get_examination_schedule(
+    exam_id: int,
+    schedule_id: int,
+    session: DBSessionDep,
+    current_user: SystemAdminDep,
+) -> ExaminationScheduleResponse:
+    """Get a specific examination schedule."""
+    # Verify exam exists
+    exam_stmt = select(RegistrationExam).where(RegistrationExam.id == exam_id)
+    exam_result = await session.execute(exam_stmt)
+    exam = exam_result.scalar_one_or_none()
+
+    if not exam:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Exam not found")
+
+    # Get schedule
+    schedule_stmt = select(ExaminationSchedule).where(
+        ExaminationSchedule.id == schedule_id,
+        ExaminationSchedule.registration_exam_id == exam_id,
+    )
+    schedule_result = await session.execute(schedule_stmt)
+    schedule = schedule_result.scalar_one_or_none()
+
+    if not schedule:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Schedule not found")
+
+    return ExaminationScheduleResponse.model_validate(schedule)
+
+
+@router.put("/exams/{exam_id}/schedules/{schedule_id}", response_model=ExaminationScheduleResponse)
+async def update_examination_schedule(
+    exam_id: int,
+    schedule_id: int,
+    schedule_update: ExaminationScheduleUpdate,
+    session: DBSessionDep,
+    current_user: SystemAdminDep,
+) -> ExaminationScheduleResponse:
+    """Update an examination schedule."""
+    # Verify exam exists
+    exam_stmt = select(RegistrationExam).where(RegistrationExam.id == exam_id)
+    exam_result = await session.execute(exam_stmt)
+    exam = exam_result.scalar_one_or_none()
+
+    if not exam:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Exam not found")
+
+    # Get schedule
+    schedule_stmt = select(ExaminationSchedule).where(
+        ExaminationSchedule.id == schedule_id,
+        ExaminationSchedule.registration_exam_id == exam_id,
+    )
+    schedule_result = await session.execute(schedule_stmt)
+    schedule = schedule_result.scalar_one_or_none()
+
+    if not schedule:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Schedule not found")
+
+    # Check for duplicate if subject_code is being changed
+    if schedule_update.subject_code is not None and schedule_update.subject_code != schedule.subject_code:
+        existing_stmt = select(ExaminationSchedule).where(
+            ExaminationSchedule.registration_exam_id == exam_id,
+            ExaminationSchedule.subject_code == schedule_update.subject_code,
+            ExaminationSchedule.id != schedule_id,
+        )
+        existing_result = await session.execute(existing_stmt)
+        existing = existing_result.scalar_one_or_none()
+
+        if existing:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Schedule for subject {schedule_update.subject_code} already exists for this exam",
+            )
+
+    # Update fields
+    if schedule_update.subject_code is not None:
+        schedule.subject_code = schedule_update.subject_code
+    if schedule_update.subject_name is not None:
+        schedule.subject_name = schedule_update.subject_name
+    if schedule_update.examination_date is not None:
+        schedule.examination_date = schedule_update.examination_date
+    if schedule_update.examination_time is not None:
+        schedule.examination_time = schedule_update.examination_time
+    if schedule_update.examination_end_time is not None:
+        schedule.examination_end_time = schedule_update.examination_end_time
+    if schedule_update.papers is not None:
+        schedule.papers = schedule_update.papers
+    if schedule_update.venue is not None:
+        schedule.venue = schedule_update.venue
+    if schedule_update.duration_minutes is not None:
+        schedule.duration_minutes = schedule_update.duration_minutes
+    if schedule_update.instructions is not None:
+        schedule.instructions = schedule_update.instructions
+
+    await session.commit()
+    await session.refresh(schedule)
+
+    return ExaminationScheduleResponse.model_validate(schedule)
+
+
+@router.delete("/exams/{exam_id}/schedules/{schedule_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_examination_schedule(
+    exam_id: int,
+    schedule_id: int,
+    session: DBSessionDep,
+    current_user: SystemAdminDep,
+) -> None:
+    """Delete an examination schedule."""
+    # Verify exam exists
+    exam_stmt = select(RegistrationExam).where(RegistrationExam.id == exam_id)
+    exam_result = await session.execute(exam_stmt)
+    exam = exam_result.scalar_one_or_none()
+
+    if not exam:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Exam not found")
+
+    # Get schedule
+    schedule_stmt = select(ExaminationSchedule).where(
+        ExaminationSchedule.id == schedule_id,
+        ExaminationSchedule.registration_exam_id == exam_id,
+    )
+    schedule_result = await session.execute(schedule_stmt)
+    schedule = schedule_result.scalar_one_or_none()
+
+    if not schedule:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Schedule not found")
+
+    await session.delete(schedule)
+    await session.commit()
+
+
+@router.post("/exams/{exam_id}/schedules/bulk-upload", response_model=ExaminationScheduleBulkUploadResponse, status_code=status.HTTP_200_OK)
+async def bulk_upload_schedules(
+    exam_id: int,
+    session: DBSessionDep,
+    current_user: SystemAdminDep,
+    file: UploadFile = File(...),
+) -> ExaminationScheduleBulkUploadResponse:
+    """Bulk upload schedules from Excel or CSV file."""
+    # Verify exam exists
+    exam_stmt = select(RegistrationExam).where(RegistrationExam.id == exam_id)
+    exam_result = await session.execute(exam_stmt)
+    exam = exam_result.scalar_one_or_none()
+
+    if not exam:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Exam not found")
+
+    # Read file content
+    file_content = await file.read()
+
+    # Parse file
+    try:
+        df = parse_schedule_upload_file(file_content, file.filename or "unknown")
+        validate_schedule_columns(df)
+    except (ScheduleUploadParseError, ScheduleUploadValidationError) as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+
+    # Process each row
+    total_rows = len(df)
+    successful = 0
+    failed = 0
+    errors: list[ExaminationScheduleBulkUploadError] = []
+
+    for idx, row in df.iterrows():
+        row_number = int(idx) + 2  # +2 because Excel rows are 1-indexed and header is row 1
+        try:
+            # Parse row data
+            schedule_data = parse_schedule_row(row)
+
+            # Validate required fields
+            if not schedule_data["original_code"]:
+                errors.append(
+                    ExaminationScheduleBulkUploadError(
+                        row_number=row_number, error_message="original_code is required", field="original_code"
+                    )
+                )
+                failed += 1
+                continue
+
+            if not schedule_data["subject_name"]:
+                errors.append(
+                    ExaminationScheduleBulkUploadError(
+                        row_number=row_number, error_message="subject_name is required", field="subject_name"
+                    )
+                )
+                failed += 1
+                continue
+
+            if not schedule_data["examination_date"]:
+                errors.append(
+                    ExaminationScheduleBulkUploadError(
+                        row_number=row_number, error_message="examination_date is required", field="examination_date"
+                    )
+                )
+                failed += 1
+                continue
+
+            if not schedule_data["examination_time"]:
+                errors.append(
+                    ExaminationScheduleBulkUploadError(
+                        row_number=row_number, error_message="examination_time is required", field="examination_time"
+                    )
+                )
+                failed += 1
+                continue
+
+            # Lookup subject by original_code
+            subject_stmt = select(Subject).where(Subject.original_code == schedule_data["original_code"])
+            subject_result = await session.execute(subject_stmt)
+            subject = subject_result.scalar_one_or_none()
+
+            if not subject:
+                errors.append(
+                    ExaminationScheduleBulkUploadError(
+                        row_number=row_number,
+                        error_message=f"Subject with original_code '{schedule_data['original_code']}' not found",
+                        field="original_code",
+                    )
+                )
+                failed += 1
+                continue
+
+            # Check for duplicate schedule (same subject code)
+            existing_stmt = select(ExaminationSchedule).where(
+                ExaminationSchedule.registration_exam_id == exam_id,
+                ExaminationSchedule.subject_code == subject.code,
+            )
+            existing_result = await session.execute(existing_stmt)
+            existing = existing_result.scalar_one_or_none()
+
+            if existing:
+                errors.append(
+                    ExaminationScheduleBulkUploadError(
+                        row_number=row_number,
+                        error_message=f"Schedule for subject {subject.code} already exists for this exam",
+                        field="original_code",
+                    )
+                )
+                failed += 1
+                continue
+
+            # Build papers array from paper1/paper2 flags
+            papers = []
+            if schedule_data["paper1"]:
+                paper1_entry = {"paper": 1}
+                if schedule_data["paper1_start_time"]:
+                    paper1_entry["start_time"] = schedule_data["paper1_start_time"].strftime("%H:%M:%S")
+                if schedule_data["paper1_end_time"]:
+                    paper1_entry["end_time"] = schedule_data["paper1_end_time"].strftime("%H:%M:%S")
+                papers.append(paper1_entry)
+
+            if schedule_data["paper2"]:
+                paper2_entry = {"paper": 2}
+                if schedule_data["paper2_start_time"]:
+                    paper2_entry["start_time"] = schedule_data["paper2_start_time"].strftime("%H:%M:%S")
+                if schedule_data["paper2_end_time"]:
+                    paper2_entry["end_time"] = schedule_data["paper2_end_time"].strftime("%H:%M:%S")
+                papers.append(paper2_entry)
+
+            # If no papers specified, default to paper 1
+            if not papers:
+                papers = [{"paper": 1}]
+
+            # Create schedule
+            new_schedule = ExaminationSchedule(
+                registration_exam_id=exam_id,
+                subject_code=subject.code,
+                subject_name=subject.name,
+                examination_date=schedule_data["examination_date"],
+                examination_time=schedule_data["examination_time"],
+                examination_end_time=schedule_data.get("examination_end_time"),
+                papers=papers,
+                venue=schedule_data.get("venue"),
+                duration_minutes=schedule_data.get("duration_minutes"),
+                instructions=schedule_data.get("instructions"),
+            )
+            session.add(new_schedule)
+            await session.flush()  # Flush to get ID but don't commit yet
+            successful += 1
+
+        except Exception as e:
+            errors.append(
+                ExaminationScheduleBulkUploadError(
+                    row_number=row_number,
+                    error_message=f"Error processing row: {str(e)}",
+                    field=None,
+                )
+            )
+            failed += 1
+            continue
+
+    # Commit all successful additions
+    if successful > 0:
+        await session.commit()
+
+    return ExaminationScheduleBulkUploadResponse(
+        total_rows=total_rows,
+        successful=successful,
+        failed=failed,
+        errors=errors,
     )
 
 
