@@ -60,7 +60,7 @@ from app.services.subject_selection import (
     validate_subject_selections,
     get_programme_subjects_for_registration,
 )
-from app.services.photo_storage import PhotoStorageService
+from app.services.photo_storage import PhotoStorageService, calculate_checksum
 from app.services.index_slip_service import generate_index_slip_pdf
 from app.services.photo_validation import PhotoValidationService
 import logging
