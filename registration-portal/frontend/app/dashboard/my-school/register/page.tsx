@@ -438,7 +438,7 @@ export default function RegistrationPage() {
                   ) : (
                     exams.map((exam) => (
                       <SelectItem key={exam.id} value={exam.id.toString()}>
-                        {exam.exam_type} {exam.exam_series} {exam.year}
+                        {exam.exam_type}{exam.exam_series ? ` ${exam.exam_series}` : ""} {exam.year}
                         {exam.registration_period && (
                           <span className="text-xs text-muted-foreground ml-2">
                             ({new Date(exam.registration_period.registration_start_date).toLocaleDateString()} -{" "}

@@ -148,7 +148,7 @@ export interface RegistrationExam {
   id: number;
   exam_id_main_system: number | null;
   exam_type: string;
-  exam_series: string;
+  exam_series: string | null;
   year: number;
   description: string | null;
   registration_period: ExamRegistrationPeriod;
@@ -157,6 +157,7 @@ export interface RegistrationExam {
   results_published_by_user_id: string | null;
   pricing_model_preference: string | null;
   has_index_numbers: boolean;
+  candidate_count?: number | null;
   created_at: string;
   updated_at: string;
 }
@@ -164,7 +165,7 @@ export interface RegistrationExam {
 export interface RegistrationExamCreate {
   exam_id_main_system?: number | null;
   exam_type: string;
-  exam_series: string;
+  exam_series?: string | null;
   year: number;
   description?: string | null;
   registration_period: {

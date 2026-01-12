@@ -718,7 +718,7 @@ export default function PrivateRegistrationPage() {
                   <div className="flex-1">
                     <p className="font-medium">
                       {registration.exam
-                        ? `${registration.exam.exam_type} (${registration.exam.exam_series} ${registration.exam.year})`
+                        ? `${registration.exam.exam_type}${registration.exam.exam_series ? ` (${registration.exam.exam_series} ${registration.exam.year})` : ` ${registration.exam.year}`}`
                         : "Exam"}
                     </p>
                     <p className="text-sm text-muted-foreground">
@@ -821,11 +821,11 @@ export default function PrivateRegistrationPage() {
                         {(() => {
                           // First try to get exam from loaded draft
                           if (loadedDraft?.exam) {
-                            return `${loadedDraft.exam.exam_type} (${loadedDraft.exam.exam_series} ${loadedDraft.exam.year})`;
+                            return `${loadedDraft.exam.exam_type}${loadedDraft.exam.exam_series ? ` (${loadedDraft.exam.exam_series} ${loadedDraft.exam.year})` : ` ${loadedDraft.exam.year}`}`;
                           }
                           // Otherwise try to find in exams array
                           const exam = exams.find((e) => e.id === selectedExamId);
-                          return exam ? `${exam.exam_type} (${exam.exam_series} ${exam.year})` : "Selected exam";
+                          return exam ? `${exam.exam_type}${exam.exam_series ? ` (${exam.exam_series} ${exam.year})` : ` ${exam.year}`}` : "Selected exam";
                         })()}
                       </p>
                     </div>
@@ -865,7 +865,7 @@ export default function PrivateRegistrationPage() {
                               value={exam.id.toString()}
                               disabled={hasExistingReg}
                             >
-                              {exam.exam_type} ({exam.exam_series} {exam.year})
+                              {exam.exam_type}{exam.exam_series ? ` (${exam.exam_series} ${exam.year})` : ` ${exam.year}`}
                               {hasExistingReg && " (Already registered)"}
                             </SelectItem>
                           );
@@ -1297,7 +1297,7 @@ export default function PrivateRegistrationPage() {
                               Exam
                             </div>
                             <div className="text-sm font-medium">
-                              {exam.exam_type} ({exam.exam_series} {exam.year})
+                              {exam.exam_type}{exam.exam_series ? ` (${exam.exam_series} ${exam.year})` : ` ${exam.year}`}
                               {exam.description && (
                                 <span className="text-muted-foreground ml-2">- {exam.description}</span>
                               )}
@@ -1423,7 +1423,7 @@ export default function PrivateRegistrationPage() {
                         return exam ? (
                           <div>
                             <CardTitle className="text-base">
-                              {exam.exam_type} {exam.exam_series} {exam.year}
+                              {exam.exam_type}{exam.exam_series ? ` ${exam.exam_series}` : ""} {exam.year}
                             </CardTitle>
                             <div className="flex items-center gap-2 mt-2">
                               <span className="text-xs text-muted-foreground">
@@ -1461,7 +1461,7 @@ export default function PrivateRegistrationPage() {
                         return exam ? (
                           <div>
                             <CardTitle className="text-base">
-                              {exam.exam_type} {exam.exam_series} {exam.year}
+                              {exam.exam_type}{exam.exam_series ? ` ${exam.exam_series}` : ""} {exam.year}
                             </CardTitle>
                             <div className="flex items-center gap-2 mt-2">
                               <span className="text-xs text-muted-foreground">

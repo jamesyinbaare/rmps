@@ -637,7 +637,7 @@ export function CandidateDetailModal({
                       {candidate.exam && (
                         <div>
                           <CardTitle className="text-base">
-                            {candidate.exam.exam_type} {candidate.exam.exam_series} {candidate.exam.year}
+                            {candidate.exam.exam_type}{candidate.exam.exam_series ? ` ${candidate.exam.exam_series}` : ""} {candidate.exam.year}
                           </CardTitle>
                           <div className="flex items-center gap-2 mt-2">
                             <span className="text-xs text-muted-foreground">
