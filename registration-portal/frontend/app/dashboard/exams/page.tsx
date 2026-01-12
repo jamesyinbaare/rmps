@@ -47,7 +47,7 @@ export default function ExamsPage() {
       {loading ? (
         <div className="text-center py-8">Loading...</div>
       ) : (
-        <ExamTable exams={exams} />
+        <ExamTable exams={exams} onRefresh={loadExams} />
       )}
 
       <CreateExamDialog open={dialogOpen} onOpenChange={setDialogOpen} onSuccess={loadExams} />

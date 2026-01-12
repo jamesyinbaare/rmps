@@ -36,6 +36,7 @@ import { ExaminationScheduleTable } from "@/components/admin/ExaminationSchedule
 import { CreateScheduleDialog } from "@/components/admin/CreateScheduleDialog";
 import { EditScheduleDialog } from "@/components/admin/EditScheduleDialog";
 import { BulkUploadSchedulesDialog } from "@/components/admin/BulkUploadSchedulesDialog";
+import { EditExamDialog } from "@/components/admin/EditExamDialog";
 
 export default function ExamDetailPage() {
   const params = useParams();
@@ -58,6 +59,7 @@ export default function ExamDetailPage() {
   const [editScheduleDialogOpen, setEditScheduleDialogOpen] = useState(false);
   const [uploadSchedulesDialogOpen, setUploadSchedulesDialogOpen] = useState(false);
   const [editingSchedule, setEditingSchedule] = useState<ExaminationSchedule | null>(null);
+  const [editExamDialogOpen, setEditExamDialogOpen] = useState(false);
 
   const loadExam = async () => {
     if (isNaN(examId)) {
@@ -232,7 +234,7 @@ export default function ExamDetailPage() {
       <div className="flex items-start justify-between">
         <div>
           <h1 className="text-3xl font-bold">
-            {exam.exam_type} ({exam.exam_series} {exam.year})
+            {exam.exam_type}{exam.exam_series ? ` (${exam.exam_series} ${exam.year})` : ` ${exam.year}`}
           </h1>
           {exam.description && (
             <p className="text-muted-foreground mt-1">{exam.description}</p>
@@ -278,7 +280,19 @@ export default function ExamDetailPage() {
       {/* Exam Information */}
       <Card>
         <CardHeader>
-          <CardTitle>Exam Information</CardTitle>
+          <div className="flex items-center justify-between">
+            <CardTitle>Exam Information</CardTitle>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => setEditExamDialogOpen(true)}
+              disabled={(exam.candidate_count ?? 0) > 0}
+              title={(exam.candidate_count ?? 0) > 0 ? `Cannot edit: ${exam.candidate_count} candidate(s) registered` : "Edit examination details"}
+            >
+              <Edit className="mr-2 h-4 w-4" />
+              Edit
+            </Button>
+          </div>
         </CardHeader>
         <CardContent className="space-y-4">
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -286,10 +300,12 @@ export default function ExamDetailPage() {
               <p className="text-sm text-muted-foreground">Exam Type</p>
               <p className="text-sm font-medium">{exam.exam_type}</p>
             </div>
-            <div>
-              <p className="text-sm text-muted-foreground">Series</p>
-              <p className="text-sm font-medium">{exam.exam_series}</p>
-            </div>
+            {exam.exam_series && (
+              <div>
+                <p className="text-sm text-muted-foreground">Series</p>
+                <p className="text-sm font-medium">{exam.exam_series}</p>
+              </div>
+            )}
             <div>
               <p className="text-sm text-muted-foreground">Year</p>
               <p className="text-sm font-medium">{exam.year}</p>
@@ -499,6 +515,18 @@ export default function ExamDetailPage() {
           examId={examId}
           schedule={editingSchedule}
           onSuccess={loadSchedules}
+        />
+      )}
+
+      {/* Edit Exam Dialog */}
+      {exam && (
+        <EditExamDialog
+          open={editExamDialogOpen}
+          onOpenChange={setEditExamDialogOpen}
+          exam={exam}
+          onSuccess={async () => {
+            await loadExam();
+          }}
         />
       )}
     </div>

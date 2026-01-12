@@ -954,6 +954,13 @@ export async function updateExam(
   return handleResponse<RegistrationExam>(response);
 }
 
+export async function deleteExam(id: number): Promise<void> {
+  const response = await fetchWithAuth(`/api/v1/admin/exams/${id}`, {
+    method: "DELETE",
+  });
+  await handleResponse(response);
+}
+
 // Pricing Management API
 export async function getExamPricing(examId: number): Promise<ExamPricingResponse> {
   const response = await fetchWithAuth(`/api/v1/admin/exams/${examId}/pricing`);

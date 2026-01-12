@@ -70,8 +70,12 @@ class SubjectType(enum.Enum):
 
 
 class ExamType(enum.Enum):
-    CERTIFICATE_II = "Certificate II Examination"
-    CBT = "CBT"
+    CERTIFICATE_II = "Certificate II Examinations"
+    ADVANCE = "Advance"
+    TECHNICIAN_PART_I = "Technician Part I"
+    TECHNICIAN_PART_II = "Technician Part II"
+    TECHNICIAN_PART_III = "Technician Part III"
+    DIPLOMA = "Diploma"
 
 
 class ExamSeries(enum.Enum):
@@ -311,7 +315,7 @@ class RegistrationExam(Base):
     id = Column(Integer, primary_key=True)
     exam_id_main_system = Column(Integer, nullable=True, index=True)  # Reference to main system exam ID
     exam_type = Column(String(50), nullable=False)
-    exam_series = Column(String(20), nullable=False)
+    exam_series = Column(String(20), nullable=True)
     year = Column(Integer, nullable=False)
     description = Column(Text, nullable=True)
     registration_period_id = Column(Integer, ForeignKey("exam_registration_periods.id", ondelete="CASCADE"), nullable=False, index=True)

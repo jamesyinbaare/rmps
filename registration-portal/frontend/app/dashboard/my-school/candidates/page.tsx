@@ -227,7 +227,7 @@ export default function CandidatesPage() {
                   <SelectContent>
                     {exams.map((exam) => (
                       <SelectItem key={exam.id} value={exam.id.toString()}>
-                        {exam.exam_type} {exam.exam_series} {exam.year}
+                        {exam.exam_type}{exam.exam_series ? ` ${exam.exam_series}` : ""} {exam.year}
                       </SelectItem>
                     ))}
                   </SelectContent>

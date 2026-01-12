@@ -5,6 +5,13 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import {
   Dialog,
   DialogContent,
   DialogDescription,
@@ -37,8 +44,15 @@ export function CreateExamDialog({ open, onOpenChange, onSuccess }: CreateExamDi
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
 
-    if (!examType || !examSeries || !year || !registrationStartDate || !registrationEndDate) {
+    // Validate required fields
+    if (!examType || !year || !registrationStartDate || !registrationEndDate) {
       toast.error("Please fill in all required fields");
+      return;
+    }
+
+    // Validate exam_series is required for Certificate II Examinations
+    if (examType === "Certificate II Examinations" && !examSeries) {
+      toast.error("Exam Series is required for Certificate II Examinations");
       return;
     }
 
@@ -64,7 +78,7 @@ export function CreateExamDialog({ open, onOpenChange, onSuccess }: CreateExamDi
 
       const examData: RegistrationExamCreate = {
         exam_type: examType,
-        exam_series: examSeries,
+        exam_series: examType === "Certificate II Examinations" ? examSeries : null,
         year: parseInt(year),
         description: description || null,
         registration_period: {
@@ -95,6 +109,8 @@ export function CreateExamDialog({ open, onOpenChange, onSuccess }: CreateExamDi
     }
   };
 
+  const isCertificateII = examType === "Certificate II Examinations";
+
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
@@ -104,29 +120,53 @@ export function CreateExamDialog({ open, onOpenChange, onSuccess }: CreateExamDi
         </DialogHeader>
         <form onSubmit={handleSubmit}>
           <div className="space-y-4 py-4">
-            <div className="grid grid-cols-2 gap-4">
+            <div className={`grid gap-4 ${isCertificateII ? "grid-cols-2" : "grid-cols-1"}`}>
               <div className="space-y-2">
                 <Label htmlFor="examType">Exam Type *</Label>
-                <Input
-                  id="examType"
-                  placeholder="e.g., GCE, WASSCE"
+                <Select
                   value={examType}
-                  onChange={(e) => setExamType(e.target.value)}
-                  required
+                  onValueChange={(value) => {
+                    setExamType(value);
+                    // Clear exam_series when changing away from Certificate II Examinations
+                    if (value !== "Certificate II Examinations") {
+                      setExamSeries("");
+                    }
+                  }}
                   disabled={loading}
-                />
-              </div>
-              <div className="space-y-2">
-                <Label htmlFor="examSeries">Exam Series *</Label>
-                <Input
-                  id="examSeries"
-                  placeholder="e.g., May/June, Nov/Dec"
-                  value={examSeries}
-                  onChange={(e) => setExamSeries(e.target.value)}
                   required
-                  disabled={loading}
-                />
+                >
+                  <SelectTrigger id="examType">
+                    <SelectValue placeholder="Select exam type" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="Certificate II Examinations">Certificate II Examinations</SelectItem>
+                    <SelectItem value="Advance">Advance</SelectItem>
+                    <SelectItem value="Technician Part I">Technician Part I</SelectItem>
+                    <SelectItem value="Technician Part II">Technician Part II</SelectItem>
+                    <SelectItem value="Technician Part III">Technician Part III</SelectItem>
+                    <SelectItem value="Diploma">Diploma</SelectItem>
+                  </SelectContent>
+                </Select>
               </div>
+              {isCertificateII && (
+                <div className="space-y-2">
+                  <Label htmlFor="examSeries">Exam Series *</Label>
+                  <Select
+                    value={examSeries}
+                    onValueChange={setExamSeries}
+                    disabled={loading}
+                    required
+                  >
+                    <SelectTrigger id="examSeries">
+                      <SelectValue placeholder="Select exam series" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="MAY/JUNE">May/June</SelectItem>
+                      <SelectItem value="NOV/DEC">Nov/Dec</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+              )}
             </div>
             <div className="space-y-2">
               <Label htmlFor="year">Year *</Label>
