@@ -156,6 +156,19 @@ export function CandidateDetailModal({
     }
   };
 
+  // Refresh candidate from candidates list when modal opens (in case data was updated)
+  useEffect(() => {
+    if (candidate && open && candidates.length > 0) {
+      const updatedCandidate = candidates.find((c) => c.id === candidate.id);
+      if (updatedCandidate && updatedCandidate !== candidate && onCandidateChange) {
+        // Only update if there are meaningful changes (like index_number being populated)
+        if (updatedCandidate.index_number !== candidate.index_number) {
+          onCandidateChange(updatedCandidate);
+        }
+      }
+    }
+  }, [open, candidates, candidate?.id]);
+
   // Load photo when candidate changes
   useEffect(() => {
     if (candidate && open) {
@@ -500,12 +513,14 @@ export function CandidateDetailModal({
                       {new Date(candidate.registration_date).toLocaleDateString()}
                     </div>
                   </div>
-                  {candidate.index_number && (
-                    <div className="space-y-1">
-                      <div className="text-xs text-muted-foreground">Index Number</div>
-                      <div className="text-sm font-medium font-mono">{candidate.index_number}</div>
+                  <div className="space-y-1">
+                    <div className="text-xs text-muted-foreground">Index Number</div>
+                    <div className="text-sm font-medium font-mono">
+                      {candidate.index_number || (
+                        <span className="text-muted-foreground italic">Not generated yet</span>
+                      )}
                     </div>
-                  )}
+                  </div>
                 </div>
               </CardContent>
               </Card>
