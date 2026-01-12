@@ -120,6 +120,7 @@ class RoleChecker:
                 Role.SchoolAdmin: "SchoolAdmin",
                 Role.SchoolStaff: "SchoolStaff",
                 Role.PublicUser: "PublicUser",
+                Role.APIUSER: "APIUSER",
             }
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,

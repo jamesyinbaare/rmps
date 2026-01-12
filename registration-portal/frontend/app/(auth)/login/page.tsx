@@ -35,6 +35,11 @@ export default function LoginPage() {
             toast.error("Access to this page is restricted");
             return;
           }
+          // Redirect API users to their dashboard
+          if (user.role === "APIUSER") {
+            router.push("/api/login");
+            return;
+          }
           // Redirect school users (SchoolAdmin, SchoolStaff) to their school dashboard
           if (user.role === "SchoolAdmin" || user.role === "SchoolStaff") {
             router.push("/dashboard/my-school");

@@ -52,6 +52,7 @@ export function Sidebar() {
 
   const isSchoolUser = user?.role === "SchoolAdmin" || user?.role === "SchoolStaff";
   const isPrivateUser = user?.role === "PublicUser";
+  const isApiUser = user?.role === "APIUSER";
 
   // Private users have their own dashboard and shouldn't see this sidebar
   if (isPrivateUser) {

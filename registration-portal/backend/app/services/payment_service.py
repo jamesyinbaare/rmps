@@ -363,6 +363,39 @@ async def process_webhook_event(
                             f"payment_amount={payment.amount}"
                         )
 
+                # Handle credit purchase
+                # Check if this is a credit purchase by checking payment metadata
+                # Metadata can be in paystack_response or in the webhook data
+                paystack_response = payment.paystack_response or {}
+                paystack_metadata = paystack_response.get("data", {}).get("metadata", {}) or data.get("metadata", {})
+                if paystack_metadata.get("type") == "credit_purchase":
+                    from app.services.credit_service import add_credit
+                    from app.models import CreditTransactionType
+                    from uuid import UUID
+
+                    user_id_str = paystack_metadata.get("user_id")
+                    credits_amount = paystack_metadata.get("credits", 0)
+
+                    if user_id_str and credits_amount:
+                        try:
+                            user_id = UUID(user_id_str)
+                            credits_decimal = Decimal(str(credits_amount))
+
+                            # Add credits to user account
+                            await add_credit(
+                                session,
+                                user_id,
+                                credits_decimal,
+                                CreditTransactionType.PURCHASE,
+                                payment_id=payment.id,
+                                description=f"Credit purchase via Paystack payment {payment.paystack_reference}",
+                            )
+                            logger.info(
+                                f"Added {credits_amount} credits to user {user_id} via payment {payment.id}"
+                            )
+                        except Exception as e:
+                            logger.error(f"Error adding credits for payment {payment.id}: {e}", exc_info=True)
+
     elif event_type == "charge.failure":
         payment.status = PaymentStatus.FAILED
 

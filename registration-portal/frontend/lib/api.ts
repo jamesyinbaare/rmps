@@ -41,6 +41,19 @@ import type {
   ExaminationScheduleCreate,
   ExaminationScheduleUpdate,
   ExaminationScheduleBulkUploadResponse,
+  ApiKey,
+  ApiKeyCreateResponse,
+  ApiKeyUsageStats,
+  CreditBalance,
+  CreditPurchaseRequest,
+  CreditPurchaseResponse,
+  CreditTransactionListResponse,
+  BulkVerificationRequest,
+  BulkVerificationResponse,
+  ApiUser,
+  ApiUserListResponse,
+  ApiUserDetail,
+  ApiUserUsageStats,
 } from "@/types";
 
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL || "http://localhost:8001";
@@ -351,6 +364,7 @@ const ROLE_MAP: Record<number, Role> = {
   70: "SchoolAdmin",
   80: "SchoolStaff",
   90: "PublicUser",
+  100: "APIUSER",
 };
 
 // Transform user object to convert role number to role name
@@ -2979,4 +2993,156 @@ export async function listPendingPayments(hours: number = 24): Promise<PendingPa
     `/api/v1/admin/payments/pending-reconciliation?${params.toString()}`
   );
   return handleResponse<PendingPaymentsResponse>(response);
+}
+
+// API Key functions
+export async function createApiKey(data: { name: string; rate_limit_per_minute?: number }): Promise<ApiKeyCreateResponse> {
+  const response = await fetchWithAuth(`/api/v1/api-keys`, {
+    method: "POST",
+    body: JSON.stringify(data),
+  });
+  return handleResponse<ApiKeyCreateResponse>(response);
+}
+
+export async function listApiKeys(): Promise<ApiKey[]> {
+  const response = await fetchWithAuth(`/api/v1/api-keys`);
+  return handleResponse<ApiKey[]>(response);
+}
+
+export async function getApiKey(keyId: string): Promise<ApiKey> {
+  const response = await fetchWithAuth(`/api/v1/api-keys/${keyId}`);
+  return handleResponse<ApiKey>(response);
+}
+
+export async function getApiKeyUsage(keyId: string): Promise<ApiKeyUsageStats> {
+  const response = await fetchWithAuth(`/api/v1/api-keys/${keyId}/usage`);
+  return handleResponse<ApiKeyUsageStats>(response);
+}
+
+export async function updateApiKey(
+  keyId: string,
+  data: { name?: string; rate_limit_per_minute?: number; is_active?: boolean }
+): Promise<ApiKey> {
+  const response = await fetchWithAuth(`/api/v1/api-keys/${keyId}`, {
+    method: "PATCH",
+    body: JSON.stringify(data),
+  });
+  return handleResponse<ApiKey>(response);
+}
+
+export async function deleteApiKey(keyId: string): Promise<void> {
+  const response = await fetchWithAuth(`/api/v1/api-keys/${keyId}`, {
+    method: "DELETE",
+  });
+  if (!response.ok) {
+    throw new Error(`Failed to delete API key: ${response.statusText}`);
+  }
+}
+
+// Credit functions
+export async function getCreditBalance(): Promise<CreditBalance> {
+  const response = await fetchWithAuth(`/api/v1/credits/balance`);
+  return handleResponse<CreditBalance>(response);
+}
+
+export async function getCreditTransactions(page: number = 1, pageSize: number = 20): Promise<CreditTransactionListResponse> {
+  const params = new URLSearchParams();
+  params.append("page", page.toString());
+  params.append("page_size", pageSize.toString());
+  const response = await fetchWithAuth(`/api/v1/credits/transactions?${params.toString()}`);
+  return handleResponse<CreditTransactionListResponse>(response);
+}
+
+export async function purchaseCredits(data: CreditPurchaseRequest): Promise<CreditPurchaseResponse> {
+  const response = await fetchWithAuth(`/api/v1/credits/purchase`, {
+    method: "POST",
+    body: JSON.stringify(data),
+  });
+  return handleResponse<CreditPurchaseResponse>(response);
+}
+
+// Verification functions (dashboard)
+export async function verifyCandidate(data: PublicResultCheckRequest): Promise<PublicResultResponse> {
+  const response = await fetchWithAuth(`/api/v1/dashboard/verify`, {
+    method: "POST",
+    body: JSON.stringify(data),
+  });
+  return handleResponse<PublicResultResponse>(response);
+}
+
+export async function verifyCandidatesBulk(data: BulkVerificationRequest): Promise<BulkVerificationResponse> {
+  const response = await fetchWithAuth(`/api/v1/dashboard/verify`, {
+    method: "POST",
+    body: JSON.stringify(data),
+  });
+  return handleResponse<BulkVerificationResponse>(response);
+}
+
+// API User Management functions (admin only)
+export async function listApiUsers(filters: {
+  page?: number;
+  page_size?: number;
+  search?: string;
+  is_active?: boolean;
+}): Promise<ApiUserListResponse> {
+  const params = new URLSearchParams();
+  if (filters.page) params.append("page", filters.page.toString());
+  if (filters.page_size) params.append("page_size", filters.page_size.toString());
+  if (filters.search) params.append("search", filters.search);
+  if (filters.is_active !== undefined) params.append("is_active", filters.is_active.toString());
+  const response = await fetchWithAuth(`/api/v1/admin/api-users?${params.toString()}`);
+  return handleResponse<ApiUserListResponse>(response);
+}
+
+export async function getApiUser(userId: string): Promise<ApiUserDetail> {
+  const response = await fetchWithAuth(`/api/v1/admin/api-users/${userId}`);
+  return handleResponse<ApiUserDetail>(response);
+}
+
+export async function createApiUser(data: { email: string; password: string; full_name: string }): Promise<ApiUser> {
+  const response = await fetchWithAuth(`/api/v1/admin/api-users`, {
+    method: "POST",
+    body: JSON.stringify(data),
+  });
+  return handleResponse<ApiUser>(response);
+}
+
+export async function updateApiUser(userId: string, data: { full_name?: string; is_active?: boolean; password?: string }): Promise<ApiUser> {
+  const response = await fetchWithAuth(`/api/v1/admin/api-users/${userId}`, {
+    method: "PATCH",
+    body: JSON.stringify(data),
+  });
+  return handleResponse<ApiUser>(response);
+}
+
+export async function deactivateApiUser(userId: string, revokeKeys: boolean = false): Promise<void> {
+  const params = new URLSearchParams();
+  if (revokeKeys) params.append("revoke_keys", "true");
+  const response = await fetchWithAuth(`/api/v1/admin/api-users/${userId}?${params.toString()}`, {
+    method: "DELETE",
+  });
+  if (!response.ok) {
+    throw new Error(`Failed to deactivate API user: ${response.statusText}`);
+  }
+}
+
+export async function getApiUserUsage(userId: string, startDate?: string, endDate?: string): Promise<ApiUserUsageStats> {
+  const params = new URLSearchParams();
+  if (startDate) params.append("start_date", startDate);
+  if (endDate) params.append("end_date", endDate);
+  const response = await fetchWithAuth(`/api/v1/admin/api-users/${userId}/usage?${params.toString()}`);
+  return handleResponse<ApiUserUsageStats>(response);
+}
+
+export async function getApiUserApiKeys(userId: string): Promise<ApiKey[]> {
+  const response = await fetchWithAuth(`/api/v1/admin/api-users/${userId}/api-keys`);
+  return handleResponse<ApiKey[]>(response);
+}
+
+export async function assignCreditsToApiUser(userId: string, amount: number, description?: string): Promise<CreditBalance> {
+  const response = await fetchWithAuth(`/api/v1/admin/api-users/${userId}/credits`, {
+    method: "POST",
+    body: JSON.stringify({ amount, description }),
+  });
+  return handleResponse<CreditBalance>(response);
 }

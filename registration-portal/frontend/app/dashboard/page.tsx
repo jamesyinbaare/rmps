@@ -18,8 +18,15 @@ export default function DashboardPage() {
   useEffect(() => {
     let mounted = true;
 
+    // CRITICAL: Check API users FIRST before any rendering
     getCurrentUser()
       .then((userData) => {
+        // CRITICAL: Redirect API users FIRST, before any state updates
+        if (userData.role === "APIUSER") {
+          window.location.replace("/api/dashboard");
+          return; // Exit immediately, don't render anything
+        }
+
         if (!mounted) return;
 
         setUser(userData);

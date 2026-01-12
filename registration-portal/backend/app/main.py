@@ -10,7 +10,7 @@ from starlette.middleware.cors import CORSMiddleware
 import time
 from app.dependencies.database import get_sessionmanager, initialize_db
 from app.initial_data import ensure_system_admin_user
-from app.routers import auth, public, admin, school, private, permissions
+from app.routers import auth, public, admin, school, private, permissions, api_keys, credits, api_verification, dashboard_verification
 from app.config import logging_settings
 from starlette.types import ASGIApp
 
@@ -170,6 +170,10 @@ app.include_router(admin.router)
 app.include_router(school.router)
 app.include_router(private.router)
 app.include_router(permissions.router)
+app.include_router(api_keys.router)
+app.include_router(credits.router)
+app.include_router(api_verification.router)
+app.include_router(dashboard_verification.router)
 
 
 @app.get("/health", status_code=status.HTTP_200_OK)

@@ -10,7 +10,8 @@ export type Role =
   | "Staff"
   | "SchoolAdmin"
   | "SchoolStaff"
-  | "PublicUser";
+  | "PublicUser"
+  | "APIUSER";
 
 export interface User {
   id: string;
@@ -647,4 +648,145 @@ export interface ExaminationScheduleUpdate {
   venue?: string | null;
   duration_minutes?: number | null;
   instructions?: string | null;
+}
+
+// API Key types
+export interface ApiKey {
+  id: string;
+  name: string;
+  key_prefix: string;
+  is_active: boolean;
+  last_used_at: string | null;
+  created_at: string;
+  rate_limit_per_minute: number;
+  total_requests: number;
+  total_verifications: number;
+}
+
+export interface ApiKeyCreate {
+  name: string;
+  rate_limit_per_minute?: number;
+}
+
+export interface ApiKeyCreateResponse {
+  id: string;
+  name: string;
+  api_key: string; // Full key shown only once
+  key_prefix: string;
+  is_active: boolean;
+  created_at: string;
+  rate_limit_per_minute: number;
+}
+
+export interface ApiKeyUsageStats {
+  total_requests: number;
+  total_verifications: number;
+  requests_today: number;
+  requests_this_month: number;
+  average_duration_ms: number | null;
+  last_used_at: string | null;
+}
+
+// Credit types
+export interface CreditBalance {
+  balance: number;
+  total_purchased: number;
+  total_used: number;
+}
+
+export interface CreditPurchaseRequest {
+  amount: number;
+  payment_method?: string;
+}
+
+export interface CreditPurchaseResponse {
+  payment_url: string | null;
+  payment_reference: string | null;
+  amount: number;
+  credits: number;
+  message: string;
+}
+
+export interface CreditTransaction {
+  id: number;
+  transaction_type: "purchase" | "admin_assignment" | "usage" | "refund";
+  amount: number;
+  balance_after: number;
+  description: string | null;
+  created_at: string;
+}
+
+export interface CreditTransactionListResponse {
+  transactions: CreditTransaction[];
+  total: number;
+  page: number;
+  page_size: number;
+  total_pages: number;
+}
+
+// Verification types
+export interface BulkVerificationRequest {
+  items: PublicResultCheckRequest[];
+}
+
+export interface VerificationItemResponse {
+  success: boolean;
+  request: PublicResultCheckRequest;
+  result: PublicResultResponse | null;
+  error: string | null;
+}
+
+export interface BulkVerificationResponse {
+  total: number;
+  successful: number;
+  failed: number;
+  results: VerificationItemResponse[];
+}
+
+// API User types (for admin management)
+export interface ApiUser {
+  id: string;
+  email: string;
+  full_name: string;
+  is_active: boolean;
+  created_at: string;
+  last_login: string | null;
+}
+
+export interface ApiUserListItem extends ApiUser {
+  credit_balance: number;
+  total_api_keys: number;
+  active_api_keys: number;
+  total_requests: number;
+  total_verifications: number;
+}
+
+export interface ApiUserListResponse {
+  items: ApiUserListItem[];
+  total: number;
+  page: number;
+  page_size: number;
+  total_pages: number;
+}
+
+export interface ApiUserUsageStats {
+  total_requests: number;
+  total_verifications: number;
+  requests_today: number;
+  requests_this_week: number;
+  requests_this_month: number;
+  successful_requests: number;
+  failed_requests: number;
+  average_duration_ms: number | null;
+  total_credits_used: number;
+  credits_remaining: number;
+}
+
+export interface ApiUserDetail {
+  user: ApiUser;
+  credit_balance: CreditBalance;
+  api_keys: ApiKey[];
+  usage_stats: ApiUserUsageStats;
+  created_at: string;
+  last_activity: string | null;
 }

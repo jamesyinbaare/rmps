@@ -1,6 +1,7 @@
 """Admin endpoints for system administrators."""
 import logging
 from datetime import datetime, timezone
+from decimal import Decimal
 from typing import Annotated, Optional
 from uuid import UUID
 
@@ -34,6 +35,10 @@ from app.models import (
     RegistrationApplicationFee,
     SubjectPricing,
     RegistrationTieredPricing,
+    ApiKey,
+    ApiUsage,
+    UserCredit,
+    CreditTransactionType,
 )
 from app.schemas.registration import (
     RegistrationExamCreate,
@@ -53,6 +58,17 @@ from app.schemas.user import (
     UserResponse,
     UserListResponse,
 )
+from app.schemas.api_user import (
+    ApiUserCreate,
+    ApiUserUpdate,
+    ApiUserResponse,
+    ApiUserListResponse,
+    ApiUserListItem,
+    ApiUserUsageStats,
+    ApiUserDetailResponse,
+)
+from app.schemas.api_key import ApiKeyResponse
+from app.schemas.credit import CreditBalanceResponse, CreditAssignmentRequest
 from app.schemas.school import (
     SchoolResponse,
     SchoolDetailResponse,
@@ -7635,3 +7651,418 @@ async def manual_status_change(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to change status: {str(e)}",
         )
+
+
+# API User Management Endpoints
+
+@router.get("/api-users", response_model=ApiUserListResponse)
+async def list_api_users(
+    session: DBSessionDep,
+    current_user: SystemAdminDep,
+    page: int = Query(1, ge=1),
+    page_size: int = Query(20, ge=1, le=100),
+    search: Optional[str] = Query(None),
+    is_active: Optional[bool] = Query(None),
+) -> ApiUserListResponse:
+    """List all API users with filtering and pagination."""
+    from app.services.credit_service import get_user_credit
+
+    # Build query
+    conditions = [PortalUser.role == Role.APIUSER]
+
+    if search:
+        search_pattern = f"%{search}%"
+        conditions.append(
+            (PortalUser.email.ilike(search_pattern)) | (PortalUser.full_name.ilike(search_pattern))
+        )
+
+    if is_active is not None:
+        conditions.append(PortalUser.is_active == is_active)
+
+    # Get total count
+    count_stmt = select(func.count(PortalUser.id)).where(and_(*conditions))
+    count_result = await session.execute(count_stmt)
+    total = count_result.scalar() or 0
+
+    # Get paginated users
+    offset = (page - 1) * page_size
+    stmt = (
+        select(PortalUser)
+        .where(and_(*conditions))
+        .order_by(PortalUser.created_at.desc())
+        .offset(offset)
+        .limit(page_size)
+    )
+    result = await session.execute(stmt)
+    users = result.scalars().all()
+
+    # Build response with stats
+    items = []
+    for user in users:
+        # Get credit balance
+        credit = await get_user_credit(session, user.id)
+
+        # Get API keys count
+        keys_stmt = select(func.count(ApiKey.id)).where(ApiKey.user_id == user.id)
+        keys_result = await session.execute(keys_stmt)
+        total_api_keys = keys_result.scalar() or 0
+
+        active_keys_stmt = select(func.count(ApiKey.id)).where(
+            and_(ApiKey.user_id == user.id, ApiKey.is_active == True)
+        )
+        active_keys_result = await session.execute(active_keys_stmt)
+        active_api_keys = active_keys_result.scalar() or 0
+
+        # Get total requests and verifications
+        usage_stmt = select(
+            func.count(ApiUsage.id).label("total_requests"),
+            func.sum(ApiUsage.verification_count).label("total_verifications"),
+        ).where(ApiUsage.user_id == user.id)
+        usage_result = await session.execute(usage_stmt)
+        usage_row = usage_result.first()
+
+        items.append(
+            ApiUserListItem(
+                id=user.id,
+                email=user.email,
+                full_name=user.full_name,
+                is_active=user.is_active,
+                created_at=user.created_at,
+                last_login=user.last_login,
+                credit_balance=credit.balance,
+                total_api_keys=total_api_keys,
+                active_api_keys=active_api_keys,
+                total_requests=usage_row.total_requests or 0 if usage_row else 0,
+                total_verifications=usage_row.total_verifications or 0 if usage_row else 0,
+            )
+        )
+
+    total_pages = (total + page_size - 1) // page_size
+
+    return ApiUserListResponse(
+        items=items,
+        total=total,
+        page=page,
+        page_size=page_size,
+        total_pages=total_pages,
+    )
+
+
+@router.get("/api-users/{user_id}", response_model=ApiUserDetailResponse)
+async def get_api_user(
+    user_id: UUID,
+    session: DBSessionDep,
+    current_user: SystemAdminDep,
+) -> ApiUserDetailResponse:
+    """Get detailed API user information."""
+    from app.services.credit_service import get_user_credit
+    from app.services.api_analytics import get_user_usage_stats
+    from app.models import CreditTransaction
+    from decimal import Decimal
+
+    # Get user
+    stmt = select(PortalUser).where(PortalUser.id == user_id, PortalUser.role == Role.APIUSER)
+    result = await session.execute(stmt)
+    user = result.scalar_one_or_none()
+
+    if not user:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="API user not found",
+        )
+
+    # Get credit balance
+    credit = await get_user_credit(session, user.id)
+
+    # Get API keys
+    keys_stmt = select(ApiKey).where(ApiKey.user_id == user.id).order_by(ApiKey.created_at.desc())
+    keys_result = await session.execute(keys_stmt)
+    api_keys = keys_result.scalars().all()
+
+    # Get usage stats
+    usage_stats_data = await get_user_usage_stats(session, user.id)
+
+    # Get credit usage
+    credit_usage_stmt = select(func.sum(CreditTransaction.amount)).where(
+        and_(
+            CreditTransaction.user_id == user.id,
+            CreditTransaction.transaction_type == CreditTransactionType.USAGE,
+            CreditTransaction.amount < 0,
+        )
+    )
+    credit_usage_result = await session.execute(credit_usage_stmt)
+    total_credits_used = abs(credit_usage_result.scalar() or 0)
+
+    usage_stats = ApiUserUsageStats(
+        total_requests=usage_stats_data["total_requests"],
+        total_verifications=usage_stats_data["total_verifications"],
+        requests_today=usage_stats_data["requests_today"],
+        requests_this_week=usage_stats_data["requests_this_week"],
+        requests_this_month=usage_stats_data["requests_this_month"],
+        successful_requests=usage_stats_data["successful_requests"],
+        failed_requests=usage_stats_data["failed_requests"],
+        average_duration_ms=usage_stats_data["average_duration_ms"],
+        total_credits_used=Decimal(str(total_credits_used)),
+        credits_remaining=credit.balance,
+    )
+
+    # Get last activity
+    last_activity_stmt = select(func.max(ApiUsage.request_timestamp)).where(
+        ApiUsage.user_id == user.id
+    )
+    last_activity_result = await session.execute(last_activity_stmt)
+    last_activity = last_activity_result.scalar()
+
+    return ApiUserDetailResponse(
+        user=ApiUserResponse.model_validate(user),
+        credit_balance=CreditBalanceResponse(
+            balance=credit.balance,
+            total_purchased=credit.total_purchased,
+            total_used=credit.total_used,
+        ),
+        api_keys=[ApiKeyResponse.model_validate(key) for key in api_keys],
+        usage_stats=usage_stats,
+        created_at=user.created_at,
+        last_activity=last_activity,
+    )
+
+
+@router.post("/api-users", response_model=ApiUserResponse, status_code=status.HTTP_201_CREATED)
+async def create_api_user(
+    user_data: ApiUserCreate,
+    session: DBSessionDep,
+    current_user: SystemAdminDep,
+) -> ApiUserResponse:
+    """Create new API user. SystemAdmin only."""
+    from app.services.credit_service import create_credit_account
+
+    # Check if user already exists
+    stmt = select(PortalUser).where(PortalUser.email == user_data.email)
+    result = await session.execute(stmt)
+    existing_user = result.scalar_one_or_none()
+
+    if existing_user:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Email already registered",
+        )
+
+    # Validate password length
+    if len(user_data.password) < settings.password_min_length:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Password must be at least {settings.password_min_length} characters long",
+        )
+
+    # Create new user with APIUSER role
+    hashed_password = get_password_hash(user_data.password)
+    new_user = PortalUser(
+        email=user_data.email,
+        hashed_password=hashed_password,
+        full_name=user_data.full_name,
+        role=Role.APIUSER,
+        school_id=None,  # API users don't have schools
+        is_active=True,
+        created_by_user_id=current_user.id,
+    )
+
+    session.add(new_user)
+    await session.flush()
+
+    # Create credit account
+    await create_credit_account(session, new_user.id)
+
+    await session.commit()
+    await session.refresh(new_user)
+
+    return ApiUserResponse.model_validate(new_user)
+
+
+@router.patch("/api-users/{user_id}", response_model=ApiUserResponse)
+async def update_api_user(
+    user_id: UUID,
+    user_update: ApiUserUpdate,
+    session: DBSessionDep,
+    current_user: SystemAdminDep,
+) -> ApiUserResponse:
+    """Update API user."""
+    stmt = select(PortalUser).where(PortalUser.id == user_id, PortalUser.role == Role.APIUSER)
+    result = await session.execute(stmt)
+    user = result.scalar_one_or_none()
+
+    if not user:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="API user not found",
+        )
+
+    # Update fields
+    if user_update.full_name is not None:
+        user.full_name = user_update.full_name
+    if user_update.is_active is not None:
+        user.is_active = user_update.is_active
+    if user_update.password is not None:
+        if len(user_update.password) < settings.password_min_length:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Password must be at least {settings.password_min_length} characters long",
+            )
+        user.hashed_password = get_password_hash(user_update.password)
+
+    await session.commit()
+    await session.refresh(user)
+
+    return ApiUserResponse.model_validate(user)
+
+
+@router.delete("/api-users/{user_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def deactivate_api_user(
+    user_id: UUID,
+    session: DBSessionDep,
+    current_user: SystemAdminDep,
+    revoke_keys: bool = Query(False, description="Revoke all API keys when deactivating"),
+) -> None:
+    """Deactivate API user (soft delete)."""
+    stmt = select(PortalUser).where(PortalUser.id == user_id, PortalUser.role == Role.APIUSER)
+    result = await session.execute(stmt)
+    user = result.scalar_one_or_none()
+
+    if not user:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="API user not found",
+        )
+
+    # Deactivate user
+    user.is_active = False
+
+    # Optionally revoke all API keys
+    if revoke_keys:
+        keys_stmt = select(ApiKey).where(ApiKey.user_id == user.id, ApiKey.is_active == True)
+        keys_result = await session.execute(keys_stmt)
+        keys = keys_result.scalars().all()
+        for key in keys:
+            key.is_active = False
+
+    await session.commit()
+
+
+@router.get("/api-users/{user_id}/usage", response_model=ApiUserUsageStats)
+async def get_api_user_usage(
+    user_id: UUID,
+    session: DBSessionDep,
+    current_user: SystemAdminDep,
+    start_date: Optional[datetime] = Query(None),
+    end_date: Optional[datetime] = Query(None),
+) -> ApiUserUsageStats:
+    """Get usage statistics for API user."""
+    from app.services.credit_service import get_user_credit
+    from app.services.api_analytics import get_user_usage_stats
+    from decimal import Decimal
+
+    # Verify user exists and is APIUSER
+    stmt = select(PortalUser).where(PortalUser.id == user_id, PortalUser.role == Role.APIUSER)
+    result = await session.execute(stmt)
+    user = result.scalar_one_or_none()
+
+    if not user:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="API user not found",
+        )
+
+    # Get usage stats
+    usage_stats_data = await get_user_usage_stats(session, user.id, start_date, end_date)
+
+    # Get credit balance
+    credit = await get_user_credit(session, user.id)
+
+    # Get total credits used
+    from app.models import CreditTransaction
+    credit_usage_stmt = select(func.sum(CreditTransaction.amount)).where(
+        and_(
+            CreditTransaction.user_id == user.id,
+            CreditTransaction.transaction_type == CreditTransactionType.USAGE,
+            CreditTransaction.amount < 0,
+        )
+    )
+    credit_usage_result = await session.execute(credit_usage_stmt)
+    total_credits_used = abs(credit_usage_result.scalar() or 0)
+
+    return ApiUserUsageStats(
+        total_requests=usage_stats_data["total_requests"],
+        total_verifications=usage_stats_data["total_verifications"],
+        requests_today=usage_stats_data["requests_today"],
+        requests_this_week=usage_stats_data["requests_this_week"],
+        requests_this_month=usage_stats_data["requests_this_month"],
+        successful_requests=usage_stats_data["successful_requests"],
+        failed_requests=usage_stats_data["failed_requests"],
+        average_duration_ms=usage_stats_data["average_duration_ms"],
+        total_credits_used=Decimal(str(total_credits_used)),
+        credits_remaining=credit.balance,
+    )
+
+
+@router.get("/api-users/{user_id}/api-keys", response_model=list[ApiKeyResponse])
+async def get_api_user_api_keys(
+    user_id: UUID,
+    session: DBSessionDep,
+    current_user: SystemAdminDep,
+) -> list[ApiKeyResponse]:
+    """List all API keys for a user."""
+    # Verify user exists and is APIUSER
+    stmt = select(PortalUser).where(PortalUser.id == user_id, PortalUser.role == Role.APIUSER)
+    result = await session.execute(stmt)
+    user = result.scalar_one_or_none()
+
+    if not user:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="API user not found",
+        )
+
+    # Get API keys
+    keys_stmt = select(ApiKey).where(ApiKey.user_id == user.id).order_by(ApiKey.created_at.desc())
+    keys_result = await session.execute(keys_stmt)
+    api_keys = keys_result.scalars().all()
+
+    return [ApiKeyResponse.model_validate(key) for key in api_keys]
+
+
+@router.post("/api-users/{user_id}/credits", response_model=CreditBalanceResponse)
+async def assign_credits_to_api_user(
+    user_id: UUID,
+    assignment_data: CreditAssignmentRequest,
+    session: DBSessionDep,
+    current_user: SystemAdminDep,
+) -> CreditBalanceResponse:
+    """Assign credits to API user."""
+    from app.services.credit_service import add_credit, get_user_credit
+
+    # Verify user exists and is APIUSER
+    stmt = select(PortalUser).where(PortalUser.id == user_id, PortalUser.role == Role.APIUSER)
+    result = await session.execute(stmt)
+    user = result.scalar_one_or_none()
+
+    if not user:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="API user not found",
+        )
+
+    # Add credits
+    amount = Decimal(str(assignment_data.amount))
+    credit = await add_credit(
+        session,
+        user.id,
+        amount,
+        CreditTransactionType.ADMIN_ASSIGNMENT,
+        assigned_by_user_id=current_user.id,
+        description=assignment_data.description or f"Credits assigned by {current_user.full_name}",
+    )
+
+    return CreditBalanceResponse(
+        balance=credit.balance,
+        total_purchased=credit.total_purchased,
+        total_used=credit.total_used,
+    )

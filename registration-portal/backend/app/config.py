@@ -54,6 +54,15 @@ class Settings(BaseSettings):
     pdf_signing_organization: str = ""  # Organization name (for certificate metadata)
     # Permission management settings
     permission_management_min_role: str = "Director"  # Minimum role required to manage permissions (role name as string)
+    # API key settings
+    api_key_default_rate_limit_per_minute: int = 60
+    api_key_max_rate_limit_per_minute: int = 1000
+    api_key_bulk_request_max_items: int = 100
+    api_key_usage_retention_days: int = 90
+    # Credit system settings
+    credit_cost_per_verification: int = 8
+    credit_minimum_purchase: int = 10
+    credit_purchase_price_per_unit: float = 8.00
 
 
 class LoggingSettings(BaseSettings):
