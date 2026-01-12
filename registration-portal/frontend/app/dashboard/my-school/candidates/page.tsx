@@ -373,8 +373,20 @@ export default function CandidatesPage() {
         candidate={selectedCandidate}
         candidates={candidates}
         open={detailDialogOpen}
-        onOpenChange={setDetailDialogOpen}
-        onCandidateChange={(candidate) => setSelectedCandidate(candidate)}
+        onOpenChange={(open) => {
+          setDetailDialogOpen(open);
+          // Refresh candidates list when modal opens to get latest data (e.g., index numbers)
+          if (open) {
+            loadData();
+          }
+        }}
+        onCandidateChange={(candidate) => {
+          setSelectedCandidate(candidate);
+          // Update candidate in the list
+          setCandidates((prev) =>
+            prev.map((c) => (c.id === candidate.id ? candidate : c))
+          );
+        }}
       />
     </div>
   );
