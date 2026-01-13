@@ -92,7 +92,7 @@ def generate_candidate_template(exam_series: str | None = None) -> bytes:
         "guardian_name": ["John Doe Sr.", "Jane Smith Sr."],
         "guardian_phone": ["+1234567891", "+0987654322"],
         "disability": ["", "Visual"],
-        "registration_type": ["regular", "referral"],
+        "registration_type": ["free_tvet", "referral"],
         "guardian_digital_address": ["GA-123-4567", "GA-789-0123"],
         "guardian_national_id": ["GHA-123456789-1", "GHA-987654321-2"],
     })

@@ -269,13 +269,13 @@ async def validate_registration_type_and_guardian(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="Guardian name and phone are required for private registration type",
             )
-    elif registration_type in (RegistrationType.REGULAR.value, RegistrationType.REFERRAL.value):
+    elif registration_type in (RegistrationType.FREE_TVET.value, RegistrationType.REFERRAL.value):
         if not is_may_june:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail=f"{registration_type.capitalize()} registration type is only allowed for MAY/JUNE exams",
+                detail=f"{registration_type.replace('_', ' ').title()} registration type is only allowed for MAY/JUNE exams",
             )
-        # Guardian info optional for regular and referral
+        # Guardian info optional for FREE_TVET and referral
     else:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -351,11 +351,16 @@ async def register_candidate(
                     detail="Programme is not available for your school. Please contact your administrator.",
                 )
 
-    # Generate unique registration number
-    registration_number = await generate_unique_registration_number(session, exam_id)
+    # Determine registration_type (default to FREE_TVET for school registrations)
+    registration_type = candidate_data.registration_type or RegistrationType.FREE_TVET.value
 
-    # Determine registration_type (default to REGULAR for school registrations)
-    registration_type = candidate_data.registration_type or RegistrationType.REGULAR.value
+    # Generate unique registration number
+    if not current_user.school_id:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="School ID is required for candidate registration",
+        )
+    registration_number = await generate_unique_registration_number(session, exam_id, current_user.school_id, registration_type)
     normalized_series = normalize_exam_series(exam.exam_series)
     is_may_june = normalized_series == "MAY/JUNE"
     is_nov_dec = normalized_series == "NOV/DEC"
@@ -819,7 +824,7 @@ async def bulk_upload_candidates(
     exam_id: int = Form(...),
     file: UploadFile = File(...),
     default_choice_group_selection: str | None = Form(None, description="Optional JSON mapping of {choice_group_id: subject_code} for default selections"),
-    registration_type: str | None = Form(None, description="Default registration type (regular or referral) to apply to all candidates"),
+    registration_type: str | None = Form(None, description="Default registration type (free_tvet or referral) to apply to all candidates"),
     session: DBSessionDep = None,
     current_user: SchoolUserWithSchoolDep = None,
 ) -> BulkUploadResponse:
@@ -1054,8 +1059,8 @@ async def bulk_upload_candidates(
             file_registration_type = get_col('registration_type') or get_col('registration type')
             if file_registration_type:
                 file_registration_type = str(file_registration_type).strip() or None
-            # Use file value if provided, otherwise use form parameter, otherwise default to regular
-            candidate_registration_type = file_registration_type or registration_type or RegistrationType.REGULAR.value
+            # Use file value if provided, otherwise use form parameter, otherwise default to FREE_TVET
+            candidate_registration_type = file_registration_type or registration_type or RegistrationType.FREE_TVET.value
 
             # Validate and get programme
             programme_id = None
@@ -1196,8 +1201,8 @@ async def bulk_upload_candidates(
                     failed += 1
                     continue
 
-            # Generate registration number
-            registration_number = await generate_unique_registration_number(session, exam_id)
+            # Generate registration number (candidate_registration_type already determined above)
+            registration_number = await generate_unique_registration_number(session, exam_id, current_user.school_id, candidate_registration_type)
 
             # Create candidate
             new_candidate = RegistrationCandidate(

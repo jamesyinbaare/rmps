@@ -260,8 +260,11 @@ async def register_private_user(
     session.add(new_user)
     await session.flush()
 
+    # Determine registration_type (should be PRIVATE for private user registration)
+    registration_type = RegistrationType.PRIVATE.value
+
     # Generate unique registration number
-    registration_number = await generate_unique_registration_number(session, registration_data.exam_id)
+    registration_number = await generate_unique_registration_number(session, registration_data.exam_id, registration_data.school_id, registration_type)
 
     # Create registration candidate
     new_candidate = RegistrationCandidate(

@@ -1069,7 +1069,7 @@ export default function RegistrationPage() {
                             <SelectValue placeholder="Select registration type" />
                           </SelectTrigger>
                           <SelectContent>
-                            <SelectItem value="regular">Regular</SelectItem>
+                            <SelectItem value="free_tvet">FREE TVET</SelectItem>
                             <SelectItem value="referral">Referral</SelectItem>
                           </SelectContent>
                         </Select>
@@ -1605,7 +1605,7 @@ export default function RegistrationPage() {
                         <SelectValue placeholder="Select registration type (optional)" />
                       </SelectTrigger>
                       <SelectContent>
-                        <SelectItem value="regular">Regular</SelectItem>
+                        <SelectItem value="free_tvet">FREE TVET</SelectItem>
                         <SelectItem value="referral">Referral</SelectItem>
                       </SelectContent>
                     </Select>

@@ -79,7 +79,7 @@ class RegistrationCandidateBase(BaseModel):
     address: str | None = None
     national_id: str | None = Field(None, max_length=50)
     disability: str | None = Field(None, description="Disability type: Visual, Auditory, Physical, Cognitive, Speech, Other")
-    registration_type: str | None = Field(None, description="Registration type: regular, private, or referral")
+    registration_type: str | None = Field(None, description="Registration type: free_tvet, private, or referral")
     guardian_name: str | None = Field(None, max_length=255)
     guardian_phone: str | None = Field(None, max_length=50)
     guardian_digital_address: str | None = Field(None, max_length=50, description="Ghana digital address")
@@ -123,7 +123,7 @@ class RegistrationCandidateUpdate(BaseModel):
     address: str | None = None
     national_id: str | None = Field(None, max_length=50)
     disability: str | None = Field(None, description="Disability type: Visual, Auditory, Physical, Cognitive, Speech, Other")
-    registration_type: str | None = Field(None, description="Registration type: regular, private, or referral")
+    registration_type: str | None = Field(None, description="Registration type: free_tvet, private, or referral")
     guardian_name: str | None = Field(None, max_length=255)
     guardian_phone: str | None = Field(None, max_length=50)
     guardian_digital_address: str | None = Field(None, max_length=50, description="Ghana digital address")
