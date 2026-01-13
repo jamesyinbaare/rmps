@@ -3426,3 +3426,101 @@ export async function assignCreditsToApiUser(userId: string, amount: number, des
   });
   return handleResponse<CreditBalance>(response);
 }
+
+// Invoice Generation APIs
+
+// School Admin Invoice APIs
+export async function getFreeTvetInvoiceByExamination(examId: number): Promise<any> {
+  const response = await fetchWithAuth(`/api/v1/school/invoices/free-tvet/by-examination?exam_id=${examId}`);
+  return handleResponse<any>(response);
+}
+
+export async function getFreeTvetInvoiceByExaminationGroupedByProgramme(examId: number): Promise<any> {
+  const response = await fetchWithAuth(`/api/v1/school/invoices/free-tvet/by-examination-grouped-by-programme?exam_id=${examId}`);
+  return handleResponse<any>(response);
+}
+
+export async function getReferralInvoiceByExamination(examId: number): Promise<any> {
+  const response = await fetchWithAuth(`/api/v1/school/invoices/referral/by-examination?exam_id=${examId}`);
+  return handleResponse<any>(response);
+}
+
+export async function downloadFreeTvetInvoicePdf(examId: number, groupByProgramme: boolean = false): Promise<Blob> {
+  const params = new URLSearchParams();
+  params.append("exam_id", examId.toString());
+  if (groupByProgramme) {
+    params.append("group_by_programme", "true");
+  }
+  const response = await fetchWithAuth(`/api/v1/school/invoices/free-tvet/pdf?${params.toString()}`);
+  if (!response.ok) {
+    const error = await response.json().catch(() => ({ detail: "Failed to download invoice" }));
+    throw new Error(error.detail || "Failed to download invoice");
+  }
+  return response.blob();
+}
+
+export async function downloadReferralInvoicePdf(examId: number): Promise<Blob> {
+  const response = await fetchWithAuth(`/api/v1/school/invoices/referral/pdf?exam_id=${examId}`);
+  if (!response.ok) {
+    const error = await response.json().catch(() => ({ detail: "Failed to download invoice" }));
+    throw new Error(error.detail || "Failed to download invoice");
+  }
+  return response.blob();
+}
+
+// System Admin Invoice APIs
+export async function getAdminFreeTvetInvoiceBySchool(examId: number, schoolId: number): Promise<any> {
+  const response = await fetchWithAuth(`/api/v1/admin/invoices/free-tvet/by-school?exam_id=${examId}&school_id=${schoolId}`);
+  return handleResponse<any>(response);
+}
+
+export async function getAdminReferralInvoiceBySchool(examId: number, schoolId: number): Promise<any> {
+  const response = await fetchWithAuth(`/api/v1/admin/invoices/referral/by-school?exam_id=${examId}&school_id=${schoolId}`);
+  return handleResponse<any>(response);
+}
+
+export async function getAdminFreeTvetInvoiceSummary(examId: number): Promise<any> {
+  const response = await fetchWithAuth(`/api/v1/admin/invoices/free-tvet/summary?exam_id=${examId}`);
+  return handleResponse<any>(response);
+}
+
+export async function getAdminReferralInvoiceSummary(examId: number): Promise<any> {
+  const response = await fetchWithAuth(`/api/v1/admin/invoices/referral/summary?exam_id=${examId}`);
+  return handleResponse<any>(response);
+}
+
+export async function downloadAdminFreeTvetInvoicePdfBySchool(examId: number, schoolId: number): Promise<Blob> {
+  const response = await fetchWithAuth(`/api/v1/admin/invoices/free-tvet/by-school/pdf?exam_id=${examId}&school_id=${schoolId}`);
+  if (!response.ok) {
+    const error = await response.json().catch(() => ({ detail: "Failed to download invoice" }));
+    throw new Error(error.detail || "Failed to download invoice");
+  }
+  return response.blob();
+}
+
+export async function downloadAdminReferralInvoicePdfBySchool(examId: number, schoolId: number): Promise<Blob> {
+  const response = await fetchWithAuth(`/api/v1/admin/invoices/referral/by-school/pdf?exam_id=${examId}&school_id=${schoolId}`);
+  if (!response.ok) {
+    const error = await response.json().catch(() => ({ detail: "Failed to download invoice" }));
+    throw new Error(error.detail || "Failed to download invoice");
+  }
+  return response.blob();
+}
+
+export async function downloadAdminFreeTvetInvoiceSummaryPdf(examId: number): Promise<Blob> {
+  const response = await fetchWithAuth(`/api/v1/admin/invoices/free-tvet/summary/pdf?exam_id=${examId}`);
+  if (!response.ok) {
+    const error = await response.json().catch(() => ({ detail: "Failed to download invoice" }));
+    throw new Error(error.detail || "Failed to download invoice");
+  }
+  return response.blob();
+}
+
+export async function downloadAdminReferralInvoiceSummaryPdf(examId: number): Promise<Blob> {
+  const response = await fetchWithAuth(`/api/v1/admin/invoices/referral/summary/pdf?exam_id=${examId}`);
+  if (!response.ok) {
+    const error = await response.json().catch(() => ({ detail: "Failed to download invoice" }));
+    throw new Error(error.detail || "Failed to download invoice");
+  }
+  return response.blob();
+}
