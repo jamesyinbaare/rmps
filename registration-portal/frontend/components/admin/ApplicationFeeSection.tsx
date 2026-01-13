@@ -7,8 +7,16 @@ import { Label } from "@/components/ui/label";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Checkbox } from "@/components/ui/checkbox";
 import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import {
   createOrUpdateApplicationFee,
   deleteApplicationFee,
+  getApplicationFee,
 } from "@/lib/api";
 import { toast } from "sonner";
 import type { ApplicationFeeResponse } from "@/types";
@@ -35,22 +43,51 @@ export function ApplicationFeeSection({
   applicationFee,
   onUpdate,
 }: ApplicationFeeSectionProps) {
+  const [registrationType, setRegistrationType] = useState<string>("");
   const [fee, setFee] = useState<string>("");
   const [isActive, setIsActive] = useState(true);
   const [loading, setLoading] = useState(false);
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
 
+  // Load application fee when registration type changes
+  useEffect(() => {
+    const loadFee = async () => {
+      if (!registrationType) {
+        setFee("");
+        setIsActive(true);
+        return;
+      }
+      setLoading(true);
+      try {
+        const feeData = await getApplicationFee(examId, registrationType === "all" ? null : registrationType);
+        setFee(feeData.fee.toString());
+        setIsActive(feeData.is_active);
+      } catch (error) {
+        // Fee not found for this registration type
+        setFee("");
+        setIsActive(true);
+      } finally {
+        setLoading(false);
+      }
+    };
+    loadFee();
+  }, [examId, registrationType]);
+
   useEffect(() => {
     if (applicationFee) {
       setFee(applicationFee.fee.toString());
       setIsActive(applicationFee.is_active);
-    } else {
-      setFee("");
-      setIsActive(true);
+      if (applicationFee.registration_type) {
+        setRegistrationType(applicationFee.registration_type);
+      }
     }
   }, [applicationFee]);
 
   const handleSave = async () => {
+    if (!registrationType) {
+      toast.error("Please select a registration type");
+      return;
+    }
     const feeValue = parseFloat(fee);
     if (isNaN(feeValue) || feeValue <= 0) {
       toast.error("Please enter a valid fee amount greater than 0");
@@ -63,6 +100,7 @@ export function ApplicationFeeSection({
         fee: feeValue,
         currency: "GHS",
         is_active: isActive,
+        registration_type: registrationType === "all" ? null : registrationType,
       });
       toast.success("Application fee saved successfully");
       // Update local state immediately with the response
@@ -78,11 +116,17 @@ export function ApplicationFeeSection({
   };
 
   const handleDelete = async () => {
+    if (!registrationType) {
+      toast.error("Please select a registration type");
+      return;
+    }
     setLoading(true);
     try {
-      await deleteApplicationFee(examId);
+      await deleteApplicationFee(examId, registrationType === "all" ? null : registrationType);
       toast.success("Application fee deleted successfully");
       setDeleteDialogOpen(false);
+      setFee("");
+      setIsActive(true);
       onUpdate();
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "Failed to delete application fee");
@@ -99,6 +143,25 @@ export function ApplicationFeeSection({
         </CardHeader>
         <CardContent className="space-y-4">
           <div className="space-y-2">
+            <Label htmlFor="registrationType">Registration Type</Label>
+            <Select
+              value={registrationType}
+              onValueChange={setRegistrationType}
+              disabled={loading}
+            >
+              <SelectTrigger id="registrationType">
+                <SelectValue placeholder="Select registration type" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">All Types</SelectItem>
+                <SelectItem value="free_tvet">Free TVET</SelectItem>
+                <SelectItem value="private">Private</SelectItem>
+                <SelectItem value="referral">Referral</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
+
+          <div className="space-y-2">
             <Label htmlFor="fee">Fee Amount (GHS)</Label>
             <Input
               id="fee"
@@ -108,7 +171,7 @@ export function ApplicationFeeSection({
               placeholder="0.00"
               value={fee}
               onChange={(e) => setFee(e.target.value)}
-              disabled={loading}
+              disabled={loading || !registrationType}
             />
           </div>
 
@@ -125,7 +188,7 @@ export function ApplicationFeeSection({
           </div>
 
           <div className="flex items-center gap-2 pt-4">
-            <Button onClick={handleSave} disabled={loading || !fee}>
+            <Button onClick={handleSave} disabled={loading || !fee || !registrationType}>
               {loading ? (
                 <>
                   <Loader2 className="mr-2 h-4 w-4 animate-spin" />
@@ -138,7 +201,7 @@ export function ApplicationFeeSection({
                 </>
               )}
             </Button>
-            {applicationFee && (
+            {fee && registrationType && (
               <Button
                 variant="destructive"
                 onClick={() => setDeleteDialogOpen(true)}

@@ -43,6 +43,8 @@ export function ImportPricingDialog({
   const [importApplicationFee, setImportApplicationFee] = useState(true);
   const [importSubjectPricing, setImportSubjectPricing] = useState(true);
   const [importTieredPricing, setImportTieredPricing] = useState(true);
+  const [importProgrammePricing, setImportProgrammePricing] = useState(true);
+  const [importPricingModels, setImportPricingModels] = useState(true);
   const [loading, setLoading] = useState(false);
 
   const availableExams = exams.filter((exam) => exam.id !== examId);
@@ -58,7 +60,7 @@ export function ImportPricingDialog({
       return;
     }
 
-    if (!importApplicationFee && !importSubjectPricing && !importTieredPricing) {
+    if (!importApplicationFee && !importSubjectPricing && !importTieredPricing && !importProgrammePricing && !importPricingModels) {
       toast.error("Please select at least one pricing type to import");
       return;
     }
@@ -70,6 +72,8 @@ export function ImportPricingDialog({
         import_application_fee: importApplicationFee,
         import_subject_pricing: importSubjectPricing,
         import_tiered_pricing: importTieredPricing,
+        import_programme_pricing: importProgrammePricing,
+        import_pricing_models: importPricingModels,
       };
 
       const result = await importExamPricing(examId, importData);
@@ -81,6 +85,8 @@ export function ImportPricingDialog({
       setImportApplicationFee(true);
       setImportSubjectPricing(true);
       setImportTieredPricing(true);
+      setImportProgrammePricing(true);
+      setImportPricingModels(true);
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "Failed to import pricing");
     } finally {
@@ -149,6 +155,28 @@ export function ImportPricingDialog({
                 />
                 <Label htmlFor="importTieredPricing" className="font-normal cursor-pointer">
                   Tiered Pricing
+                </Label>
+              </div>
+              <div className="flex items-center space-x-2">
+                <Checkbox
+                  id="importProgrammePricing"
+                  checked={importProgrammePricing}
+                  onCheckedChange={(checked) => setImportProgrammePricing(checked === true)}
+                  disabled={loading}
+                />
+                <Label htmlFor="importProgrammePricing" className="font-normal cursor-pointer">
+                  Per-Programme Pricing
+                </Label>
+              </div>
+              <div className="flex items-center space-x-2">
+                <Checkbox
+                  id="importPricingModels"
+                  checked={importPricingModels}
+                  onCheckedChange={(checked) => setImportPricingModels(checked === true)}
+                  disabled={loading}
+                />
+                <Label htmlFor="importPricingModels" className="font-normal cursor-pointer">
+                  Pricing Models
                 </Label>
               </div>
             </div>

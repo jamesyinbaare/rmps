@@ -348,6 +348,7 @@ export interface SubjectBulkUploadResponse {
 export interface ApplicationFeeResponse {
   id: number;
   exam_id: number | null;
+  registration_type: string | null;
   fee: number;
   currency: string;
   is_active: boolean;
@@ -359,12 +360,14 @@ export interface ApplicationFeeCreate {
   fee: number;
   currency?: string;
   is_active?: boolean;
+  registration_type?: string | null;
 }
 
 export interface SubjectPricingResponse {
   id: number;
   subject_id: number;
   exam_id: number | null;
+  registration_type: string | null;
   price: number;
   currency: string;
   is_active: boolean;
@@ -378,6 +381,7 @@ export interface SubjectPricingCreate {
   price: number;
   currency?: string;
   is_active?: boolean;
+  registration_type?: string | null;
 }
 
 export interface SubjectPricingBulkUpdate {
@@ -387,6 +391,7 @@ export interface SubjectPricingBulkUpdate {
 export interface TieredPricingResponse {
   id: number;
   exam_id: number | null;
+  registration_type: string | null;
   min_subjects: number;
   max_subjects: number | null;
   price: number;
@@ -402,10 +407,50 @@ export interface TieredPricingCreate {
   price: number;
   currency?: string;
   is_active?: boolean;
+  registration_type?: string | null;
 }
 
 export interface TieredPricingBulkUpdate {
   pricing: TieredPricingCreate[];
+}
+
+export interface ProgrammePricingResponse {
+  id: number;
+  programme_id: number;
+  exam_id: number | null;
+  registration_type: string | null;
+  price: number;
+  currency: string;
+  is_active: boolean;
+  created_at: string;
+  updated_at: string;
+  programme: Programme;
+}
+
+export interface ProgrammePricingCreate {
+  programme_id: number;
+  price: number;
+  currency?: string;
+  is_active?: boolean;
+  registration_type?: string | null;
+}
+
+export interface ProgrammePricingBulkUpdate {
+  pricing: ProgrammePricingCreate[];
+}
+
+export interface ExamPricingModelResponse {
+  id: number;
+  exam_id: number | null;
+  registration_type: string | null;
+  pricing_model_preference: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface ExamPricingModelCreate {
+  registration_type?: string | null;
+  pricing_model_preference: string;
 }
 
 export interface ExamPricingResponse {
@@ -413,6 +458,8 @@ export interface ExamPricingResponse {
   application_fee: ApplicationFeeResponse | null;
   subject_pricing: SubjectPricingResponse[];
   tiered_pricing: TieredPricingResponse[];
+  programme_pricing: ProgrammePricingResponse[];
+  pricing_models: ExamPricingModelResponse[];
 }
 
 export interface ImportPricingRequest {
@@ -420,6 +467,8 @@ export interface ImportPricingRequest {
   import_application_fee?: boolean;
   import_subject_pricing?: boolean;
   import_tiered_pricing?: boolean;
+  import_programme_pricing?: boolean;
+  import_pricing_models?: boolean;
 }
 
 // Photo Album types

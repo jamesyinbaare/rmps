@@ -1,9 +1,8 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import {
   Table,
@@ -14,73 +13,72 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import {
-  createOrUpdateSubjectPricing,
-  listAllSubjects,
-  downloadSubjectPricingTemplate,
-  uploadSubjectPricing,
+  createOrUpdateProgrammePricing,
+  listAllProgrammes,
+  downloadProgrammePricingTemplate,
+  uploadProgrammePricing,
 } from "@/lib/api";
 import { toast } from "sonner";
-import type { SubjectPricingResponse, Subject, SubjectPricingCreate } from "@/types";
+import type { ProgrammePricingResponse, Programme, ProgrammePricingCreate } from "@/types";
 import { Save, Loader2, Download, Upload } from "lucide-react";
-import { useRef } from "react";
 
-interface SubjectPricingSectionProps {
+interface ProgrammePricingSectionProps {
   examId: number;
-  subjectPricing: SubjectPricingResponse[];
+  programmePricing: ProgrammePricingResponse[];
   onUpdate: () => void;
 }
 
-export function SubjectPricingSection({
+export function ProgrammePricingSection({
   examId,
-  subjectPricing,
+  programmePricing,
   onUpdate,
-}: SubjectPricingSectionProps) {
-  const [subjects, setSubjects] = useState<Subject[]>([]);
+}: ProgrammePricingSectionProps) {
+  const [programmes, setProgrammes] = useState<Programme[]>([]);
   const [pricingMap, setPricingMap] = useState<Map<number, string>>(new Map());
   const [loading, setLoading] = useState(false);
-  const [loadingSubjects, setLoadingSubjects] = useState(true);
+  const [loadingProgrammes, setLoadingProgrammes] = useState(true);
   const [downloadingTemplate, setDownloadingTemplate] = useState(false);
   const [uploading, setUploading] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     const loadData = async () => {
-      setLoadingSubjects(true);
+      setLoadingProgrammes(true);
       try {
-        const allSubjects = await listAllSubjects();
-        setSubjects(allSubjects);
+        const allProgrammes = await listAllProgrammes();
+        setProgrammes(allProgrammes);
 
         // Initialize pricing map from existing pricing
         const initialPricing = new Map<number, string>();
-        subjectPricing.forEach((sp) => {
-          initialPricing.set(sp.subject_id, sp.price.toString());
+        programmePricing.forEach((pp) => {
+          initialPricing.set(pp.programme_id, pp.price.toString());
         });
         setPricingMap(initialPricing);
       } catch (error) {
-        toast.error("Failed to load subjects");
+        toast.error("Failed to load programmes");
         console.error(error);
       } finally {
-        setLoadingSubjects(false);
+        setLoadingProgrammes(false);
       }
     };
 
     loadData();
-  }, [subjectPricing]);
+  }, [programmePricing]);
 
-  const handlePriceChange = (subjectId: number, price: string) => {
+  const handlePriceChange = (programmeId: number, price: string) => {
     const newPricingMap = new Map(pricingMap);
-    newPricingMap.set(subjectId, price);
+    newPricingMap.set(programmeId, price);
     setPricingMap(newPricingMap);
   };
 
   const handleDownloadTemplate = async () => {
     setDownloadingTemplate(true);
     try {
-      const blob = await downloadSubjectPricingTemplate(examId);
+      const blob = await downloadProgrammePricingTemplate(examId);
       const url = window.URL.createObjectURL(blob);
       const a = document.createElement("a");
       a.href = url;
-      a.download = `subject_pricing_template_${examId}.xlsx`;
+      a.download = `programme_pricing_template_${examId}.xlsx`;
       document.body.appendChild(a);
       a.click();
       window.URL.revokeObjectURL(url);
@@ -108,11 +106,11 @@ export function SubjectPricingSection({
 
     setUploading(true);
     try {
-      const result = await uploadSubjectPricing(examId, file);
-      toast.success(`Successfully uploaded pricing for ${result.length} subject(s)`);
+      const result = await uploadProgrammePricing(examId, file);
+      toast.success(`Successfully uploaded pricing for ${result.length} programme(s)`);
       onUpdate();
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : "Failed to upload subject pricing");
+      toast.error(error instanceof Error ? error.message : "Failed to upload programme pricing");
       console.error(error);
     } finally {
       setUploading(false);
@@ -124,13 +122,13 @@ export function SubjectPricingSection({
   };
 
   const handleSave = async () => {
-    const pricingToSave: SubjectPricingCreate[] = [];
+    const pricingToSave: ProgrammePricingCreate[] = [];
 
-    pricingMap.forEach((price, subjectId) => {
+    pricingMap.forEach((price, programmeId) => {
       const priceValue = parseFloat(price);
       if (!isNaN(priceValue) && priceValue > 0) {
         pricingToSave.push({
-          subject_id: subjectId,
+          programme_id: programmeId,
           price: priceValue,
           currency: "GHS",
           is_active: true,
@@ -145,23 +143,23 @@ export function SubjectPricingSection({
 
     setLoading(true);
     try {
-      await createOrUpdateSubjectPricing(examId, { pricing: pricingToSave });
-      toast.success("Subject pricing saved successfully");
+      await createOrUpdateProgrammePricing(examId, { pricing: pricingToSave });
+      toast.success("Programme pricing saved successfully");
       onUpdate();
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : "Failed to save subject pricing");
+      toast.error(error instanceof Error ? error.message : "Failed to save programme pricing");
     } finally {
       setLoading(false);
     }
   };
 
-  if (loadingSubjects) {
+  if (loadingProgrammes) {
     return (
       <Card>
         <CardContent className="py-8">
           <div className="flex items-center justify-center">
             <Loader2 className="h-8 w-8 animate-spin" />
-            <span className="ml-2">Loading subjects...</span>
+            <span className="ml-2">Loading programmes...</span>
           </div>
         </CardContent>
       </Card>
@@ -172,7 +170,7 @@ export function SubjectPricingSection({
     <Card>
       <CardHeader>
         <div className="flex items-center justify-between">
-          <CardTitle>Per-Subject Pricing</CardTitle>
+          <CardTitle>Per-Programme Pricing</CardTitle>
           <div className="flex gap-2">
             <Button
               variant="outline"
@@ -223,38 +221,24 @@ export function SubjectPricingSection({
           <Table>
             <TableHeader>
               <TableRow>
-                <TableHead>Original Subject Code</TableHead>
-                <TableHead>Subject Name</TableHead>
-                <TableHead>Type</TableHead>
+                <TableHead>Programme Code</TableHead>
+                <TableHead>Programme Name</TableHead>
                 <TableHead>Price (GHS)</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
-              {subjects.map((subject) => (
-                <TableRow key={subject.id}>
-                  <TableCell className="font-medium font-mono">
-                    {subject.original_code || subject.code}
-                  </TableCell>
-                  <TableCell>{subject.name}</TableCell>
-                  <TableCell>
-                    <span
-                      className={`inline-flex items-center rounded-full px-2 py-1 text-xs font-medium ${
-                        subject.subject_type === "CORE"
-                          ? "bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-200"
-                          : "bg-purple-100 text-purple-800 dark:bg-purple-900 dark:text-purple-200"
-                      }`}
-                    >
-                      {subject.subject_type}
-                    </span>
-                  </TableCell>
+              {programmes.map((programme) => (
+                <TableRow key={programme.id}>
+                  <TableCell className="font-medium font-mono">{programme.code}</TableCell>
+                  <TableCell>{programme.name}</TableCell>
                   <TableCell>
                     <Input
                       type="number"
                       step="0.01"
                       min="0"
                       placeholder="0.00"
-                      value={pricingMap.get(subject.id) || ""}
-                      onChange={(e) => handlePriceChange(subject.id, e.target.value)}
+                      value={pricingMap.get(programme.id) || ""}
+                      onChange={(e) => handlePriceChange(programme.id, e.target.value)}
                       disabled={loading}
                       className="w-32"
                     />
