@@ -1206,6 +1206,42 @@ export async function downloadSchoolCandidateIndexSlip(candidateId: number): Pro
   return response.blob();
 }
 
+export async function downloadIndexSlipsBulk(examId: number, programmeId?: number): Promise<void> {
+  const params = new URLSearchParams();
+  if (programmeId !== undefined) {
+    params.append("programme_id", programmeId.toString());
+  }
+  const queryString = params.toString();
+  const url = `/api/v1/school/exams/${examId}/index-slips/download${queryString ? `?${queryString}` : ""}`;
+
+  const response = await fetchWithAuth(url);
+  if (!response.ok) {
+    const error = await response.json().catch(() => ({ detail: "Failed to download ZIP" }));
+    throw new Error(error.detail || "Failed to download index slips ZIP");
+  }
+
+  // Get filename from Content-Disposition header or use default
+  const contentDisposition = response.headers.get("Content-Disposition");
+  let filename = `index_slips_${examId}.zip`;
+  if (contentDisposition) {
+    const filenameMatch = contentDisposition.match(/filename="?(.+)"?/i);
+    if (filenameMatch) {
+      filename = filenameMatch[1];
+    }
+  }
+
+  // Download the file
+  const blob = await response.blob();
+  const downloadUrl = window.URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = downloadUrl;
+  link.download = filename;
+  document.body.appendChild(link);
+  link.click();
+  document.body.removeChild(link);
+  window.URL.revokeObjectURL(downloadUrl);
+}
+
 // Public candidate info API (no auth) - uses index_number
 export async function getPublicCandidateInfo(indexNumber: string): Promise<{
   candidate_name: string;

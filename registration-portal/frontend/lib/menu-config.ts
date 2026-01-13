@@ -14,6 +14,7 @@ import {
   Key,
   Coins,
   Search,
+  FileCheck,
 } from "lucide-react";
 import type { Role } from "@/types";
 import { LucideIcon } from "lucide-react";
@@ -136,6 +137,12 @@ export const schoolUserMenuItems: MenuItem[] = [
     href: "/dashboard/my-school/programmes",
     label: "Programmes",
     icon: BookOpen,
+    roles: ["SchoolAdmin", "SchoolStaff"],
+  },
+  {
+    href: "/dashboard/my-school/documents",
+    label: "Documents",
+    icon: FileCheck,
     roles: ["SchoolAdmin", "SchoolStaff"],
   },
   {
