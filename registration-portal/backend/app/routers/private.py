@@ -264,15 +264,23 @@ async def register_self(
             status_code=status.HTTP_400_BAD_REQUEST, detail="You are already registered for this exam"
         )
 
-    # Generate unique registration number
-    registration_number = await generate_unique_registration_number(session, exam_id)
-
     # Validate school_id is provided and is a private examination center
     if not hasattr(candidate_data, 'school_id') or candidate_data.school_id is None:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Examination center (school_id) is required for private candidate registration",
         )
+
+    # Validate registration_type and guardian requirements for private registration
+    registration_type = candidate_data.registration_type or RegistrationType.PRIVATE.value
+    if registration_type != RegistrationType.PRIVATE.value:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Private registration endpoint only accepts 'private' registration_type",
+        )
+
+    # Generate unique registration number
+    registration_number = await generate_unique_registration_number(session, exam_id, candidate_data.school_id, registration_type)
 
     school_stmt = select(School).where(
         School.id == candidate_data.school_id,
@@ -305,14 +313,6 @@ async def register_self(
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Programme selection is required for NOV/DEC exams",
-        )
-
-    # Validate registration_type and guardian requirements for private registration
-    registration_type = candidate_data.registration_type or RegistrationType.PRIVATE.value
-    if registration_type != RegistrationType.PRIVATE.value:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Private registration endpoint only accepts 'private' registration_type",
         )
 
     # Guardian info required for private registration
@@ -629,8 +629,18 @@ async def save_draft_registration(
         return response
     else:
         # Create new draft
+        # Validate school_id is required for registration number generation
+        if not school_id:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Examination center (school_id) is required for draft registration",
+            )
+
+        # Determine registration_type for draft (default to PRIVATE for private registration endpoint)
+        draft_registration_type = candidate_data.registration_type or RegistrationType.PRIVATE.value
+
         # Generate temporary registration number (will be regenerated on submit)
-        registration_number = await generate_unique_registration_number(session, exam_id)
+        registration_number = await generate_unique_registration_number(session, exam_id, school_id, draft_registration_type)
 
         # For drafts, allow empty name (will be validated on submit)
         draft_name = candidate_data.name if candidate_data.name and candidate_data.name.strip() else "Draft Registration"
@@ -920,7 +930,11 @@ async def submit_draft_registration(
 
     # Only generate registration number if it doesn't already exist (preserve existing number when editing)
     if not draft.registration_number:
-        registration_number = await generate_unique_registration_number(session, draft.registration_exam_id)
+        if not draft.school_id:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Examination center is required for registration number generation")
+        if not draft.registration_type:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Registration type is required for registration number generation")
+        registration_number = await generate_unique_registration_number(session, draft.registration_exam_id, draft.school_id, draft.registration_type)
         draft.registration_number = registration_number
 
     # For private candidates: Verify payment is completed

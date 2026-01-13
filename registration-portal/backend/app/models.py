@@ -186,7 +186,7 @@ class Disability(enum.Enum):
 
 
 class RegistrationType(enum.Enum):
-    REGULAR = "regular"
+    FREE_TVET = "free_tvet"
     PRIVATE = "private"
     REFERRAL = "referral"
 
