@@ -369,6 +369,9 @@ class RegistrationCandidate(Base):
     contact_phone = Column(String(50), nullable=True)
     address = Column(Text, nullable=True)
     national_id = Column(String(50), nullable=True)
+    guardian_name = Column(String(255), nullable=True)
+    guardian_phone = Column(String(50), nullable=True)
+    guardian_address = Column(Text, nullable=True)
     registration_status = Column(Enum(RegistrationStatus), default=RegistrationStatus.PENDING, nullable=False, index=True)
     registration_date = Column(DateTime, default=datetime.utcnow, nullable=False)
     total_paid_amount = Column(Numeric(10, 2), default=0, nullable=False)  # Track total amount paid across all payments

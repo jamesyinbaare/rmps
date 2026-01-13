@@ -63,6 +63,7 @@ from app.services.subject_selection import (
 from app.services.photo_storage import PhotoStorageService, calculate_checksum
 from app.services.index_slip_service import generate_index_slip_pdf
 from app.services.photo_validation import PhotoValidationService
+from app.services.registration_validation import can_approve_registration
 import logging
 
 logger = logging.getLogger(__name__)
@@ -104,6 +105,26 @@ async def list_available_exams(
             ExamRegistrationPeriod.registration_end_date >= now,
         )
         .options(selectinload(RegistrationExam.registration_period))
+    )
+    result = await session.execute(stmt)
+    exams = result.scalars().all()
+
+    return [RegistrationExamResponse.model_validate(exam) for exam in exams]
+
+
+@router.get("/exams/all", response_model=list[RegistrationExamResponse])
+async def list_all_exams(
+    session: DBSessionDep, current_user: SchoolUserWithSchoolDep
+) -> list[RegistrationExamResponse]:
+    """List all exams that allow bulk registration (both open and closed) for viewing candidates."""
+    stmt = (
+        select(RegistrationExam)
+        .join(ExamRegistrationPeriod, RegistrationExam.registration_period_id == ExamRegistrationPeriod.id)
+        .where(
+            ExamRegistrationPeriod.allows_bulk_registration.is_(True),
+        )
+        .options(selectinload(RegistrationExam.registration_period))
+        .order_by(RegistrationExam.year.desc(), RegistrationExam.exam_type, RegistrationExam.exam_series)
     )
     result = await session.execute(stmt)
     exams = result.scalars().all()
@@ -167,10 +188,14 @@ async def list_candidates(
             "date_of_birth": candidate.date_of_birth,
             "gender": candidate.gender,
             "programme_code": candidate.programme_code,
+            "programme_id": candidate.programme_id,
             "contact_email": candidate.contact_email,
             "contact_phone": candidate.contact_phone,
             "address": candidate.address,
             "national_id": candidate.national_id,
+            "guardian_name": candidate.guardian_name,
+            "guardian_phone": candidate.guardian_phone,
+            "guardian_address": candidate.guardian_address,
             "registration_status": candidate.registration_status,
             "registration_date": candidate.registration_date,
             "subject_selections": [
@@ -516,6 +541,9 @@ async def update_candidate(
             "contact_phone": candidate.contact_phone,
             "address": candidate.address,
             "national_id": candidate.national_id,
+            "guardian_name": candidate.guardian_name,
+            "guardian_phone": candidate.guardian_phone,
+            "guardian_address": candidate.guardian_address,
             "registration_status": candidate.registration_status,
             "registration_date": candidate.registration_date,
             "subject_selections": [
@@ -541,6 +569,135 @@ async def update_candidate(
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to update candidate: {str(e)}",
+        )
+
+
+@router.post("/candidates/{candidate_id}/approve", response_model=RegistrationCandidateResponse, status_code=status.HTTP_200_OK)
+async def approve_candidate(
+    candidate_id: int,
+    session: DBSessionDep,
+    current_user: SchoolAdminDep,
+) -> RegistrationCandidateResponse:
+    """Approve a registration candidate."""
+    # Validate candidate exists and belongs to school
+    candidate_stmt = (
+        select(RegistrationCandidate)
+        .where(RegistrationCandidate.id == candidate_id)
+        .options(
+            selectinload(RegistrationCandidate.exam).selectinload(RegistrationExam.registration_period),
+            selectinload(RegistrationCandidate.subject_selections),
+        )
+    )
+    candidate_result = await session.execute(candidate_stmt)
+    candidate = candidate_result.scalar_one_or_none()
+
+    if not candidate:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Candidate not found")
+
+    if current_user.school_id and candidate.school_id != current_user.school_id:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Candidate does not belong to your school",
+        )
+
+    # Check if candidate is already approved
+    if candidate.registration_status == RegistrationStatus.APPROVED:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Candidate is already approved",
+        )
+
+    # Check if candidate is in a valid status for approval
+    if candidate.registration_status not in (RegistrationStatus.PENDING, RegistrationStatus.DRAFT):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Cannot approve candidate with status {candidate.registration_status.value}",
+        )
+
+    # Validate that registration meets approval requirements
+    is_valid, validation_errors = await can_approve_registration(session, candidate)
+    if not is_valid:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Registration does not meet approval requirements: {'; '.join(validation_errors)}",
+        )
+
+    # Update registration status to APPROVED
+    candidate.registration_status = RegistrationStatus.APPROVED
+
+    try:
+        await session.commit()
+        await session.refresh(candidate, ["subject_selections", "exam"])
+
+        # Build exam response if available
+        exam_response = None
+        if candidate.exam:
+            exam_response = {
+                "id": candidate.exam.id,
+                "exam_id_main_system": candidate.exam.exam_id_main_system,
+                "exam_type": candidate.exam.exam_type,
+                "exam_series": candidate.exam.exam_series,
+                "year": candidate.exam.year,
+                "description": candidate.exam.description,
+                "registration_period": {
+                    "id": candidate.exam.registration_period.id,
+                    "registration_start_date": candidate.exam.registration_period.registration_start_date,
+                    "registration_end_date": candidate.exam.registration_period.registration_end_date,
+                    "is_active": candidate.exam.registration_period.is_active,
+                    "allows_bulk_registration": candidate.exam.registration_period.allows_bulk_registration,
+                    "allows_private_registration": candidate.exam.registration_period.allows_private_registration,
+                    "created_at": candidate.exam.registration_period.created_at,
+                    "updated_at": candidate.exam.registration_period.updated_at,
+                },
+                "created_at": candidate.exam.created_at,
+                "updated_at": candidate.exam.updated_at,
+            }
+
+        # Create response dict with subject selections
+        candidate_dict = {
+            "id": candidate.id,
+            "registration_exam_id": candidate.registration_exam_id,
+            "school_id": candidate.school_id,
+            "name": candidate.name,
+            "registration_number": candidate.registration_number,
+            "index_number": candidate.index_number,
+            "date_of_birth": candidate.date_of_birth,
+            "gender": candidate.gender,
+            "programme_code": candidate.programme_code,
+            "programme_id": candidate.programme_id,
+            "contact_email": candidate.contact_email,
+            "contact_phone": candidate.contact_phone,
+            "address": candidate.address,
+            "national_id": candidate.national_id,
+            "guardian_name": candidate.guardian_name,
+            "guardian_phone": candidate.guardian_phone,
+            "guardian_address": candidate.guardian_address,
+            "registration_status": candidate.registration_status,
+            "registration_date": candidate.registration_date,
+            "subject_selections": [
+                {
+                    "id": sel.id,
+                    "subject_id": sel.subject_id,
+                    "subject_code": sel.subject_code,
+                    "subject_name": sel.subject_name,
+                    "series": sel.series,
+                    "created_at": sel.created_at,
+                }
+                for sel in (candidate.subject_selections or [])
+            ],
+            "exam": exam_response,
+            "created_at": candidate.created_at,
+            "updated_at": candidate.updated_at,
+        }
+        return RegistrationCandidateResponse.model_validate(candidate_dict)
+    except HTTPException:
+        await session.rollback()
+        raise
+    except Exception as e:
+        await session.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to approve candidate: {str(e)}",
         )
 
 
@@ -724,6 +881,18 @@ async def bulk_upload_candidates(
             if national_id:
                 national_id = str(national_id).strip() or None
 
+            guardian_name = get_col('guardian_name') or get_col('guardian name')
+            if guardian_name:
+                guardian_name = str(guardian_name).strip() or None
+
+            guardian_phone = get_col('guardian_phone') or get_col('guardian phone')
+            if guardian_phone:
+                guardian_phone = str(guardian_phone).strip() or None
+
+            guardian_address = get_col('guardian_address') or get_col('guardian address')
+            if guardian_address:
+                guardian_address = str(guardian_address).strip() or None
+
             # Validate and get programme
             programme_id = None
             if programme_code:
@@ -881,6 +1050,9 @@ async def bulk_upload_candidates(
                 contact_phone=contact_phone,
                 address=address,
                 national_id=national_id,
+                guardian_name=guardian_name,
+                guardian_phone=guardian_phone,
+                guardian_address=guardian_address,
                 registration_status=RegistrationStatus.PENDING,
             )
             session.add(new_candidate)
@@ -932,10 +1104,23 @@ async def bulk_upload_candidates(
 
 
 @router.get("/candidates/template")
-async def download_candidate_template(current_user: SchoolUserWithSchoolDep) -> StreamingResponse:
+async def download_candidate_template(
+    exam_id: int | None = Query(None, description="Optional exam ID to generate template specific to exam series"),
+    session: DBSessionDep = None,
+    current_user: SchoolUserWithSchoolDep = None,
+) -> StreamingResponse:
     """Download Excel template for candidate bulk upload."""
     try:
-        template_bytes = generate_candidate_template()
+        exam_series = None
+        if exam_id:
+            # Get exam to determine exam series
+            exam_stmt = select(RegistrationExam).where(RegistrationExam.id == exam_id)
+            exam_result = await session.execute(exam_stmt)
+            exam = exam_result.scalar_one_or_none()
+            if exam:
+                exam_series = exam.exam_series
+
+        template_bytes = generate_candidate_template(exam_series=exam_series)
         return StreamingResponse(
             iter([template_bytes]),
             media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",

@@ -125,6 +125,9 @@ export interface RegistrationCandidate {
   contact_phone: string | null;
   address: string | null;
   national_id: string | null;
+  guardian_name: string | null;
+  guardian_phone: string | null;
+  guardian_address: string | null;
   registration_status: "PENDING" | "APPROVED" | "REJECTED" | "DRAFT";
   registration_date: string;
   created_at: string;
@@ -226,6 +229,9 @@ export interface RegistrationCandidateCreate {
   contact_phone?: string | null;
   address?: string | null;
   national_id?: string | null;
+  guardian_name?: string | null;
+  guardian_phone?: string | null;
+  guardian_address?: string | null;
   subject_codes?: string[];
   subject_ids?: number[];
 }

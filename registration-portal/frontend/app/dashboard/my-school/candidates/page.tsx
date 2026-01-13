@@ -1,20 +1,12 @@
 "use client";
 
-import { useEffect, useState } from "react";
-import { listSchoolCandidates, listAvailableExams, registerCandidate } from "@/lib/api";
-import type { RegistrationCandidate, RegistrationExam, RegistrationCandidateCreate } from "@/types";
+import { useEffect, useState, useMemo } from "react";
+import { listSchoolCandidates, listAllExams, listSchoolProgrammes } from "@/lib/api";
+import type { RegistrationCandidate, RegistrationExam, Programme } from "@/types";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "@/components/ui/table";
+import { Input } from "@/components/ui/input";
 import {
   Select,
   SelectContent,
@@ -23,41 +15,41 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog";
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/ui/table";
 import { CandidateDetailModal } from "@/components/CandidateDetailModal";
-import { Plus, GraduationCap } from "lucide-react";
+import { SearchableSelect } from "@/components/SearchableSelect";
 import { toast } from "sonner";
+import { ChevronLeft, ChevronRight, Search, X } from "lucide-react";
 
 export default function CandidatesPage() {
-  const [candidates, setCandidates] = useState<RegistrationCandidate[]>([]);
+  const [allCandidates, setAllCandidates] = useState<RegistrationCandidate[]>([]);
   const [exams, setExams] = useState<RegistrationExam[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [createDialogOpen, setCreateDialogOpen] = useState(false);
+  const [programmes, setProgrammes] = useState<Programme[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [loadingFilters, setLoadingFilters] = useState(true);
   const [selectedCandidate, setSelectedCandidate] = useState<RegistrationCandidate | null>(null);
   const [detailDialogOpen, setDetailDialogOpen] = useState(false);
-  const [selectedExamId, setSelectedExamId] = useState<string>("");
-  const [formData, setFormData] = useState<RegistrationCandidateCreate>({
-    name: "",
-    date_of_birth: null,
-    gender: null,
-    programme_code: null,
-    contact_email: null,
-    contact_phone: null,
-    address: null,
-    national_id: null,
-    subject_codes: [],
-  });
-  const [submitting, setSubmitting] = useState(false);
+
+  // Filters
+  const [selectedExamType, setSelectedExamType] = useState<string>("");
+  const [selectedYear, setSelectedYear] = useState<string>("");
+  const [selectedSeries, setSelectedSeries] = useState<string>("");
+  const [selectedProgrammeId, setSelectedProgrammeId] = useState<string | undefined>(undefined);
+  const [searchQuery, setSearchQuery] = useState<string>("");
+
+  // Pagination
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(50);
+  const [customPageSize, setCustomPageSize] = useState("");
+  const [useCustomPageSize, setUseCustomPageSize] = useState(false);
 
   useEffect(() => {
-    loadData();
-
     // Update page title
     const updateTitle = async () => {
       try {
@@ -71,16 +63,136 @@ export default function CandidatesPage() {
       }
     };
     updateTitle();
+
+    // Load filters data
+    loadFiltersData();
   }, []);
 
-  const loadData = async () => {
+  const loadFiltersData = async () => {
     try {
-      const [candidatesData, examsData] = await Promise.all([
-        listSchoolCandidates(),
-        listAvailableExams(),
+      setLoadingFilters(true);
+      const [examsData, programmesData] = await Promise.all([
+        listAllExams(),
+        listSchoolProgrammes(),
       ]);
-      setCandidates(candidatesData);
       setExams(examsData);
+      setProgrammes(programmesData);
+    } catch (error) {
+      toast.error("Failed to load filter options");
+      console.error(error);
+    } finally {
+      setLoadingFilters(false);
+    }
+  };
+
+  // Get available exam types
+  const availableExamTypes = useMemo(() => {
+    return Array.from(new Set(exams.map((exam) => exam.exam_type))).sort();
+  }, [exams]);
+
+  // Get available years for selected exam type
+  const availableYears = useMemo(() => {
+    if (!selectedExamType) return [];
+    const filteredExams = exams.filter((exam) => exam.exam_type === selectedExamType);
+    const yearsSet = new Set<number>();
+    filteredExams.forEach((exam) => {
+      yearsSet.add(exam.year);
+    });
+    return Array.from(yearsSet).sort((a, b) => b - a); // Sort descending (newest first)
+  }, [exams, selectedExamType]);
+
+  // Get available series for selected exam type and year
+  const availableSeries = useMemo(() => {
+    if (!selectedExamType) return [];
+    let filteredExams = exams.filter((exam) => exam.exam_type === selectedExamType);
+    if (selectedYear) {
+      const yearNum = parseInt(selectedYear, 10);
+      if (!isNaN(yearNum)) {
+        filteredExams = filteredExams.filter((exam) => exam.year === yearNum);
+      }
+    }
+    const seriesSet = new Set<string>();
+    filteredExams.forEach((exam) => {
+      if (exam.exam_series) {
+        seriesSet.add(exam.exam_series);
+      }
+    });
+    return Array.from(seriesSet).sort();
+  }, [exams, selectedExamType, selectedYear]);
+
+  // Prepare programme options for SearchableSelect
+  const programmeOptions = useMemo(() => {
+    return programmes.map((programme) => ({
+      value: programme.id.toString(),
+      label: `${programme.code} - ${programme.name}`,
+    }));
+  }, [programmes]);
+
+  // Get matching exam IDs based on exam type, year, and series
+  const matchingExamIds = useMemo(() => {
+    if (!selectedExamType) return [];
+    let filteredExams = exams.filter((exam) => exam.exam_type === selectedExamType);
+    if (selectedYear) {
+      const yearNum = parseInt(selectedYear, 10);
+      if (!isNaN(yearNum)) {
+        filteredExams = filteredExams.filter((exam) => exam.year === yearNum);
+      }
+    }
+    if (selectedSeries) {
+      filteredExams = filteredExams.filter((exam) => exam.exam_series === selectedSeries);
+    }
+    return filteredExams.map((exam) => exam.id);
+  }, [exams, selectedExamType, selectedYear, selectedSeries]);
+
+  // Load candidates when filters change
+  useEffect(() => {
+    if (matchingExamIds.length > 0) {
+      loadCandidates();
+    } else {
+      setAllCandidates([]);
+      setPage(1);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [matchingExamIds.join(",")]);
+
+  // Reset year, series and programme when exam type changes
+  useEffect(() => {
+    setSelectedYear("");
+    setSelectedSeries("");
+    setSelectedProgrammeId(undefined);
+    setPage(1);
+  }, [selectedExamType]);
+
+  // Reset series and programme when year changes
+  useEffect(() => {
+    setSelectedSeries("");
+    setSelectedProgrammeId(undefined);
+    setPage(1);
+  }, [selectedYear]);
+
+  // Reset programme when series changes
+  useEffect(() => {
+    setSelectedProgrammeId(undefined);
+    setPage(1);
+  }, [selectedSeries]);
+
+  const loadCandidates = async () => {
+    if (matchingExamIds.length === 0) return;
+
+    setLoading(true);
+    try {
+      // Fetch candidates for all matching exams
+      const allCandidatesData: RegistrationCandidate[] = [];
+      for (const examId of matchingExamIds) {
+        try {
+          const candidates = await listSchoolCandidates(examId);
+          allCandidatesData.push(...candidates);
+        } catch (error) {
+          console.error(`Failed to load candidates for exam ${examId}:`, error);
+        }
+      }
+      setAllCandidates(allCandidatesData);
+      setPage(1); // Reset to first page when new data is loaded
     } catch (error) {
       toast.error("Failed to load candidates");
       console.error(error);
@@ -89,88 +201,279 @@ export default function CandidatesPage() {
     }
   };
 
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
+  // Filter candidates by programme and search query
+  const filteredCandidates = useMemo(() => {
+    let filtered = allCandidates;
 
-    if (!selectedExamId) {
-      toast.error("Please select an exam");
-      return;
+    // Filter by programme
+    if (selectedProgrammeId) {
+      const programmeIdNum = parseInt(selectedProgrammeId, 10);
+      if (!isNaN(programmeIdNum)) {
+        filtered = filtered.filter((candidate) => {
+          // Match by programme_id if available, or by programme_code as fallback
+          if (candidate.programme_id !== null && candidate.programme_id === programmeIdNum) {
+            return true;
+          }
+          // Fallback: try matching by programme_code if programme_id doesn't match
+          const selectedProgramme = programmes.find((p) => p.id === programmeIdNum);
+          if (selectedProgramme && candidate.programme_code === selectedProgramme.code) {
+            return true;
+          }
+          return false;
+        });
+      }
     }
 
-    if (!formData.name) {
-      toast.error("Name is required");
-      return;
-    }
-
-    setSubmitting(true);
-
-    try {
-      await registerCandidate(parseInt(selectedExamId), formData);
-      toast.success("Candidate registered successfully");
-      setCreateDialogOpen(false);
-      setFormData({
-        name: "",
-        date_of_birth: null,
-        gender: null,
-        programme_code: null,
-        contact_email: null,
-        contact_phone: null,
-        address: null,
-        national_id: null,
-        subject_codes: [],
+    // Filter by search query (name and index number)
+    if (searchQuery.trim()) {
+      const query = searchQuery.toLowerCase().trim();
+      filtered = filtered.filter((candidate) => {
+        const nameMatch = candidate.name.toLowerCase().includes(query);
+        const indexMatch = candidate.index_number?.toLowerCase().includes(query) || false;
+        return nameMatch || indexMatch;
       });
-      setSelectedExamId("");
-      loadData();
-    } catch (error) {
-      toast.error(error instanceof Error ? error.message : "Failed to register candidate");
-    } finally {
-      setSubmitting(false);
+    }
+
+    return filtered;
+  }, [allCandidates, selectedProgrammeId, programmes, searchQuery]);
+
+  const handleProgrammeChange = (value: string | undefined) => {
+    setSelectedProgrammeId(value);
+    setPage(1);
+  };
+
+  // Calculate pagination
+  const currentPageSize = useCustomPageSize && customPageSize
+    ? Math.max(1, parseInt(customPageSize, 10) || pageSize)
+    : pageSize;
+  const totalCandidates = filteredCandidates.length;
+  const totalPages = Math.max(1, Math.ceil(totalCandidates / currentPageSize));
+  const startIndex = (page - 1) * currentPageSize;
+  const endIndex = startIndex + currentPageSize;
+  const paginatedCandidates = filteredCandidates.slice(startIndex, endIndex);
+
+  // Reset page if it's out of bounds
+  useEffect(() => {
+    if (page > totalPages && totalPages > 0) {
+      setPage(1);
+    }
+  }, [page, totalPages]);
+
+  const handlePageSizeChange = (value: string) => {
+    if (value === "custom") {
+      setUseCustomPageSize(true);
+      setPage(1);
+    } else {
+      setUseCustomPageSize(false);
+      setPageSize(parseInt(value, 10));
+      setPage(1);
     }
   };
 
-  if (loading) {
-    return <div className="text-center py-12 text-muted-foreground">Loading candidates...</div>;
+  const handleCustomPageSizeChange = (value: string) => {
+    setCustomPageSize(value);
+    const numValue = parseInt(value, 10);
+    if (!isNaN(numValue) && numValue > 0) {
+      setPage(1);
+    }
+  };
+
+  if (loadingFilters) {
+    return <div className="text-center py-12 text-muted-foreground">Loading...</div>;
   }
 
   return (
     <div className="space-y-6">
       <div className="border-b pb-4">
-        <div className="flex items-center justify-between">
           <div>
-            <h2 className="text-3xl font-bold">Candidate Registration</h2>
-            <p className="text-muted-foreground mt-1">Register and manage candidates for your school</p>
-          </div>
-          <Button onClick={() => setCreateDialogOpen(true)}>
-            <Plus className="mr-2 h-4 w-4" />
-            Register Candidate
-          </Button>
+          <h2 className="text-2xl font-bold">Registration List</h2>
         </div>
       </div>
 
+      {/* Filters */}
+      <Card className="border-none max-w-2xl mx-auto">
+        <CardContent className="pt-6">
+          <div className="space-y-3">
+            <div className="relative">
+              <Label htmlFor="exam-type" className="absolute top-0 left-2 text-xs text-muted-foreground bg-background px-1.5 z-10 -mt-2">
+                Exam Type
+              </Label>
+              <Select value={selectedExamType} onValueChange={setSelectedExamType}>
+                <SelectTrigger id="exam-type" className="h-9">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {availableExamTypes.map((type) => (
+                    <SelectItem key={type} value={type}>
+                      {type}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+
+            <div className="relative">
+              <Label htmlFor="year" className="absolute top-0 left-2 text-xs text-muted-foreground bg-background px-1.5 z-10 -mt-2">
+                Year
+              </Label>
+              <Select
+                value={selectedYear}
+                onValueChange={setSelectedYear}
+                disabled={!selectedExamType}
+              >
+                <SelectTrigger id="year" className="h-9">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {availableYears.map((year) => (
+                    <SelectItem key={year} value={year.toString()}>
+                      {year}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+
+            <div className="relative">
+              <Label htmlFor="series" className="absolute top-0 left-2 text-xs text-muted-foreground bg-background px-1.5 z-10 -mt-2">
+                Series
+              </Label>
+              <Select
+                value={selectedSeries}
+                onValueChange={setSelectedSeries}
+                disabled={!selectedExamType || !selectedYear}
+              >
+                <SelectTrigger id="series" className="h-9">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {availableSeries.map((series) => (
+                    <SelectItem key={series} value={series}>
+                      {series}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+
+            <div className="relative">
+              <Label htmlFor="programme" className="absolute top-0 left-2 text-xs text-muted-foreground bg-background px-1.5 z-10 -mt-2">
+                Programme
+              </Label>
+              <SearchableSelect
+                options={programmeOptions}
+                value={selectedProgrammeId}
+                onValueChange={handleProgrammeChange}
+                placeholder=""
+                disabled={!selectedSeries}
+                searchPlaceholder="Search programmes..."
+                emptyMessage="No programmes found."
+                className="h-9"
+              />
+            </div>
+          </div>
+        </CardContent>
+      </Card>
+
+      {/* Candidates Table */}
       <Card>
-        <CardHeader>
-          <CardTitle>Candidates</CardTitle>
-        </CardHeader>
-        <CardContent>
+        <CardContent className="pt-6">
+          {loading ? (
+            <div className="text-center py-12 text-muted-foreground">Loading candidates...</div>
+          ) : !selectedExamType || !selectedYear || !selectedSeries ? (
+            <div className="text-center py-12 text-muted-foreground">
+              Please select exam type, year, and series to view candidates
+            </div>
+          ) : (
+            <>
+              {/* Search and Page Size Controls */}
+              <div className="flex flex-col sm:flex-row items-center justify-between gap-4 mb-4 pb-4 border-b">
+                <div className="relative flex-1 max-w-md w-full">
+                  <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+                  <Input
+                    type="search"
+                    placeholder="Search by name or index number..."
+                    value={searchQuery}
+                    onChange={(e) => {
+                      setSearchQuery(e.target.value);
+                      setPage(1);
+                    }}
+                    className="pl-10 pr-10"
+                  />
+                  {searchQuery && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setSearchQuery("");
+                        setPage(1);
+                      }}
+                      className="absolute right-3 top-1/2 -translate-y-1/2 h-4 w-4 flex items-center justify-center opacity-70 hover:opacity-100 transition-opacity"
+                    >
+                      <X className="h-4 w-4" />
+                    </button>
+                  )}
+                </div>
+                <div className="flex items-center gap-2">
+                  <Label htmlFor="page-size" className="text-sm whitespace-nowrap">
+                    Page size:
+                  </Label>
+                  {useCustomPageSize ? (
+                    <div className="flex items-center gap-2">
+                      <Input
+                        id="page-size"
+                        type="number"
+                        min="1"
+                        value={customPageSize}
+                        onChange={(e) => handleCustomPageSizeChange(e.target.value)}
+                        className="w-20 h-8"
+                        placeholder="Custom"
+                      />
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        onClick={() => {
+                          setUseCustomPageSize(false);
+                          setCustomPageSize("");
+                        }}
+                        className="h-8"
+                      >
+                        ×
+                      </Button>
+                    </div>
+                  ) : (
+                    <Select value={pageSize.toString()} onValueChange={handlePageSizeChange}>
+                      <SelectTrigger className="w-[100px] h-8">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="50">50</SelectItem>
+                        <SelectItem value="100">100</SelectItem>
+                        <SelectItem value="custom">Custom</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  )}
+                </div>
+              </div>
+
           <Table>
             <TableHeader>
               <TableRow>
                 <TableHead>Name</TableHead>
                 <TableHead>Registration Number</TableHead>
-                <TableHead>Exam</TableHead>
+                    <TableHead>Index Number</TableHead>
                 <TableHead>Status</TableHead>
                 <TableHead>Registration Date</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
-              {candidates.length === 0 ? (
+                  {paginatedCandidates.length === 0 ? (
                 <TableRow>
                   <TableCell colSpan={5} className="text-center text-muted-foreground">
-                    No candidates registered yet
+                        No candidates found
                   </TableCell>
                 </TableRow>
               ) : (
-                candidates.map((candidate) => (
+                    paginatedCandidates.map((candidate) => (
                   <TableRow
                     key={candidate.id}
                     className="cursor-pointer hover:bg-muted/50"
@@ -181,10 +484,10 @@ export default function CandidatesPage() {
                   >
                     <TableCell className="font-medium">{candidate.name}</TableCell>
                     <TableCell>{candidate.registration_number}</TableCell>
-                    <TableCell>
-                      {candidate.exam
-                        ? `${candidate.exam.exam_type} ${candidate.exam.year}`
-                        : "N/A"}
+                        <TableCell className="font-mono">
+                          {candidate.index_number || (
+                            <span className="text-muted-foreground italic">Not available</span>
+                          )}
                     </TableCell>
                     <TableCell>
                       <span
@@ -207,183 +510,59 @@ export default function CandidatesPage() {
               )}
             </TableBody>
           </Table>
+
+              {/* Pagination */}
+              {totalCandidates > 0 && (
+                <div className="flex flex-col sm:flex-row items-center justify-between gap-4 mt-4 pt-4 border-t">
+                  <div className="text-sm text-muted-foreground">
+                    Showing {startIndex + 1} to {Math.min(endIndex, totalCandidates)} of {totalCandidates} candidates
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => setPage(page - 1)}
+                      disabled={page === 1 || loading}
+                    >
+                      <ChevronLeft className="h-4 w-4 mr-1" />
+                      Previous
+                    </Button>
+                    <div className="text-sm whitespace-nowrap">
+                      Page {page} of {totalPages}
+                    </div>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => setPage(page + 1)}
+                      disabled={page >= totalPages || loading}
+                    >
+                      Next
+                      <ChevronRight className="h-4 w-4 ml-1" />
+                    </Button>
+                  </div>
+                </div>
+              )}
+            </>
+          )}
         </CardContent>
       </Card>
-
-      <Dialog open={createDialogOpen} onOpenChange={setCreateDialogOpen}>
-        <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
-          <DialogHeader>
-            <DialogTitle>Register Candidate</DialogTitle>
-            <DialogDescription>Register a new candidate for an exam</DialogDescription>
-          </DialogHeader>
-          <form onSubmit={handleSubmit}>
-            <div className="space-y-4 py-4">
-              <div className="space-y-2">
-                <Label htmlFor="exam">Exam *</Label>
-                <Select value={selectedExamId} onValueChange={setSelectedExamId} required>
-                  <SelectTrigger>
-                    <SelectValue placeholder="Select an exam" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {exams.map((exam) => (
-                      <SelectItem key={exam.id} value={exam.id.toString()}>
-                        {exam.exam_type}{exam.exam_series ? ` ${exam.exam_series}` : ""} {exam.year}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
-
-              <div className="space-y-2">
-                <Label htmlFor="name">Full Name *</Label>
-                <Input
-                  id="name"
-                  placeholder="John Doe"
-                  value={formData.name}
-                  onChange={(e) => setFormData({ ...formData, name: e.target.value })}
-                  required
-                  disabled={submitting}
-                />
-              </div>
-
-              <div className="grid grid-cols-2 gap-4">
-                <div className="space-y-2">
-                  <Label htmlFor="date_of_birth">Date of Birth</Label>
-                  <Input
-                    id="date_of_birth"
-                    type="date"
-                    value={formData.date_of_birth || ""}
-                    onChange={(e) =>
-                      setFormData({
-                        ...formData,
-                        date_of_birth: e.target.value || null,
-                      })
-                    }
-                    disabled={submitting}
-                  />
-                </div>
-
-                <div className="space-y-2">
-                  <Label htmlFor="gender">Gender</Label>
-                  <Select
-                    value={formData.gender || ""}
-                    onValueChange={(value) =>
-                      setFormData({ ...formData, gender: value || null })
-                    }
-                  >
-                    <SelectTrigger>
-                      <SelectValue placeholder="Select gender" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="Male">Male</SelectItem>
-                      <SelectItem value="Female">Female</SelectItem>
-                      <SelectItem value="Other">Other</SelectItem>
-                    </SelectContent>
-                  </Select>
-                </div>
-              </div>
-
-              <div className="space-y-2">
-                <Label htmlFor="programme_code">Programme Code</Label>
-                <Input
-                  id="programme_code"
-                  placeholder="PROG001"
-                  value={formData.programme_code || ""}
-                  onChange={(e) =>
-                    setFormData({ ...formData, programme_code: e.target.value || null })
-                  }
-                  disabled={submitting}
-                />
-              </div>
-
-              <div className="grid grid-cols-2 gap-4">
-                <div className="space-y-2">
-                  <Label htmlFor="contact_email">Contact Email</Label>
-                  <Input
-                    id="contact_email"
-                    type="email"
-                    placeholder="candidate@example.com"
-                    value={formData.contact_email || ""}
-                    onChange={(e) =>
-                      setFormData({ ...formData, contact_email: e.target.value || null })
-                    }
-                    disabled={submitting}
-                  />
-                </div>
-
-                <div className="space-y-2">
-                  <Label htmlFor="contact_phone">Contact Phone</Label>
-                  <Input
-                    id="contact_phone"
-                    placeholder="+1234567890"
-                    value={formData.contact_phone || ""}
-                    onChange={(e) =>
-                      setFormData({ ...formData, contact_phone: e.target.value || null })
-                    }
-                    disabled={submitting}
-                  />
-                </div>
-              </div>
-
-              <div className="space-y-2">
-                <Label htmlFor="address">Address</Label>
-                <Input
-                  id="address"
-                  placeholder="Street address"
-                  value={formData.address || ""}
-                  onChange={(e) =>
-                    setFormData({ ...formData, address: e.target.value || null })
-                  }
-                  disabled={submitting}
-                />
-              </div>
-
-              <div className="space-y-2">
-                <Label htmlFor="national_id">National ID</Label>
-                <Input
-                  id="national_id"
-                  placeholder="National ID number"
-                  value={formData.national_id || ""}
-                  onChange={(e) =>
-                    setFormData({ ...formData, national_id: e.target.value || null })
-                  }
-                  disabled={submitting}
-                />
-              </div>
-            </div>
-            <DialogFooter>
-              <Button
-                type="button"
-                variant="outline"
-                onClick={() => setCreateDialogOpen(false)}
-                disabled={submitting}
-              >
-                Cancel
-              </Button>
-              <Button type="submit" disabled={submitting}>
-                {submitting ? "Registering..." : "Register Candidate"}
-              </Button>
-            </DialogFooter>
-          </form>
-        </DialogContent>
-      </Dialog>
 
       {/* Candidate Detail Modal */}
       <CandidateDetailModal
         candidate={selectedCandidate}
-        candidates={candidates}
+        candidates={filteredCandidates}
         open={detailDialogOpen}
         onOpenChange={(open) => {
           setDetailDialogOpen(open);
           // Refresh candidates list when modal opens to get latest data (e.g., index numbers)
-          if (open) {
-            loadData();
+          if (open && matchingExamIds.length > 0) {
+            loadCandidates();
           }
         }}
         onCandidateChange={(candidate) => {
           setSelectedCandidate(candidate);
           // Update candidate in the list
-          setCandidates((prev) =>
+          setAllCandidates((prev) =>
             prev.map((c) => (c.id === candidate.id ? candidate : c))
           );
         }}

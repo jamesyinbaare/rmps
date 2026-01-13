@@ -1351,8 +1351,20 @@ export async function updateCandidate(
   return handleResponse<RegistrationCandidate>(response);
 }
 
+export async function approveCandidate(candidateId: number): Promise<RegistrationCandidate> {
+  const response = await fetchWithAuth(`/api/v1/school/candidates/${candidateId}/approve`, {
+    method: "POST",
+  });
+  return handleResponse<RegistrationCandidate>(response);
+}
+
 export async function listAvailableExams(): Promise<RegistrationExam[]> {
   const response = await fetchWithAuth("/api/v1/school/exams");
+  return handleResponse<RegistrationExam[]>(response);
+}
+
+export async function listAllExams(): Promise<RegistrationExam[]> {
+  const response = await fetchWithAuth("/api/v1/school/exams/all");
   return handleResponse<RegistrationExam[]>(response);
 }
 

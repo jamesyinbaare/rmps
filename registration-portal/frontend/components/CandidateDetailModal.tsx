@@ -31,14 +31,24 @@ import {
   Loader2,
   Trash2,
   ZoomIn,
+  Check,
+  XCircle,
+  CheckCircle2,
 } from "lucide-react";
-import { uploadCandidatePhoto, getCandidatePhoto, deleteCandidatePhoto, getPhotoFile, updateCandidate, getProgrammeSubjects } from "@/lib/api";
+import { uploadCandidatePhoto, getCandidatePhoto, deleteCandidatePhoto, getPhotoFile, updateCandidate, getProgrammeSubjects, approveCandidate, getCurrentUser } from "@/lib/api";
 import { toast } from "sonner";
-import type { RegistrationCandidatePhoto, ProgrammeSubjectRequirements } from "@/types";
+import type { RegistrationCandidatePhoto, ProgrammeSubjectRequirements, User as UserType } from "@/types";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Checkbox } from "@/components/ui/checkbox";
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { Edit2, Save, X as XIcon, FileText } from "lucide-react";
 
 interface CandidateDetailModalProps {
@@ -96,6 +106,36 @@ export function CandidateDetailModal({
   const [loadingSubjects, setLoadingSubjects] = useState(false);
   const [selectedSubjectIds, setSelectedSubjectIds] = useState<number[]>([]);
   const [savingSubjects, setSavingSubjects] = useState(false);
+
+  // Bio data editing state
+  const [editingBio, setEditingBio] = useState(false);
+  const [bioData, setBioData] = useState({
+    name: "",
+    date_of_birth: "",
+    gender: "",
+    contact_email: "",
+    contact_phone: "",
+    address: "",
+    national_id: "",
+  });
+  const [savingBio, setSavingBio] = useState(false);
+
+  // Approval state
+  const [currentUser, setCurrentUser] = useState<UserType | null>(null);
+  const [approving, setApproving] = useState(false);
+
+  // Load current user on mount
+  useEffect(() => {
+    const loadUser = async () => {
+      try {
+        const user = await getCurrentUser();
+        setCurrentUser(user);
+      } catch (error) {
+        console.error("Failed to load current user:", error);
+      }
+    };
+    loadUser();
+  }, []);
 
   // Find current candidate index
   const currentIndex = candidate ? candidates.findIndex((c) => c.id === candidate.id) : -1;
@@ -182,14 +222,28 @@ export function CandidateDetailModal({
     }
   }, [candidate?.id, open]);
 
-  // Initialize subject selections when candidate changes
+  // Initialize subject selections and bio data when candidate changes
   useEffect(() => {
     if (candidate) {
       const currentSubjectIds = (candidate.subject_selections || [])
         .map((s) => s.subject_id)
         .filter((id): id is number => id !== null && id !== undefined);
       setSelectedSubjectIds(currentSubjectIds);
+
+      // Exit edit mode when candidate changes
       setEditingSubjects(false);
+      setEditingBio(false);
+
+      // Initialize bio data
+      setBioData({
+        name: candidate.name || "",
+        date_of_birth: candidate.date_of_birth ? new Date(candidate.date_of_birth).toISOString().split('T')[0] : "",
+        gender: candidate.gender || "",
+        contact_email: candidate.contact_email || "",
+        contact_phone: candidate.contact_phone || "",
+        address: candidate.address || "",
+        national_id: candidate.national_id || "",
+      });
     }
   }, [candidate?.id]);
 
@@ -336,9 +390,90 @@ export function CandidateDetailModal({
     setProgrammeSubjects(null);
   };
 
+  const handleSaveBio = async () => {
+    if (!candidate) return;
+
+    setSavingBio(true);
+    try {
+      const updatedCandidate = await updateCandidate(candidate.id, {
+        name: bioData.name,
+        date_of_birth: bioData.date_of_birth || null,
+        gender: bioData.gender || null,
+        contact_email: bioData.contact_email || null,
+        contact_phone: bioData.contact_phone || null,
+        address: bioData.address || null,
+        national_id: bioData.national_id || null,
+      });
+
+      toast.success("Bio data updated successfully");
+      setEditingBio(false);
+
+      // Update the candidate in parent component
+      if (onCandidateChange) {
+        onCandidateChange(updatedCandidate);
+      }
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Failed to update bio data");
+      console.error(error);
+    } finally {
+      setSavingBio(false);
+    }
+  };
+
+  const handleCancelBioEdit = () => {
+    // Reset to original bio data
+    if (candidate) {
+      setBioData({
+        name: candidate.name || "",
+        date_of_birth: candidate.date_of_birth ? new Date(candidate.date_of_birth).toISOString().split('T')[0] : "",
+        gender: candidate.gender || "",
+        contact_email: candidate.contact_email || "",
+        contact_phone: candidate.contact_phone || "",
+        address: candidate.address || "",
+        national_id: candidate.national_id || "",
+      });
+    }
+    setEditingBio(false);
+  };
+
+  const handleApprove = async () => {
+    if (!candidate) return;
+
+    setApproving(true);
+    try {
+      const updatedCandidate = await approveCandidate(candidate.id);
+      toast.success("Registration approved successfully");
+
+      // Update the candidate in parent component
+      if (onCandidateChange) {
+        onCandidateChange(updatedCandidate);
+      }
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Failed to approve registration");
+      console.error(error);
+    } finally {
+      setApproving(false);
+    }
+  };
+
   if (!candidate) return null;
 
   const subjectSelections = candidate.subject_selections || [];
+
+  // Compute validation status for approval
+  const isSchoolAdmin = currentUser?.role === "SchoolAdmin";
+  const canApprove = candidate.registration_status === "PENDING" || candidate.registration_status === "DRAFT";
+  const hasPhoto = !!photo;
+
+  // Check if exam is closed
+  const isExamClosed = candidate.exam?.registration_period
+    ? (() => {
+        const isActive = candidate.exam.registration_period.is_active;
+        const now = new Date();
+        const endDate = new Date(candidate.exam.registration_period.registration_end_date);
+        return !isActive || now > endDate;
+      })()
+    : false;
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -397,6 +532,26 @@ export function CandidateDetailModal({
               </div>
             </div>
             <div className="flex items-center gap-2 flex-shrink-0">
+              {isSchoolAdmin && canApprove && (
+                <Button
+                  onClick={handleApprove}
+                  disabled={approving || !hasPhoto}
+                  className="bg-green-600 hover:bg-green-700 text-white"
+                  title={!hasPhoto ? "Photo is required for approval" : "Approve registration (validation will be performed by the system)"}
+                >
+                  {approving ? (
+                    <>
+                      <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                      Approving...
+                    </>
+                  ) : (
+                    <>
+                      <CheckCircle2 className="h-4 w-4 mr-2" />
+                      Approve
+                    </>
+                  )}
+                </Button>
+              )}
               <Button
                 variant="ghost"
                 size="icon"
@@ -441,87 +596,239 @@ export function CandidateDetailModal({
               {/* Enhanced Candidate Information Card */}
               <Card className="flex-1 flex flex-col">
               <CardHeader>
-                <CardTitle className="text-base flex items-center gap-2">
-                  <User className="h-4 w-4" />
-                  Candidate Information
-                </CardTitle>
+                <div className="flex items-center justify-between">
+                  <CardTitle className="text-base flex items-center gap-2">
+                    <User className="h-4 w-4" />
+                    Candidate Information
+                  </CardTitle>
+                  {!editingBio && !isExamClosed && (
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => setEditingBio(true)}
+                    >
+                      <Edit2 className="h-4 w-4 mr-2" />
+                      Edit Bio Data
+                    </Button>
+                  )}
+                </div>
               </CardHeader>
               <CardContent>
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                  {candidate.date_of_birth && (
+                {editingBio ? (
+                  <div className="space-y-4">
+                    <div className="space-y-2">
+                      <Label htmlFor="edit-name">Full Name *</Label>
+                      <Input
+                        id="edit-name"
+                        value={bioData.name}
+                        onChange={(e) => setBioData({ ...bioData, name: e.target.value })}
+                        disabled={savingBio}
+                        required
+                      />
+                    </div>
+                    <div className="grid grid-cols-2 gap-4">
+                      <div className="space-y-2">
+                        <Label htmlFor="edit-dob">Date of Birth</Label>
+                        <Input
+                          id="edit-dob"
+                          type="date"
+                          value={bioData.date_of_birth}
+                          onChange={(e) => setBioData({ ...bioData, date_of_birth: e.target.value })}
+                          disabled={savingBio}
+                        />
+                      </div>
+                      <div className="space-y-2">
+                        <Label htmlFor="edit-gender">Gender</Label>
+                        <Select
+                          value={bioData.gender}
+                          onValueChange={(value) => setBioData({ ...bioData, gender: value })}
+                          disabled={savingBio}
+                        >
+                          <SelectTrigger>
+                            <SelectValue placeholder="Select gender" />
+                          </SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="Male">Male</SelectItem>
+                            <SelectItem value="Female">Female</SelectItem>
+                            <SelectItem value="Other">Other</SelectItem>
+                          </SelectContent>
+                        </Select>
+                      </div>
+                    </div>
+                    <div className="grid grid-cols-2 gap-4">
+                      <div className="space-y-2">
+                        <Label htmlFor="edit-email">Contact Email</Label>
+                        <Input
+                          id="edit-email"
+                          type="email"
+                          value={bioData.contact_email}
+                          onChange={(e) => setBioData({ ...bioData, contact_email: e.target.value })}
+                          disabled={savingBio}
+                        />
+                      </div>
+                      <div className="space-y-2">
+                        <Label htmlFor="edit-phone">Contact Phone</Label>
+                        <Input
+                          id="edit-phone"
+                          value={bioData.contact_phone}
+                          onChange={(e) => setBioData({ ...bioData, contact_phone: e.target.value })}
+                          disabled={savingBio}
+                        />
+                      </div>
+                    </div>
+                    <div className="space-y-2">
+                      <Label htmlFor="edit-address">Address</Label>
+                      <Input
+                        id="edit-address"
+                        value={bioData.address}
+                        onChange={(e) => setBioData({ ...bioData, address: e.target.value })}
+                        disabled={savingBio}
+                      />
+                    </div>
+                    <div className="space-y-2">
+                      <Label htmlFor="edit-national-id">National ID</Label>
+                      <Input
+                        id="edit-national-id"
+                        value={bioData.national_id}
+                        onChange={(e) => setBioData({ ...bioData, national_id: e.target.value })}
+                        disabled={savingBio}
+                      />
+                    </div>
+                    <div className="flex items-center gap-2 pt-2">
+                      <Button
+                        onClick={handleSaveBio}
+                        disabled={savingBio || !bioData.name.trim()}
+                        size="sm"
+                      >
+                        {savingBio ? (
+                          <>
+                            <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                            Saving...
+                          </>
+                        ) : (
+                          <>
+                            <Save className="h-4 w-4 mr-2" />
+                            Save Changes
+                          </>
+                        )}
+                      </Button>
+                      <Button
+                        variant="outline"
+                        onClick={handleCancelBioEdit}
+                        disabled={savingBio}
+                        size="sm"
+                      >
+                        <XIcon className="h-4 w-4 mr-2" />
+                        Cancel
+                      </Button>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <div className="space-y-1 md:col-span-2">
+                      <div className="text-xs text-muted-foreground">Full Name</div>
+                      <div className="text-sm font-medium">{candidate.name}</div>
+                    </div>
+                    {candidate.date_of_birth && (
+                      <div className="space-y-1">
+                        <div className="text-xs text-muted-foreground flex items-center gap-1">
+                          <Calendar className="h-3 w-3" />
+                          Date of Birth
+                        </div>
+                        <div className="text-sm font-medium">
+                          {new Date(candidate.date_of_birth).toLocaleDateString()}
+                          <span className="text-muted-foreground ml-2">
+                            (Age: {calculateAge(candidate.date_of_birth)})
+                          </span>
+                        </div>
+                      </div>
+                    )}
+                    {candidate.gender && (
+                      <div className="space-y-1">
+                        <div className="text-xs text-muted-foreground flex items-center gap-1">
+                          <User className="h-3 w-3" />
+                          Gender
+                        </div>
+                        <div className="text-sm font-medium">{candidate.gender}</div>
+                      </div>
+                    )}
+                    {candidate.programme_code && (
+                      <div className="space-y-1">
+                        <div className="text-xs text-muted-foreground flex items-center gap-1">
+                          <GraduationCap className="h-3 w-3" />
+                          Programme Code
+                        </div>
+                        <div className="text-sm font-medium">{candidate.programme_code}</div>
+                      </div>
+                    )}
+                    {candidate.contact_email && (
+                      <div className="space-y-1">
+                        <div className="text-xs text-muted-foreground">Contact Email</div>
+                        <div className="text-sm font-medium">{candidate.contact_email}</div>
+                      </div>
+                    )}
+                    {candidate.contact_phone && (
+                      <div className="space-y-1">
+                        <div className="text-xs text-muted-foreground">Contact Phone</div>
+                        <div className="text-sm font-medium">{candidate.contact_phone}</div>
+                      </div>
+                    )}
+                    {candidate.address && (
+                      <div className="space-y-1 md:col-span-2">
+                        <div className="text-xs text-muted-foreground">Address</div>
+                        <div className="text-sm font-medium">{candidate.address}</div>
+                      </div>
+                    )}
+                    {candidate.national_id && (
+                      <div className="space-y-1">
+                        <div className="text-xs text-muted-foreground">National ID</div>
+                        <div className="text-sm font-medium">{candidate.national_id}</div>
+                      </div>
+                    )}
+                    {(candidate.guardian_name || candidate.guardian_phone || candidate.guardian_address) && (
+                      <>
+                        <div className="space-y-1 md:col-span-2">
+                          <div className="text-xs text-muted-foreground font-medium">Guardian Information</div>
+                        </div>
+                        {candidate.guardian_name && (
+                          <div className="space-y-1">
+                            <div className="text-xs text-muted-foreground">Guardian Name</div>
+                            <div className="text-sm font-medium">{candidate.guardian_name}</div>
+                          </div>
+                        )}
+                        {candidate.guardian_phone && (
+                          <div className="space-y-1">
+                            <div className="text-xs text-muted-foreground">Guardian Phone</div>
+                            <div className="text-sm font-medium">{candidate.guardian_phone}</div>
+                          </div>
+                        )}
+                        {candidate.guardian_address && (
+                          <div className="space-y-1 md:col-span-2">
+                            <div className="text-xs text-muted-foreground">Guardian Address</div>
+                            <div className="text-sm font-medium">{candidate.guardian_address}</div>
+                          </div>
+                        )}
+                      </>
+                    )}
                     <div className="space-y-1">
                       <div className="text-xs text-muted-foreground flex items-center gap-1">
-                        <Calendar className="h-3 w-3" />
-                        Date of Birth
+                        <Clock className="h-3 w-3" />
+                        Registration Date
                       </div>
                       <div className="text-sm font-medium">
-                        {new Date(candidate.date_of_birth).toLocaleDateString()}
-                        <span className="text-muted-foreground ml-2">
-                          (Age: {calculateAge(candidate.date_of_birth)})
-                        </span>
+                        {new Date(candidate.registration_date).toLocaleDateString()}
                       </div>
                     </div>
-                  )}
-                  {candidate.gender && (
                     <div className="space-y-1">
-                      <div className="text-xs text-muted-foreground flex items-center gap-1">
-                        <User className="h-3 w-3" />
-                        Gender
+                      <div className="text-xs text-muted-foreground">Index Number</div>
+                      <div className="text-sm font-medium font-mono">
+                        {candidate.index_number || (
+                          <span className="text-muted-foreground italic">Not available</span>
+                        )}
                       </div>
-                      <div className="text-sm font-medium">{candidate.gender}</div>
-                    </div>
-                  )}
-                  {candidate.programme_code && (
-                    <div className="space-y-1">
-                      <div className="text-xs text-muted-foreground flex items-center gap-1">
-                        <GraduationCap className="h-3 w-3" />
-                        Programme Code
-                      </div>
-                      <div className="text-sm font-medium">{candidate.programme_code}</div>
-                    </div>
-                  )}
-                  {candidate.contact_email && (
-                    <div className="space-y-1">
-                      <div className="text-xs text-muted-foreground">Contact Email</div>
-                      <div className="text-sm font-medium">{candidate.contact_email}</div>
-                    </div>
-                  )}
-                  {candidate.contact_phone && (
-                    <div className="space-y-1">
-                      <div className="text-xs text-muted-foreground">Contact Phone</div>
-                      <div className="text-sm font-medium">{candidate.contact_phone}</div>
-                    </div>
-                  )}
-                  {candidate.address && (
-                    <div className="space-y-1 md:col-span-2">
-                      <div className="text-xs text-muted-foreground">Address</div>
-                      <div className="text-sm font-medium">{candidate.address}</div>
-                    </div>
-                  )}
-                  {candidate.national_id && (
-                    <div className="space-y-1">
-                      <div className="text-xs text-muted-foreground">National ID</div>
-                      <div className="text-sm font-medium">{candidate.national_id}</div>
-                    </div>
-                  )}
-                  <div className="space-y-1">
-                    <div className="text-xs text-muted-foreground flex items-center gap-1">
-                      <Clock className="h-3 w-3" />
-                      Registration Date
-                    </div>
-                    <div className="text-sm font-medium">
-                      {new Date(candidate.registration_date).toLocaleDateString()}
                     </div>
                   </div>
-                  <div className="space-y-1">
-                    <div className="text-xs text-muted-foreground">Index Number</div>
-                    <div className="text-sm font-medium font-mono">
-                      {candidate.index_number || (
-                        <span className="text-muted-foreground italic">Not generated yet</span>
-                      )}
-                    </div>
-                  </div>
-                </div>
+                )}
               </CardContent>
               </Card>
 
@@ -557,15 +864,17 @@ export function CandidateDetailModal({
                           <Badge className="bg-primary text-xs">Active</Badge>
                         </div>
                       </div>
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        className="w-full"
-                        onClick={() => setUploadDialogOpen(true)}
-                      >
-                        <Upload className="h-4 w-4 mr-2" />
-                        Change Photo
-                      </Button>
+                      {!isExamClosed && (
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          className="w-full"
+                          onClick={() => setUploadDialogOpen(true)}
+                        >
+                          <Upload className="h-4 w-4 mr-2" />
+                          Change Photo
+                        </Button>
+                      )}
                     </>
                   ) : (
                     <>
@@ -575,15 +884,17 @@ export function CandidateDetailModal({
                         </div>
                         <p className="text-xs mt-2 text-center">No photo available</p>
                       </div>
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        className="w-full"
-                        onClick={() => setUploadDialogOpen(true)}
-                      >
-                        <Upload className="h-4 w-4 mr-2" />
-                        Upload Photo
-                      </Button>
+                      {!isExamClosed && (
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          className="w-full"
+                          onClick={() => setUploadDialogOpen(true)}
+                        >
+                          <Upload className="h-4 w-4 mr-2" />
+                          Upload Photo
+                        </Button>
+                      )}
                     </>
                   )}
                 </CardContent>
@@ -597,7 +908,7 @@ export function CandidateDetailModal({
                   <BookOpen className="h-5 w-5" />
                   Registered Subjects
                 </h3>
-                {candidate?.programme_id && !editingSubjects && (
+                {candidate?.programme_id && !editingSubjects && !isExamClosed && (
                   <Button
                     variant="outline"
                     size="sm"
@@ -617,7 +928,7 @@ export function CandidateDetailModal({
                       <div className="text-center text-muted-foreground text-sm py-8">
                         <BookOpen className="h-12 w-12 mx-auto mb-3 opacity-50" />
                         <p>No subjects registered for this candidate.</p>
-                        {candidate?.programme_id && (
+                        {candidate?.programme_id && !isExamClosed && (
                           <Button
                             variant="outline"
                             size="sm"
