@@ -173,6 +173,19 @@ export default function RegistrationPage() {
       const exam = exams.find((e) => e.id.toString() === selectedExamId);
       setSelectedExam(exam || null);
       loadCandidatesForExam(parseInt(selectedExamId));
+
+      // Auto-select "referral" for NOV/DEC exams immediately
+      if (exam) {
+        const isNovDec = exam.exam_series?.toUpperCase().replace(/[-\s]/g, "/") === "NOV/DEC";
+        if (isNovDec) {
+          setFormData((prev) => {
+            if (prev.registration_type !== "referral") {
+              return { ...prev, registration_type: "referral" };
+            }
+            return prev;
+          });
+        }
+      }
     } else {
       setSelectedExam(null);
       setCandidates([]);
@@ -180,6 +193,16 @@ export default function RegistrationPage() {
       setDefaultChoiceGroups({});
     }
   }, [selectedExamId, exams]);
+
+  // Also ensure "referral" is set when selectedExam changes (backup)
+  useEffect(() => {
+    if (selectedExam) {
+      const isNovDec = selectedExam.exam_series?.toUpperCase().replace(/[-\s]/g, "/") === "NOV/DEC";
+      if (isNovDec && formData.registration_type !== "referral") {
+        setFormData((prev) => ({ ...prev, registration_type: "referral" }));
+      }
+    }
+  }, [selectedExam]);
 
   // Automatically load optional core groups when exam and programmes are available
   useEffect(() => {
@@ -192,6 +215,19 @@ export default function RegistrationPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedExam?.id, programmes.length]);
 
+  // Auto-set bulk registration type for NOV/DEC
+  useEffect(() => {
+    if (selectedExam) {
+      const isNovDec = selectedExam.exam_series?.toUpperCase().replace(/[-\s]/g, "/") === "NOV/DEC";
+      if (isNovDec) {
+        // Auto-set to referral for NOV/DEC
+        if (bulkRegistrationType !== "referral") {
+          setBulkRegistrationType("referral");
+        }
+      }
+    }
+  }, [selectedExam, bulkRegistrationType]);
+
   useEffect(() => {
     if (selectedProgrammeId && selectedExam) {
       loadProgrammeSubjects(selectedProgrammeId);
@@ -199,7 +235,7 @@ export default function RegistrationPage() {
       setProgrammeSubjects(null);
       setSelectedSubjectIds([]);
     }
-  }, [selectedProgrammeId, selectedExam]);
+  }, [selectedProgrammeId, selectedExam, formData.registration_type]);
 
   const loadExams = async () => {
     try {
@@ -254,17 +290,36 @@ export default function RegistrationPage() {
       // Check if exam is MAY/JUNE (case-insensitive)
       const isMayJune = selectedExam?.exam_series?.toUpperCase().replace(/[-\s]/g, "/") === "MAY/JUNE";
 
-      // Auto-select compulsory core subjects only (not optional core subjects)
+      // Check registration type
+      const isReferral = formData.registration_type === "referral";
+      const isFreeTvet = formData.registration_type === "free_tvet" || !formData.registration_type; // Default to free_tvet if not specified
+
+      // Auto-select subjects based on registration type
       const autoSelectedIds: number[] = [];
-      autoSelectedIds.push(...subjects.compulsory_core.map((s) => s.subject_id));
 
-      // For MAY/JUNE: Auto-select ALL elective subjects (they are compulsory)
-      if (isMayJune) {
-        autoSelectedIds.push(...subjects.electives.map((s) => s.subject_id));
+      // For referral: use NOV/DEC logic (all subjects optional, no auto-selection)
+      if (isReferral) {
+        // No auto-selection for referral - user must select subjects manually
+        setSelectedSubjectIds([]);
+      } else if (isFreeTvet) {
+        // For free_tvet: Auto-select compulsory core subjects only (not optional core subjects)
+        autoSelectedIds.push(...subjects.compulsory_core.map((s) => s.subject_id));
+
+        // For MAY/JUNE: Auto-select ALL elective subjects (they are compulsory for free_tvet)
+        if (isMayJune) {
+          autoSelectedIds.push(...subjects.electives.map((s) => s.subject_id));
+        }
+
+        // Do NOT auto-select optional core subjects - they must be explicitly chosen by the user
+        setSelectedSubjectIds(autoSelectedIds);
+      } else {
+        // For other types (or no type specified), default to free_tvet behavior
+        autoSelectedIds.push(...subjects.compulsory_core.map((s) => s.subject_id));
+        if (isMayJune) {
+          autoSelectedIds.push(...subjects.electives.map((s) => s.subject_id));
+        }
+        setSelectedSubjectIds(autoSelectedIds);
       }
-
-      // Do NOT auto-select optional core subjects - they must be explicitly chosen by the user
-      setSelectedSubjectIds(autoSelectedIds);
     } catch (error) {
       toast.error("Failed to load programme subjects");
       console.error(error);
@@ -559,8 +614,13 @@ export default function RegistrationPage() {
     setSubmitting(true);
 
     try {
+      // Ensure registration_type is set for NOV/DEC exams
+      const isNovDec = selectedExam?.exam_series?.toUpperCase().replace(/[-\s]/g, "/") === "NOV/DEC";
+      const finalRegistrationType = isNovDec ? "referral" : formData.registration_type;
+
       const submitData: RegistrationCandidateCreate = {
         ...formData,
+        registration_type: finalRegistrationType,
         subject_ids: selectedSubjectIds,
       };
       const newCandidate = await registerCandidate(parseInt(selectedExamId), submitData);
@@ -1058,21 +1118,69 @@ export default function RegistrationPage() {
                         </Select>
                       </div>
                       <div className="space-y-2">
-                        <Label htmlFor="registration_type">Registration Type (Optional)</Label>
+                        <Label htmlFor="registration_type">
+                          Registration Type
+                          {selectedExam?.exam_series?.toUpperCase().replace(/[-\s]/g, "/") === "NOV/DEC" ? (
+                            <span className="text-destructive"> *</span>
+                          ) : (
+                            <span className="text-muted-foreground"> (Optional)</span>
+                          )}
+                        </Label>
                         <Select
-                          value={formData.registration_type || ""}
+                          value={(() => {
+                            const isNovDec = selectedExam?.exam_series?.toUpperCase().replace(/[-\s]/g, "/") === "NOV/DEC";
+                            // For NOV/DEC, always use "referral" and ensure formData is set
+                            if (isNovDec) {
+                              // Ensure formData is updated if it's not already set
+                              if (formData.registration_type !== "referral") {
+                                setFormData((prev) => ({ ...prev, registration_type: "referral" }));
+                              }
+                              return "referral";
+                            }
+                            return formData.registration_type || "";
+                          })()}
                           onValueChange={(value) => {
                             setFormData({ ...formData, registration_type: value || null });
                           }}
+                          disabled={selectedExam?.exam_series?.toUpperCase().replace(/[-\s]/g, "/") === "NOV/DEC"}
+                          required={selectedExam?.exam_series?.toUpperCase().replace(/[-\s]/g, "/") === "NOV/DEC"}
                         >
                           <SelectTrigger>
                             <SelectValue placeholder="Select registration type" />
                           </SelectTrigger>
                           <SelectContent>
-                            <SelectItem value="free_tvet">FREE TVET</SelectItem>
-                            <SelectItem value="referral">Referral</SelectItem>
+                            {(() => {
+                              const isMayJune = selectedExam?.exam_series?.toUpperCase().replace(/[-\s]/g, "/") === "MAY/JUNE";
+                              const isNovDec = selectedExam?.exam_series?.toUpperCase().replace(/[-\s]/g, "/") === "NOV/DEC";
+
+                              // For NOV/DEC: only show "referral"
+                              // For MAY/JUNE: show both "free_tvet" and "referral"
+                              if (isNovDec) {
+                                return <SelectItem value="referral">Referral</SelectItem>;
+                              } else if (isMayJune) {
+                                return (
+                                  <>
+                                    <SelectItem value="free_tvet">FREE TVET</SelectItem>
+                                    <SelectItem value="referral">Referral</SelectItem>
+                                  </>
+                                );
+                              } else {
+                                // If exam series is not set or unknown, show both options
+                                return (
+                                  <>
+                                    <SelectItem value="free_tvet">FREE TVET</SelectItem>
+                                    <SelectItem value="referral">Referral</SelectItem>
+                                  </>
+                                );
+                              }
+                            })()}
                           </SelectContent>
                         </Select>
+                        {selectedExam?.exam_series?.toUpperCase().replace(/[-\s]/g, "/") === "NOV/DEC" && (
+                          <p className="text-xs text-muted-foreground">
+                            For NOV/DEC examinations, only "referral" registration type is allowed.
+                          </p>
+                        )}
                       </div>
                     </div>
                     </CollapsibleContent>
@@ -1245,24 +1353,52 @@ export default function RegistrationPage() {
                       </div>
                     )}
 
-                    {programmeSubjects && !loadingSubjects && (
+                    {programmeSubjects && !loadingSubjects && (() => {
+                      const isMayJune = selectedExam?.exam_series?.toUpperCase().replace(/[-\s]/g, "/") === "MAY/JUNE";
+                      const isReferral = formData.registration_type === "referral";
+                      const isFreeTvet = formData.registration_type === "free_tvet" || !formData.registration_type;
+
+                      return (
+                        <>
+                          {isReferral && isMayJune && (
+                            <Alert className="mb-4">
+                              <Info className="h-4 w-4" />
+                              <AlertDescription>
+                                For referral candidates in MAY/JUNE examinations, all subjects are optional. However, you must select at least one subject (compulsory core, optional core, or elective).
+                              </AlertDescription>
+                            </Alert>
+                          )}
+
+                      {/* return ( */}
                       <div className="space-y-4 border rounded-lg p-4">
                         {/* Compulsory Core Subjects */}
                         {programmeSubjects.compulsory_core.length > 0 && (
                           <div className="space-y-2">
-                            <Label className="text-base font-medium">Compulsory Core Subjects</Label>
+                            <Label className="text-base font-medium">
+                              Compulsory Core Subjects {isReferral && isMayJune ? "(Optional - Select at least one subject total)" : isFreeTvet && isMayJune ? "(Required)" : ""}
+                            </Label>
                             <div className="space-y-2 pl-4">
-                              {programmeSubjects.compulsory_core.map((subject) => (
-                                <div key={subject.subject_id} className="flex items-center gap-2">
-                                  <Checkbox checked={true} disabled />
-                                  <Label className="font-normal">
-                                    {subject.subject_code} - {subject.subject_name}
-                                  </Label>
-                                  <Badge variant="secondary" className="text-xs">
-                                    CORE
-                                  </Badge>
-                                </div>
-                              ))}
+                              {programmeSubjects.compulsory_core.map((subject) => {
+                                const isChecked = selectedSubjectIds.includes(subject.subject_id);
+                                const shouldDisable = isFreeTvet && isMayJune; // Only disable for free_tvet in MAY/JUNE
+                                return (
+                                  <div key={subject.subject_id} className="flex items-center gap-2">
+                                    <Checkbox
+                                      checked={isChecked}
+                                      disabled={shouldDisable}
+                                      onCheckedChange={(checked) =>
+                                        handleSubjectToggle(subject.subject_id, checked as boolean)
+                                      }
+                                    />
+                                    <Label className={`font-normal ${shouldDisable ? "" : "cursor-pointer"}`}>
+                                      {subject.subject_code} - {subject.subject_name}
+                                    </Label>
+                                    <Badge variant="secondary" className="text-xs">
+                                      CORE
+                                    </Badge>
+                                  </div>
+                                );
+                              })}
                             </div>
                           </div>
                         )}
@@ -1305,10 +1441,19 @@ export default function RegistrationPage() {
                         {/* Elective Subjects */}
                         {programmeSubjects.electives.length > 0 && (() => {
                           const isMayJune = selectedExam?.exam_series?.toUpperCase().replace(/[-\s]/g, "/") === "MAY/JUNE";
+                          const isReferral = formData.registration_type === "referral";
+                          const isFreeTvet = formData.registration_type === "free_tvet" || !formData.registration_type;
+                          const shouldDisableElectives = isFreeTvet && isMayJune; // Only disable for free_tvet in MAY/JUNE
+                          const electiveLabel = isReferral && isMayJune
+                            ? "(Optional - Select at least one subject total)"
+                            : isFreeTvet && isMayJune
+                            ? "(All Required)"
+                            : "(Select any)";
+
                           return (
                             <div className="space-y-2">
                               <Label className="text-base font-medium">
-                                Elective Subjects {isMayJune ? "(All Required)" : "(Select any)"}
+                                Elective Subjects {electiveLabel}
                               </Label>
                               <div className="space-y-2 pl-4">
                                 {programmeSubjects.electives.map((subject) => {
@@ -1317,12 +1462,12 @@ export default function RegistrationPage() {
                                     <div key={subject.subject_id} className="flex items-center gap-2">
                                       <Checkbox
                                         checked={isChecked}
-                                        disabled={isMayJune}
+                                        disabled={shouldDisableElectives}
                                         onCheckedChange={(checked) =>
                                           handleSubjectToggle(subject.subject_id, checked as boolean)
                                         }
                                       />
-                                      <Label className={`font-normal ${isMayJune ? "" : "cursor-pointer"}`}>
+                                      <Label className={`font-normal ${shouldDisableElectives ? "" : "cursor-pointer"}`}>
                                         {subject.subject_code} - {subject.subject_name}
                                       </Label>
                                       <Badge variant="outline" className="text-xs">
@@ -1336,7 +1481,9 @@ export default function RegistrationPage() {
                           );
                         })()}
                       </div>
-                    )}
+                        </>
+                      );
+                    })()}
                     </CollapsibleContent>
                   </Collapsible>
 
@@ -1597,18 +1744,53 @@ export default function RegistrationPage() {
                       Select a default registration type to apply to all candidates in the bulk upload. This can be overridden by the registration_type column in the file.
                     </p>
                     <Select
-                      value={bulkRegistrationType || undefined}
+                      value={(() => {
+                        const isNovDec = selectedExam?.exam_series?.toUpperCase().replace(/[-\s]/g, "/") === "NOV/DEC";
+                        // For NOV/DEC, always show "referral" even if bulkRegistrationType hasn't updated yet
+                        if (isNovDec) {
+                          return "referral";
+                        }
+                        return bulkRegistrationType || undefined;
+                      })()}
                       onValueChange={(value) => setBulkRegistrationType(value || "")}
-                      disabled={bulkUploading}
+                      disabled={bulkUploading || selectedExam?.exam_series?.toUpperCase().replace(/[-\s]/g, "/") === "NOV/DEC"}
                     >
                       <SelectTrigger className="w-full max-w-xs">
                         <SelectValue placeholder="Select registration type (optional)" />
                       </SelectTrigger>
                       <SelectContent>
-                        <SelectItem value="free_tvet">FREE TVET</SelectItem>
-                        <SelectItem value="referral">Referral</SelectItem>
+                        {(() => {
+                          const isMayJune = selectedExam?.exam_series?.toUpperCase().replace(/[-\s]/g, "/") === "MAY/JUNE";
+                          const isNovDec = selectedExam?.exam_series?.toUpperCase().replace(/[-\s]/g, "/") === "NOV/DEC";
+
+                          // For NOV/DEC: only show "referral"
+                          // For MAY/JUNE: show both "free_tvet" and "referral"
+                          if (isNovDec) {
+                            return <SelectItem value="referral">Referral</SelectItem>;
+                          } else if (isMayJune) {
+                            return (
+                              <>
+                                <SelectItem value="free_tvet">FREE TVET</SelectItem>
+                                <SelectItem value="referral">Referral</SelectItem>
+                              </>
+                            );
+                          } else {
+                            // If exam series is not set or unknown, show both options
+                            return (
+                              <>
+                                <SelectItem value="free_tvet">FREE TVET</SelectItem>
+                                <SelectItem value="referral">Referral</SelectItem>
+                              </>
+                            );
+                          }
+                        })()}
                       </SelectContent>
                     </Select>
+                    {selectedExam?.exam_series?.toUpperCase().replace(/[-\s]/g, "/") === "NOV/DEC" && (
+                      <p className="text-xs text-muted-foreground">
+                        For NOV/DEC examinations, "referral" registration type is required and automatically selected.
+                      </p>
+                    )}
                     {bulkRegistrationType && (
                       <Button
                         type="button"

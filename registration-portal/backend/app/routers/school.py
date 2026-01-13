@@ -253,8 +253,19 @@ async def validate_registration_type_and_guardian(
     exam_series: str | None,
     guardian_name: str | None,
     guardian_phone: str | None,
+    is_school_registration: bool = False,
 ) -> None:
-    """Validate registration_type against exam series and guardian requirements."""
+    """
+    Validate registration_type against exam series and guardian requirements.
+
+    For school registrations:
+    - NOV/DEC: Only "referral" is allowed
+    - MAY/JUNE: "free_tvet" and "referral" are allowed
+
+    For private registrations (non-school):
+    - NOV/DEC: "private" is allowed
+    - MAY/JUNE: Not applicable (private candidates register through different endpoint)
+    """
     if registration_type is None:
         return  # No validation needed if registration_type is not specified
 
@@ -262,7 +273,26 @@ async def validate_registration_type_and_guardian(
     is_may_june = normalized_series == "MAY/JUNE"
     is_nov_dec = normalized_series == "NOV/DEC"
 
-    # Validate registration_type against exam series
+    # For school registrations, enforce different rules
+    if is_school_registration:
+        if is_nov_dec:
+            # For NOV/DEC school registrations, only "referral" is allowed
+            if registration_type != RegistrationType.REFERRAL.value:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="For NOV/DEC examinations, school registrations can only use 'referral' registration type",
+                )
+        elif is_may_june:
+            # For MAY/JUNE school registrations, only "free_tvet" and "referral" are allowed
+            if registration_type not in (RegistrationType.FREE_TVET.value, RegistrationType.REFERRAL.value):
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail=f"Invalid registration_type for MAY/JUNE school registration: {registration_type}. Only 'free_tvet' and 'referral' are allowed.",
+                )
+        # Guardian info optional for school registrations
+        return
+
+    # For non-school registrations (private candidates)
     if registration_type == RegistrationType.PRIVATE.value:
         if not is_nov_dec:
             raise HTTPException(
@@ -325,12 +355,27 @@ async def register_candidate(
     ):
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Registration period is not open")
 
+    # For NOV/DEC school registrations, registration_type is required and must be "referral"
+    normalized_series = normalize_exam_series(exam.exam_series)
+    is_nov_dec = normalized_series == "NOV/DEC"
+
+    if is_nov_dec:
+        if not candidate_data.registration_type:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Registration type is required for NOV/DEC examinations. Only 'referral' is allowed.",
+            )
+        # Auto-set to referral if not already set
+        if candidate_data.registration_type != RegistrationType.REFERRAL.value:
+            candidate_data.registration_type = RegistrationType.REFERRAL.value
+
     # Validate registration_type and guardian requirements
     await validate_registration_type_and_guardian(
         candidate_data.registration_type,
         exam.exam_series,
         candidate_data.guardian_name,
         candidate_data.guardian_phone,
+        is_school_registration=True,
     )
 
     # Validate programme if provided
@@ -357,8 +402,13 @@ async def register_candidate(
                     detail="Programme is not available for your school. Please contact your administrator.",
                 )
 
-    # Determine registration_type (default to FREE_TVET for school registrations)
-    registration_type = candidate_data.registration_type or RegistrationType.FREE_TVET.value
+    # Determine registration_type
+    # For NOV/DEC: must be referral (already validated and set above)
+    # For MAY/JUNE: default to FREE_TVET if not specified
+    if is_nov_dec:
+        registration_type = RegistrationType.REFERRAL.value
+    else:
+        registration_type = candidate_data.registration_type or RegistrationType.FREE_TVET.value
 
     # Generate unique registration number
     if not current_user.school_id:
@@ -426,16 +476,22 @@ async def register_candidate(
         selected_subject_ids = list(set(selected_subject_ids))
 
         # Validate subject selections if programme is provided
-        if programme_id and selected_subject_ids:
-            is_valid, validation_errors = await validate_subject_selections(
-                session, programme_id, selected_subject_ids, exam.exam_series
-            )
-            if not is_valid:
-                await session.rollback()
-                raise HTTPException(
-                    status_code=status.HTTP_400_BAD_REQUEST,
-                    detail=f"Subject selections do not meet programme requirements: {'; '.join(validation_errors)}",
+        # For referral candidates, validate even if selected_subject_ids is empty to ensure at least one subject is selected
+        if programme_id:
+            # For referral candidates, we need to validate even with empty list to check "at least one" requirement
+            # For other types, only validate if there are selected subjects (or if it's free_tvet with auto-selected subjects)
+            should_validate = True if (selected_subject_ids or is_referral) else False
+
+            if should_validate:
+                is_valid, validation_errors = await validate_subject_selections(
+                    session, programme_id, selected_subject_ids, exam.exam_series, registration_type
                 )
+                if not is_valid:
+                    await session.rollback()
+                    raise HTTPException(
+                        status_code=status.HTTP_400_BAD_REQUEST,
+                        detail=f"Subject selections do not meet programme requirements: {'; '.join(validation_errors)}",
+                    )
 
         # Create subject selections
         for subject_id in selected_subject_ids:
@@ -601,8 +657,14 @@ async def update_candidate(
 
             # Validate subject selections if programme is provided
             if programme_id:
+                # Pass registration_type to validation
+                registration_type = candidate.registration_type.value if candidate.registration_type else None
                 is_valid, validation_errors = await validate_subject_selections(
-                    session, programme_id, candidate_update.subject_ids, candidate.exam.exam_series if candidate.exam else None
+                    session,
+                    programme_id,
+                    candidate_update.subject_ids,
+                    candidate.exam.exam_series if candidate.exam else None,
+                    registration_type,
                 )
                 if not is_valid:
                     raise HTTPException(
@@ -1065,8 +1127,39 @@ async def bulk_upload_candidates(
             file_registration_type = get_col('registration_type') or get_col('registration type')
             if file_registration_type:
                 file_registration_type = str(file_registration_type).strip() or None
-            # Use file value if provided, otherwise use form parameter, otherwise default to FREE_TVET
-            candidate_registration_type = file_registration_type or registration_type or RegistrationType.FREE_TVET.value
+
+            # Validate registration_type for school registrations
+            # For NOV/DEC: only "referral" is allowed and required (auto-set if not provided)
+            # For MAY/JUNE: "free_tvet" and "referral" are allowed, default to FREE_TVET
+            normalized_series = normalize_exam_series(exam.exam_series)
+            is_may_june = normalized_series == "MAY/JUNE"
+            is_nov_dec = normalized_series == "NOV/DEC"
+
+            if is_nov_dec:
+                # For NOV/DEC: must be referral, auto-set if not provided
+                candidate_registration_type = file_registration_type or registration_type or RegistrationType.REFERRAL.value
+                if candidate_registration_type != RegistrationType.REFERRAL.value:
+                    errors.append(BulkUploadError(
+                        row_number=row_number,
+                        error_message=f"For NOV/DEC examinations, school registrations can only use 'referral' registration type. Found: {candidate_registration_type}",
+                        field="registration_type"
+                    ))
+                    failed += 1
+                    continue
+            elif is_may_june:
+                # For MAY/JUNE: use file value, form parameter, or default to FREE_TVET
+                candidate_registration_type = file_registration_type or registration_type or RegistrationType.FREE_TVET.value
+                if candidate_registration_type not in (RegistrationType.FREE_TVET.value, RegistrationType.REFERRAL.value):
+                    errors.append(BulkUploadError(
+                        row_number=row_number,
+                        error_message=f"Invalid registration_type for MAY/JUNE school registration: {candidate_registration_type}. Only 'free_tvet' and 'referral' are allowed.",
+                        field="registration_type"
+                    ))
+                    failed += 1
+                    continue
+            else:
+                # Default to FREE_TVET for unknown exam series
+                candidate_registration_type = file_registration_type or registration_type or RegistrationType.FREE_TVET.value
 
             # Validate and get programme
             programme_id = None
@@ -1104,21 +1197,26 @@ async def bulk_upload_candidates(
             # Get subject selections
             selected_subject_ids: list[int] = []
 
-            # Normalize exam series for comparison (needed for both programme and non-programme cases)
-            from app.services.subject_selection import normalize_exam_series
-            normalized_series = normalize_exam_series(exam.exam_series)
+            # Reuse the normalized_series that was already computed above
+            # normalized_series was already computed at line 1134 for registration_type validation
             is_may_june = normalized_series == "MAY/JUNE"
+            is_referral_bulk = candidate_registration_type == RegistrationType.REFERRAL.value
 
             if programme_id:
                 # Get programme subjects structure
                 subjects_info = await get_programme_subjects_for_registration(session, programme_id)
 
-                # Auto-select compulsory core subjects
-                selected_subject_ids.extend(subjects_info["compulsory_core"])
+                # For referral: use NOV/DEC logic (all subjects optional, no auto-selection)
+                if is_referral_bulk:
+                    # No auto-selection for referral - user must select subjects manually
+                    pass
+                else:
+                    # Auto-select compulsory core subjects
+                    selected_subject_ids.extend(subjects_info["compulsory_core"])
 
-                # For MAY/JUNE: Auto-select ALL elective subjects
-                if is_may_june:
-                    selected_subject_ids.extend(subjects_info["electives"])
+                    # For MAY/JUNE: Auto-select ALL elective subjects (they are compulsory for free_tvet)
+                    if is_may_june:
+                        selected_subject_ids.extend(subjects_info["electives"])
 
                 # Handle optional core groups
                 # Check for CSV column with optional core group selections
@@ -1194,18 +1292,24 @@ async def bulk_upload_candidates(
             selected_subject_ids = list(set(selected_subject_ids))
 
             # Validate subject selections if programme is provided
-            if programme_id and selected_subject_ids:
-                is_valid, validation_errors = await validate_subject_selections(
-                    session, programme_id, selected_subject_ids, exam.exam_series
-                )
-                if not is_valid:
-                    errors.append(BulkUploadError(
-                        row_number=row_number,
-                        error_message=f"Subject selections do not meet programme requirements: {'; '.join(validation_errors)}",
-                        field="subjects"
-                    ))
-                    failed += 1
-                    continue
+            # For referral candidates, validate even if selected_subject_ids is empty to ensure at least one subject is selected
+            if programme_id:
+                # For referral candidates, we need to validate even with empty list to check "at least one" requirement
+                # For other types, only validate if there are selected subjects (or if it's free_tvet with auto-selected subjects)
+                should_validate = True if (selected_subject_ids or is_referral_bulk) else False
+
+                if should_validate:
+                    is_valid, validation_errors = await validate_subject_selections(
+                        session, programme_id, selected_subject_ids, exam.exam_series, candidate_registration_type
+                    )
+                    if not is_valid:
+                        errors.append(BulkUploadError(
+                            row_number=row_number,
+                            error_message=f"Subject selections do not meet programme requirements: {'; '.join(validation_errors)}",
+                            field="subjects"
+                        ))
+                        failed += 1
+                        continue
 
             # Generate registration number (candidate_registration_type already determined above)
             registration_number = await generate_unique_registration_number(session, exam_id, current_user.school_id, candidate_registration_type)
