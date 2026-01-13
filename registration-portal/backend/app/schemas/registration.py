@@ -232,7 +232,7 @@ class RegistrationExamCreate(BaseModel):
     exam_series: str | None = None
     year: int
     description: str | None = None
-    pricing_model_preference: str | None = Field(None, description="Pricing model: 'per_subject', 'tiered', or 'auto'")
+    pricing_model_preference: str | None = Field(None, description="Pricing model: 'per_subject', 'tiered', 'per_programme', or 'auto'")
     registration_period: ExamRegistrationPeriodCreate
 
     @model_validator(mode="after")
@@ -262,7 +262,7 @@ class RegistrationExamUpdate(BaseModel):
     exam_series: str | None = None
     year: int | None = None
     description: str | None = None
-    pricing_model_preference: str | None = Field(None, description="Pricing model: 'per_subject', 'tiered', or 'auto'")
+    pricing_model_preference: str | None = Field(None, description="Pricing model: 'per_subject', 'tiered', 'per_programme', or 'auto'")
 
 
 class RegistrationExamResponse(BaseModel):

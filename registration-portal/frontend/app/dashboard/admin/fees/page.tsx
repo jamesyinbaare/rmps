@@ -15,8 +15,10 @@ import {
 import { ApplicationFeeSection } from "@/components/admin/ApplicationFeeSection";
 import { SubjectPricingSection } from "@/components/admin/SubjectPricingSection";
 import { TieredPricingSection } from "@/components/admin/TieredPricingSection";
+import { ProgrammePricingSection } from "@/components/admin/ProgrammePricingSection";
 import { ImportPricingDialog } from "@/components/admin/ImportPricingDialog";
 import { PricingModelSelector } from "@/components/admin/PricingModelSelector";
+import { PricingTable } from "@/components/admin/PricingTable";
 import {
   listExams,
   getExamPricing,
@@ -182,50 +184,9 @@ export default function FeesManagementPage() {
         />
       )}
 
-      {/* Pricing Sections */}
+      {/* Pricing Table */}
       {selectedExamId ? (
-        loadingPricing ? (
-          <Card>
-            <CardContent className="py-8">
-              <div className="flex items-center justify-center">
-                <Loader2 className="h-8 w-8 animate-spin" />
-                <span className="ml-2">Loading pricing data...</span>
-              </div>
-            </CardContent>
-          </Card>
-        ) : pricingData ? (
-          <Tabs value={activeTab} onValueChange={setActiveTab}>
-            <TabsList className="grid w-full grid-cols-3">
-              <TabsTrigger value="application-fee">Application Fee</TabsTrigger>
-              <TabsTrigger value="subject-pricing">Per-Subject Pricing</TabsTrigger>
-              <TabsTrigger value="tiered-pricing">Tiered Pricing</TabsTrigger>
-            </TabsList>
-
-            <TabsContent value="application-fee" className="mt-6">
-              <ApplicationFeeSection
-                examId={selectedExamId}
-                applicationFee={pricingData.application_fee}
-                onUpdate={handlePricingUpdate}
-              />
-            </TabsContent>
-
-            <TabsContent value="subject-pricing" className="mt-6">
-              <SubjectPricingSection
-                examId={selectedExamId}
-                subjectPricing={pricingData.subject_pricing}
-                onUpdate={handlePricingUpdate}
-              />
-            </TabsContent>
-
-            <TabsContent value="tiered-pricing" className="mt-6">
-              <TieredPricingSection
-                examId={selectedExamId}
-                tieredPricing={pricingData.tiered_pricing}
-                onUpdate={handlePricingUpdate}
-              />
-            </TabsContent>
-          </Tabs>
-        ) : null
+        <PricingTable examId={selectedExamId} onUpdate={handlePricingUpdate} />
       ) : (
         <Card>
           <CardContent className="py-8">
@@ -234,6 +195,45 @@ export default function FeesManagementPage() {
             </div>
           </CardContent>
         </Card>
+      )}
+
+      {/* Detailed Pricing Sections (in tabs) */}
+      {selectedExamId && (
+        <Tabs value={activeTab} onValueChange={setActiveTab}>
+          <TabsList className="grid w-full grid-cols-3">
+            <TabsTrigger value="subject-pricing">Per-Subject Pricing</TabsTrigger>
+            <TabsTrigger value="tiered-pricing">Tiered Pricing</TabsTrigger>
+            <TabsTrigger value="programme-pricing">Per-Programme Pricing</TabsTrigger>
+          </TabsList>
+
+          {pricingData && (
+            <>
+              <TabsContent value="subject-pricing" className="mt-6">
+                <SubjectPricingSection
+                  examId={selectedExamId}
+                  subjectPricing={pricingData.subject_pricing}
+                  onUpdate={handlePricingUpdate}
+                />
+              </TabsContent>
+
+              <TabsContent value="tiered-pricing" className="mt-6">
+                <TieredPricingSection
+                  examId={selectedExamId}
+                  tieredPricing={pricingData.tiered_pricing}
+                  onUpdate={handlePricingUpdate}
+                />
+              </TabsContent>
+
+              <TabsContent value="programme-pricing" className="mt-6">
+                <ProgrammePricingSection
+                  examId={selectedExamId}
+                  programmePricing={pricingData.programme_pricing || []}
+                  onUpdate={handlePricingUpdate}
+                />
+              </TabsContent>
+            </>
+          )}
+        </Tabs>
       )}
 
       <ImportPricingDialog

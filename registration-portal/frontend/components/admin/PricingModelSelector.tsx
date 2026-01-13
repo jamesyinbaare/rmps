@@ -100,12 +100,14 @@ export function PricingModelSelector({ examId, onUpdate }: PricingModelSelectorP
               </SelectItem>
               <SelectItem value="per_subject">Per-Subject Pricing</SelectItem>
               <SelectItem value="tiered">Tiered Pricing</SelectItem>
+              <SelectItem value="per_programme">Per-Programme Pricing</SelectItem>
             </SelectContent>
           </Select>
           <p className="text-sm text-muted-foreground">
             {pricingModel === "auto" && "Automatically selects the best pricing model based on configured pricing."}
             {pricingModel === "per_subject" && "Uses per-subject pricing only. Each subject has its own price."}
             {pricingModel === "tiered" && "Uses tiered pricing only. Price depends on the number of subjects selected."}
+            {pricingModel === "per_programme" && "Uses per-programme pricing for free_tvet candidates. Price is based on the candidate's programme."}
           </p>
         </div>
         <Button onClick={handleSave} disabled={saving || !exam}>

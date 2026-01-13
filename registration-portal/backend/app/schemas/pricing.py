@@ -6,6 +6,8 @@ from decimal import Decimal
 from pydantic import BaseModel, Field
 
 from app.schemas.subject import SubjectResponse
+from app.schemas.programme import ProgrammeResponse
+from app.models import RegistrationType
 
 
 class ApplicationFeeResponse(BaseModel):
@@ -13,6 +15,7 @@ class ApplicationFeeResponse(BaseModel):
 
     id: int
     exam_id: int | None
+    registration_type: str | None
     fee: Decimal
     currency: str
     is_active: bool
@@ -29,6 +32,7 @@ class ApplicationFeeCreate(BaseModel):
     fee: Decimal = Field(..., gt=0, description="Application fee amount")
     currency: str = Field(default="GHS", max_length=3)
     is_active: bool = Field(default=True)
+    registration_type: str | None = Field(None, description="Registration type: free_tvet, private, referral, or None for all types")
 
 
 class SubjectPricingResponse(BaseModel):
@@ -37,6 +41,7 @@ class SubjectPricingResponse(BaseModel):
     id: int
     subject_id: int
     exam_id: int | None
+    registration_type: str | None
     price: Decimal
     currency: str
     is_active: bool
@@ -55,6 +60,7 @@ class SubjectPricingCreate(BaseModel):
     price: Decimal = Field(..., gt=0, description="Price for the subject")
     currency: str = Field(default="GHS", max_length=3)
     is_active: bool = Field(default=True)
+    registration_type: str | None = Field(None, description="Registration type: free_tvet, private, referral, or None for all types")
 
 
 class SubjectPricingBulkUpdate(BaseModel):
@@ -68,6 +74,7 @@ class TieredPricingResponse(BaseModel):
 
     id: int
     exam_id: int | None
+    registration_type: str | None
     min_subjects: int
     max_subjects: int | None
     price: Decimal
@@ -88,12 +95,68 @@ class TieredPricingCreate(BaseModel):
     price: Decimal = Field(..., gt=0, description="Price for this tier")
     currency: str = Field(default="GHS", max_length=3)
     is_active: bool = Field(default=True)
+    registration_type: str | None = Field(None, description="Registration type: free_tvet, private, referral, or None for all types")
 
 
 class TieredPricingBulkUpdate(BaseModel):
     """Schema for bulk updating tiered pricing."""
 
     pricing: list[TieredPricingCreate] = Field(..., min_length=1)
+
+
+class ProgrammePricingResponse(BaseModel):
+    """Schema for programme pricing response."""
+
+    id: int
+    programme_id: int
+    exam_id: int | None
+    registration_type: str | None
+    price: Decimal
+    currency: str
+    is_active: bool
+    created_at: datetime
+    updated_at: datetime
+    programme: ProgrammeResponse
+
+    class Config:
+        from_attributes = True
+
+
+class ProgrammePricingCreate(BaseModel):
+    """Schema for creating/updating programme pricing."""
+
+    programme_id: int
+    price: Decimal = Field(..., gt=0, description="Price for the programme")
+    currency: str = Field(default="GHS", max_length=3)
+    is_active: bool = Field(default=True)
+    registration_type: str | None = Field(None, description="Registration type: free_tvet, private, referral, or None for all types")
+
+
+class ProgrammePricingBulkUpdate(BaseModel):
+    """Schema for bulk updating programme pricing."""
+
+    pricing: list[ProgrammePricingCreate] = Field(..., min_length=1)
+
+
+class ExamPricingModelResponse(BaseModel):
+    """Schema for exam pricing model response."""
+
+    id: int
+    exam_id: int | None
+    registration_type: str | None
+    pricing_model_preference: str
+    created_at: datetime
+    updated_at: datetime
+
+    class Config:
+        from_attributes = True
+
+
+class ExamPricingModelCreate(BaseModel):
+    """Schema for creating/updating exam pricing model."""
+
+    registration_type: str | None = Field(None, description="Registration type: free_tvet, private, referral, or None for all types")
+    pricing_model_preference: str = Field(..., description="Pricing model: 'per_subject', 'tiered', 'per_programme', or 'auto'")
 
 
 class ExamPricingResponse(BaseModel):
@@ -103,6 +166,8 @@ class ExamPricingResponse(BaseModel):
     application_fee: ApplicationFeeResponse | None
     subject_pricing: list[SubjectPricingResponse]
     tiered_pricing: list[TieredPricingResponse]
+    programme_pricing: list[ProgrammePricingResponse]
+    pricing_models: list[ExamPricingModelResponse]
 
 
 class ImportPricingRequest(BaseModel):
@@ -112,3 +177,5 @@ class ImportPricingRequest(BaseModel):
     import_application_fee: bool = Field(default=True, description="Import application fee")
     import_subject_pricing: bool = Field(default=True, description="Import subject pricing")
     import_tiered_pricing: bool = Field(default=True, description="Import tiered pricing")
+    import_programme_pricing: bool = Field(default=True, description="Import programme pricing")
+    import_pricing_models: bool = Field(default=True, description="Import pricing models")

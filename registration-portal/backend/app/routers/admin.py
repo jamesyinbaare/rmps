@@ -35,6 +35,9 @@ from app.models import (
     RegistrationApplicationFee,
     SubjectPricing,
     RegistrationTieredPricing,
+    ProgrammePricing,
+    RegistrationType,
+    ExamPricingModel,
     ApiKey,
     ApiUsage,
     UserCredit,
@@ -127,7 +130,12 @@ from app.schemas.pricing import (
     TieredPricingResponse,
     TieredPricingCreate,
     TieredPricingBulkUpdate,
+    ProgrammePricingResponse,
+    ProgrammePricingCreate,
+    ProgrammePricingBulkUpdate,
     ExamPricingResponse,
+    ExamPricingModelResponse,
+    ExamPricingModelCreate,
     ImportPricingRequest,
 )
 from app.services.programme_upload import (
@@ -151,7 +159,27 @@ from app.services.schedule_upload import (
     parse_upload_file as parse_schedule_upload_file,
     validate_required_columns as validate_schedule_columns,
 )
-from app.services.template_generator import generate_programme_template, generate_subject_template, generate_schedule_template
+from app.services.programme_pricing_upload import (
+    ProgrammePricingUploadParseError,
+    ProgrammePricingUploadValidationError,
+    parse_programme_pricing_row,
+    parse_upload_file as parse_programme_pricing_upload_file,
+    validate_required_columns as validate_programme_pricing_columns,
+)
+from app.services.subject_pricing_upload import (
+    SubjectPricingUploadParseError,
+    SubjectPricingUploadValidationError,
+    parse_subject_pricing_row,
+    parse_upload_file as parse_subject_pricing_upload_file,
+    validate_required_columns as validate_subject_pricing_columns,
+)
+from app.services.template_generator import (
+    generate_programme_template,
+    generate_subject_template,
+    generate_schedule_template,
+    generate_subject_pricing_template,
+    generate_programme_pricing_template,
+)
 from app.schemas.result import (
     CandidateResultBulkPublish,
     CandidateResultBulkPublishResponse,
@@ -1649,12 +1677,24 @@ async def get_exam_pricing(
     if not exam:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Exam not found")
 
-    # Get application fee
+    # Get application fee (prefer "all types" fee, otherwise get first one)
+    # First try to get the "all types" fee (registration_type is NULL)
     app_fee_stmt = select(RegistrationApplicationFee).where(
-        RegistrationApplicationFee.exam_id == exam_id
+        and_(
+            RegistrationApplicationFee.exam_id == exam_id,
+            RegistrationApplicationFee.registration_type.is_(None)
+        )
     )
     app_fee_result = await session.execute(app_fee_stmt)
     application_fee = app_fee_result.scalar_one_or_none()
+
+    # If no "all types" fee exists, get the first one (for backward compatibility)
+    if not application_fee:
+        app_fee_stmt = select(RegistrationApplicationFee).where(
+            RegistrationApplicationFee.exam_id == exam_id
+        ).limit(1)
+        app_fee_result = await session.execute(app_fee_stmt)
+        application_fee = app_fee_result.scalar_one_or_none()
 
     # Get subject pricing with subject details
     subject_pricing_stmt = (
@@ -1673,11 +1713,36 @@ async def get_exam_pricing(
     tiered_pricing_result = await session.execute(tiered_pricing_stmt)
     tiered_pricing_list = tiered_pricing_result.scalars().all()
 
+    # Get programme pricing with programme details
+    programme_pricing_stmt = (
+        select(ProgrammePricing)
+        .where(ProgrammePricing.exam_id == exam_id)
+        .options(selectinload(ProgrammePricing.programme))
+        .order_by(ProgrammePricing.programme_id)
+    )
+    programme_pricing_result = await session.execute(programme_pricing_stmt)
+    programme_pricing_list = programme_pricing_result.scalars().all()
+
+    # Get pricing models (handle case where table doesn't exist yet)
+    pricing_models_list = []
+    try:
+        pricing_models_stmt = select(ExamPricingModel).where(
+            ExamPricingModel.exam_id == exam_id
+        ).order_by(ExamPricingModel.registration_type)
+        pricing_models_result = await session.execute(pricing_models_stmt)
+        pricing_models_list = pricing_models_result.scalars().all()
+    except Exception as e:
+        # Table might not exist yet if migration hasn't been run
+        # Log the error but continue with empty list
+        logging.warning(f"Could not load pricing models (table may not exist): {str(e)}")
+
     return ExamPricingResponse(
         exam_id=exam_id,
         application_fee=ApplicationFeeResponse.model_validate(application_fee) if application_fee else None,
         subject_pricing=[SubjectPricingResponse.model_validate(sp) for sp in subject_pricing_list],
         tiered_pricing=[TieredPricingResponse.model_validate(tp) for tp in tiered_pricing_list],
+        programme_pricing=[ProgrammePricingResponse.model_validate(pp) for pp in programme_pricing_list],
+        pricing_models=[ExamPricingModelResponse.model_validate(pm) for pm in pricing_models_list],
     )
 
 
@@ -1686,8 +1751,9 @@ async def get_application_fee(
     exam_id: int,
     session: DBSessionDep,
     current_user: SystemAdminDep,
+    registration_type: str | None = Query(None),
 ) -> ApplicationFeeResponse:
-    """Get application fee for an exam."""
+    """Get application fee for an exam and registration type."""
     # Verify exam exists
     exam_stmt = select(RegistrationExam).where(RegistrationExam.id == exam_id)
     exam_result = await session.execute(exam_stmt)
@@ -1697,7 +1763,10 @@ async def get_application_fee(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Exam not found")
 
     stmt = select(RegistrationApplicationFee).where(
-        RegistrationApplicationFee.exam_id == exam_id
+        and_(
+            RegistrationApplicationFee.exam_id == exam_id,
+            RegistrationApplicationFee.registration_type == registration_type if registration_type else RegistrationApplicationFee.registration_type.is_(None)
+        )
     )
     result = await session.execute(stmt)
     app_fee = result.scalar_one_or_none()
@@ -1724,9 +1793,23 @@ async def create_or_update_application_fee(
     if not exam:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Exam not found")
 
+    # Convert registration_type string to enum if provided
+    registration_type_enum = None
+    if fee_data.registration_type:
+        try:
+            registration_type_enum = RegistrationType(fee_data.registration_type)
+        except ValueError:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Invalid registration_type: {fee_data.registration_type}. Must be one of: free_tvet, private, referral"
+            )
+
     # Check if application fee exists
     existing_stmt = select(RegistrationApplicationFee).where(
-        RegistrationApplicationFee.exam_id == exam_id
+        and_(
+            RegistrationApplicationFee.exam_id == exam_id,
+            RegistrationApplicationFee.registration_type == registration_type_enum
+        )
     )
     existing_result = await session.execute(existing_stmt)
     existing_fee = existing_result.scalar_one_or_none()
@@ -1743,6 +1826,7 @@ async def create_or_update_application_fee(
         # Create new
         new_fee = RegistrationApplicationFee(
             exam_id=exam_id,
+            registration_type=registration_type_enum,
             fee=fee_data.fee,
             currency=fee_data.currency,
             is_active=fee_data.is_active,
@@ -1758,10 +1842,24 @@ async def delete_application_fee(
     exam_id: int,
     session: DBSessionDep,
     current_user: SystemAdminDep,
+    registration_type: str | None = Query(None),
 ) -> None:
-    """Delete application fee for an exam."""
+    """Delete application fee for an exam and registration type."""
+    registration_type_enum = None
+    if registration_type:
+        try:
+            registration_type_enum = RegistrationType(registration_type)
+        except ValueError:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Invalid registration_type: {registration_type}. Must be one of: free_tvet, private, referral"
+            )
+
     stmt = select(RegistrationApplicationFee).where(
-        RegistrationApplicationFee.exam_id == exam_id
+        and_(
+            RegistrationApplicationFee.exam_id == exam_id,
+            RegistrationApplicationFee.registration_type == registration_type_enum
+        )
     )
     result = await session.execute(stmt)
     app_fee = result.scalar_one_or_none()
@@ -1778,8 +1876,9 @@ async def get_subject_pricing(
     exam_id: int,
     session: DBSessionDep,
     current_user: SystemAdminDep,
+    registration_type: str | None = Query(None),
 ) -> list[SubjectPricingResponse]:
-    """Get subject pricing for an exam."""
+    """Get subject pricing for an exam, optionally filtered by registration type."""
     # Verify exam exists
     exam_stmt = select(RegistrationExam).where(RegistrationExam.id == exam_id)
     exam_result = await session.execute(exam_stmt)
@@ -1788,9 +1887,23 @@ async def get_subject_pricing(
     if not exam:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Exam not found")
 
+    registration_type_enum = None
+    if registration_type:
+        try:
+            registration_type_enum = RegistrationType(registration_type)
+        except ValueError:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Invalid registration_type: {registration_type}. Must be one of: free_tvet, private, referral"
+            )
+
+    conditions = [SubjectPricing.exam_id == exam_id]
+    if registration_type_enum is not None:
+        conditions.append(SubjectPricing.registration_type == registration_type_enum)
+
     stmt = (
         select(SubjectPricing)
-        .where(SubjectPricing.exam_id == exam_id)
+        .where(and_(*conditions))
         .options(selectinload(SubjectPricing.subject))
         .order_by(SubjectPricing.subject_id)
     )
@@ -1832,10 +1945,24 @@ async def create_or_update_subject_pricing(
     # Process each pricing entry
     updated_pricing = []
     for pricing_item in pricing_data.pricing:
+        # Convert registration_type string to enum if provided
+        registration_type_enum = None
+        if pricing_item.registration_type:
+            try:
+                registration_type_enum = RegistrationType(pricing_item.registration_type)
+            except ValueError:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail=f"Invalid registration_type: {pricing_item.registration_type}. Must be one of: free_tvet, private, referral"
+                )
+
         # Check if pricing exists
         existing_stmt = select(SubjectPricing).where(
-            SubjectPricing.exam_id == exam_id,
-            SubjectPricing.subject_id == pricing_item.subject_id,
+            and_(
+                SubjectPricing.exam_id == exam_id,
+                SubjectPricing.subject_id == pricing_item.subject_id,
+                SubjectPricing.registration_type == registration_type_enum
+            )
         )
         existing_result = await session.execute(existing_stmt)
         existing = existing_result.scalar_one_or_none()
@@ -1853,6 +1980,7 @@ async def create_or_update_subject_pricing(
             new_pricing = SubjectPricing(
                 exam_id=exam_id,
                 subject_id=pricing_item.subject_id,
+                registration_type=registration_type_enum,
                 price=pricing_item.price,
                 currency=pricing_item.currency,
                 is_active=pricing_item.is_active,
@@ -1888,13 +2016,14 @@ async def delete_subject_pricing(
     await session.commit()
 
 
-@router.get("/exams/{exam_id}/pricing/tiered", response_model=list[TieredPricingResponse])
-async def get_tiered_pricing(
+@router.post("/exams/{exam_id}/pricing/subjects/upload", response_model=list[SubjectPricingResponse])
+async def upload_subject_pricing(
     exam_id: int,
     session: DBSessionDep,
     current_user: SystemAdminDep,
-) -> list[TieredPricingResponse]:
-    """Get tiered pricing for an exam."""
+    file: UploadFile = File(...),
+) -> list[SubjectPricingResponse]:
+    """Upload subject pricing from Excel or CSV file."""
     # Verify exam exists
     exam_stmt = select(RegistrationExam).where(RegistrationExam.id == exam_id)
     exam_result = await session.execute(exam_stmt)
@@ -1903,8 +2032,191 @@ async def get_tiered_pricing(
     if not exam:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Exam not found")
 
+    # Read file content
+    file_content = await file.read()
+
+    # Parse file
+    try:
+        df = parse_subject_pricing_upload_file(file_content, file.filename or "unknown")
+        validate_subject_pricing_columns(df)
+    except (SubjectPricingUploadParseError, SubjectPricingUploadValidationError) as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+
+    # Get all subjects to create a lookup map by original_code (fallback to code)
+    subjects_stmt = select(Subject)
+    subjects_result = await session.execute(subjects_stmt)
+    all_subjects = subjects_result.scalars().all()
+    subjects_by_original_code = {}
+    subjects_by_code = {}
+    for subject in all_subjects:
+        if subject.original_code:
+            subjects_by_original_code[subject.original_code] = subject
+        subjects_by_code[subject.code] = subject
+
+    # Process each row
+    errors: list[str] = []
+    pricing_to_save: list[SubjectPricingCreate] = []
+
+    for idx, row in df.iterrows():
+        row_number = int(idx) + 2  # +2 because Excel rows are 1-indexed and header is row 1
+        try:
+            # Parse row data
+            pricing_data = parse_subject_pricing_row(row)
+
+            # Validate required fields
+            if not pricing_data["original_code"]:
+                errors.append(f"Row {row_number}: Original code is required")
+                continue
+
+            if pricing_data["price"] is None or pricing_data["price"] <= 0:
+                errors.append(f"Row {row_number}: Valid price (greater than 0) is required")
+                continue
+
+            # Lookup subject by original_code (fallback to code)
+            subject = subjects_by_original_code.get(pricing_data["original_code"])
+            if not subject:
+                subject = subjects_by_code.get(pricing_data["original_code"])
+            if not subject:
+                errors.append(f"Row {row_number}: Subject with original_code/code '{pricing_data['original_code']}' not found")
+                continue
+
+            pricing_to_save.append(
+                SubjectPricingCreate(
+                    subject_id=subject.id,
+                    price=Decimal(str(pricing_data["price"])),
+                    currency="GHS",
+                    is_active=True,
+                )
+            )
+        except Exception as e:
+            errors.append(f"Row {row_number}: {str(e)}")
+            continue
+
+    if not pricing_to_save:
+        error_message = "No valid pricing data found in file"
+        if errors:
+            error_message += f". Errors encountered:\n" + "\n".join(errors[:10])
+            if len(errors) > 10:
+                error_message += f"\n... and {len(errors) - 10} more errors"
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=error_message,
+        )
+
+    # If there are errors but also valid data, log warnings but continue
+    if errors:
+        logging.warning(f"Subject pricing upload for exam {exam_id} completed with {len(errors)} errors: {', '.join(errors[:5])}")
+
+    # Create or update pricing using bulk update
+    from app.schemas.pricing import SubjectPricingBulkUpdate
+    bulk_update = SubjectPricingBulkUpdate(pricing=pricing_to_save)
+
+    # Verify all subjects exist (already done above)
+    subject_ids = [p.subject_id for p in pricing_to_save]
+    existing_subjects = {s.id for s in all_subjects}
+    missing_subjects = set(subject_ids) - existing_subjects
+    if missing_subjects:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Subjects not found: {', '.join(map(str, missing_subjects))}",
+        )
+
+    # Create or update pricing
+    updated_pricing = []
+    for pricing_item in bulk_update.pricing:
+        existing_stmt = select(SubjectPricing).where(
+            SubjectPricing.exam_id == exam_id,
+            SubjectPricing.subject_id == pricing_item.subject_id,
+        )
+        existing_result = await session.execute(existing_stmt)
+        existing = existing_result.scalar_one_or_none()
+
+        if existing:
+            existing.price = pricing_item.price
+            existing.currency = pricing_item.currency
+            existing.is_active = pricing_item.is_active
+            updated_pricing.append(existing)
+        else:
+            new_pricing = SubjectPricing(
+                exam_id=exam_id,
+                subject_id=pricing_item.subject_id,
+                price=pricing_item.price,
+                currency=pricing_item.currency,
+                is_active=pricing_item.is_active,
+            )
+            session.add(new_pricing)
+            updated_pricing.append(new_pricing)
+
+    await session.commit()
+
+    # Refresh all updated pricing with subject relationship
+    for pricing in updated_pricing:
+        await session.refresh(pricing, ["subject"])
+
+    return [SubjectPricingResponse.model_validate(p) for p in updated_pricing]
+
+
+@router.get("/exams/{exam_id}/pricing/subjects/template")
+async def download_subject_pricing_template(
+    exam_id: int,
+    session: DBSessionDep,
+    current_user: SystemAdminDep,
+) -> StreamingResponse:
+    """Download Excel template for subject pricing upload."""
+    # Verify exam exists
+    exam_stmt = select(RegistrationExam).where(RegistrationExam.id == exam_id)
+    exam_result = await session.execute(exam_stmt)
+    exam = exam_result.scalar_one_or_none()
+
+    if not exam:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Exam not found")
+
+    try:
+        template_bytes = await generate_subject_pricing_template(session, exam_id)
+        return StreamingResponse(
+            io.BytesIO(template_bytes),
+            media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            headers={"Content-Disposition": f'attachment; filename="subject_pricing_template_{exam_id}.xlsx"'},
+        )
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to generate template: {str(e)}",
+        )
+
+
+@router.get("/exams/{exam_id}/pricing/tiered", response_model=list[TieredPricingResponse])
+async def get_tiered_pricing(
+    exam_id: int,
+    session: DBSessionDep,
+    current_user: SystemAdminDep,
+    registration_type: str | None = Query(None),
+) -> list[TieredPricingResponse]:
+    """Get tiered pricing for an exam, optionally filtered by registration type."""
+    # Verify exam exists
+    exam_stmt = select(RegistrationExam).where(RegistrationExam.id == exam_id)
+    exam_result = await session.execute(exam_stmt)
+    exam = exam_result.scalar_one_or_none()
+
+    if not exam:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Exam not found")
+
+    registration_type_enum = None
+    if registration_type:
+        try:
+            registration_type_enum = RegistrationType(registration_type)
+        except ValueError:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Invalid registration_type: {registration_type}. Must be one of: free_tvet, private, referral"
+            )
+
+    conditions = [RegistrationTieredPricing.exam_id == exam_id]
+    if registration_type_enum is not None:
+        conditions.append(RegistrationTieredPricing.registration_type == registration_type_enum)
+
     stmt = select(RegistrationTieredPricing).where(
-        RegistrationTieredPricing.exam_id == exam_id
+        and_(*conditions)
     ).order_by(RegistrationTieredPricing.min_subjects)
     result = await session.execute(stmt)
     pricing_list = result.scalars().all()
@@ -1928,20 +2240,29 @@ async def create_or_update_tiered_pricing(
     if not exam:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Exam not found")
 
-    # Validate no overlapping ranges
+    # Validate no overlapping ranges (per registration_type)
     tiers = pricing_data.pricing
-    for i, tier1 in enumerate(tiers):
-        for tier2 in tiers[i + 1:]:
-            # Check for overlap
-            min1, max1 = tier1.min_subjects, tier1.max_subjects or float('inf')
-            min2, max2 = tier2.min_subjects, tier2.max_subjects or float('inf')
-            if not (max1 < min2 or max2 < min1):
-                raise HTTPException(
-                    status_code=status.HTTP_400_BAD_REQUEST,
-                    detail=f"Tiered pricing ranges overlap: ({tier1.min_subjects}-{tier1.max_subjects or '∞'}) and ({tier2.min_subjects}-{tier2.max_subjects or '∞'})",
-                )
+    # Group tiers by registration_type for overlap checking
+    tiers_by_reg_type: dict[str | None, list] = {}
+    for tier in tiers:
+        reg_type = tier.registration_type
+        if reg_type not in tiers_by_reg_type:
+            tiers_by_reg_type[reg_type] = []
+        tiers_by_reg_type[reg_type].append(tier)
 
-    # Delete existing tiered pricing for this exam
+    for reg_type, type_tiers in tiers_by_reg_type.items():
+        for i, tier1 in enumerate(type_tiers):
+            for tier2 in type_tiers[i + 1:]:
+                # Check for overlap
+                min1, max1 = tier1.min_subjects, tier1.max_subjects or float('inf')
+                min2, max2 = tier2.min_subjects, tier2.max_subjects or float('inf')
+                if not (max1 < min2 or max2 < min1):
+                    raise HTTPException(
+                        status_code=status.HTTP_400_BAD_REQUEST,
+                        detail=f"Tiered pricing ranges overlap for registration_type={reg_type}: ({tier1.min_subjects}-{tier1.max_subjects or '∞'}) and ({tier2.min_subjects}-{tier2.max_subjects or '∞'})",
+                    )
+
+    # Delete existing tiered pricing for this exam (all registration types)
     delete_stmt = delete(RegistrationTieredPricing).where(
         RegistrationTieredPricing.exam_id == exam_id
     )
@@ -1950,8 +2271,20 @@ async def create_or_update_tiered_pricing(
     # Create new tiered pricing
     created_pricing = []
     for tier_item in tiers:
+        # Convert registration_type string to enum if provided
+        registration_type_enum = None
+        if tier_item.registration_type:
+            try:
+                registration_type_enum = RegistrationType(tier_item.registration_type)
+            except ValueError:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail=f"Invalid registration_type: {tier_item.registration_type}. Must be one of: free_tvet, private, referral"
+                )
+
         new_tier = RegistrationTieredPricing(
             exam_id=exam_id,
+            registration_type=registration_type_enum,
             min_subjects=tier_item.min_subjects,
             max_subjects=tier_item.max_subjects,
             price=tier_item.price,
@@ -1988,6 +2321,312 @@ async def delete_tiered_pricing(
     await session.commit()
 
 
+@router.get("/exams/{exam_id}/pricing/programmes", response_model=list[ProgrammePricingResponse])
+async def get_programme_pricing(
+    exam_id: int,
+    session: DBSessionDep,
+    current_user: SystemAdminDep,
+    registration_type: str | None = Query(None),
+) -> list[ProgrammePricingResponse]:
+    """Get programme pricing for an exam, optionally filtered by registration type."""
+    # Verify exam exists
+    exam_stmt = select(RegistrationExam).where(RegistrationExam.id == exam_id)
+    exam_result = await session.execute(exam_stmt)
+    exam = exam_result.scalar_one_or_none()
+
+    if not exam:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Exam not found")
+
+    registration_type_enum = None
+    if registration_type:
+        try:
+            registration_type_enum = RegistrationType(registration_type)
+        except ValueError:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Invalid registration_type: {registration_type}. Must be one of: free_tvet, private, referral"
+            )
+
+    conditions = [ProgrammePricing.exam_id == exam_id]
+    if registration_type_enum is not None:
+        conditions.append(ProgrammePricing.registration_type == registration_type_enum)
+
+    stmt = (
+        select(ProgrammePricing)
+        .where(and_(*conditions))
+        .options(selectinload(ProgrammePricing.programme))
+        .order_by(ProgrammePricing.programme_id)
+    )
+    result = await session.execute(stmt)
+    pricing_list = result.scalars().all()
+
+    return [ProgrammePricingResponse.model_validate(p) for p in pricing_list]
+
+
+@router.post("/exams/{exam_id}/pricing/programmes", response_model=list[ProgrammePricingResponse])
+async def create_or_update_programme_pricing(
+    exam_id: int,
+    pricing_data: ProgrammePricingBulkUpdate,
+    session: DBSessionDep,
+    current_user: SystemAdminDep,
+) -> list[ProgrammePricingResponse]:
+    """Create or update programme pricing for an exam (bulk operation)."""
+    # Verify exam exists
+    exam_stmt = select(RegistrationExam).where(RegistrationExam.id == exam_id)
+    exam_result = await session.execute(exam_stmt)
+    exam = exam_result.scalar_one_or_none()
+
+    if not exam:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Exam not found")
+
+    # Verify all programmes exist
+    programme_ids = [p.programme_id for p in pricing_data.pricing]
+    programmes_stmt = select(Programme).where(Programme.id.in_(programme_ids))
+    programmes_result = await session.execute(programmes_stmt)
+    existing_programmes = {p.id for p in programmes_result.scalars().all()}
+
+    missing_programmes = set(programme_ids) - existing_programmes
+    if missing_programmes:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Programmes not found: {', '.join(map(str, missing_programmes))}",
+        )
+
+    # Create or update pricing
+    updated_pricing = []
+    for pricing_item in pricing_data.pricing:
+        # Convert registration_type string to enum if provided
+        registration_type_enum = None
+        if pricing_item.registration_type:
+            try:
+                registration_type_enum = RegistrationType(pricing_item.registration_type)
+            except ValueError:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail=f"Invalid registration_type: {pricing_item.registration_type}. Must be one of: free_tvet, private, referral"
+                )
+
+        existing_stmt = select(ProgrammePricing).where(
+            and_(
+                ProgrammePricing.exam_id == exam_id,
+                ProgrammePricing.programme_id == pricing_item.programme_id,
+                ProgrammePricing.registration_type == registration_type_enum
+            )
+        )
+        existing_result = await session.execute(existing_stmt)
+        existing = existing_result.scalar_one_or_none()
+
+        if existing:
+            existing.price = pricing_item.price
+            existing.currency = pricing_item.currency
+            existing.is_active = pricing_item.is_active
+            updated_pricing.append(existing)
+        else:
+            new_pricing = ProgrammePricing(
+                exam_id=exam_id,
+                programme_id=pricing_item.programme_id,
+                registration_type=registration_type_enum,
+                price=pricing_item.price,
+                currency=pricing_item.currency,
+                is_active=pricing_item.is_active,
+            )
+            session.add(new_pricing)
+            updated_pricing.append(new_pricing)
+
+    await session.commit()
+
+    # Refresh all updated pricing with programme relationship
+    for pricing in updated_pricing:
+        await session.refresh(pricing, ["programme"])
+
+    return [ProgrammePricingResponse.model_validate(p) for p in updated_pricing]
+
+
+@router.delete("/exams/{exam_id}/pricing/programmes/{programme_pricing_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_programme_pricing(
+    exam_id: int,
+    programme_pricing_id: int,
+    session: DBSessionDep,
+    current_user: SystemAdminDep,
+) -> None:
+    """Delete programme pricing."""
+    stmt = select(ProgrammePricing).where(
+        ProgrammePricing.id == programme_pricing_id,
+        ProgrammePricing.exam_id == exam_id,
+    )
+    result = await session.execute(stmt)
+    programme_pricing = result.scalar_one_or_none()
+
+    if not programme_pricing:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Programme pricing not found")
+
+    await session.delete(programme_pricing)
+    await session.commit()
+
+
+@router.get("/exams/{exam_id}/pricing/programmes/template")
+async def download_programme_pricing_template(
+    exam_id: int,
+    session: DBSessionDep,
+    current_user: SystemAdminDep,
+) -> StreamingResponse:
+    """Download Excel template for programme pricing upload."""
+    # Verify exam exists
+    exam_stmt = select(RegistrationExam).where(RegistrationExam.id == exam_id)
+    exam_result = await session.execute(exam_stmt)
+    exam = exam_result.scalar_one_or_none()
+
+    if not exam:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Exam not found")
+
+    try:
+        template_bytes = await generate_programme_pricing_template(session, exam_id)
+        return StreamingResponse(
+            io.BytesIO(template_bytes),
+            media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            headers={"Content-Disposition": f'attachment; filename="programme_pricing_template_{exam_id}.xlsx"'},
+        )
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to generate template: {str(e)}",
+        )
+
+
+@router.post("/exams/{exam_id}/pricing/programmes/upload", response_model=list[ProgrammePricingResponse])
+async def upload_programme_pricing(
+    exam_id: int,
+    session: DBSessionDep,
+    current_user: SystemAdminDep,
+    file: UploadFile = File(...),
+) -> list[ProgrammePricingResponse]:
+    """Upload programme pricing from Excel or CSV file."""
+    # Verify exam exists
+    exam_stmt = select(RegistrationExam).where(RegistrationExam.id == exam_id)
+    exam_result = await session.execute(exam_stmt)
+    exam = exam_result.scalar_one_or_none()
+
+    if not exam:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Exam not found")
+
+    # Read file content
+    file_content = await file.read()
+
+    # Parse file
+    try:
+        df = parse_programme_pricing_upload_file(file_content, file.filename or "unknown")
+        validate_programme_pricing_columns(df)
+    except (ProgrammePricingUploadParseError, ProgrammePricingUploadValidationError) as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+
+    # Get all programmes to create a lookup map by code
+    programmes_stmt = select(Programme)
+    programmes_result = await session.execute(programmes_stmt)
+    all_programmes = programmes_result.scalars().all()
+    programmes_by_code = {p.code: p for p in all_programmes}
+
+    # Process each row
+    errors: list[str] = []
+    pricing_to_save: list[ProgrammePricingCreate] = []
+
+    for idx, row in df.iterrows():
+        row_number = int(idx) + 2  # +2 because Excel rows are 1-indexed and header is row 1
+        try:
+            # Parse row data
+            pricing_data = parse_programme_pricing_row(row)
+
+            # Validate required fields
+            if not pricing_data["programme_code"]:
+                errors.append(f"Row {row_number}: Programme code is required")
+                continue
+
+            if pricing_data["price"] is None or pricing_data["price"] <= 0:
+                errors.append(f"Row {row_number}: Valid price (greater than 0) is required")
+                continue
+
+            # Lookup programme by code
+            programme = programmes_by_code.get(pricing_data["programme_code"])
+            if not programme:
+                errors.append(f"Row {row_number}: Programme with code '{pricing_data['programme_code']}' not found")
+                continue
+
+            pricing_to_save.append(
+                ProgrammePricingCreate(
+                    programme_id=programme.id,
+                    price=Decimal(str(pricing_data["price"])),
+                    currency="GHS",
+                    is_active=True,
+                )
+            )
+        except Exception as e:
+            errors.append(f"Row {row_number}: {str(e)}")
+            continue
+
+    if not pricing_to_save:
+        error_message = "No valid pricing data found in file"
+        if errors:
+            error_message += f". Errors encountered:\n" + "\n".join(errors[:10])
+            if len(errors) > 10:
+                error_message += f"\n... and {len(errors) - 10} more errors"
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=error_message,
+        )
+
+    # If there are errors but also valid data, log warnings but continue
+    if errors:
+        logging.warning(f"Programme pricing upload for exam {exam_id} completed with {len(errors)} errors: {', '.join(errors[:5])}")
+
+    # Create or update pricing using bulk update
+    from app.schemas.pricing import ProgrammePricingBulkUpdate
+    bulk_update = ProgrammePricingBulkUpdate(pricing=pricing_to_save)
+
+    # Use existing bulk update logic
+    # Verify all programmes exist (already done above)
+    programme_ids = [p.programme_id for p in pricing_to_save]
+    existing_programmes = {p.id for p in all_programmes}
+    missing_programmes = set(programme_ids) - existing_programmes
+    if missing_programmes:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Programmes not found: {', '.join(map(str, missing_programmes))}",
+        )
+
+    # Create or update pricing
+    updated_pricing = []
+    for pricing_item in bulk_update.pricing:
+        existing_stmt = select(ProgrammePricing).where(
+            ProgrammePricing.exam_id == exam_id,
+            ProgrammePricing.programme_id == pricing_item.programme_id,
+        )
+        existing_result = await session.execute(existing_stmt)
+        existing = existing_result.scalar_one_or_none()
+
+        if existing:
+            existing.price = pricing_item.price
+            existing.currency = pricing_item.currency
+            existing.is_active = pricing_item.is_active
+            updated_pricing.append(existing)
+        else:
+            new_pricing = ProgrammePricing(
+                exam_id=exam_id,
+                programme_id=pricing_item.programme_id,
+                price=pricing_item.price,
+                currency=pricing_item.currency,
+                is_active=pricing_item.is_active,
+            )
+            session.add(new_pricing)
+            updated_pricing.append(new_pricing)
+
+    await session.commit()
+
+    # Refresh all updated pricing with programme relationship
+    for pricing in updated_pricing:
+        await session.refresh(pricing, ["programme"])
+
+    return [ProgrammePricingResponse.model_validate(p) for p in updated_pricing]
+
+
 @router.post("/exams/{exam_id}/pricing/import", status_code=status.HTTP_200_OK)
 async def import_exam_pricing(
     exam_id: int,
@@ -2021,30 +2660,32 @@ async def import_exam_pricing(
     imported_count = 0
 
     try:
-        # Import application fee
+        # Import application fees (all registration types)
         if import_data.import_application_fee:
-            source_fee_stmt = select(RegistrationApplicationFee).where(
+            source_fees_stmt = select(RegistrationApplicationFee).where(
                 RegistrationApplicationFee.exam_id == import_data.source_exam_id
             )
-            source_fee_result = await session.execute(source_fee_stmt)
-            source_fee = source_fee_result.scalar_one_or_none()
+            source_fees_result = await session.execute(source_fees_stmt)
+            source_fees_list = source_fees_result.scalars().all()
 
-            if source_fee:
-                # Delete existing application fee for target exam
+            if source_fees_list:
+                # Delete existing application fees for target exam
                 delete_fee_stmt = delete(RegistrationApplicationFee).where(
                     RegistrationApplicationFee.exam_id == exam_id
                 )
                 await session.execute(delete_fee_stmt)
 
-                # Create new application fee
-                new_fee = RegistrationApplicationFee(
-                    exam_id=exam_id,
-                    fee=source_fee.fee,
-                    currency=source_fee.currency,
-                    is_active=source_fee.is_active,
-                )
-                session.add(new_fee)
-                imported_count += 1
+                # Create new application fees (preserving registration_type)
+                for source_fee in source_fees_list:
+                    new_fee = RegistrationApplicationFee(
+                        exam_id=exam_id,
+                        registration_type=source_fee.registration_type,
+                        fee=source_fee.fee,
+                        currency=source_fee.currency,
+                        is_active=source_fee.is_active,
+                    )
+                    session.add(new_fee)
+                imported_count += len(source_fees_list)
 
         # Import subject pricing
         if import_data.import_subject_pricing:
@@ -2061,11 +2702,12 @@ async def import_exam_pricing(
                 )
                 await session.execute(delete_subject_stmt)
 
-                # Create new subject pricing
+                # Create new subject pricing (preserving registration_type)
                 for source_sp in source_subject_pricing_list:
                     new_sp = SubjectPricing(
                         exam_id=exam_id,
                         subject_id=source_sp.subject_id,
+                        registration_type=source_sp.registration_type,
                         price=source_sp.price,
                         currency=source_sp.currency,
                         is_active=source_sp.is_active,
@@ -2088,10 +2730,11 @@ async def import_exam_pricing(
                 )
                 await session.execute(delete_tiered_stmt)
 
-                # Create new tiered pricing
+                # Create new tiered pricing (preserving registration_type)
                 for source_tp in source_tiered_list:
                     new_tp = RegistrationTieredPricing(
                         exam_id=exam_id,
+                        registration_type=source_tp.registration_type,
                         min_subjects=source_tp.min_subjects,
                         max_subjects=source_tp.max_subjects,
                         price=source_tp.price,
@@ -2100,6 +2743,63 @@ async def import_exam_pricing(
                     )
                     session.add(new_tp)
                 imported_count += len(source_tiered_list)
+
+        # Import programme pricing
+        if import_data.import_programme_pricing:
+            source_programme_pricing_stmt = select(ProgrammePricing).where(
+                ProgrammePricing.exam_id == import_data.source_exam_id
+            )
+            source_programme_pricing_result = await session.execute(source_programme_pricing_stmt)
+            source_programme_pricing_list = source_programme_pricing_result.scalars().all()
+
+            if source_programme_pricing_list:
+                # Delete existing programme pricing for target exam
+                delete_programme_stmt = delete(ProgrammePricing).where(
+                    ProgrammePricing.exam_id == exam_id
+                )
+                await session.execute(delete_programme_stmt)
+
+                # Create new programme pricing (preserving registration_type)
+                for source_pp in source_programme_pricing_list:
+                    new_pp = ProgrammePricing(
+                        exam_id=exam_id,
+                        programme_id=source_pp.programme_id,
+                        registration_type=source_pp.registration_type,
+                        price=source_pp.price,
+                        currency=source_pp.currency,
+                        is_active=source_pp.is_active,
+                    )
+                    session.add(new_pp)
+                imported_count += len(source_programme_pricing_list)
+
+        # Import pricing models
+        if import_data.import_pricing_models:
+            try:
+                source_pricing_models_stmt = select(ExamPricingModel).where(
+                    ExamPricingModel.exam_id == import_data.source_exam_id
+                )
+                source_pricing_models_result = await session.execute(source_pricing_models_stmt)
+                source_pricing_models_list = source_pricing_models_result.scalars().all()
+
+                if source_pricing_models_list:
+                    # Delete existing pricing models for target exam
+                    delete_models_stmt = delete(ExamPricingModel).where(
+                        ExamPricingModel.exam_id == exam_id
+                    )
+                    await session.execute(delete_models_stmt)
+
+                    # Create new pricing models (preserving registration_type)
+                    for source_pm in source_pricing_models_list:
+                        new_pm = ExamPricingModel(
+                            exam_id=exam_id,
+                            registration_type=source_pm.registration_type,
+                            pricing_model_preference=source_pm.pricing_model_preference,
+                        )
+                        session.add(new_pm)
+                    imported_count += len(source_pricing_models_list)
+            except Exception as e:
+                # Table might not exist yet - log warning but continue
+                logging.warning(f"Could not import pricing models (table may not exist): {str(e)}")
 
         await session.commit()
         return {"message": "Pricing imported successfully", "items_imported": imported_count}
@@ -2111,6 +2811,152 @@ async def import_exam_pricing(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to import pricing: {str(e)}",
         )
+
+
+@router.get("/exams/{exam_id}/pricing/models", response_model=list[ExamPricingModelResponse])
+async def get_pricing_models(
+    exam_id: int,
+    session: DBSessionDep,
+    current_user: SystemAdminDep,
+) -> list[ExamPricingModelResponse]:
+    """Get pricing models for an exam."""
+    # Verify exam exists
+    exam_stmt = select(RegistrationExam).where(RegistrationExam.id == exam_id)
+    exam_result = await session.execute(exam_stmt)
+    exam = exam_result.scalar_one_or_none()
+
+    if not exam:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Exam not found")
+
+    # Handle case where table doesn't exist yet
+    try:
+        stmt = select(ExamPricingModel).where(
+            ExamPricingModel.exam_id == exam_id
+        ).order_by(ExamPricingModel.registration_type)
+        result = await session.execute(stmt)
+        pricing_models = result.scalars().all()
+        return [ExamPricingModelResponse.model_validate(pm) for pm in pricing_models]
+    except Exception as e:
+        # Table might not exist yet if migration hasn't been run
+        logging.warning(f"Could not load pricing models (table may not exist): {str(e)}")
+        return []
+
+
+@router.post("/exams/{exam_id}/pricing/models", response_model=ExamPricingModelResponse)
+async def create_or_update_pricing_model(
+    exam_id: int,
+    model_data: ExamPricingModelCreate,
+    session: DBSessionDep,
+    current_user: SystemAdminDep,
+) -> ExamPricingModelResponse:
+    """Create or update pricing model for an exam and registration type."""
+    # Verify exam exists
+    exam_stmt = select(RegistrationExam).where(RegistrationExam.id == exam_id)
+    exam_result = await session.execute(exam_stmt)
+    exam = exam_result.scalar_one_or_none()
+
+    if not exam:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Exam not found")
+
+    # Validate pricing model
+    valid_models = ["auto", "per_subject", "tiered", "per_programme"]
+    if model_data.pricing_model_preference not in valid_models:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Invalid pricing_model_preference. Must be one of: {', '.join(valid_models)}"
+        )
+
+    # Convert registration_type string to enum if provided
+    registration_type_enum = None
+    if model_data.registration_type:
+        try:
+            registration_type_enum = RegistrationType(model_data.registration_type)
+        except ValueError:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Invalid registration_type: {model_data.registration_type}. Must be one of: free_tvet, private, referral"
+            )
+
+    # Handle case where table doesn't exist yet
+    try:
+        # Check if pricing model exists
+        existing_stmt = select(ExamPricingModel).where(
+            and_(
+                ExamPricingModel.exam_id == exam_id,
+                ExamPricingModel.registration_type == registration_type_enum
+            )
+        )
+        existing_result = await session.execute(existing_stmt)
+        existing = existing_result.scalar_one_or_none()
+
+        if existing:
+            # Update existing
+            existing.pricing_model_preference = model_data.pricing_model_preference
+            await session.commit()
+            await session.refresh(existing)
+            return ExamPricingModelResponse.model_validate(existing)
+        else:
+            # Create new
+            new_model = ExamPricingModel(
+                exam_id=exam_id,
+                registration_type=registration_type_enum,
+                pricing_model_preference=model_data.pricing_model_preference,
+            )
+            session.add(new_model)
+            await session.commit()
+            await session.refresh(new_model)
+            return ExamPricingModelResponse.model_validate(new_model)
+    except Exception as e:
+        # Table might not exist yet
+        if "does not exist" in str(e) or "UndefinedTableError" in str(type(e).__name__):
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="Pricing models table does not exist. Please run database migrations first."
+            )
+        raise
+
+
+@router.delete("/exams/{exam_id}/pricing/models", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_pricing_model(
+    exam_id: int,
+    session: DBSessionDep,
+    current_user: SystemAdminDep,
+    registration_type: str | None = Query(None),
+) -> None:
+    """Delete pricing model for an exam and registration type."""
+    registration_type_enum = None
+    if registration_type:
+        try:
+            registration_type_enum = RegistrationType(registration_type)
+        except ValueError:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Invalid registration_type: {registration_type}. Must be one of: free_tvet, private, referral"
+            )
+
+    try:
+        stmt = select(ExamPricingModel).where(
+            and_(
+                ExamPricingModel.exam_id == exam_id,
+                ExamPricingModel.registration_type == registration_type_enum
+            )
+        )
+        result = await session.execute(stmt)
+        pricing_model = result.scalar_one_or_none()
+
+        if not pricing_model:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Pricing model not found")
+
+        await session.delete(pricing_model)
+        await session.commit()
+    except Exception as e:
+        # Table might not exist yet
+        if "does not exist" in str(e) or "UndefinedTableError" in str(type(e).__name__):
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="Pricing models table does not exist. Please run database migrations first."
+            )
+        raise
 
 
 @router.get("/exams/{exam_id}/candidates/export")

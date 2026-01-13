@@ -14,25 +14,34 @@ from app.models import (
     RegistrationApplicationFee,
     RegistrationSubjectSelection,
     RegistrationExam,
+    ProgrammePricing,
+    RegistrationType,
+    ExamPricingModel,
 )
 
 
-async def get_application_fee(session: AsyncSession, exam_id: int | None = None) -> Decimal:
+async def get_application_fee(
+    session: AsyncSession,
+    exam_id: int | None = None,
+    registration_type: str | None = None
+) -> Decimal:
     """
-    Get application fee for an exam.
+    Get application fee for an exam and registration type.
 
     Args:
         session: Database session
         exam_id: Exam ID (None for global fee)
+        registration_type: Registration type (free_tvet, private, referral) or None for all types
 
     Returns:
         Application fee as Decimal (0 if not found)
     """
-    # Try exam-specific first
-    if exam_id:
+    # Try exam-specific with registration_type first
+    if exam_id and registration_type:
         stmt = select(RegistrationApplicationFee).where(
             and_(
                 RegistrationApplicationFee.exam_id == exam_id,
+                RegistrationApplicationFee.registration_type == registration_type,
                 RegistrationApplicationFee.is_active == True
             )
         )
@@ -41,10 +50,39 @@ async def get_application_fee(session: AsyncSession, exam_id: int | None = None)
         if fee:
             return Decimal(str(fee.fee))
 
-    # Fallback to global
+    # Try exam-specific with NULL registration_type (applies to all)
+    if exam_id:
+        stmt = select(RegistrationApplicationFee).where(
+            and_(
+                RegistrationApplicationFee.exam_id == exam_id,
+                RegistrationApplicationFee.registration_type.is_(None),
+                RegistrationApplicationFee.is_active == True
+            )
+        )
+        result = await session.execute(stmt)
+        fee = result.scalar_one_or_none()
+        if fee:
+            return Decimal(str(fee.fee))
+
+    # Fallback to global with registration_type
+    if registration_type:
+        stmt = select(RegistrationApplicationFee).where(
+            and_(
+                RegistrationApplicationFee.exam_id.is_(None),
+                RegistrationApplicationFee.registration_type == registration_type,
+                RegistrationApplicationFee.is_active == True
+            )
+        )
+        result = await session.execute(stmt)
+        fee = result.scalar_one_or_none()
+        if fee:
+            return Decimal(str(fee.fee))
+
+    # Fallback to global with NULL registration_type
     stmt = select(RegistrationApplicationFee).where(
         and_(
             RegistrationApplicationFee.exam_id.is_(None),
+            RegistrationApplicationFee.registration_type.is_(None),
             RegistrationApplicationFee.is_active == True
         )
     )
@@ -57,7 +95,10 @@ async def get_application_fee(session: AsyncSession, exam_id: int | None = None)
 
 
 async def get_subject_prices(
-    session: AsyncSession, subject_ids: list[int], exam_id: int | None = None
+    session: AsyncSession,
+    subject_ids: list[int],
+    exam_id: int | None = None,
+    registration_type: str | None = None
 ) -> dict[int, Decimal]:
     """
     Get prices for subjects.
@@ -66,6 +107,7 @@ async def get_subject_prices(
         session: Database session
         subject_ids: List of subject IDs
         exam_id: Exam ID (None for global pricing)
+        registration_type: Registration type (free_tvet, private, referral) or None for all types
 
     Returns:
         Dictionary mapping subject_id to price
@@ -75,12 +117,13 @@ async def get_subject_prices(
 
     prices: dict[int, Decimal] = {}
 
-    # Get exam-specific prices first
-    if exam_id:
+    # Get exam-specific prices with registration_type first
+    if exam_id and registration_type:
         stmt = select(SubjectPricing).where(
             and_(
                 SubjectPricing.subject_id.in_(subject_ids),
                 SubjectPricing.exam_id == exam_id,
+                SubjectPricing.registration_type == registration_type,
                 SubjectPricing.is_active == True
             )
         )
@@ -89,13 +132,48 @@ async def get_subject_prices(
         for pricing in exam_prices:
             prices[pricing.subject_id] = Decimal(str(pricing.price))
 
-    # Get global prices for subjects not found in exam-specific
+    # Get exam-specific prices with NULL registration_type (applies to all)
+    missing_subject_ids = [sid for sid in subject_ids if sid not in prices]
+    if exam_id and missing_subject_ids:
+        stmt = select(SubjectPricing).where(
+            and_(
+                SubjectPricing.subject_id.in_(missing_subject_ids),
+                SubjectPricing.exam_id == exam_id,
+                SubjectPricing.registration_type.is_(None),
+                SubjectPricing.is_active == True
+            )
+        )
+        result = await session.execute(stmt)
+        exam_prices = result.scalars().all()
+        for pricing in exam_prices:
+            if pricing.subject_id not in prices:
+                prices[pricing.subject_id] = Decimal(str(pricing.price))
+
+    # Get global prices with registration_type for subjects not found
+    missing_subject_ids = [sid for sid in subject_ids if sid not in prices]
+    if missing_subject_ids and registration_type:
+        stmt = select(SubjectPricing).where(
+            and_(
+                SubjectPricing.subject_id.in_(missing_subject_ids),
+                SubjectPricing.exam_id.is_(None),
+                SubjectPricing.registration_type == registration_type,
+                SubjectPricing.is_active == True
+            )
+        )
+        result = await session.execute(stmt)
+        global_prices = result.scalars().all()
+        for pricing in global_prices:
+            if pricing.subject_id not in prices:
+                prices[pricing.subject_id] = Decimal(str(pricing.price))
+
+    # Get global prices with NULL registration_type for subjects not found
     missing_subject_ids = [sid for sid in subject_ids if sid not in prices]
     if missing_subject_ids:
         stmt = select(SubjectPricing).where(
             and_(
                 SubjectPricing.subject_id.in_(missing_subject_ids),
                 SubjectPricing.exam_id.is_(None),
+                SubjectPricing.registration_type.is_(None),
                 SubjectPricing.is_active == True
             )
         )
@@ -109,7 +187,10 @@ async def get_subject_prices(
 
 
 async def get_tiered_pricing(
-    session: AsyncSession, subject_count: int, exam_id: int | None = None
+    session: AsyncSession,
+    subject_count: int,
+    exam_id: int | None = None,
+    registration_type: str | None = None
 ) -> Decimal | None:
     """
     Get tiered pricing for a number of subjects.
@@ -118,15 +199,17 @@ async def get_tiered_pricing(
         session: Database session
         subject_count: Number of subjects
         exam_id: Exam ID (None for global pricing)
+        registration_type: Registration type (free_tvet, private, referral) or None for all types
 
     Returns:
         Tiered price as Decimal, or None if no matching tier found
     """
-    # Try exam-specific first
-    if exam_id:
+    # Try exam-specific with registration_type first
+    if exam_id and registration_type:
         stmt = select(RegistrationTieredPricing).where(
             and_(
                 RegistrationTieredPricing.exam_id == exam_id,
+                RegistrationTieredPricing.registration_type == registration_type,
                 RegistrationTieredPricing.is_active == True,
                 RegistrationTieredPricing.min_subjects <= subject_count,
                 or_(
@@ -140,10 +223,49 @@ async def get_tiered_pricing(
         if tier:
             return Decimal(str(tier.price))
 
-    # Fallback to global
+    # Try exam-specific with NULL registration_type (applies to all)
+    if exam_id:
+        stmt = select(RegistrationTieredPricing).where(
+            and_(
+                RegistrationTieredPricing.exam_id == exam_id,
+                RegistrationTieredPricing.registration_type.is_(None),
+                RegistrationTieredPricing.is_active == True,
+                RegistrationTieredPricing.min_subjects <= subject_count,
+                or_(
+                    RegistrationTieredPricing.max_subjects.is_(None),
+                    RegistrationTieredPricing.max_subjects >= subject_count
+                )
+            )
+        ).order_by(RegistrationTieredPricing.min_subjects.desc())
+        result = await session.execute(stmt)
+        tier = result.scalar_one_or_none()
+        if tier:
+            return Decimal(str(tier.price))
+
+    # Fallback to global with registration_type
+    if registration_type:
+        stmt = select(RegistrationTieredPricing).where(
+            and_(
+                RegistrationTieredPricing.exam_id.is_(None),
+                RegistrationTieredPricing.registration_type == registration_type,
+                RegistrationTieredPricing.is_active == True,
+                RegistrationTieredPricing.min_subjects <= subject_count,
+                or_(
+                    RegistrationTieredPricing.max_subjects.is_(None),
+                    RegistrationTieredPricing.max_subjects >= subject_count
+                )
+            )
+        ).order_by(RegistrationTieredPricing.min_subjects.desc())
+        result = await session.execute(stmt)
+        tier = result.scalar_one_or_none()
+        if tier:
+            return Decimal(str(tier.price))
+
+    # Fallback to global with NULL registration_type
     stmt = select(RegistrationTieredPricing).where(
         and_(
             RegistrationTieredPricing.exam_id.is_(None),
+            RegistrationTieredPricing.registration_type.is_(None),
             RegistrationTieredPricing.is_active == True,
             RegistrationTieredPricing.min_subjects <= subject_count,
             or_(
@@ -158,6 +280,143 @@ async def get_tiered_pricing(
         return Decimal(str(tier.price))
 
     return None
+
+
+async def get_programme_price(
+    session: AsyncSession,
+    programme_id: int | None,
+    exam_id: int | None = None,
+    registration_type: str | None = None
+) -> Decimal | None:
+    """
+    Get price for a programme.
+
+    Args:
+        session: Database session
+        programme_id: Programme ID
+        exam_id: Exam ID (None for global pricing)
+        registration_type: Registration type (free_tvet, private, referral) or None for all types
+
+    Returns:
+        Programme price as Decimal, or None if no pricing found
+    """
+    if not programme_id:
+        return None
+
+    # Try exam-specific with registration_type first
+    if exam_id and registration_type:
+        stmt = select(ProgrammePricing).where(
+            and_(
+                ProgrammePricing.programme_id == programme_id,
+                ProgrammePricing.exam_id == exam_id,
+                ProgrammePricing.registration_type == registration_type,
+                ProgrammePricing.is_active == True
+            )
+        )
+        result = await session.execute(stmt)
+        pricing = result.scalar_one_or_none()
+        if pricing:
+            return Decimal(str(pricing.price))
+
+    # Try exam-specific with NULL registration_type (applies to all)
+    if exam_id:
+        stmt = select(ProgrammePricing).where(
+            and_(
+                ProgrammePricing.programme_id == programme_id,
+                ProgrammePricing.exam_id == exam_id,
+                ProgrammePricing.registration_type.is_(None),
+                ProgrammePricing.is_active == True
+            )
+        )
+        result = await session.execute(stmt)
+        pricing = result.scalar_one_or_none()
+        if pricing:
+            return Decimal(str(pricing.price))
+
+    # Fallback to global with registration_type
+    if registration_type:
+        stmt = select(ProgrammePricing).where(
+            and_(
+                ProgrammePricing.programme_id == programme_id,
+                ProgrammePricing.exam_id.is_(None),
+                ProgrammePricing.registration_type == registration_type,
+                ProgrammePricing.is_active == True
+            )
+        )
+        result = await session.execute(stmt)
+        pricing = result.scalar_one_or_none()
+        if pricing:
+            return Decimal(str(pricing.price))
+
+    # Fallback to global with NULL registration_type
+    stmt = select(ProgrammePricing).where(
+        and_(
+            ProgrammePricing.programme_id == programme_id,
+            ProgrammePricing.exam_id.is_(None),
+            ProgrammePricing.registration_type.is_(None),
+            ProgrammePricing.is_active == True
+        )
+    )
+    result = await session.execute(stmt)
+    pricing = result.scalar_one_or_none()
+    if pricing:
+        return Decimal(str(pricing.price))
+
+    return None
+
+
+async def get_pricing_model_preference(
+    session: AsyncSession,
+    exam_id: int | None = None,
+    registration_type: str | None = None
+) -> str:
+    """
+    Get pricing model preference for an exam and registration type.
+
+    Args:
+        session: Database session
+        exam_id: Exam ID (None for global preference)
+        registration_type: Registration type (free_tvet, private, referral) or None for all types
+
+    Returns:
+        Pricing model preference as string ("auto" if not found)
+    """
+    # Try exam-specific with registration_type first
+    if exam_id and registration_type:
+        stmt = select(ExamPricingModel).where(
+            and_(
+                ExamPricingModel.exam_id == exam_id,
+                ExamPricingModel.registration_type == registration_type
+            )
+        )
+        result = await session.execute(stmt)
+        pricing_model = result.scalar_one_or_none()
+        if pricing_model:
+            return pricing_model.pricing_model_preference
+
+    # Try exam-specific with NULL registration_type (applies to all)
+    if exam_id:
+        stmt = select(ExamPricingModel).where(
+            and_(
+                ExamPricingModel.exam_id == exam_id,
+                ExamPricingModel.registration_type.is_(None)
+            )
+        )
+        result = await session.execute(stmt)
+        pricing_model = result.scalar_one_or_none()
+        if pricing_model:
+            return pricing_model.pricing_model_preference
+
+    # Fallback to exam's default pricing_model_preference
+    if exam_id:
+        exam_stmt = select(RegistrationExam).where(RegistrationExam.id == exam_id)
+        exam_result = await session.execute(exam_stmt)
+        exam = exam_result.scalar_one_or_none()
+        if exam and exam.pricing_model_preference:
+            return exam.pricing_model_preference
+
+    # Default to "auto"
+    return "auto"
 
 
 async def calculate_registration_amount(
@@ -201,73 +460,96 @@ async def calculate_registration_amount(
 
     exam_id = candidate.registration_exam_id
 
-    # Get exam to check pricing model preference
-    exam_stmt = select(RegistrationExam).where(RegistrationExam.id == exam_id)
-    exam_result = await session.execute(exam_stmt)
-    exam = exam_result.scalar_one_or_none()
+    # Get registration type for filtering pricing
+    registration_type_str = candidate.registration_type
 
-    # Use exam's pricing model preference if not explicitly provided
-    if pricing_model is None and exam and exam.pricing_model_preference:
-        pricing_model = exam.pricing_model_preference
-    elif pricing_model is None:
-        pricing_model = "auto"
+    # Get pricing model preference for this registration type
+    if pricing_model is None:
+        pricing_model = await get_pricing_model_preference(session, exam_id, registration_type_str)
 
     # Get application fee
     application_fee = Decimal("0")
     if include_application_fee:
-        application_fee = await get_application_fee(session, exam_id)
+        registration_type_str = candidate.registration_type
+        application_fee = await get_application_fee(session, exam_id, registration_type_str)
 
-    # Get subject IDs
+    # Check if candidate is free_tvet and pricing model is per_programme
+    is_free_tvet = registration_type_str == RegistrationType.FREE_TVET.value if registration_type_str else False
+    programme_id = candidate.programme_id
+
+    # Check if pricing is configured for this exam
+    has_pricing = False
+    subject_price: Decimal | None = None
+    tiered_price: Decimal | None = None
+    programme_price: Decimal | None = None
+
+    # Get subject IDs (needed for fallback logic)
     subject_ids = [
         sel.subject_id for sel in candidate.subject_selections
         if sel.subject_id is not None
     ]
     subject_count = len(subject_ids)
 
-    # Check if pricing is configured for this exam
-    has_pricing = False
-    subject_price: Decimal | None = None
-    tiered_price: Decimal | None = None
-
-    if pricing_model == "per_subject":
-        prices = await get_subject_prices(session, subject_ids, exam_id)
-        has_pricing = len(prices) > 0
+    # For free_tvet candidates with per_programme pricing model
+    use_programme_pricing = False
+    if is_free_tvet and pricing_model == "per_programme":
+        programme_price = await get_programme_price(session, programme_id, exam_id, registration_type_str)
+        has_pricing = programme_price is not None
         if has_pricing:
-            subject_price = sum(prices.values())
-    elif pricing_model == "tiered":
-        tiered_price = await get_tiered_pricing(session, subject_count, exam_id)
-        has_pricing = tiered_price is not None
-        if not has_pricing:
-            # Fallback to per-subject if no tier found
-            prices = await get_subject_prices(session, subject_ids, exam_id)
-            if len(prices) > 0:
-                subject_price = sum(prices.values())
-                has_pricing = True
-                pricing_model = "per_subject"
-    else:  # auto
-        # Try tiered first
-        tiered_price = await get_tiered_pricing(session, subject_count, exam_id)
-        if tiered_price is not None:
-            has_pricing = True
-            pricing_model = "tiered"
+            use_programme_pricing = True
         else:
-            # Fallback to per-subject
-            prices = await get_subject_prices(session, subject_ids, exam_id)
-            if len(prices) > 0:
-                subject_price = sum(prices.values())
-                has_pricing = True
-                pricing_model = "per_subject"
+            # Fallback to subject/tiered pricing if no programme pricing found
+            pricing_model = "auto"
 
-    pricing_model_used = pricing_model
+    # For non-free_tvet or fallback from programme pricing, use existing logic
+    if not use_programme_pricing:
+        if pricing_model == "per_subject":
+            prices = await get_subject_prices(session, subject_ids, exam_id, registration_type_str)
+            has_pricing = len(prices) > 0
+            if has_pricing:
+                subject_price = sum(prices.values())
+        elif pricing_model == "tiered":
+            tiered_price = await get_tiered_pricing(session, subject_count, exam_id, registration_type_str)
+            has_pricing = tiered_price is not None
+            if not has_pricing:
+                # Fallback to per-subject if no tier found
+                prices = await get_subject_prices(session, subject_ids, exam_id, registration_type_str)
+                if len(prices) > 0:
+                    subject_price = sum(prices.values())
+                    has_pricing = True
+                    pricing_model = "per_subject"
+        else:  # auto
+            # Try tiered first
+            tiered_price = await get_tiered_pricing(session, subject_count, exam_id, registration_type_str)
+            if tiered_price is not None:
+                has_pricing = True
+                pricing_model = "tiered"
+            else:
+                # Fallback to per-subject
+                prices = await get_subject_prices(session, subject_ids, exam_id, registration_type_str)
+                if len(prices) > 0:
+                    subject_price = sum(prices.values())
+                    has_pricing = True
+                    pricing_model = "per_subject"
+
+    # Set pricing_model_used
+    if use_programme_pricing:
+        pricing_model_used = "per_programme"
+    else:
+        pricing_model_used = pricing_model
 
     # Calculate total
-    subject_or_tiered = tiered_price if tiered_price is not None else (subject_price or Decimal("0"))
-    total = application_fee + subject_or_tiered
+    if programme_price is not None:
+        total = application_fee + programme_price
+    else:
+        subject_or_tiered = tiered_price if tiered_price is not None else (subject_price or Decimal("0"))
+        total = application_fee + subject_or_tiered
 
     return {
         "application_fee": application_fee,
         "subject_price": subject_price,
         "tiered_price": tiered_price,
+        "programme_price": programme_price,
         "total": total,
         "pricing_model_used": pricing_model_used,
         "has_pricing": has_pricing,
@@ -303,28 +585,56 @@ async def calculate_price_difference(
     # Get current paid amount
     total_paid = Decimal(str(candidate.total_paid_amount or 0))
 
-    # Temporarily update subject selections to calculate new price
-    # We'll use a temporary approach: create a mock candidate calculation
-    # Actually, we need to calculate with the new subjects
-    # Let's get the exam_id first
+    # Get exam_id and exam
     exam_id = candidate.registration_exam_id
+    exam_stmt = select(RegistrationExam).where(RegistrationExam.id == exam_id)
+    exam_result = await session.execute(exam_stmt)
+    exam = exam_result.scalar_one_or_none()
+
+    # Get registration type
+    registration_type_str = candidate.registration_type
+
+    # Get pricing model preference for this registration type
+    pricing_model = await get_pricing_model_preference(session, exam_id, registration_type_str)
 
     # Calculate new total
     # Get application fee
-    application_fee = await get_application_fee(session, exam_id)
+    application_fee = await get_application_fee(session, exam_id, registration_type_str)
 
-    # Calculate subject/tiered pricing with new subjects
-    subject_count = len(new_subject_ids)
+    # Check if candidate is free_tvet and pricing model is per_programme
+    is_free_tvet = registration_type_str == RegistrationType.FREE_TVET.value if registration_type_str else False
+    programme_id = candidate.programme_id
 
-    # Try tiered first (auto mode)
-    tiered_price = await get_tiered_pricing(session, subject_count, exam_id)
-    if tiered_price is not None:
-        new_total = application_fee + tiered_price
+    new_total = application_fee
+
+    # For free_tvet candidates with per_programme pricing model
+    if is_free_tvet and pricing_model == "per_programme":
+        programme_price = await get_programme_price(session, programme_id, exam_id, registration_type_str)
+        if programme_price is not None:
+            new_total += programme_price
+        else:
+            # Fallback to subject/tiered pricing
+            subject_count = len(new_subject_ids)
+            tiered_price = await get_tiered_pricing(session, subject_count, exam_id, registration_type_str)
+            if tiered_price is not None:
+                new_total += tiered_price
+            else:
+                prices = await get_subject_prices(session, new_subject_ids, exam_id, registration_type_str)
+                subject_price = sum(prices.values())
+                new_total += subject_price
     else:
-        # Fallback to per-subject
-        prices = await get_subject_prices(session, new_subject_ids, exam_id)
-        subject_price = sum(prices.values())
-        new_total = application_fee + subject_price
+        # Calculate subject/tiered pricing with new subjects
+        subject_count = len(new_subject_ids)
+
+        # Try tiered first (auto mode)
+        tiered_price = await get_tiered_pricing(session, subject_count, exam_id, registration_type_str)
+        if tiered_price is not None:
+            new_total += tiered_price
+        else:
+            # Fallback to per-subject
+            prices = await get_subject_prices(session, new_subject_ids, exam_id, registration_type_str)
+            subject_price = sum(prices.values())
+            new_total += subject_price
 
     # Calculate difference
     difference = new_total - total_paid

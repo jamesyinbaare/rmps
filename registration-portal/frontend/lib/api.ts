@@ -54,6 +54,21 @@ import type {
   ApiUserListResponse,
   ApiUserDetail,
   ApiUserUsageStats,
+  ProgrammePricingResponse,
+  ProgrammePricingCreate,
+  ProgrammePricingBulkUpdate,
+  ExamPricingResponse,
+  ImportPricingRequest,
+  SubjectPricingResponse,
+  SubjectPricingCreate,
+  SubjectPricingBulkUpdate,
+  TieredPricingResponse,
+  TieredPricingCreate,
+  TieredPricingBulkUpdate,
+  ApplicationFeeResponse,
+  ApplicationFeeCreate,
+  ExamPricingModelResponse,
+  ExamPricingModelCreate,
 } from "@/types";
 
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL || "http://localhost:8001";
@@ -967,8 +982,16 @@ export async function getExamPricing(examId: number): Promise<ExamPricingRespons
   return handleResponse<ExamPricingResponse>(response);
 }
 
-export async function getApplicationFee(examId: number): Promise<ApplicationFeeResponse> {
-  const response = await fetchWithAuth(`/api/v1/admin/exams/${examId}/pricing/application-fee`);
+export async function getApplicationFee(
+  examId: number,
+  registrationType?: string | null
+): Promise<ApplicationFeeResponse> {
+  const params = new URLSearchParams();
+  if (registrationType) {
+    params.append("registration_type", registrationType);
+  }
+  const url = `/api/v1/admin/exams/${examId}/pricing/application-fee${params.toString() ? `?${params.toString()}` : ""}`;
+  const response = await fetchWithAuth(url);
   return handleResponse<ApplicationFeeResponse>(response);
 }
 
@@ -984,8 +1007,50 @@ export async function createOrUpdateApplicationFee(
   return handleResponse<ApplicationFeeResponse>(response);
 }
 
-export async function deleteApplicationFee(examId: number): Promise<void> {
-  const response = await fetchWithAuth(`/api/v1/admin/exams/${examId}/pricing/application-fee`, {
+export async function deleteApplicationFee(
+  examId: number,
+  registrationType?: string | null
+): Promise<void> {
+  const params = new URLSearchParams();
+  if (registrationType) {
+    params.append("registration_type", registrationType);
+  }
+  const url = `/api/v1/admin/exams/${examId}/pricing/application-fee${params.toString() ? `?${params.toString()}` : ""}`;
+  const response = await fetchWithAuth(url, {
+    method: "DELETE",
+  });
+  if (!response.ok) {
+    await handleResponse(response);
+  }
+}
+
+export async function getPricingModels(examId: number): Promise<ExamPricingModelResponse[]> {
+  const response = await fetchWithAuth(`/api/v1/admin/exams/${examId}/pricing/models`);
+  return handleResponse<ExamPricingModelResponse[]>(response);
+}
+
+export async function createOrUpdatePricingModel(
+  examId: number,
+  modelData: ExamPricingModelCreate
+): Promise<ExamPricingModelResponse> {
+  const response = await fetchWithAuth(`/api/v1/admin/exams/${examId}/pricing/models`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(modelData),
+  });
+  return handleResponse<ExamPricingModelResponse>(response);
+}
+
+export async function deletePricingModel(
+  examId: number,
+  registrationType?: string | null
+): Promise<void> {
+  const params = new URLSearchParams();
+  if (registrationType) {
+    params.append("registration_type", registrationType);
+  }
+  const url = `/api/v1/admin/exams/${examId}/pricing/models${params.toString() ? `?${params.toString()}` : ""}`;
+  const response = await fetchWithAuth(url, {
     method: "DELETE",
   });
   if (!response.ok) {
@@ -1043,6 +1108,70 @@ export async function deleteTieredPricing(examId: number, tieredPricingId: numbe
   if (!response.ok) {
     await handleResponse(response);
   }
+}
+
+export async function getProgrammePricing(examId: number): Promise<ProgrammePricingResponse[]> {
+  const response = await fetchWithAuth(`/api/v1/admin/exams/${examId}/pricing/programmes`);
+  return handleResponse<ProgrammePricingResponse[]>(response);
+}
+
+export async function createOrUpdateProgrammePricing(
+  examId: number,
+  pricingData: ProgrammePricingBulkUpdate
+): Promise<ProgrammePricingResponse[]> {
+  const response = await fetchWithAuth(`/api/v1/admin/exams/${examId}/pricing/programmes`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(pricingData),
+  });
+  return handleResponse<ProgrammePricingResponse[]>(response);
+}
+
+export async function deleteProgrammePricing(examId: number, programmePricingId: number): Promise<void> {
+  const response = await fetchWithAuth(`/api/v1/admin/exams/${examId}/pricing/programmes/${programmePricingId}`, {
+    method: "DELETE",
+  });
+  if (!response.ok) {
+    await handleResponse(response);
+  }
+}
+
+export async function downloadSubjectPricingTemplate(examId: number): Promise<Blob> {
+  const response = await fetchWithAuth(`/api/v1/admin/exams/${examId}/pricing/subjects/template`);
+  if (!response.ok) {
+    await handleResponse(response);
+  }
+  return response.blob();
+}
+
+export async function uploadSubjectPricing(examId: number, file: File): Promise<SubjectPricingResponse[]> {
+  const formData = new FormData();
+  formData.append("file", file);
+
+  const response = await fetchWithAuth(`/api/v1/admin/exams/${examId}/pricing/subjects/upload`, {
+    method: "POST",
+    body: formData,
+  });
+  return handleResponse<SubjectPricingResponse[]>(response);
+}
+
+export async function downloadProgrammePricingTemplate(examId: number): Promise<Blob> {
+  const response = await fetchWithAuth(`/api/v1/admin/exams/${examId}/pricing/programmes/template`);
+  if (!response.ok) {
+    await handleResponse(response);
+  }
+  return response.blob();
+}
+
+export async function uploadProgrammePricing(examId: number, file: File): Promise<ProgrammePricingResponse[]> {
+  const formData = new FormData();
+  formData.append("file", file);
+
+  const response = await fetchWithAuth(`/api/v1/admin/exams/${examId}/pricing/programmes/upload`, {
+    method: "POST",
+    body: formData,
+  });
+  return handleResponse<ProgrammePricingResponse[]>(response);
 }
 
 export async function importExamPricing(
@@ -1627,6 +1756,26 @@ export async function removeSubjectFromProgramme(programmeId: number, subjectId:
   if (!response.ok) {
     await handleResponse(response);
   }
+}
+
+export async function listAllProgrammes(): Promise<Programme[]> {
+  const allProgrammes: Programme[] = [];
+  let page = 1;
+  const pageSize = 100; // Backend max is 100
+
+  while (true) {
+    const response = await fetchWithAuth(`/api/v1/admin/programmes?page=${page}&page_size=${pageSize}`);
+    const data = await handleResponse<ProgrammeListResponse>(response);
+    allProgrammes.push(...data.items);
+
+    // If we got fewer items than page size, we're done
+    if (data.items.length < pageSize || page >= data.total_pages) {
+      break;
+    }
+    page++;
+  }
+
+  return allProgrammes;
 }
 
 export async function listAllSubjects(): Promise<Subject[]> {

@@ -641,6 +641,7 @@ class SubjectPricing(Base):
     id = Column(Integer, primary_key=True)
     subject_id = Column(Integer, ForeignKey("subjects.id", ondelete="CASCADE"), nullable=False, index=True)
     exam_id = Column(Integer, ForeignKey("registration_exams.id", ondelete="CASCADE"), nullable=True, index=True)  # NULL = global pricing
+    registration_type = Column(Enum(RegistrationType, create_constraint=False, values_callable=lambda x: [e.value for e in x]), nullable=True, index=True)  # NULL = applies to all types
     price = Column(Numeric(10, 2), nullable=False)
     currency = Column(String(3), default="GHS", nullable=False)
     is_active = Column(Boolean, default=True, nullable=False, index=True)
@@ -651,7 +652,7 @@ class SubjectPricing(Base):
     exam = relationship("RegistrationExam", foreign_keys=[exam_id])
 
     __table_args__ = (
-        UniqueConstraint("subject_id", "exam_id", name="uq_subject_pricing"),
+        UniqueConstraint("subject_id", "exam_id", "registration_type", name="uq_subject_pricing"),
     )
 
 
@@ -662,6 +663,7 @@ class RegistrationTieredPricing(Base):
 
     id = Column(Integer, primary_key=True)
     exam_id = Column(Integer, ForeignKey("registration_exams.id", ondelete="CASCADE"), nullable=True, index=True)  # NULL = global pricing
+    registration_type = Column(Enum(RegistrationType, create_constraint=False, values_callable=lambda x: [e.value for e in x]), nullable=True, index=True)  # NULL = applies to all types
     min_subjects = Column(Integer, nullable=False)
     max_subjects = Column(Integer, nullable=True)  # NULL = unlimited
     price = Column(Numeric(10, 2), nullable=False)
@@ -673,7 +675,7 @@ class RegistrationTieredPricing(Base):
     exam = relationship("RegistrationExam", foreign_keys=[exam_id])
 
     __table_args__ = (
-        UniqueConstraint("exam_id", "min_subjects", "max_subjects", name="uq_tiered_pricing"),
+        UniqueConstraint("exam_id", "registration_type", "min_subjects", "max_subjects", name="uq_tiered_pricing"),
     )
 
 
@@ -683,7 +685,8 @@ class RegistrationApplicationFee(Base):
     __tablename__ = "registration_application_fees"
 
     id = Column(Integer, primary_key=True)
-    exam_id = Column(Integer, ForeignKey("registration_exams.id", ondelete="CASCADE"), nullable=True, unique=True, index=True)  # NULL = global application fee
+    exam_id = Column(Integer, ForeignKey("registration_exams.id", ondelete="CASCADE"), nullable=True, index=True)  # NULL = global application fee
+    registration_type = Column(Enum(RegistrationType, create_constraint=False, values_callable=lambda x: [e.value for e in x]), nullable=True, index=True)  # NULL = applies to all types
     fee = Column(Numeric(10, 2), nullable=False)
     currency = Column(String(3), default="GHS", nullable=False)
     is_active = Column(Boolean, default=True, nullable=False, index=True)
@@ -691,6 +694,52 @@ class RegistrationApplicationFee(Base):
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
 
     exam = relationship("RegistrationExam", foreign_keys=[exam_id])
+
+    __table_args__ = (
+        UniqueConstraint("exam_id", "registration_type", name="uq_application_fee"),
+    )
+
+
+class ExamPricingModel(Base):
+    """Model for pricing model preference per registration type."""
+
+    __tablename__ = "exam_pricing_models"
+
+    id = Column(Integer, primary_key=True)
+    exam_id = Column(Integer, ForeignKey("registration_exams.id", ondelete="CASCADE"), nullable=True, index=True)  # NULL = global pricing model
+    registration_type = Column(Enum(RegistrationType, create_constraint=False, values_callable=lambda x: [e.value for e in x]), nullable=True, index=True)  # NULL = applies to all types
+    pricing_model_preference = Column(String(20), nullable=False, default="auto")  # "per_subject", "tiered", "per_programme", or "auto"
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+
+    exam = relationship("RegistrationExam", foreign_keys=[exam_id])
+
+    __table_args__ = (
+        UniqueConstraint("exam_id", "registration_type", name="uq_exam_pricing_model"),
+    )
+
+
+class ProgrammePricing(Base):
+    """Model for per-programme pricing configuration."""
+
+    __tablename__ = "programme_pricing"
+
+    id = Column(Integer, primary_key=True)
+    programme_id = Column(Integer, ForeignKey("programmes.id", ondelete="CASCADE"), nullable=False, index=True)
+    exam_id = Column(Integer, ForeignKey("registration_exams.id", ondelete="CASCADE"), nullable=True, index=True)  # NULL = global pricing
+    registration_type = Column(Enum(RegistrationType, create_constraint=False, values_callable=lambda x: [e.value for e in x]), nullable=True, index=True)  # NULL = applies to all types
+    price = Column(Numeric(10, 2), nullable=False)
+    currency = Column(String(3), default="GHS", nullable=False)
+    is_active = Column(Boolean, default=True, nullable=False, index=True)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+
+    programme = relationship("Programme")
+    exam = relationship("RegistrationExam", foreign_keys=[exam_id])
+
+    __table_args__ = (
+        UniqueConstraint("programme_id", "exam_id", "registration_type", name="uq_programme_pricing"),
+    )
 
 
 class Invoice(Base):
