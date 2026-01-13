@@ -5,6 +5,8 @@ from typing import Annotated
 from uuid import UUID
 import io
 import csv
+import zipfile
+from io import BytesIO
 
 from fastapi import APIRouter, HTTPException, status, UploadFile, File, Query, Depends, Form
 from fastapi.responses import StreamingResponse
@@ -1855,6 +1857,88 @@ async def download_registration_detailed(
         iter([pdf_bytes]),
         media_type="application/pdf",
         headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
+@router.get("/exams/{exam_id}/index-slips/download")
+async def download_index_slips_bulk(
+    exam_id: int,
+    session: DBSessionDep,
+    current_user: SchoolUserWithSchoolDep,
+    programme_id: int | None = Query(None, description="Optional programme ID to filter candidates"),
+) -> StreamingResponse:
+    """Download index slips for multiple candidates as a ZIP file."""
+    if not current_user.school_id:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="User must be associated with a school",
+        )
+
+    # Validate exam exists
+    exam_stmt = select(RegistrationExam).where(RegistrationExam.id == exam_id)
+    exam_result = await session.execute(exam_stmt)
+    exam = exam_result.scalar_one_or_none()
+    if not exam:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Exam not found")
+
+    # Query candidates with index numbers
+    candidate_stmt = (
+        select(RegistrationCandidate)
+        .where(
+            RegistrationCandidate.registration_exam_id == exam_id,
+            RegistrationCandidate.school_id == current_user.school_id,
+            RegistrationCandidate.index_number.isnot(None),
+        )
+        .order_by(RegistrationCandidate.name)
+    )
+
+    if programme_id:
+        candidate_stmt = candidate_stmt.where(RegistrationCandidate.programme_id == programme_id)
+
+    candidate_result = await session.execute(candidate_stmt)
+    candidates = candidate_result.scalars().all()
+
+    if not candidates:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="No candidates with index numbers found for the selected filters",
+        )
+
+    # Create ZIP file in memory
+    zip_buffer = BytesIO()
+
+    try:
+        with zipfile.ZipFile(zip_buffer, "w", zipfile.ZIP_DEFLATED) as zip_file:
+            for candidate in candidates:
+                try:
+                    # Generate PDF for each candidate
+                    pdf_bytes = await generate_index_slip_pdf(candidate, session, photo_data=None)
+
+                    # Use index number for filename
+                    filename = f"index_slip_{candidate.index_number}.pdf"
+                    zip_file.writestr(filename, pdf_bytes)
+                except Exception as e:
+                    logger.warning(f"Failed to generate index slip for candidate {candidate.id}: {e}")
+                    # Continue with other candidates even if one fails
+                    continue
+
+        zip_buffer.seek(0)
+    except Exception as e:
+        logger.error(f"Failed to create index slips ZIP: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to create index slips ZIP file",
+        )
+
+    programme_suffix = f"_programme_{programme_id}" if programme_id else ""
+    zip_filename = f"index_slips_{exam.exam_type}_{exam.year}_{exam.exam_series}{programme_suffix}.zip"
+    # Sanitize filename
+    zip_filename = zip_filename.replace("/", "_").replace("\\", "_")
+
+    return StreamingResponse(
+        iter([zip_buffer.getvalue()]),
+        media_type="application/zip",
+        headers={"Content-Disposition": f'attachment; filename="{zip_filename}"'},
     )
 
 
