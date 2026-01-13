@@ -64,6 +64,10 @@ from app.services.photo_storage import PhotoStorageService, calculate_checksum
 from app.services.index_slip_service import generate_index_slip_pdf
 from app.services.photo_validation import PhotoValidationService
 from app.services.registration_validation import can_approve_registration
+from app.services.registration_download_service import (
+    generate_registration_summary_pdf,
+    generate_registration_detailed_pdf,
+)
 import logging
 
 logger = logging.getLogger(__name__)
@@ -1753,6 +1757,100 @@ async def download_candidate_index_slip(
         )
 
     filename = f"index_slip_{candidate.index_number}.pdf"
+    return StreamingResponse(
+        iter([pdf_bytes]),
+        media_type="application/pdf",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
+@router.get("/exams/{exam_id}/candidates/summary.pdf")
+async def download_registration_summary(
+    exam_id: int,
+    session: DBSessionDep,
+    current_user: SchoolUserWithSchoolDep,
+    programme_id: int | None = Query(None, description="Optional programme ID to filter candidates"),
+) -> StreamingResponse:
+    """Download registration summary PDF with candidates grouped by programme."""
+    if not current_user.school_id:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="User must be associated with a school",
+        )
+
+    # Validate exam exists
+    exam_stmt = select(RegistrationExam).where(RegistrationExam.id == exam_id)
+    exam_result = await session.execute(exam_stmt)
+    exam = exam_result.scalar_one_or_none()
+    if not exam:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Exam not found")
+
+    # Generate PDF
+    try:
+        pdf_bytes = await generate_registration_summary_pdf(
+            session, exam_id, current_user.school_id, programme_id
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+    except Exception as e:
+        logger.error(f"Failed to generate registration summary PDF: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to generate registration summary PDF",
+        )
+
+    programme_suffix = f"_programme_{programme_id}" if programme_id else ""
+    filename = f"registration_summary_{exam.exam_type}_{exam.year}_{exam.exam_series}{programme_suffix}.pdf"
+    # Sanitize filename
+    filename = filename.replace("/", "_").replace("\\", "_")
+
+    return StreamingResponse(
+        iter([pdf_bytes]),
+        media_type="application/pdf",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
+@router.get("/exams/{exam_id}/candidates/detailed.pdf")
+async def download_registration_detailed(
+    exam_id: int,
+    session: DBSessionDep,
+    current_user: SchoolUserWithSchoolDep,
+    programme_id: int | None = Query(None, description="Optional programme ID to filter candidates"),
+) -> StreamingResponse:
+    """Download detailed registration PDF with one candidate per page."""
+    if not current_user.school_id:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="User must be associated with a school",
+        )
+
+    # Validate exam exists
+    exam_stmt = select(RegistrationExam).where(RegistrationExam.id == exam_id)
+    exam_result = await session.execute(exam_stmt)
+    exam = exam_result.scalar_one_or_none()
+    if not exam:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Exam not found")
+
+    # Generate PDF
+    try:
+        pdf_bytes = await generate_registration_detailed_pdf(
+            session, exam_id, current_user.school_id, programme_id
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+    except Exception as e:
+        logger.error(f"Failed to generate registration detailed PDF: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to generate registration detailed PDF",
+        )
+
+    programme_suffix = f"_programme_{programme_id}" if programme_id else ""
+    filename = f"registration_detailed_{exam.exam_type}_{exam.year}_{exam.exam_series}{programme_suffix}.pdf"
+    # Sanitize filename
+    filename = filename.replace("/", "_").replace("\\", "_")
+
     return StreamingResponse(
         iter([pdf_bytes]),
         media_type="application/pdf",

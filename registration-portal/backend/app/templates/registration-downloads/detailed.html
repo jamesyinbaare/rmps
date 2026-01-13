@@ -1,0 +1,317 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Registration Details - {{ exam.exam_type }} {{ exam.year }}</title>
+    <style>
+        @page {
+            size: A4;
+            margin: 1.5cm 1.5cm;
+        }
+
+        body {
+            font-family: 'Helvetica', Arial, sans-serif;
+            font-size: 10pt;
+            color: #000;
+            line-height: 1.4;
+            margin: 0;
+            padding: 0;
+        }
+
+        .candidate-page {
+            page-break-after: always;
+            margin-bottom: 20px;
+        }
+
+        .candidate-page:last-child {
+            page-break-after: auto;
+        }
+
+        .header {
+            display: flex;
+            align-items: center;
+            margin-bottom: 20px;
+            border-bottom: 2px solid #000;
+            padding-bottom: 10px;
+        }
+
+        .header-logo-container {
+            display: flex;
+            align-items: center;
+            margin-right: 20px;
+        }
+
+        .header-logo {
+            height: 60px;
+            width: auto;
+        }
+
+        .header-title {
+            flex: 1;
+            text-align: center;
+        }
+
+        .header h1 {
+            margin: 0;
+            font-size: 16pt;
+            font-weight: bold;
+        }
+
+        .header h2 {
+            margin: 5px 0 0 0;
+            font-size: 12pt;
+            font-weight: normal;
+        }
+
+        .candidate-info {
+            display: table;
+            width: 100%;
+            margin-bottom: 20px;
+        }
+
+        .candidate-info-row {
+            display: table-row;
+        }
+
+        .candidate-info-cell {
+            display: table-cell;
+            padding: 10px;
+            vertical-align: top;
+        }
+
+        .photo-cell {
+            width: 120px;
+            text-align: center;
+        }
+
+        .photo-cell img {
+            width: 100px;
+            height: 125px;
+            object-fit: cover;
+            border: 2px solid #000;
+        }
+
+        .info-cell {
+            width: auto;
+        }
+
+        .info-row {
+            margin-bottom: 8px;
+        }
+
+        .info-label {
+            font-weight: bold;
+            display: inline-block;
+            min-width: 140px;
+        }
+
+        .info-value {
+            display: inline-block;
+        }
+
+        .subjects-section {
+            margin-top: 20px;
+        }
+
+        .subjects-group {
+            margin-bottom: 20px;
+        }
+
+        .subjects-title {
+            font-size: 11pt;
+            font-weight: bold;
+            margin-bottom: 8px;
+            padding: 5px 8px;
+            background-color: #f0f0f0;
+            border: 1px solid #000;
+        }
+
+        .subjects-table {
+            width: 100%;
+            border-collapse: collapse;
+            margin-bottom: 10px;
+        }
+
+        .subjects-table th,
+        .subjects-table td {
+            border: 1px solid #000;
+            padding: 6px 8px;
+            text-align: left;
+        }
+
+        .subjects-table th {
+            background-color: #f0f0f0;
+            font-weight: bold;
+            font-size: 9pt;
+        }
+
+        .subjects-table td {
+            font-size: 9pt;
+        }
+
+        .subjects-table .code-cell {
+            width: 100px;
+            font-weight: bold;
+        }
+
+        .subjects-table .name-cell {
+            width: auto;
+        }
+
+        .footer {
+            margin-top: 30px;
+            padding-top: 10px;
+            border-top: 1px solid #000;
+            font-size: 8pt;
+            text-align: center;
+            color: #666;
+        }
+    </style>
+</head>
+<body>
+    {% for candidate_data in candidates_data %}
+    <div class="candidate-page">
+        <div class="header">
+            <div class="header-logo-container">
+                <img src="img/logo-crest-only.png" alt="CTVET Logo" class="header-logo" />
+            </div>
+            <div class="header-title">
+                <h1>REGISTRATION DETAILS</h1>
+                <h2>{{ exam.exam_type }} - {{ exam.exam_series }} {{ exam.year }}</h2>
+            </div>
+        </div>
+
+        <div class="candidate-info">
+            <div class="candidate-info-row">
+                <div class="candidate-info-cell photo-cell">
+                    {% if candidate_data.photo_base64 %}
+                    <img src="{{ candidate_data.photo_base64 }}" alt="Candidate Photo">
+                    {% else %}
+                    <div style="width: 100px; height: 125px; border: 2px solid #000; display: flex; align-items: center; justify-content: center;">
+                        No Photo
+                    </div>
+                    {% endif %}
+                </div>
+                <div class="candidate-info-cell info-cell">
+                    <div class="info-row">
+                        <span class="info-label">Name:</span>
+                        <span class="info-value">{{ candidate_data.candidate.name }}</span>
+                    </div>
+                    {% if candidate_data.candidate.index_number %}
+                    <div class="info-row">
+                        <span class="info-label">Index Number:</span>
+                        <span class="info-value"><strong>{{ candidate_data.candidate.index_number }}</strong></span>
+                    </div>
+                    {% endif %}
+                    <div class="info-row">
+                        <span class="info-label">Registration Number:</span>
+                        <span class="info-value">{{ candidate_data.candidate.registration_number }}</span>
+                    </div>
+                    <div class="info-row">
+                        <span class="info-label">Programme:</span>
+                        <span class="info-value">{{ candidate_data.programme_name }}</span>
+                    </div>
+                    {% if candidate_data.candidate.date_of_birth %}
+                    <div class="info-row">
+                        <span class="info-label">Date of Birth:</span>
+                        <span class="info-value">{{ candidate_data.candidate.date_of_birth.strftime('%d/%m/%Y') }}</span>
+                    </div>
+                    {% endif %}
+                    {% if candidate_data.candidate.gender %}
+                    <div class="info-row">
+                        <span class="info-label">Gender:</span>
+                        <span class="info-value">{{ candidate_data.candidate.gender }}</span>
+                    </div>
+                    {% endif %}
+                    {% if candidate_data.candidate.contact_phone %}
+                    <div class="info-row">
+                        <span class="info-label">Phone:</span>
+                        <span class="info-value">{{ candidate_data.candidate.contact_phone }}</span>
+                    </div>
+                    {% endif %}
+                    {% if candidate_data.candidate.contact_email %}
+                    <div class="info-row">
+                        <span class="info-label">Email:</span>
+                        <span class="info-value">{{ candidate_data.candidate.contact_email }}</span>
+                    </div>
+                    {% endif %}
+                    {% if candidate_data.candidate.national_id %}
+                    <div class="info-row">
+                        <span class="info-label">National ID:</span>
+                        <span class="info-value">{{ candidate_data.candidate.national_id }}</span>
+                    </div>
+                    {% endif %}
+                    <div class="info-row">
+                        <span class="info-label">School:</span>
+                        <span class="info-value">{{ school.name }} ({{ school.code }})</span>
+                    </div>
+                    <div class="info-row">
+                        <span class="info-label">Status:</span>
+                        <span class="info-value">{{ candidate_data.candidate.registration_status.value }}</span>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div class="subjects-section">
+            {% set total_subjects = candidate_data.core_subjects|length + candidate_data.elective_subjects|length %}
+            {% if total_subjects > 0 %}
+            <div style="font-size: 12pt; font-weight: bold; margin-bottom: 10px; padding: 6px; background-color: #e0e0e0; border: 1px solid #000;">
+                Registered Subjects ({{ total_subjects }})
+            </div>
+            {% endif %}
+
+            {% if candidate_data.core_subjects|length > 0 %}
+            <div class="subjects-group">
+                <div class="subjects-title">Core Subjects ({{ candidate_data.core_subjects|length }})</div>
+                <table class="subjects-table">
+                    <thead>
+                        <tr>
+                            <th class="code-cell">Subject Code</th>
+                            <th class="name-cell">Subject Name</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for subject in candidate_data.core_subjects %}
+                        <tr>
+                            <td class="code-cell">{{ subject.subject_code }}</td>
+                            <td class="name-cell">{{ subject.subject_name }}</td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+            {% endif %}
+
+            {% if candidate_data.elective_subjects|length > 0 %}
+            <div class="subjects-group">
+                <div class="subjects-title">Elective Subjects ({{ candidate_data.elective_subjects|length }})</div>
+                <table class="subjects-table">
+                    <thead>
+                        <tr>
+                            <th class="code-cell">Subject Code</th>
+                            <th class="name-cell">Subject Name</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for subject in candidate_data.elective_subjects %}
+                        <tr>
+                            <td class="code-cell">{{ subject.subject_code }}</td>
+                            <td class="name-cell">{{ subject.subject_name }}</td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+            {% endif %}
+        </div>
+
+        <div class="footer">
+            <p>This is an official registration document.</p>
+            <p>Generated on {{ generated_at.strftime('%d/%m/%Y %H:%M') }}</p>
+        </div>
+    </div>
+    {% endfor %}
+</body>
+</html>
