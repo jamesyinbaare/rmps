@@ -76,6 +76,9 @@ class RegistrationCandidateBase(BaseModel):
     contact_phone: str | None = Field(None, max_length=50)
     address: str | None = None
     national_id: str | None = Field(None, max_length=50)
+    guardian_name: str | None = Field(None, max_length=255)
+    guardian_phone: str | None = Field(None, max_length=50)
+    guardian_address: str | None = None
 
 
 class RegistrationCandidateCreate(RegistrationCandidateBase):
@@ -98,6 +101,9 @@ class RegistrationCandidateUpdate(BaseModel):
     contact_phone: str | None = Field(None, max_length=50)
     address: str | None = None
     national_id: str | None = Field(None, max_length=50)
+    guardian_name: str | None = Field(None, max_length=255)
+    guardian_phone: str | None = Field(None, max_length=50)
+    guardian_address: str | None = None
     subject_codes: list[str] | None = None  # Kept for backward compatibility
     subject_ids: list[int] | None = None
 

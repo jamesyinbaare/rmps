@@ -4,6 +4,7 @@ import io
 from typing import TYPE_CHECKING
 
 import pandas as pd
+from openpyxl.styles import Font, PatternFill
 from openpyxl.styles.numbers import FORMAT_TEXT
 
 if TYPE_CHECKING:
@@ -53,27 +54,47 @@ def generate_subject_template() -> bytes:
     return output.getvalue()
 
 
-def generate_candidate_template() -> bytes:
+def generate_candidate_template(exam_series: str | None = None) -> bytes:
     """
     Generate Excel template for candidate bulk upload.
     All columns are formatted as text to preserve leading zeros.
 
+    Args:
+        exam_series: Exam series (e.g., "MAY/JUNE", "NOV/DEC"). If "MAY/JUNE", subject columns are excluded.
+
     Returns:
         Bytes of Excel file
     """
-    # Create sample data with all values as strings
+    # Normalize exam series
+    from app.services.subject_selection import normalize_exam_series
+    normalized_series = normalize_exam_series(exam_series)
+    is_may_june = normalized_series == "MAY/JUNE"
+
+    # Required columns first
     data = {
         "name": ["John Doe", "Jane Smith"],
         "date_of_birth": ["2005-01-15", "2005-03-20"],
         "gender": ["M", "F"],
         "programme_code": ["PROG01", "PROG02"],
+    }
+
+    # Optional columns
+    data.update({
         "national_id": ["123456789", "987654321"],
         "contact_email": ["john@example.com", "jane@example.com"],
         "contact_phone": ["+1234567890", "+0987654321"],
         "address": ["123 Main St", "456 Oak Ave"],
-        "optional_subjects": ["701,702", "703"],
-        "optional_core_groups": ['{"1": "301"}', '{"1": "302"}'],
-    }
+        "guardian_name": ["John Doe Sr.", "Jane Smith Sr."],
+        "guardian_phone": ["+1234567891", "+0987654322"],
+        "guardian_address": ["123 Main St", "456 Oak Ave"],
+    })
+
+    # Subject columns only for NOV/DEC (not MAY/JUNE)
+    if not is_may_june:
+        data.update({
+            "optional_subjects": ["701,702", "703"],
+            "optional_core_groups": ['{"1": "301"}', '{"1": "302"}'],
+        })
 
     # Convert all values to strings to ensure text formatting
     df = pd.DataFrame(data)
@@ -84,18 +105,35 @@ def generate_candidate_template() -> bytes:
     with pd.ExcelWriter(output, engine="openpyxl") as writer:
         df.to_excel(writer, index=False, sheet_name="Candidates")
 
-        # Get the workbook and worksheet to format columns as text
-        workbook = writer.book
+        # Get the worksheet to format columns as text
         worksheet = writer.sheets["Candidates"]
 
-        # Format all columns as text
-        from openpyxl.styles import Font
+        # Format all columns as text and add colors to headers
+        # Define colors for headers
+        required_fill = PatternFill(start_color="E8F5E9", end_color="E8F5E9", fill_type="solid")  # Light green
+        optional_fill = PatternFill(start_color="FFF9C4", end_color="FFF9C4", fill_type="solid")  # Light yellow
 
-        for col in worksheet.columns:
+        # Define required columns
+        required_columns = {"name", "date_of_birth", "gender", "programme_code"}
+
+        # Get column headers from first row
+        header_row = 1
+        for col_idx, col in enumerate(worksheet.columns, start=1):
+            header_cell = worksheet.cell(row=header_row, column=col_idx)
+            column_name = str(header_cell.value).lower() if header_cell.value else ""
+
+            # Format header cell
+            header_cell.font = Font(bold=True)
+
+            # Apply color based on whether column is required or optional
+            if column_name in required_columns:
+                header_cell.fill = required_fill
+            else:
+                header_cell.fill = optional_fill
+
+            # Format data cells as text
             for cell in col:
-                if cell.row == 1:  # Header row
-                    cell.font = Font(bold=True)
-                else:  # Data rows
+                if cell.row > header_row:  # Data rows
                     cell.number_format = FORMAT_TEXT
                     # Ensure value is stored as text
                     if cell.value is not None:
