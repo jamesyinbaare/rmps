@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState, useMemo } from "react";
-import { listSchoolCandidates, listAllExams, listSchoolProgrammes } from "@/lib/api";
+import { listSchoolCandidates, listAllExams, listSchoolProgrammes, downloadRegistrationSummary, downloadRegistrationDetailed } from "@/lib/api";
 import type { RegistrationCandidate, RegistrationExam, Programme } from "@/types";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -25,7 +25,7 @@ import {
 import { CandidateDetailModal } from "@/components/CandidateDetailModal";
 import { SearchableSelect } from "@/components/SearchableSelect";
 import { toast } from "sonner";
-import { ChevronLeft, ChevronRight, Search, X } from "lucide-react";
+import { ChevronLeft, ChevronRight, Search, X, Download } from "lucide-react";
 
 export default function CandidatesPage() {
   const [allCandidates, setAllCandidates] = useState<RegistrationCandidate[]>([]);
@@ -35,6 +35,8 @@ export default function CandidatesPage() {
   const [loadingFilters, setLoadingFilters] = useState(true);
   const [selectedCandidate, setSelectedCandidate] = useState<RegistrationCandidate | null>(null);
   const [detailDialogOpen, setDetailDialogOpen] = useState(false);
+  const [downloadingSummary, setDownloadingSummary] = useState(false);
+  const [downloadingDetailed, setDownloadingDetailed] = useState(false);
 
   // Filters
   const [selectedExamType, setSelectedExamType] = useState<string>("");
@@ -278,6 +280,49 @@ export default function CandidatesPage() {
     }
   };
 
+  // Get the exam ID from matching exams (should have exactly one when filters are selected)
+  const examId = useMemo(() => {
+    if (matchingExamIds.length === 1) {
+      return matchingExamIds[0];
+    }
+    return null;
+  }, [matchingExamIds]);
+
+  // Check if download buttons should be enabled
+  const canDownload = selectedExamType && selectedYear && selectedSeries && examId !== null;
+
+  const handleDownloadSummary = async () => {
+    if (!examId) return;
+
+    setDownloadingSummary(true);
+    try {
+      const programmeId = selectedProgrammeId ? parseInt(selectedProgrammeId, 10) : undefined;
+      await downloadRegistrationSummary(examId, programmeId);
+      toast.success("Summary PDF downloaded successfully");
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Failed to download summary PDF");
+      console.error("Error downloading summary PDF:", error);
+    } finally {
+      setDownloadingSummary(false);
+    }
+  };
+
+  const handleDownloadDetailed = async () => {
+    if (!examId) return;
+
+    setDownloadingDetailed(true);
+    try {
+      const programmeId = selectedProgrammeId ? parseInt(selectedProgrammeId, 10) : undefined;
+      await downloadRegistrationDetailed(examId, programmeId);
+      toast.success("Detailed PDF downloaded successfully");
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Failed to download detailed PDF");
+      console.error("Error downloading detailed PDF:", error);
+    } finally {
+      setDownloadingDetailed(false);
+    }
+  };
+
   if (loadingFilters) {
     return <div className="text-center py-12 text-muted-foreground">Loading...</div>;
   }
@@ -374,6 +419,34 @@ export default function CandidatesPage() {
           </div>
         </CardContent>
       </Card>
+
+      {/* Download Buttons */}
+      {canDownload && (
+        <Card className="border-none max-w-2xl mx-auto">
+          <CardContent className="pt-6">
+            <div className="flex flex-col sm:flex-row gap-3">
+              <Button
+                onClick={handleDownloadSummary}
+                disabled={downloadingSummary || downloadingDetailed}
+                className="flex-1"
+                variant="outline"
+              >
+                <Download className="mr-2 h-4 w-4" />
+                {downloadingSummary ? "Downloading..." : "Download Summary (PDF)"}
+              </Button>
+              <Button
+                onClick={handleDownloadDetailed}
+                disabled={downloadingSummary || downloadingDetailed}
+                className="flex-1"
+                variant="outline"
+              >
+                <Download className="mr-2 h-4 w-4" />
+                {downloadingDetailed ? "Downloading..." : "Download Detailed (PDF)"}
+              </Button>
+            </div>
+          </CardContent>
+        </Card>
+      )}
 
       {/* Candidates Table */}
       <Card>

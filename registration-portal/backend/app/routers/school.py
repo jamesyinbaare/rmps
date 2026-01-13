@@ -5,6 +5,8 @@ from typing import Annotated
 from uuid import UUID
 import io
 import csv
+import zipfile
+from io import BytesIO
 
 from fastapi import APIRouter, HTTPException, status, UploadFile, File, Query, Depends, Form
 from fastapi.responses import StreamingResponse
@@ -64,6 +66,10 @@ from app.services.photo_storage import PhotoStorageService, calculate_checksum
 from app.services.index_slip_service import generate_index_slip_pdf
 from app.services.photo_validation import PhotoValidationService
 from app.services.registration_validation import can_approve_registration
+from app.services.registration_download_service import (
+    generate_registration_summary_pdf,
+    generate_registration_detailed_pdf,
+)
 import logging
 
 logger = logging.getLogger(__name__)
@@ -1757,6 +1763,182 @@ async def download_candidate_index_slip(
         iter([pdf_bytes]),
         media_type="application/pdf",
         headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
+@router.get("/exams/{exam_id}/candidates/summary.pdf")
+async def download_registration_summary(
+    exam_id: int,
+    session: DBSessionDep,
+    current_user: SchoolUserWithSchoolDep,
+    programme_id: int | None = Query(None, description="Optional programme ID to filter candidates"),
+) -> StreamingResponse:
+    """Download registration summary PDF with candidates grouped by programme."""
+    if not current_user.school_id:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="User must be associated with a school",
+        )
+
+    # Validate exam exists
+    exam_stmt = select(RegistrationExam).where(RegistrationExam.id == exam_id)
+    exam_result = await session.execute(exam_stmt)
+    exam = exam_result.scalar_one_or_none()
+    if not exam:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Exam not found")
+
+    # Generate PDF
+    try:
+        pdf_bytes = await generate_registration_summary_pdf(
+            session, exam_id, current_user.school_id, programme_id
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+    except Exception as e:
+        logger.error(f"Failed to generate registration summary PDF: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to generate registration summary PDF",
+        )
+
+    programme_suffix = f"_programme_{programme_id}" if programme_id else ""
+    filename = f"registration_summary_{exam.exam_type}_{exam.year}_{exam.exam_series}{programme_suffix}.pdf"
+    # Sanitize filename
+    filename = filename.replace("/", "_").replace("\\", "_")
+
+    return StreamingResponse(
+        iter([pdf_bytes]),
+        media_type="application/pdf",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
+@router.get("/exams/{exam_id}/candidates/detailed.pdf")
+async def download_registration_detailed(
+    exam_id: int,
+    session: DBSessionDep,
+    current_user: SchoolUserWithSchoolDep,
+    programme_id: int | None = Query(None, description="Optional programme ID to filter candidates"),
+) -> StreamingResponse:
+    """Download detailed registration PDF with one candidate per page."""
+    if not current_user.school_id:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="User must be associated with a school",
+        )
+
+    # Validate exam exists
+    exam_stmt = select(RegistrationExam).where(RegistrationExam.id == exam_id)
+    exam_result = await session.execute(exam_stmt)
+    exam = exam_result.scalar_one_or_none()
+    if not exam:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Exam not found")
+
+    # Generate PDF
+    try:
+        pdf_bytes = await generate_registration_detailed_pdf(
+            session, exam_id, current_user.school_id, programme_id
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+    except Exception as e:
+        logger.error(f"Failed to generate registration detailed PDF: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to generate registration detailed PDF",
+        )
+
+    programme_suffix = f"_programme_{programme_id}" if programme_id else ""
+    filename = f"registration_detailed_{exam.exam_type}_{exam.year}_{exam.exam_series}{programme_suffix}.pdf"
+    # Sanitize filename
+    filename = filename.replace("/", "_").replace("\\", "_")
+
+    return StreamingResponse(
+        iter([pdf_bytes]),
+        media_type="application/pdf",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
+@router.get("/exams/{exam_id}/index-slips/download")
+async def download_index_slips_bulk(
+    exam_id: int,
+    session: DBSessionDep,
+    current_user: SchoolUserWithSchoolDep,
+    programme_id: int | None = Query(None, description="Optional programme ID to filter candidates"),
+) -> StreamingResponse:
+    """Download index slips for multiple candidates as a ZIP file."""
+    if not current_user.school_id:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="User must be associated with a school",
+        )
+
+    # Validate exam exists
+    exam_stmt = select(RegistrationExam).where(RegistrationExam.id == exam_id)
+    exam_result = await session.execute(exam_stmt)
+    exam = exam_result.scalar_one_or_none()
+    if not exam:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Exam not found")
+
+    # Query candidates with index numbers
+    candidate_stmt = (
+        select(RegistrationCandidate)
+        .where(
+            RegistrationCandidate.registration_exam_id == exam_id,
+            RegistrationCandidate.school_id == current_user.school_id,
+            RegistrationCandidate.index_number.isnot(None),
+        )
+        .order_by(RegistrationCandidate.name)
+    )
+
+    if programme_id:
+        candidate_stmt = candidate_stmt.where(RegistrationCandidate.programme_id == programme_id)
+
+    candidate_result = await session.execute(candidate_stmt)
+    candidates = candidate_result.scalars().all()
+
+    if not candidates:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="No candidates with index numbers found for the selected filters",
+        )
+
+    # Create ZIP file in memory
+    zip_buffer = BytesIO()
+
+    try:
+        with zipfile.ZipFile(zip_buffer, "w", zipfile.ZIP_DEFLATED) as zip_file:
+            for candidate in candidates:
+                try:
+                    # Generate PDF for each candidate
+                    pdf_bytes = await generate_index_slip_pdf(candidate, session, photo_data=None)
+
+                    # Use index number for filename
+                    filename = f"index_slip_{candidate.index_number}.pdf"
+                    zip_file.writestr(filename, pdf_bytes)
+                except Exception as e:
+                    logger.warning(f"Failed to generate index slip for candidate {candidate.id}: {e}")
+                    # Continue with other candidates even if one fails
+                    continue
+
+        zip_buffer.seek(0)
+    except Exception as e:
+        logger.error(f"Failed to create index slips ZIP: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to create index slips ZIP file",
+        )
+
+    programme_suffix = f"_programme_{programme_id}" if programme_id else ""
+    zip_filename = f"index_slips_{exam.exam_type}_{exam.year}_{exam.exam_series}{programme_suffix}.zip"
+    # Sanitize filename
+    zip_filename = zip_filename.replace("/", "_").replace("\\", "_")
+
+    return StreamingResponse(
+        iter([zip_buffer.getvalue()]),
+        media_type="application/zip",
+        headers={"Content-Disposition": f'attachment; filename="{zip_filename}"'},
     )
 
 
