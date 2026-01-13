@@ -88,13 +88,20 @@ export default function PrivateRegistrationPage() {
   const [selectedSchoolId, setSelectedSchoolId] = useState<number | null>(null);
 
   // Step 3: Bio Data
-  const [name, setName] = useState("");
+  const [firstname, setFirstname] = useState("");
+  const [lastname, setLastname] = useState("");
+  const [othername, setOthername] = useState("");
   const [dateOfBirth, setDateOfBirth] = useState("");
   const [gender, setGender] = useState("");
   const [contactEmail, setContactEmail] = useState("");
   const [contactPhone, setContactPhone] = useState("");
   const [address, setAddress] = useState("");
   const [nationalId, setNationalId] = useState("");
+  const [disability, setDisability] = useState("");
+  const [guardianName, setGuardianName] = useState("");
+  const [guardianPhone, setGuardianPhone] = useState("");
+  const [guardianDigitalAddress, setGuardianDigitalAddress] = useState("");
+  const [guardianNationalId, setGuardianNationalId] = useState("");
 
   // Step 4: Subject Selection
   const [programmeId, setProgrammeId] = useState<number | null>(null);
@@ -177,7 +184,7 @@ export default function PrivateRegistrationPage() {
     const completed = new Set<Step>();
     if (selectedExamId) completed.add(1);
     if (selectedSchoolId) completed.add(2);
-    if (name && name.trim() !== "" && name !== "Draft") completed.add(3);
+    if (firstname && firstname.trim() !== "" && lastname && lastname.trim() !== "") completed.add(3);
     if (selectedSubjectIds.length > 0) completed.add(4);
     // Step 5 (payment) - check if payment is completed
     if (priceData && priceData.outstanding_amount <= 0) completed.add(5);
@@ -186,7 +193,7 @@ export default function PrivateRegistrationPage() {
     // Step 7 (review) is accessible if payment is completed
     if (completed.has(5)) completed.add(7);
     setCompletedSteps(completed);
-  }, [selectedExamId, selectedSchoolId, name, selectedSubjectIds, photoFile, photoPreview, hasExistingPhoto, priceData]);
+  }, [selectedExamId, selectedSchoolId, firstname, lastname, selectedSubjectIds, photoFile, photoPreview, hasExistingPhoto, priceData]);
 
   const loadExams = async () => {
     setLoadingData(true);
@@ -275,13 +282,20 @@ export default function PrivateRegistrationPage() {
     setLoadedDraft(null);
     setSelectedExamId(null);
     setSelectedSchoolId(null);
-    setName("");
+    setFirstname("");
+    setLastname("");
+    setOthername("");
     setDateOfBirth("");
     setGender("");
     setContactEmail("");
     setContactPhone("");
     setAddress("");
     setNationalId("");
+    setDisability("");
+    setGuardianName("");
+    setGuardianPhone("");
+    setGuardianDigitalAddress("");
+    setGuardianNationalId("");
     setProgrammeId(null);
     setSelectedSubjectIds([]);
     setPhotoFile(null);
@@ -340,13 +354,20 @@ export default function PrivateRegistrationPage() {
         setLoadedDraft(draft);
         setSelectedExamId(draft.registration_exam_id);
         setSelectedSchoolId(draft.school_id || null);
-        setName(draft.name);
+        setFirstname(draft.firstname || "");
+        setLastname(draft.lastname || "");
+        setOthername(draft.othername || "");
         setDateOfBirth(draft.date_of_birth || "");
         setGender(draft.gender || "");
         setContactEmail(draft.contact_email || "");
         setContactPhone(draft.contact_phone || "");
         setAddress(draft.address || "");
         setNationalId(draft.national_id || "");
+        setDisability(draft.disability || "");
+        setGuardianName(draft.guardian_name || "");
+        setGuardianPhone(draft.guardian_phone || "");
+        setGuardianDigitalAddress(draft.guardian_digital_address || "");
+        setGuardianNationalId(draft.guardian_national_id || "");
         setProgrammeId(draft.programme_id || null);
         setSelectedSubjectIds(
           draft.subject_selections?.map((s) => s.subject_id).filter((id): id is number => id !== null) || []
@@ -384,7 +405,7 @@ export default function PrivateRegistrationPage() {
         let highestStep: Step = 1;
         if (draft.registration_exam_id) highestStep = 1;
         if (draft.school_id) highestStep = 2;
-        if (draft.name && draft.name.trim() !== "" && draft.name !== "Draft") highestStep = 3;
+        if (draft.firstname && draft.firstname.trim() !== "" && draft.lastname && draft.lastname.trim() !== "") highestStep = 3;
         if (draft.subject_selections && draft.subject_selections.length > 0) highestStep = 4;
 
         // Check payment status if we have subjects
@@ -412,8 +433,8 @@ export default function PrivateRegistrationPage() {
         }
 
         // If all required data and payment is complete (or not required), allow up to review step (7)
-        if (draft.registration_exam_id && draft.school_id && draft.name &&
-            draft.name.trim() !== "" && draft.name !== "Draft" &&
+        if (draft.registration_exam_id && draft.school_id && draft.firstname &&
+            draft.firstname.trim() !== "" && draft.lastname && draft.lastname.trim() !== "" &&
             draft.subject_selections && draft.subject_selections.length > 0) {
           try {
             if (draft.id) {
@@ -446,7 +467,15 @@ export default function PrivateRegistrationPage() {
     setSaving(true);
     try {
       const candidateData = {
-        name: name || "Draft",
+        firstname: firstname || "Draft",
+        lastname: lastname || "",
+        othername: othername || null,
+        disability: disability || null,
+        registration_type: "private",
+        guardian_name: guardianName || null,
+        guardian_phone: guardianPhone || null,
+        guardian_digital_address: guardianDigitalAddress || null,
+        guardian_national_id: guardianNationalId || null,
         date_of_birth: dateOfBirth || undefined,
         gender: gender || undefined,
         contact_email: contactEmail || undefined,
@@ -911,14 +940,35 @@ export default function PrivateRegistrationPage() {
           {/* Step 3: Bio Data */}
           {currentStep === 3 && (
             <div className="space-y-4">
+              <div className="grid grid-cols-2 gap-4">
+                <div className="space-y-2">
+                  <Label htmlFor="firstname">First Name *</Label>
+                  <Input
+                    id="firstname"
+                    value={firstname}
+                    onChange={(e) => setFirstname(e.target.value)}
+                    placeholder="John"
+                    required
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="lastname">Last Name *</Label>
+                  <Input
+                    id="lastname"
+                    value={lastname}
+                    onChange={(e) => setLastname(e.target.value)}
+                    placeholder="Doe"
+                    required
+                  />
+                </div>
+              </div>
               <div className="space-y-2">
-                <Label htmlFor="name">Full Name *</Label>
+                <Label htmlFor="othername">Other Name (Optional)</Label>
                 <Input
-                  id="name"
-                  value={name}
-                  onChange={(e) => setName(e.target.value)}
-                  placeholder="Enter your full name"
-                  required
+                  id="othername"
+                  value={othername}
+                  onChange={(e) => setOthername(e.target.value)}
+                  placeholder="Middle name"
                 />
               </div>
               <div className="grid grid-cols-2 gap-4">
@@ -981,6 +1031,65 @@ export default function PrivateRegistrationPage() {
                   onChange={(e) => setNationalId(e.target.value)}
                   placeholder="National ID number"
                 />
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="disability">Disability (Optional)</Label>
+                <Select value={disability} onValueChange={setDisability}>
+                  <SelectTrigger>
+                    <SelectValue placeholder="Select disability type" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="Visual">Visual</SelectItem>
+                    <SelectItem value="Auditory">Auditory</SelectItem>
+                    <SelectItem value="Physical">Physical</SelectItem>
+                    <SelectItem value="Cognitive">Cognitive</SelectItem>
+                    <SelectItem value="Speech">Speech</SelectItem>
+                    <SelectItem value="Other">Other</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="space-y-4 border-t pt-4">
+                <h4 className="font-medium">Guardian Information (Required for Private Registration)</h4>
+                <div className="space-y-2">
+                  <Label htmlFor="guardianName">Guardian Name *</Label>
+                  <Input
+                    id="guardianName"
+                    value={guardianName}
+                    onChange={(e) => setGuardianName(e.target.value)}
+                    placeholder="Guardian full name"
+                    required
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="guardianPhone">Guardian Phone *</Label>
+                  <Input
+                    id="guardianPhone"
+                    value={guardianPhone}
+                    onChange={(e) => setGuardianPhone(e.target.value)}
+                    placeholder="+1234567890"
+                    required
+                  />
+                </div>
+                <div className="grid grid-cols-2 gap-4">
+                  <div className="space-y-2">
+                    <Label htmlFor="guardianDigitalAddress">Guardian Digital Address</Label>
+                    <Input
+                      id="guardianDigitalAddress"
+                      value={guardianDigitalAddress}
+                      onChange={(e) => setGuardianDigitalAddress(e.target.value)}
+                      placeholder="GA-123-4567"
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="guardianNationalId">Guardian National ID</Label>
+                    <Input
+                      id="guardianNationalId"
+                      value={guardianNationalId}
+                      onChange={(e) => setGuardianNationalId(e.target.value)}
+                      placeholder="GHA-123456789-1"
+                    />
+                  </div>
+                </div>
               </div>
             </div>
           )}
@@ -1188,7 +1297,9 @@ export default function PrivateRegistrationPage() {
                     </div>
                   )}
                   <div className="flex-1 min-w-0">
-                    <h2 className="text-2xl font-bold truncate">{name}</h2>
+                    <h2 className="text-2xl font-bold truncate">
+                      {loadedDraft?.name || `${firstname} ${othername ? othername + " " : ""}${lastname}`.trim() || "Draft Registration"}
+                    </h2>
                     <div className="mt-1 flex items-center gap-3 flex-wrap">
                       {loadedDraft?.registration_number && (
                         <span className="flex items-center gap-2 text-sm text-muted-foreground">
@@ -1288,6 +1399,43 @@ export default function PrivateRegistrationPage() {
                           <div className="text-sm font-medium">{nationalId}</div>
                         </div>
                       )}
+                      {disability && (
+                        <div className="space-y-1">
+                          <div className="text-xs text-muted-foreground">Disability</div>
+                          <div className="text-sm font-medium">{disability}</div>
+                        </div>
+                      )}
+                      {(guardianName || guardianPhone || guardianDigitalAddress || guardianNationalId) && (
+                        <>
+                          <div className="space-y-1 md:col-span-2">
+                            <div className="text-xs text-muted-foreground font-medium">Guardian Information</div>
+                          </div>
+                          {guardianName && (
+                            <div className="space-y-1">
+                              <div className="text-xs text-muted-foreground">Guardian Name</div>
+                              <div className="text-sm font-medium">{guardianName}</div>
+                            </div>
+                          )}
+                          {guardianPhone && (
+                            <div className="space-y-1">
+                              <div className="text-xs text-muted-foreground">Guardian Phone</div>
+                              <div className="text-sm font-medium">{guardianPhone}</div>
+                            </div>
+                          )}
+                          {guardianDigitalAddress && (
+                            <div className="space-y-1">
+                              <div className="text-xs text-muted-foreground">Guardian Digital Address</div>
+                              <div className="text-sm font-medium">{guardianDigitalAddress}</div>
+                            </div>
+                          )}
+                          {guardianNationalId && (
+                            <div className="space-y-1">
+                              <div className="text-xs text-muted-foreground">Guardian National ID</div>
+                              <div className="text-sm font-medium">{guardianNationalId}</div>
+                            </div>
+                          )}
+                        </>
+                      )}
                       {(() => {
                         const exam = exams.find((e) => e.id === selectedExamId);
                         return exam ? (
@@ -1344,7 +1492,7 @@ export default function PrivateRegistrationPage() {
                       <div className="relative w-48 h-48 border-2 border-primary rounded-lg overflow-hidden bg-muted mx-auto">
                         <img
                           src={photoPreview}
-                          alt={name}
+                          alt={loadedDraft?.name || `${firstname} ${lastname}`}
                           className="w-full h-full object-cover"
                         />
                       </div>

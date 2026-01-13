@@ -10,6 +10,7 @@ import {
   getProgrammeSubjects,
   bulkUploadCandidates,
   downloadCandidateTemplate,
+  uploadCandidatePhoto,
 } from "@/lib/api";
 import type {
   RegistrationCandidate,
@@ -21,6 +22,7 @@ import type {
   BulkUploadResponse,
 } from "@/types";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Skeleton } from "@/components/ui/skeleton";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -48,6 +50,14 @@ import { Progress } from "@/components/ui/progress";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import {
   Plus,
   GraduationCap,
   AlertCircle,
@@ -70,6 +80,9 @@ import {
   Trash2,
   HelpCircle,
   FileText,
+  User,
+  Image as ImageIcon,
+  ZoomIn,
 } from "lucide-react";
 import { toast } from "sonner";
 import { Alert, AlertDescription } from "@/components/ui/alert";
@@ -89,7 +102,9 @@ export default function RegistrationPage() {
   const [loadingSubjects, setLoadingSubjects] = useState(false);
   const [selectedSubjectIds, setSelectedSubjectIds] = useState<number[]>([]);
   const [formData, setFormData] = useState<RegistrationCandidateCreate>({
-    name: "",
+    firstname: "",
+    lastname: "",
+    othername: null,
     date_of_birth: null,
     gender: null,
     programme_code: null,
@@ -98,15 +113,23 @@ export default function RegistrationPage() {
     contact_phone: null,
     address: null,
     national_id: null,
+    disability: null,
+    registration_type: null,
     guardian_name: null,
     guardian_phone: null,
-    guardian_address: null,
+    guardian_digital_address: null,
+    guardian_national_id: null,
     subject_codes: [],
     subject_ids: [],
   });
   const [submitting, setSubmitting] = useState(false);
   const [selectedCandidate, setSelectedCandidate] = useState<RegistrationCandidate | null>(null);
   const [detailDialogOpen, setDetailDialogOpen] = useState(false);
+  const [singleRegistrationDialogOpen, setSingleRegistrationDialogOpen] = useState(false);
+  const [bulkUploadDialogOpen, setBulkUploadDialogOpen] = useState(false);
+  const [registrationSuccess, setRegistrationSuccess] = useState(false);
+  const [selectedPhoto, setSelectedPhoto] = useState<File | null>(null);
+  const [photoPreview, setPhotoPreview] = useState<string | null>(null);
 
   // Bulk upload state
   const [bulkUploadFile, setBulkUploadFile] = useState<File | null>(null);
@@ -117,6 +140,7 @@ export default function RegistrationPage() {
   const [bulkProgrammeSubjects, setBulkProgrammeSubjects] = useState<ProgrammeSubjectRequirements | null>(null);
   const [loadingBulkSubjects, setLoadingBulkSubjects] = useState(false);
   const [isDragOver, setIsDragOver] = useState(false);
+  const [bulkRegistrationType, setBulkRegistrationType] = useState<string>("");
 
   // Table features state
   const [searchQuery, setSearchQuery] = useState("");
@@ -399,11 +423,18 @@ export default function RegistrationPage() {
   const validateField = (field: string, value: any) => {
     const errors = { ...validationErrors };
     switch (field) {
-      case "name":
+      case "firstname":
         if (!value || !value.trim()) {
-          errors.name = "Name is required";
+          errors.firstname = "First name is required";
         } else {
-          delete errors.name;
+          delete errors.firstname;
+        }
+        break;
+      case "lastname":
+        if (!value || !value.trim()) {
+          errors.lastname = "Last name is required";
+        } else {
+          delete errors.lastname;
         }
         break;
       case "date_of_birth":
@@ -434,7 +465,9 @@ export default function RegistrationPage() {
   // Clear form
   const clearForm = useCallback(() => {
     setFormData({
-      name: "",
+      firstname: "",
+      lastname: "",
+      othername: null,
       date_of_birth: null,
       gender: null,
       programme_code: null,
@@ -443,9 +476,12 @@ export default function RegistrationPage() {
       contact_phone: null,
       address: null,
       national_id: null,
+      disability: null,
+      registration_type: null,
       guardian_name: null,
       guardian_phone: null,
-      guardian_address: null,
+      guardian_digital_address: null,
+      guardian_national_id: null,
       subject_codes: [],
       subject_ids: [],
     });
@@ -453,6 +489,9 @@ export default function RegistrationPage() {
     setProgrammeSubjects(null);
     setSelectedSubjectIds([]);
     setValidationErrors({});
+    setRegistrationSuccess(false);
+    setSelectedPhoto(null);
+    setPhotoPreview(null);
   }, []);
 
   // Subject count display
@@ -512,8 +551,8 @@ export default function RegistrationPage() {
       return;
     }
 
-    if (!formData.name) {
-      toast.error("Name is required");
+    if (!formData.firstname || !formData.lastname) {
+      toast.error("First name and last name are required");
       return;
     }
 
@@ -524,32 +563,26 @@ export default function RegistrationPage() {
         ...formData,
         subject_ids: selectedSubjectIds,
       };
-      await registerCandidate(parseInt(selectedExamId), submitData);
+      const newCandidate = await registerCandidate(parseInt(selectedExamId), submitData);
       toast.success("Candidate registered successfully");
-      // Reset form
-      setFormData({
-        name: "",
-        date_of_birth: null,
-        gender: null,
-        programme_code: null,
-        programme_id: null,
-        contact_email: null,
-        contact_phone: null,
-        address: null,
-        national_id: null,
-        guardian_name: null,
-        guardian_phone: null,
-        guardian_address: null,
-        subject_codes: [],
-        subject_ids: [],
-      });
-      setSelectedProgrammeId(null);
-      setProgrammeSubjects(null);
-      setSelectedSubjectIds([]);
+
+      // Upload photo if one was selected
+      if (selectedPhoto && newCandidate.id) {
+        try {
+          await uploadCandidatePhoto(newCandidate.id, selectedPhoto);
+          toast.success("Photo uploaded successfully");
+        } catch (photoError) {
+          // Don't fail the registration if photo upload fails
+          toast.warning("Candidate registered but photo upload failed. You can upload it later.");
+        }
+      }
+
+      setRegistrationSuccess(true);
       // Reload candidates for the selected exam
       loadCandidatesForExam(parseInt(selectedExamId));
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "Failed to register candidate");
+      setRegistrationSuccess(false);
     } finally {
       setSubmitting(false);
     }
@@ -572,7 +605,7 @@ export default function RegistrationPage() {
     try {
       // Use default choice groups if any are selected
       const defaultSelections = Object.keys(defaultChoiceGroups).length > 0 ? defaultChoiceGroups : undefined;
-      const result = await bulkUploadCandidates(parseInt(selectedExamId), bulkUploadFile, defaultSelections);
+      const result = await bulkUploadCandidates(parseInt(selectedExamId), bulkUploadFile, defaultSelections, bulkRegistrationType || undefined);
       setBulkUploadResult(result);
       if (result.failed === 0) {
         toast.success(`Successfully uploaded ${result.successful} candidate(s)`);
@@ -583,6 +616,7 @@ export default function RegistrationPage() {
       setBulkUploadFile(null);
       setDefaultChoiceGroups({});
       setBulkProgrammeSubjects(null);
+      setBulkRegistrationType("");
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "Failed to upload candidates");
     } finally {
@@ -643,7 +677,7 @@ export default function RegistrationPage() {
   const handleDownloadTemplate = async () => {
     try {
       setDownloadingTemplate(true);
-      const blob = await downloadCandidateTemplate(selectedExam?.id);
+      const blob = await downloadCandidateTemplate();
       const url = window.URL.createObjectURL(blob);
       const a = document.createElement("a");
       a.href = url;
@@ -673,7 +707,6 @@ export default function RegistrationPage() {
   return (
     <div className="space-y-6">
       <div>
-        <h1 className="text-3xl font-bold">Candidate Registration</h1>
         <p className="text-muted-foreground mt-1">Select an examination and register candidates</p>
       </div>
 
@@ -786,35 +819,96 @@ export default function RegistrationPage() {
         </CardContent>
       </Card>
 
-      {/* Registration Tabs */}
+      {/* Registration Buttons */}
       {selectedExam && (
-        <Tabs defaultValue="manual" className="space-y-4">
-          <TabsList>
-            <TabsTrigger value="manual">Manual Registration</TabsTrigger>
-            <TabsTrigger value="bulk">Bulk Upload</TabsTrigger>
-          </TabsList>
+        <Card>
+          <CardContent className="pt-6">
+            <div className="flex gap-4">
+              <Button
+                onClick={() => {
+                  setSingleRegistrationDialogOpen(true);
+                  setRegistrationSuccess(false);
+                  clearForm();
+                }}
+                className="flex items-center gap-2"
+              >
+                <Plus className="h-4 w-4" />
+                Register Single Candidate
+              </Button>
+              <Button
+                onClick={() => {
+                  setBulkUploadDialogOpen(true);
+                  setBulkUploadFile(null);
+                  setBulkUploadResult(null);
+                  setDefaultChoiceGroups({});
+                  setBulkRegistrationType("");
+                }}
+                variant="outline"
+                className="flex items-center gap-2"
+              >
+                <Upload className="h-4 w-4" />
+                Bulk Upload Candidates
+              </Button>
+            </div>
+          </CardContent>
+        </Card>
+      )}
 
-          <TabsContent value="manual">
-            <Card>
-              <CardHeader>
-                <div className="flex items-center justify-between">
-                  <CardTitle>Register New Candidate</CardTitle>
-                  <Button
-                    type="button"
-                    variant="outline"
-                    size="sm"
-                    onClick={clearForm}
-                    disabled={submitting}
-                    aria-label="Clear form"
-                  >
-                    <Trash2 className="h-4 w-4 mr-2" />
-                    Clear Form
-                  </Button>
-                </div>
-              </CardHeader>
-              <CardContent>
-                <form onSubmit={handleSubmit} className="space-y-4">
-                  {/* Basic Information */}
+      {/* Single Registration Dialog */}
+      <Dialog
+        open={singleRegistrationDialogOpen}
+        onOpenChange={(open) => {
+          setSingleRegistrationDialogOpen(open);
+          if (!open) {
+            setRegistrationSuccess(false);
+            setSelectedPhoto(null);
+            setPhotoPreview(null);
+          }
+        }}
+      >
+        <DialogContent className="max-w-6xl max-h-[90vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle>Register New Candidate</DialogTitle>
+            <DialogDescription>
+              Fill in the candidate information below. Required fields are marked with an asterisk (*).
+            </DialogDescription>
+          </DialogHeader>
+          {registrationSuccess ? (
+            <div className="space-y-4 py-4">
+              <div className="flex items-center gap-2 text-green-600">
+                <CheckCircle2 className="h-5 w-5" />
+                <p className="font-medium">Candidate registered successfully!</p>
+              </div>
+              <DialogFooter className="flex-row gap-2 justify-end">
+                <Button
+                  type="button"
+                  variant="outline"
+                  onClick={() => {
+                    clearForm();
+                    setRegistrationSuccess(false);
+                  }}
+                >
+                  Start New Registration
+                </Button>
+                <Button
+                  type="button"
+                  onClick={() => {
+                    setSingleRegistrationDialogOpen(false);
+                    setRegistrationSuccess(false);
+                    setSelectedPhoto(null);
+                    setPhotoPreview(null);
+                  }}
+                >
+                  Close
+                </Button>
+              </DialogFooter>
+            </div>
+          ) : (
+            <form onSubmit={handleSubmit} className="space-y-4">
+              {/* Photo and Basic Information - Side by Side */}
+              <div className="flex gap-6 items-start">
+                {/* Basic Information Section */}
+                <div className="flex-1">
                   <Collapsible open={basicInfoOpen} onOpenChange={setBasicInfoOpen}>
                     <CollapsibleTrigger className="flex w-full items-center justify-between rounded-lg border p-4 hover:bg-muted/50 transition-colors">
                       <div className="flex items-center gap-2">
@@ -824,28 +918,65 @@ export default function RegistrationPage() {
                       {basicInfoOpen ? <ChevronUp className="h-5 w-5" /> : <ChevronDown className="h-5 w-5" />}
                     </CollapsibleTrigger>
                     <CollapsibleContent className="pt-4 space-y-4">
+                    <div className="grid grid-cols-2 gap-4">
+                      <div className="space-y-2">
+                        <Label htmlFor="firstname">First Name *</Label>
+                        <Input
+                          id="firstname"
+                          placeholder="John"
+                          value={formData.firstname}
+                          onChange={(e) => {
+                            setFormData({ ...formData, firstname: e.target.value });
+                            validateField("firstname", e.target.value);
+                          }}
+                          onBlur={(e) => validateField("firstname", e.target.value)}
+                          required
+                          disabled={submitting}
+                          aria-invalid={!!validationErrors.firstname}
+                          aria-describedby={validationErrors.firstname ? "firstname-error" : undefined}
+                        />
+                        {validationErrors.firstname && (
+                          <p id="firstname-error" className="text-sm text-red-600 flex items-center gap-1">
+                            <XCircle className="h-4 w-4" />
+                            {validationErrors.firstname}
+                          </p>
+                        )}
+                      </div>
+                      <div className="space-y-2">
+                        <Label htmlFor="lastname">Last Name *</Label>
+                        <Input
+                          id="lastname"
+                          placeholder="Doe"
+                          value={formData.lastname}
+                          onChange={(e) => {
+                            setFormData({ ...formData, lastname: e.target.value });
+                            validateField("lastname", e.target.value);
+                          }}
+                          onBlur={(e) => validateField("lastname", e.target.value)}
+                          required
+                          disabled={submitting}
+                          aria-invalid={!!validationErrors.lastname}
+                          aria-describedby={validationErrors.lastname ? "lastname-error" : undefined}
+                        />
+                        {validationErrors.lastname && (
+                          <p id="lastname-error" className="text-sm text-red-600 flex items-center gap-1">
+                            <XCircle className="h-4 w-4" />
+                            {validationErrors.lastname}
+                          </p>
+                        )}
+                      </div>
+                    </div>
                     <div className="space-y-2">
-                      <Label htmlFor="name">Full Name *</Label>
+                      <Label htmlFor="othername">Other Name (Optional)</Label>
                       <Input
-                        id="name"
-                        placeholder="John Doe"
-                        value={formData.name}
+                        id="othername"
+                        placeholder="Middle name"
+                        value={formData.othername || ""}
                         onChange={(e) => {
-                          setFormData({ ...formData, name: e.target.value });
-                          validateField("name", e.target.value);
+                          setFormData({ ...formData, othername: e.target.value || null });
                         }}
-                        onBlur={(e) => validateField("name", e.target.value)}
-                        required
                         disabled={submitting}
-                        aria-invalid={!!validationErrors.name}
-                        aria-describedby={validationErrors.name ? "name-error" : undefined}
                       />
-                      {validationErrors.name && (
-                        <p id="name-error" className="text-sm text-red-600 flex items-center gap-1">
-                          <XCircle className="h-4 w-4" />
-                          {validationErrors.name}
-                        </p>
-                      )}
                     </div>
 
                     <div className="grid grid-cols-2 gap-4">
@@ -903,8 +1034,157 @@ export default function RegistrationPage() {
                         )}
                       </div>
                     </div>
+
+                    <div className="grid grid-cols-2 gap-4">
+                      <div className="space-y-2">
+                        <Label htmlFor="disability">Disability (Optional)</Label>
+                        <Select
+                          value={formData.disability || ""}
+                          onValueChange={(value) => {
+                            setFormData({ ...formData, disability: value || null });
+                          }}
+                        >
+                          <SelectTrigger>
+                            <SelectValue placeholder="Select disability type" />
+                          </SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="Visual">Visual</SelectItem>
+                            <SelectItem value="Auditory">Auditory</SelectItem>
+                            <SelectItem value="Physical">Physical</SelectItem>
+                            <SelectItem value="Cognitive">Cognitive</SelectItem>
+                            <SelectItem value="Speech">Speech</SelectItem>
+                            <SelectItem value="Other">Other</SelectItem>
+                          </SelectContent>
+                        </Select>
+                      </div>
+                      <div className="space-y-2">
+                        <Label htmlFor="registration_type">Registration Type (Optional)</Label>
+                        <Select
+                          value={formData.registration_type || ""}
+                          onValueChange={(value) => {
+                            setFormData({ ...formData, registration_type: value || null });
+                          }}
+                        >
+                          <SelectTrigger>
+                            <SelectValue placeholder="Select registration type" />
+                          </SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="regular">Regular</SelectItem>
+                            <SelectItem value="referral">Referral</SelectItem>
+                          </SelectContent>
+                        </Select>
+                      </div>
+                    </div>
                     </CollapsibleContent>
                   </Collapsible>
+                </div>
+
+                {/* Photo Section - Right Corner */}
+                <Card className="w-fit shrink-0 flex flex-col">
+                  <CardHeader className="pb-3">
+                    <CardTitle className="text-sm">Passport Photo</CardTitle>
+                  </CardHeader>
+                  <CardContent className="pt-0 flex-1 flex flex-col items-center justify-center gap-3">
+                    {photoPreview ? (
+                      <>
+                        <div
+                          className="relative w-48 h-48 border-2 border-primary rounded-lg overflow-hidden bg-muted group cursor-pointer hover:shadow-lg transition-shadow mx-auto"
+                          onClick={() => {
+                            // Open photo in new tab for full view
+                            if (photoPreview) {
+                              window.open(photoPreview, '_blank');
+                            }
+                          }}
+                        >
+                          <img
+                            src={photoPreview}
+                            alt="Photo preview"
+                            className="w-full h-full object-cover pointer-events-none"
+                          />
+                          <div className="absolute inset-0 bg-black/0 group-hover:bg-black/10 transition-colors flex items-center justify-center">
+                            <ZoomIn className="h-8 w-8 text-white opacity-0 group-hover:opacity-100 transition-opacity" />
+                          </div>
+                        </div>
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="sm"
+                          className="w-full"
+                          onClick={() => {
+                            setSelectedPhoto(null);
+                            setPhotoPreview(null);
+                            const input = document.getElementById("photo") as HTMLInputElement;
+                            if (input) input.value = "";
+                          }}
+                          disabled={submitting}
+                        >
+                          <X className="h-4 w-4 mr-2" />
+                          Remove Photo
+                        </Button>
+                      </>
+                    ) : (
+                      <>
+                        <div className="flex flex-col items-center justify-center text-muted-foreground w-48 mx-auto">
+                          <div className="w-24 h-24 rounded-full bg-muted flex items-center justify-center">
+                            <User className="h-12 w-12" />
+                          </div>
+                          <p className="text-xs mt-2 text-center">No photo selected</p>
+                          <p className="text-xs mt-1 text-center text-muted-foreground">Optional - can be added later</p>
+                        </div>
+                        <div className="w-full">
+                          <Input
+                            id="photo"
+                            type="file"
+                            accept="image/jpeg,image/jpg,image/png"
+                            onChange={(e) => {
+                              const file = e.target.files?.[0] || null;
+                              if (file) {
+                                // Validate file size (5MB)
+                                if (file.size > 5 * 1024 * 1024) {
+                                  toast.error("Photo size must be less than 5MB");
+                                  e.target.value = "";
+                                  return;
+                                }
+                                // Validate file type
+                                if (!file.type.match(/^image\/(jpeg|jpg|png)$/i)) {
+                                  toast.error("Please select a JPG or PNG image");
+                                  e.target.value = "";
+                                  return;
+                                }
+                                setSelectedPhoto(file);
+                                // Create preview
+                                const reader = new FileReader();
+                                reader.onloadend = () => {
+                                  setPhotoPreview(reader.result as string);
+                                };
+                                reader.readAsDataURL(file);
+                              } else {
+                                setSelectedPhoto(null);
+                                setPhotoPreview(null);
+                              }
+                            }}
+                            disabled={submitting}
+                            className="hidden"
+                          />
+                          <Button
+                            type="button"
+                            variant="outline"
+                            size="sm"
+                            className="w-full"
+                            onClick={() => {
+                              document.getElementById("photo")?.click();
+                            }}
+                            disabled={submitting}
+                          >
+                            <Upload className="h-4 w-4 mr-2" />
+                            Upload Photo
+                          </Button>
+                        </div>
+                      </>
+                    )}
+                  </CardContent>
+                </Card>
+              </div>
 
                   {/* Programme Selection */}
                   <Collapsible open={programmeInfoOpen} onOpenChange={setProgrammeInfoOpen}>
@@ -1176,45 +1456,85 @@ export default function RegistrationPage() {
                       </div>
                     </div>
 
-                    <div className="space-y-2">
-                      <Label htmlFor="guardian_address">Guardian Address</Label>
-                      <Input
-                        id="guardian_address"
-                        placeholder="Guardian street address"
-                        value={formData.guardian_address || ""}
-                        onChange={(e) =>
-                          setFormData({ ...formData, guardian_address: e.target.value || null })
-                        }
-                        disabled={submitting}
-                      />
+                    <div className="grid grid-cols-2 gap-4">
+                      <div className="space-y-2">
+                        <Label htmlFor="guardian_digital_address">Guardian Digital Address</Label>
+                        <Input
+                          id="guardian_digital_address"
+                          placeholder="GA-123-4567"
+                          value={formData.guardian_digital_address || ""}
+                          onChange={(e) =>
+                            setFormData({ ...formData, guardian_digital_address: e.target.value || null })
+                          }
+                          disabled={submitting}
+                        />
+                      </div>
+                      <div className="space-y-2">
+                        <Label htmlFor="guardian_national_id">Guardian National ID</Label>
+                        <Input
+                          id="guardian_national_id"
+                          placeholder="GHA-123456789-1"
+                          value={formData.guardian_national_id || ""}
+                          onChange={(e) =>
+                            setFormData({ ...formData, guardian_national_id: e.target.value || null })
+                          }
+                          disabled={submitting}
+                        />
+                      </div>
                     </div>
                     </CollapsibleContent>
                   </Collapsible>
 
-                  <Button type="submit" className="w-full" disabled={submitting}>
-                    {submitting ? (
-                      <>
-                        <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                        Registering...
-                      </>
-                    ) : (
-                      <>
-                        <Plus className="mr-2 h-4 w-4" />
-                        Register Candidate
-                      </>
-                    )}
-                  </Button>
-                </form>
-              </CardContent>
-            </Card>
-          </TabsContent>
+              <DialogFooter>
+                <Button
+                  type="button"
+                  variant="outline"
+                  onClick={clearForm}
+                  disabled={submitting}
+                >
+                  <Trash2 className="h-4 w-4 mr-2" />
+                  Clear Form
+                </Button>
+                <Button type="submit" disabled={submitting}>
+                  {submitting ? (
+                    <>
+                      <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                      Registering...
+                    </>
+                  ) : (
+                    <>
+                      <Plus className="mr-2 h-4 w-4" />
+                      Register Candidate
+                    </>
+                  )}
+                </Button>
+              </DialogFooter>
+            </form>
+          )}
+        </DialogContent>
+      </Dialog>
 
-          <TabsContent value="bulk">
-            <Card>
-              <CardHeader>
-                <CardTitle>Bulk Upload Candidates</CardTitle>
-              </CardHeader>
-              <CardContent className="space-y-4">
+      {/* Bulk Upload Dialog */}
+      <Dialog
+        open={bulkUploadDialogOpen}
+        onOpenChange={(open) => {
+          setBulkUploadDialogOpen(open);
+          if (!open) {
+            setBulkUploadFile(null);
+            setBulkUploadResult(null);
+            setDefaultChoiceGroups({});
+            setBulkRegistrationType("");
+          }
+        }}
+      >
+        <DialogContent className="max-w-4xl max-h-[90vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle>Bulk Upload Candidates</DialogTitle>
+            <DialogDescription>
+              Upload a CSV or Excel file with candidate information. Download the template for the correct format.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4">
                 {/* Default Choice Group Selection */}
                 {selectedExam && (
                   <div className="space-y-2 p-4 border rounded-lg bg-muted/50">
@@ -1269,6 +1589,40 @@ export default function RegistrationPage() {
                   </div>
                 )}
 
+                {/* Registration Type Selection for Bulk Upload */}
+                {selectedExam && (
+                  <div className="space-y-2 p-4 border rounded-lg bg-muted/50">
+                    <Label className="text-sm font-semibold">Default Registration Type (Optional)</Label>
+                    <p className="text-xs text-muted-foreground mb-2">
+                      Select a default registration type to apply to all candidates in the bulk upload. This can be overridden by the registration_type column in the file.
+                    </p>
+                    <Select
+                      value={bulkRegistrationType || undefined}
+                      onValueChange={(value) => setBulkRegistrationType(value || "")}
+                      disabled={bulkUploading}
+                    >
+                      <SelectTrigger className="w-full max-w-xs">
+                        <SelectValue placeholder="Select registration type (optional)" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="regular">Regular</SelectItem>
+                        <SelectItem value="referral">Referral</SelectItem>
+                      </SelectContent>
+                    </Select>
+                    {bulkRegistrationType && (
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="sm"
+                        onClick={() => setBulkRegistrationType("")}
+                        className="mt-2"
+                      >
+                        Clear selection
+                      </Button>
+                    )}
+                  </div>
+                )}
+
                 <div className="space-y-4">
                   <div className="flex items-center justify-between">
                     <Label htmlFor="bulk-file">Upload CSV/Excel File</Label>
@@ -1287,8 +1641,11 @@ export default function RegistrationPage() {
                               The template includes required and optional columns. Required columns are highlighted in green, optional columns in yellow.
                             </p>
                             <div className="text-sm space-y-1">
-                              <p><strong>Required:</strong> name, date_of_birth, gender, programme_code</p>
-                              <p><strong>Optional:</strong> national_id, contact_email, contact_phone, address, guardian_name, guardian_phone, guardian_address</p>
+                              <p><strong>Required:</strong> firstname, lastname, date_of_birth, gender, programme_code</p>
+                              <p><strong>Optional:</strong> othername, national_id, contact_email, contact_phone, address, disability, registration_type, guardian_name, guardian_phone, guardian_digital_address, guardian_national_id</p>
+                              <p className="text-xs text-muted-foreground mt-1">
+                                <strong>Note:</strong> You can also use the old "name" column format (will be split into firstname, lastname, othername)
+                              </p>
                               <p className="text-xs text-muted-foreground mt-2">
                                 For MAY/JUNE exams, subject columns are not included. All columns are formatted as text to preserve leading zeros.
                               </p>
@@ -1381,23 +1738,6 @@ export default function RegistrationPage() {
                     </div>
                   )}
 
-                  <Button
-                    onClick={handleBulkUpload}
-                    disabled={!bulkUploadFile || bulkUploading}
-                    className="w-full"
-                  >
-                    {bulkUploading ? (
-                      <>
-                        <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                        Uploading...
-                      </>
-                    ) : (
-                      <>
-                        <Upload className="mr-2 h-4 w-4" />
-                        Upload File
-                      </>
-                    )}
-                  </Button>
                 </div>
 
                 {bulkUploadResult && (
@@ -1442,11 +1782,41 @@ export default function RegistrationPage() {
                     )}
                   </div>
                 )}
-              </CardContent>
-            </Card>
-          </TabsContent>
-        </Tabs>
-      )}
+          </div>
+          <DialogFooter>
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => {
+                setBulkUploadFile(null);
+                setBulkUploadResult(null);
+                setDefaultChoiceGroups({});
+                setBulkRegistrationType("");
+              }}
+              disabled={bulkUploading}
+            >
+              Clear
+            </Button>
+            <Button
+              type="button"
+              onClick={handleBulkUpload}
+              disabled={!bulkUploadFile || bulkUploading}
+            >
+              {bulkUploading ? (
+                <>
+                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                  Uploading...
+                </>
+              ) : (
+                <>
+                  <Upload className="mr-2 h-4 w-4" />
+                  Upload Candidates
+                </>
+              )}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       {/* Registered Candidates for Selected Exam */}
       {selectedExam && (
