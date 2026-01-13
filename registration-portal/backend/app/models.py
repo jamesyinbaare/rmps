@@ -176,6 +176,21 @@ class ApiRequestType(enum.Enum):
     BULK = "bulk"
 
 
+class Disability(enum.Enum):
+    VISUAL = "Visual"
+    AUDITORY = "Auditory"
+    PHYSICAL = "Physical"
+    COGNITIVE = "Cognitive"
+    SPEECH = "Speech"
+    OTHER = "Other"
+
+
+class RegistrationType(enum.Enum):
+    REGULAR = "regular"
+    PRIVATE = "private"
+    REFERRAL = "referral"
+
+
 class TicketRequestMixin:
     """Mixin class for common ticket/request management fields."""
 
@@ -358,7 +373,9 @@ class RegistrationCandidate(Base):
     registration_exam_id = Column(Integer, ForeignKey("registration_exams.id", ondelete="CASCADE"), nullable=False, index=True)
     school_id = Column(Integer, ForeignKey("schools.id", ondelete="SET NULL"), nullable=True, index=True)
     portal_user_id = Column(UUID(as_uuid=True), ForeignKey("portal_users.id", ondelete="SET NULL"), nullable=True, index=True)
-    name = Column(String(255), nullable=False)
+    firstname = Column(String(255), nullable=False)
+    lastname = Column(String(255), nullable=False)
+    othername = Column(String(255), nullable=True)
     registration_number = Column(String(50), unique=True, nullable=False, index=True)  # Unique number assigned during registration
     index_number = Column(String(50), nullable=True, index=True)  # NULL during registration, generated after registration period ends
     date_of_birth = Column(Date, nullable=True)
@@ -369,14 +386,31 @@ class RegistrationCandidate(Base):
     contact_phone = Column(String(50), nullable=True)
     address = Column(Text, nullable=True)
     national_id = Column(String(50), nullable=True)
+    disability = Column(Enum(Disability, create_constraint=False, values_callable=lambda x: [e.value for e in x]), nullable=True)
+    registration_type = Column(Enum(RegistrationType, create_constraint=False, values_callable=lambda x: [e.value for e in x]), nullable=True, index=True)
     guardian_name = Column(String(255), nullable=True)
     guardian_phone = Column(String(50), nullable=True)
-    guardian_address = Column(Text, nullable=True)
+    guardian_digital_address = Column(String(50), nullable=True)  # Ghana digital address format
+    guardian_national_id = Column(String(50), nullable=True)
     registration_status = Column(Enum(RegistrationStatus), default=RegistrationStatus.PENDING, nullable=False, index=True)
     registration_date = Column(DateTime, default=datetime.utcnow, nullable=False)
     total_paid_amount = Column(Numeric(10, 2), default=0, nullable=False)  # Track total amount paid across all payments
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+
+    @property
+    def name(self) -> str:
+        """Computed name property combining firstname, lastname, and othername."""
+        parts = [self.firstname]
+        if self.othername:
+            parts.append(self.othername)
+        parts.append(self.lastname)
+        return " ".join(parts)
+
+    @property
+    def fullname(self) -> str:
+        """Fullname property (same as name for backward compatibility)."""
+        return self.name
 
     exam = relationship("RegistrationExam", back_populates="candidates")
     school = relationship("School", back_populates="candidates")

@@ -60,7 +60,9 @@ def generate_candidate_template(exam_series: str | None = None) -> bytes:
     All columns are formatted as text to preserve leading zeros.
 
     Args:
-        exam_series: Exam series (e.g., "MAY/JUNE", "NOV/DEC"). If "MAY/JUNE", subject columns are excluded.
+        exam_series: Exam series (e.g., "MAY/JUNE", "NOV/DEC").
+        - For "MAY/JUNE": no subject columns (optional_core_groups and optional_subjects excluded)
+        - For "NOV/DEC": only optional_subjects column (optional_core_groups excluded)
 
     Returns:
         Bytes of Excel file
@@ -69,10 +71,13 @@ def generate_candidate_template(exam_series: str | None = None) -> bytes:
     from app.services.subject_selection import normalize_exam_series
     normalized_series = normalize_exam_series(exam_series)
     is_may_june = normalized_series == "MAY/JUNE"
+    is_nov_dec = normalized_series == "NOV/DEC"
 
     # Required columns first
     data = {
-        "name": ["John Doe", "Jane Smith"],
+        "firstname": ["John", "Jane"],
+        "lastname": ["Doe", "Smith"],
+        "othername": ["", "Mary"],
         "date_of_birth": ["2005-01-15", "2005-03-20"],
         "gender": ["M", "F"],
         "programme_code": ["PROG01", "PROG02"],
@@ -86,14 +91,19 @@ def generate_candidate_template(exam_series: str | None = None) -> bytes:
         "address": ["123 Main St", "456 Oak Ave"],
         "guardian_name": ["John Doe Sr.", "Jane Smith Sr."],
         "guardian_phone": ["+1234567891", "+0987654322"],
-        "guardian_address": ["123 Main St", "456 Oak Ave"],
+        "disability": ["", "Visual"],
+        "registration_type": ["regular", "referral"],
+        "guardian_digital_address": ["GA-123-4567", "GA-789-0123"],
+        "guardian_national_id": ["GHA-123456789-1", "GHA-987654321-2"],
     })
 
-    # Subject columns only for NOV/DEC (not MAY/JUNE)
-    if not is_may_june:
+    # Subject columns only for NOV/DEC (explicitly check for NOV/DEC)
+    # For NOV/DEC: only include optional_subjects (optional_core_groups removed)
+    # For MAY/JUNE: no subject columns
+    # For unknown/None exam_series: no subject columns (default to MAY/JUNE behavior)
+    if is_nov_dec:
         data.update({
             "optional_subjects": ["701,702", "703"],
-            "optional_core_groups": ['{"1": "301"}', '{"1": "302"}'],
         })
 
     # Convert all values to strings to ensure text formatting
@@ -114,7 +124,7 @@ def generate_candidate_template(exam_series: str | None = None) -> bytes:
         optional_fill = PatternFill(start_color="FFF9C4", end_color="FFF9C4", fill_type="solid")  # Light yellow
 
         # Define required columns
-        required_columns = {"name", "date_of_birth", "gender", "programme_code"}
+        required_columns = {"firstname", "lastname", "date_of_birth", "gender", "programme_code"}
 
         # Get column headers from first row
         header_row = 1
