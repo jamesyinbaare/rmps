@@ -203,3 +203,117 @@ async def generate_schedule_template(session: "AsyncSession") -> bytes:
         df.to_excel(writer, index=False, sheet_name="Schedules")
     output.seek(0)
     return output.getvalue()
+
+
+async def generate_subject_pricing_template(session: "AsyncSession", exam_id: int | None = None) -> bytes:
+    """
+    Generate Excel template for subject pricing upload prepopulated with subjects.
+
+    Args:
+        session: Database session to query subjects
+        exam_id: Optional exam ID to include existing pricing
+
+    Returns:
+        Bytes of Excel file
+    """
+    from sqlalchemy import select
+    from app.models import Subject, SubjectPricing
+
+    # Query all subjects from the database
+    stmt = select(Subject).order_by(Subject.code)
+    result = await session.execute(stmt)
+    subjects = result.scalars().all()
+
+    # Get existing pricing if exam_id is provided
+    existing_pricing = {}
+    if exam_id:
+        pricing_stmt = select(SubjectPricing).where(
+            SubjectPricing.exam_id == exam_id,
+            SubjectPricing.is_active == True
+        )
+        pricing_result = await session.execute(pricing_stmt)
+        for pricing in pricing_result.scalars().all():
+            existing_pricing[pricing.subject_id] = pricing.price
+
+    # Prepare data with subjects from database
+    if subjects:
+        data = {
+            "original_code": [
+                subject.original_code if subject.original_code else subject.code for subject in subjects
+            ],
+            "subject_name": [subject.name for subject in subjects],
+            "price": [
+                str(existing_pricing.get(subject.id, "")) for subject in subjects
+            ],
+        }
+    else:
+        # If no subjects, create empty template with just headers
+        data = {
+            "original_code": [],
+            "subject_name": [],
+            "price": [],
+        }
+
+    df = pd.DataFrame(data)
+
+    output = io.BytesIO()
+    with pd.ExcelWriter(output, engine="openpyxl") as writer:
+        df.to_excel(writer, index=False, sheet_name="SubjectPricing")
+    output.seek(0)
+    return output.getvalue()
+
+
+async def generate_programme_pricing_template(session: "AsyncSession", exam_id: int | None = None) -> bytes:
+    """
+    Generate Excel template for programme pricing upload prepopulated with programmes.
+
+    Args:
+        session: Database session to query programmes
+        exam_id: Optional exam ID to include existing pricing
+
+    Returns:
+        Bytes of Excel file
+    """
+    from sqlalchemy import select
+    from app.models import Programme, ProgrammePricing
+
+    # Query all programmes from the database
+    stmt = select(Programme).order_by(Programme.code)
+    result = await session.execute(stmt)
+    programmes = result.scalars().all()
+
+    # Get existing pricing if exam_id is provided
+    existing_pricing = {}
+    if exam_id:
+        pricing_stmt = select(ProgrammePricing).where(
+            ProgrammePricing.exam_id == exam_id,
+            ProgrammePricing.is_active == True
+        )
+        pricing_result = await session.execute(pricing_stmt)
+        for pricing in pricing_result.scalars().all():
+            existing_pricing[pricing.programme_id] = pricing.price
+
+    # Prepare data with programmes from database
+    if programmes:
+        data = {
+            "programme_code": [programme.code for programme in programmes],
+            "programme_name": [programme.name for programme in programmes],
+            "price": [
+                str(existing_pricing.get(programme.id, "")) for programme in programmes
+            ],
+        }
+    else:
+        # If no programmes, create empty template with just headers
+        data = {
+            "programme_code": [],
+            "programme_name": [],
+            "price": [],
+        }
+
+    df = pd.DataFrame(data)
+
+    output = io.BytesIO()
+    with pd.ExcelWriter(output, engine="openpyxl") as writer:
+        df.to_excel(writer, index=False, sheet_name="ProgrammePricing")
+    output.seek(0)
+    return output.getvalue()
