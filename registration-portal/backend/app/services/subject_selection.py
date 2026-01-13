@@ -5,7 +5,7 @@ from typing import Any
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models import Programme, Subject, SubjectType, programme_subjects
+from app.models import Programme, RegistrationType, Subject, SubjectType, programme_subjects
 
 
 async def get_programme_subjects_for_registration(
@@ -114,15 +114,19 @@ def normalize_exam_series(exam_series: str | None) -> str | None:
 
 
 async def validate_subject_selections(
-    session: AsyncSession, programme_id: int, selected_subject_ids: list[int], exam_series: str | None = None
+    session: AsyncSession,
+    programme_id: int,
+    selected_subject_ids: list[int],
+    exam_series: str | None = None,
+    registration_type: str | None = None,
 ) -> tuple[bool, list[str]]:
     """
     Validate that subject selections meet programme requirements.
 
     For MAY/JUNE exams:
-    - All compulsory core subjects must be registered
-    - Exactly one subject from each optional core choice group must be registered
-    - ALL elective subjects under the programme must be registered
+    - Free_tvet candidates: All compulsory core subjects and ALL elective subjects must be registered
+    - Referral candidates: At least one subject must be selected (everything is optional, validated like NOV/DEC)
+    - Private candidates: At least one subject must be selected (everything is optional, validated like NOV/DEC)
 
     For NOV/DEC exams:
     - Must register at least one subject (either core or elective)
@@ -135,6 +139,7 @@ async def validate_subject_selections(
         programme_id: Programme ID
         selected_subject_ids: List of selected subject IDs
         exam_series: Exam series string (e.g., "MAY/JUNE", "NOV/DEC") - optional, defaults to MAY/JUNE behavior
+        registration_type: Registration type string (e.g., "free_tvet", "referral", "private") - optional
 
     Returns:
         Tuple of (is_valid, list of error messages)
@@ -149,11 +154,22 @@ async def validate_subject_selections(
     is_may_june = normalized_series == "MAY/JUNE"
     is_nov_dec = normalized_series == "NOV/DEC"
 
-    # For NOV/DEC: Allow empty subject list (all subjects are optional)
-    # Note: The validation now allows empty list for NOV/DEC to support the new requirement
+    # Determine registration type flags
+    is_referral = registration_type == RegistrationType.REFERRAL.value if registration_type else False
+    is_free_tvet = registration_type == RegistrationType.FREE_TVET.value if registration_type else False
+    is_private = registration_type == RegistrationType.PRIVATE.value if registration_type else False
 
-    # Check compulsory core subjects (only for MAY/JUNE)
-    if is_may_june:
+    # For referral and private candidates in MAY/JUNE, use NOV/DEC-style validation (at least one subject, everything optional)
+    # For NOV/DEC exams, also use lenient validation
+    use_lenient_validation = is_nov_dec or (is_may_june and (is_referral or is_private))
+
+    # Check if at least one subject is selected (for NOV/DEC and referral candidates in MAY/JUNE)
+    if use_lenient_validation:
+        if len(selected_subject_ids) == 0:
+            errors.append("At least one subject must be selected")
+
+    # Check compulsory core subjects (only for MAY/JUNE free_tvet candidates)
+    if is_may_june and is_free_tvet:
         compulsory_core = set(subjects_info["compulsory_core"])
         missing_compulsory = compulsory_core - selected_set
         if missing_compulsory:
@@ -164,36 +180,23 @@ async def validate_subject_selections(
             errors.append(f"Missing compulsory core subjects: {', '.join(missing_names)}")
 
     # Check optional core choice groups (exactly one from each group)
-    # For MAY/JUNE: if selected, must select exactly one from each group (but selection is optional - can be completed later)
-    # For NOV/DEC: if any optional core subjects are registered, must select exactly one from each group
+    # For MAY/JUNE free_tvet: if selected, must select exactly one from each group (but selection is optional - can be completed later)
+    # For NOV/DEC and referral in MAY/JUNE: if any optional core subjects are registered, must select exactly one from each group
     for group_id, group_subject_ids in subjects_info["optional_core_groups"].items():
         group_set = set(group_subject_ids)
         registered_from_group = group_set & selected_set
 
-        if is_may_june:
-            # MAY/JUNE: If any subject from a group is selected, must select exactly one
-            # But it's OK to not select from a group - can be completed later
-            if len(registered_from_group) > 1:
-                # Multiple subjects from same group - not allowed
-                registered_subject_stmt = select(Subject).where(Subject.id.in_(registered_from_group))
-                registered_subject_result = await session.execute(registered_subject_stmt)
-                registered_subjects = registered_subject_result.scalars().all()
-                registered_names = [s.name for s in registered_subjects]
-                errors.append(f"Can only select one from optional core group {group_id}, but selected: {', '.join(registered_names)}")
-            # Note: It's OK to not select from a group - candidate can complete selection later
-        elif is_nov_dec:
-            # NOV/DEC: If any optional core subjects are registered, validate groups
-            if len(registered_from_group) > 1:
-                # Multiple subjects from same group - not allowed
-                registered_subject_stmt = select(Subject).where(Subject.id.in_(registered_from_group))
-                registered_subject_result = await session.execute(registered_subject_stmt)
-                registered_subjects = registered_subject_result.scalars().all()
-                registered_names = [s.name for s in registered_subjects]
-                errors.append(f"Can only select one from optional core group {group_id}, but selected: {', '.join(registered_names)}")
-            # For NOV_DEC, it's OK to not select from a group (everything is optional)
+        if len(registered_from_group) > 1:
+            # Multiple subjects from same group - not allowed
+            registered_subject_stmt = select(Subject).where(Subject.id.in_(registered_from_group))
+            registered_subject_result = await session.execute(registered_subject_stmt)
+            registered_subjects = registered_subject_result.scalars().all()
+            registered_names = [s.name for s in registered_subjects]
+            errors.append(f"Can only select one from optional core group {group_id}, but selected: {', '.join(registered_names)}")
+        # Note: It's OK to not select from a group (everything is optional for NOV/DEC and referral in MAY/JUNE)
 
-    # Check ALL elective subjects are registered (only for MAY/JUNE)
-    if is_may_june:
+    # Check ALL elective subjects are registered (only for MAY/JUNE free_tvet candidates)
+    if is_may_june and is_free_tvet:
         elective_subject_ids = set(subjects_info["electives"])
         missing_electives = elective_subject_ids - selected_set
         if missing_electives:

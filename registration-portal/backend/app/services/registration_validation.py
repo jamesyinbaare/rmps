@@ -61,9 +61,12 @@ async def can_approve_registration(
         if candidate.exam:
             exam_series = candidate.exam.exam_series
 
+        # Get registration type for validation
+        registration_type = candidate.registration_type.value if candidate.registration_type else None
+
         # Validate subject selections
         is_valid_subjects, subject_errors = await validate_subject_selections(
-            session, candidate.programme_id, selected_subject_ids, exam_series
+            session, candidate.programme_id, selected_subject_ids, exam_series, registration_type
         )
         if not is_valid_subjects:
             errors.extend(subject_errors)
