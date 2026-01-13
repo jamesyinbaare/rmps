@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useState, useMemo, useRef, useCallback } from "react";
 import {
   listAvailableExams,
   registerCandidate,
@@ -44,7 +44,33 @@ import { Badge } from "@/components/ui/badge";
 import { Checkbox } from "@/components/ui/checkbox";
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import { SearchableSelect } from "@/components/SearchableSelect";
-import { Plus, GraduationCap, AlertCircle, Upload, FileSpreadsheet, Loader2 } from "lucide-react";
+import { Progress } from "@/components/ui/progress";
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import {
+  Plus,
+  GraduationCap,
+  AlertCircle,
+  Upload,
+  FileSpreadsheet,
+  Loader2,
+  Search,
+  X,
+  Users,
+  CheckCircle2,
+  Calendar,
+  Clock,
+  Info,
+  ChevronDown,
+  ChevronUp,
+  ArrowUpDown,
+  ArrowUp,
+  ArrowDown,
+  XCircle,
+  Trash2,
+  HelpCircle,
+  FileText,
+} from "lucide-react";
 import { toast } from "sonner";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { CandidateDetailModal } from "@/components/CandidateDetailModal";
@@ -90,6 +116,27 @@ export default function RegistrationPage() {
   const [defaultChoiceGroups, setDefaultChoiceGroups] = useState<Record<number, string>>({});
   const [bulkProgrammeSubjects, setBulkProgrammeSubjects] = useState<ProgrammeSubjectRequirements | null>(null);
   const [loadingBulkSubjects, setLoadingBulkSubjects] = useState(false);
+  const [isDragOver, setIsDragOver] = useState(false);
+
+  // Table features state
+  const [searchQuery, setSearchQuery] = useState("");
+  const [statusFilter, setStatusFilter] = useState<"ALL" | "PENDING" | "APPROVED" | "REJECTED" | "DRAFT">("ALL");
+  const [sortColumn, setSortColumn] = useState<"name" | "registration_number" | "status" | "registration_date" | null>(null);
+  const [sortDirection, setSortDirection] = useState<"asc" | "desc">("asc");
+  const [currentPage, setCurrentPage] = useState(1);
+  const [pageSize, setPageSize] = useState(10);
+
+  // Form organization state
+  const [basicInfoOpen, setBasicInfoOpen] = useState(true);
+  const [programmeInfoOpen, setProgrammeInfoOpen] = useState(true);
+  const [contactInfoOpen, setContactInfoOpen] = useState(true);
+  const [guardianInfoOpen, setGuardianInfoOpen] = useState(true);
+
+  // Validation state
+  const [validationErrors, setValidationErrors] = useState<Record<string, string>>({});
+
+  // Refs for keyboard shortcuts
+  const searchInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     loadExams();
@@ -246,6 +293,216 @@ export default function RegistrationPage() {
     const filtered = selectedSubjectIds.filter((id) => !groupIds.includes(id));
     setSelectedSubjectIds([...filtered, selectedId]);
   };
+
+  // Calculate statistics for candidates
+  const candidateStatistics = useMemo(() => {
+    const totalRegistered = candidates.length;
+    const totalApproved = candidates.filter((c) => c.registration_status === "APPROVED").length;
+    const completionPercentage = totalRegistered > 0 ? (totalApproved / totalRegistered) * 100 : 0;
+    return { totalRegistered, totalApproved, completionPercentage };
+  }, [candidates]);
+
+  // Registration period status helper
+  const getRegistrationPeriodStatus = useCallback((exam: RegistrationExam | null) => {
+    if (!exam?.registration_period) return { status: "unknown", label: "Unknown", variant: "secondary" as const };
+    const now = new Date();
+    const start = new Date(exam.registration_period.registration_start_date);
+    const end = new Date(exam.registration_period.registration_end_date);
+    if (now < start) return { status: "upcoming", label: "Upcoming", variant: "outline" as const };
+    if (now > end) return { status: "closed", label: "Closed", variant: "secondary" as const };
+    return { status: "active", label: "Active", variant: "default" as const };
+  }, []);
+
+  // Filtered and sorted candidates
+  const filteredCandidates = useMemo(() => {
+    let filtered = candidates;
+
+    // Apply search filter
+    if (searchQuery.trim()) {
+      const query = searchQuery.toLowerCase();
+      filtered = filtered.filter(
+        (c) =>
+          c.name.toLowerCase().includes(query) ||
+          c.registration_number?.toLowerCase().includes(query) ||
+          c.index_number?.toLowerCase().includes(query)
+      );
+    }
+
+    // Apply status filter
+    if (statusFilter !== "ALL") {
+      filtered = filtered.filter((c) => c.registration_status === statusFilter);
+    }
+
+    // Apply sorting
+    if (sortColumn) {
+      filtered = [...filtered].sort((a, b) => {
+        let aVal: any;
+        let bVal: any;
+
+        switch (sortColumn) {
+          case "name":
+            aVal = a.name.toLowerCase();
+            bVal = b.name.toLowerCase();
+            break;
+          case "registration_number":
+            aVal = a.registration_number?.toLowerCase() || "";
+            bVal = b.registration_number?.toLowerCase() || "";
+            break;
+          case "status":
+            aVal = a.registration_status;
+            bVal = b.registration_status;
+            break;
+          case "registration_date":
+            aVal = new Date(a.registration_date).getTime();
+            bVal = new Date(b.registration_date).getTime();
+            break;
+          default:
+            return 0;
+        }
+
+        if (aVal < bVal) return sortDirection === "asc" ? -1 : 1;
+        if (aVal > bVal) return sortDirection === "asc" ? 1 : -1;
+        return 0;
+      });
+    }
+
+    return filtered;
+  }, [candidates, searchQuery, statusFilter, sortColumn, sortDirection]);
+
+  // Paginated candidates
+  const paginatedCandidates = useMemo(() => {
+    const start = (currentPage - 1) * pageSize;
+    const end = start + pageSize;
+    return filteredCandidates.slice(start, end);
+  }, [filteredCandidates, currentPage, pageSize]);
+
+  const totalPages = Math.ceil(filteredCandidates.length / pageSize);
+
+  // Handle sort
+  const handleSort = (column: "name" | "registration_number" | "status" | "registration_date") => {
+    if (sortColumn === column) {
+      setSortDirection(sortDirection === "asc" ? "desc" : "asc");
+    } else {
+      setSortColumn(column);
+      setSortDirection("asc");
+    }
+    setCurrentPage(1);
+  };
+
+  // Get sort icon
+  const getSortIcon = (column: "name" | "registration_number" | "status" | "registration_date") => {
+    if (sortColumn !== column) return <ArrowUpDown className="h-4 w-4 opacity-50" />;
+    return sortDirection === "asc" ? <ArrowUp className="h-4 w-4" /> : <ArrowDown className="h-4 w-4" />;
+  };
+
+  // Form validation
+  const validateField = (field: string, value: any) => {
+    const errors = { ...validationErrors };
+    switch (field) {
+      case "name":
+        if (!value || !value.trim()) {
+          errors.name = "Name is required";
+        } else {
+          delete errors.name;
+        }
+        break;
+      case "date_of_birth":
+        if (!value) {
+          errors.date_of_birth = "Date of birth is required";
+        } else {
+          delete errors.date_of_birth;
+        }
+        break;
+      case "gender":
+        if (!value) {
+          errors.gender = "Gender is required";
+        } else {
+          delete errors.gender;
+        }
+        break;
+      case "contact_email":
+        if (value && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value)) {
+          errors.contact_email = "Invalid email format";
+        } else {
+          delete errors.contact_email;
+        }
+        break;
+    }
+    setValidationErrors(errors);
+  };
+
+  // Clear form
+  const clearForm = useCallback(() => {
+    setFormData({
+      name: "",
+      date_of_birth: null,
+      gender: null,
+      programme_code: null,
+      programme_id: null,
+      contact_email: null,
+      contact_phone: null,
+      address: null,
+      national_id: null,
+      guardian_name: null,
+      guardian_phone: null,
+      guardian_address: null,
+      subject_codes: [],
+      subject_ids: [],
+    });
+    setSelectedProgrammeId(null);
+    setProgrammeSubjects(null);
+    setSelectedSubjectIds([]);
+    setValidationErrors({});
+  }, []);
+
+  // Subject count display
+  const selectedSubjectCount = useMemo(() => {
+    return selectedSubjectIds.length;
+  }, [selectedSubjectIds]);
+
+  // Drag and drop handlers
+  const handleDragOver = (e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setIsDragOver(true);
+  };
+
+  const handleDragLeave = (e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setIsDragOver(false);
+  };
+
+  const handleDrop = (e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setIsDragOver(false);
+
+    const file = e.dataTransfer.files[0];
+    if (file && (file.type.includes("csv") || file.type.includes("spreadsheet") || file.name.endsWith(".xlsx") || file.name.endsWith(".xls"))) {
+      setBulkUploadFile(file);
+    } else {
+      toast.error("Please drop a valid CSV or Excel file");
+    }
+  };
+
+  // Keyboard shortcuts
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      // Ctrl/Cmd + K to focus search
+      if ((e.ctrlKey || e.metaKey) && e.key === "k") {
+        e.preventDefault();
+        searchInputRef.current?.focus();
+      }
+      // Escape to clear search
+      if (e.key === "Escape" && document.activeElement === searchInputRef.current) {
+        setSearchQuery("");
+      }
+    };
+
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, []);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -423,10 +680,17 @@ export default function RegistrationPage() {
       {/* Exam Selection */}
       <Card>
         <CardHeader>
-          <CardTitle className="flex items-center gap-2">
-            <GraduationCap className="h-5 w-5" />
-            Select Examination
-          </CardTitle>
+          <div className="flex items-center justify-between flex-wrap gap-4">
+            <CardTitle className="flex items-center gap-2">
+              <GraduationCap className="h-5 w-5" />
+              Select Examination
+            </CardTitle>
+            {selectedExam && (
+              <Badge variant={getRegistrationPeriodStatus(selectedExam).variant}>
+                {getRegistrationPeriodStatus(selectedExam).label}
+              </Badge>
+            )}
+          </div>
         </CardHeader>
         <CardContent>
           <div className="space-y-4">
@@ -459,21 +723,64 @@ export default function RegistrationPage() {
             </div>
 
             {selectedExam && (
-              <Alert>
-                <GraduationCap className="h-4 w-4" />
-                <AlertDescription>
-                  <strong>Selected Exam:</strong> {selectedExam.exam_type} {selectedExam.exam_series} {selectedExam.year}
-                  {selectedExam.registration_period && (
-                    <>
-                      <br />
-                      <span className="text-sm">
-                        Registration Period: {new Date(selectedExam.registration_period.registration_start_date).toLocaleDateString()} -{" "}
-                        {new Date(selectedExam.registration_period.registration_end_date).toLocaleDateString()}
-                      </span>
-                    </>
-                  )}
-                </AlertDescription>
-              </Alert>
+              <>
+                {/* Statistics Cards */}
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                  <Card>
+                    <CardContent className="pt-6">
+                      <div className="flex items-center justify-between">
+                        <div>
+                          <p className="text-sm text-muted-foreground">Total Registered</p>
+                          <p className="text-2xl font-bold">{candidateStatistics.totalRegistered}</p>
+                        </div>
+                        <Users className="h-8 w-8 text-muted-foreground" />
+                      </div>
+                    </CardContent>
+                  </Card>
+                  <Card>
+                    <CardContent className="pt-6">
+                      <div className="flex items-center justify-between">
+                        <div>
+                          <p className="text-sm text-muted-foreground">Completed (Approved)</p>
+                          <p className="text-2xl font-bold">{candidateStatistics.totalApproved}</p>
+                        </div>
+                        <CheckCircle2 className="h-8 w-8 text-green-600" />
+                      </div>
+                    </CardContent>
+                  </Card>
+                  <Card>
+                    <CardContent className="pt-6">
+                      <div className="space-y-2">
+                        <div className="flex items-center justify-between">
+                          <p className="text-sm text-muted-foreground">Completion Progress</p>
+                          <span className="text-sm font-medium">{Math.round(candidateStatistics.completionPercentage)}%</span>
+                        </div>
+                        <Progress value={candidateStatistics.completionPercentage} className="h-2" />
+                      </div>
+                    </CardContent>
+                  </Card>
+                </div>
+
+                {/* Registration Period Info */}
+                {selectedExam.registration_period && (
+                  <Alert>
+                    <Calendar className="h-4 w-4" />
+                    <AlertDescription>
+                      <div className="flex items-center justify-between flex-wrap gap-2">
+                        <div>
+                          <strong>Registration Period:</strong>{" "}
+                          {new Date(selectedExam.registration_period.registration_start_date).toLocaleDateString()} -{" "}
+                          {new Date(selectedExam.registration_period.registration_end_date).toLocaleDateString()}
+                        </div>
+                        <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                          <Clock className="h-4 w-4" />
+                          {getRegistrationPeriodStatus(selectedExam).status === "active" ? "Currently Active" : getRegistrationPeriodStatus(selectedExam).label}
+                        </div>
+                      </div>
+                    </AlertDescription>
+                  </Alert>
+                )}
+              </>
             )}
           </div>
         </CardContent>
@@ -490,51 +797,96 @@ export default function RegistrationPage() {
           <TabsContent value="manual">
             <Card>
               <CardHeader>
-                <CardTitle>Register New Candidate</CardTitle>
+                <div className="flex items-center justify-between">
+                  <CardTitle>Register New Candidate</CardTitle>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    onClick={clearForm}
+                    disabled={submitting}
+                    aria-label="Clear form"
+                  >
+                    <Trash2 className="h-4 w-4 mr-2" />
+                    Clear Form
+                  </Button>
+                </div>
               </CardHeader>
               <CardContent>
-                <form onSubmit={handleSubmit} className="space-y-6">
+                <form onSubmit={handleSubmit} className="space-y-4">
                   {/* Basic Information */}
-                  <div className="space-y-4">
-                    <h3 className="text-lg font-semibold">Basic Information</h3>
+                  <Collapsible open={basicInfoOpen} onOpenChange={setBasicInfoOpen}>
+                    <CollapsibleTrigger className="flex w-full items-center justify-between rounded-lg border p-4 hover:bg-muted/50 transition-colors">
+                      <div className="flex items-center gap-2">
+                        <h3 className="text-lg font-semibold">Basic Information</h3>
+                        <Badge variant="secondary" className="text-xs">Required</Badge>
+                      </div>
+                      {basicInfoOpen ? <ChevronUp className="h-5 w-5" /> : <ChevronDown className="h-5 w-5" />}
+                    </CollapsibleTrigger>
+                    <CollapsibleContent className="pt-4 space-y-4">
                     <div className="space-y-2">
                       <Label htmlFor="name">Full Name *</Label>
                       <Input
                         id="name"
                         placeholder="John Doe"
                         value={formData.name}
-                        onChange={(e) => setFormData({ ...formData, name: e.target.value })}
+                        onChange={(e) => {
+                          setFormData({ ...formData, name: e.target.value });
+                          validateField("name", e.target.value);
+                        }}
+                        onBlur={(e) => validateField("name", e.target.value)}
                         required
                         disabled={submitting}
+                        aria-invalid={!!validationErrors.name}
+                        aria-describedby={validationErrors.name ? "name-error" : undefined}
                       />
+                      {validationErrors.name && (
+                        <p id="name-error" className="text-sm text-red-600 flex items-center gap-1">
+                          <XCircle className="h-4 w-4" />
+                          {validationErrors.name}
+                        </p>
+                      )}
                     </div>
 
                     <div className="grid grid-cols-2 gap-4">
                       <div className="space-y-2">
-                        <Label htmlFor="date_of_birth">Date of Birth</Label>
+                        <Label htmlFor="date_of_birth">Date of Birth *</Label>
                         <Input
                           id="date_of_birth"
                           type="date"
                           value={formData.date_of_birth || ""}
-                          onChange={(e) =>
-                            setFormData({
-                              ...formData,
-                              date_of_birth: e.target.value || null,
-                            })
-                          }
+                          onChange={(e) => {
+                            const value = e.target.value || null;
+                            setFormData({ ...formData, date_of_birth: value });
+                            validateField("date_of_birth", value);
+                          }}
+                          onBlur={(e) => validateField("date_of_birth", e.target.value)}
                           disabled={submitting}
+                          aria-invalid={!!validationErrors.date_of_birth}
+                          aria-describedby={validationErrors.date_of_birth ? "date_of_birth-error" : undefined}
                         />
+                        {validationErrors.date_of_birth && (
+                          <p id="date_of_birth-error" className="text-sm text-red-600 flex items-center gap-1">
+                            <XCircle className="h-4 w-4" />
+                            {validationErrors.date_of_birth}
+                          </p>
+                        )}
                       </div>
 
                       <div className="space-y-2">
-                        <Label htmlFor="gender">Gender</Label>
+                        <Label htmlFor="gender">Gender *</Label>
                         <Select
                           value={formData.gender || ""}
-                          onValueChange={(value) =>
-                            setFormData({ ...formData, gender: value || null })
-                          }
+                          onValueChange={(value) => {
+                            const val = value || null;
+                            setFormData({ ...formData, gender: val });
+                            validateField("gender", val);
+                          }}
                         >
-                          <SelectTrigger>
+                          <SelectTrigger
+                            aria-invalid={!!validationErrors.gender}
+                            aria-describedby={validationErrors.gender ? "gender-error" : undefined}
+                          >
                             <SelectValue placeholder="Select gender" />
                           </SelectTrigger>
                           <SelectContent>
@@ -543,15 +895,45 @@ export default function RegistrationPage() {
                             <SelectItem value="Other">Other</SelectItem>
                           </SelectContent>
                         </Select>
+                        {validationErrors.gender && (
+                          <p id="gender-error" className="text-sm text-red-600 flex items-center gap-1">
+                            <XCircle className="h-4 w-4" />
+                            {validationErrors.gender}
+                          </p>
+                        )}
                       </div>
                     </div>
-                  </div>
+                    </CollapsibleContent>
+                  </Collapsible>
 
                   {/* Programme Selection */}
-                  <div className="space-y-4">
-                    <h3 className="text-lg font-semibold">Programme & Subjects</h3>
+                  <Collapsible open={programmeInfoOpen} onOpenChange={setProgrammeInfoOpen}>
+                    <CollapsibleTrigger className="flex w-full items-center justify-between rounded-lg border p-4 hover:bg-muted/50 transition-colors">
+                      <div className="flex items-center gap-2">
+                        <h3 className="text-lg font-semibold">Programme & Subjects</h3>
+                        {selectedSubjectCount > 0 && (
+                          <Badge variant="outline" className="text-xs">
+                            {selectedSubjectCount} selected
+                          </Badge>
+                        )}
+                      </div>
+                      {programmeInfoOpen ? <ChevronUp className="h-5 w-5" /> : <ChevronDown className="h-5 w-5" />}
+                    </CollapsibleTrigger>
+                    <CollapsibleContent className="pt-4 space-y-4">
                     <div className="space-y-2">
-                      <Label htmlFor="programme">Programme</Label>
+                      <div className="flex items-center gap-2">
+                        <Label htmlFor="programme">Programme</Label>
+                        <Popover>
+                          <PopoverTrigger asChild>
+                            <Button variant="ghost" size="sm" className="h-4 w-4 p-0" type="button">
+                              <Info className="h-4 w-4" />
+                            </Button>
+                          </PopoverTrigger>
+                          <PopoverContent className="w-80">
+                            <p className="text-sm">Select a programme to automatically load required subjects for this examination.</p>
+                          </PopoverContent>
+                        </Popover>
+                      </div>
                       {loadingProgrammes ? (
                         <div className="flex items-center gap-2 text-sm text-muted-foreground py-2">
                           <Loader2 className="h-4 w-4 animate-spin" />
@@ -675,11 +1057,19 @@ export default function RegistrationPage() {
                         })()}
                       </div>
                     )}
-                  </div>
+                    </CollapsibleContent>
+                  </Collapsible>
 
                   {/* Contact Information */}
-                  <div className="space-y-4">
-                    <h3 className="text-lg font-semibold">Contact Information <span className="text-sm font-normal text-muted-foreground">(Optional)</span></h3>
+                  <Collapsible open={contactInfoOpen} onOpenChange={setContactInfoOpen}>
+                    <CollapsibleTrigger className="flex w-full items-center justify-between rounded-lg border p-4 hover:bg-muted/50 transition-colors">
+                      <div className="flex items-center gap-2">
+                        <h3 className="text-lg font-semibold">Contact Information</h3>
+                        <Badge variant="outline" className="text-xs">Optional</Badge>
+                      </div>
+                      {contactInfoOpen ? <ChevronUp className="h-5 w-5" /> : <ChevronDown className="h-5 w-5" />}
+                    </CollapsibleTrigger>
+                    <CollapsibleContent className="pt-4 space-y-4">
                     <div className="grid grid-cols-2 gap-4">
                       <div className="space-y-2">
                         <Label htmlFor="contact_email">Contact Email</Label>
@@ -688,11 +1078,22 @@ export default function RegistrationPage() {
                           type="email"
                           placeholder="candidate@example.com"
                           value={formData.contact_email || ""}
-                          onChange={(e) =>
-                            setFormData({ ...formData, contact_email: e.target.value || null })
-                          }
+                          onChange={(e) => {
+                            const value = e.target.value || null;
+                            setFormData({ ...formData, contact_email: value });
+                            validateField("contact_email", value);
+                          }}
+                          onBlur={(e) => validateField("contact_email", e.target.value)}
                           disabled={submitting}
+                          aria-invalid={!!validationErrors.contact_email}
+                          aria-describedby={validationErrors.contact_email ? "contact_email-error" : undefined}
                         />
+                        {validationErrors.contact_email && (
+                          <p id="contact_email-error" className="text-sm text-red-600 flex items-center gap-1">
+                            <XCircle className="h-4 w-4" />
+                            {validationErrors.contact_email}
+                          </p>
+                        )}
                       </div>
 
                       <div className="space-y-2">
@@ -734,11 +1135,19 @@ export default function RegistrationPage() {
                         disabled={submitting}
                       />
                     </div>
-                  </div>
+                    </CollapsibleContent>
+                  </Collapsible>
 
                   {/* Guardian Information */}
-                  <div className="space-y-4">
-                    <h3 className="text-lg font-semibold">Guardian Information (Optional)</h3>
+                  <Collapsible open={guardianInfoOpen} onOpenChange={setGuardianInfoOpen}>
+                    <CollapsibleTrigger className="flex w-full items-center justify-between rounded-lg border p-4 hover:bg-muted/50 transition-colors">
+                      <div className="flex items-center gap-2">
+                        <h3 className="text-lg font-semibold">Guardian Information</h3>
+                        <Badge variant="outline" className="text-xs">Optional</Badge>
+                      </div>
+                      {guardianInfoOpen ? <ChevronUp className="h-5 w-5" /> : <ChevronDown className="h-5 w-5" />}
+                    </CollapsibleTrigger>
+                    <CollapsibleContent className="pt-4 space-y-4">
                     <div className="space-y-2">
                       <Label htmlFor="guardian_name">Guardian Name</Label>
                       <Input
@@ -779,7 +1188,8 @@ export default function RegistrationPage() {
                         disabled={submitting}
                       />
                     </div>
-                  </div>
+                    </CollapsibleContent>
+                  </Collapsible>
 
                   <Button type="submit" className="w-full" disabled={submitting}>
                     {submitting ? (
@@ -859,56 +1269,135 @@ export default function RegistrationPage() {
                   </div>
                 )}
 
-                <div className="space-y-2">
+                <div className="space-y-4">
                   <div className="flex items-center justify-between">
                     <Label htmlFor="bulk-file">Upload CSV/Excel File</Label>
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      onClick={handleDownloadTemplate}
-                      disabled={downloadingTemplate}
-                    >
-                      {downloadingTemplate ? (
-                        <>
-                          <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                          Downloading...
-                        </>
-                      ) : (
-                        <>
-                          <FileSpreadsheet className="mr-2 h-4 w-4" />
-                          Download Template
-                        </>
-                      )}
-                    </Button>
+                    <div className="flex items-center gap-2">
+                      <Popover>
+                        <PopoverTrigger asChild>
+                          <Button variant="ghost" size="sm" type="button">
+                            <HelpCircle className="h-4 w-4 mr-2" />
+                            Template Format Help
+                          </Button>
+                        </PopoverTrigger>
+                        <PopoverContent className="w-96">
+                          <div className="space-y-2">
+                            <h4 className="font-semibold">Template Format Guide</h4>
+                            <p className="text-sm text-muted-foreground">
+                              The template includes required and optional columns. Required columns are highlighted in green, optional columns in yellow.
+                            </p>
+                            <div className="text-sm space-y-1">
+                              <p><strong>Required:</strong> name, date_of_birth, gender, programme_code</p>
+                              <p><strong>Optional:</strong> national_id, contact_email, contact_phone, address, guardian_name, guardian_phone, guardian_address</p>
+                              <p className="text-xs text-muted-foreground mt-2">
+                                For MAY/JUNE exams, subject columns are not included. All columns are formatted as text to preserve leading zeros.
+                              </p>
+                            </div>
+                          </div>
+                        </PopoverContent>
+                      </Popover>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={handleDownloadTemplate}
+                        disabled={downloadingTemplate}
+                      >
+                        {downloadingTemplate ? (
+                          <>
+                            <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                            Downloading...
+                          </>
+                        ) : (
+                          <>
+                            <FileSpreadsheet className="mr-2 h-4 w-4" />
+                            Download Template
+                          </>
+                        )}
+                      </Button>
+                    </div>
                   </div>
-                  <div className="flex items-center gap-2">
+
+                  {/* Drag and Drop Area */}
+                  <div
+                    onDragOver={handleDragOver}
+                    onDragLeave={handleDragLeave}
+                    onDrop={handleDrop}
+                    className={`border-2 border-dashed rounded-lg p-8 text-center transition-colors ${
+                      isDragOver ? "border-primary bg-primary/5" : "border-muted-foreground/25"
+                    } ${bulkUploading ? "opacity-50 pointer-events-none" : ""}`}
+                  >
                     <Input
+                      ref={(input) => {
+                        if (input) {
+                          input.style.display = "none";
+                        }
+                      }}
                       id="bulk-file"
                       type="file"
                       accept=".csv,.xlsx,.xls"
                       onChange={(e) => setBulkUploadFile(e.target.files?.[0] || null)}
                       disabled={bulkUploading}
+                      className="hidden"
                     />
-                    <Button
-                      onClick={handleBulkUpload}
-                      disabled={!bulkUploadFile || bulkUploading}
-                    >
-                      {bulkUploading ? (
-                        <>
-                          <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                          Uploading...
-                        </>
-                      ) : (
-                        <>
-                          <Upload className="mr-2 h-4 w-4" />
-                          Upload
-                        </>
-                      )}
-                    </Button>
+                    <label htmlFor="bulk-file" className="cursor-pointer">
+                      <div className="flex flex-col items-center gap-4">
+                        <Upload className={`h-12 w-12 ${isDragOver ? "text-primary" : "text-muted-foreground"}`} />
+                        <div>
+                          <p className="text-sm font-medium">
+                            {bulkUploadFile ? bulkUploadFile.name : "Drop your file here, or click to browse"}
+                          </p>
+                          <p className="text-xs text-muted-foreground mt-1">
+                            Supports CSV, XLSX, and XLS files
+                          </p>
+                        </div>
+                      </div>
+                    </label>
                   </div>
-                  <p className="text-sm text-muted-foreground">
-                    CSV/Excel file should contain columns: name, programme_code, optional_subjects (comma-separated), and other candidate fields. All columns are formatted as text to preserve leading zeros.
-                  </p>
+
+                  {bulkUploadFile && (
+                    <div className="space-y-2">
+                      <div className="flex items-center justify-between">
+                        <span className="text-sm font-medium">{bulkUploadFile.name}</span>
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          onClick={() => setBulkUploadFile(null)}
+                          disabled={bulkUploading}
+                          type="button"
+                        >
+                          <X className="h-4 w-4" />
+                        </Button>
+                      </div>
+                    </div>
+                  )}
+
+                  {bulkUploading && (
+                    <div className="space-y-2">
+                      <div className="flex items-center justify-between text-sm">
+                        <span>Uploading...</span>
+                        <span>Processing file</span>
+                      </div>
+                      <Progress value={50} className="h-2" />
+                    </div>
+                  )}
+
+                  <Button
+                    onClick={handleBulkUpload}
+                    disabled={!bulkUploadFile || bulkUploading}
+                    className="w-full"
+                  >
+                    {bulkUploading ? (
+                      <>
+                        <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                        Uploading...
+                      </>
+                    ) : (
+                      <>
+                        <Upload className="mr-2 h-4 w-4" />
+                        Upload File
+                      </>
+                    )}
+                  </Button>
                 </div>
 
                 {bulkUploadResult && (
@@ -965,56 +1454,216 @@ export default function RegistrationPage() {
           <CardHeader>
             <CardTitle>Registered Candidates for {selectedExam.exam_type} {selectedExam.exam_series} {selectedExam.year}</CardTitle>
           </CardHeader>
-          <CardContent>
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>Name</TableHead>
-                  <TableHead>Registration Number</TableHead>
-                  <TableHead>Status</TableHead>
-                  <TableHead>Registration Date</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {candidates.length === 0 ? (
+          <CardContent className="space-y-4">
+            {/* Search and Filters */}
+            <div className="flex flex-col sm:flex-row gap-4 items-start sm:items-center justify-between">
+              <div className="relative flex-1 max-w-md w-full">
+                <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+                <Input
+                  ref={searchInputRef}
+                  type="search"
+                  placeholder="Search by name or registration number..."
+                  value={searchQuery}
+                  onChange={(e) => {
+                    setSearchQuery(e.target.value);
+                    setCurrentPage(1);
+                  }}
+                  className="pl-10 pr-10"
+                  aria-label="Search candidates"
+                />
+                {searchQuery && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setSearchQuery("");
+                      setCurrentPage(1);
+                    }}
+                    className="absolute right-3 top-1/2 -translate-y-1/2 h-4 w-4 flex items-center justify-center opacity-70 hover:opacity-100 transition-opacity"
+                    aria-label="Clear search"
+                  >
+                    <X className="h-4 w-4" />
+                  </button>
+                )}
+              </div>
+
+              {/* Status Filter Chips */}
+              <div className="flex flex-wrap gap-2">
+                {(["ALL", "PENDING", "APPROVED", "REJECTED", "DRAFT"] as const).map((status) => (
+                  <Button
+                    key={status}
+                    variant={statusFilter === status ? "default" : "outline"}
+                    size="sm"
+                    onClick={() => {
+                      setStatusFilter(status);
+                      setCurrentPage(1);
+                    }}
+                    type="button"
+                  >
+                    {status}
+                  </Button>
+                ))}
+              </div>
+            </div>
+
+            {/* Table */}
+            <div className="rounded-md border overflow-x-auto">
+              <Table>
+                <TableHeader>
                   <TableRow>
-                    <TableCell colSpan={4} className="text-center text-muted-foreground">
-                      No candidates registered for this examination yet
-                    </TableCell>
+                    <TableHead>
+                      <button
+                        type="button"
+                        onClick={() => handleSort("name")}
+                        className="flex items-center gap-2 hover:text-foreground"
+                      >
+                        Name {getSortIcon("name")}
+                      </button>
+                    </TableHead>
+                    <TableHead>
+                      <button
+                        type="button"
+                        onClick={() => handleSort("registration_number")}
+                        className="flex items-center gap-2 hover:text-foreground"
+                      >
+                        Registration Number {getSortIcon("registration_number")}
+                      </button>
+                    </TableHead>
+                    <TableHead>
+                      <button
+                        type="button"
+                        onClick={() => handleSort("status")}
+                        className="flex items-center gap-2 hover:text-foreground"
+                      >
+                        Status {getSortIcon("status")}
+                      </button>
+                    </TableHead>
+                    <TableHead>
+                      <button
+                        type="button"
+                        onClick={() => handleSort("registration_date")}
+                        className="flex items-center gap-2 hover:text-foreground"
+                      >
+                        Registration Date {getSortIcon("registration_date")}
+                      </button>
+                    </TableHead>
                   </TableRow>
-                ) : (
-                  candidates.map((candidate) => (
-                    <TableRow
-                      key={candidate.id}
-                      className="cursor-pointer hover:bg-muted/50"
-                      onClick={() => {
-                        setSelectedCandidate(candidate);
-                        setDetailDialogOpen(true);
-                      }}
-                    >
-                      <TableCell className="font-medium">{candidate.name}</TableCell>
-                      <TableCell>{candidate.registration_number}</TableCell>
-                      <TableCell>
-                        <span
-                          className={`inline-flex items-center rounded-full px-2 py-1 text-xs font-medium ${
-                            candidate.registration_status === "APPROVED"
-                              ? "bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-300"
-                              : candidate.registration_status === "REJECTED"
-                              ? "bg-red-100 text-red-800 dark:bg-red-900 dark:text-red-300"
-                              : "bg-yellow-100 text-yellow-800 dark:bg-yellow-900 dark:text-yellow-300"
-                          }`}
-                        >
-                          {candidate.registration_status}
-                        </span>
-                      </TableCell>
-                      <TableCell>
-                        {new Date(candidate.registration_date).toLocaleDateString()}
+                </TableHeader>
+                <TableBody>
+                  {filteredCandidates.length === 0 ? (
+                    <TableRow>
+                      <TableCell colSpan={4} className="text-center text-muted-foreground py-8">
+                        {candidates.length === 0
+                          ? "No candidates registered for this examination yet"
+                          : "No candidates match your search criteria"}
                       </TableCell>
                     </TableRow>
-                  ))
-                )}
-              </TableBody>
-            </Table>
+                  ) : (
+                    paginatedCandidates.map((candidate) => (
+                      <TableRow
+                        key={candidate.id}
+                        className="cursor-pointer hover:bg-muted/50"
+                        onClick={() => {
+                          setSelectedCandidate(candidate);
+                          setDetailDialogOpen(true);
+                        }}
+                      >
+                        <TableCell className="font-medium">{candidate.name}</TableCell>
+                        <TableCell>{candidate.registration_number}</TableCell>
+                        <TableCell>
+                          <Badge
+                            variant={
+                              candidate.registration_status === "APPROVED"
+                                ? "default"
+                                : candidate.registration_status === "REJECTED"
+                                ? "destructive"
+                                : "secondary"
+                            }
+                            className={
+                              candidate.registration_status === "APPROVED"
+                                ? "bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-300"
+                                : candidate.registration_status === "REJECTED"
+                                ? "bg-red-100 text-red-800 dark:bg-red-900 dark:text-red-300"
+                                : "bg-yellow-100 text-yellow-800 dark:bg-yellow-900 dark:text-yellow-300"
+                            }
+                          >
+                            {candidate.registration_status}
+                          </Badge>
+                        </TableCell>
+                        <TableCell>
+                          {new Date(candidate.registration_date).toLocaleDateString()}
+                        </TableCell>
+                      </TableRow>
+                    ))
+                  )}
+                </TableBody>
+              </Table>
+            </div>
+
+            {/* Pagination */}
+            {filteredCandidates.length > 0 && (
+              <div className="flex flex-col sm:flex-row items-center justify-between gap-4">
+                <div className="text-sm text-muted-foreground">
+                  Showing {(currentPage - 1) * pageSize + 1} to {Math.min(currentPage * pageSize, filteredCandidates.length)} of{" "}
+                  {filteredCandidates.length} candidates
+                </div>
+                <div className="flex items-center gap-2">
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => setCurrentPage((p) => Math.max(1, p - 1))}
+                    disabled={currentPage === 1}
+                    type="button"
+                  >
+                    Previous
+                  </Button>
+                  <div className="flex items-center gap-1">
+                    {Array.from({ length: Math.min(5, totalPages) }, (_, i) => {
+                      let pageNum: number;
+                      if (totalPages <= 5) {
+                        pageNum = i + 1;
+                      } else if (currentPage <= 3) {
+                        pageNum = i + 1;
+                      } else if (currentPage >= totalPages - 2) {
+                        pageNum = totalPages - 4 + i;
+                      } else {
+                        pageNum = currentPage - 2 + i;
+                      }
+                      return (
+                        <Button
+                          key={pageNum}
+                          variant={currentPage === pageNum ? "default" : "outline"}
+                          size="sm"
+                          onClick={() => setCurrentPage(pageNum)}
+                          type="button"
+                        >
+                          {pageNum}
+                        </Button>
+                      );
+                    })}
+                  </div>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => setCurrentPage((p) => Math.min(totalPages, p + 1))}
+                    disabled={currentPage === totalPages}
+                    type="button"
+                  >
+                    Next
+                  </Button>
+                </div>
+                <Select value={pageSize.toString()} onValueChange={(value) => { setPageSize(parseInt(value)); setCurrentPage(1); }}>
+                  <SelectTrigger className="w-20">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="10">10</SelectItem>
+                    <SelectItem value="25">25</SelectItem>
+                    <SelectItem value="50">50</SelectItem>
+                    <SelectItem value="100">100</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+            )}
           </CardContent>
         </Card>
       )}

@@ -159,24 +159,6 @@ export default function MySchoolDashboardPage() {
           </CardContent>
         </Card>
       </div>
-
-      {Object.keys(dashboardData.candidates_by_status).length > 0 && (
-        <Card>
-          <CardHeader>
-            <CardTitle>Candidates by Status</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div className="grid gap-4 md:grid-cols-3">
-              {Object.entries(dashboardData.candidates_by_status).map(([status, count]) => (
-                <div key={status} className="text-center">
-                  <p className="text-2xl font-bold">{count}</p>
-                  <p className="text-sm text-muted-foreground capitalize">{status.toLowerCase()}</p>
-                </div>
-              ))}
-            </div>
-          </CardContent>
-        </Card>
-      )}
     </div>
   );
 }

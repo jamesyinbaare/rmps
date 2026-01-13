@@ -463,9 +463,7 @@ export function CandidateDetailModal({
   // Compute validation status for approval
   const isSchoolAdmin = currentUser?.role === "SchoolAdmin";
   const canApprove = candidate.registration_status === "PENDING" || candidate.registration_status === "DRAFT";
-  const hasRequiredBioData = candidate.name && candidate.date_of_birth && candidate.gender;
   const hasPhoto = !!photo;
-  const isValidationPassing = hasRequiredBioData && hasPhoto;
 
   // Check if exam is closed
   const isExamClosed = candidate.exam?.registration_period
@@ -537,9 +535,9 @@ export function CandidateDetailModal({
               {isSchoolAdmin && canApprove && (
                 <Button
                   onClick={handleApprove}
-                  disabled={approving || !isValidationPassing}
+                  disabled={approving || !hasPhoto}
                   className="bg-green-600 hover:bg-green-700 text-white"
-                  title={!isValidationPassing ? "Missing required information (bio data or photo)" : "Approve registration"}
+                  title={!hasPhoto ? "Photo is required for approval" : "Approve registration (validation will be performed by the system)"}
                 >
                   {approving ? (
                     <>
