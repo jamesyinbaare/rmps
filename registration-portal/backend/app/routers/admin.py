@@ -7,6 +7,7 @@ from uuid import UUID
 
 from fastapi import APIRouter, HTTPException, Query, status, UploadFile, File, Form, BackgroundTasks, Body, Depends, Request
 from fastapi.responses import StreamingResponse
+import io
 from pydantic import BaseModel, Field
 from sqlalchemy import select, func, delete, insert, update, cast, String, type_coerce
 from sqlalchemy.orm import selectinload
@@ -179,6 +180,17 @@ from app.services.template_generator import (
     generate_schedule_template,
     generate_subject_pricing_template,
     generate_programme_pricing_template,
+)
+from app.schemas.invoice import (
+    SchoolInvoiceResponse,
+    AdminSummaryInvoiceResponse,
+    SchoolInvoiceItem,
+    ExaminationInvoiceItem,
+)
+from app.services.school_invoice_service import (
+    aggregate_candidates_by_examination,
+    aggregate_candidates_by_school,
+    generate_admin_invoice_pdf,
 )
 from app.schemas.result import (
     CandidateResultBulkPublish,
@@ -9000,4 +9012,282 @@ async def assign_credits_to_api_user(
         balance=credit.balance,
         total_purchased=credit.total_purchased,
         total_used=credit.total_used,
+    )
+
+
+# Invoice Generation Endpoints for System Admin
+
+@router.get("/invoices/free-tvet/by-school", response_model=SchoolInvoiceResponse)
+async def get_free_tvet_invoice_by_school(
+    session: DBSessionDep,
+    current_user: SystemAdminDep,
+    exam_id: int = Query(..., description="The exam ID"),
+    school_id: int = Query(..., description="The school ID"),
+) -> SchoolInvoiceResponse:
+    """Generate invoice for free_tvet candidates for a specific school and examination."""
+    # Get school
+    school_stmt = select(School).where(School.id == school_id)
+    school_result = await session.execute(school_stmt)
+    school = school_result.scalar_one_or_none()
+    if not school:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="School not found")
+
+    # Get aggregated data
+    invoice_data = await aggregate_candidates_by_examination(
+        session, school_id, exam_id, RegistrationType.FREE_TVET.value
+    )
+
+    # Get exam details
+    exam_stmt = select(RegistrationExam).where(RegistrationExam.id == exam_id)
+    exam_result = await session.execute(exam_stmt)
+    exam = exam_result.scalar_one_or_none()
+    if not exam:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Exam not found")
+
+    return SchoolInvoiceResponse(
+        school_id=school.id,
+        school_code=school.code,
+        school_name=school.name,
+        registration_type=RegistrationType.FREE_TVET.value,
+        examination=ExaminationInvoiceItem(
+            exam_id=invoice_data["exam_id"],
+            exam_type=invoice_data["exam_type"],
+            exam_series=invoice_data["exam_series"],
+            year=invoice_data["year"],
+            candidate_count=invoice_data["candidate_count"],
+            total_amount=invoice_data["total_amount"],
+        ),
+        generated_at=datetime.utcnow(),
+    )
+
+
+@router.get("/invoices/referral/by-school", response_model=SchoolInvoiceResponse)
+async def get_referral_invoice_by_school(
+    session: DBSessionDep,
+    current_user: SystemAdminDep,
+    exam_id: int = Query(..., description="The exam ID"),
+    school_id: int = Query(..., description="The school ID"),
+) -> SchoolInvoiceResponse:
+    """Generate invoice for referral candidates for a specific school and examination."""
+    # Get school
+    school_stmt = select(School).where(School.id == school_id)
+    school_result = await session.execute(school_stmt)
+    school = school_result.scalar_one_or_none()
+    if not school:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="School not found")
+
+    # Get aggregated data
+    invoice_data = await aggregate_candidates_by_examination(
+        session, school_id, exam_id, RegistrationType.REFERRAL.value
+    )
+
+    # Get exam details
+    exam_stmt = select(RegistrationExam).where(RegistrationExam.id == exam_id)
+    exam_result = await session.execute(exam_stmt)
+    exam = exam_result.scalar_one_or_none()
+    if not exam:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Exam not found")
+
+    return SchoolInvoiceResponse(
+        school_id=school.id,
+        school_code=school.code,
+        school_name=school.name,
+        registration_type=RegistrationType.REFERRAL.value,
+        examination=ExaminationInvoiceItem(
+            exam_id=invoice_data["exam_id"],
+            exam_type=invoice_data["exam_type"],
+            exam_series=invoice_data["exam_series"],
+            year=invoice_data["year"],
+            candidate_count=invoice_data["candidate_count"],
+            total_amount=invoice_data["total_amount"],
+        ),
+        generated_at=datetime.utcnow(),
+    )
+
+
+@router.get("/invoices/free-tvet/summary", response_model=AdminSummaryInvoiceResponse)
+async def get_free_tvet_invoice_summary(
+    session: DBSessionDep,
+    current_user: SystemAdminDep,
+    exam_id: int = Query(..., description="The exam ID"),
+) -> AdminSummaryInvoiceResponse:
+    """Generate summary invoice for free_tvet candidates across all schools for an examination."""
+    # Get aggregated data
+    summary_data = await aggregate_candidates_by_school(
+        session, exam_id, RegistrationType.FREE_TVET.value
+    )
+
+    # Build school items
+    school_items = [
+        SchoolInvoiceItem(
+            school_id=school["school_id"],
+            school_code=school["school_code"],
+            school_name=school["school_name"],
+            candidate_count=school["candidate_count"],
+            total_amount=school["total_amount"],
+        )
+        for school in summary_data["schools"]
+    ]
+
+    return AdminSummaryInvoiceResponse(
+        registration_type=RegistrationType.FREE_TVET.value,
+        examination=ExaminationInvoiceItem(
+            exam_id=summary_data["exam_id"],
+            exam_type=summary_data["exam_type"],
+            exam_series=summary_data["exam_series"],
+            year=summary_data["year"],
+            candidate_count=summary_data["total_candidate_count"],
+            total_amount=summary_data["total_amount"],
+        ),
+        schools=school_items,
+        total_candidate_count=summary_data["total_candidate_count"],
+        total_amount=summary_data["total_amount"],
+        generated_at=datetime.utcnow(),
+    )
+
+
+@router.get("/invoices/referral/summary", response_model=AdminSummaryInvoiceResponse)
+async def get_referral_invoice_summary(
+    session: DBSessionDep,
+    current_user: SystemAdminDep,
+    exam_id: int = Query(..., description="The exam ID"),
+) -> AdminSummaryInvoiceResponse:
+    """Generate summary invoice for referral candidates across all schools for an examination."""
+    # Get aggregated data
+    summary_data = await aggregate_candidates_by_school(
+        session, exam_id, RegistrationType.REFERRAL.value
+    )
+
+    # Build school items
+    school_items = [
+        SchoolInvoiceItem(
+            school_id=school["school_id"],
+            school_code=school["school_code"],
+            school_name=school["school_name"],
+            candidate_count=school["candidate_count"],
+            total_amount=school["total_amount"],
+        )
+        for school in summary_data["schools"]
+    ]
+
+    return AdminSummaryInvoiceResponse(
+        registration_type=RegistrationType.REFERRAL.value,
+        examination=ExaminationInvoiceItem(
+            exam_id=summary_data["exam_id"],
+            exam_type=summary_data["exam_type"],
+            exam_series=summary_data["exam_series"],
+            year=summary_data["year"],
+            candidate_count=summary_data["total_candidate_count"],
+            total_amount=summary_data["total_amount"],
+        ),
+        schools=school_items,
+        total_candidate_count=summary_data["total_candidate_count"],
+        total_amount=summary_data["total_amount"],
+        generated_at=datetime.utcnow(),
+    )
+
+
+@router.get("/invoices/free-tvet/by-school/pdf")
+async def download_free_tvet_invoice_pdf_by_school(
+    session: DBSessionDep,
+    current_user: SystemAdminDep,
+    exam_id: int = Query(..., description="The exam ID"),
+    school_id: int = Query(..., description="The school ID"),
+) -> StreamingResponse:
+    """Download PDF invoice for free_tvet candidates for a specific school."""
+    try:
+        pdf_bytes = await generate_admin_invoice_pdf(
+            session,
+            exam_id,
+            RegistrationType.FREE_TVET.value,
+            school_id=school_id,
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
+
+    filename = f"free_tvet_invoice_exam_{exam_id}_school_{school_id}.pdf"
+
+    return StreamingResponse(
+        io.BytesIO(pdf_bytes),
+        media_type="application/pdf",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
+@router.get("/invoices/referral/by-school/pdf")
+async def download_referral_invoice_pdf_by_school(
+    session: DBSessionDep,
+    current_user: SystemAdminDep,
+    exam_id: int = Query(..., description="The exam ID"),
+    school_id: int = Query(..., description="The school ID"),
+) -> StreamingResponse:
+    """Download PDF invoice for referral candidates for a specific school."""
+    try:
+        pdf_bytes = await generate_admin_invoice_pdf(
+            session,
+            exam_id,
+            RegistrationType.REFERRAL.value,
+            school_id=school_id,
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
+
+    filename = f"referral_invoice_exam_{exam_id}_school_{school_id}.pdf"
+
+    return StreamingResponse(
+        io.BytesIO(pdf_bytes),
+        media_type="application/pdf",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
+@router.get("/invoices/free-tvet/summary/pdf")
+async def download_free_tvet_invoice_summary_pdf(
+    session: DBSessionDep,
+    current_user: SystemAdminDep,
+    exam_id: int = Query(..., description="The exam ID"),
+) -> StreamingResponse:
+    """Download PDF summary invoice for free_tvet candidates across all schools."""
+    try:
+        pdf_bytes = await generate_admin_invoice_pdf(
+            session,
+            exam_id,
+            RegistrationType.FREE_TVET.value,
+            school_id=None,
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
+
+    filename = f"free_tvet_invoice_summary_exam_{exam_id}.pdf"
+
+    return StreamingResponse(
+        io.BytesIO(pdf_bytes),
+        media_type="application/pdf",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
+@router.get("/invoices/referral/summary/pdf")
+async def download_referral_invoice_summary_pdf(
+    session: DBSessionDep,
+    current_user: SystemAdminDep,
+    exam_id: int = Query(..., description="The exam ID"),
+) -> StreamingResponse:
+    """Download PDF summary invoice for referral candidates across all schools."""
+    try:
+        pdf_bytes = await generate_admin_invoice_pdf(
+            session,
+            exam_id,
+            RegistrationType.REFERRAL.value,
+            school_id=None,
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
+
+    filename = f"referral_invoice_summary_exam_{exam_id}.pdf"
+
+    return StreamingResponse(
+        io.BytesIO(pdf_bytes),
+        media_type="application/pdf",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
     )
