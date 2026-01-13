@@ -31,10 +31,13 @@ import {
   Loader2,
   Trash2,
   ZoomIn,
+  Check,
+  XCircle,
+  CheckCircle2,
 } from "lucide-react";
-import { uploadCandidatePhoto, getCandidatePhoto, deleteCandidatePhoto, getPhotoFile, updateCandidate, getProgrammeSubjects } from "@/lib/api";
+import { uploadCandidatePhoto, getCandidatePhoto, deleteCandidatePhoto, getPhotoFile, updateCandidate, getProgrammeSubjects, approveCandidate, getCurrentUser } from "@/lib/api";
 import { toast } from "sonner";
-import type { RegistrationCandidatePhoto, ProgrammeSubjectRequirements } from "@/types";
+import type { RegistrationCandidatePhoto, ProgrammeSubjectRequirements, User as UserType } from "@/types";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -116,6 +119,23 @@ export function CandidateDetailModal({
     national_id: "",
   });
   const [savingBio, setSavingBio] = useState(false);
+
+  // Approval state
+  const [currentUser, setCurrentUser] = useState<UserType | null>(null);
+  const [approving, setApproving] = useState(false);
+
+  // Load current user on mount
+  useEffect(() => {
+    const loadUser = async () => {
+      try {
+        const user = await getCurrentUser();
+        setCurrentUser(user);
+      } catch (error) {
+        console.error("Failed to load current user:", error);
+      }
+    };
+    loadUser();
+  }, []);
 
   // Find current candidate index
   const currentIndex = candidate ? candidates.findIndex((c) => c.id === candidate.id) : -1;
@@ -416,9 +436,36 @@ export function CandidateDetailModal({
     setEditingBio(false);
   };
 
+  const handleApprove = async () => {
+    if (!candidate) return;
+
+    setApproving(true);
+    try {
+      const updatedCandidate = await approveCandidate(candidate.id);
+      toast.success("Registration approved successfully");
+
+      // Update the candidate in parent component
+      if (onCandidateChange) {
+        onCandidateChange(updatedCandidate);
+      }
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Failed to approve registration");
+      console.error(error);
+    } finally {
+      setApproving(false);
+    }
+  };
+
   if (!candidate) return null;
 
   const subjectSelections = candidate.subject_selections || [];
+
+  // Compute validation status for approval
+  const isSchoolAdmin = currentUser?.role === "SchoolAdmin";
+  const canApprove = candidate.registration_status === "PENDING" || candidate.registration_status === "DRAFT";
+  const hasRequiredBioData = candidate.name && candidate.date_of_birth && candidate.gender;
+  const hasPhoto = !!photo;
+  const isValidationPassing = hasRequiredBioData && hasPhoto;
 
   // Check if exam is closed
   const isExamClosed = candidate.exam?.registration_period
@@ -487,6 +534,26 @@ export function CandidateDetailModal({
               </div>
             </div>
             <div className="flex items-center gap-2 flex-shrink-0">
+              {isSchoolAdmin && canApprove && (
+                <Button
+                  onClick={handleApprove}
+                  disabled={approving || !isValidationPassing}
+                  className="bg-green-600 hover:bg-green-700 text-white"
+                  title={!isValidationPassing ? "Missing required information (bio data or photo)" : "Approve registration"}
+                >
+                  {approving ? (
+                    <>
+                      <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                      Approving...
+                    </>
+                  ) : (
+                    <>
+                      <CheckCircle2 className="h-4 w-4 mr-2" />
+                      Approve
+                    </>
+                  )}
+                </Button>
+              )}
               <Button
                 variant="ghost"
                 size="icon"
@@ -719,6 +786,31 @@ export function CandidateDetailModal({
                         <div className="text-xs text-muted-foreground">National ID</div>
                         <div className="text-sm font-medium">{candidate.national_id}</div>
                       </div>
+                    )}
+                    {(candidate.guardian_name || candidate.guardian_phone || candidate.guardian_address) && (
+                      <>
+                        <div className="space-y-1 md:col-span-2">
+                          <div className="text-xs text-muted-foreground font-medium">Guardian Information</div>
+                        </div>
+                        {candidate.guardian_name && (
+                          <div className="space-y-1">
+                            <div className="text-xs text-muted-foreground">Guardian Name</div>
+                            <div className="text-sm font-medium">{candidate.guardian_name}</div>
+                          </div>
+                        )}
+                        {candidate.guardian_phone && (
+                          <div className="space-y-1">
+                            <div className="text-xs text-muted-foreground">Guardian Phone</div>
+                            <div className="text-sm font-medium">{candidate.guardian_phone}</div>
+                          </div>
+                        )}
+                        {candidate.guardian_address && (
+                          <div className="space-y-1 md:col-span-2">
+                            <div className="text-xs text-muted-foreground">Guardian Address</div>
+                            <div className="text-sm font-medium">{candidate.guardian_address}</div>
+                          </div>
+                        )}
+                      </>
                     )}
                     <div className="space-y-1">
                       <div className="text-xs text-muted-foreground flex items-center gap-1">

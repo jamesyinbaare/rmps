@@ -72,6 +72,9 @@ export default function RegistrationPage() {
     contact_phone: null,
     address: null,
     national_id: null,
+    guardian_name: null,
+    guardian_phone: null,
+    guardian_address: null,
     subject_codes: [],
     subject_ids: [],
   });
@@ -277,6 +280,9 @@ export default function RegistrationPage() {
         contact_phone: null,
         address: null,
         national_id: null,
+        guardian_name: null,
+        guardian_phone: null,
+        guardian_address: null,
         subject_codes: [],
         subject_ids: [],
       });
@@ -380,7 +386,7 @@ export default function RegistrationPage() {
   const handleDownloadTemplate = async () => {
     try {
       setDownloadingTemplate(true);
-      const blob = await downloadCandidateTemplate();
+      const blob = await downloadCandidateTemplate(selectedExam?.id);
       const url = window.URL.createObjectURL(blob);
       const a = document.createElement("a");
       a.href = url;
@@ -673,7 +679,7 @@ export default function RegistrationPage() {
 
                   {/* Contact Information */}
                   <div className="space-y-4">
-                    <h3 className="text-lg font-semibold">Contact Information</h3>
+                    <h3 className="text-lg font-semibold">Contact Information <span className="text-sm font-normal text-muted-foreground">(Optional)</span></h3>
                     <div className="grid grid-cols-2 gap-4">
                       <div className="space-y-2">
                         <Label htmlFor="contact_email">Contact Email</Label>
@@ -724,6 +730,51 @@ export default function RegistrationPage() {
                         value={formData.national_id || ""}
                         onChange={(e) =>
                           setFormData({ ...formData, national_id: e.target.value || null })
+                        }
+                        disabled={submitting}
+                      />
+                    </div>
+                  </div>
+
+                  {/* Guardian Information */}
+                  <div className="space-y-4">
+                    <h3 className="text-lg font-semibold">Guardian Information (Optional)</h3>
+                    <div className="space-y-2">
+                      <Label htmlFor="guardian_name">Guardian Name</Label>
+                      <Input
+                        id="guardian_name"
+                        placeholder="Guardian full name"
+                        value={formData.guardian_name || ""}
+                        onChange={(e) =>
+                          setFormData({ ...formData, guardian_name: e.target.value || null })
+                        }
+                        disabled={submitting}
+                      />
+                    </div>
+
+                    <div className="grid grid-cols-2 gap-4">
+                      <div className="space-y-2">
+                        <Label htmlFor="guardian_phone">Guardian Phone</Label>
+                        <Input
+                          id="guardian_phone"
+                          placeholder="+1234567890"
+                          value={formData.guardian_phone || ""}
+                          onChange={(e) =>
+                            setFormData({ ...formData, guardian_phone: e.target.value || null })
+                          }
+                          disabled={submitting}
+                        />
+                      </div>
+                    </div>
+
+                    <div className="space-y-2">
+                      <Label htmlFor="guardian_address">Guardian Address</Label>
+                      <Input
+                        id="guardian_address"
+                        placeholder="Guardian street address"
+                        value={formData.guardian_address || ""}
+                        onChange={(e) =>
+                          setFormData({ ...formData, guardian_address: e.target.value || null })
                         }
                         disabled={submitting}
                       />
