@@ -15,6 +15,7 @@ import {
   Coins,
   Search,
   FileCheck,
+  BarChart3,
 } from "lucide-react";
 import type { Role } from "@/types";
 import { LucideIcon } from "lucide-react";
@@ -45,6 +46,12 @@ export const systemAdminMenuItems: MenuItem[] = [
     href: "/dashboard/admin/certificate-requests",
     label: "Certificate Requests",
     icon: FileText,
+    roles: ["SystemAdmin", "Director", "DeputyDirector", "PrincipalManager", "SeniorManager", "Manager", "Staff"],
+  },
+  {
+    href: "/dashboard/reports",
+    label: "Reports",
+    icon: BarChart3,
     roles: ["SystemAdmin", "Director", "DeputyDirector", "PrincipalManager", "SeniorManager", "Manager", "Staff"],
   },
 ];
@@ -143,6 +150,12 @@ export const schoolUserMenuItems: MenuItem[] = [
     href: "/dashboard/my-school/documents",
     label: "Documents",
     icon: FileCheck,
+    roles: ["SchoolAdmin", "SchoolStaff"],
+  },
+  {
+    href: "/dashboard/my-school/reports",
+    label: "Reports",
+    icon: BarChart3,
     roles: ["SchoolAdmin", "SchoolStaff"],
   },
   {

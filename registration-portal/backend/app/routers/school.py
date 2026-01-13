@@ -72,6 +72,12 @@ from app.services.registration_download_service import (
     generate_registration_summary_pdf,
     generate_registration_detailed_pdf,
 )
+from app.schemas.invoice import SchoolInvoiceResponse, ProgrammeInvoiceItem, ExaminationInvoiceItem
+from app.services.school_invoice_service import (
+    aggregate_candidates_by_examination,
+    aggregate_candidates_by_examination_and_programme,
+    generate_school_invoice_pdf,
+)
 import logging
 
 logger = logging.getLogger(__name__)
@@ -2421,4 +2427,220 @@ async def get_photo_album(
         page=page,
         page_size=page_size,
         total_pages=total_pages,
+    )
+
+
+@router.get("/invoices/free-tvet/by-examination", response_model=SchoolInvoiceResponse)
+async def get_free_tvet_invoice_by_examination(
+    session: DBSessionDep,
+    current_user: SchoolAdminDep,
+    exam_id: int = Query(..., description="The exam ID"),
+) -> SchoolInvoiceResponse:
+    """Generate invoice for free_tvet candidates by examination."""
+    if not current_user.school_id:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="User is not associated with a school",
+        )
+
+    # Get school
+    school_stmt = select(School).where(School.id == current_user.school_id)
+    school_result = await session.execute(school_stmt)
+    school = school_result.scalar_one_or_none()
+    if not school:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="School not found")
+
+    # Get aggregated data
+    invoice_data = await aggregate_candidates_by_examination(
+        session, current_user.school_id, exam_id, RegistrationType.FREE_TVET.value
+    )
+
+    # Get exam details
+    exam_stmt = select(RegistrationExam).where(RegistrationExam.id == exam_id)
+    exam_result = await session.execute(exam_stmt)
+    exam = exam_result.scalar_one_or_none()
+    if not exam:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Exam not found")
+
+    return SchoolInvoiceResponse(
+        school_id=school.id,
+        school_code=school.code,
+        school_name=school.name,
+        registration_type=RegistrationType.FREE_TVET.value,
+        examination=ExaminationInvoiceItem(
+            exam_id=invoice_data["exam_id"],
+            exam_type=invoice_data["exam_type"],
+            exam_series=invoice_data["exam_series"],
+            year=invoice_data["year"],
+            candidate_count=invoice_data["candidate_count"],
+            total_amount=invoice_data["total_amount"],
+        ),
+        generated_at=datetime.utcnow(),
+    )
+
+
+@router.get("/invoices/free-tvet/by-examination-grouped-by-programme", response_model=SchoolInvoiceResponse)
+async def get_free_tvet_invoice_by_examination_grouped_by_programme(
+    session: DBSessionDep,
+    current_user: SchoolAdminDep,
+    exam_id: int = Query(..., description="The exam ID"),
+) -> SchoolInvoiceResponse:
+    """Generate invoice for free_tvet candidates by examination grouped by programme."""
+    if not current_user.school_id:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="User is not associated with a school",
+        )
+
+    # Get school
+    school_stmt = select(School).where(School.id == current_user.school_id)
+    school_result = await session.execute(school_stmt)
+    school = school_result.scalar_one_or_none()
+    if not school:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="School not found")
+
+    # Get aggregated data
+    invoice_data = await aggregate_candidates_by_examination_and_programme(
+        session, current_user.school_id, exam_id, RegistrationType.FREE_TVET.value
+    )
+
+    # Build programme items
+    programme_items = [
+        ProgrammeInvoiceItem(
+            programme_id=prog["programme_id"],
+            programme_code=prog["programme_code"],
+            programme_name=prog["programme_name"],
+            candidate_count=prog["candidate_count"],
+            total_amount=prog["total_amount"],
+        )
+        for prog in invoice_data["programmes"]
+    ]
+
+    return SchoolInvoiceResponse(
+        school_id=school.id,
+        school_code=school.code,
+        school_name=school.name,
+        registration_type=RegistrationType.FREE_TVET.value,
+        examination=ExaminationInvoiceItem(
+            exam_id=invoice_data["exam_id"],
+            exam_type=invoice_data["exam_type"],
+            exam_series=invoice_data["exam_series"],
+            year=invoice_data["year"],
+            candidate_count=invoice_data["candidate_count"],
+            total_amount=invoice_data["total_amount"],
+            programmes=programme_items,
+        ),
+        generated_at=datetime.utcnow(),
+    )
+
+
+@router.get("/invoices/referral/by-examination", response_model=SchoolInvoiceResponse)
+async def get_referral_invoice_by_examination(
+    session: DBSessionDep,
+    current_user: SchoolAdminDep,
+    exam_id: int = Query(..., description="The exam ID"),
+) -> SchoolInvoiceResponse:
+    """Generate invoice for referral candidates by examination."""
+    if not current_user.school_id:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="User is not associated with a school",
+        )
+
+    # Get school
+    school_stmt = select(School).where(School.id == current_user.school_id)
+    school_result = await session.execute(school_stmt)
+    school = school_result.scalar_one_or_none()
+    if not school:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="School not found")
+
+    # Get aggregated data
+    invoice_data = await aggregate_candidates_by_examination(
+        session, current_user.school_id, exam_id, RegistrationType.REFERRAL.value
+    )
+
+    return SchoolInvoiceResponse(
+        school_id=school.id,
+        school_code=school.code,
+        school_name=school.name,
+        registration_type=RegistrationType.REFERRAL.value,
+        examination=ExaminationInvoiceItem(
+            exam_id=invoice_data["exam_id"],
+            exam_type=invoice_data["exam_type"],
+            exam_series=invoice_data["exam_series"],
+            year=invoice_data["year"],
+            candidate_count=invoice_data["candidate_count"],
+            total_amount=invoice_data["total_amount"],
+        ),
+        generated_at=datetime.utcnow(),
+    )
+
+
+@router.get("/invoices/free-tvet/pdf")
+async def download_free_tvet_invoice_pdf(
+    session: DBSessionDep,
+    current_user: SchoolAdminDep,
+    exam_id: int = Query(..., description="The exam ID"),
+    group_by_programme: bool = Query(False, description="Group by programme"),
+) -> StreamingResponse:
+    """Download PDF invoice for free_tvet candidates."""
+    if not current_user.school_id:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="User is not associated with a school",
+        )
+
+    try:
+        pdf_bytes = await generate_school_invoice_pdf(
+            session,
+            current_user.school_id,
+            exam_id,
+            RegistrationType.FREE_TVET.value,
+            group_by_programme=group_by_programme,
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
+
+    filename = f"free_tvet_invoice_exam_{exam_id}"
+    if group_by_programme:
+        filename += "_by_programme"
+    filename += ".pdf"
+
+    return StreamingResponse(
+        io.BytesIO(pdf_bytes),
+        media_type="application/pdf",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
+@router.get("/invoices/referral/pdf")
+async def download_referral_invoice_pdf(
+    session: DBSessionDep,
+    current_user: SchoolAdminDep,
+    exam_id: int = Query(..., description="The exam ID"),
+) -> StreamingResponse:
+    """Download PDF invoice for referral candidates."""
+    if not current_user.school_id:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="User is not associated with a school",
+        )
+
+    try:
+        pdf_bytes = await generate_school_invoice_pdf(
+            session,
+            current_user.school_id,
+            exam_id,
+            RegistrationType.REFERRAL.value,
+            group_by_programme=False,
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
+
+    filename = f"referral_invoice_exam_{exam_id}.pdf"
+
+    return StreamingResponse(
+        io.BytesIO(pdf_bytes),
+        media_type="application/pdf",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
     )
