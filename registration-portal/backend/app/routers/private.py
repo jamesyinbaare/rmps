@@ -16,6 +16,7 @@ from app.models import (
     ExamRegistrationPeriod,
     RegistrationCandidate,
     RegistrationStatus,
+    RegistrationType,
     ExaminationSchedule,
     Subject,
     RegistrationSubjectSelection,
@@ -306,12 +307,29 @@ async def register_self(
             detail="Programme selection is required for NOV/DEC exams",
         )
 
+    # Validate registration_type and guardian requirements for private registration
+    registration_type = candidate_data.registration_type or RegistrationType.PRIVATE.value
+    if registration_type != RegistrationType.PRIVATE.value:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Private registration endpoint only accepts 'private' registration_type",
+        )
+
+    # Guardian info required for private registration
+    if not candidate_data.guardian_name or not candidate_data.guardian_phone:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Guardian name and phone are required for private registration",
+        )
+
     # Create candidate with examination center
     new_candidate = RegistrationCandidate(
         registration_exam_id=exam_id,
         school_id=candidate_data.school_id,
         portal_user_id=current_user.id,
-        name=candidate_data.name,
+        firstname=candidate_data.firstname,
+        lastname=candidate_data.lastname,
+        othername=candidate_data.othername,
         registration_number=registration_number,
         date_of_birth=candidate_data.date_of_birth,
         gender=candidate_data.gender,
@@ -321,6 +339,12 @@ async def register_self(
         contact_phone=candidate_data.contact_phone,
         address=candidate_data.address,
         national_id=candidate_data.national_id,
+        disability=candidate_data.disability,
+        registration_type=registration_type,
+        guardian_name=candidate_data.guardian_name,
+        guardian_phone=candidate_data.guardian_phone,
+        guardian_digital_address=candidate_data.guardian_digital_address,
+        guardian_national_id=candidate_data.guardian_national_id,
         registration_status=RegistrationStatus.PENDING,
     )
     session.add(new_candidate)

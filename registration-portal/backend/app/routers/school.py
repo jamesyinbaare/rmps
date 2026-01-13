@@ -25,6 +25,7 @@ from app.models import (
     ExamRegistrationPeriod,
     RegistrationCandidate,
     RegistrationStatus,
+    RegistrationType,
     School,
     Programme,
     Subject,
@@ -61,6 +62,7 @@ from app.services.subject_selection import (
     auto_select_subjects_for_programme,
     validate_subject_selections,
     get_programme_subjects_for_registration,
+    normalize_exam_series,
 )
 from app.services.photo_storage import PhotoStorageService, calculate_checksum
 from app.services.index_slip_service import generate_index_slip_pdf
@@ -188,7 +190,11 @@ async def list_candidates(
             "id": candidate.id,
             "registration_exam_id": candidate.registration_exam_id,
             "school_id": candidate.school_id,
-            "name": candidate.name,
+            "firstname": candidate.firstname,
+            "lastname": candidate.lastname,
+            "othername": candidate.othername,
+            "name": candidate.name,  # Computed property
+            "fullname": candidate.fullname,  # Computed property
             "registration_number": candidate.registration_number,
             "index_number": candidate.index_number,
             "date_of_birth": candidate.date_of_birth,
@@ -199,9 +205,12 @@ async def list_candidates(
             "contact_phone": candidate.contact_phone,
             "address": candidate.address,
             "national_id": candidate.national_id,
+            "disability": get_enum_value(candidate.disability),
+            "registration_type": get_enum_value(candidate.registration_type),
             "guardian_name": candidate.guardian_name,
             "guardian_phone": candidate.guardian_phone,
-            "guardian_address": candidate.guardian_address,
+            "guardian_digital_address": candidate.guardian_digital_address,
+            "guardian_national_id": candidate.guardian_national_id,
             "registration_status": candidate.registration_status,
             "registration_date": candidate.registration_date,
             "subject_selections": [
@@ -222,6 +231,56 @@ async def list_candidates(
         response_list.append(RegistrationCandidateResponse.model_validate(candidate_dict))
 
     return response_list
+
+
+def get_enum_value(enum_or_string):
+    """Safely extract value from enum or return string if already a string."""
+    if enum_or_string is None:
+        return None
+    if hasattr(enum_or_string, 'value'):
+        return enum_or_string.value
+    return enum_or_string
+
+
+async def validate_registration_type_and_guardian(
+    registration_type: str | None,
+    exam_series: str | None,
+    guardian_name: str | None,
+    guardian_phone: str | None,
+) -> None:
+    """Validate registration_type against exam series and guardian requirements."""
+    if registration_type is None:
+        return  # No validation needed if registration_type is not specified
+
+    normalized_series = normalize_exam_series(exam_series)
+    is_may_june = normalized_series == "MAY/JUNE"
+    is_nov_dec = normalized_series == "NOV/DEC"
+
+    # Validate registration_type against exam series
+    if registration_type == RegistrationType.PRIVATE.value:
+        if not is_nov_dec:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Private registration type is only allowed for NOV/DEC exams",
+            )
+        # Guardian info required for private
+        if not guardian_name or not guardian_phone:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Guardian name and phone are required for private registration type",
+            )
+    elif registration_type in (RegistrationType.REGULAR.value, RegistrationType.REFERRAL.value):
+        if not is_may_june:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"{registration_type.capitalize()} registration type is only allowed for MAY/JUNE exams",
+            )
+        # Guardian info optional for regular and referral
+    else:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Invalid registration_type: {registration_type}",
+        )
 
 
 @router.post("/candidates", response_model=RegistrationCandidateResponse, status_code=status.HTTP_201_CREATED)
@@ -260,6 +319,14 @@ async def register_candidate(
     ):
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Registration period is not open")
 
+    # Validate registration_type and guardian requirements
+    await validate_registration_type_and_guardian(
+        candidate_data.registration_type,
+        exam.exam_series,
+        candidate_data.guardian_name,
+        candidate_data.guardian_phone,
+    )
+
     # Validate programme if provided
     programme_id = candidate_data.programme_id
     if programme_id:
@@ -287,13 +354,22 @@ async def register_candidate(
     # Generate unique registration number
     registration_number = await generate_unique_registration_number(session, exam_id)
 
+    # Determine registration_type (default to REGULAR for school registrations)
+    registration_type = candidate_data.registration_type or RegistrationType.REGULAR.value
+    normalized_series = normalize_exam_series(exam.exam_series)
+    is_may_june = normalized_series == "MAY/JUNE"
+    is_nov_dec = normalized_series == "NOV/DEC"
+    is_referral = registration_type == RegistrationType.REFERRAL.value
+
     # Create candidate
     try:
         new_candidate = RegistrationCandidate(
             registration_exam_id=exam_id,
             school_id=current_user.school_id,
             portal_user_id=current_user.id,
-            name=candidate_data.name,
+            firstname=candidate_data.firstname,
+            lastname=candidate_data.lastname,
+            othername=candidate_data.othername,
             registration_number=registration_number,
             date_of_birth=candidate_data.date_of_birth,
             gender=candidate_data.gender,
@@ -303,6 +379,12 @@ async def register_candidate(
             contact_phone=candidate_data.contact_phone,
             address=candidate_data.address,
             national_id=candidate_data.national_id,
+            disability=candidate_data.disability,
+            registration_type=registration_type,
+            guardian_name=candidate_data.guardian_name,
+            guardian_phone=candidate_data.guardian_phone,
+            guardian_digital_address=candidate_data.guardian_digital_address,
+            guardian_national_id=candidate_data.guardian_national_id,
             registration_status=RegistrationStatus.PENDING,
         )
         session.add(new_candidate)
@@ -311,15 +393,16 @@ async def register_candidate(
         # Handle subject selections
         selected_subject_ids: list[int] = []
 
-        if programme_id:
+        # For referral: use NOV/DEC logic (all subjects optional, no auto-selection)
+        if is_referral:
+            # No auto-selection for referral - user must select subjects manually
+            pass
+        elif programme_id:
             # Auto-select compulsory core subjects only (not optional core subjects)
             auto_selected = await auto_select_subjects_for_programme(session, programme_id, current_user.school_id)
             selected_subject_ids.extend(auto_selected)
 
             # For MAY/JUNE: Auto-select ALL elective subjects (they are compulsory)
-            from app.services.subject_selection import get_programme_subjects_for_registration, normalize_exam_series
-            normalized_series = normalize_exam_series(exam.exam_series)
-            is_may_june = normalized_series == "MAY/JUNE"
             if is_may_june:
                 subjects_info = await get_programme_subjects_for_registration(session, programme_id)
                 selected_subject_ids.extend(subjects_info["electives"])
@@ -370,7 +453,11 @@ async def register_candidate(
             "id": new_candidate.id,
             "registration_exam_id": new_candidate.registration_exam_id,
             "school_id": new_candidate.school_id,
-            "name": new_candidate.name,
+            "firstname": new_candidate.firstname,
+            "lastname": new_candidate.lastname,
+            "othername": new_candidate.othername,
+            "name": new_candidate.name,  # Computed property
+            "fullname": new_candidate.fullname,  # Computed property
             "registration_number": new_candidate.registration_number,
             "index_number": new_candidate.index_number,
             "date_of_birth": new_candidate.date_of_birth,
@@ -381,6 +468,12 @@ async def register_candidate(
             "contact_phone": new_candidate.contact_phone,
             "address": new_candidate.address,
             "national_id": new_candidate.national_id,
+            "disability": get_enum_value(new_candidate.disability),
+            "registration_type": get_enum_value(new_candidate.registration_type),
+            "guardian_name": new_candidate.guardian_name,
+            "guardian_phone": new_candidate.guardian_phone,
+            "guardian_digital_address": new_candidate.guardian_digital_address,
+            "guardian_national_id": new_candidate.guardian_national_id,
             "registration_status": new_candidate.registration_status,
             "registration_date": new_candidate.registration_date,
             "subject_selections": [
@@ -536,7 +629,11 @@ async def update_candidate(
             "id": candidate.id,
             "registration_exam_id": candidate.registration_exam_id,
             "school_id": candidate.school_id,
-            "name": candidate.name,
+            "firstname": candidate.firstname,
+            "lastname": candidate.lastname,
+            "othername": candidate.othername,
+            "name": candidate.name,  # Computed property
+            "fullname": candidate.fullname,  # Computed property
             "registration_number": candidate.registration_number,
             "index_number": candidate.index_number,
             "date_of_birth": candidate.date_of_birth,
@@ -547,9 +644,12 @@ async def update_candidate(
             "contact_phone": candidate.contact_phone,
             "address": candidate.address,
             "national_id": candidate.national_id,
+            "disability": get_enum_value(candidate.disability),
+            "registration_type": get_enum_value(candidate.registration_type),
             "guardian_name": candidate.guardian_name,
             "guardian_phone": candidate.guardian_phone,
-            "guardian_address": candidate.guardian_address,
+            "guardian_digital_address": candidate.guardian_digital_address,
+            "guardian_national_id": candidate.guardian_national_id,
             "registration_status": candidate.registration_status,
             "registration_date": candidate.registration_date,
             "subject_selections": [
@@ -664,7 +764,11 @@ async def approve_candidate(
             "id": candidate.id,
             "registration_exam_id": candidate.registration_exam_id,
             "school_id": candidate.school_id,
-            "name": candidate.name,
+            "firstname": candidate.firstname,
+            "lastname": candidate.lastname,
+            "othername": candidate.othername,
+            "name": candidate.name,  # Computed property
+            "fullname": candidate.fullname,  # Computed property
             "registration_number": candidate.registration_number,
             "index_number": candidate.index_number,
             "date_of_birth": candidate.date_of_birth,
@@ -675,9 +779,12 @@ async def approve_candidate(
             "contact_phone": candidate.contact_phone,
             "address": candidate.address,
             "national_id": candidate.national_id,
+            "disability": get_enum_value(candidate.disability),
+            "registration_type": get_enum_value(candidate.registration_type),
             "guardian_name": candidate.guardian_name,
             "guardian_phone": candidate.guardian_phone,
-            "guardian_address": candidate.guardian_address,
+            "guardian_digital_address": candidate.guardian_digital_address,
+            "guardian_national_id": candidate.guardian_national_id,
             "registration_status": candidate.registration_status,
             "registration_date": candidate.registration_date,
             "subject_selections": [
@@ -712,6 +819,7 @@ async def bulk_upload_candidates(
     exam_id: int = Form(...),
     file: UploadFile = File(...),
     default_choice_group_selection: str | None = Form(None, description="Optional JSON mapping of {choice_group_id: subject_code} for default selections"),
+    registration_type: str | None = Form(None, description="Default registration type (regular or referral) to apply to all candidates"),
     session: DBSessionDep = None,
     current_user: SchoolUserWithSchoolDep = None,
 ) -> BulkUploadResponse:
@@ -802,12 +910,14 @@ async def bulk_upload_candidates(
     df.columns = df.columns.str.strip()
     column_mapping = {col.lower(): col for col in df.columns}
 
-    # Required columns
-    required_columns = ['name']
+    # Required columns - check for either 'name' (backward compatibility) or 'firstname'/'lastname'
+    has_name = 'name' in column_mapping or 'name' in [col.lower() for col in df.columns]
+    has_firstname = 'firstname' in column_mapping or 'firstname' in [col.lower() for col in df.columns]
+    has_lastname = 'lastname' in column_mapping or 'lastname' in [col.lower() for col in df.columns]
+
     missing_columns = []
-    for req_col in required_columns:
-        if req_col.lower() not in column_mapping:
-            missing_columns.append(req_col)
+    if not has_name and not (has_firstname and has_lastname):
+        missing_columns.append('name (or firstname and lastname)')
 
     if missing_columns:
         raise HTTPException(
@@ -833,15 +943,49 @@ async def bulk_upload_candidates(
                     return value if pd.notna(value) else default
                 return default
 
-            name = str(get_col('name', '')).strip()
-            if not name:
-                errors.append(BulkUploadError(
-                    row_number=row_number,
-                    error_message="Name is required",
-                    field="name"
-                ))
-                failed += 1
-                continue
+            # Parse name - support both old 'name' field and new firstname/lastname/othername fields
+            firstname = None
+            lastname = None
+            othername = None
+
+            # Try new format first (firstname, lastname, othername)
+            firstname_str = str(get_col('firstname', '')).strip()
+            lastname_str = str(get_col('lastname', '')).strip()
+            othername_str = str(get_col('othername', '')).strip()
+
+            if firstname_str and lastname_str:
+                # New format
+                firstname = firstname_str
+                lastname = lastname_str
+                if othername_str:
+                    othername = othername_str
+            else:
+                # Old format - parse name field
+                name = str(get_col('name', '')).strip()
+                if not name:
+                    errors.append(BulkUploadError(
+                        row_number=row_number,
+                        error_message="Name (or firstname and lastname) is required",
+                        field="name"
+                    ))
+                    failed += 1
+                    continue
+
+                # Split name: first word = firstname, second word = lastname, third word (if exists) = othername
+                name_parts = name.split()
+                if len(name_parts) >= 2:
+                    firstname = name_parts[0]
+                    lastname = name_parts[1]
+                    if len(name_parts) >= 3:
+                        othername = name_parts[2]
+                else:
+                    errors.append(BulkUploadError(
+                        row_number=row_number,
+                        error_message="Name must contain at least firstname and lastname",
+                        field="name"
+                    ))
+                    failed += 1
+                    continue
 
             # Parse date_of_birth if provided
             date_of_birth = None
@@ -895,9 +1039,23 @@ async def bulk_upload_candidates(
             if guardian_phone:
                 guardian_phone = str(guardian_phone).strip() or None
 
-            guardian_address = get_col('guardian_address') or get_col('guardian address')
-            if guardian_address:
-                guardian_address = str(guardian_address).strip() or None
+            guardian_digital_address = get_col('guardian_digital_address') or get_col('guardian digital address') or get_col('guardian_digital_address')
+            if guardian_digital_address:
+                guardian_digital_address = str(guardian_digital_address).strip() or None
+
+            guardian_national_id = get_col('guardian_national_id') or get_col('guardian national id') or get_col('guardian_national_id')
+            if guardian_national_id:
+                guardian_national_id = str(guardian_national_id).strip() or None
+
+            disability = get_col('disability')
+            if disability:
+                disability = str(disability).strip() or None
+
+            file_registration_type = get_col('registration_type') or get_col('registration type')
+            if file_registration_type:
+                file_registration_type = str(file_registration_type).strip() or None
+            # Use file value if provided, otherwise use form parameter, otherwise default to regular
+            candidate_registration_type = file_registration_type or registration_type or RegistrationType.REGULAR.value
 
             # Validate and get programme
             programme_id = None
@@ -1046,7 +1204,9 @@ async def bulk_upload_candidates(
                 registration_exam_id=exam_id,
                 school_id=current_user.school_id,
                 portal_user_id=current_user.id,
-                name=name,
+                firstname=firstname,
+                lastname=lastname,
+                othername=othername,
                 registration_number=registration_number,
                 date_of_birth=date_of_birth,
                 gender=gender,
@@ -1056,9 +1216,12 @@ async def bulk_upload_candidates(
                 contact_phone=contact_phone,
                 address=address,
                 national_id=national_id,
+                disability=disability,
+                registration_type=candidate_registration_type,
                 guardian_name=guardian_name,
                 guardian_phone=guardian_phone,
-                guardian_address=guardian_address,
+                guardian_digital_address=guardian_digital_address,
+                guardian_national_id=guardian_national_id,
                 registration_status=RegistrationStatus.PENDING,
             )
             session.add(new_candidate)

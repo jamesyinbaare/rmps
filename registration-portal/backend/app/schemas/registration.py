@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from datetime import date, datetime
 
-from pydantic import BaseModel, EmailStr, Field, field_validator, model_validator, ConfigDict
+from pydantic import BaseModel, EmailStr, Field, field_validator, model_validator, ConfigDict, computed_field
 from uuid import UUID
 
 from app.models import RegistrationStatus
@@ -67,7 +67,9 @@ class PhotoBulkUploadResponse(BaseModel):
 class RegistrationCandidateBase(BaseModel):
     """Base schema for registration candidate."""
 
-    name: str = Field(..., min_length=1, max_length=255)
+    firstname: str = Field(..., min_length=1, max_length=255)
+    lastname: str = Field(..., min_length=1, max_length=255)
+    othername: str | None = Field(None, max_length=255)
     date_of_birth: date | None = None
     gender: str | None = Field(None, max_length=20)
     programme_code: str | None = None  # Kept for backward compatibility
@@ -76,9 +78,26 @@ class RegistrationCandidateBase(BaseModel):
     contact_phone: str | None = Field(None, max_length=50)
     address: str | None = None
     national_id: str | None = Field(None, max_length=50)
+    disability: str | None = Field(None, description="Disability type: Visual, Auditory, Physical, Cognitive, Speech, Other")
+    registration_type: str | None = Field(None, description="Registration type: regular, private, or referral")
     guardian_name: str | None = Field(None, max_length=255)
     guardian_phone: str | None = Field(None, max_length=50)
-    guardian_address: str | None = None
+    guardian_digital_address: str | None = Field(None, max_length=50, description="Ghana digital address")
+    guardian_national_id: str | None = Field(None, max_length=50)
+
+    @computed_field
+    def name(self) -> str:
+        """Computed name from firstname, lastname, and othername."""
+        parts = [self.firstname]
+        if self.othername:
+            parts.append(self.othername)
+        parts.append(self.lastname)
+        return " ".join(parts)
+
+    @computed_field
+    def fullname(self) -> str:
+        """Fullname (same as name for backward compatibility)."""
+        return self.name
 
 
 class RegistrationCandidateCreate(RegistrationCandidateBase):
@@ -92,7 +111,9 @@ class RegistrationCandidateCreate(RegistrationCandidateBase):
 class RegistrationCandidateUpdate(BaseModel):
     """Schema for updating a registration candidate."""
 
-    name: str | None = Field(None, min_length=1, max_length=255)
+    firstname: str | None = Field(None, min_length=1, max_length=255)
+    lastname: str | None = Field(None, min_length=1, max_length=255)
+    othername: str | None = Field(None, max_length=255)
     date_of_birth: date | None = None
     gender: str | None = Field(None, max_length=20)
     programme_code: str | None = None  # Kept for backward compatibility
@@ -101,9 +122,12 @@ class RegistrationCandidateUpdate(BaseModel):
     contact_phone: str | None = Field(None, max_length=50)
     address: str | None = None
     national_id: str | None = Field(None, max_length=50)
+    disability: str | None = Field(None, description="Disability type: Visual, Auditory, Physical, Cognitive, Speech, Other")
+    registration_type: str | None = Field(None, description="Registration type: regular, private, or referral")
     guardian_name: str | None = Field(None, max_length=255)
     guardian_phone: str | None = Field(None, max_length=50)
-    guardian_address: str | None = None
+    guardian_digital_address: str | None = Field(None, max_length=50, description="Ghana digital address")
+    guardian_national_id: str | None = Field(None, max_length=50)
     subject_codes: list[str] | None = None  # Kept for backward compatibility
     subject_ids: list[int] | None = None
 

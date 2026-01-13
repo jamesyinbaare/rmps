@@ -110,7 +110,9 @@ export function CandidateDetailModal({
   // Bio data editing state
   const [editingBio, setEditingBio] = useState(false);
   const [bioData, setBioData] = useState({
-    name: "",
+    firstname: "",
+    lastname: "",
+    othername: "",
     date_of_birth: "",
     gender: "",
     contact_email: "",
@@ -119,6 +121,16 @@ export function CandidateDetailModal({
     national_id: "",
   });
   const [savingBio, setSavingBio] = useState(false);
+
+  // Guardian data editing state
+  const [editingGuardian, setEditingGuardian] = useState(false);
+  const [guardianData, setGuardianData] = useState({
+    guardian_name: "",
+    guardian_phone: "",
+    guardian_digital_address: "",
+    guardian_national_id: "",
+  });
+  const [savingGuardian, setSavingGuardian] = useState(false);
 
   // Approval state
   const [currentUser, setCurrentUser] = useState<UserType | null>(null);
@@ -233,16 +245,27 @@ export function CandidateDetailModal({
       // Exit edit mode when candidate changes
       setEditingSubjects(false);
       setEditingBio(false);
+      setEditingGuardian(false);
 
       // Initialize bio data
       setBioData({
-        name: candidate.name || "",
+        firstname: candidate.firstname || "",
+        lastname: candidate.lastname || "",
+        othername: candidate.othername || "",
         date_of_birth: candidate.date_of_birth ? new Date(candidate.date_of_birth).toISOString().split('T')[0] : "",
         gender: candidate.gender || "",
         contact_email: candidate.contact_email || "",
         contact_phone: candidate.contact_phone || "",
         address: candidate.address || "",
         national_id: candidate.national_id || "",
+      });
+
+      // Initialize guardian data
+      setGuardianData({
+        guardian_name: candidate.guardian_name || "",
+        guardian_phone: candidate.guardian_phone || "",
+        guardian_digital_address: candidate.guardian_digital_address || "",
+        guardian_national_id: candidate.guardian_national_id || "",
       });
     }
   }, [candidate?.id]);
@@ -396,7 +419,9 @@ export function CandidateDetailModal({
     setSavingBio(true);
     try {
       const updatedCandidate = await updateCandidate(candidate.id, {
-        name: bioData.name,
+        firstname: bioData.firstname,
+        lastname: bioData.lastname,
+        othername: bioData.othername || null,
         date_of_birth: bioData.date_of_birth || null,
         gender: bioData.gender || null,
         contact_email: bioData.contact_email || null,
@@ -424,7 +449,9 @@ export function CandidateDetailModal({
     // Reset to original bio data
     if (candidate) {
       setBioData({
-        name: candidate.name || "",
+        firstname: candidate.firstname || "",
+        lastname: candidate.lastname || "",
+        othername: candidate.othername || "",
         date_of_birth: candidate.date_of_birth ? new Date(candidate.date_of_birth).toISOString().split('T')[0] : "",
         gender: candidate.gender || "",
         contact_email: candidate.contact_email || "",
@@ -434,6 +461,46 @@ export function CandidateDetailModal({
       });
     }
     setEditingBio(false);
+  };
+
+  const handleSaveGuardian = async () => {
+    if (!candidate) return;
+
+    setSavingGuardian(true);
+    try {
+      const updatedCandidate = await updateCandidate(candidate.id, {
+        guardian_name: guardianData.guardian_name || null,
+        guardian_phone: guardianData.guardian_phone || null,
+        guardian_digital_address: guardianData.guardian_digital_address || null,
+        guardian_national_id: guardianData.guardian_national_id || null,
+      });
+
+      toast.success("Guardian information updated successfully");
+      setEditingGuardian(false);
+
+      // Update the candidate in parent component
+      if (onCandidateChange) {
+        onCandidateChange(updatedCandidate);
+      }
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Failed to update guardian information");
+      console.error(error);
+    } finally {
+      setSavingGuardian(false);
+    }
+  };
+
+  const handleCancelGuardianEdit = () => {
+    // Reset to original guardian data
+    if (candidate) {
+      setGuardianData({
+        guardian_name: candidate.guardian_name || "",
+        guardian_phone: candidate.guardian_phone || "",
+        guardian_digital_address: candidate.guardian_digital_address || "",
+        guardian_national_id: candidate.guardian_national_id || "",
+      });
+    }
+    setEditingGuardian(false);
   };
 
   const handleApprove = async () => {
@@ -616,14 +683,35 @@ export function CandidateDetailModal({
               <CardContent>
                 {editingBio ? (
                   <div className="space-y-4">
+                    <div className="grid grid-cols-2 gap-4">
+                      <div className="space-y-2">
+                        <Label htmlFor="edit-firstname">First Name *</Label>
+                        <Input
+                          id="edit-firstname"
+                          value={bioData.firstname}
+                          onChange={(e) => setBioData({ ...bioData, firstname: e.target.value })}
+                          disabled={savingBio}
+                          required
+                        />
+                      </div>
+                      <div className="space-y-2">
+                        <Label htmlFor="edit-lastname">Last Name *</Label>
+                        <Input
+                          id="edit-lastname"
+                          value={bioData.lastname}
+                          onChange={(e) => setBioData({ ...bioData, lastname: e.target.value })}
+                          disabled={savingBio}
+                          required
+                        />
+                      </div>
+                    </div>
                     <div className="space-y-2">
-                      <Label htmlFor="edit-name">Full Name *</Label>
+                      <Label htmlFor="edit-othername">Other Name (Optional)</Label>
                       <Input
-                        id="edit-name"
-                        value={bioData.name}
-                        onChange={(e) => setBioData({ ...bioData, name: e.target.value })}
+                        id="edit-othername"
+                        value={bioData.othername}
+                        onChange={(e) => setBioData({ ...bioData, othername: e.target.value })}
                         disabled={savingBio}
-                        required
                       />
                     </div>
                     <div className="grid grid-cols-2 gap-4">
@@ -697,7 +785,7 @@ export function CandidateDetailModal({
                     <div className="flex items-center gap-2 pt-2">
                       <Button
                         onClick={handleSaveBio}
-                        disabled={savingBio || !bioData.name.trim()}
+                        disabled={savingBio || !bioData.firstname.trim() || !bioData.lastname.trim()}
                         size="sm"
                       >
                         {savingBio ? (
@@ -784,31 +872,6 @@ export function CandidateDetailModal({
                         <div className="text-xs text-muted-foreground">National ID</div>
                         <div className="text-sm font-medium">{candidate.national_id}</div>
                       </div>
-                    )}
-                    {(candidate.guardian_name || candidate.guardian_phone || candidate.guardian_address) && (
-                      <>
-                        <div className="space-y-1 md:col-span-2">
-                          <div className="text-xs text-muted-foreground font-medium">Guardian Information</div>
-                        </div>
-                        {candidate.guardian_name && (
-                          <div className="space-y-1">
-                            <div className="text-xs text-muted-foreground">Guardian Name</div>
-                            <div className="text-sm font-medium">{candidate.guardian_name}</div>
-                          </div>
-                        )}
-                        {candidate.guardian_phone && (
-                          <div className="space-y-1">
-                            <div className="text-xs text-muted-foreground">Guardian Phone</div>
-                            <div className="text-sm font-medium">{candidate.guardian_phone}</div>
-                          </div>
-                        )}
-                        {candidate.guardian_address && (
-                          <div className="space-y-1 md:col-span-2">
-                            <div className="text-xs text-muted-foreground">Guardian Address</div>
-                            <div className="text-sm font-medium">{candidate.guardian_address}</div>
-                          </div>
-                        )}
-                      </>
                     )}
                     <div className="space-y-1">
                       <div className="text-xs text-muted-foreground flex items-center gap-1">
@@ -900,6 +963,135 @@ export function CandidateDetailModal({
                 </CardContent>
               </Card>
             </div>
+
+            {/* Guardian Information Section */}
+            <Card>
+              <CardHeader>
+                <div className="flex items-center justify-between">
+                  <CardTitle className="text-base flex items-center gap-2">
+                    <User className="h-4 w-4" />
+                    Guardian Information
+                  </CardTitle>
+                  {!editingGuardian && !isExamClosed && (
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => setEditingGuardian(true)}
+                    >
+                      <Edit2 className="h-4 w-4 mr-2" />
+                      {candidate.guardian_name || candidate.guardian_phone ? "Edit Guardian Info" : "Add Guardian Info"}
+                    </Button>
+                  )}
+                </div>
+              </CardHeader>
+              <CardContent>
+                {editingGuardian ? (
+                  <div className="space-y-4">
+                    <div className="space-y-2">
+                      <Label htmlFor="edit-guardian-name">Guardian Name</Label>
+                      <Input
+                        id="edit-guardian-name"
+                        value={guardianData.guardian_name}
+                        onChange={(e) => setGuardianData({ ...guardianData, guardian_name: e.target.value })}
+                        disabled={savingGuardian}
+                        placeholder="Enter guardian full name"
+                      />
+                    </div>
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                      <div className="space-y-2">
+                        <Label htmlFor="edit-guardian-phone">Guardian Phone</Label>
+                        <Input
+                          id="edit-guardian-phone"
+                          value={guardianData.guardian_phone}
+                          onChange={(e) => setGuardianData({ ...guardianData, guardian_phone: e.target.value })}
+                          disabled={savingGuardian}
+                          placeholder="+1234567890"
+                        />
+                      </div>
+                      <div className="space-y-2">
+                        <Label htmlFor="edit-guardian-digital-address">Digital Address</Label>
+                        <Input
+                          id="edit-guardian-digital-address"
+                          value={guardianData.guardian_digital_address}
+                          onChange={(e) => setGuardianData({ ...guardianData, guardian_digital_address: e.target.value })}
+                          disabled={savingGuardian}
+                          placeholder="GA-123-4567"
+                        />
+                      </div>
+                    </div>
+                    <div className="space-y-2">
+                      <Label htmlFor="edit-guardian-national-id">Guardian National ID</Label>
+                      <Input
+                        id="edit-guardian-national-id"
+                        value={guardianData.guardian_national_id}
+                        onChange={(e) => setGuardianData({ ...guardianData, guardian_national_id: e.target.value })}
+                        disabled={savingGuardian}
+                        placeholder="GHA-123456789-1"
+                      />
+                    </div>
+                    <div className="flex items-center gap-2 pt-2">
+                      <Button
+                        onClick={handleSaveGuardian}
+                        disabled={savingGuardian}
+                        size="sm"
+                      >
+                        {savingGuardian ? (
+                          <>
+                            <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                            Saving...
+                          </>
+                        ) : (
+                          <>
+                            <Save className="h-4 w-4 mr-2" />
+                            Save Changes
+                          </>
+                        )}
+                      </Button>
+                      <Button
+                        variant="outline"
+                        onClick={handleCancelGuardianEdit}
+                        disabled={savingGuardian}
+                        size="sm"
+                      >
+                        <XIcon className="h-4 w-4 mr-2" />
+                        Cancel
+                      </Button>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    {candidate.guardian_name ? (
+                      <div className="space-y-1">
+                        <div className="text-xs text-muted-foreground">Guardian Name</div>
+                        <div className="text-sm font-medium">{candidate.guardian_name}</div>
+                      </div>
+                    ) : (
+                      <div className="space-y-1 md:col-span-2">
+                        <div className="text-xs text-muted-foreground italic">No guardian information available</div>
+                      </div>
+                    )}
+                    {candidate.guardian_phone && (
+                      <div className="space-y-1">
+                        <div className="text-xs text-muted-foreground">Guardian Phone</div>
+                        <div className="text-sm font-medium">{candidate.guardian_phone}</div>
+                      </div>
+                    )}
+                    {candidate.guardian_digital_address && (
+                      <div className="space-y-1">
+                        <div className="text-xs text-muted-foreground">Digital Address</div>
+                        <div className="text-sm font-medium">{candidate.guardian_digital_address}</div>
+                      </div>
+                    )}
+                    {candidate.guardian_national_id && (
+                      <div className="space-y-1">
+                        <div className="text-xs text-muted-foreground">Guardian National ID</div>
+                        <div className="text-sm font-medium">{candidate.guardian_national_id}</div>
+                      </div>
+                    )}
+                  </div>
+                )}
+              </CardContent>
+            </Card>
 
             {/* Subject Registrations Section */}
             <div>

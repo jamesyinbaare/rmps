@@ -114,7 +114,11 @@ export interface RegistrationCandidate {
   registration_exam_id: number;
   school_id: number | null;
   portal_user_id: string | null;
-  name: string;
+  firstname: string;
+  lastname: string;
+  othername: string | null;
+  name: string; // Computed property (read-only)
+  fullname: string; // Computed property (read-only, same as name)
   registration_number: string;
   index_number: string | null;
   date_of_birth: string | null;
@@ -125,9 +129,12 @@ export interface RegistrationCandidate {
   contact_phone: string | null;
   address: string | null;
   national_id: string | null;
+  disability: string | null;
+  registration_type: string | null;
   guardian_name: string | null;
   guardian_phone: string | null;
-  guardian_address: string | null;
+  guardian_digital_address: string | null;
+  guardian_national_id: string | null;
   registration_status: "PENDING" | "APPROVED" | "REJECTED" | "DRAFT";
   registration_date: string;
   created_at: string;
@@ -220,7 +227,9 @@ export interface UserListResponse {
 }
 
 export interface RegistrationCandidateCreate {
-  name: string;
+  firstname: string;
+  lastname: string;
+  othername?: string | null;
   date_of_birth?: string | null;
   gender?: string | null;
   programme_code?: string | null;
@@ -229,9 +238,12 @@ export interface RegistrationCandidateCreate {
   contact_phone?: string | null;
   address?: string | null;
   national_id?: string | null;
+  disability?: string | null;
+  registration_type?: string | null;
   guardian_name?: string | null;
   guardian_phone?: string | null;
-  guardian_address?: string | null;
+  guardian_digital_address?: string | null;
+  guardian_national_id?: string | null;
   subject_codes?: string[];
   subject_ids?: number[];
 }

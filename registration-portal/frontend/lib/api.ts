@@ -1542,13 +1542,17 @@ export async function getProgrammeSubjects(programmeId: number): Promise<Program
 export async function bulkUploadCandidates(
   examId: number,
   file: File,
-  defaultChoiceGroupSelection?: Record<number, string>
+  defaultChoiceGroupSelection?: Record<number, string>,
+  registrationType?: string
 ): Promise<BulkUploadResponse> {
   const formData = new FormData();
   formData.append("file", file);
   formData.append("exam_id", examId.toString());
   if (defaultChoiceGroupSelection) {
     formData.append("default_choice_group_selection", JSON.stringify(defaultChoiceGroupSelection));
+  }
+  if (registrationType) {
+    formData.append("registration_type", registrationType);
   }
 
   const response = await fetchWithAuth("/api/v1/school/candidates/bulk", {
