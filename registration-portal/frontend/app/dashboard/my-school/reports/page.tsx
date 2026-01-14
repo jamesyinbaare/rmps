@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
-import { FileText, Receipt } from "lucide-react";
+import { FileText, Receipt, FileCheck } from "lucide-react";
 import { Button } from "@/components/ui/button";
 
 export default function ReportsPage() {
@@ -28,6 +28,23 @@ export default function ReportsPage() {
             </CardHeader>
             <CardContent>
               <Button className="w-full">View Invoices</Button>
+            </CardContent>
+          </Link>
+        </Card>
+
+        <Card className="cursor-pointer hover:shadow-lg transition-shadow">
+          <Link href="/dashboard/my-school/reports/index-slips">
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2">
+                <FileCheck className="h-5 w-5" />
+                Index Slips
+              </CardTitle>
+              <CardDescription>
+                Download index slips for candidates based on examination filters
+              </CardDescription>
+            </CardHeader>
+            <CardContent>
+              <Button className="w-full">Download Index Slips</Button>
             </CardContent>
           </Link>
         </Card>

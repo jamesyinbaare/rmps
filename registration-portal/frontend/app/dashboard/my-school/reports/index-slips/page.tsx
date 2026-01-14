@@ -375,10 +375,10 @@ export default function IndexSlipsDownloadPage() {
   return (
     <div className="space-y-6">
       <div className="flex items-center gap-4">
-        <Link href="/dashboard/my-school/documents">
+        <Link href="/dashboard/my-school/reports">
           <Button variant="ghost" size="sm">
             <ArrowLeft className="mr-2 h-4 w-4" />
-            Back to Documents
+            Back to Reports
           </Button>
         </Link>
         <div>
