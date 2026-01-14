@@ -143,6 +143,17 @@ export interface RegistrationCandidate {
   subject_selections?: RegistrationSubjectSelection[];
 }
 
+export interface Invoice {
+  id: number;
+  invoice_number: string;
+  amount: number;
+  currency: string;
+  status: "pending" | "paid" | "cancelled";
+  due_date: string | null;
+  paid_at: string | null;
+  created_at: string;
+}
+
 export interface ExamRegistrationPeriod {
   id: number;
   registration_start_date: string;

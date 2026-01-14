@@ -28,6 +28,7 @@ import {
   getPrivatePhotoFile,
   listMyRegistrations,
   enableEditRegistration,
+  getRegistrationForViewing,
   logout,
   getRegistrationPrice,
   initializeRegistrationPayment,
@@ -38,7 +39,7 @@ import {
 } from "@/lib/api";
 import type { RegistrationExam, RegistrationCandidate } from "@/types";
 import { toast } from "sonner";
-import { Loader2, CheckCircle2, LogOut, User, Calendar, GraduationCap, BookOpen, Building2, Copy, AlertTriangle, AlertCircle, XCircle, Edit2, Plus, Clock, CheckCircle } from "lucide-react";
+import { Loader2, CheckCircle2, LogOut, User, Calendar, GraduationCap, BookOpen, Building2, Copy, AlertTriangle, AlertCircle, XCircle, Edit2, Plus, Clock, CheckCircle, FileText, Receipt } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import {
   AlertDialog,
@@ -104,6 +105,8 @@ export default function PrivateRegistrationPage() {
   const [showExamConfirmDialog, setShowExamConfirmDialog] = useState(false);
   const [pendingExamId, setPendingExamId] = useState<number | null>(null);
   const [existingRegistrations, setExistingRegistrations] = useState<RegistrationCandidate[]>([]);
+  const [isReadOnly, setIsReadOnly] = useState(false);
+  const [showRegistrationForm, setShowRegistrationForm] = useState(false);
 
   // Step 1: Exam
   const [exams, setExams] = useState<RegistrationExam[]>([]);
@@ -158,21 +161,38 @@ export default function PrivateRegistrationPage() {
 
   // Load exams and check for draft on mount
   useEffect(() => {
-    loadExams();
-    loadExistingRegistrations();
-    const examIdParam = searchParams.get("exam_id");
-    const registrationNumberParam = searchParams.get("registration_number");
+    const initializePage = async () => {
+      await loadExams();
+      const regs = await loadExistingRegistrations();
+      const registrationIdParam = searchParams.get("registration_id");
+      const examIdParam = searchParams.get("exam_id");
+      const registrationNumberParam = searchParams.get("registration_number");
 
-    if (registrationNumberParam) {
-      // Load submitted registration for editing using registration number
-      loadSubmittedRegistrationByNumber(registrationNumberParam);
-    } else if (examIdParam) {
-      setSelectedExamId(parseInt(examIdParam));
-      loadDraft(parseInt(examIdParam));
-    } else {
-      // Auto-load draft even without URL params
-      loadDraft();
-    }
+      if (registrationIdParam) {
+        // Load registration by ID (new primary method)
+        const registrationId = parseInt(registrationIdParam);
+        if (!isNaN(registrationId)) {
+          await loadRegistrationById(registrationId);
+        } else {
+          toast.error("Invalid registration ID");
+          router.push("/dashboard/private");
+        }
+      } else if (registrationNumberParam) {
+        // Load submitted registration for editing using registration number (backward compatibility)
+        loadSubmittedRegistrationByNumber(registrationNumberParam);
+        setShowRegistrationForm(true);
+      } else if (examIdParam) {
+        // Load draft for specific exam (for continuing draft)
+        setSelectedExamId(parseInt(examIdParam));
+        loadDraft(parseInt(examIdParam));
+        setShowRegistrationForm(true);
+      } else {
+        // No params: Show empty form for new registration
+        // Don't auto-load draft - user should select exam
+        setShowRegistrationForm(true);
+      }
+    };
+    initializePage();
   }, [searchParams]);
 
   const loadExistingRegistrations = async () => {
@@ -180,15 +200,17 @@ export default function PrivateRegistrationPage() {
       const regs = await listMyRegistrations();
       // Include all registrations (DRAFT, PENDING, APPROVED, REJECTED)
       setExistingRegistrations(regs);
+      return regs;
     } catch (error) {
       console.error("Failed to load existing registrations:", error);
+      return [];
     }
   };
 
   // Load examination centers when exam is selected
   useEffect(() => {
     if (selectedExamId) {
-      loadExaminationCenters();
+      loadExaminationCenters(selectedExamId);
     }
   }, [selectedExamId]);
 
@@ -234,16 +256,16 @@ export default function PrivateRegistrationPage() {
     }
   };
 
-  const loadExaminationCenters = async () => {
-    setLoadingData(true);
+  const loadExaminationCenters = async (examId?: number) => {
+    const examIdToUse = examId || selectedExamId;
+    if (!examIdToUse) return;
+
     try {
-      const centers = await listExaminationCenters(selectedExamId || undefined);
+      const centers = await listExaminationCenters(examIdToUse);
       setExaminationCenters(centers);
     } catch (error) {
       toast.error("Failed to load examination centers");
       console.error(error);
-    } finally {
-      setLoadingData(false);
     }
   };
 
@@ -259,20 +281,166 @@ export default function PrivateRegistrationPage() {
         return;
       }
 
-      // Enable editing (converts submitted registration back to DRAFT if needed)
-      // This endpoint now also handles registrations that are already DRAFT
-      const updatedRegistration = await enableEditRegistration(registration.id);
+      // Check if registration period is closed
+      const period = registration.exam?.registration_period;
+      const periodClosed = period ? new Date(period.registration_end_date) < new Date() : false;
 
-      // Now load it as a draft using the exam ID
+      let updatedRegistration: RegistrationCandidate;
+      if (periodClosed) {
+        // Use view-only endpoint when period is closed
+        updatedRegistration = await getRegistrationForViewing(registration.id);
+        setIsReadOnly(true);
+        toast.success("Registration loaded (read-only mode - registration period has ended)");
+      } else {
+        // Enable editing (converts submitted registration back to DRAFT if needed)
+        try {
+          updatedRegistration = await enableEditRegistration(registration.id);
+          setIsReadOnly(false);
+          toast.success("Registration loaded for editing");
+        } catch (error) {
+          // If editing fails, fall back to view-only mode
+          updatedRegistration = await getRegistrationForViewing(registration.id);
+          setIsReadOnly(true);
+          toast.success("Registration loaded (read-only mode)");
+        }
+      }
+
+      // Load registration data into form
       if (updatedRegistration.registration_exam_id) {
-        await loadDraft(updatedRegistration.registration_exam_id);
-        toast.success("Registration loaded for editing");
+        if (isReadOnly) {
+          // In read-only mode, load data directly from the registration
+          await loadRegistrationData(updatedRegistration, true);
+
+          // Load photo if exists
+          if (updatedRegistration.id) {
+            try {
+              const photo = await getPrivateCandidatePhoto(updatedRegistration.id);
+              if (photo) {
+                setHasExistingPhoto(true);
+                try {
+                  const photoUrl = await getPrivatePhotoFile(updatedRegistration.id);
+                  if (photoUrl) {
+                    setPhotoPreview(photoUrl);
+                  }
+                } catch (error) {
+                  console.log("Photo exists but couldn't load preview:", error);
+                }
+              }
+            } catch (error) {
+              console.log("No existing photo found or couldn't check:", error);
+            }
+          }
+
+          // Load price data if available
+          if (updatedRegistration.id) {
+            try {
+              const price = await getRegistrationPrice(updatedRegistration.id);
+              setPriceData(price);
+            } catch (error) {
+              console.error("Failed to load price:", error);
+            }
+          }
+        } else {
+          // In edit mode, use the normal draft loading
+          await loadDraft(updatedRegistration.registration_exam_id);
+        }
       } else {
         toast.error("Could not determine exam for this registration");
       }
     } catch (error) {
       console.error("Failed to load submitted registration:", error);
-      toast.error(error instanceof Error ? error.message : "Failed to load registration for editing");
+      toast.error(error instanceof Error ? error.message : "Failed to load registration");
+    } finally {
+      setLoadingData(false);
+    }
+  };
+
+  const loadRegistrationById = async (registrationId: number) => {
+    try {
+      setLoadingData(true);
+      // Get all registrations to find the one with matching ID
+      const regs = await listMyRegistrations();
+      const registration = regs.find((r) => r.id === registrationId);
+
+      if (!registration) {
+        toast.error("Registration not found");
+        router.push("/dashboard/private");
+        return;
+      }
+
+      // Check if registration period is closed
+      const period = registration.exam?.registration_period;
+      const periodClosed = period ? new Date(period.registration_end_date) < new Date() : false;
+
+      let updatedRegistration: RegistrationCandidate;
+      if (periodClosed) {
+        // Use view-only endpoint when period is closed
+        updatedRegistration = await getRegistrationForViewing(registration.id);
+        setIsReadOnly(true);
+        toast.success("Registration loaded (read-only mode - registration period has ended)");
+      } else {
+        // Enable editing (converts submitted registration back to DRAFT if needed)
+        try {
+          updatedRegistration = await enableEditRegistration(registration.id);
+          setIsReadOnly(false);
+          toast.success("Registration loaded for editing");
+        } catch (error) {
+          // If editing fails, fall back to view-only mode
+          updatedRegistration = await getRegistrationForViewing(registration.id);
+          setIsReadOnly(true);
+          toast.success("Registration loaded (read-only mode)");
+        }
+      }
+
+      // Load registration data into form
+      if (updatedRegistration.registration_exam_id) {
+        setShowRegistrationForm(true);
+        // Use periodClosed to determine mode since isReadOnly state might not be updated yet
+        if (periodClosed || isReadOnly) {
+          // In read-only mode, load data directly from the registration
+          await loadRegistrationData(updatedRegistration, true);
+
+          // Load photo if exists
+          if (updatedRegistration.id) {
+            try {
+              const photo = await getPrivateCandidatePhoto(updatedRegistration.id);
+              if (photo) {
+                setHasExistingPhoto(true);
+                try {
+                  const photoUrl = await getPrivatePhotoFile(updatedRegistration.id);
+                  if (photoUrl) {
+                    setPhotoPreview(photoUrl);
+                  }
+                } catch (error) {
+                  console.log("Photo exists but couldn't load preview:", error);
+                }
+              }
+            } catch (error) {
+              console.log("No existing photo found or couldn't check:", error);
+            }
+          }
+
+          // Load price data if available
+          if (updatedRegistration.id) {
+            try {
+              const price = await getRegistrationPrice(updatedRegistration.id);
+              setPriceData(price);
+            } catch (error) {
+              console.error("Failed to load price:", error);
+            }
+          }
+        } else {
+          // In edit mode, use the normal draft loading
+          await loadDraft(updatedRegistration.registration_exam_id);
+        }
+      } else {
+        toast.error("Could not determine exam for this registration");
+        router.push("/dashboard/private");
+      }
+    } catch (error) {
+      console.error("Failed to load registration:", error);
+      toast.error(error instanceof Error ? error.message : "Failed to load registration");
+      router.push("/dashboard/private");
     } finally {
       setLoadingData(false);
     }
@@ -281,22 +449,79 @@ export default function PrivateRegistrationPage() {
   const handleLoadRegistration = async (registration: RegistrationCandidate) => {
     try {
       setLoadingData(true);
-      // Enable editing (converts submitted registration back to DRAFT if needed)
-      const updatedRegistration = await enableEditRegistration(registration.id);
+
+      // Check if registration period is closed
+      const period = registration.exam?.registration_period;
+      const periodClosed = period ? new Date(period.registration_end_date) < new Date() : false;
+
+      let updatedRegistration: RegistrationCandidate;
+      if (periodClosed) {
+        // Use view-only endpoint when period is closed
+        updatedRegistration = await getRegistrationForViewing(registration.id);
+        setIsReadOnly(true);
+        toast.success("Registration loaded (read-only mode - registration period has ended)");
+      } else {
+        // Enable editing (converts submitted registration back to DRAFT if needed)
+        try {
+          updatedRegistration = await enableEditRegistration(registration.id);
+          setIsReadOnly(false);
+          toast.success("Registration loaded for editing");
+        } catch (error) {
+          // If editing fails, fall back to view-only mode
+          updatedRegistration = await getRegistrationForViewing(registration.id);
+          setIsReadOnly(true);
+          toast.success("Registration loaded (read-only mode)");
+        }
+      }
 
       // Reload registrations list to reflect status changes
       await loadExistingRegistrations();
 
-      // Load it as a draft using the exam ID
+      // Load registration data into form
       if (updatedRegistration.registration_exam_id) {
-        await loadDraft(updatedRegistration.registration_exam_id);
-        toast.success("Registration loaded for editing");
+        if (isReadOnly) {
+          // In read-only mode, load data directly from the registration
+          await loadRegistrationData(updatedRegistration, true);
+
+          // Load photo if exists
+          if (updatedRegistration.id) {
+            try {
+              const photo = await getPrivateCandidatePhoto(updatedRegistration.id);
+              if (photo) {
+                setHasExistingPhoto(true);
+                try {
+                  const photoUrl = await getPrivatePhotoFile(updatedRegistration.id);
+                  if (photoUrl) {
+                    setPhotoPreview(photoUrl);
+                  }
+                } catch (error) {
+                  console.log("Photo exists but couldn't load preview:", error);
+                }
+              }
+            } catch (error) {
+              console.log("No existing photo found or couldn't check:", error);
+            }
+          }
+
+          // Load price data if available
+          if (updatedRegistration.id) {
+            try {
+              const price = await getRegistrationPrice(updatedRegistration.id);
+              setPriceData(price);
+            } catch (error) {
+              console.error("Failed to load price:", error);
+            }
+          }
+        } else {
+          // In edit mode, use the normal draft loading
+          await loadDraft(updatedRegistration.registration_exam_id);
+        }
       } else {
         toast.error("Could not determine exam for this registration");
       }
     } catch (error) {
       console.error("Failed to load registration:", error);
-      toast.error(error instanceof Error ? error.message : "Failed to load registration for editing");
+      toast.error(error instanceof Error ? error.message : "Failed to load registration");
     } finally {
       setLoadingData(false);
     }
@@ -332,6 +557,8 @@ export default function PrivateRegistrationPage() {
     setExamLocked(false);
     setCurrentStep(1);
     setCompletedSteps(new Set());
+    setIsReadOnly(false);
+    setShowRegistrationForm(true);
 
     // Load a fresh draft
     loadDraft();
@@ -370,6 +597,69 @@ export default function PrivateRegistrationPage() {
       default:
         return null;
     }
+  };
+
+  const loadRegistrationData = async (registration: RegistrationCandidate, readOnly: boolean = false) => {
+    // Populate all form fields from registration data
+    setDraftId(registration.id);
+    setLoadedDraft(registration);
+    setSelectedExamId(registration.registration_exam_id);
+    setSelectedSchoolId(registration.school_id || null);
+
+    // Load examination centers if exam is selected
+    if (registration.registration_exam_id) {
+      await loadExaminationCenters(registration.registration_exam_id);
+    }
+    setFirstname(registration.firstname || "");
+    setLastname(registration.lastname || "");
+    setOthername(registration.othername || "");
+    setDateOfBirth(registration.date_of_birth || "");
+    setGender(registration.gender || "");
+    setContactEmail(registration.contact_email || "");
+    setContactPhone(registration.contact_phone ? formatPhoneForDisplay(registration.contact_phone) : "");
+    setAddress(registration.address || "");
+    setNationalId(registration.national_id || "");
+    setDisability(registration.disability || "");
+    setGuardianName(registration.guardian_name || "");
+    setGuardianPhone(registration.guardian_phone ? formatPhoneForDisplay(registration.guardian_phone) : "");
+    setGuardianDigitalAddress(registration.guardian_digital_address || "");
+    setGuardianNationalId(registration.guardian_national_id || "");
+    setProgrammeId(registration.programme_id || null);
+    setSelectedSubjectIds(
+      registration.subject_selections?.map((s) => s.subject_id).filter((id): id is number => id !== null) || []
+    );
+
+    // Lock exam if registration has been saved
+    if (registration.id && registration.registration_exam_id) {
+      setExamLocked(true);
+    }
+
+    // Determine the highest completed step
+    let highestStep: Step = 1;
+    if (registration.registration_exam_id) highestStep = 1;
+    if (registration.school_id) highestStep = 2;
+    if (registration.firstname && registration.firstname.trim() !== "" && registration.lastname && registration.lastname.trim() !== "") highestStep = 3;
+    if (registration.subject_selections && registration.subject_selections.length > 0) highestStep = 4;
+
+    // For read-only mode, allow viewing all steps
+    if (readOnly && registration.subject_selections && registration.subject_selections.length > 0) {
+      highestStep = 7; // Allow viewing all steps including review
+    } else if (registration.subject_selections && registration.subject_selections.length > 0) {
+      highestStep = 5; // Payment step
+    }
+
+    setCurrentStep(highestStep);
+
+    // Update completed steps
+    const completed = new Set<Step>();
+    if (registration.registration_exam_id) completed.add(1);
+    if (registration.school_id) completed.add(2);
+    if (registration.firstname && registration.firstname.trim() !== "" && registration.lastname && registration.lastname.trim() !== "") completed.add(3);
+    if (registration.subject_selections && registration.subject_selections.length > 0) completed.add(4);
+    if (registration.subject_selections && registration.subject_selections.length > 0) completed.add(5); // Payment step
+    if (registration.subject_selections && registration.subject_selections.length > 0) completed.add(6); // Photo step
+    if (registration.subject_selections && registration.subject_selections.length > 0) completed.add(7); // Review step
+    setCompletedSteps(completed);
   };
 
   const loadDraft = async (examId?: number) => {
@@ -626,6 +916,14 @@ export default function PrivateRegistrationPage() {
   };
 
   const handleStepClick = async (stepNumber: Step) => {
+    // In read-only mode, allow navigation but don't save
+    if (isReadOnly) {
+      if (stepNumber === currentStep) return;
+      // Allow navigation to any step in read-only mode
+      setCurrentStep(stepNumber);
+      return;
+    }
+
     // Only allow navigation to completed steps or the current step
     if (stepNumber === currentStep) return;
 
@@ -786,53 +1084,387 @@ export default function PrivateRegistrationPage() {
   return (
     <div className="container mx-auto max-w-4xl py-8">
       <div className="mb-8 flex items-start justify-between">
-        <div>
-          <h1 className="text-3xl font-bold mb-2">Examination Registration</h1>
-          <p className="text-muted-foreground">Complete your registration step by step</p>
+        <div className="flex items-center gap-4">
+          <Button
+            variant="ghost"
+            onClick={() => router.push("/dashboard/private")}
+            className="flex items-center gap-2"
+          >
+            <LogOut className="h-4 w-4 rotate-180" />
+            Back to Dashboard
+          </Button>
+          <div>
+            <h1 className="text-3xl font-bold mb-2">Examination Registration</h1>
+            <p className="text-muted-foreground">Complete your registration step by step</p>
+          </div>
         </div>
-        <Button onClick={handleStartNewRegistration} variant="outline">
-          <Plus className="mr-2 h-4 w-4" />
-          Start New Registration
-        </Button>
       </div>
 
-      {/* Active Registrations List */}
-      {existingRegistrations.length > 0 && (
-        <Card className="mb-8">
-          <CardHeader>
-            <CardTitle className="flex items-center gap-2">
-              <GraduationCap className="h-5 w-5" />
-              My Active Registrations
-            </CardTitle>
-            <CardDescription>Click on a registration to continue or edit</CardDescription>
-          </CardHeader>
-          <CardContent>
-            <div className="space-y-3">
-              {existingRegistrations.map((registration) => (
-                <div
-                  key={registration.id}
-                  className="flex items-center justify-between rounded-lg border p-4 hover:bg-muted/50 cursor-pointer transition-colors"
-                  onClick={() => handleLoadRegistration(registration)}
-                >
-                  <div className="flex-1">
-                    <p className="font-medium">
-                      {registration.exam
-                        ? `${registration.exam.exam_type}${registration.exam.exam_series ? ` (${registration.exam.exam_series} ${registration.exam.year})` : ` ${registration.exam.year}`}`
-                        : "Exam"}
-                    </p>
-                    <p className="text-sm text-muted-foreground">
-                      Registration Number: {registration.registration_number}
-                    </p>
-                    <div className="mt-2">{getStatusBadge(registration.registration_status)}</div>
-                  </div>
-                  <Edit2 className="h-4 w-4 text-muted-foreground" />
+      {/* Show registration form - always show when on this page */}
+      {!loadingData && (
+      <div>
+      {/* Read-Only Mode - Show All Information */}
+      {isReadOnly ? (
+        <div className="space-y-6">
+          {/* Read-Only Mode Alert */}
+          <Card className="border-amber-200 bg-amber-50 dark:bg-amber-950 dark:border-amber-800">
+            <CardContent className="pt-6">
+              <div className="flex items-center gap-3">
+                <AlertTriangle className="h-5 w-5 text-amber-600 shrink-0" />
+                <div className="flex-1">
+                  <h4 className="font-semibold text-amber-900 dark:text-amber-100 mb-1">
+                    Read-Only Mode
+                  </h4>
+                  <p className="text-sm text-amber-800 dark:text-amber-200">
+                    The registration period has ended. You can view your registration details but cannot make changes.
+                  </p>
                 </div>
-              ))}
-            </div>
-          </CardContent>
-        </Card>
-      )}
+              </div>
+            </CardContent>
+          </Card>
 
+          {/* Registration Overview */}
+          <Card>
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2">
+                <FileText className="h-5 w-5" />
+                Registration Overview
+              </CardTitle>
+            </CardHeader>
+            <CardContent>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                <div>
+                  <div className="text-sm text-muted-foreground mb-1">Registration Number</div>
+                  <div className="font-mono font-semibold text-lg">{loadedDraft?.registration_number}</div>
+                </div>
+                <div>
+                  <div className="text-sm text-muted-foreground mb-1">Status</div>
+                  <div>{loadedDraft ? getStatusBadge(loadedDraft.registration_status) : null}</div>
+                </div>
+                {loadedDraft?.index_number && (
+                  <div>
+                    <div className="text-sm text-muted-foreground mb-1">Index Number</div>
+                    <div className="font-mono font-semibold">{loadedDraft.index_number}</div>
+                  </div>
+                )}
+                {loadedDraft?.registration_date && (
+                  <div>
+                    <div className="text-sm text-muted-foreground mb-1">Registration Date</div>
+                    <div>{new Date(loadedDraft.registration_date).toLocaleDateString()}</div>
+                  </div>
+                )}
+              </div>
+            </CardContent>
+          </Card>
+
+          {/* Exam Information */}
+          <Card>
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2">
+                <BookOpen className="h-5 w-5" />
+                Examination Details
+              </CardTitle>
+            </CardHeader>
+            <CardContent>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                {(() => {
+                  const exam = exams.find((e) => e.id === selectedExamId) || loadedDraft?.exam;
+                  return exam ? (
+                    <>
+                      <div>
+                        <div className="text-sm text-muted-foreground mb-1">Examination Type</div>
+                        <div className="font-medium">{exam.exam_type}</div>
+                      </div>
+                      {exam.exam_series && (
+                        <div>
+                          <div className="text-sm text-muted-foreground mb-1">Series</div>
+                          <div className="font-medium">{exam.exam_series}</div>
+                        </div>
+                      )}
+                      <div>
+                        <div className="text-sm text-muted-foreground mb-1">Year</div>
+                        <div className="font-medium">{exam.year}</div>
+                      </div>
+                    </>
+                  ) : null;
+                })()}
+                {(() => {
+                  // Try to get school from loadedDraft first, then from examinationCenters
+                  const schoolFromDraft = (loadedDraft as any)?.school;
+                  const center = schoolFromDraft
+                    ? { name: schoolFromDraft.name, code: schoolFromDraft.code }
+                    : examinationCenters.find((c) => c.id === selectedSchoolId);
+                  return center ? (
+                    <div>
+                      <div className="text-sm text-muted-foreground mb-1">Examination Center</div>
+                      <div className="font-medium">{center.name} {center.code && `(${center.code})`}</div>
+                    </div>
+                  ) : null;
+                })()}
+              </div>
+            </CardContent>
+          </Card>
+
+          {/* Personal Information */}
+          <Card>
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2">
+                <User className="h-5 w-5" />
+                Personal Information
+              </CardTitle>
+            </CardHeader>
+            <CardContent>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div>
+                  <div className="text-sm text-muted-foreground mb-1">Full Name</div>
+                  <div className="font-medium">{loadedDraft?.name || `${firstname} ${othername ? othername + " " : ""}${lastname}`.trim()}</div>
+                </div>
+                {dateOfBirth && (
+                  <div>
+                    <div className="text-sm text-muted-foreground mb-1">Date of Birth</div>
+                    <div className="font-medium">{new Date(dateOfBirth).toLocaleDateString()}</div>
+                  </div>
+                )}
+                {gender && (
+                  <div>
+                    <div className="text-sm text-muted-foreground mb-1">Gender</div>
+                    <div className="font-medium">{gender}</div>
+                  </div>
+                )}
+                {disability && (
+                  <div>
+                    <div className="text-sm text-muted-foreground mb-1">Disability</div>
+                    <div className="font-medium">{disability}</div>
+                  </div>
+                )}
+                {contactEmail && (
+                  <div>
+                    <div className="text-sm text-muted-foreground mb-1">Email</div>
+                    <div className="font-medium">{contactEmail}</div>
+                  </div>
+                )}
+                {contactPhone && (
+                  <div>
+                    <div className="text-sm text-muted-foreground mb-1">Phone</div>
+                    <div className="font-medium">{contactPhone}</div>
+                  </div>
+                )}
+                {address && (
+                  <div className="md:col-span-2">
+                    <div className="text-sm text-muted-foreground mb-1">Digital Address</div>
+                    <div className="font-medium">{address}</div>
+                  </div>
+                )}
+                {nationalId && (
+                  <div>
+                    <div className="text-sm text-muted-foreground mb-1">National ID</div>
+                    <div className="font-medium">{nationalId}</div>
+                  </div>
+                )}
+              </div>
+            </CardContent>
+          </Card>
+
+          {/* Guardian Information */}
+          {(guardianName || guardianPhone || guardianDigitalAddress || guardianNationalId) && (
+            <Card>
+              <CardHeader>
+                <CardTitle className="flex items-center gap-2">
+                  <User className="h-5 w-5" />
+                  Guardian Information
+                </CardTitle>
+              </CardHeader>
+              <CardContent>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  {guardianName && (
+                    <div>
+                      <div className="text-sm text-muted-foreground mb-1">Guardian Name</div>
+                      <div className="font-medium">{guardianName}</div>
+                    </div>
+                  )}
+                  {guardianPhone && (
+                    <div>
+                      <div className="text-sm text-muted-foreground mb-1">Guardian Phone</div>
+                      <div className="font-medium">{guardianPhone}</div>
+                    </div>
+                  )}
+                  {guardianDigitalAddress && (
+                    <div>
+                      <div className="text-sm text-muted-foreground mb-1">Guardian Digital Address</div>
+                      <div className="font-medium">{guardianDigitalAddress}</div>
+                    </div>
+                  )}
+                  {guardianNationalId && (
+                    <div>
+                      <div className="text-sm text-muted-foreground mb-1">Guardian National ID</div>
+                      <div className="font-medium">{guardianNationalId}</div>
+                    </div>
+                  )}
+                </div>
+              </CardContent>
+            </Card>
+          )}
+
+          {/* Programme */}
+          {programmeId && (() => {
+            const programme = programmes.find((p) => p.id === programmeId);
+            return programme ? (
+              <Card>
+                <CardHeader>
+                  <CardTitle className="flex items-center gap-2">
+                    <GraduationCap className="h-5 w-5" />
+                    Programme
+                  </CardTitle>
+                </CardHeader>
+                <CardContent>
+                  <div className="font-medium">{programme.code} - {programme.name}</div>
+                </CardContent>
+              </Card>
+            ) : null;
+          })()}
+
+          {/* Subjects */}
+          {(() => {
+            // Use subject_selections from loadedDraft if available, otherwise use selectedSubjectIds
+            const subjectSelections = loadedDraft?.subject_selections || [];
+            const hasSubjectSelections = subjectSelections.length > 0;
+            const hasSelectedIds = selectedSubjectIds.length > 0;
+
+            if (!hasSubjectSelections && !hasSelectedIds) return null;
+
+            return (
+              <Card>
+                <CardHeader>
+                  <CardTitle className="flex items-center gap-2">
+                    <BookOpen className="h-5 w-5" />
+                    Registered Subjects ({hasSubjectSelections ? subjectSelections.length : selectedSubjectIds.length})
+                  </CardTitle>
+                </CardHeader>
+                <CardContent>
+                  <div className="space-y-2">
+                    {hasSubjectSelections ? (
+                      // Use subject_selections from loadedDraft
+                      subjectSelections.map((selection: any, index: number) => (
+                        <div key={selection.subject_id || index} className="flex items-center justify-between py-2 px-3 rounded-md border bg-card">
+                          <div>
+                            <div className="font-medium text-sm">{selection.subject_name || 'Unknown Subject'}</div>
+                            <div className="text-xs text-muted-foreground mt-1">
+                              Code: {selection.subject_code || 'N/A'}
+                              {selection.series && ` • Series ${selection.series}`}
+                            </div>
+                          </div>
+                        </div>
+                      ))
+                    ) : (
+                      // Fall back to selectedSubjectIds
+                      selectedSubjectIds.map((subjectId) => {
+                        const subject = allSubjects.find((s) => s.id === subjectId);
+                        if (!subject) return null;
+                        return (
+                          <div key={subjectId} className="flex items-center justify-between py-2 px-3 rounded-md border bg-card">
+                            <div>
+                              <div className="font-medium text-sm">{subject.name}</div>
+                              <div className="text-xs text-muted-foreground mt-1">
+                                Code: {subject.code}
+                                {subject.subject_type && ` • ${subject.subject_type}`}
+                              </div>
+                            </div>
+                          </div>
+                        );
+                      })
+                    )}
+                  </div>
+                </CardContent>
+              </Card>
+            );
+          })()}
+
+          {/* Payment Information */}
+          {priceData && (
+            <Card>
+              <CardHeader>
+                <CardTitle className="flex items-center gap-2">
+                  <Receipt className="h-5 w-5" />
+                  Payment Information
+                </CardTitle>
+              </CardHeader>
+              <CardContent>
+                <div className="space-y-3">
+                  {priceData.application_fee > 0 && (
+                    <div className="flex justify-between">
+                      <span className="text-sm text-muted-foreground">Application Fee</span>
+                      <span className="font-medium">{priceData.application_fee.toFixed(2)} GHS</span>
+                    </div>
+                  )}
+                  {priceData.tiered_price !== null && priceData.tiered_price > 0 && (
+                    <div className="flex justify-between">
+                      <span className="text-sm text-muted-foreground">Subject Fees (Tiered)</span>
+                      <span className="font-medium">{priceData.tiered_price.toFixed(2)} GHS</span>
+                    </div>
+                  )}
+                  {priceData.subject_price !== null && priceData.subject_price > 0 && (
+                    <div className="flex justify-between">
+                      <span className="text-sm text-muted-foreground">Subject Fees (Per Subject)</span>
+                      <span className="font-medium">{priceData.subject_price.toFixed(2)} GHS</span>
+                    </div>
+                  )}
+                  <div className="border-t pt-3 mt-3">
+                    <div className="flex justify-between items-center">
+                      <span className="font-semibold">Total Amount</span>
+                      <span className="text-lg font-bold">{priceData.total.toFixed(2)} GHS</span>
+                    </div>
+                  </div>
+                  {priceData.total_paid_amount > 0 && (
+                    <>
+                      <div className="flex justify-between items-center text-sm">
+                        <span className="text-muted-foreground">Amount Paid</span>
+                        <span className="text-green-600 font-medium">{priceData.total_paid_amount.toFixed(2)} GHS</span>
+                      </div>
+                      <div className="flex justify-between items-center font-semibold border-t pt-2 mt-2">
+                        <span>Outstanding Amount</span>
+                        <span className={priceData.outstanding_amount > 0 ? "text-orange-600" : "text-green-600"}>
+                          {priceData.outstanding_amount.toFixed(2)} GHS
+                        </span>
+                      </div>
+                    </>
+                  )}
+                </div>
+              </CardContent>
+            </Card>
+          )}
+
+          {/* Photo */}
+          {(photoPreview || hasExistingPhoto) && (
+            <Card>
+              <CardHeader>
+                <CardTitle className="flex items-center gap-2">
+                  <User className="h-5 w-5" />
+                  Passport Photo
+                </CardTitle>
+              </CardHeader>
+              <CardContent>
+                {photoPreview ? (
+                  <div className="flex justify-center">
+                    <img
+                      src={photoPreview}
+                      alt="Candidate photo"
+                      className="w-48 h-48 object-cover rounded-lg border-2 border-primary"
+                    />
+                  </div>
+                ) : hasExistingPhoto ? (
+                  <div className="flex flex-col items-center justify-center text-muted-foreground">
+                    <div className="w-24 h-24 rounded-full bg-muted flex items-center justify-center">
+                      <User className="h-12 w-12" />
+                    </div>
+                    <p className="text-sm mt-2">Photo uploaded</p>
+                  </div>
+                ) : null}
+              </CardContent>
+            </Card>
+          )}
+        </div>
+      ) : (
+        <>
       {/* Progress Bar */}
       <div className="mb-8">
         <div className="flex justify-between mb-2">
@@ -949,7 +1581,7 @@ export default function PrivateRegistrationPage() {
                         setPendingExamId(examId);
                         setShowExamConfirmDialog(true);
                       }}
-                      disabled={loadingData || examLocked}
+                      disabled={loadingData || examLocked || isReadOnly}
                     >
                       <SelectTrigger>
                         <SelectValue placeholder="Select an exam" />
@@ -990,7 +1622,7 @@ export default function PrivateRegistrationPage() {
                 <Select
                   value={selectedSchoolId?.toString() || ""}
                   onValueChange={(value) => setSelectedSchoolId(parseInt(value))}
-                  disabled={loadingData}
+                  disabled={loadingData || isReadOnly}
                 >
                   <SelectTrigger>
                     <SelectValue placeholder="Select an examination center" />
@@ -1022,6 +1654,7 @@ export default function PrivateRegistrationPage() {
                       onChange={(e) => setFirstname(e.target.value)}
                       placeholder="John"
                       required
+                      disabled={isReadOnly}
                     />
                   </div>
                   <div className="space-y-2">
@@ -1032,6 +1665,7 @@ export default function PrivateRegistrationPage() {
                       onChange={(e) => setLastname(e.target.value)}
                       placeholder="Doe"
                       required
+                      disabled={isReadOnly}
                     />
                   </div>
                 </div>
@@ -1057,7 +1691,7 @@ export default function PrivateRegistrationPage() {
                   </div>
                   <div className="space-y-2">
                     <Label htmlFor="gender">Gender *</Label>
-                    <Select value={gender} onValueChange={setGender} required>
+                    <Select value={gender} onValueChange={setGender} required disabled={isReadOnly}>
                       <SelectTrigger>
                         <SelectValue placeholder="Select gender" />
                       </SelectTrigger>
@@ -1071,7 +1705,7 @@ export default function PrivateRegistrationPage() {
                 </div>
                 <div className="space-y-2">
                   <Label htmlFor="disability">Disability (Optional)</Label>
-                  <Select value={disability} onValueChange={setDisability}>
+                  <Select value={disability} onValueChange={setDisability} disabled={isReadOnly}>
                     <SelectTrigger>
                       <SelectValue placeholder="Select disability type" />
                     </SelectTrigger>
@@ -1757,58 +2391,69 @@ export default function PrivateRegistrationPage() {
           <div className="flex justify-between pt-4">
             <div>
               {currentStep > 1 && (
-                <Button variant="outline" onClick={handlePrevious} disabled={loading || saving}>
+                <Button variant="outline" onClick={handlePrevious} disabled={loading || saving || isReadOnly}>
                   Previous
                 </Button>
               )}
             </div>
-            <div className="flex gap-2">
-              <Button
-                variant="outline"
-                onClick={handleSaveAndExit}
-                disabled={loading || saving || !selectedExamId}
-              >
-                {saving ? (
-                  <>
-                    <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                    Saving...
-                  </>
-                ) : (
-                  <>
-                    <LogOut className="mr-2 h-4 w-4" />
-                    Save and Exit
-                  </>
-                )}
-              </Button>
-              {currentStep < 7 ? (
-                <Button onClick={handleNext} disabled={loading || saving || (currentStep === 5 && priceData && priceData.outstanding_amount > 0 && !paymentAcknowledged)}>
+            {!isReadOnly ? (
+              <div className="flex gap-2">
+                <Button
+                  variant="outline"
+                  onClick={handleSaveAndExit}
+                  disabled={loading || saving || !selectedExamId}
+                >
                   {saving ? (
                     <>
                       <Loader2 className="mr-2 h-4 w-4 animate-spin" />
                       Saving...
                     </>
-                  ) : currentStep === 5 && priceData && priceData.outstanding_amount > 0 ? (
-                    "Payment Required"
                   ) : (
-                    "Save and Continue"
-                  )}
-                </Button>
-              ) : (
-                <Button onClick={handleSubmit} disabled={loading || saving}>
-                  {loading ? (
                     <>
-                      <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                      Submitting...
+                      <LogOut className="mr-2 h-4 w-4" />
+                      Save and Exit
                     </>
-                  ) : (
-                    "Submit Registration"
                   )}
                 </Button>
-              )}
-            </div>
+                {currentStep < 7 ? (
+                  <Button onClick={handleNext} disabled={loading || saving || (currentStep === 5 && priceData && priceData.outstanding_amount > 0 && !paymentAcknowledged)}>
+                    {saving ? (
+                      <>
+                        <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                        Saving...
+                      </>
+                    ) : currentStep === 5 && priceData && priceData.outstanding_amount > 0 ? (
+                      "Payment Required"
+                    ) : (
+                      "Save and Continue"
+                    )}
+                  </Button>
+                ) : (
+                  <Button onClick={handleSubmit} disabled={loading || saving}>
+                    {loading ? (
+                      <>
+                        <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                        Submitting...
+                      </>
+                    ) : (
+                      "Submit Registration"
+                    )}
+                  </Button>
+                )}
+              </div>
+            ) : (
+              <div className="text-sm text-muted-foreground flex items-center gap-2">
+                <AlertCircle className="h-4 w-4" />
+                Read-only mode - changes are disabled
+              </div>
+            )}
           </div>
         </CardContent>
       </Card>
+        </>
+      )}
+      </div>
+      )}
 
       {/* Exam Selection Confirmation Dialog */}
       <AlertDialog
