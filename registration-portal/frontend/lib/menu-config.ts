@@ -59,6 +59,18 @@ export const systemAdminMenuItems: MenuItem[] = [
     icon: Images,
     roles: ["SystemAdmin", "Director", "DeputyDirector", "PrincipalManager", "SeniorManager", "Manager", "Staff"],
   },
+  {
+    href: "/dashboard/admin/fees",
+    label: "Fees Management",
+    icon: DollarSign,
+    roles: ["SystemAdmin", "Director", "DeputyDirector", "PrincipalManager", "SeniorManager", "Manager", "Staff"],
+  },
+  {
+    href: "/dashboard/admin/api-users",
+    label: "API Users",
+    icon: Users,
+    roles: ["SystemAdmin", "Director", "DeputyDirector", "PrincipalManager", "SeniorManager", "Manager", "Staff"],
+  },
 ];
 
 // System Admin "More Actions" Menu Items
@@ -91,18 +103,6 @@ export const systemAdminMoreActions: MenuItem[] = [
     href: "/dashboard/admin/results/blocks",
     label: "Result Blocks",
     icon: Shield,
-    roles: ["SystemAdmin", "Director", "DeputyDirector", "PrincipalManager", "SeniorManager", "Manager", "Staff"],
-  },
-  {
-    href: "/dashboard/admin/fees",
-    label: "Fees Management",
-    icon: DollarSign,
-    roles: ["SystemAdmin", "Director", "DeputyDirector", "PrincipalManager", "SeniorManager", "Manager", "Staff"],
-  },
-  {
-    href: "/dashboard/admin/api-users",
-    label: "API Users",
-    icon: Users,
     roles: ["SystemAdmin", "Director", "DeputyDirector", "PrincipalManager", "SeniorManager", "Manager", "Staff"],
   },
   {
