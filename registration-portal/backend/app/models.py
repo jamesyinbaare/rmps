@@ -337,7 +337,7 @@ class RegistrationExam(Base):
     results_published = Column(Boolean, default=False, nullable=False, index=True)
     results_published_at = Column(DateTime, nullable=True)
     results_published_by_user_id = Column(UUID(as_uuid=True), ForeignKey("portal_users.id", ondelete="SET NULL"), nullable=True, index=True)
-    pricing_model_preference = Column(String(20), nullable=True, default="auto")  # "per_subject", "tiered", or "auto"
+    pricing_model_preference = Column(String(20), nullable=True)  # "per_subject", "tiered", or "per_programme" (must be explicit, no "auto")
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
 
@@ -708,7 +708,7 @@ class ExamPricingModel(Base):
     id = Column(Integer, primary_key=True)
     exam_id = Column(Integer, ForeignKey("registration_exams.id", ondelete="CASCADE"), nullable=True, index=True)  # NULL = global pricing model
     registration_type = Column(Enum(RegistrationType, create_constraint=False, values_callable=lambda x: [e.value for e in x]), nullable=True, index=True)  # NULL = applies to all types
-    pricing_model_preference = Column(String(20), nullable=False, default="auto")  # "per_subject", "tiered", "per_programme", or "auto"
+    pricing_model_preference = Column(String(20), nullable=False)  # "per_subject", "tiered", or "per_programme" (must be explicit, no "auto")
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
 
