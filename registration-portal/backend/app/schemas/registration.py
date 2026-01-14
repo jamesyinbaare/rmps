@@ -76,7 +76,7 @@ class RegistrationCandidateBase(BaseModel):
     programme_id: int | None = None
     contact_email: EmailStr | None = None
     contact_phone: str | None = Field(None, max_length=50)
-    address: str | None = None
+    address: str | None = Field(None, max_length=50, description="Ghana digital address")
     national_id: str | None = Field(None, max_length=50)
     disability: str | None = Field(None, description="Disability type: Visual, Auditory, Physical, Cognitive, Speech, Other")
     registration_type: str | None = Field(None, description="Registration type: free_tvet, private, or referral")
@@ -120,7 +120,7 @@ class RegistrationCandidateUpdate(BaseModel):
     programme_id: int | None = None
     contact_email: EmailStr | None = None
     contact_phone: str | None = Field(None, max_length=50)
-    address: str | None = None
+    address: str | None = Field(None, max_length=50, description="Ghana digital address")
     national_id: str | None = Field(None, max_length=50)
     disability: str | None = Field(None, description="Disability type: Visual, Auditory, Physical, Cognitive, Speech, Other")
     registration_type: str | None = Field(None, description="Registration type: free_tvet, private, or referral")

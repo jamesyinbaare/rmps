@@ -116,13 +116,20 @@ class PrivateUserRegistrationRequest(BaseModel):
     school_id: int = Field(..., description="The examination center (school) ID")
 
     # Bio data
-    name: str = Field(..., min_length=1, max_length=255, description="Candidate's full name")
+    firstname: str = Field(..., min_length=1, max_length=255, description="Candidate's first name")
+    lastname: str = Field(..., min_length=1, max_length=255, description="Candidate's last name")
+    othername: str | None = Field(None, max_length=255, description="Candidate's other/middle name")
     date_of_birth: date | None = Field(None, description="Date of birth")
     gender: str | None = Field(None, max_length=20, description="Gender")
     contact_email: EmailStr | None = Field(None, description="Contact email address")
     contact_phone: str | None = Field(None, max_length=50, description="Contact phone number")
     address: str | None = Field(None, description="Address")
     national_id: str | None = Field(None, max_length=50, description="National ID number")
+    disability: str | None = Field(None, description="Disability type: Visual, Auditory, Physical, Cognitive, Speech, Other")
+    guardian_name: str | None = Field(None, max_length=255, description="Guardian name")
+    guardian_phone: str | None = Field(None, max_length=50, description="Guardian phone number")
+    guardian_digital_address: str | None = Field(None, max_length=50, description="Guardian digital address (Ghana format)")
+    guardian_national_id: str | None = Field(None, max_length=50, description="Guardian national ID number")
 
     # Programme (optional)
     programme_id: int | None = Field(None, description="Programme ID (optional)")

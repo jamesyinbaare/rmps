@@ -384,7 +384,7 @@ class RegistrationCandidate(Base):
     programme_id = Column(Integer, ForeignKey("programmes.id", ondelete="SET NULL"), nullable=True, index=True)
     contact_email = Column(String(255), nullable=True)
     contact_phone = Column(String(50), nullable=True)
-    address = Column(Text, nullable=True)
+    address = Column(String(50), nullable=True)  # Ghana digital address format
     national_id = Column(String(50), nullable=True)
     disability = Column(Enum(Disability, create_constraint=False, values_callable=lambda x: [e.value for e in x]), nullable=True)
     registration_type = Column(Enum(RegistrationType, create_constraint=False, values_callable=lambda x: [e.value for e in x]), nullable=True, index=True)
