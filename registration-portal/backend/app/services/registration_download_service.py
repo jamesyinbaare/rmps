@@ -218,9 +218,11 @@ async def generate_registration_detailed_pdf(
     if programme_id:
         candidate_stmt = candidate_stmt.where(RegistrationCandidate.programme_id == programme_id)
 
-    candidate_stmt = candidate_stmt.order_by(RegistrationCandidate.name)
     candidate_result = await session.execute(candidate_stmt)
     candidates = candidate_result.scalars().all()
+
+    # Sort by name property (firstname + othername + lastname) in Python
+    candidates = sorted(candidates, key=lambda c: c.name)
 
     photo_service = PhotoStorageService()
     candidates_data = []

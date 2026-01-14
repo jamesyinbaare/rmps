@@ -24,7 +24,7 @@ import {
 } from "@/components/ui/table";
 import { SearchableSelect } from "@/components/SearchableSelect";
 import { toast } from "sonner";
-import { Download, ArrowLeft, Search } from "lucide-react";
+import { Download, ArrowLeft, Search, ArrowUpDown, ArrowUp, ArrowDown, Info } from "lucide-react";
 import Link from "next/link";
 
 export default function IndexSlipsDownloadPage() {
@@ -42,6 +42,11 @@ export default function IndexSlipsDownloadPage() {
   const [selectedSeries, setSelectedSeries] = useState<string>("");
   const [selectedProgrammeId, setSelectedProgrammeId] = useState<string | undefined>(undefined);
   const [searchQuery, setSearchQuery] = useState<string>("");
+
+  // Sorting - array of sort columns with directions
+  type SortColumn = "name" | "index_number" | "registration_number" | "programme";
+  type SortEntry = { column: SortColumn; direction: "asc" | "desc" };
+  const [sortColumns, setSortColumns] = useState<SortEntry[]>([]);
 
   useEffect(() => {
     loadFiltersData();
@@ -173,19 +178,127 @@ export default function IndexSlipsDownloadPage() {
     }
   };
 
-  // Filter candidates by search query (name and index number)
+  // Filter and sort candidates
   const filteredCandidates = useMemo(() => {
-    if (!searchQuery.trim()) {
-      return candidates;
+    let filtered = candidates;
+
+    // Filter by search query (name and index number)
+    if (searchQuery.trim()) {
+      const query = searchQuery.toLowerCase().trim();
+      filtered = candidates.filter((candidate) => {
+        const nameMatch = candidate.name?.toLowerCase().includes(query);
+        const indexMatch = candidate.index_number?.toLowerCase().includes(query);
+        return nameMatch || indexMatch;
+      });
     }
 
-    const query = searchQuery.toLowerCase().trim();
-    return candidates.filter((candidate) => {
-      const nameMatch = candidate.name?.toLowerCase().includes(query);
-      const indexMatch = candidate.index_number?.toLowerCase().includes(query);
-      return nameMatch || indexMatch;
+    // Apply multi-column sorting
+    if (sortColumns.length > 0) {
+      filtered = [...filtered].sort((a, b) => {
+        for (const { column, direction } of sortColumns) {
+          let aVal: any;
+          let bVal: any;
+
+          switch (column) {
+            case "name":
+              aVal = a.name?.toLowerCase() || "";
+              bVal = b.name?.toLowerCase() || "";
+              break;
+            case "index_number":
+              aVal = a.index_number?.toLowerCase() || "";
+              bVal = b.index_number?.toLowerCase() || "";
+              break;
+            case "registration_number":
+              aVal = a.registration_number?.toLowerCase() || "";
+              bVal = b.registration_number?.toLowerCase() || "";
+              break;
+            case "programme":
+              // Get programme name for comparison
+              const programmeA = programmes.find((p) => p.id === a.programme_id);
+              const programmeB = programmes.find((p) => p.id === b.programme_id);
+              aVal = programmeA?.name?.toLowerCase() || "";
+              bVal = programmeB?.name?.toLowerCase() || "";
+              break;
+            default:
+              continue;
+          }
+
+          if (aVal < bVal) {
+            const result = direction === "asc" ? -1 : 1;
+            if (result !== 0) return result;
+          }
+          if (aVal > bVal) {
+            const result = direction === "asc" ? 1 : -1;
+            if (result !== 0) return result;
+          }
+          // Values are equal, continue to next sort column
+        }
+        return 0;
+      });
+    }
+
+    return filtered;
+  }, [candidates, searchQuery, sortColumns, programmes]);
+
+  // Handle sort - Shift+Click adds as additional sort, normal click sets as primary
+  const handleSort = (
+    column: SortColumn,
+    event: React.MouseEvent<HTMLButtonElement>
+  ) => {
+    event.preventDefault();
+    const isShiftClick = event.shiftKey;
+
+    setSortColumns((prev) => {
+      const existingIndex = prev.findIndex((s) => s.column === column);
+
+      if (existingIndex >= 0) {
+        // Column already in sort - toggle direction
+        const newSorts = [...prev];
+        newSorts[existingIndex] = {
+          ...newSorts[existingIndex],
+          direction: newSorts[existingIndex].direction === "asc" ? "desc" : "asc",
+        };
+        return newSorts;
+      } else {
+        // Column not in sort
+        if (isShiftClick) {
+          // Shift+Click: Add as additional sort (append)
+          return [...prev, { column, direction: "asc" }];
+        } else {
+          // Normal click: Set as primary sort (replace all)
+          return [{ column, direction: "asc" }];
+        }
+      }
     });
-  }, [candidates, searchQuery]);
+  };
+
+  // Get sort icon and priority indicator
+  const getSortIcon = (column: SortColumn) => {
+    const sortIndex = sortColumns.findIndex((s) => s.column === column);
+
+    if (sortIndex < 0) {
+      return <ArrowUpDown className="h-4 w-4 opacity-50" />;
+    }
+
+    const sortEntry = sortColumns[sortIndex];
+    const icon = sortEntry.direction === "asc" ? (
+      <ArrowUp className="h-4 w-4" />
+    ) : (
+      <ArrowDown className="h-4 w-4" />
+    );
+
+    // Show priority number if multiple sorts
+    if (sortColumns.length > 1) {
+      return (
+        <span className="flex items-center gap-1">
+          {icon}
+          <span className="text-xs font-semibold">{sortIndex + 1}</span>
+        </span>
+      );
+    }
+
+    return icon;
+  };
 
   const handleProgrammeChange = (value: string | undefined) => {
     setSelectedProgrammeId(value);
@@ -406,39 +519,87 @@ export default function IndexSlipsDownloadPage() {
                   {searchQuery ? "No candidates match your search" : "No candidates found with index numbers"}
                 </div>
               ) : (
-                <div className="rounded-md border">
-                  <Table>
+                <div className="space-y-2">
+                  <div className="flex items-start gap-2 text-sm text-muted-foreground bg-muted/50 p-2 rounded-md border">
+                    <Info className="h-4 w-4 mt-0.5 flex-shrink-0" />
+                    <div>
+                      <span className="font-medium">Sorting tip: </span>
+                      Click a column header to sort. Hold <kbd className="px-1.5 py-0.5 text-xs font-semibold bg-background border rounded">Shift</kbd> and click to add additional sort columns. Numbers indicate sort priority.
+                    </div>
+                  </div>
+                  <div className="rounded-md border">
+                    <Table>
                     <TableHeader>
                       <TableRow>
-                        <TableHead>Name</TableHead>
-                        <TableHead>Index Number</TableHead>
-                        <TableHead>Registration Number</TableHead>
-                        <TableHead>Programme</TableHead>
+                        <TableHead>
+                          <button
+                            type="button"
+                            onClick={(e) => handleSort("name", e)}
+                            className="flex items-center gap-2 hover:text-foreground"
+                            title="Click to sort, Shift+Click to add additional sort"
+                          >
+                            Name {getSortIcon("name")}
+                          </button>
+                        </TableHead>
+                        <TableHead>
+                          <button
+                            type="button"
+                            onClick={(e) => handleSort("index_number", e)}
+                            className="flex items-center gap-2 hover:text-foreground"
+                            title="Click to sort, Shift+Click to add additional sort"
+                          >
+                            Index Number {getSortIcon("index_number")}
+                          </button>
+                        </TableHead>
+                        <TableHead>
+                          <button
+                            type="button"
+                            onClick={(e) => handleSort("registration_number", e)}
+                            className="flex items-center gap-2 hover:text-foreground"
+                            title="Click to sort, Shift+Click to add additional sort"
+                          >
+                            Registration Number {getSortIcon("registration_number")}
+                          </button>
+                        </TableHead>
+                        <TableHead>
+                          <button
+                            type="button"
+                            onClick={(e) => handleSort("programme", e)}
+                            className="flex items-center gap-2 hover:text-foreground"
+                            title="Click to sort, Shift+Click to add additional sort"
+                          >
+                            Programme {getSortIcon("programme")}
+                          </button>
+                        </TableHead>
                         <TableHead className="text-right">Actions</TableHead>
                       </TableRow>
                     </TableHeader>
                     <TableBody>
-                      {filteredCandidates.map((candidate) => (
-                        <TableRow key={candidate.id}>
-                          <TableCell className="font-medium">{candidate.name}</TableCell>
-                          <TableCell>{candidate.index_number || "-"}</TableCell>
-                          <TableCell>{candidate.registration_number || "-"}</TableCell>
-                          <TableCell>{candidate.programme?.name || "-"}</TableCell>
-                          <TableCell className="text-right">
-                            <Button
-                              onClick={() => handleDownloadCandidate(candidate)}
-                              disabled={downloadingCandidates.has(candidate.id)}
-                              size="sm"
-                              variant="outline"
-                            >
-                              <Download className="mr-2 h-4 w-4" />
-                              {downloadingCandidates.has(candidate.id) ? "Downloading..." : "Download"}
-                            </Button>
-                          </TableCell>
-                        </TableRow>
-                      ))}
+                      {filteredCandidates.map((candidate) => {
+                        const programme = programmes.find((p) => p.id === candidate.programme_id);
+                        return (
+                          <TableRow key={candidate.id}>
+                            <TableCell className="font-medium">{candidate.name}</TableCell>
+                            <TableCell>{candidate.index_number || "-"}</TableCell>
+                            <TableCell>{candidate.registration_number || "-"}</TableCell>
+                            <TableCell>{programme?.name || "-"}</TableCell>
+                            <TableCell className="text-right">
+                              <Button
+                                onClick={() => handleDownloadCandidate(candidate)}
+                                disabled={downloadingCandidates.has(candidate.id)}
+                                size="sm"
+                                variant="outline"
+                              >
+                                <Download className="mr-2 h-4 w-4" />
+                                {downloadingCandidates.has(candidate.id) ? "Downloading..." : "Download"}
+                              </Button>
+                            </TableCell>
+                          </TableRow>
+                        );
+                      })}
                     </TableBody>
                   </Table>
+                  </div>
                 </div>
               )}
             </div>
