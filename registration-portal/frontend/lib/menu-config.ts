@@ -53,6 +53,12 @@ export const systemAdminMenuItems: MenuItem[] = [
     icon: BarChart3,
     roles: ["SystemAdmin", "Director", "DeputyDirector", "PrincipalManager", "SeniorManager", "Manager", "Staff"],
   },
+  {
+    href: "/dashboard/admin/photo-album",
+    label: "Photo Album",
+    icon: Images,
+    roles: ["SystemAdmin", "Director", "DeputyDirector", "PrincipalManager", "SeniorManager", "Manager", "Staff"],
+  },
 ];
 
 // System Admin "More Actions" Menu Items
