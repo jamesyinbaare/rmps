@@ -69,6 +69,7 @@ import type {
   ApplicationFeeCreate,
   ExamPricingModelResponse,
   ExamPricingModelCreate,
+  Invoice,
 } from "@/types";
 
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL || "http://localhost:8001";
@@ -624,6 +625,11 @@ export async function getRegistrationPaymentStatus(registrationId: number): Prom
     outstanding_amount: priceData.outstanding_amount,
     has_pricing: priceData.has_pricing || false,
   };
+}
+
+export async function getRegistrationForViewing(registrationId: number): Promise<RegistrationCandidate> {
+  const response = await fetchWithAuth(`/api/v1/private/registrations/${registrationId}/view`);
+  return handleResponse<RegistrationCandidate>(response);
 }
 
 export async function enableEditRegistration(registrationId: number): Promise<RegistrationCandidate> {
@@ -1310,6 +1316,28 @@ export async function downloadCandidateIndexSlip(candidateId: number): Promise<B
 export async function downloadMyIndexSlip(registrationId: number): Promise<Blob> {
   const token = getAccessToken();
   const response = await fetch(`${API_BASE_URL}/api/v1/private/registrations/${registrationId}/index-slip`, {
+    method: "GET",
+    headers: {
+      Authorization: `Bearer ${token}`,
+    },
+  });
+  if (!response.ok) {
+    await handleResponse(response);
+  }
+  return response.blob();
+}
+
+export async function listRegistrationInvoices(registrationId: number): Promise<Invoice[]> {
+  const response = await fetchWithAuth(`/api/v1/private/registrations/${registrationId}/invoices`);
+  if (!response.ok) {
+    await handleResponse(response);
+  }
+  return response.json();
+}
+
+export async function downloadInvoicePdf(invoiceId: number): Promise<Blob> {
+  const token = getAccessToken();
+  const response = await fetch(`${API_BASE_URL}/api/v1/private/invoices/${invoiceId}/pdf`, {
     method: "GET",
     headers: {
       Authorization: `Bearer ${token}`,
