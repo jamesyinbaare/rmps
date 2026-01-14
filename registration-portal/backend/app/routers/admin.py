@@ -8,6 +8,9 @@ from uuid import UUID
 from fastapi import APIRouter, HTTPException, Query, status, UploadFile, File, Form, BackgroundTasks, Body, Depends, Request
 from fastapi.responses import StreamingResponse
 import io
+import zipfile
+import re
+from pathlib import Path
 from pydantic import BaseModel, Field
 from sqlalchemy import select, func, delete, insert, update, cast, String, type_coerce
 from sqlalchemy.orm import selectinload
@@ -43,6 +46,7 @@ from app.models import (
     ApiUsage,
     UserCredit,
     CreditTransactionType,
+    RegistrationCandidatePhoto,
 )
 from app.schemas.registration import (
     RegistrationExamCreate,
@@ -53,6 +57,9 @@ from app.schemas.registration import (
     IndexNumberGenerationJobResponse,
     SchoolProgressItem,
     CandidateListResponse,
+    PhotoAlbumResponse,
+    PhotoAlbumItem,
+    RegistrationCandidatePhotoResponse,
 )
 from app.schemas.user import (
     SchoolAdminUserCreate,
@@ -1468,14 +1475,6 @@ async def create_exam(
         )
         session.add(new_exam)
         await session.commit()
-        # #region agent log
-        try:
-            with open('/home/jyin/workspace/lazaar/.cursor/debug.log', 'a') as f:
-                import json
-                f.write(json.dumps({"sessionId":"debug-session","runId":"run1","hypothesisId":"D","location":"admin.py:1430","message":"after commit","data":{},"timestamp":int(__import__('time').time()*1000)}) + '\n')
-        except Exception as log_err:
-            logger.error(f"Debug log write failed: {log_err}")
-        # #endregion
         await session.refresh(new_exam, ["registration_period"])
 
         return RegistrationExamResponse.model_validate(new_exam)
@@ -3073,6 +3072,314 @@ async def export_candidates(
         iter([output.getvalue()]),
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
+@router.get("/candidates/photos/album", response_model=PhotoAlbumResponse)
+async def get_admin_photo_album(
+    session: DBSessionDep,
+    current_user: SystemAdminDep,
+    page: int = Query(1, ge=1),
+    page_size: int = Query(20, ge=1, le=10000),
+    exam_id: int | None = Query(None, description="Filter by exam ID"),
+    school_id: int | None = Query(None, description="Filter by school ID"),
+    has_photo: bool | None = Query(None, description="Filter by presence of photo"),
+) -> PhotoAlbumResponse:
+    """Get photo album with pagination and filtering for system administrators."""
+    offset = (page - 1) * page_size
+
+    # Build base query for candidates
+    base_stmt = select(RegistrationCandidate, School)
+    base_stmt = base_stmt.join(School, RegistrationCandidate.school_id == School.id)
+
+    # Apply filters
+    if exam_id is not None:
+        base_stmt = base_stmt.where(RegistrationCandidate.registration_exam_id == exam_id)
+
+    if school_id is not None:
+        base_stmt = base_stmt.where(RegistrationCandidate.school_id == school_id)
+
+    # Get total count
+    count_stmt = select(func.count(func.distinct(RegistrationCandidate.id)))
+    if exam_id is not None:
+        count_stmt = count_stmt.where(RegistrationCandidate.registration_exam_id == exam_id)
+    if school_id is not None:
+        count_stmt = count_stmt.where(RegistrationCandidate.school_id == school_id)
+    count_result = await session.execute(count_stmt)
+    total = count_result.scalar() or 0
+
+    # If has_photo filter is applied, we need to filter candidates
+    if has_photo is not None:
+        # Get all candidate IDs matching other filters
+        all_candidates_stmt = select(RegistrationCandidate.id)
+        if exam_id is not None:
+            all_candidates_stmt = all_candidates_stmt.where(RegistrationCandidate.registration_exam_id == exam_id)
+        if school_id is not None:
+            all_candidates_stmt = all_candidates_stmt.where(RegistrationCandidate.school_id == school_id)
+
+        all_candidates_result = await session.execute(all_candidates_stmt)
+        all_candidate_ids = [row[0] for row in all_candidates_result.all()]
+
+        # Filter by photo presence
+        if has_photo:
+            # Get candidates with photos
+            photos_stmt = select(RegistrationCandidatePhoto.registration_candidate_id)
+            if all_candidate_ids:
+                photos_stmt = photos_stmt.where(RegistrationCandidatePhoto.registration_candidate_id.in_(all_candidate_ids))
+            photos_result = await session.execute(photos_stmt)
+            candidate_ids_with_photos = {row[0] for row in photos_result.all()}
+            filtered_candidate_ids = [cid for cid in all_candidate_ids if cid in candidate_ids_with_photos]
+        else:
+            # Get candidates without photos
+            photos_stmt = select(RegistrationCandidatePhoto.registration_candidate_id)
+            if all_candidate_ids:
+                photos_stmt = photos_stmt.where(RegistrationCandidatePhoto.registration_candidate_id.in_(all_candidate_ids))
+            photos_result = await session.execute(photos_stmt)
+            candidate_ids_with_photos = {row[0] for row in photos_result.all()}
+            filtered_candidate_ids = [cid for cid in all_candidate_ids if cid not in candidate_ids_with_photos]
+
+        # Update total and base query
+        total = len(filtered_candidate_ids)
+        if not filtered_candidate_ids:
+            return PhotoAlbumResponse(
+                items=[],
+                total=0,
+                page=page,
+                page_size=page_size,
+                total_pages=0,
+            )
+
+        base_stmt = base_stmt.where(RegistrationCandidate.id.in_(filtered_candidate_ids))
+
+    # Get candidates
+    stmt = base_stmt.offset(offset).limit(page_size).order_by(RegistrationCandidate.registration_number)
+    result = await session.execute(stmt)
+    candidate_school_pairs = result.all()
+
+    # Build response items
+    items: list[PhotoAlbumItem] = []
+    for candidate, school in candidate_school_pairs:
+        # Get photo for this candidate
+        photo_stmt = select(RegistrationCandidatePhoto).where(
+            RegistrationCandidatePhoto.registration_candidate_id == candidate.id
+        )
+        photo_result = await session.execute(photo_stmt)
+        photo = photo_result.scalar_one_or_none()
+
+        photo_response = RegistrationCandidatePhotoResponse.model_validate(photo) if photo else None
+
+        items.append(
+            PhotoAlbumItem(
+                candidate_id=candidate.id,
+                candidate_name=candidate.name,
+                registration_number=candidate.registration_number,
+                index_number=candidate.index_number,
+                school_id=school.id if school else None,
+                school_name=school.name if school else None,
+                school_code=school.code if school else None,
+                photo=photo_response,
+            )
+        )
+
+    total_pages = (total + page_size - 1) // page_size if total > 0 else 0
+
+    return PhotoAlbumResponse(
+        items=items,
+        total=total,
+        page=page,
+        page_size=page_size,
+        total_pages=total_pages,
+    )
+
+
+def sanitize_folder_name(name: str) -> str:
+    """Remove special characters that could cause issues in file systems."""
+    if not name:
+        return ""
+    # Remove or replace problematic characters: / \ : * ? " < > |
+    # Replace spaces and other special chars with underscore
+    sanitized = re.sub(r'[<>:"/\\|?*]', '', name)
+    # Replace multiple spaces/underscores with single underscore
+    sanitized = re.sub(r'[\s_]+', '_', sanitized)
+    # Remove leading/trailing underscores
+    sanitized = sanitized.strip('_')
+    return sanitized
+
+
+@router.get("/candidates/photos/export")
+async def export_candidate_photos(
+    session: DBSessionDep,
+    current_user: SystemAdminDep,
+    exam_id: int = Query(..., description="Exam ID (required)"),
+    school_id: int | None = Query(None, description="Filter by school ID"),
+) -> StreamingResponse:
+    """Export candidate photos as a ZIP file, named by registration number. Exam ID is required."""
+    # Initialize photo storage service
+    photo_storage_service = PhotoStorageService()
+
+    # Build query for candidates with photos
+    # exam_id is required, so we always filter by it
+    base_stmt = (
+        select(RegistrationCandidate, RegistrationCandidatePhoto, School, RegistrationExam)
+        .join(RegistrationCandidatePhoto, RegistrationCandidate.id == RegistrationCandidatePhoto.registration_candidate_id)
+        .join(School, RegistrationCandidate.school_id == School.id)
+        .join(RegistrationExam, RegistrationCandidate.registration_exam_id == RegistrationExam.id)
+        .where(RegistrationCandidate.registration_exam_id == exam_id)
+    )
+
+    # Apply school filter if provided
+    if school_id is not None:
+        base_stmt = base_stmt.where(RegistrationCandidate.school_id == school_id)
+
+    # Execute query
+    result = await session.execute(base_stmt)
+    candidate_photo_school_exam_tuples = result.all()
+
+    if not candidate_photo_school_exam_tuples:
+        # Return empty ZIP if no photos found
+        zip_buffer = io.BytesIO()
+        with zipfile.ZipFile(zip_buffer, "w", zipfile.ZIP_DEFLATED) as zip_file:
+            pass
+        zip_buffer.seek(0)
+
+        # Get exam info for filename (exam_id is required)
+        exam_stmt = select(RegistrationExam).where(RegistrationExam.id == exam_id)
+        exam_result = await session.execute(exam_stmt)
+        exam = exam_result.scalar_one_or_none()
+        if exam:
+            if exam.exam_series:
+                filename = f"{exam.exam_type}_{exam.year}_{exam.exam_series}_photos.zip"
+            else:
+                filename = f"{exam.exam_type}_{exam.year}_photos.zip"
+        else:
+            filename = f"exam_{exam_id}_photos.zip"
+
+        content_disposition = f'attachment; filename="{filename}"'
+        return StreamingResponse(
+            iter([zip_buffer.getvalue()]),
+            media_type="application/zip",
+            headers={
+                "Content-Disposition": content_disposition,
+                "Access-Control-Expose-Headers": "Content-Disposition",
+            },
+        )
+
+    # Create ZIP file in memory
+    zip_buffer = io.BytesIO()
+    logger = logging.getLogger(__name__)
+
+    # Determine filename - exam_id is required, so we always use exam info
+    # Use the exam from first result (all should have same exam if filtered)
+    exam = candidate_photo_school_exam_tuples[0][3]
+    if exam.exam_series:
+        filename = f"{exam.exam_type}_{exam.year}_{exam.exam_series}_photos.zip"
+    else:
+        filename = f"{exam.exam_type}_{exam.year}_photos.zip"
+
+    with zipfile.ZipFile(zip_buffer, "w", zipfile.ZIP_DEFLATED) as zip_file:
+        for candidate, photo, school, exam in candidate_photo_school_exam_tuples:
+            try:
+                # Retrieve photo file
+                photo_content = await photo_storage_service.retrieve(photo.file_path)
+
+                # Determine file extension
+                file_ext = Path(photo.file_name).suffix
+                if not file_ext:
+                    # Try to determine from mime type
+                    if photo.mime_type == "image/jpeg" or photo.mime_type == "image/jpg":
+                        file_ext = ".jpg"
+                    elif photo.mime_type == "image/png":
+                        file_ext = ".png"
+                    else:
+                        file_ext = ".jpg"  # Default
+
+                # Create filename using registration number
+                photo_filename = f"{candidate.registration_number}{file_ext}"
+
+                # Determine ZIP path
+                if school_id is None:
+                    # Organize by school folder: {school_code}-{school_name:20}
+                    school_code_sanitized = sanitize_folder_name(school.code if school.code else "")
+                    school_name_sanitized = sanitize_folder_name(school.name if school.name else "")
+                    # Take first 20 characters of school name
+                    school_name_short = school_name_sanitized[:20] if school_name_sanitized else "unknown"
+
+                    if school_code_sanitized:
+                        school_folder = f"{school_code_sanitized}-{school_name_short}"
+                    else:
+                        school_folder = school_name_short if school_name_short else "unknown"
+
+                    zip_path = f"{school_folder}/{photo_filename}"
+                else:
+                    # Flat structure when school is filtered
+                    zip_path = photo_filename
+
+                # Add to ZIP
+                zip_file.writestr(zip_path, photo_content)
+
+            except Exception as e:
+                # Log error but continue with other photos
+                logger.warning(f"Failed to add photo for candidate {candidate.id} (registration {candidate.registration_number}): {e}")
+
+    zip_buffer.seek(0)
+
+    content_disposition = f'attachment; filename="{filename}"'
+    return StreamingResponse(
+        iter([zip_buffer.getvalue()]),
+        media_type="application/zip",
+        headers={
+            "Content-Disposition": content_disposition,
+            "Access-Control-Expose-Headers": "Content-Disposition",
+        },
+    )
+
+
+@router.get("/candidates/{candidate_id}/photos/file")
+async def get_admin_candidate_photo_file(
+    candidate_id: int,
+    session: DBSessionDep,
+    current_user: SystemAdminDep,
+) -> StreamingResponse:
+    """Get photo file for admin."""
+    # Verify candidate exists
+    candidate_stmt = select(RegistrationCandidate).where(RegistrationCandidate.id == candidate_id)
+    candidate_result = await session.execute(candidate_stmt)
+    candidate = candidate_result.scalar_one_or_none()
+    if not candidate:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Candidate not found")
+
+    # Initialize photo storage service
+    photo_storage_service = PhotoStorageService()
+
+    # Get photo
+    photo_stmt = select(RegistrationCandidatePhoto).where(
+        RegistrationCandidatePhoto.registration_candidate_id == candidate_id
+    )
+    photo_result = await session.execute(photo_stmt)
+    photo = photo_result.scalar_one_or_none()
+    if not photo:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Photo not found")
+
+    # Retrieve file
+    try:
+        if not await photo_storage_service.exists(photo.file_path):
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND, detail="Photo file not found in storage"
+            )
+        file_content = await photo_storage_service.retrieve(photo.file_path)
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger = logging.getLogger(__name__)
+        logger.error(f"Unexpected error retrieving photo file {photo.file_path}: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Failed to retrieve photo file: {str(e)}"
+        )
+
+    return StreamingResponse(
+        iter([file_content]),
+        media_type=photo.mime_type,
+        headers={"Content-Disposition": f'inline; filename="{photo.file_name}"'},
     )
 
 
