@@ -1,7 +1,7 @@
 "use client";
 
-import { useState, useEffect, useCallback, useRef } from "react";
-import { getPhotoAlbum, listAvailableExams, listSchoolProgrammes, getPhotoFile, bulkUploadPhotos } from "@/lib/api";
+import { useState, useEffect, useCallback, useRef, useMemo } from "react";
+import { getPhotoAlbum, listAllExams, listSchoolProgrammes, getPhotoFile, bulkUploadPhotos } from "@/lib/api";
 import type { PhotoAlbumItem, RegistrationExam, Programme, PhotoBulkUploadResponse } from "@/types";
 import { toast } from "sonner";
 import { Search, User, Image as ImageIcon, Loader2, Upload, X, CheckCircle2, AlertCircle, FileText, Filter, ChevronDown, ChevronUp, ChevronLeft, ChevronRight } from "lucide-react";
@@ -133,7 +133,7 @@ export default function PhotoAlbumPage() {
   useEffect(() => {
     async function loadExams() {
       try {
-        const allExams = await listAvailableExams();
+        const allExams = await listAllExams();
         setExams(allExams);
       } catch (err) {
         console.error("Failed to load exams:", err);
@@ -304,6 +304,16 @@ export default function PhotoAlbumPage() {
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
   }, [selectedPhoto, navigateToPhoto]);
+
+  // Check if registration period has ended for the selected exam
+  const isRegistrationEnded = useMemo(() => {
+    if (!selectedExamId) return false;
+    const exam = exams.find((e) => e.id === selectedExamId);
+    if (!exam?.registration_period) return false;
+    const now = new Date();
+    const endDate = new Date(exam.registration_period.registration_end_date);
+    return !exam.registration_period.is_active || now > endDate;
+  }, [selectedExamId, exams]);
 
   const canLoadPhotos = selectedExamId !== null;
 
@@ -551,9 +561,10 @@ export default function PhotoAlbumPage() {
         <div className="flex flex-wrap gap-3 justify-end">
           <Button
             onClick={() => setBulkUploadOpen(true)}
-            disabled={!selectedExamId}
+            disabled={!selectedExamId || isRegistrationEnded}
             variant="outline"
             className="min-w-[140px]"
+            title={isRegistrationEnded ? "Upload is disabled because registration period has ended" : undefined}
           >
             <Upload className="h-4 w-4 mr-2" />
             Bulk Upload
