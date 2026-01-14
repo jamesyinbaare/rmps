@@ -1011,14 +1011,48 @@ async def submit_draft_registration(
             detail=f"Payment required. Outstanding amount: {outstanding:.2f} GHS. Please complete payment before submitting.",
         )
 
-    # Change status to PENDING
-    draft.registration_status = RegistrationStatus.PENDING
+    # Change status to APPROVED after payment is completed and registration is submitted
+    draft.registration_status = RegistrationStatus.APPROVED
     draft.registration_date = datetime.utcnow()
 
     await session.commit()
     await session.refresh(draft, ["subject_selections"])
 
     return RegistrationCandidateResponse.model_validate(draft)
+
+
+@router.get("/registrations/{registration_id}/view", response_model=RegistrationCandidateResponse)
+async def get_registration_for_viewing(
+    registration_id: int,
+    session: DBSessionDep,
+    current_user: CurrentUserDep,
+) -> RegistrationCandidateResponse:
+    """Get a registration for viewing (read-only mode). Works even when registration period is closed."""
+    if current_user.role != Role.PublicUser:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="This endpoint is for private users only")
+
+    # Get registration - allow any status for viewing
+    stmt = (
+        select(RegistrationCandidate)
+        .where(
+            RegistrationCandidate.id == registration_id,
+            RegistrationCandidate.portal_user_id == current_user.id,
+        )
+        .options(
+            selectinload(RegistrationCandidate.exam).selectinload(RegistrationExam.registration_period),
+            selectinload(RegistrationCandidate.subject_selections)
+        )
+    )
+    result = await session.execute(stmt)
+    registration = result.scalar_one_or_none()
+
+    if not registration:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Registration not found",
+        )
+
+    return RegistrationCandidateResponse.model_validate(registration)
 
 
 @router.post("/registrations/{registration_id}/edit", response_model=RegistrationCandidateResponse)
@@ -1283,10 +1317,16 @@ async def download_my_index_slip(
     if current_user.role != Role.PublicUser:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="This endpoint is for private users only")
 
-    # Get candidate registration
-    candidate_stmt = select(RegistrationCandidate).where(
-        RegistrationCandidate.id == registration_id,
-        RegistrationCandidate.portal_user_id == current_user.id,
+    # Get candidate registration with exam and registration period
+    candidate_stmt = (
+        select(RegistrationCandidate)
+        .where(
+            RegistrationCandidate.id == registration_id,
+            RegistrationCandidate.portal_user_id == current_user.id,
+        )
+        .options(
+            selectinload(RegistrationCandidate.exam).selectinload(RegistrationExam.registration_period)
+        )
     )
     candidate_result = await session.execute(candidate_stmt)
     candidate = candidate_result.scalar_one_or_none()
@@ -1294,10 +1334,23 @@ async def download_my_index_slip(
     if not candidate:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Registration not found")
 
-    if not candidate.index_number:
+    # Check if index slip is available: either index_number exists OR registration period has ended
+    from datetime import datetime, timezone
+    now = datetime.now(timezone.utc)
+
+    registration_period_ended = False
+    if candidate.exam and candidate.exam.registration_period:
+        period_end = candidate.exam.registration_period.registration_end_date
+        if period_end:
+            # Ensure period_end is timezone-aware for comparison
+            if period_end.tzinfo is None:
+                period_end = period_end.replace(tzinfo=timezone.utc)
+            registration_period_ended = period_end < now
+
+    if not candidate.index_number and not registration_period_ended:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Index number must be generated before downloading Index Slip",
+            detail="Index slip is not yet available. Index numbers will be generated after the registration period ends.",
         )
 
     # Generate PDF (service function will load photo if needed)
@@ -1313,6 +1366,104 @@ async def download_my_index_slip(
         )
 
     filename = f"index_slip_{candidate.index_number}.pdf"
+    return StreamingResponse(
+        iter([pdf_bytes]),
+        media_type="application/pdf",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
+@router.get("/registrations/{registration_id}/invoices")
+async def list_registration_invoices(
+    registration_id: int,
+    session: DBSessionDep,
+    current_user: CurrentUserDep,
+) -> list[dict]:
+    """List all invoices for a registration (private candidate only)."""
+    if current_user.role != Role.PublicUser:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="This endpoint is for private users only")
+
+    # Get registration and verify ownership
+    candidate_stmt = select(RegistrationCandidate).where(
+        RegistrationCandidate.id == registration_id,
+        RegistrationCandidate.portal_user_id == current_user.id,
+    )
+    candidate_result = await session.execute(candidate_stmt)
+    candidate = candidate_result.scalar_one_or_none()
+
+    if not candidate:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Registration not found")
+
+    # Get all invoices for this registration
+    from app.models import Invoice
+    invoice_stmt = select(Invoice).where(
+        Invoice.registration_candidate_id == registration_id
+    ).order_by(Invoice.created_at.desc())
+    invoice_result = await session.execute(invoice_stmt)
+    invoices = invoice_result.scalars().all()
+
+    # Convert to dict format
+    invoice_list = []
+    for invoice in invoices:
+        invoice_list.append({
+            "id": invoice.id,
+            "invoice_number": invoice.invoice_number,
+            "amount": float(invoice.amount),
+            "currency": invoice.currency,
+            "status": invoice.status,
+            "due_date": invoice.due_date.isoformat() if invoice.due_date else None,
+            "paid_at": invoice.paid_at.isoformat() if invoice.paid_at else None,
+            "created_at": invoice.created_at.isoformat(),
+        })
+
+    return invoice_list
+
+
+@router.get("/invoices/{invoice_id}/pdf")
+async def download_invoice_pdf(
+    invoice_id: int,
+    session: DBSessionDep,
+    current_user: CurrentUserDep,
+) -> StreamingResponse:
+    """Download invoice PDF for own registration (private candidate only)."""
+    if current_user.role != Role.PublicUser:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="This endpoint is for private users only")
+
+    # Get invoice and verify ownership
+    from app.models import Invoice
+    invoice_stmt = select(Invoice).where(Invoice.id == invoice_id)
+    invoice_result = await session.execute(invoice_stmt)
+    invoice = invoice_result.scalar_one_or_none()
+
+    if not invoice:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Invoice not found")
+
+    if not invoice.registration_candidate_id:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invoice is not associated with a registration")
+
+    # Verify the registration belongs to the current user
+    candidate_stmt = select(RegistrationCandidate).where(
+        RegistrationCandidate.id == invoice.registration_candidate_id,
+        RegistrationCandidate.portal_user_id == current_user.id,
+    )
+    candidate_result = await session.execute(candidate_stmt)
+    candidate = candidate_result.scalar_one_or_none()
+
+    if not candidate:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="You do not have access to this invoice")
+
+    # Generate PDF
+    from app.services.registration_invoice_service import generate_registration_invoice_pdf
+    try:
+        pdf_bytes = await generate_registration_invoice_pdf(session, invoice, candidate)
+    except Exception as e:
+        logger.error(f"Failed to generate invoice PDF: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to generate invoice PDF",
+        )
+
+    filename = f"invoice_{invoice.invoice_number}.pdf"
     return StreamingResponse(
         iter([pdf_bytes]),
         media_type="application/pdf",
