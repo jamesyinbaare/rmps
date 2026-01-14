@@ -24,6 +24,7 @@ from app.models import (
     RegistrationExam,
     RegistrationStatus,
     RegistrationSubjectSelection,
+    RegistrationType,
     Role,
     School,
     Subject,
@@ -248,6 +249,13 @@ async def register_private_user(
             detail="At least one subject must be selected when no programme is selected",
         )
 
+    # Guardian info required for private registration
+    if not registration_data.guardian_name or not registration_data.guardian_phone:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Guardian name and phone are required for private registration",
+        )
+
     # Create user account
     hashed_password = get_password_hash(registration_data.password)
     new_user = PortalUser(
@@ -271,7 +279,9 @@ async def register_private_user(
         registration_exam_id=registration_data.exam_id,
         school_id=registration_data.school_id,
         portal_user_id=new_user.id,
-        name=registration_data.name,
+        firstname=registration_data.firstname,
+        lastname=registration_data.lastname,
+        othername=registration_data.othername,
         registration_number=registration_number,
         date_of_birth=registration_data.date_of_birth,
         gender=registration_data.gender,
@@ -280,6 +290,12 @@ async def register_private_user(
         contact_phone=registration_data.contact_phone,
         address=registration_data.address,
         national_id=registration_data.national_id,
+        disability=registration_data.disability,
+        registration_type=registration_type,
+        guardian_name=registration_data.guardian_name,
+        guardian_phone=registration_data.guardian_phone,
+        guardian_digital_address=registration_data.guardian_digital_address,
+        guardian_national_id=registration_data.guardian_national_id,
         registration_status=RegistrationStatus.PENDING,
     )
     session.add(new_candidate)

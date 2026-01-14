@@ -64,6 +64,32 @@ const STEPS = [
   { number: 7, title: "Review" },
 ];
 
+// Phone formatting functions
+const formatPhoneForDisplay = (phone: string): string => {
+  // Remove all spaces first
+  const digits = phone.replace(/\s/g, "");
+  // Format as XXX XXX XXXX (3-3-4)
+  if (digits.length <= 3) return digits;
+  if (digits.length <= 6) return `${digits.slice(0, 3)} ${digits.slice(3)}`;
+  return `${digits.slice(0, 3)} ${digits.slice(3, 6)} ${digits.slice(6, 10)}`;
+};
+
+const stripPhoneFormatting = (phone: string): string => {
+  return phone.replace(/\s/g, "");
+};
+
+const validateGhanaPhone = (phone: string): { isValid: boolean; error?: string } => {
+  const stripped = stripPhoneFormatting(phone);
+  if (!stripped) {
+    return { isValid: false, error: "Phone number is required" };
+  }
+  // Ghana phone format: 10 digits starting with 0
+  if (!/^0\d{9}$/.test(stripped)) {
+    return { isValid: false, error: "Phone number must be 10 digits starting with 0 (e.g., 0554210052)" };
+  }
+  return { isValid: true };
+};
+
 export default function PrivateRegistrationPage() {
   const router = useRouter();
   const searchParams = useSearchParams();
@@ -360,12 +386,12 @@ export default function PrivateRegistrationPage() {
         setDateOfBirth(draft.date_of_birth || "");
         setGender(draft.gender || "");
         setContactEmail(draft.contact_email || "");
-        setContactPhone(draft.contact_phone || "");
+        setContactPhone(draft.contact_phone ? formatPhoneForDisplay(draft.contact_phone) : "");
         setAddress(draft.address || "");
         setNationalId(draft.national_id || "");
         setDisability(draft.disability || "");
         setGuardianName(draft.guardian_name || "");
-        setGuardianPhone(draft.guardian_phone || "");
+        setGuardianPhone(draft.guardian_phone ? formatPhoneForDisplay(draft.guardian_phone) : "");
         setGuardianDigitalAddress(draft.guardian_digital_address || "");
         setGuardianNationalId(draft.guardian_national_id || "");
         setProgrammeId(draft.programme_id || null);
@@ -468,18 +494,18 @@ export default function PrivateRegistrationPage() {
     try {
       const candidateData = {
         firstname: firstname || "Draft",
-        lastname: lastname || "",
+        lastname: lastname || "Draft",
         othername: othername || null,
         disability: disability || null,
         registration_type: "private",
         guardian_name: guardianName || null,
-        guardian_phone: guardianPhone || null,
+        guardian_phone: guardianPhone ? stripPhoneFormatting(guardianPhone) : null,
         guardian_digital_address: guardianDigitalAddress || null,
         guardian_national_id: guardianNationalId || null,
         date_of_birth: dateOfBirth || undefined,
         gender: gender || undefined,
         contact_email: contactEmail || undefined,
-        contact_phone: contactPhone || undefined,
+        contact_phone: contactPhone ? stripPhoneFormatting(contactPhone) : undefined,
         address: address || undefined,
         national_id: nationalId || undefined,
         programme_id: programmeId || undefined,
@@ -528,9 +554,43 @@ export default function PrivateRegistrationPage() {
       toast.error("Please select an examination center");
       return;
     }
-    if (currentStep === 3 && !name) {
-      toast.error("Please enter your name");
-      return;
+    if (currentStep === 3) {
+      if (!firstname || !lastname) {
+        toast.error("Please enter your first and last name");
+        return;
+      }
+      if (!dateOfBirth) {
+        toast.error("Date of birth is required");
+        return;
+      }
+      if (!gender) {
+        toast.error("Gender is required");
+        return;
+      }
+      if (!contactEmail) {
+        toast.error("Contact email is required");
+        return;
+      }
+      if (!contactPhone) {
+        toast.error("Contact phone is required");
+        return;
+      }
+      if (!address) {
+        toast.error("Address is required");
+        return;
+      }
+      if (!nationalId) {
+        toast.error("National ID is required");
+        return;
+      }
+      if (!guardianName) {
+        toast.error("Guardian name is required");
+        return;
+      }
+      if (!guardianPhone) {
+        toast.error("Guardian phone is required");
+        return;
+      }
     }
     if (currentStep === 4) {
       const exam = exams.find((e) => e.id === selectedExamId);
@@ -546,7 +606,11 @@ export default function PrivateRegistrationPage() {
     }
 
     // Save draft before moving to next step (this now includes photo upload)
-    await saveDraft();
+    // Only save if we have an existing draft OR if we're past step 2 (where school is selected)
+    // Backend requires school_id for NEW drafts
+    if (draftId || currentStep >= 2) {
+      await saveDraft();
+    }
 
     // Only advance if save was successful (saveDraft handles errors internally)
     // Don't advance past step 7 (review) - user can submit from there
@@ -568,7 +632,9 @@ export default function PrivateRegistrationPage() {
     // Check if step is accessible (completed or is step 1)
     if (stepNumber === 1 || completedSteps.has(stepNumber) || stepNumber < currentStep) {
       // Save draft before navigating to a different step
-      if (selectedExamId) {
+      // Only save if we have an existing draft OR if we're past step 2 (where school is selected)
+      // Backend requires school_id for NEW drafts
+      if (selectedExamId && (draftId || currentStep >= 2)) {
         await saveDraft();
       }
       setCurrentStep(stepNumber);
@@ -583,7 +649,11 @@ export default function PrivateRegistrationPage() {
 
     setSaving(true);
     try {
-      await saveDraft();
+      // Only save if we have an existing draft OR if we're past step 2 (where school is selected)
+      // Backend requires school_id for NEW drafts
+      if (draftId || currentStep >= 2) {
+        await saveDraft();
+      }
       toast.success("Progress saved. Logging out...");
       // Logout the user
       await logout();
@@ -903,7 +973,7 @@ export default function PrivateRegistrationPage() {
                     </Select>
                     {existingRegistrations.length > 0 && (
                       <p className="text-xs text-muted-foreground">
-                        Note: You can only submit one application per examination. Exams you've already registered for are disabled.
+                        Note: You can only submit one application per examination.
                       </p>
                     )}
                   </>
@@ -940,116 +1010,138 @@ export default function PrivateRegistrationPage() {
           {/* Step 3: Bio Data */}
           {currentStep === 3 && (
             <div className="space-y-4">
-              <div className="grid grid-cols-2 gap-4">
-                <div className="space-y-2">
-                  <Label htmlFor="firstname">First Name *</Label>
-                  <Input
-                    id="firstname"
-                    value={firstname}
-                    onChange={(e) => setFirstname(e.target.value)}
-                    placeholder="John"
-                    required
-                  />
+              {/* Basic Information Section */}
+              <div className="space-y-4">
+                <h4 className="font-medium">Basic Information</h4>
+                <div className="grid grid-cols-2 gap-4">
+                  <div className="space-y-2">
+                    <Label htmlFor="firstname">First Name *</Label>
+                    <Input
+                      id="firstname"
+                      value={firstname}
+                      onChange={(e) => setFirstname(e.target.value)}
+                      placeholder="John"
+                      required
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="lastname">Last Name *</Label>
+                    <Input
+                      id="lastname"
+                      value={lastname}
+                      onChange={(e) => setLastname(e.target.value)}
+                      placeholder="Doe"
+                      required
+                    />
+                  </div>
                 </div>
                 <div className="space-y-2">
-                  <Label htmlFor="lastname">Last Name *</Label>
+                  <Label htmlFor="othername">Other Name (Optional)</Label>
                   <Input
-                    id="lastname"
-                    value={lastname}
-                    onChange={(e) => setLastname(e.target.value)}
-                    placeholder="Doe"
-                    required
+                    id="othername"
+                    value={othername}
+                    onChange={(e) => setOthername(e.target.value)}
+                    placeholder="Middle name"
                   />
                 </div>
-              </div>
-              <div className="space-y-2">
-                <Label htmlFor="othername">Other Name (Optional)</Label>
-                <Input
-                  id="othername"
-                  value={othername}
-                  onChange={(e) => setOthername(e.target.value)}
-                  placeholder="Middle name"
-                />
-              </div>
-              <div className="grid grid-cols-2 gap-4">
-                <div className="space-y-2">
-                  <Label htmlFor="dob">Date of Birth</Label>
-                  <Input
-                    id="dob"
-                    type="date"
-                    value={dateOfBirth}
-                    onChange={(e) => setDateOfBirth(e.target.value)}
-                  />
+                <div className="grid grid-cols-2 gap-4">
+                  <div className="space-y-2">
+                    <Label htmlFor="dob">Date of Birth *</Label>
+                    <Input
+                      id="dob"
+                      type="date"
+                      value={dateOfBirth}
+                      onChange={(e) => setDateOfBirth(e.target.value)}
+                      required
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="gender">Gender *</Label>
+                    <Select value={gender} onValueChange={setGender} required>
+                      <SelectTrigger>
+                        <SelectValue placeholder="Select gender" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="Male">Male</SelectItem>
+                        <SelectItem value="Female">Female</SelectItem>
+                        <SelectItem value="Other">Other</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
                 </div>
                 <div className="space-y-2">
-                  <Label htmlFor="gender">Gender</Label>
-                  <Select value={gender} onValueChange={setGender}>
+                  <Label htmlFor="disability">Disability (Optional)</Label>
+                  <Select value={disability} onValueChange={setDisability}>
                     <SelectTrigger>
-                      <SelectValue placeholder="Select gender" />
+                      <SelectValue placeholder="Select disability type" />
                     </SelectTrigger>
                     <SelectContent>
-                      <SelectItem value="Male">Male</SelectItem>
-                      <SelectItem value="Female">Female</SelectItem>
+                      <SelectItem value="Visual">Visual</SelectItem>
+                      <SelectItem value="Auditory">Auditory</SelectItem>
+                      <SelectItem value="Physical">Physical</SelectItem>
+                      <SelectItem value="Cognitive">Cognitive</SelectItem>
+                      <SelectItem value="Speech">Speech</SelectItem>
                       <SelectItem value="Other">Other</SelectItem>
                     </SelectContent>
                   </Select>
                 </div>
               </div>
-              <div className="space-y-2">
-                <Label htmlFor="email">Contact Email</Label>
-                <Input
-                  id="email"
-                  type="email"
-                  value={contactEmail}
-                  onChange={(e) => setContactEmail(e.target.value)}
-                  placeholder="your.email@example.com"
-                />
-              </div>
-              <div className="space-y-2">
-                <Label htmlFor="phone">Contact Phone</Label>
-                <Input
-                  id="phone"
-                  value={contactPhone}
-                  onChange={(e) => setContactPhone(e.target.value)}
-                  placeholder="+1234567890"
-                />
-              </div>
-              <div className="space-y-2">
-                <Label htmlFor="address">Address</Label>
-                <Input
-                  id="address"
-                  value={address}
-                  onChange={(e) => setAddress(e.target.value)}
-                  placeholder="Your address"
-                />
-              </div>
-              <div className="space-y-2">
-                <Label htmlFor="nationalId">National ID</Label>
-                <Input
-                  id="nationalId"
-                  value={nationalId}
-                  onChange={(e) => setNationalId(e.target.value)}
-                  placeholder="National ID number"
-                />
-              </div>
-              <div className="space-y-2">
-                <Label htmlFor="disability">Disability (Optional)</Label>
-                <Select value={disability} onValueChange={setDisability}>
-                  <SelectTrigger>
-                    <SelectValue placeholder="Select disability type" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="Visual">Visual</SelectItem>
-                    <SelectItem value="Auditory">Auditory</SelectItem>
-                    <SelectItem value="Physical">Physical</SelectItem>
-                    <SelectItem value="Cognitive">Cognitive</SelectItem>
-                    <SelectItem value="Speech">Speech</SelectItem>
-                    <SelectItem value="Other">Other</SelectItem>
-                  </SelectContent>
-                </Select>
-              </div>
+
+              {/* Contact Information Section */}
               <div className="space-y-4 border-t pt-4">
-                <h4 className="font-medium">Guardian Information (Required for Private Registration)</h4>
+                <h4 className="font-medium">Contact Information</h4>
+                <div className="grid grid-cols-2 gap-4">
+                  <div className="space-y-2">
+                    <Label htmlFor="email">Contact Email *</Label>
+                    <Input
+                      id="email"
+                      type="email"
+                      value={contactEmail}
+                      onChange={(e) => setContactEmail(e.target.value)}
+                      placeholder="your.email@example.com"
+                      required
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="phone">Contact Phone *</Label>
+                    <Input
+                      id="phone"
+                      value={contactPhone}
+                      onChange={(e) => {
+                        const formatted = formatPhoneForDisplay(e.target.value);
+                        setContactPhone(formatted);
+                      }}
+                      placeholder="055 421 0052"
+                      maxLength={12}
+                      required
+                    />
+                  </div>
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="address">Digital Address *</Label>
+                  <Input
+                    id="address"
+                    value={address}
+                    onChange={(e) => setAddress(e.target.value)}
+                    placeholder="GA-123-4567"
+                    required
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="nationalId">National ID *</Label>
+                  <Input
+                    id="nationalId"
+                    value={nationalId}
+                    onChange={(e) => setNationalId(e.target.value)}
+                    placeholder="National ID number"
+                    required
+                  />
+                </div>
+              </div>
+
+              {/* Guardian Information Section */}
+              <div className="space-y-4 border-t pt-4">
+                <h4 className="font-medium">Guardian Information (Required)</h4>
                 <div className="space-y-2">
                   <Label htmlFor="guardianName">Guardian Name *</Label>
                   <Input
@@ -1065,8 +1157,12 @@ export default function PrivateRegistrationPage() {
                   <Input
                     id="guardianPhone"
                     value={guardianPhone}
-                    onChange={(e) => setGuardianPhone(e.target.value)}
-                    placeholder="+1234567890"
+                    onChange={(e) => {
+                      const formatted = formatPhoneForDisplay(e.target.value);
+                      setGuardianPhone(formatted);
+                    }}
+                    placeholder="055 421 0052"
+                    maxLength={12}
                     required
                   />
                 </div>
@@ -1287,7 +1383,7 @@ export default function PrivateRegistrationPage() {
                     <div className="relative w-16 h-16 rounded-full overflow-hidden border-2 border-primary shrink-0">
                       <img
                         src={photoPreview}
-                        alt={name}
+                        alt={loadedDraft?.name || `${firstname} ${othername ? othername + " " : ""}${lastname}`.trim() || "Candidate photo"}
                         className="w-full h-full object-cover"
                       />
                     </div>

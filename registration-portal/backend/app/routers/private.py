@@ -315,6 +315,38 @@ async def register_self(
             detail="Programme selection is required for NOV/DEC exams",
         )
 
+    # Required fields validation for private registration
+    if not candidate_data.date_of_birth:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Date of birth is required for private registration",
+        )
+    if not candidate_data.gender:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Gender is required for private registration",
+        )
+    if not candidate_data.contact_email:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Contact email is required for private registration",
+        )
+    if not candidate_data.contact_phone:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Contact phone is required for private registration",
+        )
+    if not candidate_data.address:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Address is required for private registration",
+        )
+    if not candidate_data.national_id:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="National ID is required for private registration",
+        )
+
     # Guardian info required for private registration
     if not candidate_data.guardian_name or not candidate_data.guardian_phone:
         raise HTTPException(
@@ -575,7 +607,9 @@ async def save_draft_registration(
 
     if existing_draft:
         # Update existing draft
-        existing_draft.name = candidate_data.name
+        existing_draft.firstname = candidate_data.firstname
+        existing_draft.lastname = candidate_data.lastname
+        existing_draft.othername = candidate_data.othername
         existing_draft.date_of_birth = candidate_data.date_of_birth
         existing_draft.gender = candidate_data.gender
         existing_draft.programme_code = candidate_data.programme_code
@@ -584,6 +618,12 @@ async def save_draft_registration(
         existing_draft.contact_phone = candidate_data.contact_phone
         existing_draft.address = candidate_data.address
         existing_draft.national_id = candidate_data.national_id
+        existing_draft.disability = candidate_data.disability
+        existing_draft.registration_type = candidate_data.registration_type
+        existing_draft.guardian_name = candidate_data.guardian_name
+        existing_draft.guardian_phone = candidate_data.guardian_phone
+        existing_draft.guardian_digital_address = candidate_data.guardian_digital_address
+        existing_draft.guardian_national_id = candidate_data.guardian_national_id
         existing_draft.school_id = school_id
 
         # Update subject selections
@@ -642,14 +682,13 @@ async def save_draft_registration(
         # Generate temporary registration number (will be regenerated on submit)
         registration_number = await generate_unique_registration_number(session, exam_id, school_id, draft_registration_type)
 
-        # For drafts, allow empty name (will be validated on submit)
-        draft_name = candidate_data.name if candidate_data.name and candidate_data.name.strip() else "Draft Registration"
-
         new_draft = RegistrationCandidate(
             registration_exam_id=exam_id,
             school_id=school_id,
             portal_user_id=current_user.id,
-            name=draft_name,
+            firstname=candidate_data.firstname,
+            lastname=candidate_data.lastname,
+            othername=candidate_data.othername,
             registration_number=registration_number,
             date_of_birth=candidate_data.date_of_birth,
             gender=candidate_data.gender,
@@ -659,6 +698,12 @@ async def save_draft_registration(
             contact_phone=candidate_data.contact_phone,
             address=candidate_data.address,
             national_id=candidate_data.national_id,
+            disability=candidate_data.disability,
+            registration_type=draft_registration_type,
+            guardian_name=candidate_data.guardian_name,
+            guardian_phone=candidate_data.guardian_phone,
+            guardian_digital_address=candidate_data.guardian_digital_address,
+            guardian_national_id=candidate_data.guardian_national_id,
             registration_status=RegistrationStatus.DRAFT,
         )
         session.add(new_draft)
@@ -900,6 +945,20 @@ async def submit_draft_registration(
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Examination center is required")
     if not draft.name:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Name is required")
+    if not draft.date_of_birth:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Date of birth is required for private registration")
+    if not draft.gender:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Gender is required for private registration")
+    if not draft.contact_email:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Contact email is required for private registration")
+    if not draft.contact_phone:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Contact phone is required for private registration")
+    if not draft.address:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Address is required for private registration")
+    if not draft.national_id:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="National ID is required for private registration")
+    if not draft.guardian_name or not draft.guardian_phone:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Guardian name and phone are required for private registration")
     if not draft.subject_selections:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="At least one subject must be selected")
 
