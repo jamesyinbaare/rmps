@@ -1464,7 +1464,7 @@ async def create_exam(
             year=exam_data.year,
             description=exam_data.description,
             registration_period_id=registration_period.id,
-            pricing_model_preference=exam_data.pricing_model_preference or "auto",
+            pricing_model_preference=exam_data.pricing_model_preference,
         )
         session.add(new_exam)
         await session.commit()

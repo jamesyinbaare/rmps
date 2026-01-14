@@ -379,7 +379,10 @@ async def get_pricing_model_preference(
         registration_type: Registration type (free_tvet, private, referral) or None for all types
 
     Returns:
-        Pricing model preference as string ("auto" if not found)
+        Pricing model preference as string (one of "per_subject", "tiered", "per_programme")
+
+    Raises:
+        ValueError: If no explicit pricing model preference is configured
     """
     # Try exam-specific with registration_type first
     if exam_id and registration_type:
@@ -391,7 +394,7 @@ async def get_pricing_model_preference(
         )
         result = await session.execute(stmt)
         pricing_model = result.scalar_one_or_none()
-        if pricing_model:
+        if pricing_model and pricing_model.pricing_model_preference != "auto":
             return pricing_model.pricing_model_preference
 
     # Try exam-specific with NULL registration_type (applies to all)
@@ -404,7 +407,7 @@ async def get_pricing_model_preference(
         )
         result = await session.execute(stmt)
         pricing_model = result.scalar_one_or_none()
-        if pricing_model:
+        if pricing_model and pricing_model.pricing_model_preference != "auto":
             return pricing_model.pricing_model_preference
 
     # Fallback to exam's default pricing_model_preference
@@ -412,11 +415,16 @@ async def get_pricing_model_preference(
         exam_stmt = select(RegistrationExam).where(RegistrationExam.id == exam_id)
         exam_result = await session.execute(exam_stmt)
         exam = exam_result.scalar_one_or_none()
-        if exam and exam.pricing_model_preference:
+        if exam and exam.pricing_model_preference and exam.pricing_model_preference != "auto":
             return exam.pricing_model_preference
 
-    # Default to "auto"
-    return "auto"
+    # No explicit pricing model found - raise error
+    exam_info = f"exam_id={exam_id}" if exam_id else "global"
+    reg_type_info = f"registration_type={registration_type}" if registration_type else "all registration types"
+    raise ValueError(
+        f"No explicit pricing model preference configured for {exam_info}, {reg_type_info}. "
+        "Please configure an explicit pricing model (per_subject, tiered, or per_programme)."
+    )
 
 
 async def calculate_registration_amount(
@@ -431,7 +439,7 @@ async def calculate_registration_amount(
     Args:
         session: Database session
         candidate_id: Registration candidate ID
-        pricing_model: "per_subject", "tiered", or "auto"
+        pricing_model: Explicit pricing model - "per_subject", "tiered", or "per_programme"
         include_application_fee: Whether to include application fee
 
     Returns:
@@ -439,9 +447,13 @@ async def calculate_registration_amount(
             "application_fee": Decimal,
             "subject_price": Decimal | None,
             "tiered_price": Decimal | None,
+            "programme_price": Decimal | None,
             "total": Decimal,
             "pricing_model_used": str
         }
+
+    Raises:
+        ValueError: If pricing is not configured for the specified pricing model
     """
     # Get candidate with exam and subject selections
     stmt = (
@@ -462,6 +474,9 @@ async def calculate_registration_amount(
 
     # Get registration type for filtering pricing
     registration_type_str = candidate.registration_type
+    # Convert enum to string value if it's an enum
+    if isinstance(registration_type_str, RegistrationType):
+        registration_type_str = registration_type_str.value
 
     # Get pricing model preference for this registration type
     if pricing_model is None:
@@ -470,8 +485,11 @@ async def calculate_registration_amount(
     # Get application fee
     application_fee = Decimal("0")
     if include_application_fee:
-        registration_type_str = candidate.registration_type
-        application_fee = await get_application_fee(session, exam_id, registration_type_str)
+        registration_type_for_fee = candidate.registration_type
+        # Convert enum to string value if it's an enum
+        if isinstance(registration_type_for_fee, RegistrationType):
+            registration_type_for_fee = registration_type_for_fee.value
+        application_fee = await get_application_fee(session, exam_id, registration_type_for_fee)
 
     # Check if candidate is free_tvet and pricing model is per_programme
     is_free_tvet = registration_type_str == RegistrationType.FREE_TVET.value if registration_type_str else False
@@ -483,60 +501,68 @@ async def calculate_registration_amount(
     tiered_price: Decimal | None = None
     programme_price: Decimal | None = None
 
-    # Get subject IDs (needed for fallback logic)
+    # Get subject IDs
     subject_ids = [
         sel.subject_id for sel in candidate.subject_selections
         if sel.subject_id is not None
     ]
     subject_count = len(subject_ids)
 
+    # Validate pricing model is explicit (not "auto")
+    if pricing_model == "auto":
+        raise ValueError(
+            "Pricing model 'auto' is not allowed. Please configure an explicit pricing model "
+            "(per_subject, tiered, or per_programme)."
+        )
+
     # For free_tvet candidates with per_programme pricing model
     use_programme_pricing = False
-    if is_free_tvet and pricing_model == "per_programme":
+    if pricing_model == "per_programme":
+        if not is_free_tvet:
+            raise ValueError(
+                f"Per-programme pricing model is only valid for FREE TVET candidates. "
+                f"Current registration type: {registration_type_str}. "
+                "Please use 'per_subject' or 'tiered' pricing model instead."
+            )
         programme_price = await get_programme_price(session, programme_id, exam_id, registration_type_str)
-        has_pricing = programme_price is not None
-        if has_pricing:
-            use_programme_pricing = True
-        else:
-            # Fallback to subject/tiered pricing if no programme pricing found
-            pricing_model = "auto"
+        if programme_price is None:
+            raise ValueError(
+                f"Per-programme pricing not configured for programme_id={programme_id}, "
+                f"exam_id={exam_id}, registration_type={registration_type_str}. "
+                "Please configure programme pricing or use a different pricing model."
+            )
+        has_pricing = True
+        use_programme_pricing = True
 
-    # For non-free_tvet or fallback from programme pricing, use existing logic
+    # For non-programme pricing, use per_subject or tiered
     if not use_programme_pricing:
         if pricing_model == "per_subject":
             prices = await get_subject_prices(session, subject_ids, exam_id, registration_type_str)
-            has_pricing = len(prices) > 0
-            if has_pricing:
-                subject_price = sum(prices.values())
+            if len(prices) == 0:
+                raise ValueError(
+                    f"Per-subject pricing not configured for exam_id={exam_id}, "
+                    f"registration_type={registration_type_str}. "
+                    "Please configure subject pricing."
+                )
+            subject_price = sum(prices.values())
+            has_pricing = True
         elif pricing_model == "tiered":
             tiered_price = await get_tiered_pricing(session, subject_count, exam_id, registration_type_str)
-            has_pricing = tiered_price is not None
-            if not has_pricing:
-                # Fallback to per-subject if no tier found
-                prices = await get_subject_prices(session, subject_ids, exam_id, registration_type_str)
-                if len(prices) > 0:
-                    subject_price = sum(prices.values())
-                    has_pricing = True
-                    pricing_model = "per_subject"
-        else:  # auto
-            # Try tiered first
-            tiered_price = await get_tiered_pricing(session, subject_count, exam_id, registration_type_str)
-            if tiered_price is not None:
-                has_pricing = True
-                pricing_model = "tiered"
-            else:
-                # Fallback to per-subject
-                prices = await get_subject_prices(session, subject_ids, exam_id, registration_type_str)
-                if len(prices) > 0:
-                    subject_price = sum(prices.values())
-                    has_pricing = True
-                    pricing_model = "per_subject"
+            if tiered_price is None:
+                raise ValueError(
+                    f"Tiered pricing not configured for subject_count={subject_count}, "
+                    f"exam_id={exam_id}, registration_type={registration_type_str}. "
+                    "Please configure tiered pricing."
+                )
+            has_pricing = True
+        else:
+            raise ValueError(
+                f"Invalid pricing model: {pricing_model}. "
+                "Must be one of: per_subject, tiered, per_programme"
+            )
 
     # Set pricing_model_used
-    if use_programme_pricing:
-        pricing_model_used = "per_programme"
-    else:
-        pricing_model_used = pricing_model
+    pricing_model_used = pricing_model
 
     # Calculate total
     if programme_price is not None:
@@ -593,6 +619,9 @@ async def calculate_price_difference(
 
     # Get registration type
     registration_type_str = candidate.registration_type
+    # Convert enum to string value if it's an enum
+    if isinstance(registration_type_str, RegistrationType):
+        registration_type_str = registration_type_str.value
 
     # Get pricing model preference for this registration type
     pricing_model = await get_pricing_model_preference(session, exam_id, registration_type_str)
@@ -610,31 +639,37 @@ async def calculate_price_difference(
     # For free_tvet candidates with per_programme pricing model
     if is_free_tvet and pricing_model == "per_programme":
         programme_price = await get_programme_price(session, programme_id, exam_id, registration_type_str)
-        if programme_price is not None:
-            new_total += programme_price
-        else:
-            # Fallback to subject/tiered pricing
-            subject_count = len(new_subject_ids)
-            tiered_price = await get_tiered_pricing(session, subject_count, exam_id, registration_type_str)
-            if tiered_price is not None:
-                new_total += tiered_price
-            else:
-                prices = await get_subject_prices(session, new_subject_ids, exam_id, registration_type_str)
-                subject_price = sum(prices.values())
-                new_total += subject_price
-    else:
-        # Calculate subject/tiered pricing with new subjects
+        if programme_price is None:
+            raise ValueError(
+                f"Per-programme pricing not configured for programme_id={programme_id}, "
+                f"exam_id={exam_id}, registration_type={registration_type_str}."
+            )
+        new_total += programme_price
+    elif pricing_model == "per_subject":
+        # Calculate per-subject pricing with new subjects
+        prices = await get_subject_prices(session, new_subject_ids, exam_id, registration_type_str)
+        if len(prices) == 0:
+            raise ValueError(
+                f"Per-subject pricing not configured for exam_id={exam_id}, "
+                f"registration_type={registration_type_str}."
+            )
+        subject_price = sum(prices.values())
+        new_total += subject_price
+    elif pricing_model == "tiered":
+        # Calculate tiered pricing with new subjects
         subject_count = len(new_subject_ids)
-
-        # Try tiered first (auto mode)
         tiered_price = await get_tiered_pricing(session, subject_count, exam_id, registration_type_str)
-        if tiered_price is not None:
-            new_total += tiered_price
-        else:
-            # Fallback to per-subject
-            prices = await get_subject_prices(session, new_subject_ids, exam_id, registration_type_str)
-            subject_price = sum(prices.values())
-            new_total += subject_price
+        if tiered_price is None:
+            raise ValueError(
+                f"Tiered pricing not configured for subject_count={subject_count}, "
+                f"exam_id={exam_id}, registration_type={registration_type_str}."
+            )
+        new_total += tiered_price
+    else:
+        raise ValueError(
+            f"Invalid pricing model: {pricing_model}. "
+            "Must be one of: per_subject, tiered, per_programme"
+        )
 
     # Calculate difference
     difference = new_total - total_paid

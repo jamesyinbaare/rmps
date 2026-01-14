@@ -156,7 +156,7 @@ class ExamPricingModelCreate(BaseModel):
     """Schema for creating/updating exam pricing model."""
 
     registration_type: str | None = Field(None, description="Registration type: free_tvet, private, referral, or None for all types")
-    pricing_model_preference: str = Field(..., description="Pricing model: 'per_subject', 'tiered', 'per_programme', or 'auto'")
+    pricing_model_preference: str = Field(..., description="Pricing model: 'per_subject', 'tiered', or 'per_programme' (must be explicit, no 'auto')")
 
 
 class ExamPricingResponse(BaseModel):
