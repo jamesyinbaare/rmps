@@ -14,7 +14,6 @@ import {
   Key,
   Coins,
   Search,
-  FileCheck,
   BarChart3,
 } from "lucide-react";
 import type { Role } from "@/types";
@@ -144,12 +143,6 @@ export const schoolUserMenuItems: MenuItem[] = [
     href: "/dashboard/my-school/programmes",
     label: "Programmes",
     icon: BookOpen,
-    roles: ["SchoolAdmin", "SchoolStaff"],
-  },
-  {
-    href: "/dashboard/my-school/documents",
-    label: "Documents",
-    icon: FileCheck,
     roles: ["SchoolAdmin", "SchoolStaff"],
   },
   {

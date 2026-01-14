@@ -2167,7 +2167,6 @@ async def download_index_slips_bulk(
             RegistrationCandidate.school_id == current_user.school_id,
             RegistrationCandidate.index_number.isnot(None),
         )
-        .order_by(RegistrationCandidate.name)
     )
 
     if programme_id:
@@ -2175,6 +2174,9 @@ async def download_index_slips_bulk(
 
     candidate_result = await session.execute(candidate_stmt)
     candidates = candidate_result.scalars().all()
+
+    # Sort by name property (firstname + othername + lastname) in Python
+    candidates = sorted(candidates, key=lambda c: c.name)
 
     if not candidates:
         raise HTTPException(
