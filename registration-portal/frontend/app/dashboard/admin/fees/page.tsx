@@ -17,7 +17,6 @@ import { SubjectPricingSection } from "@/components/admin/SubjectPricingSection"
 import { TieredPricingSection } from "@/components/admin/TieredPricingSection";
 import { ProgrammePricingSection } from "@/components/admin/ProgrammePricingSection";
 import { ImportPricingDialog } from "@/components/admin/ImportPricingDialog";
-import { PricingModelSelector } from "@/components/admin/PricingModelSelector";
 import { PricingTable } from "@/components/admin/PricingTable";
 import {
   listExams,
@@ -175,14 +174,6 @@ export default function FeesManagementPage() {
           </div>
         </CardContent>
       </Card>
-
-      {/* Pricing Model Selector */}
-      {selectedExamId && (
-        <PricingModelSelector
-          examId={selectedExamId}
-          onUpdate={handlePricingUpdate}
-        />
-      )}
 
       {/* Pricing Table */}
       {selectedExamId ? (

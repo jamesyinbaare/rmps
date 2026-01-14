@@ -23,7 +23,7 @@ interface PricingModelSelectorProps {
 
 export function PricingModelSelector({ examId, onUpdate }: PricingModelSelectorProps) {
   const [exam, setExam] = useState<RegistrationExam | null>(null);
-  const [pricingModel, setPricingModel] = useState<string>("auto");
+  const [pricingModel, setPricingModel] = useState<string>("");
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
 
@@ -36,7 +36,7 @@ export function PricingModelSelector({ examId, onUpdate }: PricingModelSelectorP
     try {
       const examData = await getExam(examId);
       setExam(examData);
-      setPricingModel(examData.pricing_model_preference || "auto");
+      setPricingModel(examData.pricing_model_preference || "");
     } catch (error) {
       toast.error("Failed to load exam data");
       console.error(error);
@@ -95,19 +95,16 @@ export function PricingModelSelector({ examId, onUpdate }: PricingModelSelectorP
               <SelectValue placeholder="Select pricing model" />
             </SelectTrigger>
             <SelectContent>
-              <SelectItem value="auto">
-                Auto (Use tiered if available, otherwise per-subject)
-              </SelectItem>
               <SelectItem value="per_subject">Per-Subject Pricing</SelectItem>
               <SelectItem value="tiered">Tiered Pricing</SelectItem>
               <SelectItem value="per_programme">Per-Programme Pricing</SelectItem>
             </SelectContent>
           </Select>
           <p className="text-sm text-muted-foreground">
-            {pricingModel === "auto" && "Automatically selects the best pricing model based on configured pricing."}
             {pricingModel === "per_subject" && "Uses per-subject pricing only. Each subject has its own price."}
             {pricingModel === "tiered" && "Uses tiered pricing only. Price depends on the number of subjects selected."}
             {pricingModel === "per_programme" && "Uses per-programme pricing for free_tvet candidates. Price is based on the candidate's programme."}
+            {!pricingModel && "Please select a pricing model. Pricing model must be explicitly configured."}
           </p>
         </div>
         <Button onClick={handleSave} disabled={saving || !exam}>
