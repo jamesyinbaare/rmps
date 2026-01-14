@@ -1900,6 +1900,100 @@ export async function getPhotoAlbum(
   return handleResponse<PhotoAlbumResponse>(response);
 }
 
+// Admin API - Photo Album
+export async function getAdminPhotoAlbum(
+  page: number = 1,
+  pageSize: number = 10000,
+  examId?: number,
+  schoolId?: number,
+  hasPhoto?: boolean
+): Promise<PhotoAlbumResponse> {
+  const params = new URLSearchParams({
+    page: page.toString(),
+    page_size: pageSize.toString(),
+  });
+  if (examId) params.append("exam_id", examId.toString());
+  if (schoolId) params.append("school_id", schoolId.toString());
+  if (hasPhoto !== undefined) params.append("has_photo", hasPhoto.toString());
+
+  const response = await fetchWithAuth(`/api/v1/admin/candidates/photos/album?${params.toString()}`);
+  return handleResponse<PhotoAlbumResponse>(response);
+}
+
+export async function exportCandidatePhotos(
+  examId: number,
+  schoolId?: number
+): Promise<void> {
+  const token = getAccessToken();
+  const params = new URLSearchParams();
+  params.append("exam_id", examId.toString());
+  if (schoolId) params.append("school_id", schoolId.toString());
+
+  const response = await fetch(`${API_BASE_URL}/api/v1/admin/candidates/photos/export?${params.toString()}`, {
+    method: "GET",
+    headers: {
+      Authorization: `Bearer ${token}`,
+    },
+  });
+
+  if (!response.ok) {
+    const error = await response.json().catch(() => ({ detail: "Failed to export photos" }));
+    throw new Error((error as { detail?: string }).detail || "Failed to export photos");
+  }
+
+  // Get filename from Content-Disposition header or use default
+  const contentDisposition = response.headers.get("Content-Disposition");
+  let filename = "photos.zip";
+  if (contentDisposition) {
+    // Try multiple regex patterns to match filename
+    // Pattern 1: filename="..." (quoted, most common)
+    let filenameMatch = contentDisposition.match(/filename\s*=\s*"([^"]+)"/i);
+    if (!filenameMatch) {
+      // Pattern 2: filename='...' (single quotes)
+      filenameMatch = contentDisposition.match(/filename\s*=\s*'([^']+)'/i);
+    }
+    if (!filenameMatch) {
+      // Pattern 3: filename=... (unquoted, no spaces after =)
+      filenameMatch = contentDisposition.match(/filename\s*=\s*([^;\s]+)/i);
+    }
+    if (!filenameMatch) {
+      // Pattern 4: filename*=UTF-8''... (RFC 5987 encoded)
+      filenameMatch = contentDisposition.match(/filename\*\s*=\s*UTF-8''([^;]+)/i);
+    }
+    if (filenameMatch && filenameMatch[1]) {
+      filename = filenameMatch[1].trim();
+      // Handle URL-encoded filenames (RFC 5987)
+      if (filename.startsWith("UTF-8''")) {
+        filename = decodeURIComponent(filename.substring(7));
+      }
+    }
+  }
+
+  // Download the file
+  const blob = await response.blob();
+  const downloadUrl = window.URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = downloadUrl;
+  link.download = filename;
+  document.body.appendChild(link);
+  link.click();
+  document.body.removeChild(link);
+  window.URL.revokeObjectURL(downloadUrl);
+}
+
+export async function getAdminPhotoFile(candidateId: number): Promise<string | null> {
+  const response = await fetchWithAuth(`/api/v1/admin/candidates/${candidateId}/photos/file`);
+  if (response.status === 404) {
+    return null;
+  }
+  if (!response.ok) {
+    await handleResponse(response);
+    return null;
+  }
+  const blob = await response.blob();
+  return URL.createObjectURL(blob);
+}
+
 export async function getPhotoFile(candidateId: number): Promise<string | null> {
   const response = await fetchWithAuth(`/api/v1/school/candidates/${candidateId}/photos/file`);
   if (response.status === 404) {
