@@ -9,7 +9,7 @@ from fastapi.security import HTTPAuthorizationCredentials
 from app.dependencies.api_key_auth import api_key_security, get_api_key_user
 from app.dependencies.database import DBSessionDep
 from app.models import ApiKey, ApiRequestSource, ApiRequestType, PortalUser
-from app.routers.public import check_public_results
+from app.routers.dashboard_verification import verify_dashboard_candidate
 from app.schemas.result import PublicResultCheckRequest, PublicResultResponse
 from app.schemas.verification import (
     BulkVerificationRequest,
@@ -29,9 +29,9 @@ async def verify_single_candidate(
     request_data: PublicResultCheckRequest,
     session: DBSessionDep,
 ) -> PublicResultResponse:
-    """Helper function to verify a single candidate (reuses public endpoint logic)."""
-    # Reuse the public endpoint logic
-    return await check_public_results(request_data, session)
+    """Helper function to verify a single candidate (uses dashboard verification logic)."""
+    # Use the dashboard verification logic which supports index_number-only lookup
+    return await verify_dashboard_candidate(request_data, session)
 
 
 @router.post("")
@@ -45,8 +45,12 @@ async def verify_candidates(
     Unified verification endpoint that handles both single and bulk requests.
 
     Request body can be:
-    - Single: {"registration_number": "...", "exam_type": "...", ...}
-    - Bulk: {"items": [{"registration_number": "...", ...}, ...]}
+    - Single: {"index_number": "...", "exam_type": "...", "exam_series": "...", "year": ...}
+      or {"registration_number": "...", "exam_type": "...", "exam_series": "...", "year": ...}
+    - Bulk: {"items": [{"index_number": "...", ...}, ...]}
+
+    Note: Either index_number or registration_number must be provided.
+    exam_series is required only for Certificate II Examinations.
     """
     start_time = datetime.utcnow()
 
