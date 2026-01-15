@@ -1136,16 +1136,13 @@ async def bulk_upload_candidates(
             is_nov_dec = normalized_series == "NOV/DEC"
 
             if is_nov_dec:
-                # For NOV/DEC: must be referral, auto-set if not provided
-                candidate_registration_type = file_registration_type or registration_type or RegistrationType.REFERRAL.value
-                if candidate_registration_type != RegistrationType.REFERRAL.value:
-                    errors.append(BulkUploadError(
-                        row_number=row_number,
-                        error_message=f"For NOV/DEC examinations, school registrations can only use 'referral' registration type. Found: {candidate_registration_type}",
-                        field="registration_type"
-                    ))
-                    failed += 1
-                    continue
+                # For NOV/DEC: must be referral, ignore file value and always use referral
+                # Ignore file_registration_type for NOV/DEC - it must always be referral for school registrations
+                candidate_registration_type = RegistrationType.REFERRAL.value
+                # Warn if file has a different registration_type (but still use referral)
+                if file_registration_type and file_registration_type != RegistrationType.REFERRAL.value:
+                    # Log a warning but don't fail - we're overriding it to referral anyway
+                    pass
             elif is_may_june:
                 # For MAY/JUNE: use file value, form parameter, or default to FREE_TVET
                 candidate_registration_type = file_registration_type or registration_type or RegistrationType.FREE_TVET.value
@@ -1200,9 +1197,49 @@ async def bulk_upload_candidates(
             # Reuse the normalized_series that was already computed above
             # normalized_series was already computed at line 1134 for registration_type validation
             is_may_june = normalized_series == "MAY/JUNE"
+            is_nov_dec = normalized_series == "NOV/DEC"
             is_referral_bulk = candidate_registration_type == RegistrationType.REFERRAL.value
 
-            if programme_id:
+            # For NOV/DEC: use subject_codes column (comma-separated subject original codes) - skip choice groups entirely
+            if is_nov_dec:
+                subject_codes_str = get_col('subject_codes') or get_col('subject codes') or get_col('subject_codes')
+                if subject_codes_str:
+                    # Parse comma-separated subject original codes
+                    subject_code_list = [code.strip() for code in str(subject_codes_str).split(',') if code.strip()]
+                    for subject_code in subject_code_list:
+                        # Lookup subject by original_code first, then fall back to code
+                        subject_stmt = select(Subject).where(Subject.original_code == subject_code)
+                        subject_result = await session.execute(subject_stmt)
+                        subject = subject_result.scalar_one_or_none()
+
+                        # If not found by original_code, try code for backward compatibility
+                        if not subject:
+                            subject_stmt = select(Subject).where(Subject.code == subject_code)
+                            subject_result = await session.execute(subject_stmt)
+                            subject = subject_result.scalar_one_or_none()
+
+                        if subject:
+                            if subject.id not in selected_subject_ids:
+                                selected_subject_ids.append(subject.id)
+                        else:
+                            errors.append(BulkUploadError(
+                                row_number=row_number,
+                                error_message=f"Subject not found: {subject_code}. Please use the subject's original code (e.g., C701, C30-1-01).",
+                                field="subject_codes"
+                            ))
+                            failed += 1
+                            continue
+                else:
+                    # subject_codes is required for NOV/DEC
+                    errors.append(BulkUploadError(
+                        row_number=row_number,
+                        error_message="subject_codes column is required for NOV/DEC registrations. Please provide comma-separated subject original codes (e.g., C701,C702).",
+                        field="subject_codes"
+                    ))
+                    failed += 1
+                    continue
+            elif programme_id:
+                # For MAY/JUNE: use existing logic with choice groups
                 # Get programme subjects structure
                 subjects_info = await get_programme_subjects_for_registration(session, programme_id)
 
@@ -1236,6 +1273,7 @@ async def bulk_upload_candidates(
                                 csv_choice_groups[group_id] = str(col_value).strip()
 
                 # Handle optional core groups - select one from each group if provided
+                # For NOV/DEC, skip default selections (don't apply default choice groups)
                 for group_id, group_subject_ids in subjects_info["optional_core_groups"].items():
                     selected_from_group = None
 
@@ -1261,7 +1299,8 @@ async def bulk_upload_candidates(
                                 break
 
                     # Third priority: Check default selections (from UI choice group selection)
-                    if not selected_from_group and group_id in default_selections:
+                    # Skip default selections for NOV/DEC - they should use subject_ids column instead
+                    if not is_nov_dec and not selected_from_group and group_id in default_selections:
                         default_code = str(default_selections[group_id]).strip()
                         subject_stmt = select(Subject).where(Subject.code == default_code)
                         subject_result = await session.execute(subject_stmt)
@@ -1276,16 +1315,16 @@ async def bulk_upload_candidates(
                     if selected_from_group:
                         selected_subject_ids.append(selected_from_group)
 
-            # Add optional subjects (electives or additional subjects) - only for NOV/DEC
-            # For MAY/JUNE, all electives are already auto-selected above
-            if not is_may_june and optional_subject_codes:
-                for code in optional_subject_codes:
-                    subject_stmt = select(Subject).where(Subject.code == code)
-                    subject_result = await session.execute(subject_stmt)
-                    subject = subject_result.scalar_one_or_none()
-                    if subject:
-                        if subject.id not in selected_subject_ids:
-                            selected_subject_ids.append(subject.id)
+                # Add optional subjects (electives or additional subjects) - only for NOV/DEC
+                # For MAY/JUNE, all electives are already auto-selected above
+                if not is_may_june and optional_subject_codes:
+                    for code in optional_subject_codes:
+                        subject_stmt = select(Subject).where(Subject.code == code)
+                        subject_result = await session.execute(subject_stmt)
+                        subject = subject_result.scalar_one_or_none()
+                        if subject:
+                            if subject.id not in selected_subject_ids:
+                                selected_subject_ids.append(subject.id)
                     # Note: We don't error if optional subject not found, just skip it
 
             # Remove duplicates
@@ -1396,19 +1435,33 @@ async def download_candidate_template(
     """Download Excel template for candidate bulk upload."""
     try:
         exam_series = None
+        exam_type = None
+        year = None
+        filename = "candidate_upload_template.xlsx"
+
         if exam_id:
-            # Get exam to determine exam series
+            # Get exam to determine exam series, type, and year
             exam_stmt = select(RegistrationExam).where(RegistrationExam.id == exam_id)
             exam_result = await session.execute(exam_stmt)
             exam = exam_result.scalar_one_or_none()
             if exam:
                 exam_series = exam.exam_series
+                exam_type = exam.exam_type
+                year = exam.year
+                # Generate filename: {year}_{exam_series}_{exam_type}.xlsx
+                # Sanitize exam_type and exam_series for filename (replace spaces/special chars)
+                exam_type_safe = exam_type.replace(" ", "_").replace("/", "_")
+                exam_series_safe = exam_series.replace("/", "_") if exam_series else ""
+                if exam_series_safe:
+                    filename = f"{year}_{exam_series_safe}_{exam_type_safe}.xlsx"
+                else:
+                    filename = f"{year}_{exam_type_safe}.xlsx"
 
         template_bytes = generate_candidate_template(exam_series=exam_series)
         return StreamingResponse(
             iter([template_bytes]),
             media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-            headers={"Content-Disposition": 'attachment; filename=candidate_upload_template.xlsx'},
+            headers={"Content-Disposition": f'attachment; filename="{filename}"'},
         )
     except Exception as e:
         raise HTTPException(
