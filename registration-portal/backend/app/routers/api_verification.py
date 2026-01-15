@@ -176,8 +176,27 @@ async def verify_candidates(
 
         return response
 
-    except HTTPException:
-        # Re-raise HTTP exceptions
+    except HTTPException as e:
+        # Record usage for HTTP exceptions (404, 403, etc.) but don't bill
+        # Only successful responses (200) will be billed by record_api_usage
+        response_status = e.status_code
+        duration_ms = int((datetime.utcnow() - start_time).total_seconds() * 1000)
+
+        # For HTTP exceptions, no successful verifications
+        verification_count = 0
+
+        await record_api_usage(
+            session,
+            user_id=user.id,
+            api_key_id=api_key.id,
+            request_source=ApiRequestSource.API_KEY,
+            request_type=ApiRequestType.BULK if is_bulk else ApiRequestType.SINGLE,
+            verification_count=verification_count,
+            response_status=response_status,
+            duration_ms=duration_ms,
+            start_time=start_time,
+        )
+        # Re-raise the HTTP exception
         raise
     except Exception as e:
         # Record error
