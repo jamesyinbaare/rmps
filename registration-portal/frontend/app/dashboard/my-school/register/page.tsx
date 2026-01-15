@@ -663,9 +663,22 @@ export default function RegistrationPage() {
     setBulkUploadResult(null);
 
     try {
-      // Use default choice groups if any are selected
-      const defaultSelections = Object.keys(defaultChoiceGroups).length > 0 ? defaultChoiceGroups : undefined;
-      const result = await bulkUploadCandidates(parseInt(selectedExamId), bulkUploadFile, defaultSelections, bulkRegistrationType || undefined);
+      // Determine registration type to send
+      let registrationTypeToSend = bulkRegistrationType || undefined;
+
+      // Check if this is NOV/DEC exam
+      const isNovDec = selectedExam?.exam_series?.toUpperCase().replace(/[-\s]/g, "/") === "NOV/DEC";
+
+      // Force "referral" for NOV/DEC school registrations
+      if (isNovDec) {
+        registrationTypeToSend = "referral";
+      }
+
+      // For NOV/DEC: don't send default choice groups (they should use subject_ids column instead)
+      // For MAY/JUNE: use default choice groups if any are selected
+      const defaultSelections = isNovDec ? undefined : (Object.keys(defaultChoiceGroups).length > 0 ? defaultChoiceGroups : undefined);
+
+      const result = await bulkUploadCandidates(parseInt(selectedExamId), bulkUploadFile, defaultSelections, registrationTypeToSend);
       setBulkUploadResult(result);
       if (result.failed === 0) {
         toast.success(`Successfully uploaded ${result.successful} candidate(s)`);
@@ -737,11 +750,16 @@ export default function RegistrationPage() {
   const handleDownloadTemplate = async () => {
     try {
       setDownloadingTemplate(true);
-      const blob = await downloadCandidateTemplate();
+      const examId = selectedExamId ? parseInt(selectedExamId) : undefined;
+      const blob = await downloadCandidateTemplate(examId);
       const url = window.URL.createObjectURL(blob);
       const a = document.createElement("a");
       a.href = url;
-      a.download = "candidate_upload_template.xlsx";
+      // Get filename from Content-Disposition header if available, otherwise use default
+      // The backend will set the proper filename in the Content-Disposition header
+      a.download = selectedExam
+        ? `${selectedExam.year}_${selectedExam.exam_series?.replace("/", "_") || ""}_${selectedExam.exam_type.replace(" ", "_")}.xlsx`
+        : "candidate_upload_template.xlsx";
       document.body.appendChild(a);
       a.click();
       window.URL.revokeObjectURL(url);
@@ -1682,8 +1700,8 @@ export default function RegistrationPage() {
             </DialogDescription>
           </DialogHeader>
           <div className="space-y-4">
-                {/* Default Choice Group Selection */}
-                {selectedExam && (
+                {/* Default Choice Group Selection - Only for MAY/JUNE */}
+                {selectedExam && selectedExam.exam_series?.toUpperCase().replace(/[-\s]/g, "/") !== "NOV/DEC" && (
                   <div className="space-y-2 p-4 border rounded-lg bg-muted/50">
                     <Label className="text-sm font-semibold">Default Choice Group Selection (Optional)</Label>
                     <p className="text-xs text-muted-foreground mb-2">
@@ -1788,7 +1806,7 @@ export default function RegistrationPage() {
                     </Select>
                     {selectedExam?.exam_series?.toUpperCase().replace(/[-\s]/g, "/") === "NOV/DEC" && (
                       <p className="text-xs text-muted-foreground">
-                        For NOV/DEC examinations, "referral" registration type is required and automatically selected.
+                        For NOV/DEC examinations, schools can only register as "referral(private)" registration.
                       </p>
                     )}
                     {bulkRegistrationType && (
@@ -1824,12 +1842,19 @@ export default function RegistrationPage() {
                             </p>
                             <div className="text-sm space-y-1">
                               <p><strong>Required:</strong> firstname, lastname, date_of_birth, gender, programme_code</p>
-                              <p><strong>Optional:</strong> othername, national_id, contact_email, contact_phone, address, disability, registration_type, guardian_name, guardian_phone, guardian_digital_address, guardian_national_id</p>
+                              {selectedExam?.exam_series?.toUpperCase().replace(/[-\s]/g, "/") === "NOV/DEC" && (
+                                <p><strong>Required for NOV/DEC:</strong> subject_codes (comma-separated subject original codes, e.g., "C701,C702,C30-1-01")</p>
+                              )}
+                              <p><strong>Optional:</strong> othername, national_id, contact_email, contact_phone, address, disability{selectedExam?.exam_series?.toUpperCase().replace(/[-\s]/g, "/") !== "NOV/DEC" && ", registration_type"}, guardian_name, guardian_phone, guardian_digital_address, guardian_national_id</p>
                               <p className="text-xs text-muted-foreground mt-1">
                                 <strong>Note:</strong> You can also use the old "name" column format (will be split into firstname, lastname, othername)
                               </p>
                               <p className="text-xs text-muted-foreground mt-2">
-                                For MAY/JUNE exams, subject columns are not included. All columns are formatted as text to preserve leading zeros.
+                                {selectedExam?.exam_series?.toUpperCase().replace(/[-\s]/g, "/") === "NOV/DEC" ? (
+                                  <>For NOV/DEC exams, use the <strong>subject_codes</strong> column with comma-separated subject original codes (e.g., C701, C702, C30-1-01). Registration type is automatically set to "referral" and is not included in the template. Default choice groups are not used.</>
+                                ) : (
+                                  <>For MAY/JUNE exams, subject columns are not included. All columns are formatted as text to preserve leading zeros.</>
+                                )}
                               </p>
                             </div>
                           </div>
