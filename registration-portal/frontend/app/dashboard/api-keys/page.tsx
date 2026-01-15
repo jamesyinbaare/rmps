@@ -73,6 +73,7 @@ export default function ApiKeysPage() {
       setNewKey(response);
       setKeyName("");
       setRateLimit(60);
+      setCreateDialogOpen(false); // Close the modal after successful creation
       await loadApiKeys();
       toast.success("API key created successfully");
     } catch (error: any) {

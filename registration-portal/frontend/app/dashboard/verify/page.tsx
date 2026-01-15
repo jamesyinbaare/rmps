@@ -14,9 +14,17 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { Search, Upload, Download, AlertCircle } from "lucide-react";
+import { Search, Upload, Download, AlertCircle, Info, FileText, CheckCircle2, BookOpen, ExternalLink } from "lucide-react";
 import { toast } from "sonner";
+import Link from "next/link";
 
 export default function VerifyPage() {
   const [mode, setMode] = useState<"single" | "bulk">("single");
@@ -25,13 +33,25 @@ export default function VerifyPage() {
 
   // Single verification state
   const [singleData, setSingleData] = useState<PublicResultCheckRequest>({
-    registration_number: "",
     index_number: "",
     exam_type: "",
     exam_series: "",
     year: new Date().getFullYear(),
   });
   const [singleResult, setSingleResult] = useState<PublicResultResponse | null>(null);
+
+  // Exam type and series options
+  const examTypes = [
+    "Certificate II Examinations",
+    "Advance",
+    "Technician Part I",
+    "Technician Part II",
+    "Technician Part III",
+    "Diploma",
+  ];
+  const examSeriesOptions = ["MAY/JUNE", "NOV/DEC"];
+
+  const isCertificateII = singleData.exam_type === "Certificate II Examinations";
 
   // Bulk verification state
   const [bulkResults, setBulkResults] = useState<BulkVerificationResponse | null>(null);
@@ -41,6 +61,13 @@ export default function VerifyPage() {
   useEffect(() => {
     loadCreditBalance();
   }, []);
+
+  // Clear exam_series when exam_type changes away from Certificate II
+  useEffect(() => {
+    if (singleData.exam_type !== "Certificate II Examinations" && singleData.exam_series) {
+      setSingleData((prev) => ({ ...prev, exam_series: "" }));
+    }
+  }, [singleData.exam_type]);
 
   const loadCreditBalance = async () => {
     try {
@@ -52,12 +79,20 @@ export default function VerifyPage() {
   };
 
   const handleSingleVerify = async () => {
-    if (!singleData.registration_number && !singleData.index_number) {
-      toast.error("Please provide either registration number or index number");
+    if (!singleData.index_number) {
+      toast.error("Index number is required");
       return;
     }
-    if (!singleData.exam_type || !singleData.exam_series || !singleData.year) {
-      toast.error("Please fill in all required fields");
+    if (!singleData.exam_type) {
+      toast.error("Please select an exam type");
+      return;
+    }
+    if (isCertificateII && !singleData.exam_series) {
+      toast.error("Please select an exam series for Certificate II Examinations");
+      return;
+    }
+    if (!singleData.year) {
+      toast.error("Please enter a year");
       return;
     }
 
@@ -88,26 +123,49 @@ export default function VerifyPage() {
       const headers = lines[0].split(",").map((h) => h.trim().toLowerCase());
 
       // Find column indices
-      const regNumIdx = headers.findIndex((h) => h.includes("registration") || h.includes("reg"));
       const indexNumIdx = headers.findIndex((h) => h.includes("index"));
       const examTypeIdx = headers.findIndex((h) => h.includes("exam_type") || h.includes("type"));
-      const examSeriesIdx = headers.findIndex((h) => h.includes("series"));
+      const examSeriesIdx = headers.findIndex((h) => h.includes("exam_series") || h.includes("series"));
       const yearIdx = headers.findIndex((h) => h.includes("year"));
 
-      if (regNumIdx === -1 && indexNumIdx === -1) {
-        toast.error("CSV must contain registration_number or index_number column");
+      if (indexNumIdx === -1) {
+        toast.error("CSV must contain index_number column");
+        return;
+      }
+
+      if (examTypeIdx === -1) {
+        toast.error("CSV must contain exam_type column");
+        return;
+      }
+
+      if (examSeriesIdx === -1) {
+        toast.error("CSV must contain exam_series column");
+        return;
+      }
+
+      if (yearIdx === -1) {
+        toast.error("CSV must contain year column");
         return;
       }
 
       const items: PublicResultCheckRequest[] = [];
       for (let i = 1; i < lines.length; i++) {
         const values = lines[i].split(",").map((v) => v.trim());
+        const indexNumber = values[indexNumIdx];
+        const examType = values[examTypeIdx];
+        const examSeries = values[examSeriesIdx];
+        const year = yearIdx >= 0 ? parseInt(values[yearIdx]) || new Date().getFullYear() : new Date().getFullYear();
+
+        if (!indexNumber || !examType || !examSeries) {
+          toast.error(`Row ${i + 1}: Missing required fields (index_number, exam_type, exam_series)`);
+          continue;
+        }
+
         items.push({
-          registration_number: regNumIdx >= 0 ? values[regNumIdx] : undefined,
-          index_number: indexNumIdx >= 0 ? values[indexNumIdx] : undefined,
-          exam_type: examTypeIdx >= 0 ? values[examTypeIdx] : "",
-          exam_series: examSeriesIdx >= 0 ? values[examSeriesIdx] : "",
-          year: yearIdx >= 0 ? parseInt(values[yearIdx]) || new Date().getFullYear() : new Date().getFullYear(),
+          index_number: indexNumber,
+          exam_type: examType,
+          exam_series: examSeries,
+          year: year,
         });
       }
 
@@ -135,7 +193,7 @@ export default function VerifyPage() {
       const url = URL.createObjectURL(blob);
       const a = document.createElement("a");
       a.href = url;
-      a.download = `verification-${singleResult.registration_number}.json`;
+      a.download = `verification-${singleResult.index_number || singleResult.registration_number}.json`;
       a.click();
     } else if (mode === "bulk" && bulkResults) {
       const data = JSON.stringify(bulkResults, null, 2);
@@ -165,6 +223,10 @@ export default function VerifyPage() {
                 Low balance
               </div>
             )}
+            <div className="flex items-start gap-1 text-xs text-gray-500 mt-2 max-w-xs text-right">
+              <Info className="h-3 w-3 mt-0.5 shrink-0" />
+              <span>Only successful verifications are billed. Failed requests (404) are tracked but not charged.</span>
+            </div>
           </div>
         )}
       </div>
@@ -182,64 +244,78 @@ export default function VerifyPage() {
             </CardHeader>
             <CardContent>
               <div className="space-y-4">
+                <div>
+                  <Label htmlFor="index-number">Index Number <span className="text-red-500">*</span></Label>
+                  <Input
+                    id="index-number"
+                    value={singleData.index_number || ""}
+                    onChange={(e) =>
+                      setSingleData({ ...singleData, index_number: e.target.value })
+                    }
+                    placeholder="12345"
+                    required
+                  />
+                </div>
                 <div className="grid grid-cols-2 gap-4">
                   <div>
-                    <Label htmlFor="reg-number">Registration Number</Label>
-                    <Input
-                      id="reg-number"
-                      value={singleData.registration_number || ""}
-                      onChange={(e) =>
-                        setSingleData({ ...singleData, registration_number: e.target.value })
-                      }
-                      placeholder="REG001"
-                    />
-                  </div>
-                  <div>
-                    <Label htmlFor="index-number">Index Number (optional)</Label>
-                    <Input
-                      id="index-number"
-                      value={singleData.index_number || ""}
-                      onChange={(e) =>
-                        setSingleData({ ...singleData, index_number: e.target.value })
-                      }
-                      placeholder="12345"
-                    />
-                  </div>
-                </div>
-                <div className="grid grid-cols-3 gap-4">
-                  <div>
-                    <Label htmlFor="exam-type">Exam Type</Label>
-                    <Input
-                      id="exam-type"
+                    <Label htmlFor="exam-type">Exam Type <span className="text-red-500">*</span></Label>
+                    <Select
                       value={singleData.exam_type}
-                      onChange={(e) =>
-                        setSingleData({ ...singleData, exam_type: e.target.value })
-                      }
-                      placeholder="Certificate II Examination"
-                    />
+                      onValueChange={(value) => {
+                        setSingleData({
+                          ...singleData,
+                          exam_type: value,
+                          exam_series: value === "Certificate II Examinations" ? singleData.exam_series : "",
+                        });
+                      }}
+                    >
+                      <SelectTrigger id="exam-type">
+                        <SelectValue placeholder="Select exam type" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {examTypes.map((type) => (
+                          <SelectItem key={type} value={type}>
+                            {type}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
                   </div>
-                  <div>
-                    <Label htmlFor="exam-series">Exam Series</Label>
-                    <Input
-                      id="exam-series"
-                      value={singleData.exam_series}
-                      onChange={(e) =>
-                        setSingleData({ ...singleData, exam_series: e.target.value })
-                      }
-                      placeholder="MAY/JUNE"
-                    />
-                  </div>
-                  <div>
-                    <Label htmlFor="year">Year</Label>
-                    <Input
-                      id="year"
-                      type="number"
-                      value={singleData.year}
-                      onChange={(e) =>
-                        setSingleData({ ...singleData, year: parseInt(e.target.value) || new Date().getFullYear() })
-                      }
-                    />
-                  </div>
+                  {isCertificateII && (
+                    <div>
+                      <Label htmlFor="exam-series">Exam Series <span className="text-red-500">*</span></Label>
+                      <Select
+                        value={singleData.exam_series}
+                        onValueChange={(value) =>
+                          setSingleData({ ...singleData, exam_series: value })
+                        }
+                      >
+                        <SelectTrigger id="exam-series">
+                          <SelectValue placeholder="Select series" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {examSeriesOptions.map((series) => (
+                            <SelectItem key={series} value={series}>
+                              {series}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
+                  )}
+                </div>
+                <div>
+                  <Label htmlFor="year">Year <span className="text-red-500">*</span></Label>
+                  <Input
+                    id="year"
+                    type="number"
+                    value={singleData.year}
+                    onChange={(e) =>
+                      setSingleData({ ...singleData, year: parseInt(e.target.value) || new Date().getFullYear() })
+                    }
+                    placeholder="2024"
+                    required
+                  />
                 </div>
                 <Button onClick={handleSingleVerify} disabled={loading} className="w-full">
                   <Search className="mr-2 h-4 w-4" />
@@ -315,19 +391,102 @@ export default function VerifyPage() {
               <CardTitle>Bulk Verification</CardTitle>
             </CardHeader>
             <CardContent>
-              <div className="space-y-4">
+              <div className="space-y-6">
+                {/* Instructions Card */}
+                <div className="rounded-lg bg-blue-50 border border-blue-200 p-4 space-y-3">
+                  <div className="flex items-start gap-2">
+                    <Info className="h-5 w-5 text-blue-600 mt-0.5 shrink-0" />
+                    <div className="flex-1 space-y-2">
+                      <h4 className="font-semibold text-blue-900">CSV File Format</h4>
+                      <p className="text-sm text-blue-800">
+                        Your CSV file must include the following columns (in any order):
+                      </p>
+                      <ul className="text-sm text-blue-800 space-y-1.5 list-none pl-0">
+                        <li className="flex items-start gap-2">
+                          <CheckCircle2 className="h-4 w-4 text-blue-600 mt-0.5 shrink-0" />
+                          <span><strong className="font-semibold">index_number</strong> - The candidate's index number</span>
+                        </li>
+                        <li className="flex items-start gap-2">
+                          <CheckCircle2 className="h-4 w-4 text-blue-600 mt-0.5 shrink-0" />
+                          <span><strong className="font-semibold">exam_type</strong> - Exam type (e.g., "Certificate II Examinations", "Advance", "Technician Part I")</span>
+                        </li>
+                        <li className="flex items-start gap-2">
+                          <CheckCircle2 className="h-4 w-4 text-blue-600 mt-0.5 shrink-0" />
+                          <span><strong className="font-semibold">exam_series</strong> - Exam series ("MAY/JUNE" or "NOV/DEC")</span>
+                        </li>
+                        <li className="flex items-start gap-2">
+                          <CheckCircle2 className="h-4 w-4 text-blue-600 mt-0.5 shrink-0" />
+                          <span><strong className="font-semibold">year</strong> - Examination year (e.g., 2024)</span>
+                        </li>
+                      </ul>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Example Table */}
+                <div className="rounded-lg bg-gray-50 border border-gray-200 p-4 space-y-2">
+                  <div className="flex items-center gap-2">
+                    <FileText className="h-4 w-4 text-gray-600" />
+                    <h4 className="font-semibold text-gray-900">Example CSV Format</h4>
+                  </div>
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-sm border-collapse">
+                      <thead>
+                        <tr className="bg-gray-100 border-b">
+                          <th className="border border-gray-300 px-3 py-2 text-left font-semibold">index_number</th>
+                          <th className="border border-gray-300 px-3 py-2 text-left font-semibold">exam_type</th>
+                          <th className="border border-gray-300 px-3 py-2 text-left font-semibold">exam_series</th>
+                          <th className="border border-gray-300 px-3 py-2 text-left font-semibold">year</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        <tr>
+                          <td className="border border-gray-300 px-3 py-2 font-mono bg-white">12345</td>
+                          <td className="border border-gray-300 px-3 py-2 bg-white">Certificate II Examinations</td>
+                          <td className="border border-gray-300 px-3 py-2 bg-white">MAY/JUNE</td>
+                          <td className="border border-gray-300 px-3 py-2 bg-white">2024</td>
+                        </tr>
+                        <tr>
+                          <td className="border border-gray-300 px-3 py-2 font-mono bg-white">67890</td>
+                          <td className="border border-gray-300 px-3 py-2 bg-white">Advance</td>
+                          <td className="border border-gray-300 px-3 py-2 bg-white">-</td>
+                          <td className="border border-gray-300 px-3 py-2 bg-white">2024</td>
+                        </tr>
+                      </tbody>
+                    </table>
+                  </div>
+                  <div className="space-y-2">
+                    <p className="text-xs text-gray-600">
+                      <strong>Tip:</strong> Use simple codes (<code className="bg-gray-100 px-1 rounded">cert2</code>, <code className="bg-gray-100 px-1 rounded">mj</code>) instead of full names for shorter, cleaner CSV files. All codes are case-insensitive.
+                    </p>
+                    <p className="text-xs text-gray-600">
+                      <strong>Note:</strong> Column names are case-insensitive and can have spaces (e.g., "Index Number", "Exam Type").
+                      For non-Certificate II exams, leave exam_series empty or use "-".
+                    </p>
+                    <Link href="/api/dashboard/docs?tab=codes" className="text-xs text-blue-600 hover:text-blue-800 inline-flex items-center gap-1 font-medium">
+                      View all supported codes →
+                    </Link>
+                  </div>
+                </div>
+
+                {/* File Upload */}
                 <div>
-                  <Label htmlFor="csv-file">CSV File</Label>
+                  <Label htmlFor="csv-file">Upload CSV File</Label>
                   <Input
                     id="csv-file"
                     type="file"
                     accept=".csv"
                     onChange={(e) => setBulkFile(e.target.files?.[0] || null)}
+                    className="mt-2"
                   />
-                  <p className="text-sm text-gray-600 mt-1">
-                    CSV should contain: registration_number (or index_number), exam_type, exam_series, year
-                  </p>
+                  {bulkFile && (
+                    <p className="text-sm text-green-600 mt-2 flex items-center gap-1">
+                      <CheckCircle2 className="h-4 w-4" />
+                      Selected: {bulkFile.name}
+                    </p>
+                  )}
                 </div>
+
                 <Button onClick={handleBulkVerify} disabled={loading || !bulkFile} className="w-full">
                   <Upload className="mr-2 h-4 w-4" />
                   {loading ? "Verifying..." : "Verify Bulk"}
@@ -361,7 +520,7 @@ export default function VerifyPage() {
                           <div className="flex justify-between items-start">
                             <div className="flex-1">
                               <p className="font-medium">
-                                {item.request.registration_number || item.request.index_number}
+                                {item.request.index_number}
                               </p>
                               {item.error && (
                                 <p className="text-sm text-red-600 mt-1">{item.error}</p>
