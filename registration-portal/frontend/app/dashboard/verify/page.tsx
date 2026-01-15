@@ -138,33 +138,44 @@ export default function VerifyPage() {
         return;
       }
 
-      if (examSeriesIdx === -1) {
-        toast.error("CSV must contain exam_series column");
-        return;
-      }
-
       if (yearIdx === -1) {
         toast.error("CSV must contain year column");
         return;
       }
+
+      // exam_series is optional - only required for Certificate II Examinations
 
       const items: PublicResultCheckRequest[] = [];
       for (let i = 1; i < lines.length; i++) {
         const values = lines[i].split(",").map((v) => v.trim());
         const indexNumber = values[indexNumIdx];
         const examType = values[examTypeIdx];
-        const examSeries = values[examSeriesIdx];
+        const examSeries = examSeriesIdx >= 0 ? values[examSeriesIdx] : "";
         const year = yearIdx >= 0 ? parseInt(values[yearIdx]) || new Date().getFullYear() : new Date().getFullYear();
 
-        if (!indexNumber || !examType || !examSeries) {
-          toast.error(`Row ${i + 1}: Missing required fields (index_number, exam_type, exam_series)`);
+        if (!indexNumber || !examType) {
+          toast.error(`Row ${i + 1}: Missing required fields (index_number, exam_type)`);
           continue;
         }
+
+        // Normalize exam type for checking if it's Certificate II
+        const normalizedExamType = examType.toLowerCase().trim();
+        const isCertII = normalizedExamType.includes("certificate") &&
+                        (normalizedExamType.includes("ii") || normalizedExamType.includes("2"));
+
+        // Validate exam_series only for Certificate II Examinations
+        if (isCertII && !examSeries) {
+          toast.error(`Row ${i + 1}: exam_series is required for Certificate II Examinations`);
+          continue;
+        }
+
+        // For non-Certificate II exams, exam_series can be empty or "-"
+        const finalExamSeries = (isCertII ? examSeries : (examSeries || "")).trim();
 
         items.push({
           index_number: indexNumber,
           exam_type: examType,
-          exam_series: examSeries,
+          exam_series: finalExamSeries,
           year: year,
         });
       }
@@ -412,7 +423,7 @@ export default function VerifyPage() {
                         </li>
                         <li className="flex items-start gap-2">
                           <CheckCircle2 className="h-4 w-4 text-blue-600 mt-0.5 shrink-0" />
-                          <span><strong className="font-semibold">exam_series</strong> - Exam series ("MAY/JUNE" or "NOV/DEC")</span>
+                          <span><strong className="font-semibold">exam_series</strong> - Exam series ("MAY/JUNE" or "NOV/DEC"). Required only for Certificate II Examinations. For other exam types, leave empty or use "-".</span>
                         </li>
                         <li className="flex items-start gap-2">
                           <CheckCircle2 className="h-4 w-4 text-blue-600 mt-0.5 shrink-0" />
@@ -461,7 +472,7 @@ export default function VerifyPage() {
                     </p>
                     <p className="text-xs text-gray-600">
                       <strong>Note:</strong> Column names are case-insensitive and can have spaces (e.g., "Index Number", "Exam Type").
-                      For non-Certificate II exams, leave exam_series empty or use "-".
+                      The <code className="bg-gray-100 px-1 rounded">exam_series</code> column is optional - only required for Certificate II Examinations. For other exam types, leave it empty or use "-".
                     </p>
                     <Link href="/api/dashboard/docs?tab=codes" className="text-xs text-blue-600 hover:text-blue-800 inline-flex items-center gap-1 font-medium">
                       View all supported codes →
