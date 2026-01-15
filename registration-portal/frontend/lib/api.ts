@@ -1719,8 +1719,11 @@ export async function bulkUploadCandidates(
   return handleResponse<BulkUploadResponse>(response);
 }
 
-export async function downloadCandidateTemplate(): Promise<Blob> {
-  const response = await fetchWithAuth("/api/v1/school/candidates/template");
+export async function downloadCandidateTemplate(examId?: number): Promise<Blob> {
+  const url = examId
+    ? `/api/v1/school/candidates/template?exam_id=${examId}`
+    : "/api/v1/school/candidates/template";
+  const response = await fetchWithAuth(url);
   if (!response.ok) {
     await handleResponse(response);
   }
