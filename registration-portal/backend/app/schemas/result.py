@@ -5,8 +5,9 @@ from datetime import datetime
 from typing import Optional
 from uuid import UUID
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
+from app.core.exam_codes import normalize_exam_type, normalize_exam_series
 from app.models import Grade, ResultBlockType
 
 
@@ -123,7 +124,13 @@ class ResultBlockResponse(BaseModel):
 
 
 class PublicResultCheckRequest(BaseModel):
-    """Schema for public result check request."""
+    """Schema for public result check request.
+
+    Supports simple codes/aliases for exam_type and exam_series:
+    - Exam types: "cert2", "tech1", "1", etc. → normalized to full names
+    - Exam series: "mj", "may_june", "1", etc. → normalized to "MAY/JUNE" or "NOV/DEC"
+    - Full names are also accepted for backward compatibility
+    """
 
     index_number: Optional[str] = None
     registration_number: Optional[str] = None
@@ -131,13 +138,30 @@ class PublicResultCheckRequest(BaseModel):
     exam_series: str
     year: int
 
+    @model_validator(mode="after")
+    def normalize_exam_codes(self) -> "PublicResultCheckRequest":
+        """Normalize exam_type and exam_series codes/aliases to canonical names."""
+        # Normalize exam_type
+        if self.exam_type:
+            normalized_type = normalize_exam_type(self.exam_type)
+            if normalized_type:
+                self.exam_type = normalized_type
+
+        # Normalize exam_series
+        if self.exam_series:
+            normalized_series = normalize_exam_series(self.exam_series)
+            if normalized_series:
+                self.exam_series = normalized_series
+
+        return self
+
     class Config:
         json_schema_extra = {
             "example": {
                 "index_number": "12345",
                 "registration_number": "REG001",
-                "exam_type": "Certificate II Examination",
-                "exam_series": "MAY/JUNE",
+                "exam_type": "cert2",  # Can use code or full name
+                "exam_series": "mj",   # Can use code or full name
                 "year": 2024,
             }
         }

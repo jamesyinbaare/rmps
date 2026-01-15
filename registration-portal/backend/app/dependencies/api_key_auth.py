@@ -7,7 +7,6 @@ from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.api_key_generator import hash_api_key
 from app.core.security import verify_refresh_token_hash
 from app.dependencies.database import DBSessionDep
 from app.models import ApiKey, PortalUser
@@ -61,13 +60,23 @@ async def get_api_key_user(
             headers={"WWW-Authenticate": "Bearer"},
         )
 
-    # Hash the provided key
-    key_hash = hash_api_key(api_key)
+    # Extract key prefix for efficient filtering (first 15 characters)
+    key_prefix = api_key[:15] if len(api_key) >= 15 else api_key
 
-    # Find API key in database
-    stmt = select(ApiKey).where(ApiKey.key_hash == key_hash)
+    # Find API keys with matching prefix and active status
+    stmt = select(ApiKey).where(
+        ApiKey.key_prefix == key_prefix,
+        ApiKey.is_active == True
+    )
     result = await session.execute(stmt)
-    api_key_obj = result.scalar_one_or_none()
+    candidate_keys = result.scalars().all()
+
+    # Find matching key by verifying hash
+    api_key_obj = None
+    for candidate in candidate_keys:
+        if verify_refresh_token_hash(api_key, candidate.key_hash):
+            api_key_obj = candidate
+            break
 
     if not api_key_obj:
         raise HTTPException(
