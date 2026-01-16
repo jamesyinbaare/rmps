@@ -1572,22 +1572,13 @@ export async function downloadIndexSlipsBulk(examId: number, programmeId?: numbe
 
   // Get filename from Content-Disposition header or use default
   const contentDisposition = response.headers.get("Content-Disposition");
-  // #region agent log
-  fetch('http://127.0.0.1:7243/ingest/d2bbea2e-4269-44ac-80ae-28c7bda50858',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'api.ts:1574',message:'Index slips - Content-Disposition header',data:{contentDisposition:contentDisposition},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'C'})}).catch(()=>{});
-  // #endregion
   let filename = `index_slips_${examId}.zip`;
   if (contentDisposition) {
     const filenameMatch = contentDisposition.match(/filename="?([^"]+)"?/i) || contentDisposition.match(/filename=([^;\s]+)/i);
-    // #region agent log
-    fetch('http://127.0.0.1:7243/ingest/d2bbea2e-4269-44ac-80ae-28c7bda50858',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'api.ts:1577',message:'Index slips - filename match result',data:{filenameMatch:filenameMatch?.[1],fullMatch:contentDisposition},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'C'})}).catch(()=>{});
-    // #endregion
     if (filenameMatch) {
       filename = filenameMatch[1].replace(/^["']|["']$/g, ''); // Strip any leading/trailing quotes
     }
   }
-  // #region agent log
-  fetch('http://127.0.0.1:7243/ingest/d2bbea2e-4269-44ac-80ae-28c7bda50858',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'api.ts:1581',message:'Index slips - final filename before download',data:{filename:filename},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'C'})}).catch(()=>{});
-  // #endregion
 
   // Download the file
   const blob = await response.blob();
@@ -1642,22 +1633,13 @@ export async function exportCandidates(examId: number): Promise<void> {
 
   // Get filename from Content-Disposition header or use default
   const contentDisposition = response.headers.get("Content-Disposition");
-  // #region agent log
-  fetch('http://127.0.0.1:7243/ingest/d2bbea2e-4269-44ac-80ae-28c7bda50858',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'api.ts:1635',message:'Export candidates - Content-Disposition header',data:{contentDisposition:contentDisposition},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'D'})}).catch(()=>{});
-  // #endregion
   let filename = `exam_${examId}_candidates.xlsx`;
   if (contentDisposition) {
     const filenameMatch = contentDisposition.match(/filename="?([^"]+)"?/i) || contentDisposition.match(/filename=([^;\s]+)/i);
-    // #region agent log
-    fetch('http://127.0.0.1:7243/ingest/d2bbea2e-4269-44ac-80ae-28c7bda50858',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'api.ts:1638',message:'Export candidates - filename match result',data:{filenameMatch:filenameMatch?.[1],fullMatch:contentDisposition},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'D'})}).catch(()=>{});
-    // #endregion
     if (filenameMatch) {
       filename = filenameMatch[1].replace(/^["']|["']$/g, ''); // Strip any leading/trailing quotes
     }
   }
-  // #region agent log
-  fetch('http://127.0.0.1:7243/ingest/d2bbea2e-4269-44ac-80ae-28c7bda50858',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'api.ts:1642',message:'Export candidates - final filename before download',data:{filename:filename},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'D'})}).catch(()=>{});
-  // #endregion
 
   // Download the file
   const blob = await response.blob();
