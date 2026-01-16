@@ -5,7 +5,7 @@ import { getSchoolDashboard, getCurrentUser } from "@/lib/api";
 import type { SchoolDashboardData } from "@/lib/api";
 import type { User } from "@/types";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Users, GraduationCap, UserPlus, AlertCircle, BookOpen } from "lucide-react";
+import { Users, GraduationCap, UserPlus, AlertCircle, BookOpen, UserCircle, Edit } from "lucide-react";
 import Link from "next/link";
 import { Button } from "@/components/ui/button";
 import { Alert, AlertDescription } from "@/components/ui/alert";
@@ -67,6 +67,26 @@ export default function MySchoolDashboardPage() {
         </p>
       </div>
 
+      {!dashboardData.school.profile_completed && (
+        <Alert variant="destructive">
+          <AlertCircle className="h-4 w-4" />
+          <AlertDescription className="flex items-center justify-between">
+            <div>
+              <strong>Complete your school profile</strong>
+              <p className="mt-1">
+                Please complete your school profile to access all features. All profile fields are
+                required.
+              </p>
+            </div>
+            <Link href="/dashboard/my-school/profile">
+              <Button size="sm" variant="outline" className="ml-4">
+                Complete Profile
+              </Button>
+            </Link>
+          </AlertDescription>
+        </Alert>
+      )}
+
       {user?.role === "SchoolAdmin" && isAtUserLimit && (
         <Alert variant="destructive">
           <AlertCircle className="h-4 w-4" />
@@ -102,6 +122,30 @@ export default function MySchoolDashboardPage() {
             </CardContent>
           </Card>
         )}
+
+        <Card>
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2">
+              <UserCircle className="h-5 w-5" />
+              School Profile
+            </CardTitle>
+          </CardHeader>
+          <CardContent>
+            <div className="space-y-2">
+              <p className="text-sm text-muted-foreground">
+                {dashboardData.school.profile_completed
+                  ? "View and edit your school profile"
+                  : "Complete your school profile"}
+              </p>
+              <Link href="/dashboard/my-school/profile">
+                <Button className="w-full mt-4" variant={dashboardData.school.profile_completed ? "default" : "destructive"}>
+                  <UserCircle className="mr-2 h-4 w-4" />
+                  {dashboardData.school.profile_completed ? "View Profile" : "Complete Profile"}
+                </Button>
+              </Link>
+            </div>
+          </CardContent>
+        </Card>
 
         <Card>
           <CardHeader>

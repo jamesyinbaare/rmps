@@ -13,7 +13,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { listAllExams } from "@/lib/api";
+import { listAllSchoolExams } from "@/lib/api";
 import type { RegistrationExam } from "@/types";
 import {
   downloadFreeTvetInvoicePdf,
@@ -30,7 +30,7 @@ export default function InvoicesPage() {
   useEffect(() => {
     const loadExams = async () => {
       try {
-        const examsData = await listAllExams();
+        const examsData = await listAllSchoolExams();
         setExams(examsData);
       } catch (error) {
         console.error("Failed to load exams:", error);

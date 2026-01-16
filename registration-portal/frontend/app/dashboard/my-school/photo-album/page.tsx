@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect, useCallback, useRef, useMemo } from "react";
-import { getPhotoAlbum, listAllExams, listSchoolProgrammes, getPhotoFile, bulkUploadPhotos } from "@/lib/api";
+import { getPhotoAlbum, listAllSchoolExams, listSchoolProgrammes, getPhotoFile, bulkUploadPhotos } from "@/lib/api";
 import type { PhotoAlbumItem, RegistrationExam, Programme, PhotoBulkUploadResponse } from "@/types";
 import { toast } from "sonner";
 import { Search, User, Image as ImageIcon, Loader2, Upload, X, CheckCircle2, AlertCircle, FileText, Filter, ChevronDown, ChevronUp, ChevronLeft, ChevronRight } from "lucide-react";
@@ -133,7 +133,7 @@ export default function PhotoAlbumPage() {
   useEffect(() => {
     async function loadExams() {
       try {
-        const allExams = await listAllExams();
+        const allExams = await listAllSchoolExams();
         setExams(allExams);
       } catch (err) {
         console.error("Failed to load exams:", err);

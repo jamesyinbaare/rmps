@@ -747,13 +747,47 @@ export async function getSchoolExams(schoolId: number): Promise<SchoolExam[]> {
 
 export async function updateSchool(
   schoolId: number,
-  data: { name?: string; is_active?: boolean; is_private_examination_center?: boolean }
+  data: {
+    name?: string;
+    is_active?: boolean;
+    is_private_examination_center?: boolean;
+    email?: string | null;
+    phone?: string | null;
+    digital_address?: string | null;
+    post_office_address?: string | null;
+    is_private?: boolean | null;
+    principal_name?: string | null;
+    principal_email?: string | null;
+    principal_phone?: string | null;
+  }
 ): Promise<SchoolDetail> {
   const response = await fetchWithAuth(`/api/v1/admin/schools/${schoolId}`, {
     method: "PUT",
     body: JSON.stringify(data),
   });
   return handleResponse<SchoolDetail>(response);
+}
+
+export async function getSchoolProfile(): Promise<School> {
+  const response = await fetchWithAuth("/api/v1/school/profile");
+  return handleResponse<School>(response);
+}
+
+export async function updateSchoolProfile(data: {
+  email?: string | null;
+  phone?: string | null;
+  digital_address?: string | null;
+  post_office_address?: string | null;
+  is_private?: boolean | null;
+  principal_name?: string | null;
+  principal_email?: string | null;
+  principal_phone?: string | null;
+}): Promise<School> {
+  const response = await fetchWithAuth("/api/v1/school/profile", {
+    method: "PUT",
+    body: JSON.stringify(data),
+  });
+  return handleResponse<School>(response);
 }
 
 export async function createSchool(data: { code: string; name: string; is_private_examination_center?: boolean }): Promise<SchoolDetail> {
