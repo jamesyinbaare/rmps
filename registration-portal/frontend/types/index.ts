@@ -717,6 +717,27 @@ export interface ExaminationScheduleBulkUploadResponse {
   errors: ExaminationScheduleBulkUploadError[];
 }
 
+export interface TimetableEntry {
+  subject_code: string;
+  subject_name: string;
+  examination_date: string;
+  examination_time: string;
+  examination_end_time?: string | null;
+  venue?: string | null;
+  duration_minutes?: number | null;
+  instructions?: string | null;
+}
+
+export interface TimetableResponse {
+  exam_id: number;
+  exam_type: string;
+  exam_series: string;
+  year: number;
+  entries: TimetableEntry[];
+}
+
+export type TimetableDownloadFilter = "ALL" | "CORE_ONLY" | "ELECTIVE_ONLY";
+
 export interface ExaminationScheduleUpdate {
   subject_code?: string;
   subject_name?: string;

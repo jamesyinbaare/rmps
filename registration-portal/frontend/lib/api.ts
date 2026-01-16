@@ -70,6 +70,8 @@ import type {
   ExamPricingModelResponse,
   ExamPricingModelCreate,
   Invoice,
+  TimetableDownloadFilter,
+  TimetableResponse,
 } from "@/types";
 
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL || "http://localhost:8001";
@@ -1298,6 +1300,163 @@ export async function downloadScheduleTemplate(examId: number): Promise<Blob> {
   return response.blob();
 }
 
+// Timetable Download API
+export async function downloadTimetableForExam(
+  examId: number,
+  subjectFilter: TimetableDownloadFilter = "ALL",
+  mergeByDate: boolean = false,
+  orientation: "portrait" | "landscape" = "portrait"
+): Promise<void> {
+  const params = new URLSearchParams({ subject_filter: subjectFilter });
+  if (mergeByDate) {
+    params.append("merge_by_date", "true");
+  }
+  if (orientation === "landscape") {
+    params.append("orientation", "landscape");
+  }
+  const response = await fetchWithAuth(`/api/v1/admin/exams/${examId}/timetable?${params}`);
+  if (!response.ok) {
+    await handleResponse(response);
+  }
+
+  // Get filename from Content-Disposition header or use default
+  const contentDisposition = response.headers.get("Content-Disposition");
+  let filename = `timetable_exam_${examId}.pdf`;
+  if (contentDisposition) {
+    const filenameMatch = contentDisposition.match(/filename="?([^"]+)"?/i);
+    if (filenameMatch && filenameMatch[1]) {
+      filename = filenameMatch[1].trim();
+    }
+  }
+
+  // Download the file
+  const blob = await response.blob();
+  const downloadUrl = window.URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = downloadUrl;
+  link.download = filename;
+  document.body.appendChild(link);
+  link.click();
+  document.body.removeChild(link);
+  window.URL.revokeObjectURL(downloadUrl);
+}
+
+export async function downloadTimetableForSchool(
+  examId: number,
+  schoolId: number,
+  subjectFilter: TimetableDownloadFilter = "ALL",
+  programmeId?: number,
+  mergeByDate: boolean = false,
+  orientation: "portrait" | "landscape" = "portrait"
+): Promise<void> {
+  const params = new URLSearchParams({ subject_filter: subjectFilter });
+  if (programmeId) {
+    params.append("programme_id", programmeId.toString());
+  }
+  if (mergeByDate) {
+    params.append("merge_by_date", "true");
+  }
+  if (orientation === "landscape") {
+    params.append("orientation", "landscape");
+  }
+  const response = await fetchWithAuth(`/api/v1/admin/exams/${examId}/timetable/school/${schoolId}?${params}`);
+  if (!response.ok) {
+    await handleResponse(response);
+  }
+
+  // Get filename from Content-Disposition header or use default
+  const contentDisposition = response.headers.get("Content-Disposition");
+  let filename = `timetable_exam_${examId}_school_${schoolId}.pdf`;
+  if (contentDisposition) {
+    const filenameMatch = contentDisposition.match(/filename="?([^"]+)"?/i);
+    if (filenameMatch && filenameMatch[1]) {
+      filename = filenameMatch[1].trim();
+    }
+  }
+
+  // Download the file
+  const blob = await response.blob();
+  const downloadUrl = window.URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = downloadUrl;
+  link.download = filename;
+  document.body.appendChild(link);
+  link.click();
+  document.body.removeChild(link);
+  window.URL.revokeObjectURL(downloadUrl);
+}
+
+export async function downloadMySchoolTimetable(
+  examId: number,
+  subjectFilter: TimetableDownloadFilter = "ALL",
+  programmeId?: number,
+  mergeByDate: boolean = false,
+  orientation: "portrait" | "landscape" = "portrait"
+): Promise<void> {
+  const params = new URLSearchParams({ subject_filter: subjectFilter });
+  if (programmeId) {
+    params.append("programme_id", programmeId.toString());
+  }
+  if (mergeByDate) {
+    params.append("merge_by_date", "true");
+  }
+  if (orientation === "landscape") {
+    params.append("orientation", "landscape");
+  }
+  const response = await fetchWithAuth(`/api/v1/school/exams/${examId}/timetable?${params}`);
+  if (!response.ok) {
+    await handleResponse(response);
+  }
+
+  // Get filename from Content-Disposition header or use default
+  const contentDisposition = response.headers.get("Content-Disposition");
+  let filename = `timetable_exam_${examId}.pdf`;
+  if (contentDisposition) {
+    const filenameMatch = contentDisposition.match(/filename="?([^"]+)"?/i);
+    if (filenameMatch && filenameMatch[1]) {
+      filename = filenameMatch[1].trim();
+    }
+  }
+
+  // Download the file
+  const blob = await response.blob();
+  const downloadUrl = window.URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = downloadUrl;
+  link.download = filename;
+  document.body.appendChild(link);
+  link.click();
+  document.body.removeChild(link);
+  window.URL.revokeObjectURL(downloadUrl);
+}
+
+export async function getTimetablePreview(
+  examId: number,
+  subjectFilter: TimetableDownloadFilter = "ALL",
+  programmeId?: number
+): Promise<TimetableResponse> {
+  const params = new URLSearchParams({ subject_filter: subjectFilter });
+  if (programmeId) {
+    params.append("programme_id", programmeId.toString());
+  }
+  const response = await fetchWithAuth(`/api/v1/school/exams/${examId}/timetable/preview?${params}`);
+  return handleResponse<TimetableResponse>(response);
+}
+
+export async function getTimetablePreviewForSchool(
+  examId: number,
+  schoolId: number,
+  subjectFilter: TimetableDownloadFilter = "ALL",
+  programmeId?: number
+): Promise<TimetableResponse> {
+  const params = new URLSearchParams({ subject_filter: subjectFilter });
+  if (programmeId) {
+    params.append("programme_id", programmeId.toString());
+  }
+  const response = await fetchWithAuth(`/api/v1/admin/exams/${examId}/timetable/school/${schoolId}/preview?${params}`);
+  return handleResponse<TimetableResponse>(response);
+}
+
 // Index Slip Download API
 export async function downloadCandidateIndexSlip(candidateId: number): Promise<Blob> {
   const token = getAccessToken();
@@ -1556,8 +1715,13 @@ export async function listAvailableExams(): Promise<RegistrationExam[]> {
   return handleResponse<RegistrationExam[]>(response);
 }
 
-export async function listAllExams(): Promise<RegistrationExam[]> {
+export async function listAllSchoolExams(): Promise<RegistrationExam[]> {
   const response = await fetchWithAuth("/api/v1/school/exams/all");
+  return handleResponse<RegistrationExam[]>(response);
+}
+
+export async function listAllExams(): Promise<RegistrationExam[]> {
+  const response = await fetchWithAuth("/api/v1/admin/exams");
   return handleResponse<RegistrationExam[]>(response);
 }
 
@@ -1641,6 +1805,11 @@ export async function listSchoolProgrammes(): Promise<Programme[]> {
 
 export async function listAvailableProgrammes(): Promise<Programme[]> {
   const response = await fetchWithAuth("/api/v1/school/programmes/available");
+  return handleResponse<Programme[]>(response);
+}
+
+export async function getSchoolProgrammes(schoolId: number): Promise<Programme[]> {
+  const response = await fetchWithAuth(`/api/v1/admin/schools/${schoolId}/programmes`);
   return handleResponse<Programme[]>(response);
 }
 
