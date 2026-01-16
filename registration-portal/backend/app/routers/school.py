@@ -1,11 +1,12 @@
 """School portal endpoints for school users."""
 from datetime import datetime
 from pathlib import Path
-from typing import Annotated
+from typing import Annotated, Any
 from uuid import UUID
 import io
 import csv
 import zipfile
+import re
 from io import BytesIO
 
 from fastapi import APIRouter, HTTPException, status, UploadFile, File, Query, Depends, Form
@@ -78,6 +79,8 @@ from app.services.school_invoice_service import (
     aggregate_candidates_by_examination_and_programme,
     generate_school_invoice_pdf,
 )
+from app.services.timetable_service import generate_timetable_pdf
+from app.schemas.timetable import TimetableDownloadFilter
 import logging
 
 logger = logging.getLogger(__name__)
@@ -2803,3 +2806,238 @@ async def download_referral_invoice_pdf(
         media_type="application/pdf",
         headers={"Content-Disposition": f'attachment; filename="{filename}"'},
     )
+
+
+# Timetable Download Endpoints
+
+@router.get("/exams/{exam_id}/timetable")
+async def download_school_timetable(
+    exam_id: int,
+    session: DBSessionDep,
+    current_user: SchoolUserWithSchoolDep,
+    subject_filter: TimetableDownloadFilter = Query(default=TimetableDownloadFilter.ALL, description="Filter by subject type: ALL, CORE_ONLY, or ELECTIVE_ONLY"),
+    programme_id: int | None = Query(default=None, description="Optional programme ID to filter timetable"),
+    merge_by_date: bool = Query(default=False, description="Merge subjects written on the same day"),
+    orientation: str = Query(default="portrait", description="Page orientation: portrait or landscape"),
+) -> StreamingResponse:
+    """Download timetable for the school's subjects."""
+    if not current_user.school_id:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="User must be associated with a school",
+        )
+
+    # Verify exam exists
+    exam_stmt = select(RegistrationExam).where(RegistrationExam.id == exam_id)
+    exam_result = await session.execute(exam_stmt)
+    exam = exam_result.scalar_one_or_none()
+    if not exam:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Exam not found")
+
+    # If programme_id is provided, verify it's associated with the school
+    if programme_id:
+        assoc_stmt = select(school_programmes).where(
+            school_programmes.c.school_id == current_user.school_id,
+            school_programmes.c.programme_id == programme_id
+        )
+        result = await session.execute(assoc_stmt)
+        existing = result.first()
+        if not existing:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Programme not found or not associated with school"
+            )
+
+    try:
+        pdf_bytes = await generate_timetable_pdf(
+            session,
+            exam_id=exam_id,
+            school_id=current_user.school_id,
+            programme_id=programme_id,
+            subject_filter=subject_filter,
+            merge_by_date=merge_by_date,
+            orientation=orientation,
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
+
+    # Generate filename: {exam_year}_{exam_series}_{exam_type}{programme_name if selected}{subject_filter if not ALL}
+    # Sanitize filename parts
+    def sanitize_filename_part(text: str | None) -> str:
+        """Sanitize a filename part by removing/replacing problematic characters."""
+        if not text:
+            return ""
+        # Remove or replace problematic characters: / \ : * ? " < > |
+        sanitized = re.sub(r'[<>:"/\\|?*]', '_', str(text))
+        # Replace spaces with underscores
+        sanitized = sanitized.replace(" ", "_")
+        # Remove multiple consecutive underscores
+        sanitized = re.sub(r'_+', '_', sanitized)
+        # Remove leading/trailing underscores
+        sanitized = sanitized.strip('_')
+        return sanitized
+
+    exam_year = str(exam.year)
+    exam_series = sanitize_filename_part(exam.exam_series).upper() if exam.exam_series else ""
+    exam_type_safe = sanitize_filename_part(exam.exam_type)
+
+    # Build filename parts
+    filename_parts = [exam_year]
+    if exam_series:
+        filename_parts.append(exam_series)
+    filename_parts.append(exam_type_safe)
+
+    # Add programme name if selected
+    if programme_id:
+        programme_stmt = select(Programme).where(Programme.id == programme_id)
+        programme_result = await session.execute(programme_stmt)
+        programme = programme_result.scalar_one_or_none()
+        if programme:
+            programme_name_safe = sanitize_filename_part(programme.name)
+            if programme_name_safe:
+                filename_parts.append(programme_name_safe)
+
+    # Add subject filter if not ALL
+    if subject_filter != TimetableDownloadFilter.ALL:
+        filename_parts.append(subject_filter.value)
+
+    # Join parts and ensure we have at least one part
+    if not filename_parts:
+        filename = "timetable.pdf"
+    else:
+        filename = "_".join(filter(None, filename_parts)) + ".pdf"
+
+    return StreamingResponse(
+        io.BytesIO(pdf_bytes),
+        media_type="application/pdf",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
+@router.get("/exams/{exam_id}/timetable/preview")
+async def preview_school_timetable(
+    exam_id: int,
+    session: DBSessionDep,
+    current_user: SchoolUserWithSchoolDep,
+    subject_filter: TimetableDownloadFilter = Query(default=TimetableDownloadFilter.ALL, description="Filter by subject type: ALL, CORE_ONLY, or ELECTIVE_ONLY"),
+    programme_id: int | None = Query(default=None, description="Optional programme ID to filter timetable"),
+) -> dict[str, Any]:
+    """Preview timetable data (JSON) for the school's subjects."""
+    if not current_user.school_id:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="User must be associated with a school",
+        )
+
+    # Verify exam exists
+    exam_stmt = select(RegistrationExam).where(RegistrationExam.id == exam_id)
+    exam_result = await session.execute(exam_stmt)
+    exam = exam_result.scalar_one_or_none()
+    if not exam:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Exam not found")
+
+    # If programme_id is provided, verify it's associated with the school
+    if programme_id:
+        assoc_stmt = select(school_programmes).where(
+            school_programmes.c.school_id == current_user.school_id,
+            school_programmes.c.programme_id == programme_id
+        )
+        result = await session.execute(assoc_stmt)
+        existing = result.first()
+        if not existing:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Programme not found or not associated with school"
+            )
+
+    # Import here to avoid circular dependency
+    from app.models import ExaminationSchedule, Subject
+    from app.schemas.schedule import TimetableEntry, TimetableResponse
+    from app.services.timetable_service import (
+        get_school_subject_codes,
+        get_programme_subject_codes,
+        filter_schedules_by_subject_type,
+    )
+
+    # Get all schedules for the exam
+    schedules_stmt = select(ExaminationSchedule).where(
+        ExaminationSchedule.registration_exam_id == exam_id
+    ).order_by(ExaminationSchedule.examination_date, ExaminationSchedule.examination_time)
+    schedules_result = await session.execute(schedules_stmt)
+    all_schedules = schedules_result.scalars().all()
+
+    # Build a map from schedule subject_code to Subject to get original_code for display
+    schedule_subject_codes = {schedule.subject_code for schedule in all_schedules}
+    subject_stmt = select(Subject.code, Subject.original_code).where(Subject.code.in_(schedule_subject_codes))
+    subject_result = await session.execute(subject_stmt)
+    code_to_original_code: dict[str, str] = {}
+    for code, original_code in subject_result.all():
+        if original_code:
+            code_to_original_code[code] = original_code
+
+    # Apply filters
+    filtered_subject_codes: set[str] | None = None
+    filtered_code_to_original_code: dict[str, str] = {}
+
+    if programme_id:
+        filtered_subject_codes, filtered_code_to_original_code = await get_programme_subject_codes(session, programme_id)
+    else:
+        filtered_subject_codes, filtered_code_to_original_code = await get_school_subject_codes(session, current_user.school_id)
+
+    # Apply subject type filter
+    if filtered_subject_codes is not None:
+        filtered_subject_codes = await filter_schedules_by_subject_type(
+            session, filtered_subject_codes, subject_filter
+        )
+        # Update the code_to_original_code map to only include filtered subjects
+        filtered_code_to_original_code = {
+            code: original_code for code, original_code in filtered_code_to_original_code.items()
+            if code in filtered_subject_codes
+        }
+    elif subject_filter != TimetableDownloadFilter.ALL:
+        # No school/programme filter, but need to filter by subject type
+        all_subject_codes = {schedule.subject_code for schedule in all_schedules}
+        filtered_subject_codes = await filter_schedules_by_subject_type(
+            session, all_subject_codes, subject_filter
+        )
+        # Update the code_to_original_code map to only include filtered subjects
+        filtered_code_to_original_code = {
+            code: original_code for code, original_code in code_to_original_code.items()
+            if code in filtered_subject_codes
+        }
+    else:
+        filtered_code_to_original_code = code_to_original_code
+
+    # Filter schedules
+    if filtered_subject_codes:
+        schedules = [s for s in all_schedules if s.subject_code in filtered_subject_codes]
+    else:
+        schedules = list(all_schedules)
+
+    # Sort by date and time
+    schedules.sort(key=lambda s: (s.examination_date, s.examination_time))
+
+    # Convert to TimetableEntry, using original_code if available
+    entries = [
+        TimetableEntry(
+            subject_code=filtered_code_to_original_code.get(schedule.subject_code, schedule.subject_code),
+            subject_name=schedule.subject_name,
+            examination_date=schedule.examination_date,
+            examination_time=schedule.examination_time,
+            examination_end_time=schedule.examination_end_time,
+            venue=schedule.venue,
+            duration_minutes=schedule.duration_minutes,
+            instructions=schedule.instructions,
+        )
+        for schedule in schedules
+    ]
+
+    timetable_response = TimetableResponse(
+        exam_id=exam.id,
+        exam_type=exam.exam_type,
+        exam_series=exam.exam_series or "",
+        year=exam.year,
+        entries=entries,
+    )
+
+    return timetable_response.model_dump()
