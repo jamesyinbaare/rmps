@@ -49,7 +49,6 @@ from app.schemas.registration import (
 )
 from app.schemas.programme import (
     ProgrammeResponse,
-    ProgrammeSubjectResponse,
     ProgrammeSubjectRequirements,
     SchoolProgrammeAssociation,
 )
@@ -81,6 +80,8 @@ from app.services.school_invoice_service import (
 )
 from app.services.timetable_service import generate_timetable_pdf
 from app.schemas.timetable import TimetableDownloadFilter
+from app.schemas.school import SchoolUpdate, SchoolResponse
+from app.utils.school import check_school_profile_completion
 import logging
 
 logger = logging.getLogger(__name__)
@@ -1610,6 +1611,86 @@ async def update_school_user(
     return UserResponse.model_validate(user)
 
 
+@router.get("/profile", response_model=SchoolResponse)
+async def get_school_profile(
+    session: DBSessionDep,
+    current_user: SchoolUserWithSchoolDep,
+) -> SchoolResponse:
+    """Get school profile (school users can only view their own school)."""
+    # Ensure user has a school
+    if current_user.school_id is None:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="School user must be associated with a school",
+        )
+
+    # Get school
+    school_stmt = select(School).where(School.id == current_user.school_id)
+    school_result = await session.execute(school_stmt)
+    school = school_result.scalar_one_or_none()
+
+    if not school:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="School not found",
+        )
+
+    return SchoolResponse.model_validate(school)
+
+
+@router.put("/profile", response_model=SchoolResponse)
+async def update_school_profile(
+    school_update: SchoolUpdate,
+    session: DBSessionDep,
+    current_user: SchoolUserWithSchoolDep,
+) -> SchoolResponse:
+    """Update school profile (school users can only update their own school)."""
+    # Ensure user has a school
+    if current_user.school_id is None:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="School user must be associated with a school",
+        )
+
+    # Get school and verify it belongs to the user
+    school_stmt = select(School).where(School.id == current_user.school_id)
+    school_result = await session.execute(school_stmt)
+    school = school_result.scalar_one_or_none()
+
+    if not school:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="School not found",
+        )
+
+    # Update profile fields if provided (school users can only update profile fields, not name, is_active, etc.)
+    # Only allow updating profile-related fields
+    if school_update.email is not None:
+        school.email = school_update.email
+    if school_update.phone is not None:
+        school.phone = school_update.phone
+    if school_update.digital_address is not None:
+        school.digital_address = school_update.digital_address
+    if school_update.post_office_address is not None:
+        school.post_office_address = school_update.post_office_address
+    if school_update.is_private is not None:
+        school.is_private = school_update.is_private
+    if school_update.principal_name is not None:
+        school.principal_name = school_update.principal_name
+    if school_update.principal_email is not None:
+        school.principal_email = school_update.principal_email
+    if school_update.principal_phone is not None:
+        school.principal_phone = school_update.principal_phone
+
+    # Automatically calculate and set profile completion status
+    school.profile_completed = check_school_profile_completion(school)
+
+    await session.commit()
+    await session.refresh(school)
+
+    return SchoolResponse.model_validate(school)
+
+
 @router.get("/dashboard")
 async def get_school_dashboard(
     session: DBSessionDep,
@@ -1666,6 +1747,7 @@ async def get_school_dashboard(
             "code": school.code,
             "name": school.name,
             "is_active": school.is_active,
+            "profile_completed": school.profile_completed,
         },
         "active_user_count": active_user_count,
         "max_active_users": MAX_ACTIVE_USERS_PER_SCHOOL,

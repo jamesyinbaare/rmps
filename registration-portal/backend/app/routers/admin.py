@@ -90,6 +90,7 @@ from app.schemas.school import (
     BulkUploadResponse,
     BulkUploadError,
 )
+from app.utils.school import check_school_profile_completion
 from app.models import RegistrationStatus
 import csv
 import io
@@ -1400,6 +1401,27 @@ async def update_school(
         school.is_active = school_update.is_active
     if school_update.is_private_examination_center is not None:
         school.is_private_examination_center = school_update.is_private_examination_center
+
+    # Update profile fields if provided
+    if school_update.email is not None:
+        school.email = school_update.email
+    if school_update.phone is not None:
+        school.phone = school_update.phone
+    if school_update.digital_address is not None:
+        school.digital_address = school_update.digital_address
+    if school_update.post_office_address is not None:
+        school.post_office_address = school_update.post_office_address
+    if school_update.is_private is not None:
+        school.is_private = school_update.is_private
+    if school_update.principal_name is not None:
+        school.principal_name = school_update.principal_name
+    if school_update.principal_email is not None:
+        school.principal_email = school_update.principal_email
+    if school_update.principal_phone is not None:
+        school.principal_phone = school_update.principal_phone
+
+    # Automatically calculate and set profile completion status
+    school.profile_completed = check_school_profile_completion(school)
 
     await session.commit()
     await session.refresh(school)
