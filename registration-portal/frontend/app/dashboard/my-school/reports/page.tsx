@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
-import { FileText, Receipt, FileCheck } from "lucide-react";
+import { Calendar, Receipt, FileCheck } from "lucide-react";
 import { Button } from "@/components/ui/button";
 
 export default function ReportsPage() {
@@ -45,6 +45,23 @@ export default function ReportsPage() {
             </CardHeader>
             <CardContent>
               <Button className="w-full">Download Index Slips</Button>
+            </CardContent>
+          </Link>
+        </Card>
+
+        <Card className="cursor-pointer hover:shadow-lg transition-shadow">
+          <Link href="/dashboard/my-school/timetables">
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2">
+                <Calendar className="h-5 w-5" />
+                Timetables
+              </CardTitle>
+              <CardDescription>
+                View and download examination timetables for your school
+              </CardDescription>
+            </CardHeader>
+            <CardContent>
+              <Button className="w-full">View Timetables</Button>
             </CardContent>
           </Link>
         </Card>

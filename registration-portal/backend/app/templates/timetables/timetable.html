@@ -1,0 +1,335 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Examination Timetable - {{ exam.exam_type }} {{ exam.year }}</title>
+    <style>
+        @page {
+            size: A4 {% if orientation == 'landscape' %}landscape{% else %}portrait{% endif %};
+            margin: 1.5cm 1.5cm;
+        }
+
+        body {
+            font-family: 'Helvetica', Arial, sans-serif;
+            font-size: 9pt;
+            color: #000;
+            line-height: 1.4;
+            margin: 0;
+            padding: 0;
+            position: relative;
+        }
+
+        .watermark {
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            width: 100%;
+            height: 100%;
+            background-image: url('img/logo-crest-only.png');
+            background-size: contain;
+            background-repeat: no-repeat;
+            background-position: center;
+            opacity: 0.03;
+            z-index: 0;
+            pointer-events: none;
+        }
+
+        .content-wrapper {
+            position: relative;
+            z-index: 1;
+        }
+
+        .header {
+            display: flex;
+            align-items: center;
+            margin-bottom: 20px;
+            border-bottom: 2px solid #000;
+            padding-bottom: 10px;
+        }
+
+        .header-logo-container {
+            display: flex;
+            align-items: center;
+            margin-right: 20px;
+        }
+
+        .header-logo {
+            height: 60px;
+            width: auto;
+        }
+
+        .header-title {
+            flex: 1;
+            text-align: center;
+        }
+
+        .header h1 {
+            margin: 0;
+            font-size: 16pt;
+            font-weight: bold;
+        }
+
+        .header h2 {
+            margin: 5px 0 0 0;
+            font-size: 12pt;
+            font-weight: normal;
+        }
+
+        .info-section {
+            margin-bottom: 20px;
+        }
+
+        .info-row {
+            margin: 5px 0;
+        }
+
+        .info-label {
+            font-weight: bold;
+            display: inline-block;
+            min-width: 120px;
+        }
+
+        .timetable-table {
+            width: 100%;
+            border-collapse: collapse;
+            margin-bottom: 20px;
+        }
+
+        .timetable-table th,
+        .timetable-table td {
+            border: 1px solid #000;
+            padding: 6px;
+            text-align: left;
+            vertical-align: middle;
+        }
+
+        .timetable-table th {
+            background-color: #f0f0f0;
+            font-weight: bold;
+            text-align: center;
+        }
+
+        .timetable-table .sn-cell {
+            width: 50px;
+            text-align: center;
+        }
+
+        .timetable-table .subject-code-cell {
+            width: 100px;
+            text-align: center;
+        }
+
+        .timetable-table .subject-name-cell {
+            width: 200px;
+            max-width: 200px;
+            text-align: left;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+
+        .timetable-table .date-cell {
+            width: 180px;
+            text-align: center;
+        }
+
+        .timetable-table .date-day-of-week {
+            font-weight: bold;
+            font-size: 9pt;
+        }
+
+        .timetable-table .date-display {
+            font-size: 8pt;
+            color: #555;
+        }
+
+        .timetable-table .duration-cell {
+            width: 140px;
+            text-align: center;
+            white-space: nowrap;
+        }
+
+        .timetable-table .stacked-content {
+            display: flex;
+            flex-direction: column;
+            gap: 2px;
+        }
+
+        .timetable-table .stacked-item {
+            padding: 2px 0;
+        }
+
+        .timetable-table .time-item {
+            font-size: 8pt;
+            color: #555;
+            font-weight: normal;
+        }
+
+        .instructions-cell {
+            font-size: 8pt;
+            font-style: italic;
+            color: #555;
+        }
+
+        .footer {
+            margin-top: 30px;
+            padding-top: 10px;
+            border-top: 1px solid #000;
+            font-size: 8pt;
+            text-align: center;
+            color: #666;
+        }
+    </style>
+</head>
+<body>
+    <div class="watermark"></div>
+    <div class="content-wrapper">
+    <div class="header">
+        <div class="header-logo-container">
+            <img src="img/logo-crest-only.png" alt="CTVET Logo" class="header-logo" />
+        </div>
+        <div class="header-title">
+            <h1>EXAMINATION TIMETABLE</h1>
+            <h2>{{ exam.exam_type }} - {{ exam.exam_series }} {{ exam.year }}</h2>
+        </div>
+    </div>
+
+    <div class="info-section">
+        {% if school %}
+        <div class="info-row">
+            <span class="info-label">School:</span>
+            <span>{{ school.name }} ({{ school.code }})</span>
+        </div>
+        {% endif %}
+        {% if programme %}
+        <div class="info-row">
+            <span class="info-label">Programme:</span>
+            <span>{{ programme.name }} ({{ programme.code }})</span>
+        </div>
+        {% endif %}
+        {% if subject_filter != 'ALL' %}
+        <div class="info-row">
+            <span class="info-label">Subject Filter:</span>
+            <span>{% if subject_filter == 'CORE_ONLY' %}Core Subjects Only{% elif subject_filter == 'ELECTIVE_ONLY' %}Elective Subjects Only{% else %}{{ subject_filter }}{% endif %}</span>
+        </div>
+        {% endif %}
+        <div class="info-row">
+            <span class="info-label">Total Entries:</span>
+            <span>{{ total_entries }}</span>
+        </div>
+        <div class="info-row">
+            <span class="info-label">Generated:</span>
+            <span>{{ generated_at.strftime('%d/%m/%Y %H:%M') }}</span>
+        </div>
+    </div>
+
+    <table class="timetable-table">
+        <thead>
+            <tr>
+                <th class="sn-cell">SN</th>
+                <th class="subject-code-cell">Code</th>
+                <th class="subject-name-cell">Subject</th>
+                <th class="date-cell">Date</th>
+                <th class="duration-cell">Duration</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% if merge_by_date %}
+                {% for entry in schedule_entries %}
+                    {% if entry.is_merged %}
+                        {% for idx in range(entry.rowspan) %}
+                        <tr>
+                            {% if idx == 0 %}
+                            <td class="sn-cell" rowspan="{{ entry.rowspan }}">{{ entry.sn }}</td>
+                            <td class="subject-code-cell">
+                                <div class="stacked-content">
+                                    <div class="stacked-item">{{ entry.subject_code[idx] }}</div>
+                                    {% if entry.time and entry.time[idx] %}
+                                    <div class="stacked-item time-item">{{ entry.time[idx] }}</div>
+                                    {% endif %}
+                                </div>
+                            </td>
+                            <td class="subject-name-cell">{{ entry.subject_name[idx] }}</td>
+                            <td class="date-cell" rowspan="{{ entry.rowspan }}">
+                                <div class="date-day-of-week">{{ entry.day_of_week }}</div>
+                                <div class="date-display">{{ entry.date_display }}</div>
+                            </td>
+                            <td class="duration-cell">
+                                {% if entry.time_range and entry.time_range[idx] %}
+                                {{ entry.time_range[idx] }}
+                                {% else %}
+                                <span style="color: #999;">-</span>
+                                {% endif %}
+                            </td>
+                            {% else %}
+                            <td class="subject-code-cell">
+                                <div class="stacked-content">
+                                    <div class="stacked-item">{{ entry.subject_code[idx] }}</div>
+                                    {% if entry.time and entry.time[idx] %}
+                                    <div class="stacked-item time-item">{{ entry.time[idx] }}</div>
+                                    {% endif %}
+                                </div>
+                            </td>
+                            <td class="subject-name-cell">{{ entry.subject_name[idx] }}</td>
+                            <td class="duration-cell">
+                                {% if entry.time_range and entry.time_range[idx] %}
+                                {{ entry.time_range[idx] }}
+                                {% else %}
+                                <span style="color: #999;">-</span>
+                                {% endif %}
+                            </td>
+                            {% endif %}
+                        </tr>
+                        {% endfor %}
+                    {% else %}
+                        <tr>
+                            <td class="sn-cell">{{ entry.sn }}</td>
+                            <td class="subject-code-cell">{{ entry.subject_code }}</td>
+                            <td class="subject-name-cell">{{ entry.subject_name }}</td>
+                            <td class="date-cell">
+                                <div class="date-day-of-week">{{ entry.day_of_week }}</div>
+                                <div class="date-display">{{ entry.date_display }}</div>
+                            </td>
+                            <td class="duration-cell">
+                                {% if entry.time_range %}
+                                {{ entry.time_range }}
+                                {% else %}
+                                <span style="color: #999;">-</span>
+                                {% endif %}
+                            </td>
+                        </tr>
+                    {% endif %}
+                {% endfor %}
+            {% else %}
+                {% for entry in schedule_entries %}
+                <tr>
+                    <td class="sn-cell">{{ entry.sn }}</td>
+                    <td class="subject-code-cell">{{ entry.subject_code }}</td>
+                    <td class="subject-name-cell">{{ entry.subject_name }}</td>
+                    <td class="date-cell">
+                        <div class="date-day-of-week">{{ entry.day_of_week }}</div>
+                        <div class="date-display">{{ entry.date_display }}</div>
+                    </td>
+                    <td class="duration-cell">
+                        {% if entry.time_range %}
+                        {{ entry.time_range }}
+                        {% else %}
+                        <span style="color: #999;">-</span>
+                        {% endif %}
+                    </td>
+                </tr>
+                {% endfor %}
+            {% endif %}
+        </tbody>
+    </table>
+
+    <div class="footer">
+        <p>This is an official examination timetable document.</p>
+        <p>Generated on {{ generated_at.strftime('%d/%m/%Y %H:%M') }}</p>
+    </div>
+    </div>
+</body>
+</html>
