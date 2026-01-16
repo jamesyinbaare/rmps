@@ -1,5 +1,8 @@
 """Admin endpoints for system administrators."""
 import logging
+import json
+import time
+import os
 from datetime import datetime, timezone
 from decimal import Decimal
 from typing import Annotated, Any, Optional
@@ -3065,7 +3068,44 @@ async def export_candidates(
         df_empty = pd.DataFrame(columns=["registration_number", "index_number", "school_code", "programme_code", "name", "dob", "subject_original_codes"])
         df_empty.to_excel(output, index=False, engine='openpyxl')
         output.seek(0)
-        filename = f"exam_{exam_id}_candidates_{datetime.utcnow().strftime('%Y%m%d_%H%M%S')}.xlsx"
+
+        # Format filename: {year}_{exam_series}_{exam_type}.xlsx
+        # #region agent log
+        try:
+            log_data = {"sessionId":"debug-session","runId":"run1","hypothesisId":"B","location":"admin.py:3069","message":"Export candidates - exam values (empty)","data":{"exam_id":exam_id,"exam_type":exam.exam_type,"exam_year":exam.year,"exam_series":exam.exam_series},"timestamp":int(time.time()*1000)}
+            log_path = '/home/jyin/workspace/lazaar/.cursor/debug.log'
+            os.makedirs(os.path.dirname(log_path), exist_ok=True)
+            with open(log_path, 'a') as f: f.write(json.dumps(log_data) + '\n')
+        except Exception: pass
+        # #endregion
+        # Sanitize exam fields
+        exam_type_safe = (exam.exam_type or "").replace(" ", "_").replace("/", "_").replace("\\", "_")
+        exam_series_safe = (exam.exam_series or "").replace("/", "_").replace("\\", "_") if exam.exam_series else ""
+        # Build filename parts: {year}_{exam_series}_{exam_type}
+        parts = [str(exam.year)]
+        if exam_series_safe:
+            parts.append(exam_series_safe)
+        parts.append(exam_type_safe)
+        filename = "_".join(parts) + ".xlsx"
+        # #region agent log
+        try:
+            log_data = {"sessionId":"debug-session","runId":"run1","hypothesisId":"B","location":"admin.py:3080","message":"Export candidates filename - after construction (empty)","data":{"filename":filename,"exam_series_safe":exam_series_safe,"exam_type_safe":exam_type_safe},"timestamp":int(time.time()*1000)}
+            log_path = '/home/jyin/workspace/lazaar/.cursor/debug.log'
+            os.makedirs(os.path.dirname(log_path), exist_ok=True)
+            with open(log_path, 'a') as f: f.write(json.dumps(log_data) + '\n')
+        except Exception: pass
+        # #endregion
+        # Remove any double underscores and trailing underscores before the extension
+        filename = filename.replace("__", "_").replace("_.xlsx", ".xlsx").replace("_.XLSX", ".XLSX")
+        # #region agent log
+        try:
+            log_data = {"sessionId":"debug-session","runId":"run1","hypothesisId":"B","location":"admin.py:3083","message":"Export candidates filename - final (empty)","data":{"filename":filename},"timestamp":int(time.time()*1000)}
+            log_path = '/home/jyin/workspace/lazaar/.cursor/debug.log'
+            os.makedirs(os.path.dirname(log_path), exist_ok=True)
+            with open(log_path, 'a') as f: f.write(json.dumps(log_data) + '\n')
+        except Exception: pass
+        # #endregion
+
         return StreamingResponse(
             io.BytesIO(output.read()),
             media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
@@ -3090,7 +3130,42 @@ async def export_candidates(
         df.to_excel(writer, index=False, sheet_name="Candidates")
     output.seek(0)
 
-    filename = f"exam_{exam_id}_candidates_{datetime.utcnow().strftime('%Y%m%d_%H%M%S')}.xlsx"
+    # Format filename: {year}_{exam_series}_{exam_type}.xlsx
+    # #region agent log
+    try:
+        log_data = {"sessionId":"debug-session","runId":"run1","hypothesisId":"B","location":"admin.py:3096","message":"Export candidates - exam values","data":{"exam_id":exam_id,"exam_type":exam.exam_type,"exam_year":exam.year,"exam_series":exam.exam_series},"timestamp":int(time.time()*1000)}
+        log_path = '/home/jyin/workspace/lazaar/.cursor/debug.log'
+        os.makedirs(os.path.dirname(log_path), exist_ok=True)
+        with open(log_path, 'a') as f: f.write(json.dumps(log_data) + '\n')
+    except Exception: pass
+    # #endregion
+    # Sanitize exam fields
+    exam_type_safe = (exam.exam_type or "").replace(" ", "_").replace("/", "_").replace("\\", "_")
+    exam_series_safe = (exam.exam_series or "").replace("/", "_").replace("\\", "_") if exam.exam_series else ""
+    # Build filename parts: {year}_{exam_series}_{exam_type}
+    parts = [str(exam.year)]
+    if exam_series_safe:
+        parts.append(exam_series_safe)
+    parts.append(exam_type_safe)
+    filename = "_".join(parts) + ".xlsx"
+    # #region agent log
+    try:
+        log_data = {"sessionId":"debug-session","runId":"run1","hypothesisId":"B","location":"admin.py:3104","message":"Export candidates filename - after construction","data":{"filename":filename,"exam_series_safe":exam_series_safe,"exam_type_safe":exam_type_safe},"timestamp":int(time.time()*1000)}
+        log_path = '/home/jyin/workspace/lazaar/.cursor/debug.log'
+        os.makedirs(os.path.dirname(log_path), exist_ok=True)
+        with open(log_path, 'a') as f: f.write(json.dumps(log_data) + '\n')
+    except Exception: pass
+    # #endregion
+    # Remove any double underscores and trailing underscores before the extension
+    filename = filename.replace("__", "_").replace("_.xlsx", ".xlsx").replace("_.XLSX", ".XLSX")
+    # #region agent log
+    try:
+        log_data = {"sessionId":"debug-session","runId":"run1","hypothesisId":"B","location":"admin.py:3107","message":"Export candidates filename - final","data":{"filename":filename},"timestamp":int(time.time()*1000)}
+        log_path = '/home/jyin/workspace/lazaar/.cursor/debug.log'
+        os.makedirs(os.path.dirname(log_path), exist_ok=True)
+        with open(log_path, 'a') as f: f.write(json.dumps(log_data) + '\n')
+    except Exception: pass
+    # #endregion
 
     return StreamingResponse(
         iter([output.getvalue()]),

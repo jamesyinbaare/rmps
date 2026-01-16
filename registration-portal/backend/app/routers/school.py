@@ -15,6 +15,8 @@ from sqlalchemy import select, and_, func, insert, delete
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 import json
+import time
+import os
 import pandas as pd
 
 from app.dependencies.auth import SchoolUserWithSchoolDep, SchoolAdminDep, get_current_school_user
@@ -2349,9 +2351,42 @@ async def download_index_slips_bulk(
         )
 
     programme_suffix = f"_programme_{programme_id}" if programme_id else ""
-    zip_filename = f"index_slips_{exam.exam_type}_{exam.year}_{exam.exam_series}{programme_suffix}.zip"
-    # Sanitize filename
-    zip_filename = zip_filename.replace("/", "_").replace("\\", "_")
+    # #region agent log
+    try:
+        log_data = {"sessionId":"debug-session","runId":"run1","hypothesisId":"A","location":"school.py:2351","message":"Index slips filename - exam values","data":{"exam_id":exam.id,"exam_type":exam.exam_type,"exam_year":exam.year,"exam_series":exam.exam_series,"programme_id":programme_id},"timestamp":int(time.time()*1000)}
+        log_path = '/home/jyin/workspace/lazaar/.cursor/debug.log'
+        os.makedirs(os.path.dirname(log_path), exist_ok=True)
+        with open(log_path, 'a') as f: f.write(json.dumps(log_data) + '\n')
+    except Exception: pass
+    # #endregion
+    # Sanitize exam fields
+    exam_type_safe = (exam.exam_type or "").replace(" ", "_").replace("/", "_").replace("\\", "_")
+    exam_series_safe = (exam.exam_series or "").replace("/", "_").replace("\\", "_") if exam.exam_series else ""
+    # Build filename parts
+    parts = ["index_slips", exam_type_safe, str(exam.year)]
+    if exam_series_safe:
+        parts.append(exam_series_safe)
+    if programme_suffix:
+        parts.append(programme_suffix.strip("_"))  # Remove leading underscore from programme_suffix if present
+    zip_filename = "_".join(parts) + ".zip"
+    # #region agent log
+    try:
+        log_data = {"sessionId":"debug-session","runId":"run1","hypothesisId":"A","location":"school.py:2362","message":"Index slips filename - after construction","data":{"filename":zip_filename},"timestamp":int(time.time()*1000)}
+        log_path = '/home/jyin/workspace/lazaar/.cursor/debug.log'
+        os.makedirs(os.path.dirname(log_path), exist_ok=True)
+        with open(log_path, 'a') as f: f.write(json.dumps(log_data) + '\n')
+    except Exception: pass
+    # #endregion
+    # Remove any double underscores and trailing underscores before the extension
+    zip_filename = zip_filename.replace("__", "_").replace("_.zip", ".zip").replace("_.ZIP", ".ZIP")
+    # #region agent log
+    try:
+        log_data = {"sessionId":"debug-session","runId":"run1","hypothesisId":"A","location":"school.py:2366","message":"Index slips filename - final","data":{"filename":zip_filename},"timestamp":int(time.time()*1000)}
+        log_path = '/home/jyin/workspace/lazaar/.cursor/debug.log'
+        os.makedirs(os.path.dirname(log_path), exist_ok=True)
+        with open(log_path, 'a') as f: f.write(json.dumps(log_data) + '\n')
+    except Exception: pass
+    # #endregion
 
     return StreamingResponse(
         iter([zip_buffer.getvalue()]),
