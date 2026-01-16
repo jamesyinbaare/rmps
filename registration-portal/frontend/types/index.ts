@@ -38,6 +38,15 @@ export interface School {
   name: string;
   is_active?: boolean;
   is_private_examination_center?: boolean;
+  email?: string | null;
+  phone?: string | null;
+  digital_address?: string | null;
+  post_office_address?: string | null;
+  is_private?: boolean | null;
+  principal_name?: string | null;
+  principal_email?: string | null;
+  principal_phone?: string | null;
+  profile_completed: boolean;
   created_at?: string;
   updated_at?: string;
   admin_count?: number;
@@ -47,6 +56,7 @@ export interface School {
 export interface SchoolDetail extends School {
   is_active: boolean;
   is_private_examination_center: boolean;
+  profile_completed: boolean;
   created_at: string;
   updated_at: string;
 }
@@ -68,6 +78,7 @@ export interface SchoolDashboardData {
     code: string;
     name: string;
     is_active: boolean;
+    profile_completed?: boolean;
   };
   active_user_count: number;
   max_active_users: number;

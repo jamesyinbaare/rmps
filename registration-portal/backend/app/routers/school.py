@@ -15,6 +15,8 @@ from sqlalchemy import select, and_, func, insert, delete
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 import json
+import time
+import os
 import pandas as pd
 
 from app.dependencies.auth import SchoolUserWithSchoolDep, SchoolAdminDep, get_current_school_user
@@ -49,7 +51,6 @@ from app.schemas.registration import (
 )
 from app.schemas.programme import (
     ProgrammeResponse,
-    ProgrammeSubjectResponse,
     ProgrammeSubjectRequirements,
     SchoolProgrammeAssociation,
 )
@@ -81,6 +82,8 @@ from app.services.school_invoice_service import (
 )
 from app.services.timetable_service import generate_timetable_pdf
 from app.schemas.timetable import TimetableDownloadFilter
+from app.schemas.school import SchoolUpdate, SchoolResponse
+from app.utils.school import check_school_profile_completion
 import logging
 
 logger = logging.getLogger(__name__)
@@ -1610,6 +1613,86 @@ async def update_school_user(
     return UserResponse.model_validate(user)
 
 
+@router.get("/profile", response_model=SchoolResponse)
+async def get_school_profile(
+    session: DBSessionDep,
+    current_user: SchoolUserWithSchoolDep,
+) -> SchoolResponse:
+    """Get school profile (school users can only view their own school)."""
+    # Ensure user has a school
+    if current_user.school_id is None:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="School user must be associated with a school",
+        )
+
+    # Get school
+    school_stmt = select(School).where(School.id == current_user.school_id)
+    school_result = await session.execute(school_stmt)
+    school = school_result.scalar_one_or_none()
+
+    if not school:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="School not found",
+        )
+
+    return SchoolResponse.model_validate(school)
+
+
+@router.put("/profile", response_model=SchoolResponse)
+async def update_school_profile(
+    school_update: SchoolUpdate,
+    session: DBSessionDep,
+    current_user: SchoolUserWithSchoolDep,
+) -> SchoolResponse:
+    """Update school profile (school users can only update their own school)."""
+    # Ensure user has a school
+    if current_user.school_id is None:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="School user must be associated with a school",
+        )
+
+    # Get school and verify it belongs to the user
+    school_stmt = select(School).where(School.id == current_user.school_id)
+    school_result = await session.execute(school_stmt)
+    school = school_result.scalar_one_or_none()
+
+    if not school:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="School not found",
+        )
+
+    # Update profile fields if provided (school users can only update profile fields, not name, is_active, etc.)
+    # Only allow updating profile-related fields
+    if school_update.email is not None:
+        school.email = school_update.email
+    if school_update.phone is not None:
+        school.phone = school_update.phone
+    if school_update.digital_address is not None:
+        school.digital_address = school_update.digital_address
+    if school_update.post_office_address is not None:
+        school.post_office_address = school_update.post_office_address
+    if school_update.is_private is not None:
+        school.is_private = school_update.is_private
+    if school_update.principal_name is not None:
+        school.principal_name = school_update.principal_name
+    if school_update.principal_email is not None:
+        school.principal_email = school_update.principal_email
+    if school_update.principal_phone is not None:
+        school.principal_phone = school_update.principal_phone
+
+    # Automatically calculate and set profile completion status
+    school.profile_completed = check_school_profile_completion(school)
+
+    await session.commit()
+    await session.refresh(school)
+
+    return SchoolResponse.model_validate(school)
+
+
 @router.get("/dashboard")
 async def get_school_dashboard(
     session: DBSessionDep,
@@ -1666,6 +1749,7 @@ async def get_school_dashboard(
             "code": school.code,
             "name": school.name,
             "is_active": school.is_active,
+            "profile_completed": school.profile_completed,
         },
         "active_user_count": active_user_count,
         "max_active_users": MAX_ACTIVE_USERS_PER_SCHOOL,
@@ -2267,9 +2351,42 @@ async def download_index_slips_bulk(
         )
 
     programme_suffix = f"_programme_{programme_id}" if programme_id else ""
-    zip_filename = f"index_slips_{exam.exam_type}_{exam.year}_{exam.exam_series}{programme_suffix}.zip"
-    # Sanitize filename
-    zip_filename = zip_filename.replace("/", "_").replace("\\", "_")
+    # #region agent log
+    try:
+        log_data = {"sessionId":"debug-session","runId":"run1","hypothesisId":"A","location":"school.py:2351","message":"Index slips filename - exam values","data":{"exam_id":exam.id,"exam_type":exam.exam_type,"exam_year":exam.year,"exam_series":exam.exam_series,"programme_id":programme_id},"timestamp":int(time.time()*1000)}
+        log_path = '/home/jyin/workspace/lazaar/.cursor/debug.log'
+        os.makedirs(os.path.dirname(log_path), exist_ok=True)
+        with open(log_path, 'a') as f: f.write(json.dumps(log_data) + '\n')
+    except Exception: pass
+    # #endregion
+    # Sanitize exam fields
+    exam_type_safe = (exam.exam_type or "").replace(" ", "_").replace("/", "_").replace("\\", "_")
+    exam_series_safe = (exam.exam_series or "").replace("/", "_").replace("\\", "_") if exam.exam_series else ""
+    # Build filename parts
+    parts = ["index_slips", exam_type_safe, str(exam.year)]
+    if exam_series_safe:
+        parts.append(exam_series_safe)
+    if programme_suffix:
+        parts.append(programme_suffix.strip("_"))  # Remove leading underscore from programme_suffix if present
+    zip_filename = "_".join(parts) + ".zip"
+    # #region agent log
+    try:
+        log_data = {"sessionId":"debug-session","runId":"run1","hypothesisId":"A","location":"school.py:2362","message":"Index slips filename - after construction","data":{"filename":zip_filename},"timestamp":int(time.time()*1000)}
+        log_path = '/home/jyin/workspace/lazaar/.cursor/debug.log'
+        os.makedirs(os.path.dirname(log_path), exist_ok=True)
+        with open(log_path, 'a') as f: f.write(json.dumps(log_data) + '\n')
+    except Exception: pass
+    # #endregion
+    # Remove any double underscores and trailing underscores before the extension
+    zip_filename = zip_filename.replace("__", "_").replace("_.zip", ".zip").replace("_.ZIP", ".ZIP")
+    # #region agent log
+    try:
+        log_data = {"sessionId":"debug-session","runId":"run1","hypothesisId":"A","location":"school.py:2366","message":"Index slips filename - final","data":{"filename":zip_filename},"timestamp":int(time.time()*1000)}
+        log_path = '/home/jyin/workspace/lazaar/.cursor/debug.log'
+        os.makedirs(os.path.dirname(log_path), exist_ok=True)
+        with open(log_path, 'a') as f: f.write(json.dumps(log_data) + '\n')
+    except Exception: pass
+    # #endregion
 
     return StreamingResponse(
         iter([zip_buffer.getvalue()]),

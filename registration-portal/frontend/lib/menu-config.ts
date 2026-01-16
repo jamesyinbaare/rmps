@@ -15,6 +15,7 @@ import {
   Coins,
   Search,
   BarChart3,
+  UserCircle,
 } from "lucide-react";
 import type { Role } from "@/types";
 import { LucideIcon } from "lucide-react";
@@ -155,6 +156,12 @@ export const schoolUserMenuItems: MenuItem[] = [
     href: "/dashboard/my-school/reports",
     label: "Reports",
     icon: BarChart3,
+    roles: ["SchoolAdmin", "SchoolStaff"],
+  },
+  {
+    href: "/dashboard/my-school/profile",
+    label: "School Profile",
+    icon: UserCircle,
     roles: ["SchoolAdmin", "SchoolStaff"],
   },
   {

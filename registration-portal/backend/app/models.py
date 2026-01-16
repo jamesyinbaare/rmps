@@ -315,6 +315,16 @@ class School(Base):
     name = Column(String(255), nullable=False)
     is_active = Column(Boolean, default=True, nullable=False)
     is_private_examination_center = Column(Boolean, default=False, nullable=False)
+    # School profile fields
+    email = Column(String(255), nullable=True)
+    phone = Column(String(50), nullable=True)
+    digital_address = Column(String(50), nullable=True)
+    post_office_address = Column(String(255), nullable=True)
+    is_private = Column(Boolean, nullable=True)  # True for private, False for public, None if not set
+    principal_name = Column(String(255), nullable=True)
+    principal_email = Column(String(255), nullable=True)
+    principal_phone = Column(String(50), nullable=True)
+    profile_completed = Column(Boolean, default=False, nullable=False, index=True)
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
 

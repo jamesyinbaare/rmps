@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState, useMemo } from "react";
-import { listAllExams, listSchoolProgrammes, downloadIndexSlipsBulk, listSchoolCandidates, downloadSchoolCandidateIndexSlip } from "@/lib/api";
+import { listAllSchoolExams, listSchoolProgrammes, downloadIndexSlipsBulk, listSchoolCandidates, downloadSchoolCandidateIndexSlip } from "@/lib/api";
 import type { RegistrationExam, Programme, RegistrationCandidate } from "@/types";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -56,7 +56,7 @@ export default function IndexSlipsDownloadPage() {
     try {
       setLoadingFilters(true);
       const [examsData, programmesData] = await Promise.all([
-        listAllExams(),
+        listAllSchoolExams(),
         listSchoolProgrammes(),
       ]);
       setExams(examsData);

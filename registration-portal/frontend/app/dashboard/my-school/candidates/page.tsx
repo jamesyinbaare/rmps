@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState, useMemo } from "react";
-import { listSchoolCandidates, listAllExams, listSchoolProgrammes, downloadRegistrationSummary, downloadRegistrationDetailed } from "@/lib/api";
+import { listSchoolCandidates, listAllSchoolExams, listSchoolProgrammes, downloadRegistrationSummary, downloadRegistrationDetailed } from "@/lib/api";
 import type { RegistrationCandidate, RegistrationExam, Programme } from "@/types";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -74,7 +74,7 @@ export default function CandidatesPage() {
     try {
       setLoadingFilters(true);
       const [examsData, programmesData] = await Promise.all([
-        listAllExams(),
+        listAllSchoolExams(),
         listSchoolProgrammes(),
       ]);
       setExams(examsData);
