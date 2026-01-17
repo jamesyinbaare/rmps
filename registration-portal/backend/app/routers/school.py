@@ -1,5 +1,5 @@
 """School portal endpoints for school users."""
-from datetime import datetime
+from datetime import datetime, date, time
 from pathlib import Path
 from typing import Annotated, Any
 from uuid import UUID
@@ -11,7 +11,7 @@ from io import BytesIO
 
 from fastapi import APIRouter, HTTPException, status, UploadFile, File, Query, Depends, Form
 from fastapi.responses import StreamingResponse
-from sqlalchemy import select, and_, func, insert, delete
+from sqlalchemy import select, and_, or_, func, insert, delete
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 import json
@@ -3042,85 +3042,115 @@ async def preview_school_timetable(
             )
 
     # Import here to avoid circular dependency
-    from app.models import ExaminationSchedule, Subject
+    from app.models import ExaminationSchedule
     from app.schemas.schedule import TimetableEntry, TimetableResponse
     from app.services.timetable_service import (
-        get_school_subject_codes,
-        get_programme_subject_codes,
+        get_school_subject_schedule_codes,
+        get_programme_subject_schedule_codes,
         filter_schedules_by_subject_type,
+        parse_schedule_date,
     )
 
     # Get all schedules for the exam
     schedules_stmt = select(ExaminationSchedule).where(
         ExaminationSchedule.registration_exam_id == exam_id
-    ).order_by(ExaminationSchedule.examination_date, ExaminationSchedule.examination_time)
+    )
     schedules_result = await session.execute(schedules_stmt)
     all_schedules = schedules_result.scalars().all()
 
-    # Build a map from schedule subject_code to Subject to get original_code for display
-    schedule_subject_codes = {schedule.subject_code for schedule in all_schedules}
-    subject_stmt = select(Subject.code, Subject.original_code).where(Subject.code.in_(schedule_subject_codes))
-    subject_result = await session.execute(subject_stmt)
-    code_to_original_code: dict[str, str] = {}
-    for code, original_code in subject_result.all():
-        if original_code:
-            code_to_original_code[code] = original_code
+    # Get all schedule codes (schedules store original_code if available, otherwise code)
+    schedule_codes = {schedule.subject_code for schedule in all_schedules}
 
-    # Apply filters
-    filtered_subject_codes: set[str] | None = None
-    filtered_code_to_original_code: dict[str, str] = {}
+    # Apply filters - get schedule codes for school/programme subjects
+    filtered_schedule_codes: set[str] | None = None
 
     if programme_id:
-        filtered_subject_codes, filtered_code_to_original_code = await get_programme_subject_codes(session, programme_id)
+        # Filter to programme's subjects - get codes that schedules would use
+        programme_schedule_codes = await get_programme_subject_schedule_codes(session, programme_id)
+        # Only include codes that have schedules
+        filtered_schedule_codes = programme_schedule_codes & schedule_codes
     else:
-        filtered_subject_codes, filtered_code_to_original_code = await get_school_subject_codes(session, current_user.school_id)
+        # Filter to school's subjects - get codes that schedules would use
+        school_schedule_codes = await get_school_subject_schedule_codes(session, current_user.school_id)
+        # Only include codes that have schedules
+        filtered_schedule_codes = school_schedule_codes & schedule_codes
 
-    # Apply subject type filter
-    if filtered_subject_codes is not None:
-        filtered_subject_codes = await filter_schedules_by_subject_type(
-            session, filtered_subject_codes, subject_filter
+    # Apply subject type filter if needed
+    if filtered_schedule_codes is not None:
+        # Filter by subject type using schedule codes
+        filtered_schedule_codes = await filter_schedules_by_subject_type(
+            session, filtered_schedule_codes, subject_filter
         )
-        # Update the code_to_original_code map to only include filtered subjects
-        filtered_code_to_original_code = {
-            code: original_code for code, original_code in filtered_code_to_original_code.items()
-            if code in filtered_subject_codes
-        }
     elif subject_filter != TimetableDownloadFilter.ALL:
         # No school/programme filter, but need to filter by subject type
-        all_subject_codes = {schedule.subject_code for schedule in all_schedules}
-        filtered_subject_codes = await filter_schedules_by_subject_type(
-            session, all_subject_codes, subject_filter
+        # Filter schedule codes by subject type
+        filtered_schedule_codes = await filter_schedules_by_subject_type(
+            session, schedule_codes, subject_filter
         )
-        # Update the code_to_original_code map to only include filtered subjects
-        filtered_code_to_original_code = {
-            code: original_code for code, original_code in code_to_original_code.items()
-            if code in filtered_subject_codes
-        }
     else:
-        filtered_code_to_original_code = code_to_original_code
+        # No filtering - we'll show all schedules
+        filtered_schedule_codes = None
 
-    # Filter schedules
-    if filtered_subject_codes:
-        schedules = [s for s in all_schedules if s.subject_code in filtered_subject_codes]
+    # Filter schedules by schedule codes
+    # schedule.subject_code contains original_code (if available) or code
+    if filtered_schedule_codes is not None:
+        # We have filters (school/programme/subject type)
+        # Match schedules directly by their subject_code
+        schedules = [s for s in all_schedules if s.subject_code in filtered_schedule_codes]
     else:
         schedules = list(all_schedules)
 
-    # Sort by date and time
-    schedules.sort(key=lambda s: (s.examination_date, s.examination_time))
+    # Expand schedules into paper entries (one entry per paper with its date/time)
+    paper_entries = []
+    for schedule in schedules:
+        papers_list = schedule.papers if schedule.papers else []
+        # schedule.subject_code is now original_code, use it directly for display
+        display_subject_code = schedule.subject_code
+
+        for paper_info in papers_list:
+            paper_num = paper_info.get("paper", 1)
+            paper_date_str = paper_info.get("date")
+            paper_start_time_str = paper_info.get("start_time")
+            paper_end_time_str = paper_info.get("end_time")
+
+            if not paper_date_str or not paper_start_time_str:
+                continue  # Skip invalid papers (shouldn't happen after validation)
+
+            # Parse date and time
+            try:
+                paper_date = parse_schedule_date(paper_date_str)
+                paper_start_time = time.fromisoformat(paper_start_time_str)
+                paper_end_time = None
+                if paper_end_time_str:
+                    paper_end_time = time.fromisoformat(paper_end_time_str)
+            except (ValueError, TypeError):
+                continue  # Skip invalid entries
+
+            paper_entries.append({
+                "schedule": schedule,
+                "display_subject_code": display_subject_code,
+                "paper": paper_num,
+                "date": paper_date,
+                "start_time": paper_start_time,
+                "end_time": paper_end_time,
+            })
+
+    # Sort paper entries by date, then by time
+    paper_entries.sort(key=lambda e: (e["date"], e["start_time"]))
 
     # Convert to TimetableEntry, using original_code if available
     entries = [
         TimetableEntry(
-            subject_code=filtered_code_to_original_code.get(schedule.subject_code, schedule.subject_code),
-            subject_name=schedule.subject_name,
-            examination_date=schedule.examination_date,
-            examination_time=schedule.examination_time,
-            examination_end_time=schedule.examination_end_time,
-            venue=schedule.venue,
-            duration_minutes=schedule.duration_minutes,
-            instructions=schedule.instructions,
+            subject_code=entry["display_subject_code"],
+            subject_name=entry["schedule"].subject_name,
+            examination_date=entry["date"],
+            examination_time=entry["start_time"],
+            examination_end_time=entry["end_time"],
+            venue=entry["schedule"].venue,
+            duration_minutes=entry["schedule"].duration_minutes,
+            instructions=entry["schedule"].instructions,
         )
-        for schedule in schedules
+        for entry in paper_entries
     ]
 
     timetable_response = TimetableResponse(

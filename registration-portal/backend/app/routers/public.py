@@ -6,7 +6,7 @@ from fastapi.responses import StreamingResponse
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from sqlalchemy import select, and_, or_, func
 from sqlalchemy.orm import selectinload
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, date, time
 
 from app.dependencies.database import DBSessionDep
 from app.services.photo_storage import PhotoStorageService
@@ -570,15 +570,33 @@ async def get_public_candidate_info(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Candidate not found")
 
     # Get examination schedules for registered subjects
+    # schedule.subject_code is now original_code, so we need to look up subjects to map original_code to internal code
     subject_codes = [sel.subject_code for sel in candidate.subject_selections]
+
+    # Get all subjects to build mapping from original_code to internal code
+    subjects_stmt = select(Subject).where(Subject.code.in_(subject_codes))
+    subjects_result = await session.execute(subjects_stmt)
+    subjects = subjects_result.scalars().all()
+
+    # Create mapping: original_code -> internal code
+    original_code_to_internal_code: dict[str, str] = {}
+    for subject in subjects:
+        if subject.original_code:
+            original_code_to_internal_code[subject.original_code] = subject.code
+
+    # Get schedules - schedule.subject_code is now original_code
+    # We need to find schedules where the original_code maps to one of the candidate's subject codes
+    schedule_original_codes = [
+        orig_code for orig_code, int_code in original_code_to_internal_code.items()
+        if int_code in subject_codes
+    ]
 
     schedules_stmt = (
         select(ExaminationSchedule)
         .where(
             ExaminationSchedule.registration_exam_id == candidate.registration_exam_id,
-            ExaminationSchedule.subject_code.in_(subject_codes),
+            ExaminationSchedule.subject_code.in_(schedule_original_codes),
         )
-        .order_by(ExaminationSchedule.examination_date, ExaminationSchedule.examination_time)
     )
     schedules_result = await session.execute(schedules_stmt)
     schedules = schedules_result.scalars().all()
@@ -587,24 +605,44 @@ async def get_public_candidate_info(
     schedule_entries = []
     for schedule in schedules:
         # Find matching subject selection
+        # Convert schedule.subject_code (original_code) to internal code for matching
+        internal_code = original_code_to_internal_code.get(schedule.subject_code)
+        if not internal_code:
+            continue  # Skip if we can't map original_code to internal code
+
         subject_selection = next(
-            (sel for sel in candidate.subject_selections if sel.subject_code == schedule.subject_code),
+            (sel for sel in candidate.subject_selections if sel.subject_code == internal_code),
             None,
         )
         if subject_selection:
-            papers_list = schedule.papers if schedule.papers else [{"paper": 1}]
+            papers_list = schedule.papers if schedule.papers else []
             for paper_info in papers_list:
                 paper_num = paper_info.get("paper", 1)
-                paper_start_time = paper_info.get("start_time")
-                paper_end_time = paper_info.get("end_time")
+                paper_date_str = paper_info.get("date")
+                paper_start_time_str = paper_info.get("start_time")
+                paper_end_time_str = paper_info.get("end_time")
+
+                if not paper_date_str or not paper_start_time_str:
+                    continue  # Skip invalid papers (shouldn't happen after validation)
+
+                # Parse date and time
+                try:
+                    from app.services.timetable_service import parse_schedule_date
+                    paper_date = parse_schedule_date(paper_date_str)
+                    paper_start_time = time.fromisoformat(paper_start_time_str)
+                    paper_end_time = None
+                    if paper_end_time_str:
+                        paper_end_time = time.fromisoformat(paper_end_time_str)
+                except (ValueError, TypeError):
+                    continue  # Skip invalid entries
 
                 schedule_entries.append({
                     "subject_code": schedule.subject_code,
                     "subject_name": schedule.subject_name,
                     "paper": paper_num,
-                    "date": schedule.examination_date.isoformat() if schedule.examination_date else None,
-                    "start_time": (paper_start_time or schedule.examination_time).isoformat() if (paper_start_time or schedule.examination_time) else None,
-                    "end_time": (paper_end_time or schedule.examination_end_time).isoformat() if (paper_end_time or schedule.examination_end_time) else None,
+                    "date": paper_date.isoformat(),
+                    "start_time": paper_start_time.isoformat(),
+                    "end_time": paper_end_time.isoformat() if paper_end_time else None,
                     "venue": schedule.venue,
                 })
 

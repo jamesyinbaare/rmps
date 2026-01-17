@@ -254,7 +254,6 @@
                     <th>Date</th>
                     <th>Subject Code</th>
                     <th>Subject Name</th>
-                    <th>Paper</th>
                     <th>Time</th>
                 </tr>
             </thead>
@@ -264,7 +263,6 @@
                     <td class="center">{{ entry.date.strftime('%d/%m/%Y') }}</td>
                     <td class="center">{{ entry.subject_code }}</td>
                     <td>{{ entry.subject_name }}</td>
-                    <td class="center">Paper {{ entry.paper }}</td>
                     <td class="center">
                         {{ entry.start_time.strftime('%H:%M') }}
                         {% if entry.end_time %}

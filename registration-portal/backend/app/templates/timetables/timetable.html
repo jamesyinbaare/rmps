@@ -112,6 +112,14 @@
             text-align: center;
         }
 
+        .timetable-table tbody tr:nth-child(even) {
+            background-color: #f5f5f5;
+        }
+
+        .timetable-table tbody tr:nth-child(odd) {
+            background-color: #ffffff;
+        }
+
         .timetable-table .sn-cell {
             width: 50px;
             text-align: center;
@@ -125,10 +133,7 @@
         .timetable-table .subject-name-cell {
             width: 200px;
             max-width: 200px;
-            text-align: left;
-            overflow: hidden;
-            text-overflow: ellipsis;
-            white-space: nowrap;
+            text-align: center;
         }
 
         .timetable-table .date-cell {
@@ -156,6 +161,7 @@
             display: flex;
             flex-direction: column;
             gap: 2px;
+            align-items: center;
         }
 
         .timetable-table .stacked-item {
@@ -163,6 +169,19 @@
         }
 
         .timetable-table .time-item {
+            font-size: 8pt;
+            color: #555;
+            font-weight: normal;
+        }
+
+        .timetable-table .paper-item {
+            font-size: 8pt;
+            color: #555;
+            font-weight: normal;
+            padding-left: 8px;
+        }
+
+        .timetable-table .duration-item {
             font-size: 8pt;
             color: #555;
             font-weight: normal;
@@ -244,42 +263,52 @@
                         <tr>
                             {% if idx == 0 %}
                             <td class="sn-cell" rowspan="{{ entry.rowspan }}">{{ entry.sn }}</td>
-                            <td class="subject-code-cell">
+                            <td class="subject-code-cell">{{ entry.subject_code[idx] }}</td>
+                            <td class="subject-name-cell">
                                 <div class="stacked-content">
-                                    <div class="stacked-item">{{ entry.subject_code[idx] }}</div>
-                                    {% if entry.time and entry.time[idx] %}
-                                    <div class="stacked-item time-item">{{ entry.time[idx] }}</div>
+                                    <div class="stacked-item">{{ entry.subject_name[idx] }}</div>
+                                    {% if entry.paper_display and entry.paper_display[idx] %}
+                                    <div class="stacked-item paper-item">{{ entry.paper_display[idx] }}</div>
                                     {% endif %}
                                 </div>
                             </td>
-                            <td class="subject-name-cell">{{ entry.subject_name[idx] }}</td>
                             <td class="date-cell" rowspan="{{ entry.rowspan }}">
                                 <div class="date-day-of-week">{{ entry.day_of_week }}</div>
                                 <div class="date-display">{{ entry.date_display }}</div>
                             </td>
                             <td class="duration-cell">
+                                <div class="stacked-content">
                                 {% if entry.time_range and entry.time_range[idx] %}
-                                {{ entry.time_range[idx] }}
+                                    <div class="stacked-item">{{ entry.time_range[idx] }}</div>
+                                    {% if entry.duration_display and entry.duration_display[idx] %}
+                                    <div class="stacked-item duration-item">{{ entry.duration_display[idx] }}</div>
+                                    {% endif %}
                                 {% else %}
                                 <span style="color: #999;">-</span>
                                 {% endif %}
+                                </div>
                             </td>
                             {% else %}
-                            <td class="subject-code-cell">
+                            <td class="subject-code-cell">{{ entry.subject_code[idx] }}</td>
+                            <td class="subject-name-cell">
                                 <div class="stacked-content">
-                                    <div class="stacked-item">{{ entry.subject_code[idx] }}</div>
-                                    {% if entry.time and entry.time[idx] %}
-                                    <div class="stacked-item time-item">{{ entry.time[idx] }}</div>
+                                    <div class="stacked-item">{{ entry.subject_name[idx] }}</div>
+                                    {% if entry.paper_display and entry.paper_display[idx] %}
+                                    <div class="stacked-item paper-item">{{ entry.paper_display[idx] }}</div>
                                     {% endif %}
                                 </div>
                             </td>
-                            <td class="subject-name-cell">{{ entry.subject_name[idx] }}</td>
                             <td class="duration-cell">
+                                <div class="stacked-content">
                                 {% if entry.time_range and entry.time_range[idx] %}
-                                {{ entry.time_range[idx] }}
+                                    <div class="stacked-item">{{ entry.time_range[idx] }}</div>
+                                    {% if entry.duration_display and entry.duration_display[idx] %}
+                                    <div class="stacked-item duration-item">{{ entry.duration_display[idx] }}</div>
+                                    {% endif %}
                                 {% else %}
                                 <span style="color: #999;">-</span>
                                 {% endif %}
+                                </div>
                             </td>
                             {% endif %}
                         </tr>
@@ -288,17 +317,29 @@
                         <tr>
                             <td class="sn-cell">{{ entry.sn }}</td>
                             <td class="subject-code-cell">{{ entry.subject_code }}</td>
-                            <td class="subject-name-cell">{{ entry.subject_name }}</td>
+                            <td class="subject-name-cell">
+                                <div class="stacked-content">
+                                    <div class="stacked-item">{{ entry.subject_name }}</div>
+                                    {% if entry.paper_display %}
+                                    <div class="stacked-item paper-item">{{ entry.paper_display }}</div>
+                                    {% endif %}
+                                </div>
+                            </td>
                             <td class="date-cell">
                                 <div class="date-day-of-week">{{ entry.day_of_week }}</div>
                                 <div class="date-display">{{ entry.date_display }}</div>
                             </td>
                             <td class="duration-cell">
+                                <div class="stacked-content">
                                 {% if entry.time_range %}
-                                {{ entry.time_range }}
+                                    <div class="stacked-item">{{ entry.time_range }}</div>
+                                    {% if entry.duration_display %}
+                                    <div class="stacked-item duration-item">{{ entry.duration_display }}</div>
+                                    {% endif %}
                                 {% else %}
                                 <span style="color: #999;">-</span>
                                 {% endif %}
+                                </div>
                             </td>
                         </tr>
                     {% endif %}
@@ -308,17 +349,29 @@
                 <tr>
                     <td class="sn-cell">{{ entry.sn }}</td>
                     <td class="subject-code-cell">{{ entry.subject_code }}</td>
-                    <td class="subject-name-cell">{{ entry.subject_name }}</td>
+                    <td class="subject-name-cell">
+                        <div class="stacked-content">
+                            <div class="stacked-item">{{ entry.subject_name }}</div>
+                            {% if entry.paper_display %}
+                            <div class="stacked-item paper-item">{{ entry.paper_display }}</div>
+                            {% endif %}
+                        </div>
+                    </td>
                     <td class="date-cell">
                         <div class="date-day-of-week">{{ entry.day_of_week }}</div>
                         <div class="date-display">{{ entry.date_display }}</div>
                     </td>
                     <td class="duration-cell">
+                        <div class="stacked-content">
                         {% if entry.time_range %}
-                        {{ entry.time_range }}
+                            <div class="stacked-item">{{ entry.time_range }}</div>
+                            {% if entry.duration_display %}
+                            <div class="stacked-item duration-item">{{ entry.duration_display }}</div>
+                            {% endif %}
                         {% else %}
                         <span style="color: #999;">-</span>
                         {% endif %}
+                        </div>
                     </td>
                 </tr>
                 {% endfor %}

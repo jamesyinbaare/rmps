@@ -1,7 +1,7 @@
 """Service for generating Index Slip PDFs."""
 import base64
 import io
-from datetime import datetime
+from datetime import datetime, date, time
 from pathlib import Path
 from typing import Any
 
@@ -22,6 +22,7 @@ from app.models import (
 )
 from app.services.pdf_generator import PdfGenerator, render_html
 from app.services.photo_storage import PhotoStorageService
+from app.services.timetable_service import parse_schedule_date
 
 
 def generate_qr_code(url: str) -> str:
@@ -117,48 +118,65 @@ async def generate_index_slip_pdf(
             ExaminationSchedule.registration_exam_id == candidate.registration_exam_id,
             ExaminationSchedule.subject_code.in_(subject_codes),
         )
-        .order_by(ExaminationSchedule.examination_date, ExaminationSchedule.examination_time)
     )
     schedules_result = await session.execute(schedules_stmt)
     schedules = schedules_result.scalars().all()
 
-    # Get unique subject codes to look up original codes
-    unique_subject_codes = list(set([schedule.subject_code for schedule in schedules]))
-    subjects_stmt = select(Subject).where(Subject.code.in_(unique_subject_codes))
+    # schedule.subject_code now contains original_code
+    # We need to look up subjects by original_code to get the internal code for matching with subject_selections
+    unique_original_codes = list(set([schedule.subject_code for schedule in schedules]))
+    subjects_stmt = select(Subject).where(Subject.original_code.in_(unique_original_codes))
     subjects_result = await session.execute(subjects_stmt)
     subjects = subjects_result.scalars().all()
 
-    # Create a mapping of code -> original_code (fallback to code if original_code is None)
-    subject_code_map = {}
+    # Create a mapping of original_code -> internal code (for matching with subject_selections)
+    original_code_to_internal_code: dict[str, str] = {}
     for subject in subjects:
-        subject_code_map[subject.code] = subject.original_code if subject.original_code else subject.code
+        if subject.original_code:
+            original_code_to_internal_code[subject.original_code] = subject.code
 
     # Build schedule entries with papers
     schedule_entries = []
     for schedule in schedules:
         # Find matching subject selection
+        # subject_selections use internal code, so we need to convert schedule.subject_code (original_code) to internal code
+        internal_code = original_code_to_internal_code.get(schedule.subject_code, schedule.subject_code)
         subject_selection = next(
-            (sel for sel in subject_selections if sel.subject_code == schedule.subject_code),
+            (sel for sel in subject_selections if sel.subject_code == internal_code),
             None,
         )
         if subject_selection:
-            papers_list = schedule.papers if schedule.papers else [{"paper": 1}]
+            papers_list = schedule.papers if schedule.papers else []
             for paper_info in papers_list:
                 paper_num = paper_info.get("paper", 1)
-                paper_start_time = paper_info.get("start_time")
-                paper_end_time = paper_info.get("end_time")
+                paper_date_str = paper_info.get("date")
+                paper_start_time_str = paper_info.get("start_time")
+                paper_end_time_str = paper_info.get("end_time")
 
-                # Use original_code if available, otherwise use code
-                display_subject_code = subject_code_map.get(schedule.subject_code, schedule.subject_code)
+                if not paper_date_str or not paper_start_time_str:
+                    continue  # Skip invalid papers (shouldn't happen after validation)
+
+                # Parse date and time
+                try:
+                    paper_date = parse_schedule_date(paper_date_str)
+                    paper_start_time = time.fromisoformat(paper_start_time_str)
+                    paper_end_time = None
+                    if paper_end_time_str:
+                        paper_end_time = time.fromisoformat(paper_end_time_str)
+                except (ValueError, TypeError):
+                    continue  # Skip invalid entries
+
+                # schedule.subject_code is now original_code, use it directly for display
+                display_subject_code = schedule.subject_code
 
                 schedule_entries.append({
                     "subject_code": display_subject_code,  # Display code (original_code or code)
                     "schedule_subject_code": schedule.subject_code,  # Keep original for grouping
                     "subject_name": schedule.subject_name,
                     "paper": paper_num,
-                    "date": schedule.examination_date,
-                    "start_time": paper_start_time or schedule.examination_time,
-                    "end_time": paper_end_time or schedule.examination_end_time,
+                    "date": paper_date,
+                    "start_time": paper_start_time,
+                    "end_time": paper_end_time,
                     "venue": schedule.venue,
                 })
 
@@ -192,14 +210,17 @@ async def generate_index_slip_pdf(
         # Create combined entry
         papers_to_combine.sort()
         if len(papers_to_combine) > 1:
-            paper_display = " & ".join(str(p) for p in papers_to_combine)
+            paper_display = f"Paper {' & '.join(str(p) for p in papers_to_combine)}"
         else:
-            paper_display = str(papers_to_combine[0])
+            paper_display = f"Paper {papers_to_combine[0]}"
+
+        # Add paper display to subject name: "Subject Name (Paper 1 & 2)" or "Subject Name (Paper 1)"
+        subject_name_with_paper = f"{current['subject_name']} ({paper_display})"
 
         combined_entries.append({
             "subject_code": current["subject_code"],
-            "subject_name": current["subject_name"],
-            "paper": paper_display,  # Now a string like "1 & 2" or "1"
+            "subject_name": subject_name_with_paper,  # Subject name with paper display
+            "paper": paper_display,  # Keep for template compatibility (may not be used)
             "date": current["date"],
             "start_time": current["start_time"],
             "end_time": end_time,
