@@ -1,13 +1,11 @@
 """Service for photo storage operations."""
 
 import hashlib
-import os
 import uuid
 from pathlib import Path
 
-import aiofiles
-
 from app.config import settings
+from app.services.storage.factory import get_storage_backend
 
 
 def calculate_checksum(content: bytes) -> str:
@@ -18,26 +16,27 @@ def calculate_checksum(content: bytes) -> str:
 class PhotoStorageService:
     """Service for storing and retrieving candidate photos."""
 
-    def __init__(self, base_path: str | None = None):
-        self.base_path = Path(base_path or settings.photo_storage_path)
-        self.base_path.mkdir(parents=True, exist_ok=True)
+    def __init__(self, base_path: str | None = None, backend=None):
+        """
+        Initialize photo storage service.
 
-    def _generate_file_path(self, candidate_id: int, exam_id: int, original_filename: str, registration_number: str | None = None) -> Path:
-        """Generate file path organized by school/exam/candidate."""
+        Args:
+            base_path: Base path for local storage (used when storage_backend is "local")
+            backend: Optional storage backend instance (if None, uses factory to get backend)
+        """
+        self._backend = backend or get_storage_backend(base_path=base_path or settings.photo_storage_path)
+
+    def _generate_file_path(self, candidate_id: int, exam_id: int, original_filename: str, registration_number: str | None = None) -> str:
+        """Generate relative file path organized by school/exam/candidate."""
         ext = Path(original_filename).suffix or ".jpg"
         # Use registration number if provided, otherwise use UUID
         if registration_number:
             filename = f"{registration_number}{ext}"
         else:
             filename = f"{uuid.uuid4()}{ext}"
-        candidate_dir = self.base_path / str(exam_id) / str(candidate_id)
-        candidate_dir.mkdir(parents=True, exist_ok=True)
-        return candidate_dir / filename
-
-    def _resolve_path(self, file_path: str | Path) -> Path:
-        """Resolve file path (accepts both relative and absolute paths)."""
-        path = Path(file_path)
-        return path if path.is_absolute() else self.base_path / path
+        # Generate path relative to storage root
+        subdir = f"{exam_id}/{candidate_id}"
+        return f"{subdir}/{filename}"
 
     async def save(self, file_content: bytes, filename: str, candidate_id: int, exam_id: int, registration_number: str | None = None) -> tuple[str, str]:
         """
@@ -45,37 +44,44 @@ class PhotoStorageService:
 
         Args:
             file_content: Photo file content as bytes
-            filename: Original filename
+            filename: Original filename (may already include registration_number if passed from router)
             candidate_id: Candidate ID
             exam_id: Exam ID
-            registration_number: Optional registration number to use as filename
+            registration_number: Optional registration number to use as filename (if not already in filename)
 
         Returns:
             Tuple of (relative_file_path, checksum)
         """
-        file_path = self._generate_file_path(candidate_id, exam_id, filename, registration_number)
-        checksum = calculate_checksum(file_content)
+        # Generate subdirectory path
+        subdir = f"{exam_id}/{candidate_id}"
 
-        async with aiofiles.open(file_path, "wb") as f:
-            await f.write(file_content)
+        # Determine if we should use custom filename (if registration_number is provided and filename matches it)
+        use_custom_filename = False
+        if registration_number:
+            # Check if filename already contains registration_number (passed from router)
+            ext = Path(filename).suffix or ".jpg"
+            expected_filename = f"{registration_number}{ext}"
+            if filename == expected_filename or registration_number in filename:
+                use_custom_filename = True
 
-        # Return path relative to base_path for storage
-        relative_path = file_path.relative_to(self.base_path)
-        return str(relative_path), checksum
+        # Use storage backend to save
+        file_path, checksum = await self._backend.save(
+            file_content=file_content,
+            filename=filename,
+            subdir=subdir,
+            use_custom_filename=use_custom_filename
+        )
+
+        return file_path, checksum
 
     async def retrieve(self, file_path: str) -> bytes:
         """Retrieve photo file content."""
-        full_path = self._resolve_path(file_path)
-        async with aiofiles.open(full_path, "rb") as f:
-            return await f.read()
+        return await self._backend.retrieve(file_path)
 
     async def delete(self, file_path: str) -> None:
         """Delete photo file."""
-        full_path = self._resolve_path(file_path)
-        if await self.exists(file_path):
-            os.remove(full_path)
+        await self._backend.delete(file_path)
 
     async def exists(self, file_path: str) -> bool:
         """Check if photo file exists."""
-        full_path = self._resolve_path(file_path)
-        return full_path.exists()
+        return await self._backend.exists(file_path)

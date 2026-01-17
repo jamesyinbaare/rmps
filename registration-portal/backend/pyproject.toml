@@ -29,6 +29,7 @@ dependencies = [
     "pypdf>=6.5.0",
     "requests>=2.32.0",
     "qrcode[pil]>=8.2",
+    "google-cloud-storage>=3.8.0",
 ]
 
 [dependency-groups]

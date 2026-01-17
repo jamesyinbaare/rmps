@@ -5,11 +5,15 @@ class Settings(BaseSettings):
     database_url: str = ""
     environment: str = "dev"
     # Storage settings
-    storage_backend: str = "local"  # local, s3, azure
+    storage_backend: str = "local"  # local, gcs, s3, azure
     storage_path: str = "storage/documents"
     storage_max_size: int = 50 * 1024 * 1024  # 50MB default
     photo_storage_path: str = "storage/photos"
     export_storage_path: str = "storage/exports"
+    # Google Cloud Storage settings (for storage_backend="gcs")
+    gcs_bucket_name: str = ""  # GCS bucket name
+    gcs_project_id: str = ""  # GCP project ID (optional, uses default if not provided)
+    gcs_credentials_path: str = ""  # Path to service account JSON file (optional, uses ADC if not provided)
     # Authentication settings
     secret_key: str = "registration-portal-secret-key-change-in-production"  # Should be set via environment variable
     algorithm: str = "HS256"

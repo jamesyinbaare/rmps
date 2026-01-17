@@ -1,0 +1,209 @@
+services:
+  traefik:
+    image: traefik:v3.6
+    container_name: registration-traefik-staging
+    command:
+      - "--configfile=/etc/traefik/traefik.staging.yml"
+    ports:
+      - "80:80"
+      - "443:443"
+      - "8080:8080"  # Traefik dashboard (restricted by firewall)
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - ./traefik/traefik.staging.yml:/etc/traefik/traefik.staging.yml:ro
+      - ./traefik/dynamic.staging.yml:/etc/traefik/dynamic.staging.yml:ro
+      - traefik_certs:/certificates
+      - traefik_logs:/var/log/traefik
+    labels:
+      - "traefik.enable=true"
+      # Dashboard (restricted by firewall)
+      - "traefik.http.routers.dashboard-staging.rule=Host(`traefik-staging.yourdomain.com`)" # TODO: Change to the actual domain
+      - "traefik.http.routers.dashboard-staging.entrypoints=web"
+      - "traefik.http.routers.dashboard-staging.service=api@internal"
+    restart: unless-stopped
+    networks:
+      - registration-network
+    depends_on:
+      - registration-backend
+      - registration-frontend
+    deploy:
+      resources:
+        limits:
+          cpus: '1'
+          memory: 512M
+        reservations:
+          cpus: '0.5'
+          memory: 256M
+
+  registration-backend:
+    build:
+      context: backend
+      dockerfile: Dockerfile
+    container_name: registration-backend-staging
+    env_file:
+      - .env.staging.gcp
+    environment:
+      - ENVIRONMENT=staging
+      - PYTHONUNBUFFERED=1
+      - PYTHONDONTWRITEBYTECODE=1
+      - FASTAPI_HOST=0.0.0.0
+      - FASTAPI_PORT=80
+    volumes:
+      - registration_storage_data:/app/storage/documents
+      - registration_photos_data:/app/storage/photos
+      - registration_exports_data:/app/storage/exports
+      - registration_certificate_requests_data:/app/storage/certificate_requests
+    command: >
+      sh -c "
+        if [ -f app/scripts/prestart.sh ]; then
+          bash app/scripts/prestart.sh
+        fi &&
+        fastapi run app/main.py --port 80
+      "
+    restart: unless-stopped
+    depends_on:
+      registration_postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:80/health || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    networks:
+      - registration-network
+    labels:
+      - "traefik.enable=true"
+      # Backend service (must be defined before routers)
+      - "traefik.http.services.backend-staging.loadbalancer.server.port=80"
+      # Backend API router - Domain-based
+      - "traefik.http.routers.backend-staging.rule=Host(`staging-api.yourdomain.com`)" # TODO: Change to the actual domain
+      - "traefik.http.routers.backend-staging.entrypoints=websecure"
+      - "traefik.http.routers.backend-staging.tls=true"
+      - "traefik.http.routers.backend-staging.tls.certresolver=letsencrypt"
+      - "traefik.http.routers.backend-staging.service=backend-staging"
+      # Backend API router - HTTP (redirect to HTTPS)
+      - "traefik.http.routers.backend-staging-http.rule=Host(`staging-api.yourdomain.com`)" # TODO: Change to the actual domain
+      - "traefik.http.routers.backend-staging-http.entrypoints=web"
+      - "traefik.http.routers.backend-staging-http.service=backend-staging"
+    deploy:
+      resources:
+        limits:
+          cpus: '2'
+          memory: 2G
+        reservations:
+          cpus: '1'
+          memory: 1G
+
+  registration-frontend:
+    build:
+      context: frontend
+      dockerfile: Dockerfile.prod
+      args:
+        - NEXT_PUBLIC_API_BASE_URL=${FRONTEND_API_BASE_URL:-https://staging-api.yourdomain.com} # TODO: Change to the actual domain
+    container_name: registration-frontend-staging
+    environment:
+      - NODE_ENV=production
+      - NEXT_PUBLIC_API_BASE_URL=${FRONTEND_API_BASE_URL:-https://staging-api.yourdomain.com} # TODO: Change to the actual domain
+    restart: unless-stopped
+    depends_on:
+      registration-backend:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "wget --spider --no-verbose --tries=1 http://127.0.0.1:3001/ || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    networks:
+      - registration-network
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.services.frontend-staging.loadbalancer.server.port=3001"
+      # Frontend router - HTTPS
+      - "traefik.http.routers.frontend-staging.rule=Host(`staging.yourdomain.com`)" # TODO: Change to the actual domain
+      - "traefik.http.routers.frontend-staging.entrypoints=websecure"
+      - "traefik.http.routers.frontend-staging.tls=true"
+      - "traefik.http.routers.frontend-staging.tls.certresolver=letsencrypt"
+      - "traefik.http.routers.frontend-staging.service=frontend-staging"
+      # Frontend router - HTTP (redirect to HTTPS)
+      - "traefik.http.routers.frontend-staging-http.rule=Host(`staging.yourdomain.com`)" # TODO: Change to the actual domain
+      - "traefik.http.routers.frontend-staging-http.entrypoints=web"
+      - "traefik.http.routers.frontend-staging-http.service=frontend-staging"
+    deploy:
+      resources:
+        limits:
+          cpus: '1.5'
+          memory: 1.5G
+        reservations:
+          cpus: '0.5'
+          memory: 512M
+
+  registration_postgres:
+    image: postgres:18
+    container_name: registration-postgres-staging
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 10s
+      retries: 5
+      start_period: 30s
+      timeout: 10s
+    volumes:
+      - registration_db_data:/var/lib/postgresql/data/pgdata
+      - ./docker/postgres/init:/docker-entrypoint-initdb.d:ro
+    env_file:
+      - .env.staging.gcp
+    environment:
+      - PGDATA=/var/lib/postgresql/data/pgdata
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD?Variable not set}
+      - POSTGRES_USER=${POSTGRES_USER?Variable not set}
+      - POSTGRES_DB=${REGISTRATION_POSTGRES_DB:-registration_portal_db}
+      - POSTGRES_HOST_AUTH_METHOD=trust
+    networks:
+      - registration-network
+    deploy:
+      resources:
+        limits:
+          cpus: '1'
+          memory: 1G
+        reservations:
+          cpus: '0.5'
+          memory: 512M
+
+  # Cloud SQL Proxy (optional - enabled when USE_CLOUD_SQL=true)
+  cloud-sql-proxy:
+    image: gcr.io/cloud-sql-connectors/cloud-sql-proxy:latest
+    container_name: cloud-sql-proxy-staging
+    command:
+      - /cloud-sql-proxy
+      - --port=5432
+      - ${CLOUD_SQL_CONNECTION_NAME}
+    networks:
+      - registration-network
+    restart: unless-stopped
+    profiles:
+      - cloud-sql
+    # Only start if USE_CLOUD_SQL is set to true in environment
+    # Can be enabled via: docker compose --profile cloud-sql up
+
+volumes:
+  registration_db_data:
+    driver: local
+  registration_storage_data:
+    driver: local
+  registration_photos_data:
+    driver: local
+  registration_exports_data:
+    driver: local
+  registration_certificate_requests_data:
+    driver: local
+  traefik_certs:
+    driver: local
+  traefik_logs:
+    driver: local
+
+networks:
+  registration-network:
+    driver: bridge
+    name: registration-network-staging
