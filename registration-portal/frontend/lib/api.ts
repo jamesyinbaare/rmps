@@ -12,6 +12,7 @@ import type {
   RegistrationCandidateCreate,
   RegistrationExam,
   RegistrationExamCreate,
+  ExamStatistics,
   SchoolAdminCreate,
   AdminUserCreate,
   UserPasswordReset,
@@ -1010,9 +1011,39 @@ export async function listExams(): Promise<RegistrationExam[]> {
   return handleResponse<RegistrationExam[]>(response);
 }
 
+export async function getActiveExams(): Promise<RegistrationExam[]> {
+  const response = await fetchWithAuth("/api/v1/admin/exams/active");
+  return handleResponse<RegistrationExam[]>(response);
+}
+
 export async function getExam(id: number): Promise<RegistrationExam> {
   const response = await fetchWithAuth(`/api/v1/admin/exams/${id}`);
   return handleResponse<RegistrationExam>(response);
+}
+
+export async function getExamStatistics(id: number): Promise<ExamStatistics> {
+  // Ensure id is a valid positive integer
+  const examId = Number(id);
+  if (!Number.isInteger(examId) || examId <= 0 || isNaN(examId)) {
+    throw new Error(`Invalid exam ID: ${id}`);
+  }
+  const response = await fetchWithAuth(`/api/v1/admin/exams/${examId}/statistics`);
+  return handleResponse<ExamStatistics>(response);
+}
+
+export interface ExamSchool {
+  id: number;
+  name: string;
+  code: string;
+  candidate_count: number;
+}
+
+export async function getExamSchools(examId: number): Promise<ExamSchool[]> {
+  // This endpoint needs to be created in the backend
+  // For now, we'll try to fetch from /api/v1/admin/exams/{exam_id}/schools
+  // If it doesn't exist, the backend should provide this endpoint
+  const response = await fetchWithAuth(`/api/v1/admin/exams/${examId}/schools`);
+  return handleResponse<ExamSchool[]>(response);
 }
 
 export async function updateExam(
