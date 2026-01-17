@@ -1,39 +1,28 @@
 """Service for certificate request file storage operations (photographs and ID scans)."""
 
-import hashlib
-import os
 import uuid
 from pathlib import Path
 
-import aiofiles
-
 from app.config import settings
-
-
-def calculate_checksum(content: bytes) -> str:
-    """Calculate SHA256 checksum of file content."""
-    return hashlib.sha256(content).hexdigest()
+from app.services.storage.factory import get_storage_backend
 
 
 class CertificateFileStorageService:
     """Service for storing and retrieving certificate request files (photographs and ID scans)."""
 
-    def __init__(self, base_path: str | None = None):
-        self.base_path = Path(base_path or settings.certificate_request_storage_path)
-        self.base_path.mkdir(parents=True, exist_ok=True)
+    def __init__(self, base_path: str | None = None, backend=None):
+        """
+        Initialize certificate file storage service.
 
-    def _generate_file_path(self, request_id: int, file_type: str, original_filename: str) -> Path:
-        """Generate file path organized by request ID and file type."""
-        ext = Path(original_filename).suffix or ".jpg"
-        filename = f"{uuid.uuid4()}{ext}"
-        file_type_dir = self.base_path / str(request_id) / file_type  # file_type: 'photo' or 'id_scan'
-        file_type_dir.mkdir(parents=True, exist_ok=True)
-        return file_type_dir / filename
+        Args:
+            base_path: Base path for local storage (used when storage_backend is "local")
+            backend: Optional storage backend instance (if None, uses factory to get backend)
+        """
+        self._backend = backend or get_storage_backend(base_path=base_path or settings.certificate_request_storage_path)
 
-    def _resolve_path(self, file_path: str | Path) -> Path:
-        """Resolve file path (accepts both relative and absolute paths)."""
-        path = Path(file_path)
-        return path if path.is_absolute() else self.base_path / path
+    def _get_subdir(self, request_id: int, file_type: str) -> str:
+        """Generate subdirectory path for file type."""
+        return f"{request_id}/{file_type}"
 
     async def save_photo(self, file_content: bytes, filename: str, request_id: int) -> tuple[str, str]:
         """
@@ -47,15 +36,8 @@ class CertificateFileStorageService:
         Returns:
             Tuple of (relative_file_path, checksum)
         """
-        file_path = self._generate_file_path(request_id, "photo", filename)
-        checksum = calculate_checksum(file_content)
-
-        async with aiofiles.open(file_path, "wb") as f:
-            await f.write(file_content)
-
-        # Return path relative to base_path for storage
-        relative_path = file_path.relative_to(self.base_path)
-        return str(relative_path), checksum
+        subdir = self._get_subdir(request_id, "photo")
+        return await self._backend.save(file_content=file_content, filename=filename, subdir=subdir)
 
     async def save_id_scan(self, file_content: bytes, filename: str, request_id: int) -> tuple[str, str]:
         """
@@ -69,15 +51,8 @@ class CertificateFileStorageService:
         Returns:
             Tuple of (relative_file_path, checksum)
         """
-        file_path = self._generate_file_path(request_id, "id_scan", filename)
-        checksum = calculate_checksum(file_content)
-
-        async with aiofiles.open(file_path, "wb") as f:
-            await f.write(file_content)
-
-        # Return path relative to base_path for storage
-        relative_path = file_path.relative_to(self.base_path)
-        return str(relative_path), checksum
+        subdir = self._get_subdir(request_id, "id_scan")
+        return await self._backend.save(file_content=file_content, filename=filename, subdir=subdir)
 
     async def save_certificate_scan(self, file_content: bytes, filename: str, request_id: int) -> tuple[str, str]:
         """
@@ -91,15 +66,8 @@ class CertificateFileStorageService:
         Returns:
             Tuple of (relative_file_path, checksum)
         """
-        file_path = self._generate_file_path(request_id, "certificate", filename)
-        checksum = calculate_checksum(file_content)
-
-        async with aiofiles.open(file_path, "wb") as f:
-            await f.write(file_content)
-
-        # Return path relative to base_path for storage
-        relative_path = file_path.relative_to(self.base_path)
-        return str(relative_path), checksum
+        subdir = self._get_subdir(request_id, "certificate")
+        return await self._backend.save(file_content=file_content, filename=filename, subdir=subdir)
 
     async def save_candidate_photo(self, file_content: bytes, filename: str, request_id: int) -> tuple[str, str]:
         """
@@ -113,15 +81,8 @@ class CertificateFileStorageService:
         Returns:
             Tuple of (relative_file_path, checksum)
         """
-        file_path = self._generate_file_path(request_id, "candidate_photo", filename)
-        checksum = calculate_checksum(file_content)
-
-        async with aiofiles.open(file_path, "wb") as f:
-            await f.write(file_content)
-
-        # Return path relative to base_path for storage
-        relative_path = file_path.relative_to(self.base_path)
-        return str(relative_path), checksum
+        subdir = self._get_subdir(request_id, "candidate_photo")
+        return await self._backend.save(file_content=file_content, filename=filename, subdir=subdir)
 
     async def save_pdf(self, file_content: bytes, filename: str, request_id: int) -> tuple[str, str]:
         """
@@ -135,15 +96,8 @@ class CertificateFileStorageService:
         Returns:
             Tuple of (relative_file_path, checksum)
         """
-        file_path = self._generate_file_path(request_id, "pdf", filename)
-        checksum = calculate_checksum(file_content)
-
-        async with aiofiles.open(file_path, "wb") as f:
-            await f.write(file_content)
-
-        # Return path relative to base_path for storage
-        relative_path = file_path.relative_to(self.base_path)
-        return str(relative_path), checksum
+        subdir = self._get_subdir(request_id, "pdf")
+        return await self._backend.save(file_content=file_content, filename=filename, subdir=subdir)
 
     async def save_response_file(self, file_content: bytes, filename: str, request_id: int) -> tuple[str, str]:
         """
@@ -151,28 +105,17 @@ class CertificateFileStorageService:
 
         Stored under "{request_id}/response/".
         """
-        file_path = self._generate_file_path(request_id, "response", filename)
-        checksum = calculate_checksum(file_content)
-
-        async with aiofiles.open(file_path, "wb") as f:
-            await f.write(file_content)
-
-        relative_path = file_path.relative_to(self.base_path)
-        return str(relative_path), checksum
+        subdir = self._get_subdir(request_id, "response")
+        return await self._backend.save(file_content=file_content, filename=filename, subdir=subdir)
 
     async def retrieve(self, file_path: str) -> bytes:
         """Retrieve file content."""
-        full_path = self._resolve_path(file_path)
-        async with aiofiles.open(full_path, "rb") as f:
-            return await f.read()
+        return await self._backend.retrieve(file_path)
 
     async def delete(self, file_path: str) -> None:
         """Delete file."""
-        full_path = self._resolve_path(file_path)
-        if await self.exists(file_path):
-            os.remove(full_path)
+        await self._backend.delete(file_path)
 
     async def exists(self, file_path: str) -> bool:
         """Check if file exists."""
-        full_path = self._resolve_path(file_path)
-        return full_path.exists()
+        return await self._backend.exists(file_path)
