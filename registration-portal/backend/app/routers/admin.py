@@ -3896,10 +3896,13 @@ async def create_examination_schedule(
             detail=f"Subject with original_code '{schedule_data.original_code}' not found",
         )
 
-    # Check for duplicate schedule (same subject code)
+    # Determine the subject_code to use (original_code if available, otherwise code)
+    subject_code_to_store = subject.original_code if subject.original_code else subject.code
+
+    # Check for duplicate schedule (same subject code - using original_code)
     existing_stmt = select(ExaminationSchedule).where(
         ExaminationSchedule.registration_exam_id == exam_id,
-        ExaminationSchedule.subject_code == subject.code,
+        ExaminationSchedule.subject_code == subject_code_to_store,
     )
     existing_result = await session.execute(existing_stmt)
     existing = existing_result.scalar_one_or_none()
@@ -3907,17 +3910,22 @@ async def create_examination_schedule(
     if existing:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Schedule for subject {subject.code} already exists for this exam",
+            detail=f"Schedule for subject {subject_code_to_store} already exists for this exam",
         )
 
-    # Create schedule
+    # Validate that all papers have required date and start_time
+    for paper_entry in schedule_data.papers:
+        if "date" not in paper_entry or "start_time" not in paper_entry:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Each paper must have 'date' and 'start_time' fields",
+            )
+
+    # Create schedule - store original_code (or code if original_code is None)
     new_schedule = ExaminationSchedule(
         registration_exam_id=exam_id,
-        subject_code=subject.code,
+        subject_code=subject_code_to_store,
         subject_name=subject.name,
-        examination_date=schedule_data.examination_date,
-        examination_time=schedule_data.examination_time,
-        examination_end_time=schedule_data.examination_end_time,
         papers=schedule_data.papers,
         venue=schedule_data.venue,
         duration_minutes=schedule_data.duration_minutes,
@@ -3949,7 +3957,7 @@ async def list_examination_schedules(
     # Get schedules
     schedules_stmt = select(ExaminationSchedule).where(
         ExaminationSchedule.registration_exam_id == exam_id
-    ).order_by(ExaminationSchedule.examination_date, ExaminationSchedule.examination_time)
+    )
     schedules_result = await session.execute(schedules_stmt)
     schedules = schedules_result.scalars().all()
 
@@ -3962,12 +3970,33 @@ async def download_schedule_template(
 ) -> StreamingResponse:
     """Download schedule upload template prepopulated with subjects."""
     try:
-        template_bytes = await generate_schedule_template(session)
+        # Fetch exam information for filename
+        exam_stmt = select(RegistrationExam).where(RegistrationExam.id == exam_id)
+        exam_result = await session.execute(exam_stmt)
+        exam = exam_result.scalar_one_or_none()
+
+        if not exam:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Exam not found")
+
+        template_bytes = await generate_schedule_template(
+            session,
+            exam_year=exam.year,
+            exam_series=exam.exam_series,
+            exam_type=exam.exam_type,
+        )
+
+        # Generate filename: {exam_year}_{exam_series}_{exam_type}_timetable_template.xlsx
+        filename = f"{exam.year}_{exam.exam_series}_{exam.exam_type}_timetable_template.xlsx"
+        # Sanitize filename (remove invalid characters)
+        filename = "".join(c for c in filename if c.isalnum() or c in ("_", "-", "."))
+
         return StreamingResponse(
             iter([template_bytes]),
             media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-            headers={"Content-Disposition": "attachment; filename=schedule_upload_template.xlsx"},
+            headers={"Content-Disposition": f'attachment; filename="{filename}"'},
         )
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -4054,13 +4083,14 @@ async def update_examination_schedule(
         schedule.subject_code = schedule_update.subject_code
     if schedule_update.subject_name is not None:
         schedule.subject_name = schedule_update.subject_name
-    if schedule_update.examination_date is not None:
-        schedule.examination_date = schedule_update.examination_date
-    if schedule_update.examination_time is not None:
-        schedule.examination_time = schedule_update.examination_time
-    if schedule_update.examination_end_time is not None:
-        schedule.examination_end_time = schedule_update.examination_end_time
     if schedule_update.papers is not None:
+        # Validate that all papers have required date and start_time
+        for paper_entry in schedule_update.papers:
+            if "date" not in paper_entry or "start_time" not in paper_entry:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="Each paper must have 'date' and 'start_time' fields",
+                )
         schedule.papers = schedule_update.papers
     if schedule_update.venue is not None:
         schedule.venue = schedule_update.venue
@@ -4112,8 +4142,13 @@ async def bulk_upload_schedules(
     session: DBSessionDep,
     current_user: SystemAdminDep,
     file: UploadFile = File(...),
+    override_existing: bool = Query(default=False, description="If true, update existing schedules; if false, skip them"),
 ) -> ExaminationScheduleBulkUploadResponse:
     """Bulk upload schedules from Excel or CSV file."""
+    # Log the override_existing parameter for debugging
+    logger = logging.getLogger(__name__)
+    logger.info(f"Bulk upload schedules for exam_id={exam_id}, override_existing={override_existing} (type: {type(override_existing).__name__})")
+
     # Verify exam exists
     exam_stmt = select(RegistrationExam).where(RegistrationExam.id == exam_id)
     exam_result = await session.execute(exam_stmt)
@@ -4163,19 +4198,11 @@ async def bulk_upload_schedules(
                 failed += 1
                 continue
 
-            if not schedule_data["examination_date"]:
+            # Validate papers
+            if "papers" not in schedule_data or not schedule_data["papers"]:
                 errors.append(
                     ExaminationScheduleBulkUploadError(
-                        row_number=row_number, error_message="examination_date is required", field="examination_date"
-                    )
-                )
-                failed += 1
-                continue
-
-            if not schedule_data["examination_time"]:
-                errors.append(
-                    ExaminationScheduleBulkUploadError(
-                        row_number=row_number, error_message="examination_time is required", field="examination_time"
+                        row_number=row_number, error_message="At least one paper with date and start_time is required", field="papers"
                     )
                 )
                 failed += 1
@@ -4197,55 +4224,49 @@ async def bulk_upload_schedules(
                 failed += 1
                 continue
 
-            # Check for duplicate schedule (same subject code)
+            # Determine the subject_code to use (original_code from upload data)
+            subject_code_to_store = schedule_data["original_code"]
+
+            # Check for duplicate schedule (using original_code)
             existing_stmt = select(ExaminationSchedule).where(
                 ExaminationSchedule.registration_exam_id == exam_id,
-                ExaminationSchedule.subject_code == subject.code,
+                ExaminationSchedule.subject_code == subject_code_to_store,
             )
             existing_result = await session.execute(existing_stmt)
             existing = existing_result.scalar_one_or_none()
 
+            # Get papers from parsed data (already includes dates)
+            papers = schedule_data["papers"]
+
             if existing:
-                errors.append(
-                    ExaminationScheduleBulkUploadError(
-                        row_number=row_number,
-                        error_message=f"Schedule for subject {subject.code} already exists for this exam",
-                        field="original_code",
+                if override_existing:
+                    # Update existing schedule
+                    existing.papers = papers
+                    existing.venue = schedule_data.get("venue")
+                    existing.duration_minutes = schedule_data.get("duration_minutes")
+                    existing.instructions = schedule_data.get("instructions")
+                    # Update subject_name in case it changed
+                    existing.subject_name = subject.name
+                    existing.updated_at = datetime.utcnow()
+                    await session.flush()
+                    successful += 1
+                else:
+                    # Skip existing schedule
+                    errors.append(
+                        ExaminationScheduleBulkUploadError(
+                            row_number=row_number,
+                            error_message=f"Schedule for subject {subject_code_to_store} already exists for this exam",
+                            field="original_code",
+                        )
                     )
-                )
-                failed += 1
+                    failed += 1
                 continue
 
-            # Build papers array from paper1/paper2 flags
-            papers = []
-            if schedule_data["paper1"]:
-                paper1_entry = {"paper": 1}
-                if schedule_data["paper1_start_time"]:
-                    paper1_entry["start_time"] = schedule_data["paper1_start_time"].strftime("%H:%M:%S")
-                if schedule_data["paper1_end_time"]:
-                    paper1_entry["end_time"] = schedule_data["paper1_end_time"].strftime("%H:%M:%S")
-                papers.append(paper1_entry)
-
-            if schedule_data["paper2"]:
-                paper2_entry = {"paper": 2}
-                if schedule_data["paper2_start_time"]:
-                    paper2_entry["start_time"] = schedule_data["paper2_start_time"].strftime("%H:%M:%S")
-                if schedule_data["paper2_end_time"]:
-                    paper2_entry["end_time"] = schedule_data["paper2_end_time"].strftime("%H:%M:%S")
-                papers.append(paper2_entry)
-
-            # If no papers specified, default to paper 1
-            if not papers:
-                papers = [{"paper": 1}]
-
-            # Create schedule
+            # Create new schedule - store original_code
             new_schedule = ExaminationSchedule(
                 registration_exam_id=exam_id,
-                subject_code=subject.code,
+                subject_code=subject_code_to_store,
                 subject_name=subject.name,
-                examination_date=schedule_data["examination_date"],
-                examination_time=schedule_data["examination_time"],
-                examination_end_time=schedule_data.get("examination_end_time"),
                 papers=papers,
                 venue=schedule_data.get("venue"),
                 duration_minutes=schedule_data.get("duration_minutes"),

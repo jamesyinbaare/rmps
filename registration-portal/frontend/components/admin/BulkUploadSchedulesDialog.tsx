@@ -2,6 +2,8 @@
 
 import { useState } from "react";
 import { Button } from "@/components/ui/button";
+import { Checkbox } from "@/components/ui/checkbox";
+import { Label } from "@/components/ui/label";
 import {
   Dialog,
   DialogContent,
@@ -41,6 +43,7 @@ export function BulkUploadSchedulesDialog({
   const [downloadingTemplate, setDownloadingTemplate] = useState(false);
   const [isDragging, setIsDragging] = useState(false);
   const [result, setResult] = useState<ExaminationScheduleBulkUploadResponse | null>(null);
+  const [overrideExisting, setOverrideExisting] = useState(false);
 
   const validateAndSetFile = (selectedFile: File) => {
     const validExtensions = [".xlsx", ".xls", ".csv"];
@@ -93,11 +96,11 @@ export function BulkUploadSchedulesDialog({
   const handleDownloadTemplate = async () => {
     try {
       setDownloadingTemplate(true);
-      const blob = await downloadScheduleTemplate(examId);
+      const { blob, filename } = await downloadScheduleTemplate(examId);
       const url = window.URL.createObjectURL(blob);
       const a = document.createElement("a");
       a.href = url;
-      a.download = "schedule_upload_template.xlsx";
+      a.download = filename;
       document.body.appendChild(a);
       a.click();
       window.URL.revokeObjectURL(url);
@@ -123,7 +126,7 @@ export function BulkUploadSchedulesDialog({
     setResult(null);
 
     try {
-      const response = await uploadSchedulesBulk(examId, file);
+      const response = await uploadSchedulesBulk(examId, file, overrideExisting);
       setResult(response);
 
       if (response.successful > 0) {
@@ -161,7 +164,7 @@ export function BulkUploadSchedulesDialog({
         <DialogHeader>
           <DialogTitle>Bulk Upload Schedules</DialogTitle>
           <DialogDescription>
-            Upload an Excel or CSV file with schedule data. The file should have columns: original_code, subject_name, examination_date, examination_time
+            Upload an Excel or CSV file with schedule data. The file should have columns: subject_code, subject_name, paper1_date, paper1_start_time, paper2_date, paper2_start_time (and optional: paper1_end_time, paper2_end_time, write_together). Set write_together to 1 to copy Paper 1 date/time to Paper 2.
           </DialogDescription>
         </DialogHeader>
 
@@ -187,6 +190,19 @@ export function BulkUploadSchedulesDialog({
                 </>
               )}
             </Button>
+          </div>
+
+          {/* Override Existing Option */}
+          <div className="flex items-center space-x-2">
+            <Checkbox
+              id="override-existing"
+              checked={overrideExisting}
+              onCheckedChange={(checked) => setOverrideExisting(checked as boolean)}
+              disabled={loading}
+            />
+            <Label htmlFor="override-existing" className="cursor-pointer text-sm">
+              Override existing schedules (if unchecked, existing schedules will be skipped)
+            </Label>
           </div>
 
           {/* File Upload Area */}

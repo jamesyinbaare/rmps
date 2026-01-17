@@ -25,10 +25,7 @@ class ExaminationScheduleCreate(BaseModel):
     """Schema for creating an examination schedule."""
 
     original_code: str = Field(..., min_length=1, max_length=50, description="Subject original_code to lookup")
-    examination_date: date
-    examination_time: time
-    examination_end_time: time | None = None
-    papers: list[dict[str, Any]] = Field(default=[{"paper": 1}], description="List of papers: [{'paper': 1}, {'paper': 2}] or [{'paper': 1, 'start_time': '...', 'end_time': '...'}, ...]")
+    papers: list[dict[str, Any]] = Field(..., description="List of papers: [{'paper': 1, 'date': '2026-01-15', 'start_time': '09:00', 'end_time': '11:00'}, {'paper': 2, 'date': '2026-01-16', 'start_time': '14:00'}] - date and start_time are required, end_time is optional")
     venue: str | None = Field(None, max_length=255)
     duration_minutes: int | None = Field(None, ge=1)
     instructions: str | None = None
@@ -46,6 +43,26 @@ class ExaminationScheduleCreate(BaseModel):
                 raise ValueError("Each paper entry must have a 'paper' field")
             if paper_entry["paper"] not in [1, 2]:
                 raise ValueError("Paper number must be 1 or 2")
+            if "date" not in paper_entry:
+                raise ValueError("Each paper entry must have a 'date' field")
+            if "start_time" not in paper_entry:
+                raise ValueError("Each paper entry must have a 'start_time' field")
+            # Validate date format (ISO date string)
+            try:
+                date.fromisoformat(paper_entry["date"])
+            except (ValueError, TypeError):
+                raise ValueError(f"Invalid date format for paper {paper_entry['paper']}. Expected ISO date format (YYYY-MM-DD)")
+            # Validate start_time format (ISO time string)
+            try:
+                time.fromisoformat(paper_entry["start_time"])
+            except (ValueError, TypeError):
+                raise ValueError(f"Invalid start_time format for paper {paper_entry['paper']}. Expected ISO time format (HH:MM:SS or HH:MM)")
+            # Validate end_time format if provided
+            if "end_time" in paper_entry and paper_entry["end_time"] is not None:
+                try:
+                    time.fromisoformat(paper_entry["end_time"])
+                except (ValueError, TypeError):
+                    raise ValueError(f"Invalid end_time format for paper {paper_entry['paper']}. Expected ISO time format (HH:MM:SS or HH:MM)")
         return v
 
 
@@ -54,10 +71,7 @@ class ExaminationScheduleUpdate(BaseModel):
 
     subject_code: str | None = Field(None, min_length=1, max_length=10)
     subject_name: str | None = Field(None, min_length=1, max_length=255)
-    examination_date: date | None = None
-    examination_time: time | None = None
-    examination_end_time: time | None = None
-    papers: list[dict[str, Any]] | None = Field(None, description="List of papers: [{'paper': 1}, {'paper': 2}] or [{'paper': 1, 'start_time': '...', 'end_time': '...'}, ...]")
+    papers: list[dict[str, Any]] | None = Field(None, description="List of papers: [{'paper': 1, 'date': '2026-01-15', 'start_time': '09:00', 'end_time': '11:00'}, {'paper': 2, 'date': '2026-01-16', 'start_time': '14:00'}] - date and start_time are required, end_time is optional")
     venue: str | None = Field(None, max_length=255)
     duration_minutes: int | None = Field(None, ge=1)
     instructions: str | None = None
@@ -77,6 +91,26 @@ class ExaminationScheduleUpdate(BaseModel):
                 raise ValueError("Each paper entry must have a 'paper' field")
             if paper_entry["paper"] not in [1, 2]:
                 raise ValueError("Paper number must be 1 or 2")
+            if "date" not in paper_entry:
+                raise ValueError("Each paper entry must have a 'date' field")
+            if "start_time" not in paper_entry:
+                raise ValueError("Each paper entry must have a 'start_time' field")
+            # Validate date format (ISO date string)
+            try:
+                date.fromisoformat(paper_entry["date"])
+            except (ValueError, TypeError):
+                raise ValueError(f"Invalid date format for paper {paper_entry['paper']}. Expected ISO date format (YYYY-MM-DD)")
+            # Validate start_time format (ISO time string)
+            try:
+                time.fromisoformat(paper_entry["start_time"])
+            except (ValueError, TypeError):
+                raise ValueError(f"Invalid start_time format for paper {paper_entry['paper']}. Expected ISO time format (HH:MM:SS or HH:MM)")
+            # Validate end_time format if provided
+            if "end_time" in paper_entry and paper_entry["end_time"] is not None:
+                try:
+                    time.fromisoformat(paper_entry["end_time"])
+                except (ValueError, TypeError):
+                    raise ValueError(f"Invalid end_time format for paper {paper_entry['paper']}. Expected ISO time format (HH:MM:SS or HH:MM)")
         return v
 
 
@@ -87,9 +121,6 @@ class ExaminationScheduleResponse(BaseModel):
     registration_exam_id: int
     subject_code: str
     subject_name: str
-    examination_date: date
-    examination_time: time
-    examination_end_time: time | None = None
     papers: list[dict[str, Any]] = Field(default=[{"paper": 1}])
     venue: str | None = None
     duration_minutes: int | None = None

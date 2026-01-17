@@ -14,7 +14,6 @@ from sqlalchemy import (
     String,
     Table,
     Text,
-    Time,
     UniqueConstraint,
 )
 from sqlalchemy.dialects.postgresql import JSON, UUID
@@ -457,10 +456,7 @@ class ExaminationSchedule(Base):
     registration_exam_id = Column(Integer, ForeignKey("registration_exams.id", ondelete="CASCADE"), nullable=False, index=True)
     subject_code = Column(String(10), nullable=False)
     subject_name = Column(String(255), nullable=False)
-    examination_date = Column(Date, nullable=False)
-    examination_time = Column(Time, nullable=False)
-    examination_end_time = Column(Time, nullable=True)
-    papers = Column(JSON, nullable=False, default=[{"paper": 1}])  # JSON array: [{"paper": 1}, {"paper": 2}] or [{"paper": 1, "start_time": "...", "end_time": "..."}, ...]
+    papers = Column(JSON, nullable=False, default=[{"paper": 1}])  # JSON array: [{"paper": 1, "date": "2026-01-15", "start_time": "09:00", "end_time": "11:00"}, {"paper": 2, "date": "2026-01-16", "start_time": "14:00", "end_time": "16:00"}] - date and start_time are required, end_time is optional
     venue = Column(String(255), nullable=True)
     duration_minutes = Column(Integer, nullable=True)
     instructions = Column(Text, nullable=True)
