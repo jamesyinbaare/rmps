@@ -76,7 +76,7 @@ export function EditExamDialog({
     try {
       await updateExam(exam.id, {
         exam_type: examType,
-        exam_series: examType === "Certificate II Examinations" ? examSeries : null,
+        exam_series: examType === "Certificate II Examinations" ? examSeries : undefined,
         year: yearNum,
       });
 

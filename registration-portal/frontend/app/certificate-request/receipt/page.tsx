@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, Suspense } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -11,7 +11,7 @@ import { toast } from "sonner";
 import { CheckCircle2, Download, FileText, Search, Copy } from "lucide-react";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 
-export default function CertificateRequestReceiptPage() {
+function CertificateRequestReceiptContent() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const [requestNumber, setRequestNumber] = useState<string | null>(null);
@@ -254,5 +254,17 @@ export default function CertificateRequestReceiptPage() {
         </div>
       </main>
     </div>
+  );
+}
+
+export default function CertificateRequestReceiptPage() {
+  return (
+    <Suspense fallback={
+      <div className="flex min-h-screen flex-col bg-gradient-to-br from-background via-background to-primary/5">
+        <div className="text-center py-12">Loading...</div>
+      </div>
+    }>
+      <CertificateRequestReceiptContent />
+    </Suspense>
   );
 }

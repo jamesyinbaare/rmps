@@ -26,10 +26,13 @@ target_metadata = Base.metadata
 
 
 def get_url() -> str:
-    """Get database URL from settings."""
+    """Get database URL from settings and convert to async URL if needed."""
     from app.config import settings
+    from app.dependencies.database import convert_to_async_url
 
-    return settings.database_url
+    url = settings.database_url
+    # Convert to async URL if using async migrations
+    return convert_to_async_url(url)
 
 
 def run_migrations_offline() -> None:

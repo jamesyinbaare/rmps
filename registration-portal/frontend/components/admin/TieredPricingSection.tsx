@@ -70,7 +70,8 @@ export function TieredPricingSection({
     } else if (field === "max_subjects") {
       newRows[index][field] = value === null ? null : (typeof value === "number" ? value : parseInt(value));
     } else {
-      newRows[index][field] = typeof value === "number" ? value : parseFloat(value);
+      const numValue = typeof value === "number" ? value : (value === null ? 0 : parseFloat(value));
+      newRows[index][field] = numValue;
     }
     setRows(newRows);
   };

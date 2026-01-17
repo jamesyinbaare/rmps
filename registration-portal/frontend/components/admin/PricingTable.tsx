@@ -30,7 +30,7 @@ import {
   deletePricingModel,
 } from "@/lib/api";
 import { toast } from "sonner";
-import type { RegistrationExam } from "@/types";
+import type { RegistrationExam, ExamPricingModelResponse } from "@/types";
 import { Save, Edit, Trash2, Loader2 } from "lucide-react";
 import {
   AlertDialog,

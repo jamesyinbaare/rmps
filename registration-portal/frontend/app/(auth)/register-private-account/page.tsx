@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, Suspense } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -11,7 +11,7 @@ import { toast } from "sonner";
 import { Loader2 } from "lucide-react";
 import Link from "next/link";
 
-export default function PrivateAccountCreationPage() {
+function PrivateAccountCreationContent() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const [loading, setLoading] = useState(false);
@@ -143,5 +143,17 @@ export default function PrivateAccountCreationPage() {
         </CardContent>
       </Card>
     </div>
+  );
+}
+
+export default function PrivateAccountCreationPage() {
+  return (
+    <Suspense fallback={
+      <div className="flex min-h-screen items-center justify-center bg-gray-50">
+        <div className="text-center">Loading...</div>
+      </div>
+    }>
+      <PrivateAccountCreationContent />
+    </Suspense>
   );
 }

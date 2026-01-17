@@ -24,7 +24,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { Checkbox } from "@/components/ui/checkbox";
-import { Shield, Check, X, RotateCcw, Search, ArrowLeft, Calendar, User } from "lucide-react";
+import { Shield, Check, X, RotateCcw, Search, ArrowLeft, Calendar, User as UserIcon } from "lucide-react";
 import {
   getPermissions,
   getUserPermissions,
@@ -61,7 +61,7 @@ export default function UserPermissionsPage() {
       setUserLoading(true);
       try {
         // Load user details from list (filter by ID)
-        const usersResponse = await listAdminUsers({}, 1, 1000);
+        const usersResponse = await listAdminUsers({ page: 1, page_size: 1000 });
         const userData = usersResponse.items.find((u) => u.id === userId);
         if (!userData) {
           toast.error("User not found");
@@ -220,7 +220,7 @@ export default function UserPermissionsPage() {
       <Card>
         <CardHeader>
           <CardTitle className="flex items-center gap-2">
-            <User className="h-5 w-5" />
+            <UserIcon className="h-5 w-5" />
             User Information
           </CardTitle>
         </CardHeader>

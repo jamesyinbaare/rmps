@@ -1831,7 +1831,7 @@ export default function PrivateRegistrationPage() {
               selectedSubjectIds={selectedSubjectIds}
               onProgrammeChange={setProgrammeId}
               onSubjectIdsChange={setSelectedSubjectIds}
-              examSeries={exams.find((e) => e.id === selectedExamId)?.exam_series}
+              examSeries={exams.find((e) => e.id === selectedExamId)?.exam_series ?? undefined}
             />
           )}
 
@@ -2416,7 +2416,7 @@ export default function PrivateRegistrationPage() {
                   )}
                 </Button>
                 {currentStep < 7 ? (
-                  <Button onClick={handleNext} disabled={loading || saving || (currentStep === 5 && priceData && priceData.outstanding_amount > 0 && !paymentAcknowledged)}>
+                  <Button onClick={handleNext} disabled={!!(loading || saving || (currentStep === 5 && priceData && priceData.outstanding_amount > 0 && !paymentAcknowledged))}>
                     {saving ? (
                       <>
                         <Loader2 className="mr-2 h-4 w-4 animate-spin" />

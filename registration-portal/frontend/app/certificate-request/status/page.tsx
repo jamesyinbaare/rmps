@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, Suspense } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -66,7 +66,7 @@ const getStatusBadgeVariant = (status: string) => {
   }
 };
 
-export default function CertificateRequestStatusPage() {
+function CertificateRequestStatusContent() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const [requestNumber, setRequestNumber] = useState("");
@@ -331,5 +331,17 @@ export default function CertificateRequestStatusPage() {
         </div>
       </main>
     </div>
+  );
+}
+
+export default function CertificateRequestStatusPage() {
+  return (
+    <Suspense fallback={
+      <div className="flex min-h-screen flex-col bg-gradient-to-br from-background via-background to-primary/5">
+        <div className="text-center py-12">Loading...</div>
+      </div>
+    }>
+      <CertificateRequestStatusContent />
+    </Suspense>
   );
 }

@@ -45,12 +45,14 @@ import type {
   ApiKeyCreateResponse,
   ApiKeyUsageStats,
   CreditBalance,
+  CreditTransaction,
   CreditPurchaseRequest,
   CreditPurchaseResponse,
   CreditTransactionListResponse,
   BulkVerificationRequest,
   BulkVerificationResponse,
   ApiUser,
+  ApiUserListItem,
   ApiUserListResponse,
   ApiUserDetail,
   ApiUserUsageStats,
@@ -73,6 +75,26 @@ import type {
   TimetableDownloadFilter,
   TimetableResponse,
 } from "@/types";
+
+// Re-export types for convenience
+export type {
+  ApiKey,
+  ApiKeyUsageStats,
+  ApiKeyCreateResponse,
+  ApiUser,
+  ApiUserDetail,
+  ApiUserListItem,
+  ApiUserListResponse,
+  ApiUserUsageStats,
+  CreditBalance,
+  CreditTransaction,
+  CreditPurchaseRequest,
+  CreditPurchaseResponse,
+  PublicResultCheckRequest,
+  PublicResultResponse,
+  BulkVerificationRequest,
+  BulkVerificationResponse,
+};
 
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL || "http://localhost:8001";
 
@@ -597,6 +619,7 @@ export interface RegistrationPriceResponse {
   total: number;
   pricing_model_used: string;
   payment_required: boolean;
+  has_pricing: boolean;
   total_paid_amount: number;
   outstanding_amount: number;
 }
@@ -1671,6 +1694,7 @@ export interface SchoolDashboardData {
     code: string;
     name: string;
     is_active: boolean;
+    profile_completed?: boolean;
   };
   active_user_count: number;
   max_active_users: number;

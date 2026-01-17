@@ -66,6 +66,7 @@ const ROLE_DISPLAY_NAMES: Record<Role, string> = {
   SchoolAdmin: "School Admin",
   SchoolStaff: "SchoolStaff",
   PublicUser: "Public User",
+  APIUSER: "API User",
 };
 
 export function AdminUserTable({

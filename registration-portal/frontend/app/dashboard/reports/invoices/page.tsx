@@ -50,6 +50,12 @@ export default function AdminInvoicesPage() {
     loadData();
   }, []);
 
+  const getDownloadKey = (type: "free-tvet" | "referral", summary: boolean): string => {
+    const examIdStr = selectedExamId ? String(selectedExamId) : "";
+    const schoolIdStr = summary ? "summary" : (selectedSchoolId === "all" ? "summary" : String(selectedSchoolId));
+    return `${type}-${examIdStr}-${schoolIdStr}`;
+  };
+
   const handleDownload = async (
     type: "free-tvet" | "referral",
     summary: boolean = false
@@ -64,7 +70,7 @@ export default function AdminInvoicesPage() {
       return;
     }
 
-      const downloadKey = `${type}-${selectedExamId}-${selectedSchoolId === "all" ? "summary" : selectedSchoolId}`;
+    const downloadKey = getDownloadKey(type, summary);
     setDownloading(downloadKey);
 
     try {
@@ -192,7 +198,7 @@ export default function AdminInvoicesPage() {
                     onClick={() => handleDownload("free-tvet", false)}
                     disabled={downloading !== null}
                   >
-                    {downloading === `free-tvet-${selectedExamId}-${selectedSchoolId}` ? (
+                    {downloading === getDownloadKey("free-tvet", false) ? (
                       "Downloading..."
                     ) : (
                       <>
@@ -207,7 +213,7 @@ export default function AdminInvoicesPage() {
                     onClick={() => handleDownload("free-tvet", true)}
                     disabled={downloading !== null}
                   >
-                    {downloading === `free-tvet-${selectedExamId}-summary` ? (
+                    {downloading === getDownloadKey("free-tvet", true) ? (
                       "Downloading..."
                     ) : (
                       <>
@@ -237,7 +243,7 @@ export default function AdminInvoicesPage() {
                     onClick={() => handleDownload("referral", false)}
                     disabled={downloading !== null}
                   >
-                    {downloading === `referral-${selectedExamId}-${selectedSchoolId === "all" ? "summary" : selectedSchoolId}` ? (
+                    {downloading === getDownloadKey("referral", false) ? (
                       "Downloading..."
                     ) : (
                       <>

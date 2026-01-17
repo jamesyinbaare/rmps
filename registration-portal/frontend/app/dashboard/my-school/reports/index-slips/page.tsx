@@ -224,12 +224,10 @@ export default function IndexSlipsDownloadPage() {
           }
 
           if (aVal < bVal) {
-            const result = direction === "asc" ? -1 : 1;
-            if (result !== 0) return result;
+            return direction === "asc" ? -1 : 1;
           }
           if (aVal > bVal) {
-            const result = direction === "asc" ? 1 : -1;
-            if (result !== 0) return result;
+            return direction === "asc" ? 1 : -1;
           }
           // Values are equal, continue to next sort column
         }
