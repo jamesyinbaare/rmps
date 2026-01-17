@@ -60,6 +60,7 @@ from app.schemas.registration import (
     PhotoAlbumResponse,
     PhotoAlbumItem,
     RegistrationCandidatePhotoResponse,
+    ExamStatisticsResponse,
 )
 from app.schemas.user import (
     SchoolAdminUserCreate,
@@ -1527,6 +1528,57 @@ async def list_exams(session: DBSessionDep, current_user: SystemAdminDep) -> lis
     return [RegistrationExamResponse.model_validate(exam) for exam in exams]
 
 
+@router.get("/exams/active", response_model=list[RegistrationExamResponse])
+async def list_active_exams(session: DBSessionDep, current_user: SystemAdminDep) -> list[RegistrationExamResponse]:
+    """List active examinations with registration statistics."""
+    # Get current time in UTC, then convert to naive datetime for database comparison
+    now_aware = datetime.now(timezone.utc)
+    now = now_aware.replace(tzinfo=None)  # Convert to naive datetime for database
+
+    # Query exams with active registration periods
+    stmt = (
+        select(RegistrationExam)
+        .join(ExamRegistrationPeriod, RegistrationExam.registration_period_id == ExamRegistrationPeriod.id)
+        .where(
+            ExamRegistrationPeriod.is_active == True,
+            ExamRegistrationPeriod.registration_start_date <= now,
+            ExamRegistrationPeriod.registration_end_date >= now,
+        )
+        .options(selectinload(RegistrationExam.registration_period))
+        .order_by(RegistrationExam.year.desc(), RegistrationExam.exam_type, RegistrationExam.exam_series)
+    )
+    result = await session.execute(stmt)
+    exams = result.scalars().all()
+
+    # Calculate statistics for each exam
+    exam_responses = []
+    for exam in exams:
+        # Count total candidates
+        total_candidates_stmt = select(func.count(RegistrationCandidate.id)).where(
+            RegistrationCandidate.registration_exam_id == exam.id
+        )
+        total_result = await session.execute(total_candidates_stmt)
+        total_candidates = total_result.scalar() or 0
+
+        # Count approved candidates
+        approved_candidates_stmt = select(func.count(RegistrationCandidate.id)).where(
+            RegistrationCandidate.registration_exam_id == exam.id,
+            RegistrationCandidate.registration_status == RegistrationStatus.APPROVED,
+        )
+        approved_result = await session.execute(approved_candidates_stmt)
+        approved_candidates = approved_result.scalar() or 0
+
+        exam_response = RegistrationExamResponse.model_validate(exam)
+        # Update fields using model_dump and reconstruct to ensure proper serialization
+        exam_data = exam_response.model_dump()
+        exam_data["candidate_count"] = total_candidates
+        exam_data["approved_candidates"] = approved_candidates
+        exam_response = RegistrationExamResponse(**exam_data)
+        exam_responses.append(exam_response)
+
+    return exam_responses
+
+
 @router.get("/exams/{exam_id}", response_model=RegistrationExamResponse)
 async def get_exam(exam_id: int, session: DBSessionDep, current_user: SystemAdminDep) -> RegistrationExamResponse:
     """Get exam details."""
@@ -1562,6 +1614,125 @@ async def get_exam(exam_id: int, session: DBSessionDep, current_user: SystemAdmi
     exam_response.candidate_count = candidate_count
 
     return exam_response
+
+
+@router.get("/exams/{exam_id}/statistics", response_model=ExamStatisticsResponse)
+async def get_exam_statistics(
+    exam_id: int, session: DBSessionDep, current_user: SystemAdminDep
+) -> ExamStatisticsResponse:
+    """Get detailed statistics for an examination."""
+    # Verify exam exists
+    exam_stmt = (
+        select(RegistrationExam)
+        .where(RegistrationExam.id == exam_id)
+        .options(selectinload(RegistrationExam.registration_period))
+    )
+    exam_result = await session.execute(exam_stmt)
+    exam = exam_result.scalar_one_or_none()
+
+    if not exam:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Exam not found")
+
+    # Count total candidates
+    total_candidates_stmt = select(func.count(RegistrationCandidate.id)).where(
+        RegistrationCandidate.registration_exam_id == exam_id
+    )
+    total_result = await session.execute(total_candidates_stmt)
+    total_candidates = total_result.scalar() or 0
+
+    # Count approved candidates
+    approved_candidates_stmt = select(func.count(RegistrationCandidate.id)).where(
+        RegistrationCandidate.registration_exam_id == exam_id,
+        RegistrationCandidate.registration_status == RegistrationStatus.APPROVED,
+    )
+    approved_result = await session.execute(approved_candidates_stmt)
+    approved_candidates = approved_result.scalar() or 0
+
+    # Calculate completion percentage
+    completion_percentage = (approved_candidates / total_candidates * 100.0) if total_candidates > 0 else 0.0
+
+    # Count distinct schools (excluding null school_id for private candidates)
+    schools_count_stmt = (
+        select(func.count(func.distinct(RegistrationCandidate.school_id)))
+        .where(
+            RegistrationCandidate.registration_exam_id == exam_id,
+            RegistrationCandidate.school_id.isnot(None),
+        )
+    )
+    schools_result = await session.execute(schools_count_stmt)
+    schools_count = schools_result.scalar() or 0
+
+    # Calculate days to end
+    now = datetime.now(timezone.utc)
+    end_date = exam.registration_period.registration_end_date
+    if end_date:
+        # Ensure end_date is timezone-aware
+        if end_date.tzinfo is None:
+            end_date = end_date.replace(tzinfo=timezone.utc)
+        days_to_end = (end_date - now).days
+        # Only return positive days, otherwise return None
+        days_to_end = days_to_end if days_to_end > 0 else None
+    else:
+        days_to_end = None
+
+    return ExamStatisticsResponse(
+        total_candidates=total_candidates,
+        approved_candidates=approved_candidates,
+        completion_percentage=round(completion_percentage, 2),
+        schools_count=schools_count,
+        days_to_end=days_to_end,
+    )
+
+
+@router.get("/exams/{exam_id}/schools", response_model=list[dict])
+async def get_exam_schools(
+    exam_id: int, session: DBSessionDep, current_user: SystemAdminDep
+) -> list[dict]:
+    """Get list of schools with candidate counts for an examination."""
+    # Verify exam exists
+    exam_stmt = (
+        select(RegistrationExam)
+        .where(RegistrationExam.id == exam_id)
+        .options(selectinload(RegistrationExam.registration_period))
+    )
+    exam_result = await session.execute(exam_stmt)
+    exam = exam_result.scalar_one_or_none()
+
+    if not exam:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Exam not found")
+
+    # Get schools with candidate counts for this exam
+    schools_stmt = (
+        select(
+            School.id,
+            School.name,
+            School.code,
+            func.count(RegistrationCandidate.id).label("candidate_count"),
+        )
+        .join(
+            RegistrationCandidate,
+            RegistrationCandidate.school_id == School.id,
+        )
+        .where(
+            RegistrationCandidate.registration_exam_id == exam_id,
+            RegistrationCandidate.school_id.isnot(None),
+        )
+        .group_by(School.id, School.name, School.code)
+        .order_by(School.name)
+    )
+
+    result = await session.execute(schools_stmt)
+    schools = result.all()
+
+    return [
+        {
+            "id": row.id,
+            "name": row.name,
+            "code": row.code,
+            "candidate_count": row.candidate_count,
+        }
+        for row in schools
+    ]
 
 
 @router.put("/exams/{exam_id}", response_model=RegistrationExamResponse)

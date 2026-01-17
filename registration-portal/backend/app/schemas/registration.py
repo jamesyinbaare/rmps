@@ -281,6 +281,7 @@ class RegistrationExamResponse(BaseModel):
     pricing_model_preference: str | None = None
     has_index_numbers: bool = False
     candidate_count: int | None = None
+    approved_candidates: int | None = None
     created_at: datetime
     updated_at: datetime
 
@@ -327,5 +328,17 @@ class IndexNumberGenerationJobResponse(BaseModel):
     created_at: datetime
     updated_at: datetime
     completed_at: datetime | None
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class ExamStatisticsResponse(BaseModel):
+    """Schema for exam statistics response."""
+
+    total_candidates: int
+    approved_candidates: int
+    completion_percentage: float
+    schools_count: int
+    days_to_end: int | None
 
     model_config = ConfigDict(from_attributes=True)
