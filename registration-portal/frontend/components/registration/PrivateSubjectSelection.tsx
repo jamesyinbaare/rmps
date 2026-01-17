@@ -303,7 +303,7 @@ export function PrivateSubjectSelection({
             onValueChange={(value) => {
               if (isNovDec) {
                 if (value && value !== undefined) {
-                  handleProgrammeChange(parseInt(value));
+                  handleProgrammeChange(value);
                 }
               } else {
                 if (value === "none" || value === undefined) {

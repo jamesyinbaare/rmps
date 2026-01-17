@@ -156,7 +156,7 @@ export function CreateScheduleDialog({
                 <SearchableSelect
                   options={subjectOptions}
                   value={originalCode}
-                  onValueChange={setOriginalCode}
+                  onValueChange={(value) => setOriginalCode(value ?? "")}
                   placeholder="Select subject..."
                   disabled={loading}
                 />

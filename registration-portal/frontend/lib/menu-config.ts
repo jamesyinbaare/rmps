@@ -199,7 +199,7 @@ export function getMenuItemsForRole(role: Role | null | undefined): MenuItem[] {
 
   // API user role
   if (role === "APIUSER") {
-    return apiUserMenuItems.filter(item => item.roles.includes(role));
+    return []; // API users don't have menu items - they use API endpoints
   }
 
   return [];

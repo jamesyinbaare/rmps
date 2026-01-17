@@ -78,7 +78,7 @@ export function CreateExamDialog({ open, onOpenChange, onSuccess }: CreateExamDi
 
       const examData: RegistrationExamCreate = {
         exam_type: examType,
-        exam_series: examType === "Certificate II Examinations" ? examSeries : null,
+        exam_series: examType === "Certificate II Examinations" ? examSeries : undefined,
         year: parseInt(year),
         description: description || null,
         registration_period: {

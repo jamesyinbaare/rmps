@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useState, Suspense } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { LoginForm } from "@/components/auth/LoginForm";
 import { getCurrentUser, isAuthenticated, logout } from "@/lib/api";
@@ -8,7 +8,7 @@ import { toast } from "sonner";
 import { Key } from "lucide-react";
 import Image from "next/image";
 
-export default function ApiLoginPage() {
+function ApiLoginContent() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const [checking, setChecking] = useState(true);
@@ -123,5 +123,17 @@ export default function ApiLoginPage() {
       {/* Right side - Decorative background */}
       <div className="bg-gradient-to-br from-slate-50 to-blue-50 relative hidden lg:block" />
     </div>
+  );
+}
+
+export default function ApiLoginPage() {
+  return (
+    <Suspense fallback={
+      <div className="flex min-h-screen items-center justify-center bg-gray-50">
+        <div className="text-center">Loading...</div>
+      </div>
+    }>
+      <ApiLoginContent />
+    </Suspense>
   );
 }

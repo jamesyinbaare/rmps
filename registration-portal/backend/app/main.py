@@ -157,7 +157,14 @@ app.add_middleware(RequestLoggingMiddleware)
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3001", "http://127.0.0.1:3001"],  # Different port for registration portal
+    allow_origins=[
+        "http://localhost:3001",
+        "http://127.0.0.1:3001",
+        "https://frontend.localhost",
+        "https://localhost",
+        "http://frontend.localhost",
+        "http://localhost",
+    ],  # Development and Traefik routes
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],

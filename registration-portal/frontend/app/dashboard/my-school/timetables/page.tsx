@@ -321,7 +321,7 @@ export default function TimetablesPage() {
 
                           const sortedDates = Array.from(entriesByDate.keys()).sort();
                           let sn = 1;
-                          const rows: JSX.Element[] = [];
+                           const rows: React.ReactElement[] = [];
 
                           sortedDates.forEach((dateKey) => {
                             const dayEntries = entriesByDate.get(dateKey)!;
