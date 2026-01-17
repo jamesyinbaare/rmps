@@ -179,155 +179,155 @@ export default function DashboardPage() {
       {/* Two Column Layout */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
         {/* Left Column - Active Examinations */}
-        <div className="space-y-4">
-          <div className="flex items-center justify-between">
-            <h2 className="text-xl font-semibold">Active Examinations</h2>
-            <Link href="/dashboard/exams">
-              <Button variant="outline" size="sm">View All</Button>
-            </Link>
-          </div>
-
-          {loadingExams ? (
-            <div className="space-y-4">
-              {[1, 2, 3].map((i) => (
-                <Card key={i}>
-                  <CardHeader>
-                    <div className="flex items-start justify-between">
-                      <Skeleton className="h-6 w-32" />
-                      <Skeleton className="h-5 w-16 rounded-full" />
-                    </div>
-                    <Skeleton className="h-4 w-full mt-2" />
-                  </CardHeader>
-                  <CardContent className="space-y-4">
-                    <div className="grid grid-cols-2 gap-4">
-                      <div>
-                        <Skeleton className="h-4 w-20 mb-2" />
-                        <Skeleton className="h-8 w-16" />
-                      </div>
-                      <div>
-                        <Skeleton className="h-4 w-20 mb-2" />
-                        <Skeleton className="h-8 w-16" />
-                      </div>
-                    </div>
-                    <div className="pt-2">
-                      <Skeleton className="h-4 w-full" />
-                    </div>
-                    <Skeleton className="h-10 w-full rounded-md" />
-                  </CardContent>
-                </Card>
-              ))}
+        <Card className="h-full flex flex-col">
+          <CardHeader className="shrink-0">
+            <div className="flex items-center justify-between">
+              <CardTitle>Active Examinations</CardTitle>
+              <Link href="/dashboard/exams">
+                <Button variant="outline" size="sm">View All</Button>
+              </Link>
             </div>
-          ) : activeExams.length === 0 ? (
-            <Card>
-              <CardContent className="py-12 text-center">
-                <div className="flex flex-col items-center justify-center">
-                  <div className="rounded-full bg-muted p-4 mb-4">
-                    <Calendar className="h-10 w-10 text-muted-foreground" />
-                  </div>
-                  <h3 className="text-lg font-semibold mb-2">No Active Examinations</h3>
-                  <p className="text-sm text-muted-foreground max-w-md mb-4">
-                    There are no active examinations at this time. Create a new examination to get started.
-                  </p>
-                  <Link href="/dashboard/exams">
-                    <Button>
-                      <Calendar className="mr-2 h-4 w-4" />
-                      View All Examinations
-                    </Button>
-                  </Link>
-                </div>
-              </CardContent>
-            </Card>
-          ) : (
-            <div className="space-y-4">
-              {activeExams.map((exam) => {
-                const completionPercentage = getCompletionPercentage(exam);
-                const examTitle = `${exam.exam_type}${exam.exam_series ? ` (${exam.exam_series} ${exam.year})` : ` ${exam.year}`}`;
-                const isSelected = selectedExamId === exam.id;
+          </CardHeader>
 
-                return (
-                  <Card
-                    key={exam.id}
-                    className={`transition-all duration-200 cursor-pointer border-2 ${
-                      isSelected
-                        ? "border-primary shadow-lg"
-                        : "hover:border-primary/50 hover:shadow-md"
-                    }`}
-                    onClick={() => setSelectedExamId(exam.id)}
-                  >
+          <CardContent className="flex-1 overflow-y-auto">
+            {loadingExams ? (
+              <div className="space-y-4">
+                {[1, 2, 3].map((i) => (
+                  <Card key={i}>
                     <CardHeader>
                       <div className="flex items-start justify-between">
-                        <CardTitle className="text-lg font-semibold line-clamp-2">
-                          {examTitle}
-                        </CardTitle>
-                        <Badge variant="default" className="bg-green-500 text-white shrink-0 ml-2">
-                          Active
-                        </Badge>
+                        <Skeleton className="h-6 w-32" />
+                        <Skeleton className="h-5 w-16 rounded-full" />
                       </div>
-                      {exam.description && (
-                        <p className="text-sm text-muted-foreground mt-2 line-clamp-2">{exam.description}</p>
-                      )}
+                      <Skeleton className="h-4 w-full mt-2" />
                     </CardHeader>
                     <CardContent className="space-y-4">
-                      {/* Progress Visualization */}
-                      <div className="flex items-center justify-between gap-4">
-                        <div className="flex-1 space-y-2">
-                          <div className="flex items-center justify-between text-sm">
-                            <span className="text-muted-foreground">Completion</span>
-                            <span className="font-semibold">{completionPercentage}%</span>
-                          </div>
-                          <Progress value={completionPercentage} className="h-2" />
+                      <div className="grid grid-cols-2 gap-4">
+                        <div>
+                          <Skeleton className="h-4 w-20 mb-2" />
+                          <Skeleton className="h-8 w-16" />
                         </div>
-                        <ProgressRing
-                          value={completionPercentage}
-                          size={56}
-                          strokeWidth={6}
-                          color="hsl(var(--primary))"
-                        />
-                      </div>
-
-                      <div className="grid grid-cols-2 gap-4 pt-2">
-                        <div className="flex items-center gap-2">
-                          <UsersIcon className="h-5 w-5 text-muted-foreground" />
-                          <div>
-                            <p className="text-xs text-muted-foreground">Candidates</p>
-                            <p className="text-xl font-bold">{exam.candidate_count || 0}</p>
-                          </div>
-                        </div>
-                        <div className="flex items-center gap-2">
-                          <CheckCircle2 className="h-5 w-5 text-green-600" />
-                          <div>
-                            <p className="text-xs text-muted-foreground">Approved</p>
-                            <p className="text-xl font-bold">{exam.approved_candidates || 0}</p>
-                          </div>
+                        <div>
+                          <Skeleton className="h-4 w-20 mb-2" />
+                          <Skeleton className="h-8 w-16" />
                         </div>
                       </div>
-
-                      <div className="pt-2 border-t">
-                        <div className="flex gap-2">
-                          <Button
-                            variant={isSelected ? "default" : "outline"}
-                            className="flex-1"
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              setSelectedExamId(exam.id);
-                            }}
-                          >
-                            {isSelected ? "Selected" : "Select"}
-                          </Button>
-                          <Link href={`/dashboard/exams/${exam.id}`} onClick={(e) => e.stopPropagation()}>
-                            <Button variant="outline" className="flex-1">
-                              View Details
-                            </Button>
-                          </Link>
-                        </div>
+                      <div className="pt-2">
+                        <Skeleton className="h-4 w-full" />
                       </div>
+                      <Skeleton className="h-10 w-full rounded-md" />
                     </CardContent>
                   </Card>
-                );
-              })}
-            </div>
-          )}
-        </div>
+                ))}
+              </div>
+            ) : activeExams.length === 0 ? (
+              <div className="flex flex-col items-center justify-center h-full py-12 text-center">
+                <div className="rounded-full bg-muted p-4 mb-4">
+                  <Calendar className="h-10 w-10 text-muted-foreground" />
+                </div>
+                <h3 className="text-lg font-semibold mb-2">No Active Examinations</h3>
+                <p className="text-sm text-muted-foreground max-w-md mb-4">
+                  There are no active examinations at this time. Create a new examination to get started.
+                </p>
+                <Link href="/dashboard/exams">
+                  <Button>
+                    <Calendar className="mr-2 h-4 w-4" />
+                    View All Examinations
+                  </Button>
+                </Link>
+              </div>
+            ) : (
+              <div className="space-y-4">
+                {activeExams.map((exam) => {
+                  const completionPercentage = getCompletionPercentage(exam);
+                  const examTitle = `${exam.exam_type}${exam.exam_series ? ` (${exam.exam_series} ${exam.year})` : ` ${exam.year}`}`;
+                  const isSelected = selectedExamId === exam.id;
+
+                  return (
+                    <Card
+                      key={exam.id}
+                      className={`transition-all duration-200 cursor-pointer border-2 ${
+                        isSelected
+                          ? "border-primary shadow-lg"
+                          : "hover:border-primary/50 hover:shadow-md"
+                      }`}
+                      onClick={() => setSelectedExamId(exam.id)}
+                    >
+                      <CardHeader>
+                        <div className="flex items-start justify-between">
+                          <CardTitle className="text-lg font-semibold line-clamp-2">
+                            {examTitle}
+                          </CardTitle>
+                          <Badge variant="default" className="bg-green-500 text-white shrink-0 ml-2">
+                            Active
+                          </Badge>
+                        </div>
+                        {exam.description && (
+                          <p className="text-sm text-muted-foreground mt-2 line-clamp-2">{exam.description}</p>
+                        )}
+                      </CardHeader>
+                      <CardContent className="space-y-4">
+                        {/* Progress Visualization */}
+                        <div className="flex items-center justify-between gap-4">
+                          <div className="flex-1 space-y-2">
+                            <div className="flex items-center justify-between text-sm">
+                              <span className="text-muted-foreground">Completion</span>
+                              <span className="font-semibold">{completionPercentage}%</span>
+                            </div>
+                            <Progress value={completionPercentage} className="h-2" />
+                          </div>
+                          <ProgressRing
+                            value={completionPercentage}
+                            size={56}
+                            strokeWidth={6}
+                            color="hsl(var(--primary))"
+                          />
+                        </div>
+
+                        <div className="grid grid-cols-2 gap-4 pt-2">
+                          <div className="flex items-center gap-2">
+                            <UsersIcon className="h-5 w-5 text-muted-foreground" />
+                            <div>
+                              <p className="text-xs text-muted-foreground">Candidates</p>
+                              <p className="text-xl font-bold">{exam.candidate_count || 0}</p>
+                            </div>
+                          </div>
+                          <div className="flex items-center gap-2">
+                            <CheckCircle2 className="h-5 w-5 text-green-600" />
+                            <div>
+                              <p className="text-xs text-muted-foreground">Approved</p>
+                              <p className="text-xl font-bold">{exam.approved_candidates || 0}</p>
+                            </div>
+                          </div>
+                        </div>
+
+                        <div className="pt-2 border-t">
+                          <div className="flex gap-2">
+                            <Button
+                              variant={isSelected ? "default" : "outline"}
+                              className="flex-1"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                setSelectedExamId(exam.id);
+                              }}
+                            >
+                              {isSelected ? "Selected" : "Select"}
+                            </Button>
+                            <Link href={`/dashboard/exams/${exam.id}`} onClick={(e) => e.stopPropagation()}>
+                              <Button variant="outline" className="flex-1">
+                                View Details
+                              </Button>
+                            </Link>
+                          </div>
+                        </div>
+                      </CardContent>
+                    </Card>
+                  );
+                })}
+              </div>
+            )}
+          </CardContent>
+        </Card>
 
         {/* Right Column - Schools List */}
         <Card className="h-full flex flex-col">
