@@ -34,11 +34,15 @@ export function EditScheduleDialog({
 }: EditScheduleDialogProps) {
   const [subjectCode, setSubjectCode] = useState("");
   const [subjectName, setSubjectName] = useState("");
-  const [examinationDate, setExaminationDate] = useState("");
-  const [examinationTime, setExaminationTime] = useState("");
-  const [examinationEndTime, setExaminationEndTime] = useState("");
   const [paper1, setPaper1] = useState(true);
   const [paper2, setPaper2] = useState(false);
+  const [paper1Date, setPaper1Date] = useState("");
+  const [paper1StartTime, setPaper1StartTime] = useState("");
+  const [paper1EndTime, setPaper1EndTime] = useState("");
+  const [paper2Date, setPaper2Date] = useState("");
+  const [paper2StartTime, setPaper2StartTime] = useState("");
+  const [paper2EndTime, setPaper2EndTime] = useState("");
+  const [writeTogether, setWriteTogether] = useState(false);
   const [venue, setVenue] = useState("");
   const [durationMinutes, setDurationMinutes] = useState("");
   const [instructions, setInstructions] = useState("");
@@ -48,28 +52,55 @@ export function EditScheduleDialog({
     if (open && schedule) {
       setSubjectCode(schedule.subject_code);
       setSubjectName(schedule.subject_name);
-      // Format date for input (YYYY-MM-DD)
-      const date = new Date(schedule.examination_date);
-      setExaminationDate(date.toISOString().split("T")[0]);
-      // Format time for input (HH:MM)
-      const time = schedule.examination_time.split(":").slice(0, 2).join(":");
-      setExaminationTime(time);
-      if (schedule.examination_end_time) {
-        const endTime = schedule.examination_end_time.split(":").slice(0, 2).join(":");
-        setExaminationEndTime(endTime);
+
+      // Extract paper data from papers array
+      const paper1Data = schedule.papers.find((p) => p.paper === 1);
+      const paper2Data = schedule.papers.find((p) => p.paper === 2);
+
+      setPaper1(!!paper1Data);
+      setPaper2(!!paper2Data);
+
+      if (paper1Data) {
+        setPaper1Date(paper1Data.date || "");
+        setPaper1StartTime(paper1Data.start_time ? paper1Data.start_time.split(":").slice(0, 2).join(":") : "");
+        setPaper1EndTime(paper1Data.end_time ? paper1Data.end_time.split(":").slice(0, 2).join(":") : "");
       } else {
-        setExaminationEndTime("");
+        setPaper1Date("");
+        setPaper1StartTime("");
+        setPaper1EndTime("");
       }
-      // Set papers
-      const hasPaper1 = schedule.papers.some((p) => p.paper === 1);
-      const hasPaper2 = schedule.papers.some((p) => p.paper === 2);
-      setPaper1(hasPaper1);
-      setPaper2(hasPaper2);
+
+      if (paper2Data) {
+        setPaper2Date(paper2Data.date || "");
+        setPaper2StartTime(paper2Data.start_time ? paper2Data.start_time.split(":").slice(0, 2).join(":") : "");
+        setPaper2EndTime(paper2Data.end_time ? paper2Data.end_time.split(":").slice(0, 2).join(":") : "");
+      } else {
+        setPaper2Date("");
+        setPaper2StartTime("");
+        setPaper2EndTime("");
+      }
+
+      // Check if papers are written together (same date and time)
+      if (paper1Data && paper2Data && paper1Data.date === paper2Data.date && paper1Data.start_time === paper2Data.start_time) {
+        setWriteTogether(true);
+      } else {
+        setWriteTogether(false);
+      }
+
       setVenue(schedule.venue || "");
       setDurationMinutes(schedule.duration_minutes?.toString() || "");
       setInstructions(schedule.instructions || "");
     }
   }, [open, schedule]);
+
+  // Handle write together checkbox - copy paper1 date/time to paper2
+  useEffect(() => {
+    if (writeTogether && paper2) {
+      setPaper2Date(paper1Date);
+      setPaper2StartTime(paper1StartTime);
+      setPaper2EndTime(paper1EndTime);
+    }
+  }, [writeTogether, paper1Date, paper1StartTime, paper1EndTime, paper2]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -79,24 +110,49 @@ export function EditScheduleDialog({
       return;
     }
 
+    // Validate paper 1
+    if (paper1 && (!paper1Date || !paper1StartTime)) {
+      toast.error("Paper 1 date and start time are required");
+      return;
+    }
+
+    // Validate paper 2
+    if (paper2 && (!paper2Date || !paper2StartTime)) {
+      toast.error("Paper 2 date and start time are required");
+      return;
+    }
+
     setLoading(true);
 
     try {
-      // Build papers array
-      const papers: Array<{ paper: number; start_time?: string; end_time?: string }> = [];
+      // Build papers array with dates
+      const papers: Array<{ paper: number; date: string; start_time: string; end_time?: string }> = [];
       if (paper1) {
-        papers.push({ paper: 1 });
+        const paper1Entry: { paper: number; date: string; start_time: string; end_time?: string } = {
+          paper: 1,
+          date: paper1Date,
+          start_time: paper1StartTime,
+        };
+        if (paper1EndTime) {
+          paper1Entry.end_time = paper1EndTime;
+        }
+        papers.push(paper1Entry);
       }
       if (paper2) {
-        papers.push({ paper: 2 });
+        const paper2Entry: { paper: number; date: string; start_time: string; end_time?: string } = {
+          paper: 2,
+          date: paper2Date,
+          start_time: paper2StartTime,
+        };
+        if (paper2EndTime) {
+          paper2Entry.end_time = paper2EndTime;
+        }
+        papers.push(paper2Entry);
       }
 
       const scheduleData: ExaminationScheduleUpdate = {
         subject_code: subjectCode.trim(),
         subject_name: subjectName.trim(),
-        examination_date: examinationDate,
-        examination_time: examinationTime,
-        examination_end_time: examinationEndTime || null,
         papers,
         venue: venue.trim() || null,
         duration_minutes: durationMinutes ? parseInt(durationMinutes) : null,
@@ -148,40 +204,6 @@ export function EditScheduleDialog({
                 />
               </div>
             </div>
-            <div className="grid grid-cols-2 gap-4">
-              <div className="space-y-2">
-                <Label htmlFor="examinationDate">Examination Date *</Label>
-                <Input
-                  id="examinationDate"
-                  type="date"
-                  value={examinationDate}
-                  onChange={(e) => setExaminationDate(e.target.value)}
-                  required
-                  disabled={loading}
-                />
-              </div>
-              <div className="space-y-2">
-                <Label htmlFor="examinationTime">Start Time *</Label>
-                <Input
-                  id="examinationTime"
-                  type="time"
-                  value={examinationTime}
-                  onChange={(e) => setExaminationTime(e.target.value)}
-                  required
-                  disabled={loading}
-                />
-              </div>
-            </div>
-            <div className="space-y-2">
-              <Label htmlFor="examinationEndTime">End Time (Optional)</Label>
-              <Input
-                id="examinationEndTime"
-                type="time"
-                value={examinationEndTime}
-                onChange={(e) => setExaminationEndTime(e.target.value)}
-                disabled={loading}
-              />
-            </div>
             <div className="space-y-2">
               <Label>Papers *</Label>
               <div className="flex gap-6">
@@ -204,8 +226,112 @@ export function EditScheduleDialog({
                   <Label htmlFor="paper2" className="cursor-pointer">Paper 2</Label>
                 </div>
               </div>
-              <p className="text-xs text-muted-foreground">Select at least one paper. Both papers can be written together.</p>
+              {paper1 && paper2 && (
+                <div className="flex items-center space-x-2 mt-2">
+                  <Checkbox
+                    id="writeTogether"
+                    checked={writeTogether}
+                    onCheckedChange={(checked) => setWriteTogether(checked as boolean)}
+                    disabled={loading}
+                  />
+                  <Label htmlFor="writeTogether" className="cursor-pointer text-sm">Write together (copy Paper 1 date/time to Paper 2)</Label>
+                </div>
+              )}
+              <p className="text-xs text-muted-foreground">Select at least one paper. Each paper requires a date and start time.</p>
             </div>
+            {paper1 && (
+              <div className="space-y-3 p-4 border rounded-md">
+                <Label className="text-base font-semibold">Paper 1 *</Label>
+                <div className="grid grid-cols-2 gap-4">
+                  <div className="space-y-2">
+                    <Label htmlFor="paper1Date">Date *</Label>
+                    <Input
+                      id="paper1Date"
+                      type="date"
+                      value={paper1Date}
+                      onChange={(e) => setPaper1Date(e.target.value)}
+                      required
+                      disabled={loading}
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="paper1StartTime">Start Time *</Label>
+                    <Input
+                      id="paper1StartTime"
+                      type="time"
+                      value={paper1StartTime}
+                      onChange={(e) => setPaper1StartTime(e.target.value)}
+                      required
+                      disabled={loading}
+                    />
+                  </div>
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="paper1EndTime">End Time (Optional)</Label>
+                  <Input
+                    id="paper1EndTime"
+                    type="time"
+                    value={paper1EndTime}
+                    onChange={(e) => setPaper1EndTime(e.target.value)}
+                    disabled={loading}
+                  />
+                </div>
+              </div>
+            )}
+            {paper2 && (
+              <div className="space-y-3 p-4 border rounded-md">
+                <Label className="text-base font-semibold">Paper 2 *</Label>
+                <div className="grid grid-cols-2 gap-4">
+                  <div className="space-y-2">
+                    <Label htmlFor="paper2Date">Date *</Label>
+                    <Input
+                      id="paper2Date"
+                      type="date"
+                      value={paper2Date}
+                      onChange={(e) => {
+                        setPaper2Date(e.target.value);
+                        if (writeTogether) {
+                          setWriteTogether(false);
+                        }
+                      }}
+                      required
+                      disabled={loading || writeTogether}
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="paper2StartTime">Start Time *</Label>
+                    <Input
+                      id="paper2StartTime"
+                      type="time"
+                      value={paper2StartTime}
+                      onChange={(e) => {
+                        setPaper2StartTime(e.target.value);
+                        if (writeTogether) {
+                          setWriteTogether(false);
+                        }
+                      }}
+                      required
+                      disabled={loading || writeTogether}
+                    />
+                  </div>
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="paper2EndTime">End Time (Optional)</Label>
+                  <Input
+                    id="paper2EndTime"
+                    type="time"
+                    value={paper2EndTime}
+                    onChange={(e) => {
+                      setPaper2EndTime(e.target.value);
+                      if (writeTogether) {
+                        setWriteTogether(false);
+                      }
+                    }}
+                    disabled={loading || writeTogether}
+                  />
+                </div>
+              </div>
+            )}
             <div className="grid grid-cols-2 gap-4">
               <div className="space-y-2">
                 <Label htmlFor="venue">Venue (Optional)</Label>

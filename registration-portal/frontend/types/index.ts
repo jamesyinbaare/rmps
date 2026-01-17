@@ -693,10 +693,7 @@ export interface ExaminationSchedule {
   registration_exam_id: number;
   subject_code: string;
   subject_name: string;
-  examination_date: string;
-  examination_time: string;
-  examination_end_time: string | null;
-  papers: Array<{ paper: number; start_time?: string; end_time?: string }>;
+  papers: Array<{ paper: number; date: string; start_time: string; end_time?: string }>;
   venue: string | null;
   duration_minutes: number | null;
   instructions: string | null;
@@ -706,10 +703,7 @@ export interface ExaminationSchedule {
 
 export interface ExaminationScheduleCreate {
   original_code: string;
-  examination_date: string;
-  examination_time: string;
-  examination_end_time?: string | null;
-  papers: Array<{ paper: number; start_time?: string; end_time?: string }>;
+  papers: Array<{ paper: number; date: string; start_time: string; end_time?: string }>;
   venue?: string | null;
   duration_minutes?: number | null;
   instructions?: string | null;
@@ -752,10 +746,7 @@ export type TimetableDownloadFilter = "ALL" | "CORE_ONLY" | "ELECTIVE_ONLY";
 export interface ExaminationScheduleUpdate {
   subject_code?: string;
   subject_name?: string;
-  examination_date?: string;
-  examination_time?: string;
-  examination_end_time?: string | null;
-  papers?: Array<{ paper: number; start_time?: string; end_time?: string }>;
+  papers?: Array<{ paper: number; date: string; start_time: string; end_time?: string }>;
   venue?: string | null;
   duration_minutes?: number | null;
   instructions?: string | null;

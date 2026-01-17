@@ -1338,23 +1338,39 @@ export async function deleteExaminationSchedule(examId: number, scheduleId: numb
   await handleResponse(response);
 }
 
-export async function uploadSchedulesBulk(examId: number, file: File): Promise<ExaminationScheduleBulkUploadResponse> {
+export async function uploadSchedulesBulk(
+  examId: number,
+  file: File,
+  overrideExisting: boolean = false
+): Promise<ExaminationScheduleBulkUploadResponse> {
   const formData = new FormData();
   formData.append("file", file);
 
-  const response = await fetchWithAuth(`/api/v1/admin/exams/${examId}/schedules/bulk-upload`, {
-    method: "POST",
-    body: formData,
-  });
+  const response = await fetchWithAuth(
+    `/api/v1/admin/exams/${examId}/schedules/bulk-upload?override_existing=${overrideExisting}`,
+    {
+      method: "POST",
+      body: formData,
+    }
+  );
   return handleResponse<ExaminationScheduleBulkUploadResponse>(response);
 }
 
-export async function downloadScheduleTemplate(examId: number): Promise<Blob> {
+export async function downloadScheduleTemplate(examId: number): Promise<{ blob: Blob; filename: string }> {
   const response = await fetchWithAuth(`/api/v1/admin/exams/${examId}/schedules/template`);
   if (!response.ok) {
     await handleResponse(response);
   }
-  return response.blob();
+  // Extract filename from Content-Disposition header
+  const contentDisposition = response.headers.get("Content-Disposition");
+  let filename = "schedule_upload_template.xlsx"; // fallback
+  if (contentDisposition) {
+    const filenameMatch = contentDisposition.match(/filename="?([^"]+)"?/);
+    if (filenameMatch) {
+      filename = filenameMatch[1];
+    }
+  }
+  return { blob: await response.blob(), filename };
 }
 
 // Timetable Download API

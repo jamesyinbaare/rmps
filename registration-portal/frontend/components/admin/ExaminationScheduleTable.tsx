@@ -68,22 +68,38 @@ export function ExaminationScheduleTable({
     return time;
   };
 
-  const getPaperDisplay = (papers: Array<{ paper: number }>) => {
-    const paperNums = papers.map((p) => p.paper).sort();
-    if (paperNums.length === 2) {
-      return "Paper 1 & 2";
-    }
-    return `Paper ${paperNums[0]}`;
-  };
+  // Expand schedules into paper entries
+  interface PaperEntry {
+    schedule: ExaminationSchedule;
+    paper: number;
+    date: string;
+    startTime: string;
+    endTime?: string;
+  }
 
-  // Sort schedules by date and time
-  const sortedSchedules = [...schedules].sort((a, b) => {
-    const dateA = new Date(a.examination_date).getTime();
-    const dateB = new Date(b.examination_date).getTime();
+  const paperEntries: PaperEntry[] = [];
+  for (const schedule of schedules) {
+    for (const paperInfo of schedule.papers) {
+      if (paperInfo.date && paperInfo.start_time) {
+        paperEntries.push({
+          schedule,
+          paper: paperInfo.paper,
+          date: paperInfo.date,
+          startTime: paperInfo.start_time,
+          endTime: paperInfo.end_time,
+        });
+      }
+    }
+  }
+
+  // Sort paper entries by date and time
+  const sortedPaperEntries = [...paperEntries].sort((a, b) => {
+    const dateA = new Date(a.date).getTime();
+    const dateB = new Date(b.date).getTime();
     if (dateA !== dateB) {
       return dateA - dateB;
     }
-    return a.examination_time.localeCompare(b.examination_time);
+    return a.startTime.localeCompare(b.startTime);
   });
 
   return (
@@ -108,32 +124,32 @@ export function ExaminationScheduleTable({
                   Loading...
                 </TableCell>
               </TableRow>
-            ) : sortedSchedules.length === 0 ? (
+            ) : sortedPaperEntries.length === 0 ? (
               <TableRow>
                 <TableCell colSpan={7} className="text-center py-8 text-muted-foreground">
                   No schedules found
                 </TableCell>
               </TableRow>
             ) : (
-              sortedSchedules.map((schedule) => (
-                <TableRow key={schedule.id}>
-                  <TableCell className="font-medium">{formatDate(schedule.examination_date)}</TableCell>
-                  <TableCell className="font-mono">{schedule.subject_code}</TableCell>
-                  <TableCell>{schedule.subject_name}</TableCell>
+              sortedPaperEntries.map((entry, index) => (
+                <TableRow key={`${entry.schedule.id}-${entry.paper}-${index}`}>
+                  <TableCell className="font-medium">{formatDate(entry.date)}</TableCell>
+                  <TableCell className="font-mono">{entry.schedule.subject_code}</TableCell>
+                  <TableCell>{entry.schedule.subject_name}</TableCell>
                   <TableCell>
-                    <Badge variant="outline">{getPaperDisplay(schedule.papers)}</Badge>
+                    <Badge variant="outline">Paper {entry.paper}</Badge>
                   </TableCell>
                   <TableCell>
-                    {formatTime(schedule.examination_time)}
-                    {schedule.examination_end_time && ` - ${formatTime(schedule.examination_end_time)}`}
+                    {formatTime(entry.startTime)}
+                    {entry.endTime && ` - ${formatTime(entry.endTime)}`}
                   </TableCell>
-                  <TableCell>{schedule.venue || "TBA"}</TableCell>
+                  <TableCell>{entry.schedule.venue || "TBA"}</TableCell>
                   <TableCell className="text-right">
                     <div className="flex justify-end gap-2">
                       <Button
                         variant="ghost"
                         size="sm"
-                        onClick={() => onEdit(schedule)}
+                        onClick={() => onEdit(entry.schedule)}
                         disabled={loading}
                       >
                         <Edit className="h-4 w-4" />
@@ -141,7 +157,7 @@ export function ExaminationScheduleTable({
                       <Button
                         variant="ghost"
                         size="sm"
-                        onClick={() => handleDeleteClick(schedule)}
+                        onClick={() => handleDeleteClick(entry.schedule)}
                         disabled={loading}
                       >
                         <Trash2 className="h-4 w-4 text-destructive" />
