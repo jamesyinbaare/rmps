@@ -2,7 +2,7 @@
 from datetime import datetime
 from pathlib import Path
 
-from fastapi import APIRouter, HTTPException, Query, status, File, UploadFile
+from fastapi import APIRouter, HTTPException, Query, status, File, UploadFile, Form
 from fastapi.responses import StreamingResponse
 from sqlalchemy import select
 from sqlalchemy.orm import selectinload
@@ -26,6 +26,7 @@ from app.models import (
 )
 from app.services.photo_storage import PhotoStorageService, calculate_checksum
 from app.services.photo_validation import PhotoValidationService
+from app.services.mediapipe_photo_validation import replace_background
 from app.schemas.registration import RegistrationCandidatePhotoResponse
 import logging
 
@@ -1146,6 +1147,8 @@ async def upload_private_candidate_photo(
     session: DBSessionDep,
     current_user: CurrentUserDep,
     file: UploadFile = File(...),
+    validation_level: str = Form("strict", description="Validation level: 'basic', 'standard', or 'strict' (default: strict for passport photos)"),
+    replace_background: bool = Form(False, description="Replace background with white color if checked"),
 ) -> RegistrationCandidatePhotoResponse:
     """Upload/replace photo for a draft registration (automatically deletes existing photo if present)."""
     if current_user.role != Role.PublicUser:
@@ -1172,8 +1175,18 @@ async def upload_private_candidate_photo(
     # Read file content
     content = await file.read()
 
-    # Validate photo (file type, dimensions, file size)
-    PhotoValidationService.validate_all(content, file.content_type or "")
+    # Replace background if requested
+    if replace_background:
+        try:
+            content = replace_background(content, background_color=(255, 255, 255))  # White background
+            logger.info(f"Background replaced with white for registration {registration_id}")
+        except Exception as e:
+            logger.warning(f"Failed to replace background for registration {registration_id}: {e}")
+            # Continue with original image if replacement fails
+            pass
+
+    # Validate photo with specified validation level (includes MediaPipe validation if enabled)
+    PhotoValidationService.validate_all(content, file.content_type or "", validation_level=validation_level)
 
     # Delete existing photo if present (one photo per candidate)
     existing_photo_stmt = select(RegistrationCandidatePhoto).where(
