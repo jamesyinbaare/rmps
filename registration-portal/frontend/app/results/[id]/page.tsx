@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { useRouter, useSearchParams } from "next/navigation";
+import { useRouter, useSearchParams, useParams } from "next/navigation";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Navbar } from "@/components/layout/Navbar";
@@ -14,27 +14,61 @@ import Image from "next/image";
 export default function ResultsDetailPage() {
   const router = useRouter();
   const searchParams = useSearchParams();
+  const params = useParams();
   const [results, setResults] = useState<PublicResultResponse | null>(null);
   const [loading, setLoading] = useState(true);
   const [photoError, setPhotoError] = useState(false);
 
   useEffect(() => {
-    // Get results data from URL params
+    // Get search criteria from URL params
+    const indexNumber = searchParams.get("index");
+    const examType = searchParams.get("exam_type");
+    const examSeries = searchParams.get("exam_series");
+    const year = searchParams.get("year");
+    const registrationNumber = params.id as string;
+
+    // Backward compatibility: check for old ?data= parameter
     const resultsData = searchParams.get("data");
     if (resultsData) {
       try {
         const parsed = JSON.parse(decodeURIComponent(resultsData));
         setResults(parsed);
         setLoading(false);
+        return;
       } catch (e) {
-        toast.error("Invalid results data");
-        router.push("/results");
+        // Fall through to new logic if old format fails
       }
-    } else {
-      // If no data in URL, redirect back to search
-      router.push("/results");
     }
-  }, [searchParams, router]);
+
+    // Validate required parameters for new format
+    if (!indexNumber || !examType || !examSeries || !year || !registrationNumber) {
+      toast.error("Missing required parameters");
+      router.push("/results");
+      return;
+    }
+
+    // Fetch results from API
+    const fetchResults = async () => {
+      setLoading(true);
+      try {
+        const response = await checkPublicResults({
+          index_number: indexNumber,
+          registration_number: registrationNumber,
+          exam_type: examType,
+          exam_series: examSeries,
+          year: parseInt(year),
+        });
+        setResults(response);
+      } catch (e) {
+        toast.error("Failed to load results");
+        router.push("/results");
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    fetchResults();
+  }, [searchParams, router, params.id]);
 
   const formatGrade = (grade: Grade | null): string => {
     if (!grade) {

@@ -57,9 +57,14 @@ export default function PublicResultsPage() {
         year: parseInt(year),
       });
 
-      // Redirect to results detail page with data in URL
-      const resultsData = encodeURIComponent(JSON.stringify(response));
-      router.push(`/results/${response.registration_number}?data=${resultsData}`);
+      // Redirect to results detail page with query params
+      const params = new URLSearchParams({
+        index: response.index_number || '',
+        exam_type: response.exam_type,
+        exam_series: response.exam_series,
+        year: response.year.toString(),
+      });
+      router.push(`/results/${response.registration_number}?${params.toString()}`);
     } catch (err: any) {
       const errorMessage =
         err?.message || "Failed to retrieve results. Please verify your credentials.";
