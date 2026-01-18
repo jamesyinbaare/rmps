@@ -2,10 +2,10 @@
 
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
-import { getCurrentUser, getActiveExams, getExamSchools, type ExamSchool } from "@/lib/api";
+import { getCurrentUser, getActiveExams, getExamSchools, getExamProgrammes, type ExamSchool, type ProgrammeSummary } from "@/lib/api";
 import type { User, RegistrationExam } from "@/types";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Calendar, Users as UsersIcon, CheckCircle2, Building2, Search } from "lucide-react";
+import { Calendar, Users as UsersIcon, CheckCircle2, Building2, Search, BookOpen } from "lucide-react";
 import Link from "next/link";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -30,6 +30,8 @@ export default function DashboardPage() {
   const [selectedExamId, setSelectedExamId] = useState<number | null>(null);
   const [examSchools, setExamSchools] = useState<ExamSchool[]>([]);
   const [loadingSchools, setLoadingSchools] = useState(false);
+  const [examProgrammes, setExamProgrammes] = useState<ProgrammeSummary[]>([]);
+  const [loadingProgrammes, setLoadingProgrammes] = useState(false);
   const [schoolsDialogOpen, setSchoolsDialogOpen] = useState(false);
   const [schoolSearch, setSchoolSearch] = useState("");
   const router = useRouter();
@@ -121,9 +123,23 @@ export default function DashboardPage() {
     }
   };
 
+  const loadExamProgrammes = async (examId: number) => {
+    setLoadingProgrammes(true);
+    try {
+      const programmes = await getExamProgrammes(examId);
+      setExamProgrammes(programmes);
+    } catch (error) {
+      console.error("Failed to load exam programmes:", error);
+      setExamProgrammes([]);
+    } finally {
+      setLoadingProgrammes(false);
+    }
+  };
+
   useEffect(() => {
     if (selectedExamId) {
       loadExamSchools(selectedExamId);
+      loadExamProgrammes(selectedExamId);
     }
   }, [selectedExamId]);
 
@@ -173,8 +189,52 @@ export default function DashboardPage() {
     <div className="space-y-6 max-w-8xl mx-auto">
       {/* Header Section */}
       <div className="space-y-2">
+        <h1 className="text-3xl font-bold">Admin Dashboard</h1>
         <p className="text-muted-foreground">Welcome back, {user?.full_name || "Admin"}</p>
       </div>
+
+      {/* Selected Exam Context Bar */}
+      {selectedExamId && (() => {
+        const selectedExam = activeExams.find(e => e.id === selectedExamId);
+        if (!selectedExam) return null;
+
+        const examTitle = `${selectedExam.exam_type}${selectedExam.exam_series ? ` (${selectedExam.exam_series} ${selectedExam.year})` : ` ${selectedExam.year}`}`;
+        const completionPercentage = getCompletionPercentage(selectedExam);
+        const totalCandidates = selectedExam.candidate_count || 0;
+
+        // Calculate days remaining
+        let daysRemaining: number | null = null;
+        if (selectedExam.registration_period?.registration_end_date) {
+          const endDate = new Date(selectedExam.registration_period.registration_end_date);
+          const now = new Date();
+          const diffTime = endDate.getTime() - now.getTime();
+          const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+          daysRemaining = diffDays > 0 ? diffDays : 0;
+        }
+
+        return (
+          <div className="flex items-center gap-4 p-3 rounded-lg border bg-muted/30 text-sm">
+            <Link
+              href={`/dashboard/exams/${selectedExamId}`}
+              className="font-semibold text-primary hover:underline cursor-pointer"
+            >
+              {examTitle}
+            </Link>
+            <span className="text-muted-foreground">•</span>
+            <span className="text-muted-foreground">Candidates: <span className="font-semibold text-foreground">{totalCandidates.toLocaleString()}</span></span>
+            <span className="text-muted-foreground">•</span>
+            <span className="text-muted-foreground">Completion: <span className="font-semibold text-foreground">{completionPercentage}%</span></span>
+            {daysRemaining !== null && (
+              <>
+                <span className="text-muted-foreground">•</span>
+                <span className={`${daysRemaining <= 7 ? "text-orange-600 font-semibold" : "text-muted-foreground"}`}>
+                  Registration ends in {daysRemaining === 0 ? "today" : `${daysRemaining} day${daysRemaining !== 1 ? "s" : ""}`}
+                </span>
+              </>
+            )}
+          </div>
+        );
+      })()}
 
       {/* Two Column Layout */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
@@ -361,13 +421,12 @@ export default function DashboardPage() {
                 </p>
               </div>
             ) : loadingSchools ? (
-              <div className="space-y-3">
+              <div className="space-y-2">
                 {[1, 2, 3, 4, 5].map((i) => (
-                  <div key={i} className="flex items-center gap-3 p-3 rounded-lg border">
-                    <Skeleton className="h-10 w-10 rounded-full" />
-                    <div className="flex-1 space-y-2">
+                  <div key={i} className="flex items-center gap-2.5 p-2 rounded-md border">
+                    <Skeleton className="h-8 w-8 rounded-full" />
+                    <div className="flex-1">
                       <Skeleton className="h-4 w-32" />
-                      <Skeleton className="h-3 w-24" />
                     </div>
                     <Skeleton className="h-4 w-16" />
                   </div>
@@ -384,36 +443,37 @@ export default function DashboardPage() {
                 </p>
               </div>
             ) : (
-              <div className="space-y-3">
+              <div className="space-y-2">
                 {examSchools.slice(0, 5).map((school) => (
                   <div
                     key={school.id}
-                    className="flex items-center gap-4 p-3 rounded-lg border hover:bg-muted/50 transition-colors"
+                    className="flex items-center gap-2.5 p-2 rounded-md border hover:bg-muted/50 transition-colors cursor-pointer"
+                    onClick={() => {
+                      const url = selectedExamId
+                        ? `/dashboard/schools/${school.id}?tab=registrations&exam_id=${selectedExamId}`
+                        : `/dashboard/schools/${school.id}`;
+                      router.push(url);
+                    }}
                   >
                     {/* Avatar */}
-                    <div className="h-10 w-10 rounded-full bg-blue-100 dark:bg-blue-900/30 flex items-center justify-center shrink-0">
-                      <Building2 className="h-5 w-5 text-blue-600 dark:text-blue-400" />
+                    <div className="h-8 w-8 rounded-full bg-blue-100 dark:bg-blue-900/30 flex items-center justify-center shrink-0">
+                      <Building2 className="h-4 w-4 text-blue-600 dark:text-blue-400" />
                     </div>
 
                     {/* School Info */}
                     <div className="flex-1 min-w-0">
-                      <div className="flex items-center gap-2 mb-1">
-                        <h4 className="font-semibold text-primary truncate">{school.name}</h4>
-                        <Badge variant="outline" className="text-xs shrink-0">
-                          {school.code}
-                        </Badge>
-                      </div>
                       <div className="flex items-center gap-2">
-                        <Badge variant="default" className="bg-green-500 text-white text-xs">
-                          Active
+                        <h4 className="font-medium text-sm text-primary truncate">{school.name}</h4>
+                        <Badge variant="outline" className="text-xs shrink-0 py-0 px-1.5 h-5">
+                          {school.code}
                         </Badge>
                       </div>
                     </div>
 
                     {/* Candidate Count */}
                     <div className="text-right shrink-0">
-                      <div className="font-bold text-lg">{school.candidate_count.toLocaleString()}</div>
-                      <div className="text-xs text-muted-foreground">Candidates</div>
+                      <span className="font-semibold text-sm">{school.candidate_count.toLocaleString()}</span>
+                      <span className="text-xs text-muted-foreground ml-1">candidates</span>
                     </div>
                   </div>
                 ))}
@@ -457,7 +517,13 @@ export default function DashboardPage() {
                   );
                 })
                 .map((school, index) => (
-                  <Card key={school.id} className="hover:shadow-md transition-shadow">
+                  <Card key={school.id} className="hover:shadow-md transition-shadow cursor-pointer" onClick={() => {
+                    const url = selectedExamId
+                      ? `/dashboard/schools/${school.id}?tab=registrations&exam_id=${selectedExamId}`
+                      : `/dashboard/schools/${school.id}`;
+                    router.push(url);
+                    setSchoolsDialogOpen(false);
+                  }}>
                     <CardContent className="p-4">
                       <div className="flex items-center gap-4">
                         {/* Avatar */}
@@ -505,6 +571,105 @@ export default function DashboardPage() {
           </DialogContent>
         </Dialog>
       </div>
+
+      {/* Programmes Summary Section */}
+      <Card>
+        <CardHeader className="shrink-0">
+          <CardTitle>
+            Programmes Summary
+            {selectedExamId && examProgrammes.length > 0 && ` (${examProgrammes.length})`}
+          </CardTitle>
+        </CardHeader>
+
+        <CardContent>
+          {!selectedExamId ? (
+            <div className="flex flex-col items-center justify-center py-12 text-center">
+              <div className="rounded-full bg-muted p-4 mb-4">
+                <BookOpen className="h-10 w-10 text-muted-foreground" />
+              </div>
+              <h3 className="text-lg font-semibold mb-2">Select an Examination</h3>
+              <p className="text-sm text-muted-foreground max-w-md">
+                Select an examination from above to view programmes summary
+              </p>
+            </div>
+          ) : loadingProgrammes ? (
+            <div className="space-y-2">
+              {[1, 2, 3, 4, 5].map((i) => (
+                <div key={i} className="flex items-center gap-2.5 p-2 rounded-md border">
+                  <Skeleton className="h-8 w-8 rounded-full" />
+                  <div className="flex-1 space-y-1.5">
+                    <Skeleton className="h-4 w-32" />
+                    <Skeleton className="h-3 w-48" />
+                  </div>
+                </div>
+              ))}
+            </div>
+          ) : examProgrammes.length === 0 ? (
+            <div className="flex flex-col items-center justify-center py-12 text-center">
+              <div className="rounded-full bg-muted p-4 mb-4">
+                <BookOpen className="h-10 w-10 text-muted-foreground" />
+              </div>
+              <h3 className="text-lg font-semibold mb-2">No Programmes</h3>
+              <p className="text-sm text-muted-foreground max-w-md">
+                No candidates registered for programmes in this examination yet.
+              </p>
+            </div>
+          ) : (
+            <div className="space-y-2">
+              {examProgrammes.map((programme) => {
+                const completionPercentage = programme.total_candidates > 0
+                  ? Math.round((programme.completed_candidates / programme.total_candidates) * 100)
+                  : 0;
+
+                return (
+                  <div
+                    key={programme.id}
+                    className="flex items-center gap-2.5 p-2 rounded-md border hover:bg-muted/50 transition-colors cursor-pointer"
+                    onClick={() => {
+                      if (selectedExamId) {
+                        router.push(`/dashboard/exams/${selectedExamId}`);
+                      }
+                    }}
+                  >
+                    {/* Programme Icon */}
+                    <div className="h-8 w-8 rounded-full bg-blue-100 dark:bg-blue-900/30 flex items-center justify-center shrink-0">
+                      <BookOpen className="h-4 w-4 text-blue-600 dark:text-blue-400" />
+                    </div>
+
+                    {/* Programme Info */}
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center gap-2 mb-1">
+                        <h4 className="font-medium text-sm text-primary truncate">{programme.name}</h4>
+                        <Badge variant="outline" className="text-xs shrink-0 py-0 px-1.5 h-5">
+                          {programme.code}
+                        </Badge>
+                      </div>
+                      <div className="flex items-center gap-3 text-xs">
+                        <span className="text-muted-foreground">
+                          <span className="font-medium text-foreground">{programme.total_candidates}</span> registered
+                        </span>
+                        <span className="text-muted-foreground">•</span>
+                        <span className="text-muted-foreground">
+                          <span className="font-medium text-green-600">{programme.completed_candidates}</span> completed
+                        </span>
+                        {programme.total_candidates > 0 && (
+                          <>
+                            <span className="text-muted-foreground">•</span>
+                            <span className="text-muted-foreground font-medium">{completionPercentage}%</span>
+                          </>
+                        )}
+                      </div>
+                      {programme.total_candidates > 0 && (
+                        <Progress value={completionPercentage} className="h-1 mt-1.5" />
+                      )}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </CardContent>
+      </Card>
     </div>
   );
 }

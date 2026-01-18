@@ -35,7 +35,7 @@ import {
   XCircle,
   CheckCircle2,
 } from "lucide-react";
-import { uploadCandidatePhoto, getCandidatePhoto, deleteCandidatePhoto, getPhotoFile, updateCandidate, getProgrammeSubjects, approveCandidate, getCurrentUser } from "@/lib/api";
+import { uploadCandidatePhoto, getCandidatePhoto, getAdminCandidatePhoto, getAdminPhotoFile, deleteCandidatePhoto, getPhotoFile, updateCandidate, getProgrammeSubjects, approveCandidate, getCurrentUser } from "@/lib/api";
 import { toast } from "sonner";
 import type { RegistrationCandidatePhoto, ProgrammeSubjectRequirements, User as UserType } from "@/types";
 import { Input } from "@/components/ui/input";
@@ -221,7 +221,7 @@ export function CandidateDetailModal({
     }
   }, [open, candidates, candidate?.id]);
 
-  // Load photo when candidate changes
+  // Load photo when candidate changes or currentUser loads
   useEffect(() => {
     if (candidate && open) {
       loadPhoto();
@@ -232,7 +232,8 @@ export function CandidateDetailModal({
         setPhotoUrl(null);
       }
     }
-  }, [candidate?.id, open]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [candidate?.id, open, currentUser?.role]);
 
   // Initialize subject selections and bio data when candidate changes
   useEffect(() => {
@@ -281,10 +282,23 @@ export function CandidateDetailModal({
     if (!candidate) return;
     setLoadingPhoto(true);
     try {
-      const photoData = await getCandidatePhoto(candidate.id);
+      // Use admin endpoint if user is admin, otherwise use school endpoint
+      const isAdmin = currentUser && (currentUser.role === "SystemAdmin" ||
+        currentUser.role === "Director" ||
+        currentUser.role === "DeputyDirector" ||
+        currentUser.role === "PrincipalManager" ||
+        currentUser.role === "SeniorManager" ||
+        currentUser.role === "Manager" ||
+        currentUser.role === "Staff");
+
+      const photoData = isAdmin
+        ? await getAdminCandidatePhoto(candidate.id)
+        : await getCandidatePhoto(candidate.id);
       setPhoto(photoData);
       if (photoData) {
-        const url = await getPhotoFile(candidate.id);
+        const url = isAdmin
+          ? await getAdminPhotoFile(candidate.id)
+          : await getPhotoFile(candidate.id);
         setPhotoUrl(url);
       } else {
         setPhotoUrl(null);
