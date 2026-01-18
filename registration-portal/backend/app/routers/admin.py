@@ -211,8 +211,11 @@ from app.schemas.result import (
     ResultBlockCreate,
     ResultBlockResponse,
     PublishResultsFilterRequest,
+    ResultAccessPinCreate,
+    ResultAccessPinResponse,
+    ResultAccessPinUpdate,
 )
-from app.models import CandidateResult, ResultBlock, ResultBlockType, Grade
+from app.models import CandidateResult, ResultBlock, ResultBlockType, Grade, ResultAccessPin
 from app.services.result_service import (
     upload_results_bulk,
     publish_results_bulk,
@@ -223,6 +226,10 @@ from app.services.result_service import (
     check_result_blocks,
     get_candidate_results,
     unblock_result,
+)
+from app.services.result_access_pin_service import (
+    generate_pin_serial_combinations,
+    validate_pin_serial,
 )
 
 router = APIRouter(prefix="/api/v1/admin", tags=["admin"])
@@ -6386,6 +6393,141 @@ async def delete_result_block(
     block.updated_at = datetime.utcnow()
 
     await session.commit()
+
+
+# Result Access PIN/Serial Endpoints
+
+@router.post("/result-access-pins/generate", response_model=list[ResultAccessPinResponse], status_code=status.HTTP_201_CREATED)
+async def generate_result_access_pins(
+    pin_data: ResultAccessPinCreate,
+    session: DBSessionDep,
+    current_user: SystemAdminDep,
+) -> list[ResultAccessPinResponse]:
+    """Generate PIN/Serial combinations for result access (System Admin or Director only)."""
+    try:
+        generated_pins = await generate_pin_serial_combinations(
+            session=session,
+            count=pin_data.count,
+            max_uses=pin_data.max_uses,
+            created_by_user_id=current_user.id,
+        )
+        await session.commit()
+
+        # Load created_by relationship
+        for pin in generated_pins:
+            await session.refresh(pin, ["created_by"])
+
+        return [
+            ResultAccessPinResponse(
+                id=pin.id,
+                pin=pin.pin,
+                serial_number=pin.serial_number,
+                max_uses=pin.max_uses,
+                current_uses=pin.current_uses,
+                is_active=pin.is_active,
+                created_by_user_id=pin.created_by_user_id,
+                created_by_user_name=pin.created_by.full_name if pin.created_by else None,
+                expires_at=pin.expires_at,
+                first_used_registration_number=pin.first_used_registration_number,
+                first_used_exam_id=pin.first_used_exam_id,
+                first_used_at=pin.first_used_at,
+                created_at=pin.created_at,
+                updated_at=pin.updated_at,
+            )
+            for pin in generated_pins
+        ]
+    except ValueError as e:
+        await session.rollback()
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+    except Exception as e:
+        await session.rollback()
+        logger.error(f"Error generating PIN/Serial combinations: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to generate PIN/Serial combinations",
+        )
+
+
+@router.get("/result-access-pins", response_model=list[ResultAccessPinResponse])
+async def list_result_access_pins(
+    session: DBSessionDep,
+    current_user: SystemAdminDep,
+    is_active: Optional[bool] = Query(None, description="Filter by active status"),
+) -> list[ResultAccessPinResponse]:
+    """List all PIN/Serial combinations with usage stats."""
+    stmt = select(ResultAccessPin).options(
+        selectinload(ResultAccessPin.created_by),
+    ).order_by(ResultAccessPin.created_at.desc())
+
+    if is_active is not None:
+        stmt = stmt.where(ResultAccessPin.is_active == is_active)
+
+    result = await session.execute(stmt)
+    pins = result.scalars().all()
+
+    return [
+        ResultAccessPinResponse(
+            id=pin.id,
+            pin=pin.pin,
+            serial_number=pin.serial_number,
+            max_uses=pin.max_uses,
+            current_uses=pin.current_uses,
+            is_active=pin.is_active,
+            created_by_user_id=pin.created_by_user_id,
+            created_by_user_name=pin.created_by.full_name if pin.created_by else None,
+            expires_at=pin.expires_at,
+            first_used_registration_number=pin.first_used_registration_number,
+            first_used_exam_id=pin.first_used_exam_id,
+            first_used_at=pin.first_used_at,
+            created_at=pin.created_at,
+            updated_at=pin.updated_at,
+        )
+        for pin in pins
+    ]
+
+
+@router.patch("/result-access-pins/{pin_id}", response_model=ResultAccessPinResponse)
+async def update_result_access_pin(
+    pin_id: int,
+    update_data: ResultAccessPinUpdate,
+    session: DBSessionDep,
+    current_user: SystemAdminDep,
+) -> ResultAccessPinResponse:
+    """Update PIN/Serial combination (activate/deactivate or set expiration)."""
+    stmt = select(ResultAccessPin).where(ResultAccessPin.id == pin_id).options(
+        selectinload(ResultAccessPin.created_by),
+    )
+    result = await session.execute(stmt)
+    pin = result.scalar_one_or_none()
+
+    if not pin:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="PIN/Serial combination not found")
+
+    if update_data.is_active is not None:
+        pin.is_active = update_data.is_active
+    if update_data.expires_at is not None:
+        pin.expires_at = update_data.expires_at
+
+    pin.updated_at = datetime.utcnow()
+    await session.commit()
+    await session.refresh(pin, ["created_by"])
+
+    return ResultAccessPinResponse(
+        id=pin.id,
+        pin=pin.pin,
+        serial_number=pin.serial_number,
+        max_uses=pin.max_uses,
+        current_uses=pin.current_uses,
+        is_active=pin.is_active,
+        created_by_user_id=pin.created_by_user_id,
+        created_by_user_name=pin.created_by.full_name if pin.created_by else None,
+        expires_at=pin.expires_at,
+        first_used_registration_number=pin.first_used_registration_number,
+        first_used_exam_id=pin.first_used_exam_id,
+        first_used_at=pin.first_used_at,
+        created_at=pin.created_at,
+        updated_at=pin.updated_at,
+    )
 
 
 # Certificate Request Endpoints

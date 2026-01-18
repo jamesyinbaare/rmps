@@ -12,6 +12,7 @@ from app.dependencies.database import DBSessionDep
 from app.services.photo_storage import PhotoStorageService
 
 logger = logging.getLogger(__name__)
+
 from app.models import (
     RegistrationExam,
     ExamRegistrationPeriod,
@@ -30,6 +31,7 @@ from app.schemas.result import (
     PublicSubjectResult,
 )
 from app.services.result_service import check_result_blocks, get_candidate_results
+from app.services.result_access_pin_service import validate_pin_serial
 
 router = APIRouter(prefix="/api/v1/public", tags=["public"])
 
@@ -167,9 +169,10 @@ async def check_public_results(
     """Check results using index_number, registration_number, exam_type, exam_series, year.
 
     Flow:
-    1. Find exam by exam_type, exam_series, year to get exam.id
-    2. Use exam.id to find candidate by registration_exam_id and registration_number
-    3. Use exam.id and candidate.id to get results
+    1. Validate PIN/Serial combination (if provided)
+    2. Find exam by exam_type, exam_series, year to get exam.id
+    3. Use exam.id to find candidate by registration_exam_id and registration_number
+    4. Use exam.id and candidate.id to get results
     """
     logger.info(
         "Public results check request received",
@@ -179,8 +182,23 @@ async def check_public_results(
             "year": check_data.year,
             "has_registration_number": bool(check_data.registration_number),
             "has_index_number": bool(check_data.index_number),
+            "has_pin": bool(check_data.pin),
+            "has_serial_number": bool(check_data.serial_number),
         },
     )
+
+    # PIN/Serial are required for public results access
+    if not check_data.pin or not check_data.serial_number:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="PIN and Serial Number are required to access results",
+        )
+
+    if not check_data.registration_number:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Registration number is required",
+        )
 
     # Step 1: Find the exam by exam_type, exam_series, and year to get the exam.id
     # Use case-insensitive matching for exam_type and exam_series to handle variations
@@ -262,6 +280,30 @@ async def check_public_results(
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Examination not found",
+        )
+
+    # Validate PIN/Serial now that we have exam_id
+    is_valid, error_message = await validate_pin_serial(
+        session=session,
+        pin=check_data.pin,
+        serial_number=check_data.serial_number,
+        registration_number=check_data.registration_number,
+        exam_id=exam.id,
+    )
+
+    if not is_valid:
+        logger.warning(
+            "PIN/Serial validation failed",
+            extra={
+                "error": error_message,
+                "exam_id": exam.id,
+                "registration_number": check_data.registration_number,
+            },
+        )
+        await session.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=error_message or "Invalid PIN or Serial Number",
         )
 
     # Check if exam results are published
@@ -680,6 +722,19 @@ async def generate_results_pdf_endpoint(
     from app.services.pdf_generator import generate_results_pdf
     from app.services.photo_storage import PhotoStorageService
 
+    # PIN/Serial are required for public results access
+    if not check_data.pin or not check_data.serial_number:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="PIN and Serial Number are required to access results",
+        )
+
+    if not check_data.registration_number:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Registration number is required",
+        )
+
     # Reuse the same logic as check_public_results to get the results
     # Step 1: Find the exam
     exam_type_input = check_data.exam_type.strip() if check_data.exam_type else ""
@@ -709,6 +764,30 @@ async def generate_results_pdf_endpoint(
 
     if not exam:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Examination not found")
+
+    # Validate PIN/Serial now that we have exam_id
+    is_valid, error_message = await validate_pin_serial(
+        session=session,
+        pin=check_data.pin,
+        serial_number=check_data.serial_number,
+        registration_number=check_data.registration_number,
+        exam_id=exam.id,
+    )
+
+    if not is_valid:
+        logger.warning(
+            "PIN/Serial validation failed for PDF generation",
+            extra={
+                "error": error_message,
+                "exam_id": exam.id,
+                "registration_number": check_data.registration_number,
+            },
+        )
+        await session.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=error_message or "Invalid PIN or Serial Number",
+        )
 
     if not exam.results_published:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Results are not yet published for this examination")

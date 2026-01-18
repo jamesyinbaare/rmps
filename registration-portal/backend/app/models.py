@@ -1077,6 +1077,38 @@ class ApiUsage(Base):
     user = relationship("PortalUser", foreign_keys=[user_id])
 
 
+class ResultAccessPin(Base):
+    """Model for PIN and serial number combinations used to limit access to public results.
+
+    Once a PIN/Serial is first used for a candidate, it becomes tied to that candidate
+    and can only be reused for the same candidate's results.
+    """
+
+    __tablename__ = "result_access_pins"
+
+    id = Column(Integer, primary_key=True)
+    pin = Column(String(10), nullable=False, index=True)
+    serial_number = Column(String(20), unique=True, nullable=False, index=True)
+    max_uses = Column(Integer, nullable=False)
+    current_uses = Column(Integer, default=0, nullable=False)
+    is_active = Column(Boolean, default=True, nullable=False, index=True)
+    created_by_user_id = Column(UUID(as_uuid=True), ForeignKey("portal_users.id", ondelete="SET NULL"), nullable=True, index=True)
+    expires_at = Column(DateTime, nullable=True, index=True)
+    # Track first candidate this PIN/Serial was used for
+    first_used_registration_number = Column(String(50), nullable=True, index=True)
+    first_used_exam_id = Column(Integer, ForeignKey("registration_exams.id", ondelete="SET NULL"), nullable=True, index=True)
+    first_used_at = Column(DateTime, nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+
+    created_by = relationship("PortalUser", foreign_keys=[created_by_user_id])
+    first_used_exam = relationship("RegistrationExam", foreign_keys=[first_used_exam_id])
+
+    __table_args__ = (
+        UniqueConstraint("pin", "serial_number", name="uq_pin_serial"),
+    )
+
+
 # Define the relationship after both classes are defined to avoid forward reference issues
 PortalUser.user_permissions = relationship(
     UserPermission,
