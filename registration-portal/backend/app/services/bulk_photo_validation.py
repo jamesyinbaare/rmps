@@ -176,9 +176,9 @@ async def process_bulk_photo_resize(
     target_width: int = 155,
     target_height: int = 191,
     maintain_aspect_ratio: bool = False
-) -> Tuple[List[BulkPhotoResizeResult], bytes]:
+) -> Tuple[List[BulkPhotoResizeResult], bytes, str, str]:
     """
-    Process bulk photo resizing and create zip file with resized photos.
+    Process bulk photo resizing and create zip file with resized photos (or single file if only one).
 
     Args:
         files: List of tuples (filename, file_bytes)
@@ -187,7 +187,9 @@ async def process_bulk_photo_resize(
         maintain_aspect_ratio: If True, maintain aspect ratio and pad if needed. If False, stretch to exact dimensions.
 
     Returns:
-        Tuple of (resize_results_list, zip_file_bytes)
+        Tuple of (resize_results_list, file_bytes, content_type, filename)
+        - If single file: returns the single file bytes, "image/jpeg" or "image/png", and the filename
+        - If multiple files: returns zip bytes, "application/zip", and zip filename
     """
     results: List[BulkPhotoResizeResult] = []
 
@@ -259,6 +261,25 @@ async def process_bulk_photo_resize(
                     error_message=f"Resize error: {str(e)}"
                 ))
 
+        # Check if single file - return directly without zip
+        successful_files = [r for r in results if r.success]
+        if len(files) == 1 and len(successful_files) == 1:
+            # Single file - return the file directly
+            single_file_path = os.path.join(resized_dir, successful_files[0].filename)
+            if os.path.exists(single_file_path):
+                with open(single_file_path, "rb") as f:
+                    file_bytes = f.read()
+
+                # Determine content type
+                filename = successful_files[0].filename
+                if filename.lower().endswith(".png"):
+                    content_type = "image/png"
+                else:
+                    content_type = "image/jpeg"
+
+                return results, file_bytes, content_type, filename
+
+        # Multiple files - create zip
         # Generate resize report CSV
         report_path = os.path.join(temp_dir, "resize_report.csv")
         with open(report_path, "w", newline="", encoding="utf-8") as csvfile:
@@ -285,7 +306,8 @@ async def process_bulk_photo_resize(
             zipf.write(report_path, "resize_report.csv")
 
         zip_bytes.seek(0)
-        return results, zip_bytes.getvalue()
+        zip_filename = f"resized_photos_{target_width}x{target_height}_{datetime.utcnow().strftime('%Y%m%d_%H%M%S')}.zip"
+        return results, zip_bytes.getvalue(), "application/zip", zip_filename
 
 
 def get_resize_summary(results: List[BulkPhotoResizeResult]) -> Dict[str, Any]:
@@ -314,16 +336,18 @@ class BulkBackgroundReplacementResult:
 async def process_bulk_background_replacement(
     files: List[Tuple[str, bytes]],
     background_color: Tuple[int, int, int] = (255, 255, 255)  # White (RGB)
-) -> Tuple[List[BulkBackgroundReplacementResult], bytes]:
+) -> Tuple[List[BulkBackgroundReplacementResult], bytes, str, str]:
     """
-    Process bulk background replacement and create zip file with processed photos.
+    Process bulk background replacement and create zip file with processed photos (or single file if only one).
 
     Args:
         files: List of tuples (filename, file_bytes)
         background_color: RGB tuple for background color (default: white 255, 255, 255)
 
     Returns:
-        Tuple of (replacement_results_list, zip_file_bytes)
+        Tuple of (replacement_results_list, file_bytes, content_type, filename)
+        - If single file: returns the single file bytes, "image/jpeg" or "image/png", and the filename
+        - If multiple files: returns zip bytes, "application/zip", and zip filename
     """
     from app.services.mediapipe_photo_validation import replace_background
 
@@ -360,6 +384,25 @@ async def process_bulk_background_replacement(
                     error_message=f"Background replacement error: {str(e)}"
                 ))
 
+        # Check if single file - return directly without zip
+        successful_files = [r for r in results if r.success]
+        if len(files) == 1 and len(successful_files) == 1:
+            # Single file - return the file directly
+            single_file_path = os.path.join(processed_dir, successful_files[0].filename)
+            if os.path.exists(single_file_path):
+                with open(single_file_path, "rb") as f:
+                    file_bytes = f.read()
+
+                # Determine content type
+                filename = successful_files[0].filename
+                if filename.lower().endswith(".png"):
+                    content_type = "image/png"
+                else:
+                    content_type = "image/jpeg"
+
+                return results, file_bytes, content_type, filename
+
+        # Multiple files - create zip
         # Generate replacement report CSV
         report_path = os.path.join(temp_dir, "background_replacement_report.csv")
         with open(report_path, "w", newline="", encoding="utf-8") as csvfile:
@@ -385,7 +428,8 @@ async def process_bulk_background_replacement(
             zipf.write(report_path, "background_replacement_report.csv")
 
         zip_bytes.seek(0)
-        return results, zip_bytes.getvalue()
+        zip_filename = f"background_replaced_photos_r{background_color[0]}g{background_color[1]}b{background_color[2]}_{datetime.utcnow().strftime('%Y%m%d_%H%M%S')}.zip"
+        return results, zip_bytes.getvalue(), "application/zip", zip_filename
 
 
 def get_background_replacement_summary(results: List[BulkBackgroundReplacementResult]) -> Dict[str, Any]:

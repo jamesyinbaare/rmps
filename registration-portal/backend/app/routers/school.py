@@ -2977,19 +2977,16 @@ async def bulk_resize_photos(
 
     try:
         # Process bulk resize
-        results, zip_bytes = await process_bulk_photo_resize(
+        results, file_bytes, content_type, filename = await process_bulk_photo_resize(
             file_data, target_width, target_height, maintain_aspect_ratio
         )
 
-        # Return zip file
-        filename = f"resized_photos_{target_width}x{target_height}_{datetime.utcnow().strftime('%Y%m%d_%H%M%S')}.zip"
-
         def generate():
-            yield zip_bytes
+            yield file_bytes
 
         return StreamingResponse(
             generate(),
-            media_type="application/zip",
+            media_type=content_type,
             headers={"Content-Disposition": f'attachment; filename="{filename}"'}
         )
     except Exception as e:
@@ -3049,19 +3046,16 @@ async def bulk_replace_background(
 
     try:
         # Process bulk background replacement
-        results, zip_bytes = await process_bulk_background_replacement(
+        results, file_bytes, content_type, filename = await process_bulk_background_replacement(
             file_data, background_color
         )
 
-        # Return zip file
-        filename = f"background_replaced_photos_r{background_color_r}g{background_color_g}b{background_color_b}_{datetime.utcnow().strftime('%Y%m%d_%H%M%S')}.zip"
-
         def generate():
-            yield zip_bytes
+            yield file_bytes
 
         return StreamingResponse(
             generate(),
-            media_type="application/zip",
+            media_type=content_type,
             headers={"Content-Disposition": f'attachment; filename="{filename}"'}
         )
     except Exception as e:

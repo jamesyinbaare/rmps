@@ -9,7 +9,7 @@ import io
 import tempfile
 import logging
 import math
-from typing import Optional, Dict, Any
+from typing import Optional, Dict, Any, Tuple
 
 from PIL import Image
 import mediapipe as mp
@@ -17,6 +17,15 @@ from mediapipe.tasks import python
 from mediapipe.tasks.python import vision
 
 logger = logging.getLogger(__name__)
+
+# Try to import OpenCV for LAB color space conversion
+try:
+    import cv2
+    import numpy as np
+    CV2_AVAILABLE = True
+except ImportError:
+    CV2_AVAILABLE = False
+    logger.warning("OpenCV (cv2) not available - LAB color space validation will use RGB fallback")
 
 # Eye landmark indices for MediaPipe Face Landmarker
 LEFT_EYE_LANDMARKS = [33, 160, 158, 133, 153, 144]  # Left eye landmarks
@@ -233,6 +242,70 @@ def replace_background(
                 pass
 
 
+def _is_white_perceptual_lab(r: int, g: int, b: int, reference_white: Tuple[int, int, int] = (255, 255, 255), max_delta_e: float = 15.0) -> Tuple[bool, float]:
+    """
+    Check if a color is perceptually similar to white using LAB color space.
+
+    LAB color space is perceptually uniform - colors that are the same distance
+    apart in LAB space appear equally different to the human eye. Delta E measures
+    the perceptual difference between colors.
+
+    Args:
+        r: Red channel (0-255)
+        g: Green channel (0-255)
+        b: Blue channel (0-255)
+        reference_white: Reference white color in RGB (default: pure white 255, 255, 255)
+        max_delta_e: Maximum Delta E threshold for acceptance (default: 15.0)
+                    - ΔE < 1: Not perceptible by human eyes
+                    - ΔE 1-2: Perceptible by close observation
+                    - ΔE 2-10: Perceptible at a glance
+                    - ΔE 10-15: Acceptable for "similar" colors
+                    - ΔE > 15: Clearly different colors
+
+    Returns:
+        Tuple of (is_white: bool, delta_e: float)
+    """
+    if not CV2_AVAILABLE:
+        # Fallback to RGB range check if OpenCV not available
+        threshold = 220
+        is_white = r >= threshold and g >= threshold and b >= threshold
+        # Estimate Delta E (not accurate without LAB conversion)
+        avg_rgb = (r + g + b) / 3.0
+        delta_e_estimate = abs(255 - avg_rgb) / 255.0 * 100  # Rough estimate
+        return is_white, delta_e_estimate
+
+    try:
+        # Convert reference white to LAB
+        ref_rgb = np.uint8([[[reference_white[2], reference_white[1], reference_white[0]]]])  # BGR format
+        ref_lab = cv2.cvtColor(ref_rgb, cv2.COLOR_BGR2LAB)[0][0]
+        ref_l = float(ref_lab[0])
+        ref_a = float(ref_lab[1])
+        ref_b = float(ref_lab[2])
+
+        # Convert test color to LAB
+        test_rgb = np.uint8([[[b, g, r]]])  # BGR format
+        test_lab = cv2.cvtColor(test_rgb, cv2.COLOR_BGR2LAB)[0][0]
+        test_l = float(test_lab[0])
+        test_a = float(test_lab[1])
+        test_b = float(test_lab[2])
+
+        # Calculate Delta E (CIE76 formula)
+        delta_l = test_l - ref_l
+        delta_a = test_a - ref_a
+        delta_b = test_b - ref_b
+        delta_e = math.sqrt(delta_l**2 + delta_a**2 + delta_b**2)
+
+        is_white = delta_e <= max_delta_e
+        return is_white, delta_e
+
+    except Exception as e:
+        logger.warning(f"Error in LAB color conversion: {e}, falling back to RGB check")
+        # Fallback to RGB range check
+        threshold = 220
+        is_white = r >= threshold and g >= threshold and b >= threshold
+        return is_white, 0.0
+
+
 def _calculate_eye_aspect_ratio(landmarks, eye_indices: list[int]) -> float:
     """Calculate Eye Aspect Ratio (EAR) for eye open/closed detection.
 
@@ -398,17 +471,27 @@ def _validate_photo_simplified(
                                         background_regions.append(img_array.getpixel((img_width-1, y)))
 
                                 if background_regions:
-                                    # Check if background is white/off-white (RGB ≥ 240)
-                                    white_threshold = 240
-                                    white_count = sum(1 for r, g, b in background_regions if r >= white_threshold and g >= white_threshold and b >= white_threshold)
-                                    white_percentage = (white_count / len(background_regions)) * 100
+                                    # Check if background is white/off-white using LAB color space perceptual matching
+                                    white_count = 0
+                                    total_delta_e = 0.0
+                                    valid_samples = 0
+
+                                    for r, g, b in background_regions:
+                                        is_white, delta_e = _is_white_perceptual_lab(r, g, b)
+                                        if is_white:
+                                            white_count += 1
+                                        total_delta_e += delta_e
+                                        valid_samples += 1
+
+                                    white_percentage = (white_count / len(background_regions)) * 100 if background_regions else 0.0
+                                    avg_delta_e = total_delta_e / valid_samples if valid_samples > 0 else 0.0
 
                                     if white_percentage >= 70.0:
                                         validations.append({
                                             "name": "Background Color",
                                             "passed": True,
                                             "score": 1.0,
-                                            "message": f"✓ Background is white/off-white ({white_percentage:.1f}% white)",
+                                            "message": f"✓ Background is white/off-white ({white_percentage:.1f}% white, avg ΔE: {avg_delta_e:.1f})",
                                             "suggestion": None
                                         })
                                     else:
@@ -416,7 +499,7 @@ def _validate_photo_simplified(
                                             "name": "Background Color",
                                             "passed": False,
                                             "score": 0.5,
-                                            "message": f"✗ Background is not white/off-white ({white_percentage:.1f}% white, expected ≥70%)",
+                                            "message": f"✗ Background is not white/off-white ({white_percentage:.1f}% white, avg ΔE: {avg_delta_e:.1f}, expected ≥70% white)",
                                             "suggestion": "Use a white or off-white background for passport photos"
                                         })
                                         is_valid = False
@@ -428,10 +511,10 @@ def _validate_photo_simplified(
                                         "passed": False,
                                         "score": 0.0,
                                         "message": "✗ Could not validate background color - background not clearly visible",
-                                        "suggestion": "Ensure background is clearly visible and white/off-white"
+                                        "suggestion": "Ensure background is clearly visible and white/off-white (various white color variations are accepted)"
                                     })
                                     is_valid = False
-                                    suggestions.append("Ensure background is clearly visible and white/off-white")
+                                    suggestions.append("Ensure background is clearly visible and white/off-white (various white color variations are accepted)")
                             else:
                                 # If segmentation masks are not returned, fail the validation
                                 validations.append({
@@ -439,10 +522,10 @@ def _validate_photo_simplified(
                                     "passed": False,
                                     "score": 0.0,
                                     "message": "✗ Could not validate background color - segmentation failed",
-                                    "suggestion": "Ensure background is clearly visible and white/off-white"
+                                    "suggestion": "Ensure background is clearly visible and white/off-white (various white color variations are accepted)"
                                 })
                                 is_valid = False
-                                suggestions.append("Ensure background is clearly visible and white/off-white")
+                                suggestions.append("Ensure background is clearly visible and white/off-white (various white color variations are accepted)")
                         except Exception as e:
                             logger.warning(f"Background validation failed: {e}", exc_info=True)
                             # If validation fails with exception, fail the validation
@@ -451,10 +534,10 @@ def _validate_photo_simplified(
                                 "passed": False,
                                 "score": 0.0,
                                 "message": f"✗ Background validation failed: {str(e)}",
-                                "suggestion": "Ensure background is clearly visible and white/off-white"
+                                "suggestion": "Ensure background is clearly visible and white/off-white (various white color variations are accepted)"
                             })
                             is_valid = False
-                            suggestions.append("Ensure background is clearly visible and white/off-white")
+                            suggestions.append("Ensure background is clearly visible and white/off-white (various white color variations are accepted)")
                 else:
                     validations.append({
                         "name": "Single Face",
