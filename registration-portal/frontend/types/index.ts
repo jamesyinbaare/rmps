@@ -190,8 +190,21 @@ export interface RegistrationExam {
   pricing_model_preference: string | null;
   has_index_numbers: boolean;
   candidate_count?: number | null;
+  approved_candidates?: number | null;
   created_at: string;
   updated_at: string;
+}
+
+export interface ExamStatistics {
+  total_candidates: number;
+  approved_candidates: number;
+  completion_percentage: number;
+  schools_count: number;
+  days_to_end: number | null;
+}
+
+export interface ActiveExam extends RegistrationExam {
+  approved_candidates: number;
 }
 
 export interface RegistrationExamCreate {
