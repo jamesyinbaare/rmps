@@ -1311,7 +1311,10 @@ async def get_school_candidates(
     # Apply pagination
     offset = (page - 1) * page_size
     stmt = stmt.order_by(RegistrationCandidate.created_at.desc()).offset(offset).limit(page_size)
-    stmt = stmt.options(selectinload(RegistrationCandidate.exam))
+    stmt = stmt.options(
+        selectinload(RegistrationCandidate.subject_selections),
+        selectinload(RegistrationCandidate.exam).selectinload(RegistrationExam.registration_period)
+    )
 
     result = await session.execute(stmt)
     candidates = result.scalars().all()
@@ -1733,6 +1736,73 @@ async def get_exam_schools(
         }
         for row in schools
     ]
+
+
+@router.get("/exams/{exam_id}/programmes", response_model=list[dict])
+async def get_exam_programmes(
+    exam_id: int, session: DBSessionDep, current_user: SystemAdminDep
+) -> list[dict]:
+    """Get list of programmes with candidate counts for an examination across all schools."""
+    # Verify exam exists
+    exam_stmt = (
+        select(RegistrationExam)
+        .where(RegistrationExam.id == exam_id)
+        .options(selectinload(RegistrationExam.registration_period))
+    )
+    exam_result = await session.execute(exam_stmt)
+    exam = exam_result.scalar_one_or_none()
+
+    if not exam:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Exam not found")
+
+    # Get programmes with candidate counts for this exam across all schools
+    # First, get distinct programmes that have candidates for this exam
+    programmes_stmt = (
+        select(Programme)
+        .join(
+            RegistrationCandidate,
+            RegistrationCandidate.programme_id == Programme.id,
+        )
+        .where(
+            RegistrationCandidate.registration_exam_id == exam_id,
+            RegistrationCandidate.programme_id.isnot(None),
+        )
+        .distinct()
+        .order_by(Programme.code)
+    )
+
+    programmes_result = await session.execute(programmes_stmt)
+    programmes = programmes_result.scalars().all()
+
+    # For each programme, count total and completed candidates
+    programmes_summary = []
+    for programme in programmes:
+        # Count total candidates for this programme
+        total_candidates_stmt = select(func.count(RegistrationCandidate.id)).where(
+            RegistrationCandidate.registration_exam_id == exam_id,
+            RegistrationCandidate.programme_id == programme.id
+        )
+        total_result = await session.execute(total_candidates_stmt)
+        total_prog_candidates = total_result.scalar_one() or 0
+
+        # Count approved (completed) candidates for this programme
+        completed_candidates_stmt = select(func.count(RegistrationCandidate.id)).where(
+            RegistrationCandidate.registration_exam_id == exam_id,
+            RegistrationCandidate.programme_id == programme.id,
+            RegistrationCandidate.registration_status == RegistrationStatus.APPROVED
+        )
+        completed_result = await session.execute(completed_candidates_stmt)
+        completed_candidates = completed_result.scalar_one() or 0
+
+        programmes_summary.append({
+            "id": programme.id,
+            "code": programme.code,
+            "name": programme.name,
+            "total_candidates": total_prog_candidates,
+            "completed_candidates": completed_candidates,
+        })
+
+    return programmes_summary
 
 
 @router.put("/exams/{exam_id}", response_model=RegistrationExamResponse)
@@ -3551,6 +3621,33 @@ async def export_candidate_photos(
             "Access-Control-Expose-Headers": "Content-Disposition",
         },
     )
+
+
+@router.get("/candidates/{candidate_id}/photos", response_model=RegistrationCandidatePhotoResponse | None)
+async def get_admin_candidate_photo(
+    candidate_id: int,
+    session: DBSessionDep,
+    current_user: SystemAdminDep,
+) -> RegistrationCandidatePhotoResponse | None:
+    """Get candidate's photo metadata (returns single photo or null) for admin."""
+    # Verify candidate exists
+    candidate_stmt = select(RegistrationCandidate).where(RegistrationCandidate.id == candidate_id)
+    candidate_result = await session.execute(candidate_stmt)
+    candidate = candidate_result.scalar_one_or_none()
+    if not candidate:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Candidate not found")
+
+    # Get photo
+    photo_stmt = select(RegistrationCandidatePhoto).where(
+        RegistrationCandidatePhoto.registration_candidate_id == candidate_id
+    )
+    photo_result = await session.execute(photo_stmt)
+    photo = photo_result.scalar_one_or_none()
+
+    if not photo:
+        return None
+
+    return RegistrationCandidatePhotoResponse.model_validate(photo)
 
 
 @router.get("/candidates/{candidate_id}/photos/file")
