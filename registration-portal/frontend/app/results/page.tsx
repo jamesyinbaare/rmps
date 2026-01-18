@@ -30,6 +30,8 @@ export default function PublicResultsPage() {
   const [examType, setExamType] = useState(examTypes[0]);
   const [examSeries, setExamSeries] = useState(examSeriesOptions[0]);
   const [year, setYear] = useState(currentYear.toString());
+  const [pin, setPin] = useState("");
+  const [serialNumber, setSerialNumber] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const registrationInputRef = useRef<HTMLInputElement>(null);
@@ -40,7 +42,7 @@ export default function PublicResultsPage() {
   }, []);
 
   const handleSearch = async () => {
-    if (!registrationNumber || !indexNumber || !examType || !examSeries || !year) {
+    if (!registrationNumber || !indexNumber || !examType || !examSeries || !year || !pin || !serialNumber) {
       toast.error("Please fill in all required fields");
       return;
     }
@@ -55,6 +57,8 @@ export default function PublicResultsPage() {
         exam_type: examType,
         exam_series: examSeries,
         year: parseInt(year),
+        pin: pin,
+        serial_number: serialNumber,
       });
 
       // Redirect to results detail page with query params
@@ -63,6 +67,8 @@ export default function PublicResultsPage() {
         exam_type: response.exam_type,
         exam_series: response.exam_series,
         year: response.year.toString(),
+        pin: pin,
+        serial_number: serialNumber,
       });
       router.push(`/results/${response.registration_number}?${params.toString()}`);
     } catch (err: any) {
@@ -210,6 +216,43 @@ export default function PublicResultsPage() {
                   placeholder="e.g., 2024"
                   min="2000"
                   max={currentYear}
+                  className="w-full h-10 sm:h-11 lg:h-12 text-sm sm:text-base px-3 sm:px-4"
+                />
+              </div>
+
+              <div className="relative">
+                <Label
+                  htmlFor="pin"
+                  className="absolute -top-2.5 left-3 bg-card px-1.5 text-xs sm:text-sm font-medium text-foreground pointer-events-none z-10"
+                >
+                  PIN <span className="text-destructive">*</span>
+                </Label>
+                <Input
+                  id="pin"
+                  type="text"
+                  inputMode="numeric"
+                  value={pin}
+                  onChange={(e) => setPin(e.target.value.replace(/\D/g, "").slice(0, 10))}
+                  placeholder="Enter 6-digit PIN"
+                  maxLength={10}
+                  className="w-full h-10 sm:h-11 lg:h-12 text-sm sm:text-base px-3 sm:px-4"
+                />
+              </div>
+
+              <div className="relative">
+                <Label
+                  htmlFor="serial_number"
+                  className="absolute -top-2.5 left-3 bg-card px-1.5 text-xs sm:text-sm font-medium text-foreground pointer-events-none z-10"
+                >
+                  Serial Number <span className="text-destructive">*</span>
+                </Label>
+                <Input
+                  id="serial_number"
+                  type="text"
+                  value={serialNumber}
+                  onChange={(e) => setSerialNumber(e.target.value.toUpperCase().replace(/[^A-Z0-9]/g, "").slice(0, 20))}
+                  placeholder="Enter 8-character serial number"
+                  maxLength={20}
                   className="w-full h-10 sm:h-11 lg:h-12 text-sm sm:text-base px-3 sm:px-4"
                 />
               </div>

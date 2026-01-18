@@ -110,6 +110,12 @@ export const systemAdminMoreActions: MenuItem[] = [
     roles: ["SystemAdmin", "Director", "DeputyDirector", "PrincipalManager", "SeniorManager", "Manager", "Staff"],
   },
   {
+    href: "/dashboard/admin/result-access-pins",
+    label: "Access PIN Management",
+    icon: Key,
+    roles: ["SystemAdmin", "Director", "DeputyDirector", "PrincipalManager", "SeniorManager", "Manager", "Staff"],
+  },
+  {
     href: "/dashboard/admin/settings",
     label: "Settings",
     icon: Settings,
