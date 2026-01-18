@@ -905,3 +905,23 @@ export interface ApiUserDetail {
   created_at: string;
   last_activity: string | null;
 }
+
+// Photo Validation Job types
+export interface PhotoValidationJobResponse {
+  id: number;
+  school_id: number;
+  status: "pending" | "processing" | "completed" | "failed";
+  validation_level: "basic" | "standard" | "strict";
+  progress_current: number;
+  progress_total: number;
+  total_photos: number;
+  valid_count: number;
+  invalid_count: number;
+  result_zip_path: string | null;
+  validation_report: Record<string, any> | null;
+  error_message: string | null;
+  created_by_user_id: string | null;
+  created_at: string;
+  updated_at: string;
+  completed_at: string | null;
+}
