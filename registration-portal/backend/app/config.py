@@ -22,10 +22,10 @@ class Settings(BaseSettings):
     inactivity_timeout_minutes: int = 30  # For frontend reference
     password_min_length: int = 8
     # Photo validation settings
-    photo_max_width: int = 600
-    photo_max_height: int = 600
-    photo_min_width: int = 200
-    photo_min_height: int = 200
+    photo_max_width: int = 155
+    photo_max_height: int = 191
+    photo_min_width: int = 155
+    photo_min_height: int = 191
     photo_max_file_size: int = 2 * 1024 * 1024  # 2MB
     # File upload settings
     upload_max_size: int = 10 * 1024 * 1024  # 10MB for CSV/Excel uploads

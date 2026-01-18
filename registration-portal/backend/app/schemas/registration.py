@@ -332,6 +332,38 @@ class IndexNumberGenerationJobResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
 
+class PhotoValidationJobResponse(BaseModel):
+    """Schema for photo validation job response."""
+
+    id: int
+    status: str  # "pending", "processing", "completed", "failed"
+    validation_level: str  # "basic", "standard", "strict"
+    progress_current: int
+    progress_total: int
+    total_photos: int
+    valid_count: int
+    invalid_count: int
+    result_zip_path: str | None
+    error_message: str | None
+    school_id: int | None
+    created_by_user_id: str | None
+    created_at: datetime
+    updated_at: datetime
+    completed_at: datetime | None
+
+    @field_validator('created_by_user_id', mode='before')
+    @classmethod
+    def convert_uuid_to_string(cls, v):
+        """Convert UUID to string if it's a UUID object."""
+        if v is None:
+            return None
+        if isinstance(v, UUID):
+            return str(v)
+        return v
+
+    model_config = ConfigDict(from_attributes=True)
+
+
 class ExamStatisticsResponse(BaseModel):
     """Schema for exam statistics response."""
 

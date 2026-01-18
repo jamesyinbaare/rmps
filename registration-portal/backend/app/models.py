@@ -108,6 +108,13 @@ class IndexNumberGenerationJobStatus(enum.Enum):
     FAILED = "failed"
 
 
+class PhotoValidationJobStatus(enum.Enum):
+    PENDING = "pending"
+    PROCESSING = "processing"
+    COMPLETED = "completed"
+    FAILED = "failed"
+
+
 class CertificateRequestType(enum.Enum):
     CERTIFICATE = "certificate"  # NOV/DEC only
     ATTESTATION = "attestation"  # All candidates
@@ -636,6 +643,31 @@ class IndexNumberGenerationJob(Base):
 
     exam = relationship("RegistrationExam", back_populates="index_number_generation_jobs")
     current_school = relationship("School", foreign_keys=[current_school_id])
+    created_by = relationship("PortalUser", foreign_keys=[created_by_user_id])
+
+
+class PhotoValidationJob(Base):
+    """Model for tracking bulk photo validation jobs."""
+
+    __tablename__ = "photo_validation_jobs"
+
+    id = Column(Integer, primary_key=True)
+    status = Column(Enum(PhotoValidationJobStatus), default=PhotoValidationJobStatus.PENDING, nullable=False, index=True)
+    validation_level = Column(String(20), default="strict", nullable=False)  # "basic", "standard", "strict"
+    progress_current = Column(Integer, default=0, nullable=False)  # Number of photos processed
+    progress_total = Column(Integer, default=0, nullable=False)  # Total number of photos
+    total_photos = Column(Integer, default=0, nullable=False)
+    valid_count = Column(Integer, default=0, nullable=False)
+    invalid_count = Column(Integer, default=0, nullable=False)
+    result_zip_path = Column(String(512), nullable=True)  # Path to result zip file
+    error_message = Column(Text, nullable=True)
+    school_id = Column(Integer, ForeignKey("schools.id", ondelete="SET NULL"), nullable=True, index=True)  # Optional, for school users
+    created_by_user_id = Column(UUID(as_uuid=True), ForeignKey("portal_users.id", ondelete="SET NULL"), nullable=True, index=True)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False, index=True)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+    completed_at = Column(DateTime, nullable=True)
+
+    school = relationship("School", foreign_keys=[school_id])
     created_by = relationship("PortalUser", foreign_keys=[created_by_user_id])
 
 

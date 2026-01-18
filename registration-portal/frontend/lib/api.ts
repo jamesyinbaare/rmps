@@ -30,6 +30,7 @@ import type {
   PhotoAlbumItem,
   PhotoBulkUploadResponse,
   RegistrationCandidatePhoto,
+  PhotoValidationJobResponse,
   CandidateResult,
   CandidateResultBulkPublish,
   CandidateResultBulkPublishResponse,
@@ -2325,9 +2326,11 @@ export async function bulkUploadPhotos(examId: number, files: File[]): Promise<P
   return handleResponse<PhotoBulkUploadResponse>(response);
 }
 
-export async function uploadCandidatePhoto(candidateId: number, file: File): Promise<RegistrationCandidatePhoto> {
+export async function uploadCandidatePhoto(candidateId: number, file: File, replaceBackground: boolean = false): Promise<RegistrationCandidatePhoto> {
   const formData = new FormData();
   formData.append("file", file);
+  formData.append("validation_level", "strict");
+  formData.append("replace_background", replaceBackground.toString());
 
   const response = await fetchWithAuth(`/api/v1/school/candidates/${candidateId}/photos`, {
     method: "POST",
@@ -2353,10 +2356,207 @@ export async function deleteCandidatePhoto(candidateId: number): Promise<void> {
   }
 }
 
+// Bulk Photo Validation API
+export async function createBulkPhotoValidationJob(
+  files: File[],
+  validationLevel: "basic" | "standard" | "strict" = "strict"
+): Promise<PhotoValidationJobResponse> {
+  const formData = new FormData();
+  formData.append("validation_level", validationLevel);
+  files.forEach((file) => {
+    formData.append("files", file);
+  });
+
+  const response = await fetchWithAuth("/api/v1/school/photos/bulk-validate", {
+    method: "POST",
+    body: formData,
+  });
+  return handleResponse<PhotoValidationJobResponse>(response);
+}
+
+export async function getBulkPhotoValidationJobStatus(jobId: number): Promise<PhotoValidationJobResponse> {
+  const response = await fetchWithAuth(`/api/v1/school/photos/bulk-validate/${jobId}/status`);
+  return handleResponse<PhotoValidationJobResponse>(response);
+}
+
+export async function downloadBulkPhotoValidationResults(jobId: number): Promise<void> {
+  const token = getAccessToken();
+  const response = await fetch(`${API_BASE_URL}/api/v1/school/photos/bulk-validate/${jobId}/download`, {
+    method: "GET",
+    headers: {
+      Authorization: `Bearer ${token}`,
+    },
+  });
+
+  if (!response.ok) {
+    const error = await response.json().catch(() => ({ detail: "Failed to download results" }));
+    throw new Error((error as { detail?: string }).detail || "Failed to download results");
+  }
+
+  // Get filename from Content-Disposition header or use default
+  const contentDisposition = response.headers.get("Content-Disposition");
+  let filename = `photo-validation-results-${jobId}.zip`;
+  if (contentDisposition) {
+    let filenameMatch = contentDisposition.match(/filename\s*=\s*"([^"]+)"/i);
+    if (!filenameMatch) {
+      filenameMatch = contentDisposition.match(/filename\s*=\s*'([^']+)'/i);
+    }
+    if (!filenameMatch) {
+      filenameMatch = contentDisposition.match(/filename\s*=\s*([^;\s]+)/i);
+    }
+    if (!filenameMatch) {
+      filenameMatch = contentDisposition.match(/filename\*\s*=\s*UTF-8''([^;]+)/i);
+    }
+    if (filenameMatch && filenameMatch[1]) {
+      filename = filenameMatch[1].trim();
+      if (filename.startsWith("UTF-8''")) {
+        filename = decodeURIComponent(filename.substring(7));
+      }
+    }
+  }
+
+  // Download the file
+  const blob = await response.blob();
+  const downloadUrl = window.URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = downloadUrl;
+  link.download = filename;
+  document.body.appendChild(link);
+  link.click();
+  document.body.removeChild(link);
+  window.URL.revokeObjectURL(downloadUrl);
+}
+
+export async function bulkResizePhotos(
+  files: File[],
+  targetWidth: number = 155,
+  targetHeight: number = 191,
+  maintainAspectRatio: boolean = true
+): Promise<void> {
+  const formData = new FormData();
+  formData.append("target_width", targetWidth.toString());
+  formData.append("target_height", targetHeight.toString());
+  formData.append("maintain_aspect_ratio", maintainAspectRatio.toString());
+  files.forEach((file) => {
+    formData.append("files", file);
+  });
+
+  const token = getAccessToken();
+  const response = await fetch(`${API_BASE_URL}/api/v1/school/photos/bulk-resize`, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${token}`,
+    },
+    body: formData,
+  });
+
+  if (!response.ok) {
+    const error = await response.json().catch(() => ({ detail: "Failed to resize photos" }));
+    throw new Error((error as { detail?: string }).detail || "Failed to resize photos");
+  }
+
+  // Get filename from Content-Disposition header or use default
+  const contentDisposition = response.headers.get("Content-Disposition");
+  let filename = `resized_photos_${targetWidth}x${targetHeight}.zip`;
+  if (contentDisposition) {
+    let filenameMatch = contentDisposition.match(/filename\s*=\s*"([^"]+)"/i);
+    if (!filenameMatch) {
+      filenameMatch = contentDisposition.match(/filename\s*=\s*'([^']+)'/i);
+    }
+    if (!filenameMatch) {
+      filenameMatch = contentDisposition.match(/filename\s*=\s*([^;\s]+)/i);
+    }
+    if (!filenameMatch) {
+      filenameMatch = contentDisposition.match(/filename\*\s*=\s*UTF-8''([^;]+)/i);
+    }
+    if (filenameMatch && filenameMatch[1]) {
+      filename = filenameMatch[1].trim();
+      if (filename.startsWith("UTF-8''")) {
+        filename = decodeURIComponent(filename.substring(7));
+      }
+    }
+  }
+
+  // Download the file
+  const blob = await response.blob();
+  const downloadUrl = window.URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = downloadUrl;
+  link.download = filename;
+  document.body.appendChild(link);
+  link.click();
+  document.body.removeChild(link);
+  window.URL.revokeObjectURL(downloadUrl);
+}
+
+export async function bulkReplaceBackground(
+  files: File[],
+  backgroundColorR: number = 255,
+  backgroundColorG: number = 255,
+  backgroundColorB: number = 255
+): Promise<void> {
+  const formData = new FormData();
+  formData.append("background_color_r", backgroundColorR.toString());
+  formData.append("background_color_g", backgroundColorG.toString());
+  formData.append("background_color_b", backgroundColorB.toString());
+  files.forEach((file) => {
+    formData.append("files", file);
+  });
+
+  const token = getAccessToken();
+  const response = await fetch(`${API_BASE_URL}/api/v1/school/photos/bulk-replace-background`, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${token}`,
+    },
+    body: formData,
+  });
+
+  if (!response.ok) {
+    const error = await response.json().catch(() => ({ detail: "Failed to replace background" }));
+    throw new Error((error as { detail?: string }).detail || "Failed to replace background");
+  }
+
+  // Get filename from Content-Disposition header or use default
+  const contentDisposition = response.headers.get("Content-Disposition");
+  let filename = `background_replaced_photos_r${backgroundColorR}g${backgroundColorG}b${backgroundColorB}.zip`;
+  if (contentDisposition) {
+    let filenameMatch = contentDisposition.match(/filename\s*=\s*"([^"]+)"/i);
+    if (!filenameMatch) {
+      filenameMatch = contentDisposition.match(/filename\s*=\s*'([^']+)'/i);
+    }
+    if (!filenameMatch) {
+      filenameMatch = contentDisposition.match(/filename\s*=\s*([^;\s]+)/i);
+    }
+    if (!filenameMatch) {
+      filenameMatch = contentDisposition.match(/filename\*\s*=\s*UTF-8''([^;]+)/i);
+    }
+    if (filenameMatch && filenameMatch[1]) {
+      filename = filenameMatch[1].trim();
+      if (filename.startsWith("UTF-8''")) {
+        filename = decodeURIComponent(filename.substring(7));
+      }
+    }
+  }
+
+  // Download the file
+  const blob = await response.blob();
+  const downloadUrl = window.URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = downloadUrl;
+  link.download = filename;
+  document.body.appendChild(link);
+  link.click();
+  document.body.removeChild(link);
+  window.URL.revokeObjectURL(downloadUrl);
+}
+
 // Private user photo endpoints
-export async function uploadPrivateCandidatePhoto(registrationId: number, file: File): Promise<RegistrationCandidatePhoto> {
+export async function uploadPrivateCandidatePhoto(registrationId: number, file: File, replaceBackground: boolean = false): Promise<RegistrationCandidatePhoto> {
   const formData = new FormData();
   formData.append("file", file);
+  formData.append("validation_level", "strict");
+  formData.append("replace_background", replaceBackground.toString());
 
   const response = await fetchWithAuth(`/api/v1/private/registrations/${registrationId}/photos`, {
     method: "POST",

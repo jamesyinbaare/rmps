@@ -4,6 +4,7 @@ from pathlib import Path
 from typing import Annotated, Any
 from uuid import UUID
 import io
+import os
 import csv
 import zipfile
 import re
@@ -32,6 +33,8 @@ from app.models import (
     Subject,
     RegistrationCandidatePhoto,
     RegistrationSubjectSelection,
+    PhotoValidationJob,
+    PhotoValidationJobStatus,
     school_programmes,
     programme_subjects,
 )
@@ -46,6 +49,7 @@ from app.schemas.registration import (
     PhotoAlbumItem,
     PhotoBulkUploadResponse,
     PhotoBulkUploadError,
+    PhotoValidationJobResponse,
 )
 from app.schemas.programme import (
     ProgrammeResponse,
@@ -67,6 +71,9 @@ from app.services.subject_selection import (
 from app.services.photo_storage import PhotoStorageService, calculate_checksum
 from app.services.index_slip_service import generate_index_slip_pdf
 from app.services.photo_validation import PhotoValidationService
+from app.services.bulk_photo_validation import process_bulk_photo_validation, process_bulk_photo_resize, process_bulk_background_replacement
+from app.services.mediapipe_photo_validation import replace_background
+from fastapi import BackgroundTasks
 from app.services.registration_validation import can_approve_registration
 from app.services.registration_download_service import (
     generate_registration_summary_pdf,
@@ -1992,8 +1999,18 @@ async def upload_candidate_photo(
     session: DBSessionDep,
     current_user: SchoolUserWithSchoolDep,
     file: UploadFile = File(...),
+    validation_level: str = Form("strict", description="Validation level: 'basic', 'standard', or 'strict' (default: strict for passport photos)"),
+    replace_background: bool = Form(False, description="Replace background with white color if checked"),
 ) -> RegistrationCandidatePhotoResponse:
-    """Upload/replace photo for a candidate (automatically deletes existing photo if present)."""
+    """Upload/replace photo for a candidate (automatically deletes existing photo if present).
+
+    Args:
+        candidate_id: ID of the candidate
+        file: Photo file to upload
+        validation_level: Validation level - 'basic' (file type/size/dimensions only),
+            'standard' (basic + face detection), or 'strict' (all validations including
+            MediaPipe face detection, pose, eyes, background). Defaults to 'strict' for passport photos.
+    """
     # Validate candidate exists and belongs to school
     candidate_stmt = select(RegistrationCandidate).where(RegistrationCandidate.id == candidate_id)
     candidate_result = await session.execute(candidate_stmt)
@@ -2010,8 +2027,19 @@ async def upload_candidate_photo(
     # Read file content
     content = await file.read()
 
-    # Validate photo (file type, dimensions, file size)
-    PhotoValidationService.validate_all(content, file.content_type or "")
+    # Replace background if requested
+    if replace_background:
+        try:
+            content = replace_background(content, background_color=(255, 255, 255))  # White background
+            logger.info(f"Background replaced with white for candidate {candidate_id}")
+        except Exception as e:
+            logger.warning(f"Failed to replace background for candidate {candidate_id}: {e}")
+            # Continue with original image if replacement fails
+            pass
+
+    # Validate photo with specified validation level
+    # This now includes MediaPipe validation if validation_level is 'standard' or 'strict'
+    PhotoValidationService.validate_all(content, file.content_type or "", validation_level=validation_level)
 
     # Delete existing photo if present (one photo per candidate)
     existing_photo_stmt = select(RegistrationCandidatePhoto).where(
@@ -2681,6 +2709,361 @@ async def get_photo_album(
         page_size=page_size,
         total_pages=total_pages,
     )
+
+
+@router.post("/photos/bulk-validate", response_model=PhotoValidationJobResponse, status_code=status.HTTP_201_CREATED)
+async def create_bulk_photo_validation_job(
+    background_tasks: BackgroundTasks,
+    session: DBSessionDep,
+    current_user: SchoolUserWithSchoolDep,
+    files: list[UploadFile] = File(...),
+    validation_level: str = Form("strict", description="Validation level: 'basic', 'standard', or 'strict'"),
+) -> PhotoValidationJobResponse:
+    """
+    Create a bulk photo validation job. Photos are validated in the background.
+    Use GET /photos/bulk-validate/{job_id}/status to check progress and GET /photos/bulk-validate/{job_id}/download to get results.
+    """
+    if current_user.school_id is None:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="User must be associated with a school",
+        )
+
+    if validation_level not in ("basic", "standard", "strict"):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="validation_level must be 'basic', 'standard', or 'strict'"
+        )
+
+    # Read all files
+    file_data: list[tuple[str, bytes]] = []
+    for file in files:
+        try:
+            content = await file.read()
+            filename = file.filename or "unknown.jpg"
+            file_data.append((filename, content))
+        except Exception as e:
+            logger.error(f"Error reading file {file.filename}: {e}")
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Error reading file {file.filename}: {str(e)}"
+            )
+
+    if not file_data:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="No files provided"
+        )
+
+    # Create job record
+    job = PhotoValidationJob(
+        status=PhotoValidationJobStatus.PENDING,
+        validation_level=validation_level,
+        progress_current=0,
+        progress_total=len(file_data),
+        total_photos=len(file_data),
+        valid_count=0,
+        invalid_count=0,
+        school_id=current_user.school_id,
+        created_by_user_id=current_user.id,
+    )
+    session.add(job)
+    await session.commit()
+    await session.refresh(job)
+
+    # Start background task
+    background_tasks.add_task(_process_bulk_photo_validation_background, job.id, file_data, validation_level)
+
+    return PhotoValidationJobResponse.model_validate(job)
+
+
+@router.get("/photos/bulk-validate/{job_id}/status", response_model=PhotoValidationJobResponse)
+async def get_bulk_photo_validation_status(
+    job_id: int,
+    session: DBSessionDep,
+    current_user: SchoolUserWithSchoolDep,
+) -> PhotoValidationJobResponse:
+    """Get the status of a bulk photo validation job."""
+    if current_user.school_id is None:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="User must be associated with a school",
+        )
+
+    # Get job
+    job_stmt = select(PhotoValidationJob).where(
+        PhotoValidationJob.id == job_id,
+        PhotoValidationJob.school_id == current_user.school_id,
+    )
+    job_result = await session.execute(job_stmt)
+    job = job_result.scalar_one_or_none()
+
+    if not job:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Job not found")
+
+    return PhotoValidationJobResponse.model_validate(job)
+
+
+@router.get("/photos/bulk-validate/{job_id}/download")
+async def download_bulk_photo_validation_results(
+    job_id: int,
+    session: DBSessionDep,
+    current_user: SchoolUserWithSchoolDep,
+) -> StreamingResponse:
+    """Download the zip file containing validated photos (valid and invalid folders)."""
+    if current_user.school_id is None:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="User must be associated with a school",
+        )
+
+    # Get job
+    job_stmt = select(PhotoValidationJob).where(
+        PhotoValidationJob.id == job_id,
+        PhotoValidationJob.school_id == current_user.school_id,
+    )
+    job_result = await session.execute(job_stmt)
+    job = job_result.scalar_one_or_none()
+
+    if not job:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Job not found")
+
+    if job.status != PhotoValidationJobStatus.COMPLETED:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Job is not completed yet. Current status: {job.status.value}"
+        )
+
+    if not job.result_zip_path or not os.path.exists(job.result_zip_path):
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Result file not found. Job may have been cleaned up."
+        )
+
+    # Read and return zip file
+    def generate():
+        with open(job.result_zip_path, "rb") as f:
+            while True:
+                chunk = f.read(8192)
+                if not chunk:
+                    break
+                yield chunk
+
+    filename = f"photo_validation_results_{job_id}_{datetime.utcnow().strftime('%Y%m%d_%H%M%S')}.zip"
+
+    return StreamingResponse(
+        generate(),
+        media_type="application/zip",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'}
+    )
+
+
+async def _process_bulk_photo_validation_background(job_id: int, file_data: list[tuple[str, bytes]], validation_level: str) -> None:
+    """Background task to process bulk photo validation."""
+    from app.dependencies.database import get_sessionmanager
+
+    sessionmanager = get_sessionmanager()
+    async with sessionmanager.session() as session:
+        try:
+            # Get job record
+            job_stmt = select(PhotoValidationJob).where(PhotoValidationJob.id == job_id)
+            job_result = await session.execute(job_stmt)
+            job = job_result.scalar_one_or_none()
+
+            if not job:
+                logger.error(f"Job {job_id} not found")
+                return
+
+            # Update job status to processing
+            job.status = PhotoValidationJobStatus.PROCESSING
+            job.updated_at = datetime.utcnow()
+            await session.commit()
+
+            # Process validation with progress callback
+            def progress_callback(current: int, total: int):
+                # Update job progress (this is synchronous callback, so we can't update DB here)
+                # Progress will be updated after processing completes
+                pass
+
+            # Process bulk validation
+            results, zip_bytes = await process_bulk_photo_validation(
+                file_data, validation_level, progress_callback
+            )
+
+            # Save zip file
+            from app.config import settings
+            storage_dir = getattr(settings, 'photo_storage_path', 'storage/photos/validation_results')
+            os.makedirs(storage_dir, exist_ok=True)
+
+            zip_filename = f"validation_results_{job_id}_{datetime.utcnow().strftime('%Y%m%d_%H%M%S')}.zip"
+            zip_path = os.path.join(storage_dir, zip_filename)
+
+            with open(zip_path, "wb") as f:
+                f.write(zip_bytes)
+
+            # Calculate statistics
+            valid_count = sum(1 for r in results if r.is_valid)
+            invalid_count = len(results) - valid_count
+
+            # Update job with results
+            job.status = PhotoValidationJobStatus.COMPLETED
+            job.progress_current = len(results)
+            job.progress_total = len(results)
+            job.valid_count = valid_count
+            job.invalid_count = invalid_count
+            job.result_zip_path = zip_path
+            job.completed_at = datetime.utcnow()
+            job.updated_at = datetime.utcnow()
+
+            await session.commit()
+
+        except Exception as e:
+            logger.error(f"Error processing bulk photo validation job {job_id}: {e}", exc_info=True)
+            # Update job with error
+            try:
+                job.status = PhotoValidationJobStatus.FAILED
+                job.error_message = str(e)
+                job.completed_at = datetime.utcnow()
+                job.updated_at = datetime.utcnow()
+                await session.commit()
+            except Exception as commit_error:
+                logger.error(f"Error updating failed job {job_id}: {commit_error}")
+
+
+@router.post("/photos/bulk-resize")
+async def bulk_resize_photos(
+    session: DBSessionDep,
+    current_user: SchoolUserWithSchoolDep,
+    files: list[UploadFile] = File(...),
+    target_width: int = Form(155, description="Target width in pixels (default: 155 for passport photos)"),
+    target_height: int = Form(191, description="Target height in pixels (default: 191 for passport photos)"),
+    maintain_aspect_ratio: bool = Form(True, description="Maintain aspect ratio (default: True, adds white padding if needed)"),
+) -> StreamingResponse:
+    """
+    Resize photos in bulk to specified dimensions. Returns a zip file with resized photos and a report.
+    """
+    if current_user.school_id is None:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="User must be associated with a school",
+        )
+
+    # Validate dimensions
+    if target_width <= 0 or target_height <= 0:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Target width and height must be positive integers"
+        )
+
+    # Read all files
+    file_data: list[tuple[str, bytes]] = []
+    for file in files:
+        try:
+            content = await file.read()
+            filename = file.filename or "unknown.jpg"
+            file_data.append((filename, content))
+        except Exception as e:
+            logger.error(f"Error reading file {file.filename}: {e}")
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Error reading file {file.filename}: {str(e)}"
+            )
+
+    if not file_data:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="No files provided"
+        )
+
+    try:
+        # Process bulk resize
+        results, file_bytes, content_type, filename = await process_bulk_photo_resize(
+            file_data, target_width, target_height, maintain_aspect_ratio
+        )
+
+        def generate():
+            yield file_bytes
+
+        return StreamingResponse(
+            generate(),
+            media_type=content_type,
+            headers={"Content-Disposition": f'attachment; filename="{filename}"'}
+        )
+    except Exception as e:
+        logger.error(f"Error processing bulk photo resize: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error processing photos: {str(e)}"
+        )
+
+
+@router.post("/photos/bulk-replace-background")
+async def bulk_replace_background(
+    session: DBSessionDep,
+    current_user: SchoolUserWithSchoolDep,
+    files: list[UploadFile] = File(...),
+    background_color_r: int = Form(255, description="Background color red component (0-255, default: 255)"),
+    background_color_g: int = Form(255, description="Background color green component (0-255, default: 255)"),
+    background_color_b: int = Form(255, description="Background color blue component (0-255, default: 255)"),
+) -> StreamingResponse:
+    """
+    Replace background of photos in bulk with specified color. Returns a zip file with processed photos and a report.
+    """
+    if current_user.school_id is None:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="User must be associated with a school",
+        )
+
+    # Validate color components
+    if not (0 <= background_color_r <= 255 and 0 <= background_color_g <= 255 and 0 <= background_color_b <= 255):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Background color components must be between 0 and 255"
+        )
+
+    background_color = (background_color_r, background_color_g, background_color_b)
+
+    # Read all files
+    file_data: list[tuple[str, bytes]] = []
+    for file in files:
+        try:
+            content = await file.read()
+            filename = file.filename or "unknown.jpg"
+            file_data.append((filename, content))
+        except Exception as e:
+            logger.error(f"Error reading file {file.filename}: {e}")
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Error reading file {file.filename}: {str(e)}"
+            )
+
+    if not file_data:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="No files provided"
+        )
+
+    try:
+        # Process bulk background replacement
+        results, file_bytes, content_type, filename = await process_bulk_background_replacement(
+            file_data, background_color
+        )
+
+        def generate():
+            yield file_bytes
+
+        return StreamingResponse(
+            generate(),
+            media_type=content_type,
+            headers={"Content-Disposition": f'attachment; filename="{filename}"'}
+        )
+    except Exception as e:
+        logger.error(f"Error processing bulk background replacement: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error processing photos: {str(e)}"
+        )
 
 
 @router.get("/invoices/free-tvet/by-examination", response_model=SchoolInvoiceResponse)

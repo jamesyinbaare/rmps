@@ -662,7 +662,7 @@ export default function CertificateRequestPage() {
                           <AlertDescription className="text-xs">
                             <strong>Requirements:</strong>
                             <ul className="list-disc list-inside mt-1 space-y-0.5">
-                              <li>Dimensions: 200x200px to 600x600px</li>
+                              <li>Dimensions: 155x191px (passport photo standard)</li>
                               <li>File size: Maximum 2MB</li>
                               <li>Format: JPEG or PNG only</li>
                               <li>Must be a clear, recent passport-style photograph</li>

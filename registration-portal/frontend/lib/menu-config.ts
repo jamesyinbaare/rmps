@@ -16,6 +16,9 @@ import {
   Search,
   BarChart3,
   UserCircle,
+  CheckCircle2,
+  Camera,
+  Sparkles,
 } from "lucide-react";
 import type { Role } from "@/types";
 import { LucideIcon } from "lucide-react";
@@ -144,6 +147,12 @@ export const schoolUserMenuItems: MenuItem[] = [
     href: "/dashboard/my-school/photo-album",
     label: "Photo Album",
     icon: Images,
+    roles: ["SchoolAdmin", "SchoolStaff"],
+  },
+  {
+    href: "/dashboard/my-school/bulk-photo-validation",
+    label: "Utility Tools",
+    icon: Sparkles,
     roles: ["SchoolAdmin", "SchoolStaff"],
   },
   {

@@ -47,6 +47,7 @@ COPY ./app /app/app
 
 COPY ./alembic /app/alembic
 COPY ./certs /app/certs
+COPY ./models /app/models
 
 # Sync the project
 # Ref: https://docs.astral.sh/uv/guides/integration/docker/#intermediate-layers

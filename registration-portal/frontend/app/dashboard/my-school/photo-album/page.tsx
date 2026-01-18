@@ -703,7 +703,7 @@ export default function PhotoAlbumPage() {
                 <li>Examples: <code className="bg-muted px-1 rounded">REG123456.jpg</code> (registration number) or <code className="bg-muted px-1 rounded">074221250034.jpg</code> (index number)</li>
                 <li>Registration number matching is prioritized over index number</li>
                 <li>Only JPEG images are allowed</li>
-                <li>Dimensions: 200x200 to 600x600 pixels</li>
+                <li>Dimensions: 155x191 pixels (passport photo standard)</li>
                 <li>Max file size: 2MB</li>
                 <li>Photos will be matched to candidates registered for the selected exam</li>
                 <li>Photos will be renamed using the candidate&apos;s registration number when saved</li>
