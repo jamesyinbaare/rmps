@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState, useMemo, useRef, useCallback } from "react";
+import { useSearchParams } from "next/navigation";
 import {
   listAvailableExams,
   registerCandidate,
@@ -89,6 +90,7 @@ import { Alert, AlertDescription } from "@/components/ui/alert";
 import { CandidateDetailModal } from "@/components/CandidateDetailModal";
 
 export default function RegistrationPage() {
+  const searchParams = useSearchParams();
   const [exams, setExams] = useState<RegistrationExam[]>([]);
   const [selectedExam, setSelectedExam] = useState<RegistrationExam | null>(null);
   const [selectedExamId, setSelectedExamId] = useState<string>("");
@@ -145,6 +147,7 @@ export default function RegistrationPage() {
   // Table features state
   const [searchQuery, setSearchQuery] = useState("");
   const [statusFilter, setStatusFilter] = useState<"ALL" | "PENDING" | "APPROVED" | "REJECTED" | "DRAFT">("ALL");
+  const [programmeFilter, setProgrammeFilter] = useState<number | null>(null);
   const [sortColumn, setSortColumn] = useState<"name" | "registration_number" | "status" | "registration_date" | null>(null);
   const [sortDirection, setSortDirection] = useState<"asc" | "desc">("asc");
   const [currentPage, setCurrentPage] = useState(1);
@@ -167,6 +170,23 @@ export default function RegistrationPage() {
     loadSchoolData();
     loadProgrammes();
   }, []);
+
+  // Read URL parameters and set filters
+  useEffect(() => {
+    const examIdParam = searchParams.get("exam_id");
+    const programmeIdParam = searchParams.get("programme_id");
+
+    if (examIdParam) {
+      setSelectedExamId(examIdParam);
+    }
+
+    if (programmeIdParam) {
+      const programmeId = parseInt(programmeIdParam);
+      if (!isNaN(programmeId)) {
+        setProgrammeFilter(programmeId);
+      }
+    }
+  }, [searchParams]);
 
   useEffect(() => {
     if (selectedExamId) {
@@ -412,6 +432,19 @@ export default function RegistrationPage() {
       filtered = filtered.filter((c) => c.registration_status === statusFilter);
     }
 
+    // Apply programme filter
+    if (programmeFilter !== null) {
+      filtered = filtered.filter((c) => {
+        // Handle both number and string comparisons, and null/undefined cases
+        const candidateProgrammeId = c.programme_id;
+        if (candidateProgrammeId === null || candidateProgrammeId === undefined) {
+          return false; // Filter out candidates without a programme
+        }
+        return candidateProgrammeId === programmeFilter ||
+               candidateProgrammeId.toString() === programmeFilter.toString();
+      });
+    }
+
     // Apply sorting
     if (sortColumn) {
       filtered = [...filtered].sort((a, b) => {
@@ -446,7 +479,7 @@ export default function RegistrationPage() {
     }
 
     return filtered;
-  }, [candidates, searchQuery, statusFilter, sortColumn, sortDirection]);
+  }, [candidates, searchQuery, statusFilter, programmeFilter, sortColumn, sortDirection]);
 
   // Paginated candidates
   const paginatedCandidates = useMemo(() => {
@@ -2063,7 +2096,7 @@ export default function RegistrationPage() {
                 )}
               </div>
 
-              {/* Status Filter Chips */}
+              {/* Status and Programme Filters */}
               <div className="flex flex-wrap gap-2">
                 {(["ALL", "PENDING", "APPROVED", "REJECTED", "DRAFT"] as const).map((status) => (
                   <Button
@@ -2079,6 +2112,25 @@ export default function RegistrationPage() {
                     {status}
                   </Button>
                 ))}
+                <Select
+                  value={programmeFilter?.toString() || "ALL"}
+                  onValueChange={(value) => {
+                    setProgrammeFilter(value === "ALL" ? null : parseInt(value));
+                    setCurrentPage(1);
+                  }}
+                >
+                  <SelectTrigger className="w-[200px]">
+                    <SelectValue placeholder="All Programmes" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="ALL">All Programmes</SelectItem>
+                    {programmes.map((programme) => (
+                      <SelectItem key={programme.id} value={programme.id.toString()}>
+                        {programme.code} - {programme.name}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
               </div>
             </div>
 
@@ -2106,6 +2158,9 @@ export default function RegistrationPage() {
                       </button>
                     </TableHead>
                     <TableHead>
+                      Programme
+                    </TableHead>
+                    <TableHead>
                       <button
                         type="button"
                         onClick={() => handleSort("status")}
@@ -2128,7 +2183,7 @@ export default function RegistrationPage() {
                 <TableBody>
                   {filteredCandidates.length === 0 ? (
                     <TableRow>
-                      <TableCell colSpan={4} className="text-center text-muted-foreground py-8">
+                      <TableCell colSpan={5} className="text-center text-muted-foreground py-8">
                         {candidates.length === 0
                           ? "No candidates registered for this examination yet"
                           : "No candidates match your search criteria"}
@@ -2146,6 +2201,15 @@ export default function RegistrationPage() {
                       >
                         <TableCell className="font-medium">{candidate.name}</TableCell>
                         <TableCell>{candidate.registration_number}</TableCell>
+                        <TableCell>
+                          {candidate.programme_code ? (
+                            <span className="text-sm">
+                              {candidate.programme_code}
+                            </span>
+                          ) : (
+                            <span className="text-sm text-muted-foreground">-</span>
+                          )}
+                        </TableCell>
                         <TableCell>
                           <Badge
                             variant={

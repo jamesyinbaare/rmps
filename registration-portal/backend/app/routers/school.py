@@ -1748,6 +1748,45 @@ async def get_school_dashboard(
     exams_result = await session.execute(total_exams_stmt)
     total_exams = exams_result.scalar_one() or 0
 
+    # Get programmes summary with candidate counts
+    # First, get all programmes for this school
+    programme_stmt = (
+        select(Programme)
+        .join(school_programmes, Programme.id == school_programmes.c.programme_id)
+        .where(school_programmes.c.school_id == current_user.school_id)
+        .order_by(Programme.code)
+    )
+    programme_result = await session.execute(programme_stmt)
+    programmes = programme_result.scalars().all()
+
+    # For each programme, count candidates
+    programmes_summary = []
+    for programme in programmes:
+        # Count total candidates for this programme
+        total_candidates_stmt = select(func.count(RegistrationCandidate.id)).where(
+            RegistrationCandidate.school_id == current_user.school_id,
+            RegistrationCandidate.programme_id == programme.id
+        )
+        total_result = await session.execute(total_candidates_stmt)
+        total_prog_candidates = total_result.scalar_one() or 0
+
+        # Count approved (completed) candidates for this programme
+        completed_candidates_stmt = select(func.count(RegistrationCandidate.id)).where(
+            RegistrationCandidate.school_id == current_user.school_id,
+            RegistrationCandidate.programme_id == programme.id,
+            RegistrationCandidate.registration_status == RegistrationStatus.APPROVED
+        )
+        completed_result = await session.execute(completed_candidates_stmt)
+        completed_candidates = completed_result.scalar_one() or 0
+
+        programmes_summary.append({
+            "id": programme.id,
+            "code": programme.code,
+            "name": programme.name,
+            "total_candidates": total_prog_candidates,
+            "completed_candidates": completed_candidates,
+        })
+
     return {
         "school": {
             "id": school.id,
@@ -1761,6 +1800,7 @@ async def get_school_dashboard(
         "total_candidates": total_candidates,
         "candidates_by_status": candidates_by_status,
         "total_exams": total_exams,
+        "programmes_summary": programmes_summary,
     }
 
 

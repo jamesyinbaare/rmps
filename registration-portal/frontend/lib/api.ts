@@ -1736,6 +1736,14 @@ export interface SchoolUserUpdate {
   is_active?: boolean;
 }
 
+export interface ProgrammeSummary {
+  id: number;
+  code: string;
+  name: string;
+  total_candidates: number;
+  completed_candidates: number;
+}
+
 export interface SchoolDashboardData {
   school: {
     id: number;
@@ -1749,6 +1757,7 @@ export interface SchoolDashboardData {
   total_candidates: number;
   candidates_by_status: Record<string, number>;
   total_exams: number;
+  programmes_summary: ProgrammeSummary[];
 }
 
 export async function getSchoolDashboard(): Promise<SchoolDashboardData> {
