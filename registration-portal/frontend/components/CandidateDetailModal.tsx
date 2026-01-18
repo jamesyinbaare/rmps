@@ -1368,7 +1368,7 @@ export function CandidateDetailModal({
                   disabled={uploadingPhoto}
                 />
                 <p className="text-xs text-muted-foreground">
-                  JPEG images only. Dimensions: 200x200 to 600x600 pixels. Max size: 2MB.
+                  JPEG images only. Dimensions: 155x191 pixels (passport photo standard). Max size: 2MB.
                 </p>
               </div>
               {selectedFile && (
