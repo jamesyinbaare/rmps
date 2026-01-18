@@ -306,3 +306,104 @@ def render_html(context: dict[str, Any], template_path: str, templates_dir: Path
     template = env.get_template(template_path)
     html_output = template.render(context)
     return html_output
+
+
+def generate_results_pdf(result_response: Any, photo_data: bytes | None = None) -> bytes:
+    """
+    Generate PDF document for examination results using WeasyPrint.
+
+    Args:
+        result_response: PublicResultResponse model instance
+        photo_data: Optional photo file content as bytes
+
+    Returns:
+        PDF file as bytes
+    """
+    import base64
+    import io
+    from datetime import datetime
+    import qrcode
+
+    # Convert photo to base64 for embedding in HTML
+    photo_base64 = None
+    if photo_data:
+        try:
+            photo_base64 = base64.b64encode(photo_data).decode('utf-8')
+        except Exception:
+            pass
+
+    # Normalize grades for template (convert enum to string value)
+    normalized_results = []
+    for subject_result in result_response.results:
+        grade_str = None
+        if subject_result.grade:
+            # Handle enum.Grade or string
+            if hasattr(subject_result.grade, 'value'):
+                grade_str = subject_result.grade.value
+            else:
+                grade_str = str(subject_result.grade)
+
+        normalized_results.append({
+            "subject_code": subject_result.subject_code,
+            "subject_name": subject_result.subject_name,
+            "grade": grade_str,
+        })
+
+    # Generate QR code with examination details
+    qr_content_lines = []
+    qr_content_lines.append(f"Name: {result_response.candidate_name}")
+    qr_content_lines.append(f"Index Number: {result_response.index_number or 'N/A'}")
+    qr_content_lines.append(f"Examination: {result_response.exam_type} {result_response.exam_series} {result_response.year}")
+    qr_content_lines.append("Results:")
+    for subject_result in normalized_results:
+        subject_name = subject_result['subject_name'] or subject_result['subject_code']
+        grade = subject_result['grade'] or 'Pending'
+        qr_content_lines.append(f"{subject_name}-{grade}")
+
+    qr_content = "\n".join(qr_content_lines)
+
+    # Generate QR code image
+    qr = qrcode.QRCode(
+        version=1,
+        error_correction=qrcode.constants.ERROR_CORRECT_L,
+        box_size=10,
+        border=4,
+    )
+    qr.add_data(qr_content)
+    qr.make(fit=True)
+
+    qr_img = qr.make_image(fill_color="black", back_color="white")
+    qr_buffer = io.BytesIO()
+    qr_img.save(qr_buffer, format="PNG")
+    qr_buffer.seek(0)
+    qr_base64 = base64.b64encode(qr_buffer.read()).decode("utf-8")
+
+    # Prepare template context
+    context = {
+        "result": result_response,
+        "normalized_results": normalized_results,
+        "photo_base64": photo_base64,
+        "qr_code_base64": qr_base64,
+        "generated_at": datetime.utcnow().strftime('%B %d, %Y at %H:%M:%S UTC'),
+    }
+
+    # Render the HTML template
+    templates_dir = Path(__file__).parent.parent / "templates"
+    main_html = render_html(context, "results/result-details.html", templates_dir)
+
+    # Get absolute path to app directory for base_url (so images can be resolved)
+    app_dir = Path(__file__).parent.parent.resolve()
+    base_url = str(app_dir)
+
+    # Generate PDF using PdfGenerator
+    pdf_gen = PdfGenerator(
+        main_html=main_html,
+        header_html=None,
+        footer_html=None,
+        base_url=base_url,
+        side_margin=1.5,
+        extra_vertical_margin=20,
+    )
+
+    pdf_bytes = pdf_gen.render_pdf()
+    return pdf_bytes
