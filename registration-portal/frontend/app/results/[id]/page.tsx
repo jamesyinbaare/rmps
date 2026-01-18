@@ -1,45 +1,80 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { useRouter, useSearchParams } from "next/navigation";
+import { useRouter, useSearchParams, useParams } from "next/navigation";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Navbar } from "@/components/layout/Navbar";
 import { checkPublicResults, generateResultsPDF } from "@/lib/api";
 import type { PublicResultResponse, Grade } from "@/types";
 import { toast } from "sonner";
-import { Printer, ArrowLeft, School, GraduationCap, Camera, Download } from "lucide-react";
+import { Printer, ArrowLeft, Download, Camera } from "lucide-react";
+import Image from "next/image";
 
 export default function ResultsDetailPage() {
   const router = useRouter();
   const searchParams = useSearchParams();
+  const params = useParams();
   const [results, setResults] = useState<PublicResultResponse | null>(null);
   const [loading, setLoading] = useState(true);
   const [photoError, setPhotoError] = useState(false);
 
   useEffect(() => {
-    // Get results data from URL params
+    // Get search criteria from URL params
+    const indexNumber = searchParams.get("index");
+    const examType = searchParams.get("exam_type");
+    const examSeries = searchParams.get("exam_series");
+    const year = searchParams.get("year");
+    const registrationNumber = params.id as string;
+
+    // Backward compatibility: check for old ?data= parameter
     const resultsData = searchParams.get("data");
     if (resultsData) {
       try {
         const parsed = JSON.parse(decodeURIComponent(resultsData));
         setResults(parsed);
         setLoading(false);
+        return;
       } catch (e) {
-        toast.error("Invalid results data");
-        router.push("/results");
+        // Fall through to new logic if old format fails
       }
-    } else {
-      // If no data in URL, redirect back to search
-      router.push("/results");
     }
-  }, [searchParams, router]);
+
+    // Validate required parameters for new format
+    if (!indexNumber || !examType || !examSeries || !year || !registrationNumber) {
+      toast.error("Missing required parameters");
+      router.push("/results");
+      return;
+    }
+
+    // Fetch results from API
+    const fetchResults = async () => {
+      setLoading(true);
+      try {
+        const response = await checkPublicResults({
+          index_number: indexNumber,
+          registration_number: registrationNumber,
+          exam_type: examType,
+          exam_series: examSeries,
+          year: parseInt(year),
+        });
+        setResults(response);
+      } catch (e) {
+        toast.error("Failed to load results");
+        router.push("/results");
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    fetchResults();
+  }, [searchParams, router, params.id]);
 
   const formatGrade = (grade: Grade | null): string => {
     if (!grade) {
       return "PENDING";
     }
-    return grade.toUpperCase();
+    return grade;
   };
 
   const handlePrint = () => {
@@ -100,168 +135,226 @@ export default function ResultsDetailPage() {
     <div className="flex min-h-screen flex-col">
       <Navbar />
       <main className="flex-1">
-      <style>{`
-        @media print {
-          @page {
-            size: A4;
-            margin: 0.5cm;
+        <style>{`
+          @media print {
+            @page {
+              size: A4;
+              margin: 2cm;
+            }
+            body {
+              print-color-adjust: exact;
+              -webkit-print-color-adjust: exact;
+            }
+            .no-print {
+              display: none !important;
+            }
           }
-          body {
-            print-color-adjust: exact;
-            -webkit-print-color-adjust: exact;
-          }
-        }
-      `}</style>
-      <div className="space-y-6 max-w-4xl mx-auto px-4 py-8 print:p-0 print:max-w-full">
+        `}</style>
+        <div className="space-y-6 max-w-4xl mx-auto px-4 py-8 print:p-0 print:max-w-full">
 
-      {/* Print Header - only visible when printing */}
-      <div className="hidden print:block mb-2 text-center border-b pb-2">
-        <h1 className="text-xl font-bold">EXAMINATION RESULTS</h1>
-        <p className="text-xs text-muted-foreground mt-1">
-          {results.exam_type} - {results.exam_series} {results.year}
-        </p>
-      </div>
+          {/* Back button - hidden when printing */}
+          <div className="no-print">
+            <Button variant="ghost" onClick={() => router.push("/results")}>
+              <ArrowLeft className="mr-2 h-4 w-4" />
+              Back
+            </Button>
+          </div>
 
-      {/* Back button - hidden when printing */}
-      <div className="no-print">
-        <Button variant="ghost" onClick={() => router.push("/results")}>
-          <ArrowLeft className="mr-2 h-4 w-4" />
-          Back
-        </Button>
-      </div>
+          {/* Results Card */}
+          <Card className="shadow-lg print:shadow-none print:border-0">
+            <CardContent className="p-8 print:p-4">
+              {/* Commission Title */}
+              <div className="text-center mb-3 print:mb-2">
+                <h1 className="text-xl font-bold print:text-xs">
+                  Commission for Technical and Vocational Education and Training
+                </h1>
+              </div>
 
-      {/* Header */}
-      <div className="no-print">
-        <h1 className="text-3xl font-bold">Examination Results</h1>
-        <p className="text-muted-foreground">
-          View your examination results and download or print your certificate
-        </p>
-      </div>
+              {/* Document Title */}
+              <div className="text-center mb-4 print:mb-3">
+                <h2 className="text-base font-bold uppercase tracking-wide print:text-sm">
+                  Statement of Results
+                </h2>
+              </div>
 
-      {/* Results Card */}
-      <Card className="shadow-lg print:shadow-none print:border-0">
-        <CardContent className="p-8 print:p-4">
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8 print:mb-4 print:gap-4">
-            {/* Candidate Information */}
-            <div className="md:col-span-2 space-y-4 print:space-y-2">
-              <div>
-                <h2 className="text-3xl font-bold mb-2 print:text-2xl print:mb-1">{results.candidate_name}</h2>
-                <div className="flex flex-wrap gap-4 text-sm text-muted-foreground print:gap-2 print:text-xs">
-                  {results.index_number && (
-                    <span>
-                      <strong>Index:</strong> {results.index_number}
-                    </span>
+              {/* Logo */}
+              <div className="text-center mb-6 print:mb-4">
+                {/* eslint-disable-next-line @next/next/no-img-element */}
+                <img
+                  src="/logo-crest-only.png"
+                  alt="CTVET Logo Crest"
+                  className="inline-block max-w-[70px] h-auto print:max-w-[70px]"
+                  onError={(e) => {
+                    // Fallback if image doesn't exist
+                    e.currentTarget.style.display = 'none';
+                  }}
+                />
+              </div>
+
+              {/* QR Code and Photo Row */}
+              <div className="flex justify-between items-center mb-6 print:mb-4">
+                {results && (() => {
+                  // Generate QR code content same as PDF
+                  const qrContentLines = [];
+                  qrContentLines.push(`Name: ${results.candidate_name}`);
+                  qrContentLines.push(`Index Number: ${results.index_number || 'N/A'}`);
+                  qrContentLines.push(`Examination: ${results.exam_type} ${results.exam_series} ${results.year}`);
+                  qrContentLines.push("Results:");
+                  results.results.forEach(result => {
+                    const subjectName = result.subject_name || result.subject_code;
+                    const grade = result.grade || 'Pending';
+                    qrContentLines.push(`${subjectName}-${grade}`);
+                  });
+                  const qrContent = qrContentLines.join('\n');
+                  const qrCodeUrl = `https://api.qrserver.com/v1/create-qr-code/?size=100x100&data=${encodeURIComponent(qrContent)}`;
+
+                  return (
+                    <div className="w-24 h-24 border-2 border-black overflow-hidden print:w-20 print:h-20">
+                      {/* eslint-disable-next-line @next/next/no-img-element */}
+                      <img
+                        src={qrCodeUrl}
+                        alt="QR Code"
+                        className="w-full h-full object-contain"
+                      />
+                    </div>
+                  );
+                })()}
+                <div className="w-24 h-24 overflow-hidden print:w-20 print:h-20 bg-white">
+                  {photoUrl && !photoError ? (
+                    // eslint-disable-next-line @next/next/no-img-element
+                    <img
+                      src={photoUrl}
+                      alt="Candidate Photo"
+                      className="w-full h-full object-contain"
+                      onError={() => setPhotoError(true)}
+                    />
+                  ) : (
+                    <div className="w-full h-full flex items-center justify-center bg-gray-100">
+                      <Camera className="h-8 w-8 text-gray-400 print:h-6 print:w-6" />
+                    </div>
                   )}
-                  <span>
-                    <strong>Registration:</strong> {results.registration_number}
-                  </span>
                 </div>
               </div>
 
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 pt-4 border-t print:grid-cols-2 print:gap-2 print:pt-2">
-                {results.school_name && (
-                  <div className="flex items-start gap-3 print:gap-2">
-                    <School className="h-5 w-5 text-primary mt-0.5 shrink-0 print:hidden" />
-                    <div>
-                      <p className="text-xs text-muted-foreground uppercase tracking-wide print:text-[10px] print:hidden">School</p>
-                      <p className="font-medium print:text-sm">{results.school_name}</p>
+              {/* Candidate Info and Exam Details Row */}
+              <div className="grid grid-cols-2 gap-4 mb-6 print:mb-4 print:gap-3">
+                {/* Candidate Information Box */}
+                <div className="border border-black p-3 print:p-2">
+                  <div className="font-bold text-xs mb-2 pb-1 border-b border-black uppercase tracking-wide print:text-[10px]">
+                    Candidate Information
+                  </div>
+                  <div className="space-y-1.5 print:space-y-1">
+                    <div className="text-xs print:text-[10px]">
+                      <span className="font-semibold mr-2">Index Number:</span>
+                      <span>{results.index_number || 'N/A'}</span>
+                    </div>
+                    <div className="text-xs print:text-[10px]">
+                      <span className="font-semibold mr-2">Name:</span>
+                      <span>{results.candidate_name}</span>
+                    </div>
+                    <div className="text-xs print:text-[10px]">
+                      <span className="font-semibold mr-2">School:</span>
+                      <span>{results.school_name || 'N/A'}</span>
                     </div>
                   </div>
-                )}
+                </div>
 
-                {results.programme_name && (
-                  <div className="flex items-start gap-3 print:gap-2">
-                    <GraduationCap className="h-5 w-5 text-primary mt-0.5 shrink-0 print:hidden" />
-                    <div>
-                      <p className="text-xs text-muted-foreground uppercase tracking-wide print:text-[10px]">Programme</p>
-                      <p className="font-medium print:text-sm">{results.programme_name}</p>
+                {/* Examination Details Box */}
+                <div className="border border-black p-3 print:p-2">
+                  <div className="font-bold text-xs mb-2 pb-1 border-b border-black uppercase tracking-wide print:text-[10px]">
+                    Examination Details
+                  </div>
+                  <div className="space-y-1.5 print:space-y-1">
+                    <div className="text-xs print:text-[10px]">
+                      <span className="font-semibold mr-2">Exam Type:</span>
+                      <span>{results.exam_type}</span>
+                    </div>
+                    <div className="text-xs print:text-[10px]">
+                      <span className="font-semibold mr-2">Series:</span>
+                      <span>{results.exam_series}</span>
+                    </div>
+                    <div className="text-xs print:text-[10px]">
+                      <span className="font-semibold mr-2">Year:</span>
+                      <span>{results.year}</span>
                     </div>
                   </div>
-                )}
+                </div>
               </div>
 
-              <div className="pt-4 border-t print:pt-2 print:hidden">
-                <p className="text-sm text-muted-foreground">
-                  <strong>Examination:</strong> {results.exam_type}
-                </p>
-                <p className="text-sm text-muted-foreground">
-                  <strong>Series:</strong> {results.exam_series} {results.year}
-                </p>
-              </div>
-            </div>
+              {/* Divider */}
+              <div className="border-t-2 border-black my-6 print:my-4"></div>
 
-            {/* Photo Section */}
-            <div className="flex flex-col items-center justify-start print:items-start">
-              <div className="relative w-40 h-48 border-2 border-gray-300 rounded-lg overflow-hidden bg-gray-100 mb-4 print:w-28 print:h-36 print:mb-2 print:border">
-                {photoUrl && !photoError ? (
-                  // eslint-disable-next-line @next/next/no-img-element
-                  <img
-                    src={photoUrl}
-                    alt="Candidate Photo"
-                    className="w-full h-full object-cover"
-                    onError={() => setPhotoError(true)}
-                  />
-                ) : (
-                  <div className="w-full h-full flex items-center justify-center">
-                    <Camera className="h-16 w-16 text-gray-400 print:h-10 print:w-10" />
-                  </div>
-                )}
+              {/* Results Section Title */}
+              <div className="mb-3 print:mb-2">
+                <h3 className="text-sm font-bold uppercase tracking-wide print:text-xs">
+                  Subject Results
+                </h3>
               </div>
-              <p className="text-xs text-muted-foreground text-center print:text-[10px] print:hidden">Passport Photograph</p>
-            </div>
-          </div>
 
-          {/* Results Table */}
-          <div className="border-t pt-6 print:pt-2 print:border-t-2">
-            <h3 className="text-xl font-semibold mb-4 print:text-base print:mb-2">Examination Results</h3>
-            {results.results.length === 0 ? (
-              <div className="text-center py-8 text-muted-foreground print:py-2 print:text-sm">
-                No results available for this examination
-              </div>
-            ) : (
-              <div className="overflow-x-auto">
-                <table className="w-full border-collapse print:text-sm">
-                  <thead>
-                    <tr className="border-b-2 border-gray-300">
-                      <th className="text-left py-3 px-4 font-semibold print:py-1 print:px-2 print:text-xs">Subject</th>
-                      <th className="text-left py-3 px-4 font-semibold print:py-1 print:px-2 print:text-xs">Grade</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {results.results.map((result, idx) => (
-                      <tr key={idx} className="border-b border-gray-200 hover:bg-gray-50 print:hover:bg-transparent">
-                        <td className="py-3 px-4 font-medium print:py-1 print:px-2 print:text-xs">
-                          {result.subject_name || result.subject_code}
-                        </td>
-                        <td className="py-3 px-4 font-semibold print:py-1 print:px-2 print:text-xs">{formatGrade(result.grade)}</td>
+              {/* Results Table */}
+              {results.results.length === 0 ? (
+                <div className="text-center py-8 text-muted-foreground print:py-2 print:text-xs">
+                  No results available for this examination
+                </div>
+              ) : (
+                <div className="overflow-x-auto mb-6 print:mb-4">
+                  <table className="w-full border-collapse">
+                    <thead>
+                      <tr className="bg-black text-white">
+                        <th className="border border-black py-2 px-3 text-xs font-bold uppercase print:py-1 print:px-2 print:text-[10px]">
+                          Code
+                        </th>
+                        <th className="border border-black py-2 px-3 text-xs font-bold uppercase print:py-1 print:px-2 print:text-[10px]">
+                          Subject
+                        </th>
+                        <th className="border border-black py-2 px-3 text-xs font-bold uppercase text-center print:py-1 print:px-2 print:text-[10px]">
+                          Grade
+                        </th>
                       </tr>
-                    ))}
-                  </tbody>
-                </table>
+                    </thead>
+                    <tbody>
+                      {results.results.map((result, idx) => (
+                        <tr
+                          key={idx}
+                          className={idx % 2 === 0 ? "bg-gray-50 print:bg-gray-50" : ""}
+                        >
+                          <td className="border border-black py-2 px-3 text-xs font-semibold print:py-1 print:px-2 print:text-[10px]">
+                            {result.subject_code}
+                          </td>
+                          <td className="border border-black py-2 px-3 text-xs print:py-1 print:px-2 print:text-[10px]">
+                            {result.subject_name || result.subject_code}
+                          </td>
+                          <td className="border border-black py-2 px-3 text-xs font-semibold text-center print:py-1 print:px-2 print:text-[10px]">
+                            {formatGrade(result.grade)}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+
+              {/* Disclaimer */}
+              <div className="border-2 border-black p-3 bg-yellow-50 text-center print:p-2 print:bg-yellow-50">
+                <p className="text-xs font-bold uppercase print:text-[10px] leading-relaxed">
+                  THE RESULTS GIVEN ABOVE ARE PROVISIONAL. THE FINAL RESULTS ARE THOSE WHICH WILL BE PRINTED ON YOUR CERTIFICATE.
+                </p>
               </div>
-            )}
+            </CardContent>
+          </Card>
+
+          {/* Action buttons at bottom - hidden when printing */}
+          <div className="flex gap-4 no-print justify-center">
+            <Button onClick={handlePrint} size="lg">
+              <Printer className="mr-2 h-5 w-5" />
+              Print Results
+            </Button>
+            <Button variant="outline" size="lg" onClick={handleDownloadPDF}>
+              <Download className="mr-2 h-5 w-5" />
+              Download PDF
+            </Button>
           </div>
-        </CardContent>
-      </Card>
-
-      {/* Action buttons at bottom - hidden when printing */}
-      <div className="flex gap-4 no-print justify-center">
-        <Button onClick={handlePrint} size="lg">
-          <Printer className="mr-2 h-5 w-5" />
-          Print Results
-        </Button>
-        <Button variant="outline" size="lg" onClick={handleDownloadPDF}>
-          <Download className="mr-2 h-5 w-5" />
-          Download PDF
-        </Button>
-      </div>
-
-      {/* Footer - only visible when printing */}
-      <div className="hidden print:block mt-2 text-center text-[10px] text-muted-foreground print:text-[9px]">
-        <p>This is a computer-generated document. No signature is required.</p>
-        <p className="mt-1">Generated on {new Date().toLocaleDateString()}</p>
-      </div>
-      </div>
+        </div>
       </main>
     </div>
   );
