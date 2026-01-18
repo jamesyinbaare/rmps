@@ -449,9 +449,14 @@ async def check_public_results(
             if not subject_blocked:
                 grade = result.grade
 
+        # Use original_code if available, otherwise fall back to subject_code
+        display_code = selection.subject_code
+        if selection.subject and selection.subject.original_code:
+            display_code = selection.subject.original_code
+
         subject_results.append(
             PublicSubjectResult(
-                subject_code=selection.subject_code,
+                subject_code=display_code,
                 subject_name=selection.subject_name,
                 grade=grade,
             )
@@ -792,7 +797,7 @@ async def generate_results_pdf_endpoint(
                     break
 
         subject_result_item = PublicSubjectResult(
-            subject_code=selection.subject.code,
+            subject_code=selection.subject.original_code or selection.subject.code,
             subject_name=selection.subject.name,
             grade=matching_result.grade if matching_result else None,
         )
