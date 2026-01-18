@@ -99,7 +99,6 @@ export function CandidateDetailModal({
   const [uploadingPhoto, setUploadingPhoto] = useState(false);
   const [uploadDialogOpen, setUploadDialogOpen] = useState(false);
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
-  const [replaceBackground, setReplaceBackground] = useState(false);
 
   // Subject editing state
   const [editingSubjects, setEditingSubjects] = useState(false);
@@ -316,11 +315,10 @@ export function CandidateDetailModal({
 
     setUploadingPhoto(true);
     try {
-      await uploadCandidatePhoto(candidate.id, selectedFile, replaceBackground);
+      await uploadCandidatePhoto(candidate.id, selectedFile, false);
       toast.success("Photo uploaded successfully");
       setUploadDialogOpen(false);
       setSelectedFile(null);
-      setReplaceBackground(false);
       await loadPhoto();
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "Failed to upload photo");
@@ -1391,17 +1389,6 @@ export function CandidateDetailModal({
                   </div>
                 </div>
               )}
-              <div className="flex items-center space-x-2">
-                <Checkbox
-                  id="replace-background"
-                  checked={replaceBackground}
-                  onCheckedChange={(checked) => setReplaceBackground(checked === true)}
-                  disabled={uploadingPhoto}
-                />
-                <label htmlFor="replace-background" className="text-sm font-medium cursor-pointer">
-                  Replace background with white color
-                </label>
-              </div>
             </div>
             <DialogFooter>
               <Button
@@ -1409,7 +1396,6 @@ export function CandidateDetailModal({
                 onClick={() => {
                   setUploadDialogOpen(false);
                   setSelectedFile(null);
-                  setReplaceBackground(false);
                 }}
                 disabled={uploadingPhoto}
               >
