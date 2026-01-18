@@ -21,17 +21,26 @@ import { getSchoolCandidates, listExams } from "@/lib/api";
 import { toast } from "sonner";
 import { ChevronLeft, ChevronRight } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { CandidateDetailModal } from "@/components/CandidateDetailModal";
 import type { RegistrationCandidate, RegistrationExam } from "@/types";
 
-export function SchoolRegistrationsSection({ schoolId }: { schoolId: number }) {
+export function SchoolRegistrationsSection({
+  schoolId,
+  initialExamId
+}: {
+  schoolId: number;
+  initialExamId?: number;
+}) {
   const [candidates, setCandidates] = useState<RegistrationCandidate[]>([]);
   const [exams, setExams] = useState<RegistrationExam[]>([]);
   const [loading, setLoading] = useState(true);
-  const [selectedExam, setSelectedExam] = useState<number | undefined>(undefined);
+  const [selectedExam, setSelectedExam] = useState<number | undefined>(initialExamId);
   const [selectedStatus, setSelectedStatus] = useState<string | undefined>(undefined);
   const [page, setPage] = useState(1);
   const [total, setTotal] = useState(0);
   const [totalPages, setTotalPages] = useState(0);
+  const [selectedCandidate, setSelectedCandidate] = useState<RegistrationCandidate | null>(null);
+  const [detailDialogOpen, setDetailDialogOpen] = useState(false);
 
   const loadCandidates = async () => {
     setLoading(true);
@@ -58,6 +67,14 @@ export function SchoolRegistrationsSection({ schoolId }: { schoolId: number }) {
     loadCandidates();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [schoolId, selectedExam, selectedStatus, page]);
+
+  // Sync selectedExam when initialExamId prop changes
+  useEffect(() => {
+    if (initialExamId !== undefined) {
+      setSelectedExam(initialExamId);
+      setPage(1); // Reset to first page when exam changes
+    }
+  }, [initialExamId]);
 
   useEffect(() => {
     listExams()
@@ -134,7 +151,14 @@ export function SchoolRegistrationsSection({ schoolId }: { schoolId: number }) {
                 </TableHeader>
                 <TableBody>
                   {candidates.map((candidate) => (
-                    <TableRow key={candidate.id}>
+                    <TableRow
+                      key={candidate.id}
+                      className="cursor-pointer hover:bg-muted/50"
+                      onClick={() => {
+                        setSelectedCandidate(candidate);
+                        setDetailDialogOpen(true);
+                      }}
+                    >
                       <TableCell className="font-medium">{candidate.name}</TableCell>
                       <TableCell>{candidate.registration_number}</TableCell>
                       <TableCell>
@@ -196,6 +220,21 @@ export function SchoolRegistrationsSection({ schoolId }: { schoolId: number }) {
           </>
         )}
       </CardContent>
+
+      {/* Candidate Detail Modal */}
+      <CandidateDetailModal
+        candidate={selectedCandidate}
+        candidates={candidates}
+        open={detailDialogOpen}
+        onOpenChange={setDetailDialogOpen}
+        onCandidateChange={(candidate) => {
+          setSelectedCandidate(candidate);
+          // Update candidate in the list
+          setCandidates((prev) =>
+            prev.map((c) => (c.id === candidate.id ? candidate : c))
+          );
+        }}
+      />
     </Card>
   );
 }

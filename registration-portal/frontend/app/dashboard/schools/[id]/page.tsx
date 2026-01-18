@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect } from "react";
-import { useParams, useRouter } from "next/navigation";
+import { useParams, useRouter, useSearchParams } from "next/navigation";
 import { SchoolProfileHeader } from "@/components/admin/SchoolProfileHeader";
 import { SchoolStatistics } from "@/components/admin/SchoolStatistics";
 import { CoordinatorsSection } from "@/components/admin/CoordinatorsSection";
@@ -20,12 +20,24 @@ type Tab = "overview" | "admins" | "registrations" | "exams" | "settings";
 export default function SchoolProfilePage() {
   const params = useParams();
   const router = useRouter();
+  const searchParams = useSearchParams();
   const schoolId = parseInt(params.id as string);
 
   const [school, setSchool] = useState<SchoolDetail | null>(null);
   const [statistics, setStatistics] = useState<SchoolStatisticsType | null>(null);
   const [loading, setLoading] = useState(true);
-  const [activeTab, setActiveTab] = useState<Tab>("overview");
+
+  // Read tab from URL query params, default to "overview"
+  const tabFromUrl = searchParams.get("tab") as Tab | null;
+  const initialTab = tabFromUrl && ["overview", "admins", "registrations", "exams", "settings"].includes(tabFromUrl)
+    ? tabFromUrl
+    : "overview";
+  const [activeTab, setActiveTab] = useState<Tab>(initialTab);
+
+  // Read exam_id from URL query params
+  const examIdFromUrl = searchParams.get("exam_id");
+  const initialExamId = examIdFromUrl ? parseInt(examIdFromUrl) : undefined;
+
   const [editDialogOpen, setEditDialogOpen] = useState(false);
 
   const loadSchoolData = async () => {
@@ -163,7 +175,7 @@ export default function SchoolProfilePage() {
 
         {activeTab === "admins" && <CoordinatorsSection schoolId={schoolId} />}
 
-        {activeTab === "registrations" && <SchoolRegistrationsSection schoolId={schoolId} />}
+        {activeTab === "registrations" && <SchoolRegistrationsSection schoolId={schoolId} initialExamId={initialExamId} />}
 
         {activeTab === "exams" && <SchoolExamsSection schoolId={schoolId} />}
 

@@ -1047,6 +1047,11 @@ export async function getExamSchools(examId: number): Promise<ExamSchool[]> {
   return handleResponse<ExamSchool[]>(response);
 }
 
+export async function getExamProgrammes(examId: number): Promise<ProgrammeSummary[]> {
+  const response = await fetchWithAuth(`/api/v1/admin/exams/${examId}/programmes`);
+  return handleResponse<ProgrammeSummary[]>(response);
+}
+
 export async function updateExam(
   id: number,
   data: {
@@ -2350,6 +2355,14 @@ export async function uploadCandidatePhoto(candidateId: number, file: File, repl
 
 export async function getCandidatePhoto(candidateId: number): Promise<RegistrationCandidatePhoto | null> {
   const response = await fetchWithAuth(`/api/v1/school/candidates/${candidateId}/photos`);
+  if (response.status === 404) {
+    return null;
+  }
+  return handleResponse<RegistrationCandidatePhoto>(response);
+}
+
+export async function getAdminCandidatePhoto(candidateId: number): Promise<RegistrationCandidatePhoto | null> {
+  const response = await fetchWithAuth(`/api/v1/admin/candidates/${candidateId}/photos`);
   if (response.status === 404) {
     return null;
   }
