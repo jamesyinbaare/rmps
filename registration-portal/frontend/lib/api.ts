@@ -38,6 +38,9 @@ import type {
   ResultBlockCreate,
   PublicResultCheckRequest,
   PublicResultResponse,
+  ResultAccessPin,
+  ResultAccessPinCreate,
+  ResultAccessPinUpdate,
   IndexNumberGenerationJob,
   ExaminationSchedule,
   ExaminationScheduleCreate,
@@ -96,6 +99,9 @@ export type {
   PublicResultResponse,
   BulkVerificationRequest,
   BulkVerificationResponse,
+  ResultAccessPin,
+  ResultAccessPinCreate,
+  ResultAccessPinUpdate,
 };
 
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL || "http://localhost:8001";
@@ -2749,6 +2755,39 @@ export async function deleteResultBlock(blockId: number): Promise<void> {
   if (!response.ok) {
     await handleResponse(response);
   }
+}
+
+// Result Access PIN/Serial Management
+export async function generateResultAccessPins(
+  data: ResultAccessPinCreate
+): Promise<ResultAccessPin[]> {
+  const response = await fetchWithAuth("/api/v1/admin/result-access-pins/generate", {
+    method: "POST",
+    body: JSON.stringify(data),
+  });
+  return handleResponse<ResultAccessPin[]>(response);
+}
+
+export async function listResultAccessPins(
+  isActive?: boolean
+): Promise<ResultAccessPin[]> {
+  const params = new URLSearchParams();
+  if (isActive !== undefined) params.append("is_active", isActive.toString());
+
+  const url = `/api/v1/admin/result-access-pins${params.toString() ? `?${params.toString()}` : ""}`;
+  const response = await fetchWithAuth(url);
+  return handleResponse<ResultAccessPin[]>(response);
+}
+
+export async function updateResultAccessPin(
+  pinId: number,
+  data: ResultAccessPinUpdate
+): Promise<ResultAccessPin> {
+  const response = await fetchWithAuth(`/api/v1/admin/result-access-pins/${pinId}`, {
+    method: "PATCH",
+    body: JSON.stringify(data),
+  });
+  return handleResponse<ResultAccessPin>(response);
 }
 
 export async function checkPublicResults(

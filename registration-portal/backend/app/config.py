@@ -67,6 +67,10 @@ class Settings(BaseSettings):
     credit_cost_per_verification: int = 8
     credit_minimum_purchase: int = 10
     credit_purchase_price_per_unit: float = 8.00
+    # Result access PIN settings
+    result_access_pin_default_max_uses: int = 5
+    result_access_pin_length: int = 6
+    result_access_serial_length: int = 8
 
 
 class LoggingSettings(BaseSettings):

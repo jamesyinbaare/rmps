@@ -123,6 +123,42 @@ class ResultBlockResponse(BaseModel):
         from_attributes = True
 
 
+class ResultAccessPinCreate(BaseModel):
+    """Schema for creating PIN/Serial combinations."""
+
+    count: int = Field(..., gt=0, le=1000, description="Number of PIN/Serial combinations to generate")
+    max_uses: Optional[int] = Field(None, gt=0, description="Maximum number of uses per combination (defaults to config)")
+
+
+class ResultAccessPinResponse(BaseModel):
+    """Schema for PIN/Serial combination response."""
+
+    id: int
+    pin: str
+    serial_number: str
+    max_uses: int
+    current_uses: int
+    is_active: bool
+    created_by_user_id: Optional[UUID] = None
+    created_by_user_name: Optional[str] = None
+    expires_at: Optional[datetime] = None
+    first_used_registration_number: Optional[str] = None
+    first_used_exam_id: Optional[int] = None
+    first_used_at: Optional[datetime] = None
+    created_at: datetime
+    updated_at: datetime
+
+    class Config:
+        from_attributes = True
+
+
+class ResultAccessPinUpdate(BaseModel):
+    """Schema for updating a PIN/Serial combination."""
+
+    is_active: Optional[bool] = None
+    expires_at: Optional[datetime] = None
+
+
 class PublicResultCheckRequest(BaseModel):
     """Schema for public result check request.
 
@@ -137,6 +173,8 @@ class PublicResultCheckRequest(BaseModel):
     exam_type: str
     exam_series: str
     year: int
+    pin: Optional[str] = None
+    serial_number: Optional[str] = None
 
     @model_validator(mode="after")
     def normalize_exam_codes(self) -> "PublicResultCheckRequest":

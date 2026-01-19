@@ -40,9 +40,19 @@ export default function ResultsDetailPage() {
       }
     }
 
+    // Get PIN and Serial from URL params
+    const pin = searchParams.get("pin") || "";
+    const serialNumber = searchParams.get("serial_number") || "";
+
     // Validate required parameters for new format
     if (!indexNumber || !examType || !examSeries || !year || !registrationNumber) {
       toast.error("Missing required parameters");
+      router.push("/results");
+      return;
+    }
+
+    if (!pin || !serialNumber) {
+      toast.error("PIN and Serial Number are required");
       router.push("/results");
       return;
     }
@@ -57,6 +67,8 @@ export default function ResultsDetailPage() {
           exam_type: examType,
           exam_series: examSeries,
           year: parseInt(year),
+          pin: pin,
+          serial_number: serialNumber,
         });
         setResults(response);
       } catch (e) {
@@ -84,6 +96,15 @@ export default function ResultsDetailPage() {
   const handleDownloadPDF = async () => {
     if (!results) return;
 
+    // Get PIN and Serial from URL params
+    const pinParam = searchParams.get("pin") || "";
+    const serialNumberParam = searchParams.get("serial_number") || "";
+
+    if (!pinParam || !serialNumberParam) {
+      toast.error("PIN and Serial Number are required to download PDF");
+      return;
+    }
+
     try {
       const blob = await generateResultsPDF({
         index_number: results.index_number || undefined,
@@ -91,6 +112,8 @@ export default function ResultsDetailPage() {
         exam_type: results.exam_type,
         exam_series: results.exam_series,
         year: results.year,
+        pin: pinParam,
+        serial_number: serialNumberParam,
       });
 
       // Create a download link

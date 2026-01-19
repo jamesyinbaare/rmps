@@ -657,6 +657,35 @@ export interface PublicResultCheckRequest {
   exam_type: string;
   exam_series: string;
   year: number;
+  pin?: string | null;
+  serial_number?: string | null;
+}
+
+export interface ResultAccessPin {
+  id: number;
+  pin: string;
+  serial_number: string;
+  max_uses: number;
+  current_uses: number;
+  is_active: boolean;
+  created_by_user_id?: string | null;
+  created_by_user_name?: string | null;
+  expires_at?: string | null;
+  first_used_registration_number?: string | null;
+  first_used_exam_id?: number | null;
+  first_used_at?: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface ResultAccessPinCreate {
+  count: number;
+  max_uses?: number | null;
+}
+
+export interface ResultAccessPinUpdate {
+  is_active?: boolean | null;
+  expires_at?: string | null;
 }
 
 export interface PublicSubjectResult {
