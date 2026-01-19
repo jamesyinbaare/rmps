@@ -194,10 +194,11 @@ async def check_public_results(
             detail="PIN and Serial Number are required to access results",
         )
 
-    if not check_data.registration_number:
+    # Require either registration_number or index_number
+    if not check_data.registration_number and not check_data.index_number:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Registration number is required",
+            detail="Either registration number or index number is required",
         )
 
     # Step 1: Find the exam by exam_type, exam_series, and year to get the exam.id
@@ -282,30 +283,6 @@ async def check_public_results(
             detail="Examination not found",
         )
 
-    # Validate PIN/Serial now that we have exam_id
-    is_valid, error_message = await validate_pin_serial(
-        session=session,
-        pin=check_data.pin,
-        serial_number=check_data.serial_number,
-        registration_number=check_data.registration_number,
-        exam_id=exam.id,
-    )
-
-    if not is_valid:
-        logger.warning(
-            "PIN/Serial validation failed",
-            extra={
-                "error": error_message,
-                "exam_id": exam.id,
-                "registration_number": check_data.registration_number,
-            },
-        )
-        await session.rollback()
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail=error_message or "Invalid PIN or Serial Number",
-        )
-
     # Check if exam results are published
     if not exam.results_published:
         logger.warning(
@@ -320,18 +297,26 @@ async def check_public_results(
             detail="Results for this examination have not been published yet",
         )
 
-    # Step 2: Find the candidate using the exam.id (registration_exam_id) and registration_number
+    # Step 2: Find the candidate using the exam.id (registration_exam_id) and registration_number or index_number
     # Don't log registration_number or index_number for security
-    candidate_stmt = select(RegistrationCandidate).where(
-        and_(
-            RegistrationCandidate.registration_exam_id == exam.id,
-            RegistrationCandidate.registration_number == check_data.registration_number,
+    if check_data.registration_number:
+        candidate_stmt = select(RegistrationCandidate).where(
+            and_(
+                RegistrationCandidate.registration_exam_id == exam.id,
+                RegistrationCandidate.registration_number == check_data.registration_number,
+            )
         )
-    )
-
-    if check_data.index_number:
-        candidate_stmt = candidate_stmt.where(
-            RegistrationCandidate.index_number == check_data.index_number
+        if check_data.index_number:
+            candidate_stmt = candidate_stmt.where(
+                RegistrationCandidate.index_number == check_data.index_number
+            )
+    else:
+        # Use index_number as primary identifier when registration_number is not provided
+        candidate_stmt = select(RegistrationCandidate).where(
+            and_(
+                RegistrationCandidate.registration_exam_id == exam.id,
+                RegistrationCandidate.index_number == check_data.index_number,
+            )
         )
 
     candidate_result = await session.execute(candidate_stmt)
@@ -358,6 +343,30 @@ async def check_public_results(
             "exam_id": exam.id,
         },
     )
+
+    # Validate PIN/Serial using the candidate's registration_number
+    is_valid, error_message = await validate_pin_serial(
+        session=session,
+        pin=check_data.pin,
+        serial_number=check_data.serial_number,
+        registration_number=candidate.registration_number,
+        exam_id=exam.id,
+    )
+
+    if not is_valid:
+        logger.warning(
+            "PIN/Serial validation failed",
+            extra={
+                "error": error_message,
+                "exam_id": exam.id,
+                "candidate_id": candidate.id,
+            },
+        )
+        await session.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=error_message or "Invalid PIN or Serial Number",
+        )
 
     # Check if results are administratively blocked
     is_blocked = await check_result_blocks(

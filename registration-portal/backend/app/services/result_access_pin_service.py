@@ -175,6 +175,15 @@ async def validate_pin_serial(
         return False, "This access code has expired"
 
     # Check if max uses reached
+    logger.info(
+        "PIN validation: checking usage limits",
+        extra={
+            "pin_id": pin_serial.id,
+            "current_uses_before_increment": pin_serial.current_uses,
+            "max_uses": pin_serial.max_uses,
+        },
+    )
+
     if pin_serial.current_uses >= pin_serial.max_uses:
         logger.warning(
             "Max uses reached for PIN/Serial combination",
@@ -219,11 +228,38 @@ async def validate_pin_serial(
             },
         )
 
-    # Increment usage
+    # Increment usage - log before and after
+    logger.info(
+        "PIN validation: before increment",
+        extra={
+            "pin_id": pin_serial.id,
+            "current_uses_before": pin_serial.current_uses,
+            "max_uses": pin_serial.max_uses,
+        },
+    )
+
     pin_serial.current_uses += 1
+
+    logger.info(
+        "PIN validation: after increment, before commit",
+        extra={
+            "pin_id": pin_serial.id,
+            "current_uses_after_increment": pin_serial.current_uses,
+            "max_uses": pin_serial.max_uses,
+        },
+    )
+
     pin_serial.updated_at = datetime.utcnow()
     await session.commit()
-    await session.refresh(pin_serial)
+
+    logger.info(
+        "PIN validation: after commit",
+        extra={
+            "pin_id": pin_serial.id,
+            "current_uses_after_commit": pin_serial.current_uses,
+            "max_uses": pin_serial.max_uses,
+        },
+    )
 
     logger.info(
         "PIN/Serial combination validated successfully",
