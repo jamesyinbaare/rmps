@@ -23,7 +23,7 @@ def generate_programme_template() -> bytes:
     data = {
         "code": ["PROG01", "PROG02"],
         "name": ["Example Programme 1", "Example Programme 2"],
-        "exam_type": ["Certificate II Examination", "CBT"],
+        "exam_type": ["Certificate II Examinations", "Advance"],
     }
     df = pd.DataFrame(data)
 
@@ -42,12 +42,13 @@ def generate_subject_template() -> bytes:
         Bytes of Excel file
     """
     data = {
-        "code": ["301", "302", "701"],
-        "original_code": ["C30-1-01", "C30-1-02", "C701"],
-        "name": ["Mathematics", "English", "Science"],
-        "subject_type": ["CORE", "CORE", "ELECTIVE"],
-        "exam_type": ["Certificate II Examination", "Certificate II Examination", "CBT"],
-        "programme_code": ["PROG01", "PROG01", ""],
+        "code": ["301", "302", "701", "NVTI-001"],
+        "original_code": ["C30-1-01", "C30-1-02", "C701", "NVTI-001"],
+        "name": ["Mathematics", "English", "Science", "NVTI Subject"],
+        "subject_type": ["CORE", "CORE", "ELECTIVE", "ELECTIVE"],
+        "exam_type": ["Certificate II Examinations", "Certificate II Examinations", "Advance", "Diploma"],
+        "programme_type": ["CERT2", "CERT2", "CERT2", "NVTI"],
+        "programme_code": ["PROG01", "PROG01", "", ""],
     }
     df = pd.DataFrame(data)
 

@@ -109,11 +109,19 @@ def parse_programme_row(row: pd.Series) -> dict[str, Any]:
         exam_type_str = str(exam_type_str).strip()
         if exam_type_str and exam_type_str.lower() != "nan":
             # Try to match exam type
-            exam_type_str_upper = exam_type_str.upper()
+            exam_type_str_upper = exam_type_str.upper().strip()
             if "CERTIFICATE" in exam_type_str_upper or exam_type_str_upper == "CERTIFICATE II":
                 exam_type = ExamType.CERTIFICATE_II
-            elif exam_type_str_upper == "CBT":
-                exam_type = ExamType.CBT
+            elif exam_type_str_upper == "ADVANCE":
+                exam_type = ExamType.ADVANCE
+            elif exam_type_str_upper == "TECHNICIAN PART I" or exam_type_str_upper == "TECHNICIAN_PART_I":
+                exam_type = ExamType.TECHNICIAN_PART_I
+            elif exam_type_str_upper == "TECHNICIAN PART II" or exam_type_str_upper == "TECHNICIAN_PART_II":
+                exam_type = ExamType.TECHNICIAN_PART_II
+            elif exam_type_str_upper == "TECHNICIAN PART III" or exam_type_str_upper == "TECHNICIAN_PART_III":
+                exam_type = ExamType.TECHNICIAN_PART_III
+            elif exam_type_str_upper == "DIPLOMA":
+                exam_type = ExamType.DIPLOMA
             # If it doesn't match, leave as None (will be validated later)
 
     return {

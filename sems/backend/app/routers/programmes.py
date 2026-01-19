@@ -611,7 +611,7 @@ async def bulk_upload_programmes(
                 errors.append(
                     ProgrammeBulkUploadError(
                         row_number=row_number,
-                        error_message="Invalid exam_type. Must be 'Certificate II Examination' or 'CBT'",
+                        error_message="Invalid exam_type. Must be 'Certificate II Examinations', 'Advance', 'Technician Part I', 'Technician Part II', 'Technician Part III', or 'Diploma'",
                         field="exam_type",
                     )
                 )

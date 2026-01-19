@@ -129,7 +129,7 @@ export interface Subject {
   updated_at: string;
 }
 
-export type ExamType = "Certificate II Examination" | "CBT";
+export type ExamType = "Certificate II Examinations" | "Advance" | "Technician Part I" | "Technician Part II" | "Technician Part III" | "Diploma";
 
 export type ExamSeries = "MAY/JUNE" | "NOV/DEC";
 

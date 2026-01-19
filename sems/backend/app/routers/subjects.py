@@ -6,7 +6,7 @@ from sqlalchemy import func, insert, select
 from sqlalchemy.exc import IntegrityError
 
 from app.dependencies.database import DBSessionDep
-from app.models import Document, Programme, School, Subject, SubjectType, programme_subjects, school_programmes
+from app.models import Document, Programme, ProgrammeType, School, Subject, SubjectType, programme_subjects, school_programmes
 from app.schemas.subject import (
     SubjectBulkUploadError,
     SubjectBulkUploadResponse,
@@ -30,6 +30,24 @@ router = APIRouter(prefix="/api/v1/subjects", tags=["subjects"])
 @router.post("", response_model=SubjectResponse, status_code=status.HTTP_201_CREATED)
 async def create_subject(subject: SubjectCreate, session: DBSessionDep) -> SubjectResponse:
     """Create a new subject."""
+    # Validate code length based on programme_type
+    # If programme_type is CERT2 or None, code must be exactly 3 characters
+    # If programme_type is NVTI, code can be 1-10 characters (saved as-is)
+    programme_type = subject.programme_type or ProgrammeType.CERT2
+    if programme_type == ProgrammeType.CERT2:
+        if len(subject.code) != 3:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Code must be exactly 3 characters for CERT2 programme type",
+            )
+    elif programme_type == ProgrammeType.NVTI:
+        if len(subject.code) < 1 or len(subject.code) > 10:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Code must be between 1 and 10 characters for NVTI programme type",
+            )
+    # else: programme_type is None, treat as CERT2 (already handled above)
+
     # Check if code already exists
     stmt = select(Subject).where(Subject.code == subject.code)
     result = await session.execute(stmt)
@@ -55,6 +73,7 @@ async def create_subject(subject: SubjectCreate, session: DBSessionDep) -> Subje
         name=subject.name,
         subject_type=subject.subject_type,
         exam_type=subject.exam_type,
+        programme_type=subject.programme_type,
     )
     session.add(db_subject)
     await session.commit()
@@ -130,6 +149,8 @@ async def update_subject(subject_id: int, subject_update: SubjectUpdate, session
         subject.subject_type = subject_update.subject_type
     if subject_update.exam_type is not None:
         subject.exam_type = subject_update.exam_type
+    if subject_update.programme_type is not None:
+        subject.programme_type = subject_update.programme_type
 
     await session.commit()
     await session.refresh(subject)
@@ -319,16 +340,32 @@ async def bulk_upload_subjects(
                 failed += 1
                 continue
 
-            if len(subject_data["code"]) != 3:
-                errors.append(
-                    SubjectBulkUploadError(
-                        row_number=row_number,
-                        error_message="Code must be exactly 3 characters",
-                        field="code",
+            # Validate code length based on programme_type
+            # If programme_type is CERT2 or None, code must be exactly 3 characters
+            # If programme_type is NVTI, code can be 1-10 characters (saved as-is)
+            programme_type = subject_data.get("programme_type") or ProgrammeType.CERT2
+            if programme_type == ProgrammeType.CERT2:
+                if len(subject_data["code"]) != 3:
+                    errors.append(
+                        SubjectBulkUploadError(
+                            row_number=row_number,
+                            error_message="Code must be exactly 3 characters for CERT2 programme type",
+                            field="code",
+                        )
                     )
-                )
-                failed += 1
-                continue
+                    failed += 1
+                    continue
+            elif programme_type == ProgrammeType.NVTI:
+                if len(subject_data["code"]) < 1 or len(subject_data["code"]) > 10:
+                    errors.append(
+                        SubjectBulkUploadError(
+                            row_number=row_number,
+                            error_message="Code must be between 1 and 10 characters for NVTI programme type",
+                            field="code",
+                        )
+                    )
+                    failed += 1
+                    continue
 
             if not subject_data["original_code"]:
                 errors.append(
@@ -387,12 +424,17 @@ async def bulk_upload_subjects(
                 errors.append(
                     SubjectBulkUploadError(
                         row_number=row_number,
-                        error_message="Exam type is required and must be 'CERTIFICATE II' or 'CBT'",
+                        error_message="Exam type is required and must be a valid exam type (Certificate II Examinations, Advance, Technician Part I/II/III, or Diploma)",
                         field="exam_type",
                     )
                 )
                 failed += 1
                 continue
+
+            # Ensure programme_type variable is available for Subject creation
+            # It was already set during code validation above, but may not be in scope here
+            # Recalculate it if needed (for validation purposes, None defaults to CERT2)
+            programme_type_for_creation = subject_data.get("programme_type")  # Store original value (may be None)
 
             # Check if subject with code already exists in database
             existing_stmt = select(Subject).where(Subject.code == subject_data["code"])
@@ -450,6 +492,7 @@ async def bulk_upload_subjects(
                 name=subject_data["name"],
                 subject_type=subject_data["subject_type"],
                 exam_type=subject_data["exam_type"],
+                programme_type=programme_type_for_creation,  # Store as-is (None will be treated as CERT2 in validation)
             )
             session.add(db_subject)
             await session.flush()  # Flush to get ID but don't commit yet
