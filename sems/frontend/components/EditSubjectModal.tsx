@@ -40,7 +40,7 @@ export function EditSubjectModal({
     name: "",
     original_code: "",
     subject_type: "CORE" as "CORE" | "ELECTIVE",
-    exam_type: "Certificate II Examination" as ExamType,
+    exam_type: "Certificate II Examinations" as ExamType,
   });
 
   useEffect(() => {
@@ -198,8 +198,12 @@ export function EditSubjectModal({
                   <SelectValue placeholder="Select exam type" />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="Certificate II Examination">Certificate II Examination</SelectItem>
-                  <SelectItem value="CBT">CBT</SelectItem>
+                  <SelectItem value="Certificate II Examinations">Certificate II Examinations</SelectItem>
+                  <SelectItem value="Advance">Advance</SelectItem>
+                  <SelectItem value="Technician Part I">Technician Part I</SelectItem>
+                  <SelectItem value="Technician Part II">Technician Part II</SelectItem>
+                  <SelectItem value="Technician Part III">Technician Part III</SelectItem>
+                  <SelectItem value="Diploma">Diploma</SelectItem>
                 </SelectContent>
               </Select>
             </div>

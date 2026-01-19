@@ -419,7 +419,7 @@ export async function listSubjects(page = 1, pageSize = 100): Promise<Subject[]>
  */
 export async function getAllExams(): Promise<Exam[]> {
   const allExamsList: Exam[] = [];
-  const examTypes: ExamType[] = ["Certificate II Examination", "CBT"];
+  const examTypes: ExamType[] = ["Certificate II Examinations", "Advance", "Technician Part I", "Technician Part II", "Technician Part III", "Diploma"];
   const series: ExamSeries[] = ["MAY/JUNE", "NOV/DEC"];
   const currentYear = new Date().getFullYear();
   // Fetch exams for current year and a few years around it

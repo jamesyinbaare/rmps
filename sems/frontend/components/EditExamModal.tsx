@@ -37,7 +37,7 @@ export function EditExamModal({
 }: EditExamModalProps) {
   const [loading, setLoading] = useState(false);
   const [formData, setFormData] = useState({
-    exam_type: "Certificate II Examination" as ExamType,
+    exam_type: "Certificate II Examinations" as ExamType,
     description: "",
     year: new Date().getFullYear(),
     series: "MAY/JUNE" as ExamSeries,
@@ -153,10 +153,14 @@ export function EditExamModal({
                   <SelectValue placeholder="Select examination name" />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="Certificate II Examination">
-                    Certificate II Examination
+                  <SelectItem value="Certificate II Examinations">
+                    Certificate II Examinations
                   </SelectItem>
-                  <SelectItem value="CBT">CBT</SelectItem>
+                  <SelectItem value="Advance">Advance</SelectItem>
+                  <SelectItem value="Technician Part I">Technician Part I</SelectItem>
+                  <SelectItem value="Technician Part II">Technician Part II</SelectItem>
+                  <SelectItem value="Technician Part III">Technician Part III</SelectItem>
+                  <SelectItem value="Diploma">Diploma</SelectItem>
                 </SelectContent>
               </Select>
             </div>

@@ -178,7 +178,7 @@ export default function UploadProgrammesPage() {
                       <ul className="list-disc list-inside space-y-1 ml-4">
                         <li><strong>Code</strong> (required) - Unique programme code</li>
                         <li><strong>Name</strong> (required) - Programme name</li>
-                        <li><strong>Exam Type</strong> (optional) - "Certificate II Examination" or "CBT"</li>
+                        <li><strong>Exam Type</strong> (optional) - "Certificate II Examinations", "Advance", "Technician Part I", "Technician Part II", "Technician Part III", or "Diploma"</li>
                       </ul>
                     </div>
                   </div>
@@ -198,12 +198,12 @@ export default function UploadProgrammesPage() {
                           <tr>
                             <td className="px-3 py-2 border-r font-mono">PROG01</td>
                             <td className="px-3 py-2 border-r">Example Programme 1</td>
-                            <td className="px-3 py-2">Certificate II Examination</td>
+                            <td className="px-3 py-2">Certificate II Examinations</td>
                           </tr>
                           <tr>
                             <td className="px-3 py-2 border-r font-mono">PROG02</td>
                             <td className="px-3 py-2 border-r">Example Programme 2</td>
-                            <td className="px-3 py-2">CBT</td>
+                            <td className="px-3 py-2">Advance</td>
                           </tr>
                         </tbody>
                       </table>
@@ -215,7 +215,7 @@ export default function UploadProgrammesPage() {
                     <ul className="text-sm text-muted-foreground space-y-1 list-disc list-inside">
                       <li>Code must be unique and not already exist in the system</li>
                       <li>Name is required</li>
-                      <li>Exam type must be either "Certificate II Examination" or "CBT" (if provided)</li>
+                      <li>Exam type must be one of: "Certificate II Examinations", "Advance", "Technician Part I", "Technician Part II", "Technician Part III", or "Diploma" (if provided)</li>
                       <li>All required fields must be filled in</li>
                     </ul>
                   </div>
