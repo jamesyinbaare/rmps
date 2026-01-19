@@ -1,14 +1,16 @@
 import asyncio
 from logging.config import fileConfig
-import os
-from alembic_utils.pg_grant_table import PGGrantTable
-from alembic_utils.pg_function import PGFunction
-from sqlalchemy import pool, engine_from_config
+
+from sqlalchemy import pool
 from sqlalchemy.engine import Connection
 from sqlalchemy.ext.asyncio import async_engine_from_config
-from app.config import settings
+
 from alembic import context
-from app.models import Base
+import alembic_postgresql_enum
+
+from app.dependencies.database import Base
+from app.models import *  # noqa: E402, F403
+
 # this is the Alembic Config object, which provides
 # access to the values within the .ini file in use.
 config = context.config
@@ -20,33 +22,17 @@ if config.config_file_name is not None:
 
 # add your model's MetaData object here
 # for 'autogenerate' support
-# from myapp import mymodel
-# target_metadata = mymodel.Base.metadata
 target_metadata = Base.metadata
 
-# other values from the config, defined by the needs of env.py,
-# can be acquired:
-# my_important_option = config.get_main_option("my_important_option")
-# ... etc.
-env = settings.environment
-if env == "dev":
-    database_url = "postgresql+asyncpg://postgres:postgres@postgres:5432/sems_db" #settings.database_url
-elif env == "stg":
-    db_pass = os.environ.get("DB_PASS", None)
-    db_host = os.environ.get("DB_HOST", "")
-    db_name = os.environ.get("DB_NAME", "sems_db")
-    database_url = f"postgresql://postgres:{db_pass}@{db_host}/{db_name}"
-else:  # FIXME(james): support test & production environments by reading db creds from secrets manager
-    raise ValueError(f"ENV {env} is not supported.")
-print(f"Using database URL: {database_url}")
 
+def get_url() -> str:
+    """Get database URL from settings and convert to async URL if needed."""
+    from app.config import settings
+    from app.dependencies.database import convert_to_async_url
 
-def include_object(object, name, type_, reflected, compare_to) -> bool:
-    if isinstance(object, PGGrantTable):
-        return False
-    elif isinstance(object, PGFunction) and object.to_variable_name() in ["public_delete_old_tasks"]:
-        return False
-    return True
+    url = settings.database_url
+    # Convert to async URL if using async migrations
+    return convert_to_async_url(url)
 
 
 def run_migrations_offline() -> None:
@@ -61,13 +47,12 @@ def run_migrations_offline() -> None:
     script output.
 
     """
-    url = config.get_main_option("sqlalchemy.url")
+    url = get_url()
     context.configure(
-        url=database_url,
+        url=url,
         target_metadata=target_metadata,
         literal_binds=True,
         dialect_opts={"paramstyle": "named"},
-        include_object=include_object,
     )
 
     with context.begin_transaction():
@@ -75,7 +60,7 @@ def run_migrations_offline() -> None:
 
 
 def do_run_migrations(connection: Connection) -> None:
-    context.configure(connection=connection, target_metadata=target_metadata, include_object=include_object)
+    context.configure(connection=connection, target_metadata=target_metadata)
 
     with context.begin_transaction():
         context.run_migrations()
@@ -86,8 +71,9 @@ async def run_async_migrations() -> None:
     and associate a connection with the context.
 
     """
-    configuration = config.get_section(config.config_ini_section)
-    configuration["sqlalchemy.url"] = database_url
+
+    configuration = config.get_section(config.config_ini_section, {})
+    configuration["sqlalchemy.url"] = get_url()
     connectable = async_engine_from_config(
         configuration,
         prefix="sqlalchemy.",
@@ -104,29 +90,6 @@ def run_migrations_online() -> None:
     """Run migrations in 'online' mode."""
 
     asyncio.run(run_async_migrations())
-
-
-# def run_migrations_online() -> None:
-#     """Run migrations in 'online' mode.
-
-#     In this scenario we need to create an Engine
-#     and associate a connection with the context.
-
-#     """
-#     configuration = config.get_section(config.config_ini_section)
-#     configuration["sqlalchemy.url"] = database_url
-
-#     connectable = engine_from_config(
-#         configuration,  # Use the updated configuration
-#         prefix="sqlalchemy.",
-#         poolclass=pool.NullPool,
-#     )
-#     with connectable.connect() as connection:
-#         context.configure(connection=connection, target_metadata=target_metadata, include_object=include_object)
-
-#         with context.begin_transaction():
-#             context.run_migrations()
-
 
 
 if context.is_offline_mode():

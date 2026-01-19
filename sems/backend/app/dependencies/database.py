@@ -45,6 +45,37 @@ db_settings = DBSettings()  # type: ignore
 # Heavily inspired by https://praciano.com.br/fastapi-and-async-sqlalchemy-20-with-pytest-done-right.html
 
 
+
+def convert_to_async_url(url: str) -> str:
+    """Convert a synchronous PostgreSQL URL to use asyncpg driver for async SQLAlchemy.
+
+    Converts:
+    - postgresql:// -> postgresql+asyncpg://
+    - postgresql+psycopg2:// -> postgresql+asyncpg://
+    - postgresql+asyncpg:// -> postgresql+asyncpg:// (no change)
+
+    Args:
+        url: The database URL string
+
+    Returns:
+        The URL string with asyncpg driver specified
+    """
+    # If already using asyncpg, return as-is
+    if "postgresql+asyncpg://" in url:
+        return url
+
+    # Replace postgresql:// with postgresql+asyncpg://
+    if url.startswith("postgresql://"):
+        return url.replace("postgresql://", "postgresql+asyncpg://", 1)
+
+    # Replace postgresql+psycopg2:// with postgresql+asyncpg://
+    if url.startswith("postgresql+psycopg2://"):
+        return url.replace("postgresql+psycopg2://", "postgresql+asyncpg://", 1)
+
+    # Return as-is if no conversion needed (e.g., already async or different driver)
+    return url
+
+
 class DatabaseSessionManager:
     _engine: AsyncEngine | None
     _sessionmaker: async_sessionmaker | None

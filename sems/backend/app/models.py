@@ -78,8 +78,12 @@ class SchoolType(enum.Enum):
 
 
 class ExamType(enum.Enum):
-    CERTIFICATE_II = "Certificate II Examination"
-    CBT = "CBT"
+    CERTIFICATE_II = "Certificate II Examinations"
+    ADVANCE = "Advance"
+    TECHNICIAN_PART_I = "Technician Part I"
+    TECHNICIAN_PART_II = "Technician Part II"
+    TECHNICIAN_PART_III = "Technician Part III"
+    DIPLOMA = "Diploma"
 
 
 class ExamSeries(enum.Enum):
@@ -90,6 +94,11 @@ class ExamSeries(enum.Enum):
 class SubjectType(enum.Enum):
     CORE = "CORE"
     ELECTIVE = "ELECTIVE"
+
+
+class ProgrammeType(enum.Enum):
+    CERT2 = "cert2"
+    NVTI = "nvti"
 
 
 class DataExtractionMethod(enum.Enum):
@@ -177,11 +186,12 @@ class School(Base):
 class Subject(Base):
     __tablename__ = "subjects"
     id = Column(Integer, primary_key=True)
-    code = Column(String(3), unique=True, nullable=False, index=True)
+    code = Column(String(10), unique=True, nullable=False, index=True)
     original_code = Column(String(50), unique=True, nullable=False, index=True)
     name = Column(String(255), nullable=False)
     subject_type = Column(Enum(SubjectType), nullable=False)
     exam_type = Column(Enum(ExamType), nullable=False, index=True)
+    programme_type = Column(Enum(ProgrammeType, values_callable=lambda x: [e.value for e in x]), nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
 

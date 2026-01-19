@@ -5,7 +5,7 @@ from typing import Any
 
 import pandas as pd
 
-from app.models import ExamType, SubjectType
+from app.models import ExamType, ProgrammeType, SubjectType
 
 
 class SubjectUploadParseError(Exception):
@@ -71,7 +71,7 @@ def validate_required_columns(df: pd.DataFrame) -> None:
     Raises:
         SubjectUploadValidationError: If required columns are missing
     """
-    required_columns = {"code", "original_code", "name", "subject_type", "exam_type"}
+    required_columns = {"code", "original_code", "name", "subject_type", "exam_type", "programme_type"}
     df_columns = set(df.columns.str.lower().str.strip())
 
     missing_columns = required_columns - df_columns
@@ -96,6 +96,7 @@ def parse_subject_row(row: pd.Series) -> dict[str, Any]:
         - name: str
         - subject_type: SubjectType
         - exam_type: ExamType
+        - programme_type: ProgrammeType | None
         - programme_code: str | None (optional)
     """
     # Normalize column names (case-insensitive, strip whitespace)
@@ -107,6 +108,7 @@ def parse_subject_row(row: pd.Series) -> dict[str, Any]:
     name = str(row_dict.get("name", "")).strip()
     subject_type_str = str(row_dict.get("subject_type", "")).strip().upper()
     exam_type_str = str(row_dict.get("exam_type", "")).strip()
+    programme_type_str = str(row_dict.get("programme_type", "")).strip().upper()
 
     # Parse subject_type
     subject_type = None
@@ -118,11 +120,29 @@ def parse_subject_row(row: pd.Series) -> dict[str, Any]:
     # Parse exam_type
     exam_type = None
     if exam_type_str:
-        exam_type_str_upper = exam_type_str.upper()
+        exam_type_str_upper = exam_type_str.upper().strip()
+        # Map string values to enum values
         if "CERTIFICATE" in exam_type_str_upper or exam_type_str_upper == "CERTIFICATE II":
             exam_type = ExamType.CERTIFICATE_II
-        elif exam_type_str_upper == "CBT":
-            exam_type = ExamType.CBT
+        elif exam_type_str_upper == "ADVANCE":
+            exam_type = ExamType.ADVANCE
+        elif exam_type_str_upper == "TECHNICIAN PART I" or exam_type_str_upper == "TECHNICIAN_PART_I":
+            exam_type = ExamType.TECHNICIAN_PART_I
+        elif exam_type_str_upper == "TECHNICIAN PART II" or exam_type_str_upper == "TECHNICIAN_PART_II":
+            exam_type = ExamType.TECHNICIAN_PART_II
+        elif exam_type_str_upper == "TECHNICIAN PART III" or exam_type_str_upper == "TECHNICIAN_PART_III":
+            exam_type = ExamType.TECHNICIAN_PART_III
+        elif exam_type_str_upper == "DIPLOMA":
+            exam_type = ExamType.DIPLOMA
+
+    # Parse programme_type
+    programme_type = None
+    if programme_type_str:
+        programme_type_str_upper = programme_type_str.upper()
+        if programme_type_str_upper == "CERT2":
+            programme_type = ProgrammeType.CERT2
+        elif programme_type_str_upper == "NVTI":
+            programme_type = ProgrammeType.NVTI
 
     # Extract optional programme_code
     programme_code = row_dict.get("programme_code")
@@ -137,5 +157,6 @@ def parse_subject_row(row: pd.Series) -> dict[str, Any]:
         "name": name,
         "subject_type": subject_type,
         "exam_type": exam_type,
+        "programme_type": programme_type,
         "programme_code": programme_code,
     }
