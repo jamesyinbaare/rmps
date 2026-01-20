@@ -3,7 +3,6 @@ from datetime import datetime
 from typing import Any
 
 from sqlalchemy import select
-from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.dependencies.database import get_sessionmanager
 from app.models import Document, DataExtractionMethod
@@ -18,9 +17,8 @@ class ReductoQueueService:
     def __init__(self):
         self._queue: asyncio.Queue[int] = asyncio.Queue()
         self._queue_items: list[int] = []  # Track queue order for position calculation
-        self._processing: bool = False
-        self._current_document_id: int | None = None
-        self._worker_task: asyncio.Task[None] | None = None
+        self._worker_tasks: list[asyncio.Task[None]] = []  # Worker pool tasks
+        self._processing_documents: set[int] = set()  # Track actively processing documents
 
     def enqueue_document(self, document_id: int) -> None:
         """Add document to queue."""
@@ -28,12 +26,27 @@ class ReductoQueueService:
             self._queue.put_nowait(document_id)
             self._queue_items.append(document_id)
 
+    def _calculate_optimal_workers(self) -> int:
+        """Calculate optimal number of workers based on rate limit."""
+        from app.config import settings
+
+        # If explicitly configured, use that
+        if settings.reducto_queue_workers is not None:
+            return max(1, settings.reducto_queue_workers)
+
+        # Auto-calculate based on rate limit
+        rate_limit = settings.reducto_rate_limit_per_second
+        avg_api_calls_per_doc = 2.5  # upload + extract/parse
+        optimal = max(1, int(rate_limit / avg_api_calls_per_doc))
+        return min(optimal, 10)  # Cap at 10 workers for safety
+
     def get_queue_status(self) -> dict[str, Any]:
         """Get queue length and current processing status."""
         return {
             "queue_length": self._queue.qsize(),
-            "is_processing": self._processing,
-            "current_document_id": self._current_document_id,
+            "active_workers": len([t for t in self._worker_tasks if not t.done()]),
+            "processing_documents": list(self._processing_documents),
+            "total_workers": len(self._worker_tasks),
         }
 
     def get_document_queue_position(self, document_id: int) -> int | None:
@@ -98,8 +111,8 @@ class ReductoQueueService:
                 except Exception:
                     pass  # Ignore errors during error handling
 
-    async def _worker(self) -> None:
-        """Background worker that processes queue items one at a time."""
+    async def _worker(self, worker_id: int) -> None:
+        """Background worker that processes queue items."""
         while True:
             try:
                 # Get next document from queue (with timeout to allow checking for shutdown)
@@ -112,37 +125,56 @@ class ReductoQueueService:
                 if document_id in self._queue_items:
                     self._queue_items.remove(document_id)
 
-                # Process document
-                self._processing = True
-                self._current_document_id = document_id
-                await self._process_document(document_id)
-                self._current_document_id = None
-                self._processing = False
+                # Track active processing
+                self._processing_documents.add(document_id)
 
-                # Mark task as done
-                self._queue.task_done()
+                try:
+                    # Process document (rate limiter is shared, so it will throttle automatically)
+                    await self._process_document(document_id)
+                finally:
+                    # Remove from active processing
+                    self._processing_documents.discard(document_id)
+                    # Mark task as done
+                    self._queue.task_done()
             except asyncio.CancelledError:
                 # Worker was cancelled, exit gracefully
                 break
             except Exception:
                 # Continue processing even if one document fails
-                self._processing = False
-                self._current_document_id = None
                 continue
 
     def start_worker(self) -> None:
-        """Start the background worker."""
-        if self._worker_task is None or self._worker_task.done():
-            self._worker_task = asyncio.create_task(self._worker())
+        """Start the worker pool."""
+        if self._worker_tasks:
+            # Check if any workers are still running
+            active_workers = [t for t in self._worker_tasks if not t.done()]
+            if active_workers:
+                return  # Already started and running
+
+        # Calculate optimal number of workers
+        num_workers = self._calculate_optimal_workers()
+
+        # Start worker pool
+        for i in range(num_workers):
+            task = asyncio.create_task(self._worker(i))
+            self._worker_tasks.append(task)
 
     async def stop_worker(self) -> None:
-        """Stop the background worker gracefully."""
-        if self._worker_task and not self._worker_task.done():
-            self._worker_task.cancel()
-            try:
-                await self._worker_task
-            except asyncio.CancelledError:
-                pass
+        """Stop all workers gracefully."""
+        if not self._worker_tasks:
+            return
+
+        # Cancel all worker tasks
+        for task in self._worker_tasks:
+            if not task.done():
+                task.cancel()
+
+        # Wait for all tasks to complete cancellation
+        await asyncio.gather(*self._worker_tasks, return_exceptions=True)
+
+        # Clear the worker tasks list
+        self._worker_tasks.clear()
+        self._processing_documents.clear()
 
 
 # Global queue service instance

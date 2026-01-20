@@ -23,11 +23,12 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Badge } from "@/components/ui/badge";
 import { SearchableSelect } from "@/components/ui/searchable-select";
-import { getFilteredDocuments, getAllExams, listSchools, listSubjects, queueReductoExtraction, getReductoStatus, findExamId, getReductoData, updateScoresFromReducto, getUnmatchedRecords, resolveUnmatchedRecord, ignoreUnmatchedRecord } from "@/lib/api";
+import { getFilteredDocuments, getAllExams, listSchools, listSubjects, queueReductoExtraction, getReductoStatus, findExamId, getReductoData, updateScoresFromReducto, getUnmatchedRecords, resolveUnmatchedRecord, ignoreUnmatchedRecord, downloadDocument, API_BASE_URL } from "@/lib/api";
 import type { Document, Exam, School, Subject, ScoreDocumentFilters, ExamType, ExamSeries, ReductoDataResponse, UpdateScoresFromReductoResponse, UnmatchedExtractionRecord } from "@/types/document";
 import { Loader2, CheckCircle2, XCircle, Clock, Send, Eye, RefreshCw, AlertCircle, Filter, FileText, Users, X, Search } from "lucide-react";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
+import { DocumentViewer } from "@/components/DocumentViewer";
 import { toast } from "sonner";
 
 export default function ReductoExtractionPage() {
@@ -36,8 +37,7 @@ export default function ReductoExtractionPage() {
   const [error, setError] = useState<string | null>(null);
   const [filters, setFilters] = useState<ScoreDocumentFilters>({
     page: 1,
-    page_size: 20,
-    // Don't set extraction_status - we'll filter out "success" on frontend
+    page_size: 50,
   });
   const [totalPages, setTotalPages] = useState(1);
   const [currentPage, setCurrentPage] = useState(1);
@@ -67,11 +67,18 @@ export default function ReductoExtractionPage() {
   const [loadingPreview, setLoadingPreview] = useState(false);
   const [updatingScores, setUpdatingScores] = useState<number | null>(null);
   const [previewViewMode, setPreviewViewMode] = useState<"table" | "json">("table");
+  const [imageLoading, setImageLoading] = useState(true);
+  const [imageError, setImageError] = useState(false);
 
   // Unmatched records state
   const [unmatchedRecords, setUnmatchedRecords] = useState<UnmatchedExtractionRecord[]>([]);
   const [loadingUnmatched, setLoadingUnmatched] = useState(false);
   const [showUnmatched, setShowUnmatched] = useState(false);
+
+  // Document viewer state
+  const [selectedDocument, setSelectedDocument] = useState<Document | null>(null);
+  const [selectedIndex, setSelectedIndex] = useState<number>(-1);
+  const [viewerOpen, setViewerOpen] = useState(false);
 
   // Load filter options
   useEffect(() => {
@@ -95,7 +102,7 @@ export default function ReductoExtractionPage() {
     loadFilterOptions();
   }, []);
 
-  // Load documents - only show unprocessed documents
+  // Load documents - show all documents including successfully extracted ones
   const loadDocuments = useCallback(async (isPolling = false) => {
     // Only show loading state on initial load, not during polling
     if (!isPolling) {
@@ -103,35 +110,34 @@ export default function ReductoExtractionPage() {
       setError(null);
     }
     try {
-      // Fetch all documents, then filter out processed (success) ones on frontend
+      // Fetch all documents, including successfully extracted ones
       const response = await getFilteredDocuments(filters);
-      // Filter out processed documents (extraction_status === "success")
-      const unprocessedDocs = response.items.filter(
-        (doc) => doc.scores_extraction_status !== "success"
-      );
+      // Show ALL documents, including successfully extracted ones
+      const allDocs = response.items;
 
       // Only update state if data actually changed to prevent unnecessary re-renders and flickering
       setDocuments((prevDocs) => {
         // Quick check: if lengths differ, definitely update
-        if (prevDocs.length !== unprocessedDocs.length) {
-          return unprocessedDocs;
+        if (prevDocs.length !== allDocs.length) {
+          return allDocs;
         }
         // Check if any document status changed by comparing IDs and statuses
         const prevDocsMap = new Map(prevDocs.map(d => [d.id, d]));
-        const hasChanges = unprocessedDocs.some((newDoc) => {
+        const hasChanges = allDocs.some((newDoc) => {
           const prevDoc = prevDocsMap.get(newDoc.id);
           return !prevDoc ||
                  prevDoc.scores_extraction_status !== newDoc.scores_extraction_status ||
                  prevDoc.scores_extracted_at !== newDoc.scores_extracted_at;
         });
         // Only update if there are actual changes to prevent flickering
-        return hasChanges ? unprocessedDocs : prevDocs;
+        return hasChanges ? allDocs : prevDocs;
       });
 
       // Only update totals on initial load to avoid unnecessary updates during polling
+      // Use backend total for pagination, not filtered count
       if (!isPolling) {
-        setTotal(unprocessedDocs.length);
-        setTotalPages(Math.ceil(unprocessedDocs.length / (filters.page_size || 20)));
+        setTotal(response.total);
+        setTotalPages(response.total_pages);
         setCurrentPage(response.page);
       }
     } catch (err) {
@@ -339,17 +345,29 @@ export default function ReductoExtractionPage() {
   };
 
   const handlePreview = async (document: Document) => {
+    // Check if document has extraction data before attempting to preview
+    if (!document.scores_extraction_data) {
+      toast.error("No extraction data available for this document");
+      return;
+    }
+
     setPreviewDocument(document);
     setPreviewOpen(true);
     setLoadingPreview(true);
     setPreviewData(null);
     setPreviewViewMode("table"); // Reset to table view when opening preview
+    setImageLoading(true);
+    setImageError(false);
     try {
       const data = await getReductoData(document.id);
       setPreviewData(data);
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : "Failed to load preview data");
+      const errorMessage = err instanceof Error ? err.message : "Failed to load preview data";
+      toast.error(errorMessage);
       console.error("Error loading preview:", err);
+      // Close the dialog if there's an error
+      setPreviewOpen(false);
+      setPreviewDocument(null);
     } finally {
       setLoadingPreview(false);
     }
@@ -375,6 +393,52 @@ export default function ReductoExtractionPage() {
     }
   };
 
+  const handleViewDocument = (document: Document) => {
+    const index = documents.findIndex((d) => d.id === document.id);
+    setSelectedIndex(index >= 0 ? index : -1);
+    setSelectedDocument(document);
+    setViewerOpen(true);
+  };
+
+  const handleCloseViewer = () => {
+    setViewerOpen(false);
+    setSelectedDocument(null);
+    setSelectedIndex(-1);
+  };
+
+  const handleNavigate = (index: number) => {
+    if (index >= 0 && index < documents.length) {
+      setSelectedIndex(index);
+      setSelectedDocument(documents[index]);
+    }
+  };
+
+  const handleDownload = async (doc: Document) => {
+    try {
+      const blob = await downloadDocument(doc.id);
+      const url = window.URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+
+      // Use extracted_id as filename if available, otherwise use file_name
+      let downloadFilename = doc.file_name;
+      if (doc.extracted_id) {
+        // Extract file extension from original filename
+        const fileExtension = doc.file_name.split('.').pop();
+        downloadFilename = fileExtension ? `${doc.extracted_id}.${fileExtension}` : doc.extracted_id;
+      }
+
+      a.download = downloadFilename;
+      document.body.appendChild(a);
+      a.click();
+      window.URL.revokeObjectURL(url);
+      document.body.removeChild(a);
+    } catch (error) {
+      console.error("Failed to download document:", error);
+      toast.error("Failed to download document. Please try again.");
+    }
+  };
+
   const loadUnmatchedRecords = async () => {
     setLoadingUnmatched(true);
     try {
@@ -385,6 +449,86 @@ export default function ReductoExtractionPage() {
     } finally {
       setLoadingUnmatched(false);
     }
+  };
+
+  // Parse extraction data to extract candidates from various formats
+  // Handles the same formats as the backend: direct candidates, tables, nested data.candidates, nested data.tables
+  const parseCandidatesFromData = (data: Record<string, any>): any[] => {
+    if (!data || typeof data !== "object") {
+      return [];
+    }
+
+    let candidates: any[] = [];
+
+    // Helper function to convert rows to candidates format
+    const extractCandidatesFromRows = (rows: any[]): any[] => {
+      const result: any[] = [];
+      if (!Array.isArray(rows)) {
+        return result;
+      }
+      for (let idx = 0; idx < rows.length; idx++) {
+        const row = rows[idx];
+        if (row && typeof row === "object") {
+          const candidate = {
+            index_number: row.index_number || row.indexNumber || null,
+            candidate_name: row.candidate_name || row.candidateName || row.name || null,
+            score: row.raw_score || row.rawScore || row.score || null,
+            attend: row.attend || null,
+            verify: row.verify || null,
+            sn: row.sn || row.serial_number || row.serialNumber || row.row_number || row.rowNumber || (idx + 1),
+          };
+          result.push(candidate);
+        }
+      }
+      return result;
+    };
+
+    // 1. Try direct candidates key
+    if (Array.isArray(data.candidates)) {
+      candidates = data.candidates;
+      if (candidates.length > 0) {
+        return candidates;
+      }
+    }
+
+    // 2. Try tables format at top level (only if no candidates found)
+    if (candidates.length === 0 && Array.isArray(data.tables)) {
+      for (const table of data.tables) {
+        if (table && typeof table === "object" && Array.isArray(table.rows)) {
+          candidates.push(...extractCandidatesFromRows(table.rows));
+        }
+      }
+      if (candidates.length > 0) {
+        return candidates;
+      }
+    }
+
+    // 3. Try nested data format (only if no candidates found yet)
+    if (candidates.length === 0 && data.data && typeof data.data === "object") {
+      const nestedData = data.data;
+
+      // Check for candidates in nested data
+      if (Array.isArray(nestedData.candidates)) {
+        candidates = nestedData.candidates;
+        if (candidates.length > 0) {
+          return candidates;
+        }
+      }
+
+      // Check for tables in nested data
+      if (candidates.length === 0 && Array.isArray(nestedData.tables)) {
+        for (const table of nestedData.tables) {
+          if (table && typeof table === "object" && Array.isArray(table.rows)) {
+            candidates.push(...extractCandidatesFromRows(table.rows));
+          }
+        }
+        if (candidates.length > 0) {
+          return candidates;
+        }
+      }
+    }
+
+    return candidates;
   };
 
   // Calculate statistics
@@ -463,7 +607,7 @@ export default function ReductoExtractionPage() {
     setExamType(undefined);
     setExamSeries(undefined);
     setExamYear(undefined);
-    setFilters({ page: 1, page_size: 20 });
+    setFilters({ page: 1, page_size: 50 });
     setSelectedDocuments(new Set());
   };
 
@@ -773,47 +917,77 @@ export default function ReductoExtractionPage() {
             )}
           </div>
 
-          {/* Actions */}
-          <div className="flex items-center justify-between px-6">
-            <div className="flex items-center gap-4">
-              {selectedDocuments.size > 0 && (
-                <Badge variant="secondary" className="bg-blue-100 text-blue-800 border-blue-300">
-                  <Users className="h-3 w-3 mr-1" />
-                  {selectedDocuments.size} document{selectedDocuments.size !== 1 ? 's' : ''} selected
-                </Badge>
-              )}
-              {isPolling && (
-                <Badge variant="outline" className="text-xs">
-                  <RefreshCw className="h-3 w-3 mr-1 animate-spin" />
-                  Auto-refreshing...
-                </Badge>
-              )}
-            </div>
-            <Button
-              onClick={handleQueueForReducto}
-              disabled={selectedDocuments.size === 0 || queuing}
-              size="lg"
-            >
-              {queuing ? (
-                <>
-                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                  Queueing...
-                </>
-              ) : (
-                <>
-                  <Send className="mr-2 h-4 w-4" />
-                  Queue {selectedDocuments.size > 0 ? `${selectedDocuments.size} ` : ''}for Reducto
-                </>
-              )}
-            </Button>
-          </div>
-
           {/* Documents Table */}
-          <Card className="flex-1 overflow-hidden flex flex-col mx-6 mb-6">
-            {/* <CardHeader>
-              <CardTitle>Documents</CardTitle>
-            </CardHeader> */}
+          <Card className="flex-1 overflow-hidden flex flex-col mx-6 mb-6 mt-6">
+            <CardHeader className="border-b border-border">
+              <div className="flex items-center justify-between">
+                <CardTitle>Documents</CardTitle>
+                <div className="flex items-center gap-4">
+                  {selectedDocuments.size > 0 && (
+                    <Badge variant="secondary" className="bg-blue-100 text-blue-800 border-blue-300">
+                      <Users className="h-3 w-3 mr-1" />
+                      {selectedDocuments.size} document{selectedDocuments.size !== 1 ? 's' : ''} selected
+                    </Badge>
+                  )}
+                  {isPolling && (
+                    <Badge variant="outline" className="text-xs">
+                      <RefreshCw className="h-3 w-3 mr-1 animate-spin" />
+                      Auto-refreshing...
+                    </Badge>
+                  )}
+                  <Button
+                    onClick={handleQueueForReducto}
+                    disabled={selectedDocuments.size === 0 || queuing}
+                    size="lg"
+                  >
+                    {queuing ? (
+                      <>
+                        <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                        Queueing...
+                      </>
+                    ) : (
+                      <>
+                        <Send className="mr-2 h-4 w-4" />
+                        Queue {selectedDocuments.size > 0 ? `${selectedDocuments.size} ` : ''}for Reducto
+                      </>
+                    )}
+                  </Button>
+                </div>
+              </div>
+            </CardHeader>
             <CardContent className="flex-1 overflow-auto">
+              {/* Page Size Selector and Pagination Info */}
+              <div className="flex items-center justify-between mb-4 pb-4 border-b border-border">
+                <div className="flex items-center gap-2">
+                  <span className="text-sm text-muted-foreground">Show</span>
+                  <Select
+                    value={(filters.page_size || 50).toString()}
+                    onValueChange={(value) => {
+                      setFilters((prev) => ({
+                        ...prev,
+                        page_size: parseInt(value, 10),
+                        page: 1, // Reset to first page when page size changes
+                      }));
+                    }}
+                  >
+                    <SelectTrigger className="h-8 w-[100px]">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="20">20</SelectItem>
+                      <SelectItem value="50">50</SelectItem>
+                      <SelectItem value="100">100</SelectItem>
+                      <SelectItem value="200">200</SelectItem>
+                      <SelectItem value="500">500</SelectItem>
+                      <SelectItem value="1000">1000</SelectItem>
+                    </SelectContent>
+                  </Select>
+                  <span className="text-sm text-muted-foreground">per page</span>
+                </div>
+                <div className="text-sm text-muted-foreground">
+                  Showing {documents.length > 0 ? ((currentPage - 1) * (filters.page_size || 50) + 1) : 0} to {Math.min(currentPage * (filters.page_size || 50), total)} of {total} documents
+                </div>
+              </div>
               {error && (
                 <div className="mb-4 rounded-lg bg-destructive/10 border border-destructive/20 p-4 text-destructive">
                   {error}
@@ -855,7 +1029,7 @@ export default function ReductoExtractionPage() {
                         <TableCell colSpan={6} className="text-center text-muted-foreground py-8">
                           <div className="flex flex-col items-center gap-2">
                             <FileText className="h-12 w-12 text-muted-foreground/50" />
-                            <p className="font-medium">No unprocessed documents found</p>
+                            <p className="font-medium">No documents found</p>
                             <p className="text-sm">Try adjusting your filters or check back later</p>
                           </div>
                         </TableCell>
@@ -863,7 +1037,8 @@ export default function ReductoExtractionPage() {
                     ) : (
                       documents.map((document) => {
                         const status = document.scores_extraction_status;
-                        const canPreview = status === "success" || status === "processing";
+                        // Only show preview data button if document has extraction data
+                        const canPreview = (status === "success" || status === "processing") && document.scores_extraction_data;
                         const canUpdate = status === "success";
                         const rowClass = status === "error"
                           ? "bg-red-50/50 hover:bg-red-100/50"
@@ -890,6 +1065,14 @@ export default function ReductoExtractionPage() {
                           </TableCell>
                           <TableCell className="text-right">
                             <div className="flex items-center justify-end gap-2">
+                              <Button
+                                variant="outline"
+                                size="sm"
+                                onClick={() => handleViewDocument(document)}
+                              >
+                                <Eye className="h-4 w-4 mr-1" />
+                                View Document
+                              </Button>
                               {canPreview && (
                                 <Button
                                   variant="outline"
@@ -898,7 +1081,7 @@ export default function ReductoExtractionPage() {
                                   disabled={loadingPreview}
                                 >
                                   <Eye className="h-4 w-4 mr-1" />
-                                  Preview
+                                  Preview Data
                                 </Button>
                               )}
                               {canUpdate && (
@@ -933,7 +1116,7 @@ export default function ReductoExtractionPage() {
 
               {/* Pagination */}
               {totalPages > 1 && (
-                <div className="flex items-center justify-between mt-4">
+                <div className="flex items-center justify-between mt-4 pt-4 border-t border-border">
                   <div className="text-sm text-muted-foreground">
                     Page {currentPage} of {totalPages}
                   </div>
@@ -1012,10 +1195,23 @@ export default function ReductoExtractionPage() {
         </div>
       </div>
 
+      {/* Document Viewer */}
+      {selectedDocument && (
+        <DocumentViewer
+          document={selectedDocument}
+          documents={documents}
+          currentIndex={selectedIndex}
+          open={viewerOpen}
+          onClose={handleCloseViewer}
+          onNavigate={handleNavigate}
+          onDownload={handleDownload}
+        />
+      )}
+
       {/* Preview Dialog */}
       <Dialog open={previewOpen} onOpenChange={setPreviewOpen}>
-        <DialogContent className="max-w-4xl max-h-[80vh] overflow-auto">
-          <DialogHeader>
+        <DialogContent className="min-w-[80vw] xl:max-w-6xl w-full max-h-[95vh] overflow-hidden p-0">
+          <DialogHeader className="px-6 pt-6 pb-4">
             <DialogTitle>
               Preview Reducto Data - {previewDocument?.extracted_id || previewDocument?.file_name}
             </DialogTitle>
@@ -1024,80 +1220,152 @@ export default function ReductoExtractionPage() {
             </DialogDescription>
           </DialogHeader>
           {loadingPreview ? (
-            <div className="flex items-center justify-center h-32">
+            <div className="flex items-center justify-center h-96 px-6">
               <Loader2 className="h-6 w-6 animate-spin" />
             </div>
-          ) : previewData ? (
-            <div className="space-y-4">
-              <div className="grid grid-cols-2 gap-4 text-sm">
-                <div>
-                  <span className="font-medium">Status:</span> {previewData.status}
+          ) : previewData && previewDocument ? (
+            <div className="flex flex-row h-[calc(95vh-8rem)] overflow-hidden">
+              {/* Left side - Document Preview */}
+              <div className="flex-1 overflow-y-auto px-6 pb-6 bg-muted/30 border-r border-border">
+                <div className="sticky top-0 bg-background border-b border-border pb-4 mb-4 pt-4 z-10">
+                  <h3 className="font-medium text-sm mb-2">Document Preview</h3>
+                  <p className="text-xs text-muted-foreground">{previewDocument.file_name}</p>
                 </div>
-                <div>
-                  <span className="font-medium">Confidence:</span>{" "}
-                  {previewData.confidence ? `${(previewData.confidence * 100).toFixed(1)}%` : "N/A"}
-                </div>
-                {previewData.extracted_at && (
-                  <div>
-                    <span className="font-medium">Extracted At:</span>{" "}
-                    {new Date(previewData.extracted_at).toLocaleString()}
-                  </div>
-                )}
-              </div>
-
-              {/* View Toggle */}
-              <Tabs value={previewViewMode} onValueChange={(value) => setPreviewViewMode(value as "table" | "json")}>
-                <TabsList className="grid w-full grid-cols-2">
-                  <TabsTrigger value="table">Table View</TabsTrigger>
-                  <TabsTrigger value="json">JSON / Raw</TabsTrigger>
-                </TabsList>
-
-                <TabsContent value="table" className="mt-4">
-                  {previewData.data?.candidates && Array.isArray(previewData.data.candidates) ? (
-                    <div>
-                      <h3 className="font-medium mb-2">Candidates ({previewData.data.candidates.length})</h3>
-                      <div className="border rounded-lg overflow-auto max-h-96">
-                        <Table>
-                          <TableHeader>
-                            <TableRow>
-                              <TableHead>Index Number</TableHead>
-                              <TableHead>Name</TableHead>
-                              <TableHead>Score</TableHead>
-                              <TableHead>Attendance</TableHead>
-                            </TableRow>
-                          </TableHeader>
-                          <TableBody>
-                            {previewData.data.candidates.map((candidate: any, idx: number) => (
-                              <TableRow key={idx}>
-                                <TableCell>{candidate.index_number || "-"}</TableCell>
-                                <TableCell>{candidate.candidate_name || "-"}</TableCell>
-                                <TableCell>{candidate.score || "-"}</TableCell>
-                                <TableCell>{candidate.attend ? "✓" : "-"}</TableCell>
-                              </TableRow>
-                            ))}
-                          </TableBody>
-                        </Table>
-                      </div>
-                    </div>
-                  ) : (
-                    <div className="text-sm text-muted-foreground">
-                      <p>No candidate data available in table format.</p>
+                <div className="flex items-center justify-center min-h-[400px] relative">
+                  {imageLoading && (
+                    <div className="absolute inset-0 flex items-center justify-center">
+                      <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
                     </div>
                   )}
-                </TabsContent>
+                  {imageError ? (
+                    <div className="flex flex-col items-center justify-center text-muted-foreground">
+                      <FileText className="h-12 w-12 mb-2" />
+                      <p className="text-sm">Failed to load document image</p>
+                    </div>
+                  ) : previewDocument.mime_type?.startsWith("image/") ? (
+                    <img
+                      src={`${API_BASE_URL}/api/v1/documents/${previewDocument.id}/download`}
+                      alt={previewDocument.extracted_id || previewDocument.file_name}
+                      className="max-w-full max-h-[calc(95vh-12rem)] object-contain rounded-lg shadow-lg"
+                      onLoad={() => setImageLoading(false)}
+                      onError={() => {
+                        setImageLoading(false);
+                        setImageError(true);
+                      }}
+                      style={{ display: imageLoading ? "none" : "block" }}
+                    />
+                  ) : (
+                    <div className="flex flex-col items-center justify-center text-muted-foreground">
+                      <FileText className="h-12 w-12 mb-2" />
+                      <p className="text-sm">Document preview not available for this file type</p>
+                      <p className="text-xs mt-1">MIME type: {previewDocument.mime_type}</p>
+                    </div>
+                  )}
+                </div>
+              </div>
 
-                <TabsContent value="json" className="mt-4">
-                  <div className="text-sm">
-                    <h3 className="font-medium mb-2">Raw JSON Data</h3>
-                    <pre className="bg-muted p-4 rounded overflow-auto max-h-96 text-xs">
-                      {JSON.stringify(previewData.data, null, 2)}
-                    </pre>
+              {/* Right side - Extraction Data */}
+              <div className="flex-1 overflow-y-auto px-6 pb-6">
+                <div className="space-y-4">
+                  <div className="grid grid-cols-2 gap-4 text-sm">
+                    <div>
+                      <span className="font-medium">Status:</span> {previewData.status}
+                    </div>
+                    <div>
+                      <span className="font-medium">Confidence:</span>{" "}
+                      {previewData.confidence ? `${(previewData.confidence * 100).toFixed(1)}%` : "N/A"}
+                    </div>
+                    {previewData.extracted_at && (
+                      <div>
+                        <span className="font-medium">Extracted At:</span>{" "}
+                        {new Date(previewData.extracted_at).toLocaleString()}
+                      </div>
+                    )}
                   </div>
-                </TabsContent>
-              </Tabs>
+
+                  {/* View Toggle */}
+                  <Tabs value={previewViewMode} onValueChange={(value) => setPreviewViewMode(value as "table" | "json")}>
+                    <TabsList className="grid w-full grid-cols-2">
+                      <TabsTrigger value="table">Table View</TabsTrigger>
+                      <TabsTrigger value="json">JSON / Raw</TabsTrigger>
+                    </TabsList>
+
+                    <TabsContent value="table" className="mt-4">
+                      {(() => {
+                        const candidates = parseCandidatesFromData(previewData.data);
+                        if (candidates.length > 0) {
+                          return (
+                            <div>
+                              <h3 className="font-medium mb-2">Candidates ({candidates.length})</h3>
+                              <div className="border rounded-lg overflow-auto max-h-[calc(95vh-20rem)]">
+                                <Table>
+                                  <TableHeader>
+                                    <TableRow>
+                                      <TableHead>SN</TableHead>
+                                      <TableHead>Index Number</TableHead>
+                                      <TableHead>Name</TableHead>
+                                      <TableHead>Attendance</TableHead>
+                                      <TableHead>Score</TableHead>
+                                      <TableHead>Verify</TableHead>
+                                    </TableRow>
+                                  </TableHeader>
+                                  <TableBody>
+                                    {candidates.map((candidate: any, idx: number) => (
+                                      <TableRow key={idx}>
+                                        <TableCell>{candidate.sn || idx + 1}</TableCell>
+                                        <TableCell>{candidate.index_number || "-"}</TableCell>
+                                        <TableCell>{candidate.candidate_name || "-"}</TableCell>
+                                        <TableCell>
+                                          {candidate.attend
+                                            ? (typeof candidate.attend === "string" && (candidate.attend === "A" || candidate.attend === "AA")
+                                              ? candidate.attend
+                                              : "✓")
+                                            : "-"}
+                                        </TableCell>
+                                        <TableCell>{candidate.score || "-"}</TableCell>
+                                        <TableCell>
+                                          {candidate.verify
+                                            ? (typeof candidate.verify === "string" && (candidate.verify === "A" || candidate.verify === "AA")
+                                              ? candidate.verify
+                                              : candidate.verify === true || candidate.verify === "✓" || candidate.verify === "✔" || candidate.verify === "√"
+                                              ? "✓"
+                                              : String(candidate.verify))
+                                            : "-"}
+                                        </TableCell>
+                                      </TableRow>
+                                    ))}
+                                  </TableBody>
+                                </Table>
+                              </div>
+                            </div>
+                          );
+                        } else {
+                          return (
+                            <div className="text-sm text-muted-foreground">
+                              <p>No candidate data available in table format.</p>
+                              <p className="mt-2 text-xs">The data structure may not match expected formats (candidates, tables, or nested data).</p>
+                            </div>
+                          );
+                        }
+                      })()}
+                    </TabsContent>
+
+                    <TabsContent value="json" className="mt-4">
+                      <div className="text-sm">
+                        <h3 className="font-medium mb-2">Raw JSON Data</h3>
+                        <pre className="bg-muted p-4 rounded overflow-auto max-h-[calc(95vh-20rem)] text-xs">
+                          {JSON.stringify(previewData.data, null, 2)}
+                        </pre>
+                      </div>
+                    </TabsContent>
+                  </Tabs>
+                </div>
+              </div>
             </div>
           ) : (
-            <p className="text-sm text-muted-foreground">No preview data available</p>
+            <div className="px-6 pb-6">
+              <p className="text-sm text-muted-foreground">No preview data available</p>
+            </div>
           )}
         </DialogContent>
       </Dialog>
