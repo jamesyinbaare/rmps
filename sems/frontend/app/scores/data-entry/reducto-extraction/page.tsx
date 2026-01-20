@@ -917,47 +917,77 @@ export default function ReductoExtractionPage() {
             )}
           </div>
 
-          {/* Actions */}
-          <div className="flex items-center justify-between px-6">
-            <div className="flex items-center gap-4">
-              {selectedDocuments.size > 0 && (
-                <Badge variant="secondary" className="bg-blue-100 text-blue-800 border-blue-300">
-                  <Users className="h-3 w-3 mr-1" />
-                  {selectedDocuments.size} document{selectedDocuments.size !== 1 ? 's' : ''} selected
-                </Badge>
-              )}
-              {isPolling && (
-                <Badge variant="outline" className="text-xs">
-                  <RefreshCw className="h-3 w-3 mr-1 animate-spin" />
-                  Auto-refreshing...
-                </Badge>
-              )}
-            </div>
-            <Button
-              onClick={handleQueueForReducto}
-              disabled={selectedDocuments.size === 0 || queuing}
-              size="lg"
-            >
-              {queuing ? (
-                <>
-                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                  Queueing...
-                </>
-              ) : (
-                <>
-                  <Send className="mr-2 h-4 w-4" />
-                  Queue {selectedDocuments.size > 0 ? `${selectedDocuments.size} ` : ''}for Reducto
-                </>
-              )}
-            </Button>
-          </div>
-
           {/* Documents Table */}
-          <Card className="flex-1 overflow-hidden flex flex-col mx-6 mb-6">
-            {/* <CardHeader>
-              <CardTitle>Documents</CardTitle>
-            </CardHeader> */}
+          <Card className="flex-1 overflow-hidden flex flex-col mx-6 mb-6 mt-6">
+            <CardHeader className="border-b border-border">
+              <div className="flex items-center justify-between">
+                <CardTitle>Documents</CardTitle>
+                <div className="flex items-center gap-4">
+                  {selectedDocuments.size > 0 && (
+                    <Badge variant="secondary" className="bg-blue-100 text-blue-800 border-blue-300">
+                      <Users className="h-3 w-3 mr-1" />
+                      {selectedDocuments.size} document{selectedDocuments.size !== 1 ? 's' : ''} selected
+                    </Badge>
+                  )}
+                  {isPolling && (
+                    <Badge variant="outline" className="text-xs">
+                      <RefreshCw className="h-3 w-3 mr-1 animate-spin" />
+                      Auto-refreshing...
+                    </Badge>
+                  )}
+                  <Button
+                    onClick={handleQueueForReducto}
+                    disabled={selectedDocuments.size === 0 || queuing}
+                    size="lg"
+                  >
+                    {queuing ? (
+                      <>
+                        <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                        Queueing...
+                      </>
+                    ) : (
+                      <>
+                        <Send className="mr-2 h-4 w-4" />
+                        Queue {selectedDocuments.size > 0 ? `${selectedDocuments.size} ` : ''}for Reducto
+                      </>
+                    )}
+                  </Button>
+                </div>
+              </div>
+            </CardHeader>
             <CardContent className="flex-1 overflow-auto">
+              {/* Page Size Selector and Pagination Info */}
+              <div className="flex items-center justify-between mb-4 pb-4 border-b border-border">
+                <div className="flex items-center gap-2">
+                  <span className="text-sm text-muted-foreground">Show</span>
+                  <Select
+                    value={(filters.page_size || 50).toString()}
+                    onValueChange={(value) => {
+                      setFilters((prev) => ({
+                        ...prev,
+                        page_size: parseInt(value, 10),
+                        page: 1, // Reset to first page when page size changes
+                      }));
+                    }}
+                  >
+                    <SelectTrigger className="h-8 w-[100px]">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="20">20</SelectItem>
+                      <SelectItem value="50">50</SelectItem>
+                      <SelectItem value="100">100</SelectItem>
+                      <SelectItem value="200">200</SelectItem>
+                      <SelectItem value="500">500</SelectItem>
+                      <SelectItem value="1000">1000</SelectItem>
+                    </SelectContent>
+                  </Select>
+                  <span className="text-sm text-muted-foreground">per page</span>
+                </div>
+                <div className="text-sm text-muted-foreground">
+                  Showing {documents.length > 0 ? ((currentPage - 1) * (filters.page_size || 50) + 1) : 0} to {Math.min(currentPage * (filters.page_size || 50), total)} of {total} documents
+                </div>
+              </div>
               {error && (
                 <div className="mb-4 rounded-lg bg-destructive/10 border border-destructive/20 p-4 text-destructive">
                   {error}
@@ -1086,7 +1116,7 @@ export default function ReductoExtractionPage() {
 
               {/* Pagination */}
               {totalPages > 1 && (
-                <div className="flex items-center justify-between mt-4">
+                <div className="flex items-center justify-between mt-4 pt-4 border-t border-border">
                   <div className="text-sm text-muted-foreground">
                     Page {currentPage} of {totalPages}
                   </div>

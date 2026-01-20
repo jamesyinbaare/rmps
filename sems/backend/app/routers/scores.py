@@ -51,7 +51,7 @@ router = APIRouter(prefix="/api/v1/scores", tags=["scores"])
 async def get_filtered_documents(
     session: DBSessionDep,
     page: int = Query(1, ge=1),
-    page_size: int = Query(20, ge=1, le=100),
+    page_size: int = Query(20, ge=1, le=1000),
     exam_id: int | None = Query(None),
     exam_type: ExamType | None = Query(None, description="Filter by examination type"),
     series: ExamSeries | None = Query(None, description="Filter by examination series"),

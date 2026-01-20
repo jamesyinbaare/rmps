@@ -32,6 +32,7 @@ class Settings(BaseSettings):
     reducto_api_key: str | None = None
     reducto_api_url: str = "https://api.reducto.ai"
     reducto_rate_limit_per_second: float = 10.0  # Rate limit for Reducto API requests (requests per second)
+    reducto_queue_workers: int | None = None  # Number of worker threads. If None, auto-calculated from rate limit
     reducto_extraction_prompt: str = (
         "Extract examination score data from this document. "
         "Focus on the main score table containing candidate information. "
