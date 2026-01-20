@@ -2,6 +2,7 @@ from datetime import datetime
 import logging
 
 from fastapi import APIRouter, HTTPException, Query, status
+from fastapi.responses import StreamingResponse
 from sqlalchemy import func, or_, select
 
 from app.dependencies.database import DBSessionDep
@@ -18,6 +19,7 @@ from app.models import (
     Subject,
     SubjectRegistration,
     SubjectScore,
+    SubjectType,
     DataExtractionMethod,
     UnmatchedExtractionRecord,
     UnmatchedRecordStatus,
@@ -38,6 +40,7 @@ from app.schemas.score import (
     UpdateScoresFromReductoResponse,
 )
 from app.utils.score_utils import add_extraction_method_to_document, calculate_grade, parse_score_value
+from app.services.results_export import generate_results_export
 
 logger = logging.getLogger(__name__)
 
@@ -546,9 +549,10 @@ async def get_candidates_for_manual_entry(
     school_id: int | None = Query(None, description="Filter by school ID"),
     programme_id: int | None = Query(None),
     subject_id: int | None = Query(None),
+    subject_type: SubjectType | None = Query(None, description="Filter by subject type (CORE or ELECTIVE)"),
     document_id: str | None = Query(None, description="Filter by document ID (extracted_id) - matches obj_document_id, essay_document_id, or pract_document_id"),
     page: int = Query(1, ge=1),
-    page_size: int = Query(20, ge=1, le=100),
+    page_size: int = Query(20, ge=1, le=10000),
 ) -> CandidateScoreListResponse:
     """Get candidates with existing scores for manual entry, filtered by exam, programme, and subject."""
     offset = (page - 1) * page_size
@@ -593,6 +597,8 @@ async def get_candidates_for_manual_entry(
         base_stmt = base_stmt.where(Candidate.programme_id == programme_id)
     if subject_id is not None:
         base_stmt = base_stmt.where(Subject.id == subject_id)
+    if subject_type is not None:
+        base_stmt = base_stmt.where(Subject.subject_type == subject_type)
     if document_id is not None:
         # Filter by document_id matching any of obj_document_id, essay_document_id, or pract_document_id
         base_stmt = base_stmt.where(
@@ -633,6 +639,8 @@ async def get_candidates_for_manual_entry(
         count_base_stmt = count_base_stmt.where(Candidate.programme_id == programme_id)
     if subject_id is not None:
         count_base_stmt = count_base_stmt.where(Subject.id == subject_id)
+    if subject_type is not None:
+        count_base_stmt = count_base_stmt.where(Subject.subject_type == subject_type)
     if document_id is not None:
         # Filter by document_id matching any of obj_document_id, essay_document_id, or pract_document_id
         count_base_stmt = count_base_stmt.where(
@@ -1383,3 +1391,111 @@ async def ignore_unmatched_record(record_id: int, session: DBSessionDep) -> dict
     await session.commit()
 
     return {"message": "Record ignored successfully", "record_id": record_id}
+
+
+@router.get("/export")
+async def export_candidate_results(
+    session: DBSessionDep,
+    exam_id: int | None = Query(None, description="Filter by exam ID"),
+    exam_type: ExamType | None = Query(None, description="Filter by examination type"),
+    series: ExamSeries | None = Query(None, description="Filter by examination series"),
+    year: int | None = Query(None, ge=1900, le=2100, description="Filter by examination year"),
+    school_id: int | None = Query(None, description="Filter by school ID"),
+    programme_id: int | None = Query(None, description="Filter by programme ID"),
+    subject_id: int | None = Query(None, description="Filter by subject ID"),
+    document_id: str | None = Query(None, description="Filter by document ID (extracted_id) - matches obj_document_id, essay_document_id, or pract_document_id"),
+    fields: str = Query(..., description="Comma-separated list of fields to export. Available fields: candidate_name, candidate_index_number, school_name, school_code, exam_name, exam_type, exam_year, exam_series, programme_name, programme_code, subject_name, subject_code, subject_series, obj_raw_score, essay_raw_score, pract_raw_score, obj_normalized, essay_normalized, pract_normalized, total_score, grade, obj_document_id, essay_document_id, pract_document_id, created_at, updated_at"),
+    subject_type: SubjectType | None = Query(None, description="Filter by subject type (CORE or ELECTIVE). If ELECTIVE, programme_id is required. Mutually exclusive with subject_id."),
+) -> StreamingResponse:
+    """
+    Export candidate processed results as Excel file.
+
+    Returns an Excel file with candidate results filtered by the specified criteria.
+    Fields parameter is required and should be a comma-separated list of field names to include.
+
+    Filtering rules:
+    - subject_type and subject_id are mutually exclusive
+    - If subject_type is ELECTIVE, programme_id is required
+    - If subject_type is CORE, exports all core subjects (each on separate sheet)
+    - If subject_type is ELECTIVE, exports all elective subjects for the programme (each on separate sheet)
+    - If subject_id is specified, exports single subject (single sheet)
+    """
+    try:
+        # Parse fields parameter
+        fields_list = [f.strip() for f in fields.split(",") if f.strip()]
+
+        if not fields_list:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="At least one field must be specified"
+            )
+
+        # Validate filter combinations
+        if subject_type is not None and subject_id is not None:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="subject_type and subject_id cannot both be specified"
+            )
+
+        if subject_type == SubjectType.ELECTIVE and programme_id is None:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="programme_id is required when subject_type is ELECTIVE"
+            )
+
+        # Generate Excel export
+        excel_bytes = await generate_results_export(
+            session=session,
+            exam_id=exam_id,
+            exam_type=exam_type,
+            series=series,
+            year=year,
+            school_id=school_id,
+            programme_id=programme_id,
+            subject_id=subject_id,
+            document_id=document_id,
+            fields=fields_list,
+            subject_type=subject_type,
+        )
+
+        # Generate descriptive filename based on filters
+        from app.services.results_export import generate_export_filename
+        try:
+            filename = await generate_export_filename(
+                session=session,
+                exam_id=exam_id,
+                exam_type=exam_type,
+                series=series,
+                year=year,
+                subject_type=subject_type,
+                programme_id=programme_id,
+                subject_id=subject_id,
+            )
+        except Exception as e:
+            # Fallback to timestamp-based filename if generation fails
+            logger.error(f"Error generating export filename: {e}")
+            from datetime import datetime
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            filename = f"candidate_results_export_{timestamp}.xlsx"
+
+        # Use RFC 5987 format for filenames with special characters
+        # This ensures proper encoding and browser compatibility
+        from urllib.parse import quote
+        encoded_filename = quote(filename, safe='')
+        content_disposition = f'attachment; filename="{filename}"; filename*=UTF-8\'\'{encoded_filename}'
+        return StreamingResponse(
+            iter([excel_bytes]),
+            media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            headers={"Content-Disposition": content_disposition},
+        )
+    except ValueError as e:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(e)
+        )
+    except Exception as e:
+        logger.error(f"Error generating export: {str(e)}", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to generate export: {str(e)}"
+        )
