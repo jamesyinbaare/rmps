@@ -145,6 +145,10 @@ const getNavMain = (userRole?: UserRole | number) => {
         url: "/scores/processed",
       },
       {
+        title: "Export Results",
+        url: "/scores/export",
+      },
+      {
         title: "Unmatched Records",
         url: "/scores/unmatched-records",
       },

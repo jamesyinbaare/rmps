@@ -1774,12 +1774,82 @@ export async function getCandidatesForManualEntry(
   if (filters.school_id) params.append("school_id", filters.school_id.toString());
   if (filters.programme_id) params.append("programme_id", filters.programme_id.toString());
   if (filters.subject_id) params.append("subject_id", filters.subject_id.toString());
+  if (filters.subject_type) params.append("subject_type", filters.subject_type);
   if (filters.document_id) params.append("document_id", filters.document_id);
   if (filters.page) params.append("page", filters.page.toString());
   if (filters.page_size) params.append("page_size", filters.page_size.toString());
 
   const response = await fetch(`${API_BASE_URL}/api/v1/scores/candidates?${params.toString()}`);
   return handleResponse<CandidateScoreListResponse>(response);
+}
+
+export async function exportCandidateResults(
+  filters: ManualEntryFilters,
+  fields: string[],
+  subjectType?: "CORE" | "ELECTIVE"
+): Promise<void> {
+  const params = new URLSearchParams();
+  if (filters.exam_id) params.append("exam_id", filters.exam_id.toString());
+  if (filters.exam_type) params.append("exam_type", filters.exam_type);
+  if (filters.series) params.append("series", filters.series);
+  if (filters.year) params.append("year", filters.year.toString());
+  if (filters.school_id) params.append("school_id", filters.school_id.toString());
+  if (filters.programme_id) params.append("programme_id", filters.programme_id.toString());
+  if (filters.subject_id) params.append("subject_id", filters.subject_id.toString());
+  if (filters.document_id) params.append("document_id", filters.document_id);
+
+  // Add fields parameter
+  params.append("fields", fields.join(","));
+  // Add subject type parameter if provided
+  if (subjectType) {
+    params.append("subject_type", subjectType);
+  }
+
+  const response = await fetch(`${API_BASE_URL}/api/v1/scores/export?${params.toString()}`, {
+    method: "GET",
+    headers: getAuthHeaders(),
+  });
+
+  if (!response.ok) {
+    const error = await response.json().catch(() => ({ detail: "Failed to export results" }));
+    throw new Error(error.detail || "Failed to export results");
+  }
+
+  // Get filename from Content-Disposition header or use default
+  const contentDisposition = response.headers.get("Content-Disposition");
+  let filename = "candidate_results_export.xlsx";
+  if (contentDisposition) {
+    // Try to extract filename from Content-Disposition header
+    // Handle formats: filename="value", filename=value, filename*=UTF-8''value
+    // Pattern 1: filename="value" (with quotes)
+    let filenameMatch = contentDisposition.match(/filename="([^"]+)"/);
+    if (filenameMatch && filenameMatch[1]) {
+      filename = filenameMatch[1];
+    } else {
+      // Pattern 2: filename=value (without quotes)
+      filenameMatch = contentDisposition.match(/filename=([^;]+)/);
+      if (filenameMatch && filenameMatch[1]) {
+        filename = filenameMatch[1].trim();
+      } else {
+        // Pattern 3: RFC 5987 format: filename*=UTF-8''value
+        filenameMatch = contentDisposition.match(/filename\*=UTF-8''(.+)/);
+        if (filenameMatch && filenameMatch[1]) {
+          filename = decodeURIComponent(filenameMatch[1]);
+        }
+      }
+    }
+  }
+
+  // Create blob and download
+  const blob = await response.blob();
+  const url = window.URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  window.URL.revokeObjectURL(url);
+  document.body.removeChild(a);
 }
 
 export async function batchUpdateScoresForManualEntry(

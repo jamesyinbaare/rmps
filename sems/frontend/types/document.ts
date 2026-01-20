@@ -443,6 +443,7 @@ export interface ManualEntryFilters {
   school_id?: number;
   programme_id?: number;
   subject_id?: number;
+  subject_type?: "CORE" | "ELECTIVE";
   document_id?: string;
   page?: number;
   page_size?: number;
