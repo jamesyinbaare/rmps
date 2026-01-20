@@ -128,3 +128,13 @@ class ReductoStatusResponse(BaseModel):
     scores_extraction_confidence: float | None
     scores_extracted_at: datetime | None
     queue_position: int | None = None
+
+
+class BackfillTestTypeResponse(BaseModel):
+    """Response schema for backfill operation."""
+
+    total_found: int  # Total documents with extracted_id but missing fields
+    updated: int  # Successfully updated documents
+    failed: int  # Documents that failed to update
+    skipped: int  # Documents skipped (invalid extracted_id, validation failed, etc.)
+    errors: list[dict[str, str]]  # List of errors with document_id and error message

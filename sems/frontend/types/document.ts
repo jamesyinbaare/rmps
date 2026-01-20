@@ -788,3 +788,15 @@ export interface UserListFilters {
   page?: number;
   page_size?: number;
 }
+
+export interface BackfillTestTypeResponse {
+  total_found: number;
+  updated: number;
+  failed: number;
+  skipped: number;
+  errors: Array<{
+    document_id: string;
+    extracted_id: string;
+    error: string;
+  }>;
+}
