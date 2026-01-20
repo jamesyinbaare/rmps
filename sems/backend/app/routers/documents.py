@@ -1,4 +1,5 @@
 from datetime import datetime
+import logging
 from typing import Any
 
 from fastapi import APIRouter, BackgroundTasks, File, Form, HTTPException, Query, UploadFile, status
@@ -7,8 +8,10 @@ from sqlalchemy import func, select
 
 from app.config import settings
 from app.dependencies.database import DBSessionDep, get_sessionmanager
-from app.models import Document, Exam, ExamType, ExamSeries, DataExtractionMethod
+from app.dependencies.auth import RegistrarDep
+from app.models import Document, Exam, ExamType, ExamSeries, DataExtractionMethod, School, Subject
 from app.schemas.document import (
+    BackfillTestTypeResponse,
     BulkUploadResponse,
     ContentExtractionResponse,
     DocumentListResponse,
@@ -21,11 +24,13 @@ from app.schemas.document import (
 )
 from app.schemas.id_extraction import IDExtractionResponse
 from app.services.content_extraction import content_extraction_service
-from app.services.id_extraction import id_extraction_service
+from app.services.id_extraction import id_extraction_service, IDValidator
 from app.services.reducto_queue import reducto_queue_service
 from app.services.storage import storage_service
 from app.utils.file_utils import calculate_checksum
 from app.utils.score_utils import add_extraction_method_to_document
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/v1/documents", tags=["documents"])
 
@@ -616,6 +621,24 @@ async def update_document_id(document_id: int, update: DocumentUpdate, session: 
         document.sheet_number = update.sheet_number
     if update.extracted_id is not None:
         document.extracted_id = update.extracted_id
+
+        # Parse extracted_id to extract test_type, subject_series, and sheet_number
+        try:
+            validator = IDValidator()
+            validation_result = validator.parse_id(update.extracted_id)
+
+            if validation_result.is_valid:
+                # Only set these if not explicitly provided in update
+                if update.test_type is None:
+                    document.test_type = validation_result.test_type
+                if update.subject_series is None:
+                    document.subject_series = validation_result.subject_series
+                if update.sheet_number is None:
+                    document.sheet_number = validation_result.sheet_number
+        except Exception as e:
+            # Log warning but don't fail the update
+            logger.warning(f"Failed to parse extracted_id {update.extracted_id}: {e}")
+
     if update.id_extraction_method is not None:
         document.id_extraction_method = update.id_extraction_method
     if update.id_extraction_confidence is not None:
@@ -709,4 +732,116 @@ async def get_reducto_status(document_id: int, session: DBSessionDep) -> Reducto
         scores_extraction_confidence=document.scores_extraction_confidence,
         scores_extracted_at=document.scores_extracted_at,
         queue_position=queue_position,
+    )
+
+
+@router.post("/admin/backfill-from-extracted-id", response_model=BackfillTestTypeResponse)
+async def backfill_from_extracted_id(
+    session: DBSessionDep,
+    _current_user: RegistrarDep,  # Require REGISTRAR role or above (used for authorization)
+    dry_run: bool = Query(False, description="If true, only report what would be updated without making changes"),
+) -> BackfillTestTypeResponse:
+    """Backfill test_type, subject_series, sheet_number, school_id, and subject_id from extracted_id for existing documents."""
+    # Find documents with extracted_id but missing at least one field
+    stmt = select(Document).where(
+        Document.extracted_id.isnot(None),
+        (
+            (Document.test_type.is_(None))
+            | (Document.subject_series.is_(None))
+            | (Document.sheet_number.is_(None))
+            | (Document.school_id.is_(None))
+            | (Document.subject_id.is_(None))
+        )
+    )
+    result = await session.execute(stmt)
+    documents = result.scalars().all()
+
+    total_found = len(documents)
+    updated = 0
+    failed = 0
+    skipped = 0
+    errors: list[dict[str, str]] = []
+
+    validator = IDValidator()
+
+    for document in documents:
+        try:
+            # Parse extracted_id
+            validation_result = validator.parse_id(document.extracted_id)
+
+            if not validation_result.is_valid:
+                skipped += 1
+                errors.append({
+                    "document_id": str(document.id),
+                    "extracted_id": document.extracted_id,
+                    "error": f"Invalid extracted_id format: {validation_result.error_message}"
+                })
+                continue
+
+            # Validate against database (checks school/subject exist and are associated)
+            is_valid, error_message = await validator.validate_against_database(session, validation_result)
+            if not is_valid:
+                skipped += 1
+                errors.append({
+                    "document_id": str(document.id),
+                    "extracted_id": document.extracted_id,
+                    "error": f"Database validation failed: {error_message}"
+                })
+                continue
+
+            # Query School and Subject to get IDs
+            school_stmt = select(School).where(School.code == validation_result.school_code)
+            school_result = await session.execute(school_stmt)
+            school = school_result.scalar_one_or_none()
+
+            subject_stmt = select(Subject).where(Subject.code == validation_result.subject_code)
+            subject_result = await session.execute(subject_stmt)
+            subject = subject_result.scalar_one_or_none()
+
+            if not school or not subject:
+                skipped += 1
+                errors.append({
+                    "document_id": str(document.id),
+                    "extracted_id": document.extracted_id,
+                    "error": f"School or Subject not found: school_code={validation_result.school_code}, subject_code={validation_result.subject_code}"
+                })
+                continue
+
+            # Update document if not dry run
+            if not dry_run:
+                # Only update fields that are missing
+                if document.test_type is None:
+                    document.test_type = validation_result.test_type
+                if document.subject_series is None:
+                    document.subject_series = validation_result.subject_series
+                if document.sheet_number is None:
+                    document.sheet_number = validation_result.sheet_number
+                if document.school_id is None:
+                    document.school_id = school.id
+                if document.subject_id is None:
+                    document.subject_id = subject.id
+                updated += 1
+            else:
+                # In dry run, just count as would-be updated
+                updated += 1
+
+        except Exception as e:
+            failed += 1
+            errors.append({
+                "document_id": str(document.id),
+                "extracted_id": document.extracted_id or "N/A",
+                "error": str(e)
+            })
+            logger.error(f"Failed to backfill from extracted_id for document {document.id}: {e}")
+
+    # Commit changes if not dry run
+    if not dry_run and updated > 0:
+        await session.commit()
+
+    return BackfillTestTypeResponse(
+        total_found=total_found,
+        updated=updated,
+        failed=failed,
+        skipped=skipped,
+        errors=errors
     )
