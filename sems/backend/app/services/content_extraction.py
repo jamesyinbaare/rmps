@@ -9,6 +9,7 @@ from reducto import Reducto
 from reducto.types.shared.v3_extract_response import V3ExtractResponse
 
 from app.config import settings
+from app.services.reducto_rate_limiter import ReductoRateLimiter
 from app.utils.score_utils import parse_score_value
 
 logger = logging.getLogger(__name__)
@@ -147,6 +148,7 @@ class ReductoExtractor:
         self.api_key = settings.reducto_api_key
         self.enabled = settings.reducto_enabled
         self._client: Reducto | None = None
+        self._rate_limiter: ReductoRateLimiter | None = None
 
     def _get_client(self) -> Reducto:
         """Get or create Reducto client instance."""
@@ -155,6 +157,14 @@ class ReductoExtractor:
             self._client = Reducto(api_key=self.api_key)
             logger.debug("Reducto client initialized")
         return self._client
+
+    def _get_rate_limiter(self) -> ReductoRateLimiter:
+        """Get or create rate limiter instance."""
+        if self._rate_limiter is None:
+            logger.debug(f"Initializing Reducto rate limiter (rate={settings.reducto_rate_limit_per_second} req/s)")
+            self._rate_limiter = ReductoRateLimiter(settings.reducto_rate_limit_per_second)
+            logger.debug("Reducto rate limiter initialized")
+        return self._rate_limiter
 
     async def extract(self, image_data: bytes, test_type: str | None = None) -> tuple[dict[str, Any], float]:
         """
@@ -177,6 +187,8 @@ class ReductoExtractor:
             # Create a file-like object from bytes for the SDK
             # Run SDK calls in executor since they may be synchronous
             logger.debug("Uploading document to Reducto")
+            rate_limiter = self._get_rate_limiter()
+            await rate_limiter.acquire()
             file_obj = io.BytesIO(image_data)
             upload = await asyncio.to_thread(client.upload, file=file_obj)
             logger.debug("Document uploaded successfully")
@@ -199,6 +211,7 @@ class ReductoExtractor:
                 logger.debug("Extracting structured data with schema using Extract endpoint")
                 try:
                     # Extract endpoint performs Parse first, then extracts specific data
+                    await rate_limiter.acquire()
                     extract_result = await asyncio.to_thread(
                         client.extract.run,
                         input=input_url,
@@ -294,6 +307,7 @@ class ReductoExtractor:
                 logger.debug("No extraction schema configured, using Parse endpoint for text extraction")
                 # If no schema, use Parse endpoint to get full text
                 try:
+                    await rate_limiter.acquire()
                     parse_result = await asyncio.to_thread(client.parse.run, input=input_url)
                     full_text = parse_result.get("markdown", "") if isinstance(parse_result, dict) else str(parse_result)
                     logger.debug(f"Document parsed: extracted {len(full_text)} characters")
