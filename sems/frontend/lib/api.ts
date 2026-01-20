@@ -51,6 +51,7 @@ import type {
   UserUpdate,
   UserPasswordReset,
   UserListFilters,
+  BackfillTestTypeResponse,
 } from "@/types/document";
 
 export const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL || "http://localhost:8000";
@@ -354,6 +355,19 @@ export async function updateDocumentId(
     body: JSON.stringify(body),
   });
   return handleResponse<Document>(response);
+}
+
+export async function backfillFromExtractedId(
+  dryRun: boolean = false
+): Promise<BackfillTestTypeResponse> {
+  const response = await fetch(
+    `${API_BASE_URL}/api/v1/documents/admin/backfill-from-extracted-id?dry_run=${dryRun}`,
+    {
+      method: "POST",
+      headers: getAuthHeaders(),
+    }
+  );
+  return handleResponse<BackfillTestTypeResponse>(response);
 }
 
 export async function listExams(

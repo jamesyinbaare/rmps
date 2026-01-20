@@ -16,11 +16,12 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import { Upload, Grid3x3, List, LayoutGrid, ListChecks, AlertCircle, Trash2, ChevronDown } from "lucide-react";
+import { Upload, Grid3x3, List, LayoutGrid, ListChecks, AlertCircle, Trash2, ChevronDown, Database } from "lucide-react";
 import { listDocuments, downloadDocument, updateDocumentId } from "@/lib/api";
 import type { Document, DocumentFilters as DocumentFiltersType } from "@/types/document";
 import { toast } from "sonner";
 import Link from "next/link";
+import { BackfillDialog } from "@/components/BackfillDialog";
 
 export default function DocumentsPage() {
   const searchParams = useSearchParams();
@@ -50,6 +51,7 @@ export default function DocumentsPage() {
   const [bulkMode, setBulkMode] = useState(false);
   const [loadingMore, setLoadingMore] = useState(false);
   const [hasMore, setHasMore] = useState(true);
+  const [backfillDialogOpen, setBackfillDialogOpen] = useState(false);
 
   const loadDocuments = useCallback(async (append = false) => {
     if (append) {
@@ -539,6 +541,15 @@ export default function DocumentsPage() {
                     </Button>
                   </Link>
                 )}
+                {/* Backfill Button */}
+                <Button
+                  variant="outline"
+                  onClick={() => setBackfillDialogOpen(true)}
+                  className="gap-2"
+                >
+                  <Database className="h-4 w-4" />
+                  Backfill Missing Fields
+                </Button>
               </div>
 
               {/* View Toggle Dropdown */}
@@ -647,6 +658,13 @@ export default function DocumentsPage() {
             open={deleteDialogOpen}
             onOpenChange={setDeleteDialogOpen}
             onSuccess={handleDeleteConfirm}
+          />
+
+          {/* Backfill Dialog */}
+          <BackfillDialog
+            open={backfillDialogOpen}
+            onOpenChange={setBackfillDialogOpen}
+            onSuccess={loadDocuments}
           />
         </div>
       </div>
