@@ -126,20 +126,14 @@ async def serialize_exam(
         grouped_data[key].append((subject_reg, exam_reg, candidate, school, exam_subject, subject))
 
     # Sort each group by index_number (ascending)
-    # Try numeric sort first, fallback to string sort if not numeric
-    def sort_key(row: tuple) -> tuple[int | str, str]:
-        """Sort key that tries numeric comparison first, then string."""
+    # Use string sorting to preserve leading zeros and handle non-numeric index numbers
+    def sort_key(row: tuple) -> str:
+        """Sort key that uses string comparison for index_number."""
         candidate = row[2]  # Candidate is at index 2
-        index_num = candidate.index_number
-        try:
-            # Try to convert to int for numeric sorting
-            return (0, str(int(index_num)))  # Use int for proper numeric ordering
-        except (ValueError, TypeError):
-            # Fallback to string sorting if not numeric
-            return (1, index_num)
+        return candidate.index_number
 
     for key in grouped_data:
-        grouped_data[key].sort(key=sort_key)  # Sort by candidate.index_number (numeric if possible)
+        grouped_data[key].sort(key=sort_key)  # Sort by candidate.index_number (string sort)
 
     # Normalize subject_codes: convert to set for fast lookup, handle None/empty
     subject_codes_set: set[str] = set()

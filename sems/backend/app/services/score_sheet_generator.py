@@ -1,10 +1,13 @@
 """Service for generating score sheets and assigning sheet IDs to candidates."""
 
+import logging
 from datetime import datetime
 from typing import Any
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
+
+logger = logging.getLogger(__name__)
 
 from app.models import (
     Candidate,
@@ -37,8 +40,8 @@ def generate_sheet_id(school_code: str, subject_code: str, series: int, test_typ
     Returns:
         13-character sheet ID
     """
-    # Pad or truncate school code to 6 characters
-    school_code_padded = school_code[:6].upper().ljust(6, "0")
+    # Pad or truncate school code to 6 characters (use last 6, pad left with zeros if shorter)
+    school_code_padded = school_code[-6:].upper().rjust(6, "0")
 
     # Pad or truncate subject code to 3 characters
     subject_code_padded = subject_code[:3].upper().ljust(3, "0")
@@ -61,15 +64,9 @@ def generate_sheet_id(school_code: str, subject_code: str, series: int, test_typ
     return school_code_padded + subject_code_padded + series_str + test_type_str + sheet_number_padded
 
 
-def sort_key_index_number(candidate: Candidate) -> tuple[int | str, str]:
-    """Sort key that tries numeric comparison first, then string."""
-    index_num = candidate.index_number
-    try:
-        # Try to convert to int for numeric sorting
-        return (0, str(int(index_num)))  # Use int for proper numeric ordering
-    except (ValueError, TypeError):
-        # Fallback to string sorting if not numeric
-        return (1, index_num)
+def sort_key_index_number(candidate: Candidate) -> str:
+    """Sort key that uses string comparison for index_number."""
+    return candidate.index_number
 
 
 async def generate_score_sheets(
@@ -199,6 +196,22 @@ async def generate_score_sheets(
     for key in grouped_data:
         grouped_data[key].sort(key=lambda row: sort_key_index_number(row[2]))  # Candidate is at index 2
 
+    # Validate series values and log summary
+    series_summary: dict[int | None, int] = {}
+    for (school_id, subject_id, series), rows_group in grouped_data.items():
+        series_summary[series] = series_summary.get(series, 0) + len(rows_group)
+
+    if series_summary.get(None, 0) > 0:
+        logger.warning(
+            f"Found {series_summary.get(None, 0)} candidates with NULL series - they will default to series 1. "
+            "Consider running serialization before generating score sheets.",
+            extra={
+                "exam_id": exam_id,
+                "candidates_with_null_series": series_summary.get(None, 0),
+                "total_candidates": sum(series_summary.values()),
+            }
+        )
+
     # Track statistics
     total_sheets_generated = 0
     total_candidates_assigned = 0
@@ -208,110 +221,173 @@ async def generate_score_sheets(
 
     BATCH_SIZE = 25
 
-    # Process each (school, subject, series) combination
+    # Reorganize grouped_data into nested structure: school -> subject -> series
+    # This ensures we can process in explicit order: school -> subject -> series -> test_type
+    nested_data: dict[int, dict[int, dict[int | None, list[tuple]]]] = {}
     for (school_id_key, subject_id_key, series), rows_group in grouped_data.items():
         if not rows_group:
             continue
+        if school_id_key not in nested_data:
+            nested_data[school_id_key] = {}
+        if subject_id_key not in nested_data[school_id_key]:
+            nested_data[school_id_key][subject_id_key] = {}
+        nested_data[school_id_key][subject_id_key][series] = rows_group
 
-        # Get school and subject info
-        _, _, candidate, school, exam_subject, subject = rows_group[0]
+    # Process in strict hierarchical order: school -> subject -> series -> test_type
+    # This ensures we complete all work for one school before moving to the next,
+    # complete all work for one subject before moving to the next,
+    # and complete all work for one series before moving to the next
+    schools_list = sorted(nested_data.keys())
+    for school_id_key in schools_list:
+        # Get school info from first entry
+        first_row = list(nested_data[school_id_key].values())[0][list(list(nested_data[school_id_key].values())[0].keys())[0]][0]
+        _, _, candidate, school, exam_subject, subject = first_row
 
-        # Initialize statistics for this school if not seen before
-        if school_id_key not in schools_processed:
-            schools_processed[school_id_key] = {
-                "school_id": school_id_key,
-                "school_name": school.name,
-                "sheets_count": 0,
-                "candidates_count": 0,
-            }
+        # Initialize statistics for this school
+        schools_processed[school_id_key] = {
+            "school_id": school_id_key,
+            "school_name": school.name,
+            "sheets_count": 0,
+            "candidates_count": 0,
+        }
 
-        # Initialize statistics for this subject if not seen before
-        if subject_id_key not in subjects_processed:
-            subjects_processed[subject_id_key] = {
-                "subject_id": subject_id_key,
-                "subject_code": subject.code,
-                "subject_name": subject.name,
-                "sheets_count": 0,
-                "candidates_count": 0,
-            }
+        # Process all subjects for this school
+        subjects_list = sorted(nested_data[school_id_key].keys())
+        for subject_id_key in subjects_list:
+            # Get subject info from first entry
+            first_row = list(nested_data[school_id_key][subject_id_key].values())[0][0]
+            _, _, candidate, school, exam_subject, subject = first_row
 
-        # Initialize series counter if not seen before
-        if series is not None:
-            if series not in sheets_by_series:
-                sheets_by_series[series] = 0
+            # Initialize statistics for this subject if not seen before
+            if subject_id_key not in subjects_processed:
+                subjects_processed[subject_id_key] = {
+                    "subject_id": subject_id_key,
+                    "subject_code": subject.code,
+                    "subject_name": subject.name,
+                    "sheets_count": 0,
+                    "candidates_count": 0,
+                }
 
-        # Use series 1 if None (shouldn't happen after serialization, but handle it)
-        effective_series = series if series is not None else 1
+            # Process all series for this school+subject
+            series_list = sorted(
+                nested_data[school_id_key][subject_id_key].keys(),
+                key=lambda x: x if x is not None else 0
+            )
+            for series in series_list:
+                rows_group = nested_data[school_id_key][subject_id_key][series]
 
-        # Generate sheets for each test type
-        for test_type in test_types:
-            # Split candidates into batches of 25
-            num_candidates = len(rows_group)
-            num_batches = (num_candidates + BATCH_SIZE - 1) // BATCH_SIZE  # Ceiling division
+                # Get school and subject info
+                _, _, candidate, school, exam_subject, subject = rows_group[0]
 
-            for batch_index in range(num_batches):
-                start_idx = batch_index * BATCH_SIZE
-                end_idx = min(start_idx + BATCH_SIZE, num_candidates)
-                batch = rows_group[start_idx:end_idx]
-
-                sheet_number = batch_index + 1
-
-                # Generate sheet ID
-                try:
-                    sheet_id = generate_sheet_id(
-                        school_code=school.code,
-                        subject_code=subject.code,
-                        series=effective_series,
-                        test_type=test_type,
-                        sheet_number=sheet_number,
-                    )
-                except ValueError:
-                    # Skip this batch if sheet ID generation fails
-                    continue
-
-                # Assign sheet ID to all candidates in this batch
-                for subject_reg, _exam_reg, _candidate, _school, _exam_subject, _subject in batch:
-                    # Get or create SubjectScore
-                    score_stmt = select(SubjectScore).where(
-                        SubjectScore.subject_registration_id == subject_reg.id
-                    )
-                    score_result = await session.execute(score_stmt)
-                    subject_score = score_result.scalar_one_or_none()
-
-                    if not subject_score:
-                        # Create new SubjectScore if it doesn't exist
-                        subject_score = SubjectScore(
-                            subject_registration_id=subject_reg.id,
-                            obj_raw_score=None,
-                            essay_raw_score=None,
-                            pract_raw_score=None,
-                            obj_normalized=None,
-                            essay_normalized=None,
-                            pract_normalized=None,
-                            total_score=0.0,
-                            obj_document_id=None,
-                            essay_document_id=None,
-                            pract_document_id=None,
-                        )
-                        session.add(subject_score)
-                        await session.flush()
-
-                    # Assign sheet ID based on test type
-                    if test_type == 1:
-                        subject_score.obj_document_id = sheet_id
-                    elif test_type == 2:
-                        subject_score.essay_document_id = sheet_id
-
-                    total_candidates_assigned += 1
-
-                total_sheets_generated += 1
-                schools_processed[school_id_key]["sheets_count"] += 1
-                schools_processed[school_id_key]["candidates_count"] += len(batch)
-                subjects_processed[subject_id_key]["sheets_count"] += 1
-                subjects_processed[subject_id_key]["candidates_count"] += len(batch)
-
+                # Initialize series counter if not seen before
                 if series is not None:
-                    sheets_by_series[series] = sheets_by_series.get(series, 0) + 1
+                    if series not in sheets_by_series:
+                        sheets_by_series[series] = 0
+
+                # Use series 1 if None (shouldn't happen after serialization, but handle it)
+                effective_series = series if series is not None else 1
+
+                # Log series determination with warning if NULL
+                if series is None:
+                    logger.warning(
+                        "SubjectRegistration.series is NULL, defaulting to 1",
+                        extra={
+                            "school_id": school_id_key,
+                            "school_code": school.code,
+                            "school_name": school.name,
+                            "subject_id": subject_id_key,
+                            "subject_code": subject.code,
+                            "subject_name": subject.name,
+                            "effective_series": effective_series,
+                            "candidates_count": len(rows_group),
+                            "sample_candidates": [
+                                {"index_number": row[2].index_number, "name": row[2].name}
+                                for row in rows_group[:3]  # First 3 candidates as sample
+                            ],
+                        }
+                    )
+
+                # Generate sheets for each test type
+                for test_type in test_types:
+                    # Split candidates into batches of 25
+                    num_candidates = len(rows_group)
+                    num_batches = (num_candidates + BATCH_SIZE - 1) // BATCH_SIZE  # Ceiling division
+
+                    for batch_index in range(num_batches):
+                        start_idx = batch_index * BATCH_SIZE
+                        end_idx = min(start_idx + BATCH_SIZE, num_candidates)
+                        batch = rows_group[start_idx:end_idx]
+
+                        sheet_number = batch_index + 1
+
+                        # Generate sheet ID
+                        try:
+                            sheet_id = generate_sheet_id(
+                                school_code=school.code,
+                                subject_code=subject.code,
+                                series=effective_series,
+                                test_type=test_type,
+                                sheet_number=sheet_number,
+                            )
+                        except ValueError as e:
+                            # Skip this batch if sheet ID generation fails
+                            logger.error(
+                                f"Failed to generate sheet ID: {e}",
+                                extra={
+                                    "school_code": school.code,
+                                    "subject_code": subject.code,
+                                    "series": effective_series,
+                                    "test_type": test_type,
+                                    "sheet_number": sheet_number,
+                                }
+                            )
+                            continue
+
+                        # Assign sheet ID to all candidates in this batch
+                        for subject_reg, _exam_reg, _candidate, _school, _exam_subject, _subject in batch:
+                            # Get or create SubjectScore
+                            score_stmt = select(SubjectScore).where(
+                                SubjectScore.subject_registration_id == subject_reg.id
+                            )
+                            score_result = await session.execute(score_stmt)
+                            subject_score = score_result.scalar_one_or_none()
+
+                            if not subject_score:
+                                # Create new SubjectScore if it doesn't exist
+                                subject_score = SubjectScore(
+                                    subject_registration_id=subject_reg.id,
+                                    obj_raw_score=None,
+                                    essay_raw_score=None,
+                                    pract_raw_score=None,
+                                    obj_normalized=None,
+                                    essay_normalized=None,
+                                    pract_normalized=None,
+                                    total_score=0.0,
+                                    obj_document_id=None,
+                                    essay_document_id=None,
+                                    pract_document_id=None,
+                                )
+                                session.add(subject_score)
+                                await session.flush()
+
+                            # Assign sheet ID based on test type
+                            # Note: Multiple candidates in the same batch will get the same sheet_id
+                            # because they are on the same physical sheet
+                            if test_type == 1:
+                                subject_score.obj_document_id = sheet_id
+                            elif test_type == 2:
+                                subject_score.essay_document_id = sheet_id
+
+                            total_candidates_assigned += 1
+
+                        total_sheets_generated += 1
+                        schools_processed[school_id_key]["sheets_count"] += 1
+                        schools_processed[school_id_key]["candidates_count"] += len(batch)
+                        subjects_processed[subject_id_key]["sheets_count"] += 1
+                        subjects_processed[subject_id_key]["candidates_count"] += len(batch)
+
+                        if series is not None:
+                            sheets_by_series[series] = sheets_by_series.get(series, 0) + 1
 
     # Commit changes
     await session.commit()
@@ -319,22 +395,26 @@ async def generate_score_sheets(
     # Create ProcessTracking records for each (school_id, subject_id) combination
     # Group by (school_id, subject_id) to create one tracking record per combination
     tracking_data: dict[tuple[int, int], dict[str, Any]] = {}
-    for (school_id_key, subject_id_key, _series), rows_group in grouped_data.items():
-        key = (school_id_key, subject_id_key)
-        if key not in tracking_data:
-            tracking_data[key] = {
-                "school_id": school_id_key,
-                "subject_id": subject_id_key,
-                "test_types": test_types,
-                "sheets_generated": 0,
-                "candidates_assigned": 0,
-            }
-        # Count sheets and candidates for this combination
-        for test_type in test_types:
-            num_candidates = len(rows_group)
-            num_batches = (num_candidates + BATCH_SIZE - 1) // BATCH_SIZE
-            tracking_data[key]["sheets_generated"] += num_batches
-            tracking_data[key]["candidates_assigned"] += num_candidates
+    for school_id_key in nested_data:
+        for subject_id_key in nested_data[school_id_key]:
+            key = (school_id_key, subject_id_key)
+            if key not in tracking_data:
+                tracking_data[key] = {
+                    "school_id": school_id_key,
+                    "subject_id": subject_id_key,
+                    "test_types": test_types,
+                    "sheets_generated": 0,
+                    "candidates_assigned": 0,
+                }
+            # Count sheets and candidates for this combination across all series
+            for series in nested_data[school_id_key][subject_id_key]:
+                rows_group = nested_data[school_id_key][subject_id_key][series]
+                # Count sheets and candidates for this combination
+                for test_type in test_types:
+                    num_candidates = len(rows_group)
+                    num_batches = (num_candidates + BATCH_SIZE - 1) // BATCH_SIZE
+                    tracking_data[key]["sheets_generated"] += num_batches
+                    tracking_data[key]["candidates_assigned"] += num_candidates
 
     # Create tracking records
     for (school_id_key, subject_id_key), data in tracking_data.items():

@@ -1,5 +1,6 @@
 """Service for generating PDF score sheets and assigning sheet IDs."""
 
+import logging
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -7,6 +8,8 @@ from typing import Any
 from PyPDF2 import PdfReader, PdfWriter
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
+
+logger = logging.getLogger(__name__)
 
 from app.config import settings
 from app.models import (
@@ -161,6 +164,22 @@ async def generate_pdfs_for_exam(
     for key in grouped_data:
         grouped_data[key].sort(key=lambda row: sort_key_index_number(row[2]))  # Candidate is at index 2
 
+    # Validate series values and log summary
+    series_summary: dict[int | None, int] = {}
+    for (school_id, subject_id, series), rows_group in grouped_data.items():
+        series_summary[series] = series_summary.get(series, 0) + len(rows_group)
+
+    if series_summary.get(None, 0) > 0:
+        logger.warning(
+            f"Found {series_summary.get(None, 0)} candidates with NULL series - they will default to series 1. "
+            "Consider running serialization before generating PDFs.",
+            extra={
+                "exam_id": exam_id,
+                "candidates_with_null_series": series_summary.get(None, 0),
+                "total_candidates": sum(series_summary.values()),
+            }
+        )
+
     # Track statistics
     total_pdfs_generated = 0
     total_sheets_generated = 0
@@ -171,193 +190,255 @@ async def generate_pdfs_for_exam(
     # Track PDF file paths for ProcessTracking
     pdf_tracking_data: dict[tuple[int, int], dict[str, Any]] = {}
 
-    # Process each (school, subject, series) combination
+    # Reorganize grouped_data into nested structure: school -> subject -> series
+    # This ensures we can process in explicit order: school -> subject -> series -> test_type
+    nested_data: dict[int, dict[int, dict[int | None, list[tuple]]]] = {}
     for (school_id_key, subject_id_key, series), rows_group in grouped_data.items():
         if not rows_group:
             continue
+        if school_id_key not in nested_data:
+            nested_data[school_id_key] = {}
+        if subject_id_key not in nested_data[school_id_key]:
+            nested_data[school_id_key][subject_id_key] = {}
+        nested_data[school_id_key][subject_id_key][series] = rows_group
 
-        # Get school and subject info
-        _, _, candidate, school, exam_subject, subject = rows_group[0]
+    # Process in strict hierarchical order: school -> subject -> series -> test_type
+    # This ensures we complete all work for one school before moving to the next,
+    # complete all work for one subject before moving to the next,
+    # and complete all work for one series before moving to the next
+    schools_list = sorted(nested_data.keys())
+    for school_id_key in schools_list:
+        # Get school info from first entry
+        first_row = list(nested_data[school_id_key].values())[0][list(list(nested_data[school_id_key].values())[0].keys())[0]][0]
+        _, _, candidate, school, exam_subject, subject = first_row
 
-        # Initialize statistics for this school if not seen before
-        if school_id_key not in schools_processed:
-            schools_processed[school_id_key] = {
-                "school_id": school_id_key,
-                "school_name": school.name,
-                "pdfs_count": 0,
-                "sheets_count": 0,
-                "candidates_count": 0,
-            }
+        # Initialize statistics for this school
+        schools_processed[school_id_key] = {
+            "school_id": school_id_key,
+            "school_name": school.name,
+            "pdfs_count": 0,
+            "sheets_count": 0,
+            "candidates_count": 0,
+        }
 
-        # Initialize statistics for this subject if not seen before
-        if subject_id_key not in subjects_processed:
-            subjects_processed[subject_id_key] = {
-                "subject_id": subject_id_key,
-                "subject_code": subject.code,
-                "subject_name": subject.name,
-                "pdfs_count": 0,
-                "sheets_count": 0,
-                "candidates_count": 0,
-            }
+        # Process all subjects for this school
+        subjects_list = sorted(nested_data[school_id_key].keys())
+        for subject_id_key in subjects_list:
+            # Get subject info from first entry
+            first_row = list(nested_data[school_id_key][subject_id_key].values())[0][0]
+            _, _, candidate, school, exam_subject, subject = first_row
 
-        # Initialize series counter if not seen before
-        if series is not None:
-            if series not in sheets_by_series:
-                sheets_by_series[series] = 0
-
-        # Use series 1 if None (shouldn't happen after serialization, but handle it)
-        effective_series = series if series is not None else 1
-
-        # Generate PDFs for each test type
-        for test_type in test_types:
-            # Prepare candidate data for template
-            candidates_data = []
-            subject_registrations = []
-            for subject_reg, _exam_reg, candidate, _school, _exam_subject, _subject in rows_group:
-                candidates_data.append({
-                    "index": candidate.index_number,  # Template uses "index" not "index_number"
-                    "index_number": candidate.index_number,  # Keep both for compatibility
-                    "name": candidate.name,
-                })
-                subject_registrations.append(subject_reg)
-
-            # Generate ONE multi-page PDF with all candidates
-            try:
-                pdf_bytes, page_count = generate_score_sheet_pdf(
-                    school_code=school.code,
-                    school_name=school.name,
-                    subject_code=subject.code,
-                    subject_name=subject.name,
-                    series=effective_series,
-                    test_type=test_type,
-                    candidates=candidates_data,
-                )
-            except Exception:
-                # Skip this group if PDF generation fails
-                continue
-
-            # Split candidates into batches of 25 (matching pages)
-            batches = split_into_batches(subject_registrations, batch_size=25)
-
-            # Ensure page_count matches number of batches
-            if page_count != len(batches):
-                # Adjust: use the actual page count from PDF
-                # If there are more batches than pages, we have an issue
-                # If there are more pages than batches, we need to handle it
-                pass
-
-            # Generate sheet IDs for each page
-            sheet_ids = []
-            for page_index in range(page_count):
-                sheet_number = page_index + 1
-                try:
-                    sheet_id = generate_sheet_id(
-                        school_code=school.code,
-                        subject_code=subject.code,
-                        series=effective_series,
-                        test_type=test_type,
-                        sheet_number=sheet_number,
-                    )
-                    sheet_ids.append(sheet_id)
-                except ValueError:
-                    # Skip if sheet ID generation fails
-                    continue
-
-            # Annotate PDF with sheet IDs
-            try:
-                annotated_pdf = annotate_pdf_with_sheet_ids(pdf_bytes, sheet_ids)
-            except Exception:
-                # If annotation fails, use original PDF
-                annotated_pdf = pdf_bytes
-
-            # Save PDF to filesystem
-            pdf_file_path = None
-            try:
-                # Create directory structure: pdf_output_path/{school_name}/
-                school_name_safe = school.name.replace("/", " ").replace("\\", " ")
-                output_dir = Path(settings.pdf_output_path) / school_name_safe
-                output_dir.mkdir(parents=True, exist_ok=True)
-
-                # Generate filename: {school_code}_{subject_code}_{series}_{test_type}.pdf
-                filename = f"{school.code}_{subject.code}_{effective_series}_{test_type}.pdf"
-                output_path = output_dir / filename
-
-                # Write PDF to file
-                output_path.write_bytes(annotated_pdf)
-                pdf_file_path = str(output_path)
-            except Exception:
-                # If saving fails, continue (PDF generation and ID assignment still succeeded)
-                pass
-
-            # Track PDF file path for this (school_id, subject_id) combination
-            tracking_key = (school_id_key, subject_id_key)
-            if tracking_key not in pdf_tracking_data:
-                pdf_tracking_data[tracking_key] = {
-                    "school_id": school_id_key,
+            # Initialize statistics for this subject if not seen before
+            if subject_id_key not in subjects_processed:
+                subjects_processed[subject_id_key] = {
                     "subject_id": subject_id_key,
-                    "test_types": [],
-                    "pdf_file_paths": [],
+                    "subject_code": subject.code,
+                    "subject_name": subject.name,
+                    "pdfs_count": 0,
                     "sheets_count": 0,
                     "candidates_count": 0,
                 }
-            if test_type not in pdf_tracking_data[tracking_key]["test_types"]:
-                pdf_tracking_data[tracking_key]["test_types"].append(test_type)
-            if pdf_file_path:
-                pdf_tracking_data[tracking_key]["pdf_file_paths"].append(pdf_file_path)
-            pdf_tracking_data[tracking_key]["sheets_count"] += page_count
-            pdf_tracking_data[tracking_key]["candidates_count"] += len(rows_group)
 
-            # Assign sheet IDs to candidates based on their batch/page
-            for batch_index in range(min(len(batches), len(sheet_ids))):
-                sheet_id = sheet_ids[batch_index]
-                batch = batches[batch_index]
+            # Process all series for this school+subject
+            series_list = sorted(
+                nested_data[school_id_key][subject_id_key].keys(),
+                key=lambda x: x if x is not None else 0
+            )
+            for series in series_list:
+                rows_group = nested_data[school_id_key][subject_id_key][series]
 
-                for subject_reg in batch:
-                    # Get or create SubjectScore
-                    score_stmt = select(SubjectScore).where(
-                        SubjectScore.subject_registration_id == subject_reg.id
-                    )
-                    score_result = await session.execute(score_stmt)
-                    subject_score = score_result.scalar_one_or_none()
+                # Get school and subject info
+                _, _, candidate, school, exam_subject, subject = rows_group[0]
 
-                    if not subject_score:
-                        # Create new SubjectScore if it doesn't exist
-                        subject_score = SubjectScore(
-                            subject_registration_id=subject_reg.id,
-                            obj_raw_score=None,
-                            essay_raw_score=None,
-                            pract_raw_score=None,
-                            obj_normalized=None,
-                            essay_normalized=None,
-                            pract_normalized=None,
-                            total_score=0.0,
-                            obj_document_id=None,
-                            essay_document_id=None,
-                            pract_document_id=None,
-                        )
-                        session.add(subject_score)
-                        await session.flush()
-
-                    # Assign sheet ID based on test type
-                    if test_type == 1:
-                        subject_score.obj_document_id = sheet_id
-                    elif test_type == 2:
-                        subject_score.essay_document_id = sheet_id
-
-                    total_candidates_assigned += 1
-
-                total_sheets_generated += 1
-                schools_processed[school_id_key]["sheets_count"] += 1
-                schools_processed[school_id_key]["candidates_count"] += len(batch)
-                subjects_processed[subject_id_key]["sheets_count"] += 1
-                subjects_processed[subject_id_key]["candidates_count"] += len(batch)
-
+                # Initialize series counter if not seen before
                 if series is not None:
-                    sheets_by_series[series] = sheets_by_series.get(series, 0) + 1
+                    if series not in sheets_by_series:
+                        sheets_by_series[series] = 0
 
-            total_pdfs_generated += 1
-            schools_processed[school_id_key]["pdfs_count"] += 1
-            subjects_processed[subject_id_key]["pdfs_count"] += 1
+                # Use series 1 if None (shouldn't happen after serialization, but handle it)
+                effective_series = series if series is not None else 1
+
+                # Log series determination with warning if NULL
+                if series is None:
+                    logger.warning(
+                        "SubjectRegistration.series is NULL in PDF generation, defaulting to 1",
+                        extra={
+                            "school_id": school_id_key,
+                            "school_code": school.code,
+                            "school_name": school.name,
+                            "subject_id": subject_id_key,
+                            "subject_code": subject.code,
+                            "subject_name": subject.name,
+                            "effective_series": effective_series,
+                            "candidates_count": len(rows_group),
+                            "sample_candidates": [
+                                {"index_number": row[2].index_number, "name": row[2].name}
+                                for row in rows_group[:3]  # First 3 candidates as sample
+                            ],
+                        }
+                    )
+
+                # Generate PDFs for each test type
+                for test_type in test_types:
+                    # Prepare candidate data for template
+                    candidates_data = []
+                    subject_registrations = []
+                    for subject_reg, _exam_reg, candidate, _school, _exam_subject, _subject in rows_group:
+                        candidates_data.append({
+                            "index": candidate.index_number,  # Template uses "index" not "index_number"
+                            "index_number": candidate.index_number,  # Keep both for compatibility
+                            "name": candidate.name,
+                        })
+                        subject_registrations.append(subject_reg)
+
+                    # Generate ONE multi-page PDF with all candidates
+                    try:
+                        pdf_bytes, page_count = generate_score_sheet_pdf(
+                            school_code=school.code,
+                            school_name=school.name,
+                            subject_code=subject.code,
+                            subject_name=subject.name,
+                            series=effective_series,
+                            test_type=test_type,
+                            candidates=candidates_data,
+                        )
+                    except Exception:
+                        # Skip this group if PDF generation fails
+                        continue
+
+                    # Split candidates into batches of 25 (matching pages)
+                    batches = split_into_batches(subject_registrations, batch_size=25)
+
+                    # Ensure page_count matches number of batches
+                    if page_count != len(batches):
+                        # Adjust: use the actual page count from PDF
+                        # If there are more batches than pages, we have an issue
+                        # If there are more pages than batches, we need to handle it
+                        pass
+
+                    # Generate sheet IDs for each page
+                    sheet_ids = []
+                    for page_index in range(page_count):
+                        sheet_number = page_index + 1
+                        try:
+                            sheet_id = generate_sheet_id(
+                                school_code=school.code,
+                                subject_code=subject.code,
+                                series=effective_series,
+                                test_type=test_type,
+                                sheet_number=sheet_number,
+                            )
+                            sheet_ids.append(sheet_id)
+                        except ValueError as e:
+                            # Skip if sheet ID generation fails
+                            logger.error(
+                                f"Failed to generate sheet ID for PDF: {e}",
+                                extra={
+                                    "school_code": school.code,
+                                    "subject_code": subject.code,
+                                    "series": effective_series,
+                                    "test_type": test_type,
+                                    "sheet_number": sheet_number,
+                                }
+                            )
+                            continue
+
+                    # Annotate PDF with sheet IDs
+                    try:
+                        annotated_pdf = annotate_pdf_with_sheet_ids(pdf_bytes, sheet_ids)
+                    except Exception:
+                        # If annotation fails, use original PDF
+                        annotated_pdf = pdf_bytes
+
+                    # Save PDF to filesystem
+                    pdf_file_path = None
+                    try:
+                        # Create directory structure: pdf_output_path/{school_name}/
+                        school_name_safe = school.name.replace("/", " ").replace("\\", " ")
+                        output_dir = Path(settings.pdf_output_path) / school_name_safe
+                        output_dir.mkdir(parents=True, exist_ok=True)
+
+                        # Generate filename: {school_code}_{subject_code}_{series}_{test_type}.pdf
+                        filename = f"{school.code}_{subject.code}_{effective_series}_{test_type}.pdf"
+                        output_path = output_dir / filename
+
+                        # Write PDF to file
+                        output_path.write_bytes(annotated_pdf)
+                        pdf_file_path = str(output_path)
+                    except Exception:
+                        # If saving fails, continue (PDF generation and ID assignment still succeeded)
+                        pass
+
+                    # Track PDF file path for this (school_id, subject_id) combination
+                    tracking_key = (school_id_key, subject_id_key)
+                    if tracking_key not in pdf_tracking_data:
+                        pdf_tracking_data[tracking_key] = {
+                            "school_id": school_id_key,
+                            "subject_id": subject_id_key,
+                            "test_types": [],
+                            "pdf_file_paths": [],
+                            "sheets_count": 0,
+                            "candidates_count": 0,
+                        }
+                    if test_type not in pdf_tracking_data[tracking_key]["test_types"]:
+                        pdf_tracking_data[tracking_key]["test_types"].append(test_type)
+                    if pdf_file_path:
+                        pdf_tracking_data[tracking_key]["pdf_file_paths"].append(pdf_file_path)
+                    pdf_tracking_data[tracking_key]["sheets_count"] += page_count
+                    pdf_tracking_data[tracking_key]["candidates_count"] += len(rows_group)
+
+                    # Assign sheet IDs to candidates based on their batch/page
+                    for batch_index in range(min(len(batches), len(sheet_ids))):
+                        sheet_id = sheet_ids[batch_index]
+                        batch = batches[batch_index]
+
+                        for subject_reg in batch:
+                            # Get or create SubjectScore
+                            score_stmt = select(SubjectScore).where(
+                                SubjectScore.subject_registration_id == subject_reg.id
+                            )
+                            score_result = await session.execute(score_stmt)
+                            subject_score = score_result.scalar_one_or_none()
+
+                            if not subject_score:
+                                # Create new SubjectScore if it doesn't exist
+                                subject_score = SubjectScore(
+                                    subject_registration_id=subject_reg.id,
+                                    obj_raw_score=None,
+                                    essay_raw_score=None,
+                                    pract_raw_score=None,
+                                    obj_normalized=None,
+                                    essay_normalized=None,
+                                    pract_normalized=None,
+                                    total_score=0.0,
+                                    obj_document_id=None,
+                                    essay_document_id=None,
+                                    pract_document_id=None,
+                                )
+                                session.add(subject_score)
+                                await session.flush()
+
+                            # Assign sheet ID based on test type
+                            # Note: Multiple candidates in the same batch will get the same sheet_id
+                            # because they are on the same physical sheet
+                            if test_type == 1:
+                                subject_score.obj_document_id = sheet_id
+                            elif test_type == 2:
+                                subject_score.essay_document_id = sheet_id
+
+                            total_candidates_assigned += 1
+
+                    total_pdfs_generated += 1
+                    total_sheets_generated += page_count
+                    schools_processed[school_id_key]["pdfs_count"] += 1
+                    schools_processed[school_id_key]["sheets_count"] += page_count
+                    schools_processed[school_id_key]["candidates_count"] += len(rows_group)
+                    subjects_processed[subject_id_key]["pdfs_count"] += 1
+                    subjects_processed[subject_id_key]["sheets_count"] += page_count
+                    subjects_processed[subject_id_key]["candidates_count"] += len(rows_group)
+
+                    if series is not None:
+                        sheets_by_series[series] = sheets_by_series.get(series, 0) + page_count
 
     # Commit changes
     await session.commit()
