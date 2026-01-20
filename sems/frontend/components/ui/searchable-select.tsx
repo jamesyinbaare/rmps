@@ -60,7 +60,12 @@ export function SearchableSelect({
 
   const selectedOption = React.useMemo(() => {
     if (value === "all" || value === "") return null;
-    return options.find((option) => option.value === value);
+    // Handle type coercion for comparison (number vs string)
+    return options.find((option) => {
+      if (option.value === value) return true;
+      // Convert both to strings for comparison if types don't match
+      return String(option.value) === String(value);
+    });
   }, [options, value]);
 
   const handleSelect = (selectedValue: string | number | "all") => {
@@ -140,12 +145,12 @@ export function SearchableSelect({
                 className="relative flex cursor-pointer select-none items-center rounded-sm px-2 py-1.5 text-sm outline-none hover:bg-accent hover:text-accent-foreground aria-selected:bg-accent aria-selected:text-accent-foreground"
                 onClick={() => handleSelect(option.value)}
               >
-                <Check
-                  className={cn(
-                    "mr-2 h-4 w-4 shrink-0",
-                    value === option.value ? "opacity-100" : "opacity-0"
-                  )}
-                />
+              <Check
+                className={cn(
+                  "mr-2 h-4 w-4 shrink-0",
+                  (value === option.value || String(value) === String(option.value)) ? "opacity-100" : "opacity-0"
+                )}
+              />
                 <span className="truncate">{option.label}</span>
               </div>
             ))
