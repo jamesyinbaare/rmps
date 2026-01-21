@@ -217,6 +217,42 @@ class PdfGenerationResponse(BaseModel):
     message: str
 
 
+class SheetIdInfo(BaseModel):
+    """Schema for detailed sheet ID information."""
+
+    sheet_id: str
+    test_type: int | None  # 1=Objectives, 2=Essay, 3=Practicals
+    school_id: int | None = None
+    school_name: str | None = None
+    school_code: str | None = None
+    subject_id: int | None = None
+    subject_code: str | None = None
+    subject_name: str | None = None
+    series: int | None = None
+    sheet_number: int | None = None
+    candidate_count: int | None = None  # For expected sheets
+    document_id: int | None = None  # For uploaded sheets
+    file_name: str | None = None  # For uploaded sheets
+    status: str  # "expected", "uploaded", "missing", "extra"
+
+
+class SheetIdComparisonResponse(BaseModel):
+    """Schema for sheet ID comparison response."""
+
+    exam_id: int
+    total_expected_sheets: int
+    total_uploaded_sheets: int
+    missing_sheet_ids: list[str]
+    uploaded_sheet_ids: list[str]
+    extra_sheet_ids: list[str]
+    expected_by_test_type: dict[int, int]
+    uploaded_by_test_type: dict[int, int]
+    expected_sheet_ids_info: list[SheetIdInfo]
+    missing_sheet_ids_info: list[SheetIdInfo]
+    uploaded_sheet_ids_info: list[SheetIdInfo]
+    extra_sheet_ids_info: list[SheetIdInfo]
+
+
 class PdfGenerationJobCreate(BaseModel):
     """Schema for creating a PDF generation job."""
 
