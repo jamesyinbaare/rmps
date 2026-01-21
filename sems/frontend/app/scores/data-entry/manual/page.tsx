@@ -58,10 +58,8 @@ export default function ManualEntryPage() {
   const [loadingSubjects, setLoadingSubjects] = useState(false);
   const [allSubjects, setAllSubjects] = useState<Subject[]>([]); // Store all subjects for filtering
 
-  // Exam filtering state (three-step: type, series, year)
-  const [examType, setExamType] = useState<ExamType | undefined>();
-  const [examSeries, setExamSeries] = useState<ExamSeries | undefined>();
-  const [examYear, setExamYear] = useState<number | undefined>();
+  // Exam filtering state (combined)
+  const [selectedExamId, setSelectedExamId] = useState<number | undefined>();
 
   // Score changes tracking - use score_id as key, but only track if score_id exists
   const [scoreChanges, setScoreChanges] = useState<Map<number, { obj?: string | null; essay?: string | null; pract?: string | null }>>(new Map());
@@ -285,31 +283,42 @@ export default function ManualEntryPage() {
     loadCandidates();
   }, [loadCandidates]);
 
-  // Find exam_id when type, series, year are all selected (update pending filters)
+  // Update pending filters when selected exam changes
   useEffect(() => {
-    // Always update exam filters - document_id now requires them (no longer standalone)
-    if (examType && examSeries && examYear) {
-      const foundExamId = findExamId(exams, examType, examSeries, examYear);
-      setPendingFilters((prev) => ({
-        ...prev,
-        exam_id: foundExamId || undefined,
-        exam_type: foundExamId ? undefined : examType,
-        series: foundExamId ? undefined : examSeries,
-        year: foundExamId ? undefined : examYear,
-        page: 1,
-      }));
+    if (selectedExamId && exams.length > 0) {
+      const exam = exams.find((e) => e.id === selectedExamId);
+      if (exam) {
+        setPendingFilters((prev) => ({
+          ...prev,
+          exam_id: exam.id,
+          exam_type: exam.exam_type as ExamType,
+          series: exam.series as ExamSeries,
+          year: exam.year,
+          page: 1,
+        }));
+      }
     } else {
-      // Update pending filters with exam_type, series, year when exam_id is not available
       setPendingFilters((prev) => ({
         ...prev,
         exam_id: undefined,
-        exam_type: examType,
-        series: examSeries,
-        year: examYear,
+        exam_type: undefined,
+        series: undefined,
+        year: undefined,
         page: 1,
       }));
     }
-  }, [examType, examSeries, examYear, exams]);
+  }, [selectedExamId, exams]);
+
+  // Reverse lookup: if filters have exam_id, populate selectedExamId
+  useEffect(() => {
+    if (exams.length > 0 && filters.exam_id) {
+      if (filters.exam_id !== selectedExamId) {
+        setSelectedExamId(filters.exam_id);
+      }
+    } else if (!filters.exam_id && selectedExamId !== undefined) {
+      setSelectedExamId(undefined);
+    }
+  }, [filters.exam_id, exams]);
 
   const handleFilterChange = (key: keyof ManualEntryFilters, value: number | string | undefined) => {
     setPendingFilters((prev) => {
@@ -355,9 +364,7 @@ export default function ManualEntryPage() {
 
   const handleClearFilters = () => {
     // Clear all filters
-    setExamType(undefined);
-    setExamSeries(undefined);
-    setExamYear(undefined);
+    setSelectedExamId(undefined);
     setPendingFilters({
       page: 1,
       page_size: 20,
@@ -376,32 +383,29 @@ export default function ManualEntryPage() {
     setShowPract(false);
   };
 
-  const handleExamTypeChange = (value: string) => {
+  const handleExamChange = (value: string | number | "all" | "") => {
     if (value === "all" || value === "") {
-      setExamType(undefined);
+      setSelectedExamId(undefined);
     } else {
-      setExamType(value as ExamType);
-      setExamSeries(undefined);
-      setExamYear(undefined);
+      setSelectedExamId(typeof value === "number" ? value : parseInt(String(value), 10));
     }
   };
 
-  const handleExamSeriesChange = (value: string) => {
-    if (value === "all" || value === "") {
-      setExamSeries(undefined);
-    } else {
-      setExamSeries(value as ExamSeries);
-      setExamYear(undefined);
-    }
-  };
-
-  const handleExamYearChange = (value: string) => {
-    if (value === "all" || value === "") {
-      setExamYear(undefined);
-    } else {
-      setExamYear(parseInt(value, 10));
-    }
-  };
+  // Generate exam options for the combined dropdown
+  const examOptions = exams
+    .sort((a, b) => {
+      // Sort by year (descending), then series, then type
+      if (b.year !== a.year) return b.year - a.year;
+      if (a.series !== b.series) return a.series.localeCompare(b.series);
+      return (a.exam_type || "").localeCompare(b.exam_type || "");
+    })
+    .map((exam) => {
+      const typeLabel = exam.exam_type === "Certificate II Examination" ? "Certificate II" : exam.exam_type;
+      return {
+        value: exam.id,
+        label: `${exam.year} ${exam.series} ${typeLabel}`,
+      };
+    });
 
   const handleScoreChange = (candidate: CandidateScoreEntry, field: "obj" | "essay" | "pract", value: string) => {
     // Only allow changes if score_id exists
@@ -517,23 +521,15 @@ export default function ManualEntryPage() {
   const getActiveFilterChips = () => {
     const chips: Array<{ label: string; onRemove: () => void }> = [];
 
-    if (examType) {
-      chips.push({
-        label: `Type: ${examType === "Certificate II Examination" ? "Certificate II" : examType}`,
-        onRemove: () => handleExamTypeChange("all"),
-      });
-    }
-    if (examSeries) {
-      chips.push({
-        label: `Series: ${examSeries}`,
-        onRemove: () => handleExamSeriesChange("all"),
-      });
-    }
-    if (examYear) {
-      chips.push({
-        label: `Year: ${examYear}`,
-        onRemove: () => handleExamYearChange("all"),
-      });
+    if (selectedExamId) {
+      const exam = exams.find((e) => e.id === selectedExamId);
+      if (exam) {
+        const typeLabel = exam.exam_type === "Certificate II Examination" ? "Certificate II" : exam.exam_type;
+        chips.push({
+          label: `Exam: ${exam.year} ${exam.series} ${typeLabel}`,
+          onRemove: () => handleExamChange("all"),
+        });
+      }
     }
     if (pendingFilters.school_id) {
       const school = schools.find((s) => s.id === pendingFilters.school_id);
@@ -696,76 +692,18 @@ export default function ManualEntryPage() {
                       <CardContent>
                       <div className="flex flex-col gap-2">
                 <div className="flex items-center gap-2">
-                  <label className="text-sm font-medium w-32 text-center">Exam Type</label>
-                  <Select
-                    value={examType || ""}
-                    onValueChange={handleExamTypeChange}
+                  <label className="text-sm font-medium w-32 text-center">Examination</label>
+                  <SearchableSelect
+                    options={examOptions}
+                    value={selectedExamId || ""}
+                    onValueChange={handleExamChange}
+                    placeholder="Select Examination"
                     disabled={loadingFilters || !!pendingFilters.document_id}
-                  >
-                    <SelectTrigger>
-                      <SelectValue placeholder="Select Exam Type" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {Array.from(new Set(exams.map((e) => e.exam_type as ExamType))).map((type) => (
-                        <SelectItem key={type} value={type}>
-                          {type === "Certificate II Examination" ? "Certificate II" : type}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                </div>
-
-                <div className="flex items-center gap-2">
-                  <label className="text-sm font-medium w-32 text-center">Series</label>
-                  <Select
-                    value={examSeries || ""}
-                    onValueChange={handleExamSeriesChange}
-                    disabled={loadingFilters || !examType || !!pendingFilters.document_id}
-                  >
-                    <SelectTrigger>
-                      <SelectValue placeholder="Select Series" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {Array.from(new Set(
-                        examType
-                          ? exams.filter((e) => e.exam_type === examType).map((e) => e.series as ExamSeries)
-                          : exams.map((e) => e.series as ExamSeries)
-                      )).map((series) => (
-                        <SelectItem key={series} value={series}>
-                          {series}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                </div>
-
-                <div className="flex items-center gap-2">
-                  <label className="text-sm font-medium w-32 text-center">Year</label>
-                  <Select
-                    value={examYear?.toString() || ""}
-                    onValueChange={handleExamYearChange}
-                    disabled={loadingFilters || !examType || !examSeries || !!pendingFilters.document_id}
-                  >
-                    <SelectTrigger>
-                      <SelectValue placeholder="Select Year" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {Array.from(new Set(
-                        (() => {
-                          let filtered = exams;
-                          if (examType) filtered = filtered.filter((e) => e.exam_type === examType);
-                          if (examSeries) filtered = filtered.filter((e) => e.series === examSeries);
-                          return filtered.map((e) => e.year);
-                        })()
-                      ))
-                        .sort((a, b) => b - a)
-                        .map((year) => (
-                          <SelectItem key={year} value={year.toString()}>
-                            {year}
-                          </SelectItem>
-                        ))}
-                    </SelectContent>
-                  </Select>
+                    allowAll={false}
+                    searchPlaceholder="Search examinations..."
+                    emptyMessage="No examinations found"
+                    className="flex-1"
+                  />
                 </div>
 
                 <div className="flex items-center gap-2">
@@ -784,7 +722,7 @@ export default function ManualEntryPage() {
                       }
                     }}
                     placeholder="Select School"
-                    disabled={loadingFilters || !examType || !examSeries || !examYear || !!pendingFilters.document_id}
+                    disabled={loadingFilters || !selectedExamId || !!pendingFilters.document_id}
                     allowAll={false}
                     searchPlaceholder="Search schools..."
                     emptyMessage="No schools found"
@@ -839,13 +777,13 @@ export default function ManualEntryPage() {
                   <label className="text-sm font-medium w-32 text-center">Document ID</label>
                   <Input
                     type="text"
-                    placeholder={!examType || !examSeries || !examYear ? "Select Exam Type, Series, and Year first" : "Enter document ID..."}
+                    placeholder={!selectedExamId ? "Select Examination first" : "Enter document ID..."}
                     value={pendingFilters.document_id || ""}
                     onChange={(e) => {
                       const docId = e.target.value || undefined;
                       handleFilterChange("document_id", docId);
                     }}
-                    disabled={loadingFilters || !examType || !examSeries || !examYear}
+                    disabled={loadingFilters || !selectedExamId}
                     className="flex-1"
                   />
                 </div>
@@ -856,9 +794,7 @@ export default function ManualEntryPage() {
                     onClick={handleSearch}
                     disabled={
                       loading ||
-                      !examType ||
-                      !examSeries ||
-                      !examYear ||
+                      !selectedExamId ||
                       (!pendingFilters.document_id && (
                         !pendingFilters.school_id ||
                         !pendingFilters.subject_id

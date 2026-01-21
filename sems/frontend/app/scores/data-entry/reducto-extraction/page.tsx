@@ -75,6 +75,9 @@ export default function ReductoExtractionPage() {
   const [loadingUnmatched, setLoadingUnmatched] = useState(false);
   const [showUnmatched, setShowUnmatched] = useState(false);
 
+  // Verify checkbox state
+  const [verifyEnabled, setVerifyEnabled] = useState(false);
+
   // Document viewer state
   const [selectedDocument, setSelectedDocument] = useState<Document | null>(null);
   const [selectedIndex, setSelectedIndex] = useState<number>(-1);
@@ -376,7 +379,7 @@ export default function ReductoExtractionPage() {
   const handleUpdateScores = async (document: Document) => {
     setUpdatingScores(document.id);
     try {
-      const response = await updateScoresFromReducto(document.id);
+      const response = await updateScoresFromReducto(document.id, verifyEnabled);
       toast.success(
         `Updated ${response.updated_count} score(s). ${response.unmatched_count} unmatched record(s) saved.`
       );
@@ -958,31 +961,46 @@ export default function ReductoExtractionPage() {
             <CardContent className="flex-1 overflow-auto">
               {/* Page Size Selector and Pagination Info */}
               <div className="flex items-center justify-between mb-4 pb-4 border-b border-border">
-                <div className="flex items-center gap-2">
-                  <span className="text-sm text-muted-foreground">Show</span>
-                  <Select
-                    value={(filters.page_size || 50).toString()}
-                    onValueChange={(value) => {
-                      setFilters((prev) => ({
-                        ...prev,
-                        page_size: parseInt(value, 10),
-                        page: 1, // Reset to first page when page size changes
-                      }));
-                    }}
-                  >
-                    <SelectTrigger className="h-8 w-[100px]">
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="20">20</SelectItem>
-                      <SelectItem value="50">50</SelectItem>
-                      <SelectItem value="100">100</SelectItem>
-                      <SelectItem value="200">200</SelectItem>
-                      <SelectItem value="500">500</SelectItem>
-                      <SelectItem value="1000">1000</SelectItem>
-                    </SelectContent>
-                  </Select>
-                  <span className="text-sm text-muted-foreground">per page</span>
+                <div className="flex items-center gap-4">
+                  <div className="flex items-center gap-2">
+                    <span className="text-sm text-muted-foreground">Show</span>
+                    <Select
+                      value={(filters.page_size || 50).toString()}
+                      onValueChange={(value) => {
+                        setFilters((prev) => ({
+                          ...prev,
+                          page_size: parseInt(value, 10),
+                          page: 1, // Reset to first page when page size changes
+                        }));
+                      }}
+                    >
+                      <SelectTrigger className="h-8 w-[100px]">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="20">20</SelectItem>
+                        <SelectItem value="50">50</SelectItem>
+                        <SelectItem value="100">100</SelectItem>
+                        <SelectItem value="200">200</SelectItem>
+                        <SelectItem value="500">500</SelectItem>
+                        <SelectItem value="1000">1000</SelectItem>
+                      </SelectContent>
+                    </Select>
+                    <span className="text-sm text-muted-foreground">per page</span>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <Checkbox
+                      id="verify-checkbox"
+                      checked={verifyEnabled}
+                      onCheckedChange={(checked) => setVerifyEnabled(checked === true)}
+                    />
+                    <label
+                      htmlFor="verify-checkbox"
+                      className="text-sm font-medium leading-none peer-disabled:cursor-not-allowed peer-disabled:opacity-70 cursor-pointer"
+                    >
+                      Verify (compare score and verify fields)
+                    </label>
+                  </div>
                 </div>
                 <div className="text-sm text-muted-foreground">
                   Showing {documents.length > 0 ? ((currentPage - 1) * (filters.page_size || 50) + 1) : 0} to {Math.min(currentPage * (filters.page_size || 50), total)} of {total} documents
