@@ -608,6 +608,8 @@ export interface ValidationIssueDetailResponse {
   exam_type: string | null;
   exam_year: number | null;
   exam_series: string | null;
+  school_id: number | null;
+  school_name: string | null;
   current_score_value: string | null;
   document_id: string | null;
   document_file_name: string | null;
