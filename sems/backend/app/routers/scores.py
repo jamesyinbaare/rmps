@@ -163,8 +163,45 @@ async def get_filtered_documents(
 @router.get("/documents/{document_id}/scores", response_model=DocumentScoresResponse)
 async def get_document_scores(document_id: str, session: DBSessionDep) -> DocumentScoresResponse:
     """Get all scores for a specific document."""
+    # Validate that document_id matches a Document.extracted_id
+    # Look up Document by extracted_id to verify it exists
+    doc_stmt = select(Document).where(Document.extracted_id == document_id)
+    doc_result = await session.execute(doc_stmt)
+    document = doc_result.scalar_one_or_none()
+
+    if not document:
+        logger.warning(
+            f"Document not found with extracted_id={document_id}",
+            extra={"document_id_param": document_id}
+        )
+        # Return empty results instead of error to maintain backward compatibility
+        return DocumentScoresResponse(document_id=document_id, scores=[])
+
+    if document.extracted_id is None:
+        logger.warning(
+            f"Document found but extracted_id is NULL. document_id={document.id}, extracted_id_param={document_id}",
+            extra={
+                "document_id": document.id,
+                "document_id_param": document_id,
+            }
+        )
+        return DocumentScoresResponse(document_id=document_id, scores=[])
+
+    # Use Document.extracted_id for filtering (not the parameter directly)
+    # This ensures we're matching against the actual extracted_id value
+    extracted_id_to_filter = document.extracted_id
+
+    logger.info(
+        f"Filtering subject_scores by document extracted_id",
+        extra={
+            "document_id_param": document_id,
+            "document_extracted_id": extracted_id_to_filter,
+            "document_id": document.id,
+            "document_test_type": document.test_type,
+        }
+    )
+
     # Get all scores with document_id matching, join with related tables
-    # Note: document_id here refers to SubjectScore document_id fields (extracted_id string), not Document.id
     # Query by any of the three document_id fields (obj, essay, or pract)
     stmt = (
         select(
@@ -182,9 +219,9 @@ async def get_document_scores(document_id: str, session: DBSessionDep) -> Docume
         .join(Subject, ExamSubject.subject_id == Subject.id)
         .where(
             or_(
-                SubjectScore.obj_document_id == document_id,
-                SubjectScore.essay_document_id == document_id,
-                SubjectScore.pract_document_id == document_id,
+                SubjectScore.obj_document_id == extracted_id_to_filter,
+                SubjectScore.essay_document_id == extracted_id_to_filter,
+                SubjectScore.pract_document_id == extracted_id_to_filter,
             )
         )
         .order_by(Candidate.index_number)
@@ -193,8 +230,41 @@ async def get_document_scores(document_id: str, session: DBSessionDep) -> Docume
     result = await session.execute(stmt)
     rows = result.all()
 
+    logger.info(
+        f"Found {len(rows)} subject_scores matching document extracted_id",
+        extra={
+            "document_extracted_id": extracted_id_to_filter,
+            "matches_count": len(rows),
+        }
+    )
+
     scores = []
     for subject_score, subject_reg, _exam_reg, candidate, exam_subject, subject in rows:
+        # Determine which field matched
+        match_type = None
+        if subject_score.obj_document_id == extracted_id_to_filter:
+            match_type = "obj"
+        elif subject_score.essay_document_id == extracted_id_to_filter:
+            match_type = "essay"
+        elif subject_score.pract_document_id == extracted_id_to_filter:
+            match_type = "pract"
+
+        logger.info(
+            f"SubjectScore matched document extracted_id",
+            extra={
+                "subject_score_id": subject_score.id,
+                "candidate_index_number": candidate.index_number,
+                "candidate_name": candidate.name,
+                "candidate_id": candidate.id,
+                "subject_code": subject.code,
+                "subject_name": subject.name,
+                "obj_document_id": subject_score.obj_document_id,
+                "essay_document_id": subject_score.essay_document_id,
+                "pract_document_id": subject_score.pract_document_id,
+                "match_type": match_type,
+                "document_extracted_id": extracted_id_to_filter,
+            }
+        )
         # Calculate grade from grade ranges JSON
         grade = calculate_grade(
             subject_score.total_score,
@@ -600,14 +670,44 @@ async def get_candidates_for_manual_entry(
     if subject_type is not None:
         base_stmt = base_stmt.where(Subject.subject_type == subject_type)
     if document_id is not None:
-        # Filter by document_id matching any of obj_document_id, essay_document_id, or pract_document_id
-        base_stmt = base_stmt.where(
-            or_(
-                SubjectScore.obj_document_id == document_id,
-                SubjectScore.essay_document_id == document_id,
-                SubjectScore.pract_document_id == document_id,
+        # Validate that document_id matches a Document.extracted_id
+        doc_stmt = select(Document).where(Document.extracted_id == document_id)
+        doc_result = await session.execute(doc_stmt)
+        document = doc_result.scalar_one_or_none()
+
+        if not document:
+            logger.warning(
+                f"Document not found with extracted_id={document_id} when filtering candidates",
+                extra={"document_id_param": document_id}
             )
-        )
+        elif document.extracted_id is None:
+            logger.warning(
+                f"Document found but extracted_id is NULL. document_id={document.id}, extracted_id_param={document_id}",
+                extra={
+                    "document_id": document.id,
+                    "document_id_param": document_id,
+                }
+            )
+        else:
+            # Use Document.extracted_id for filtering (not the parameter directly)
+            extracted_id_to_filter = document.extracted_id
+            logger.info(
+                f"Filtering candidates by document extracted_id",
+                extra={
+                    "document_id_param": document_id,
+                    "document_extracted_id": extracted_id_to_filter,
+                    "document_id": document.id,
+                    "document_test_type": document.test_type,
+                }
+            )
+            # Filter by document_id matching any of obj_document_id, essay_document_id, or pract_document_id
+            base_stmt = base_stmt.where(
+                or_(
+                    SubjectScore.obj_document_id == extracted_id_to_filter,
+                    SubjectScore.essay_document_id == extracted_id_to_filter,
+                    SubjectScore.pract_document_id == extracted_id_to_filter,
+                )
+            )
 
     # Get total count - count distinct SubjectScore IDs with same filters
     count_base_stmt = (
@@ -642,14 +742,26 @@ async def get_candidates_for_manual_entry(
     if subject_type is not None:
         count_base_stmt = count_base_stmt.where(Subject.subject_type == subject_type)
     if document_id is not None:
-        # Filter by document_id matching any of obj_document_id, essay_document_id, or pract_document_id
-        count_base_stmt = count_base_stmt.where(
-            or_(
-                SubjectScore.obj_document_id == document_id,
-                SubjectScore.essay_document_id == document_id,
-                SubjectScore.pract_document_id == document_id,
+        # Validate that document_id matches a Document.extracted_id (same as above)
+        doc_stmt = select(Document).where(Document.extracted_id == document_id)
+        doc_result = await session.execute(doc_stmt)
+        document = doc_result.scalar_one_or_none()
+
+        if document and document.extracted_id is not None:
+            # Use Document.extracted_id for filtering (not the parameter directly)
+            extracted_id_to_filter = document.extracted_id
+            # Filter by document_id matching any of obj_document_id, essay_document_id, or pract_document_id
+            count_base_stmt = count_base_stmt.where(
+                or_(
+                    SubjectScore.obj_document_id == extracted_id_to_filter,
+                    SubjectScore.essay_document_id == extracted_id_to_filter,
+                    SubjectScore.pract_document_id == extracted_id_to_filter,
+                )
             )
-        )
+        else:
+            # If document not found or extracted_id is NULL, filter will return 0 results
+            # Add a condition that never matches to return 0 count
+            count_base_stmt = count_base_stmt.where(SubjectScore.id == -1)
 
     count_stmt = select(func.count()).select_from(count_base_stmt.subquery())
     count_result = await session.execute(count_stmt)
@@ -660,8 +772,60 @@ async def get_candidates_for_manual_entry(
     result = await session.execute(stmt)
     rows = result.all()
 
+    # Log results when document_id filter is used
+    if document_id is not None:
+        # Re-query document to get extracted_id for logging
+        doc_stmt = select(Document).where(Document.extracted_id == document_id)
+        doc_result = await session.execute(doc_stmt)
+        document = doc_result.scalar_one_or_none()
+        extracted_id_to_filter = document.extracted_id if document and document.extracted_id else document_id
+
+        logger.info(
+            f"Found {len(rows)} candidates matching document extracted_id filter",
+            extra={
+                "document_id_param": document_id,
+                "document_extracted_id": extracted_id_to_filter,
+                "matches_count": len(rows),
+                "page": page,
+                "page_size": page_size,
+            }
+        )
+
     items = []
     for candidate, subject_reg, subject_score, _exam_reg, exam, exam_subject, subject, programme in rows:
+        # Log individual matches when document_id filter is used
+        if document_id is not None:
+            # Re-query document to get extracted_id for logging
+            doc_stmt = select(Document).where(Document.extracted_id == document_id)
+            doc_result = await session.execute(doc_stmt)
+            document = doc_result.scalar_one_or_none()
+            extracted_id_to_filter = document.extracted_id if document and document.extracted_id else document_id
+
+            # Determine which field matched
+            match_type = None
+            if subject_score.obj_document_id == extracted_id_to_filter:
+                match_type = "obj"
+            elif subject_score.essay_document_id == extracted_id_to_filter:
+                match_type = "essay"
+            elif subject_score.pract_document_id == extracted_id_to_filter:
+                match_type = "pract"
+
+            logger.info(
+                f"Candidate matched document extracted_id filter",
+                extra={
+                    "subject_score_id": subject_score.id,
+                    "candidate_index_number": candidate.index_number,
+                    "candidate_name": candidate.name,
+                    "candidate_id": candidate.id,
+                    "subject_code": subject.code,
+                    "subject_name": subject.name,
+                    "obj_document_id": subject_score.obj_document_id,
+                    "essay_document_id": subject_score.essay_document_id,
+                    "pract_document_id": subject_score.pract_document_id,
+                    "match_type": match_type,
+                    "document_extracted_id": extracted_id_to_filter,
+                }
+            )
         items.append(
             CandidateScoreEntry(
                 candidate_id=candidate.id,
