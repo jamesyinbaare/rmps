@@ -146,7 +146,7 @@ export interface DocumentFilters {
 }
 
 export interface ApiError {
-  detail: string;
+  detail: string | object | Array<{ loc: (string | number)[]; msg: string; type: string }>;
 }
 
 export interface Programme {
@@ -802,4 +802,36 @@ export interface BackfillTestTypeResponse {
     extracted_id: string;
     error: string;
   }>;
+}
+
+export interface SheetIdInfo {
+  sheet_id: string;
+  test_type: number | null; // 1=Objectives, 2=Essay, 3=Practicals
+  school_id: number | null;
+  school_name: string | null;
+  school_code: string | null;
+  subject_id: number | null;
+  subject_code: string | null;
+  subject_name: string | null;
+  series: number | null;
+  sheet_number: number | null;
+  candidate_count: number | null; // For expected sheets
+  document_id: number | null; // For uploaded sheets
+  file_name: string | null; // For uploaded sheets
+  status: string; // "expected", "uploaded", "missing", "extra"
+}
+
+export interface SheetIdComparisonResponse {
+  exam_id: number;
+  total_expected_sheets: number;
+  total_uploaded_sheets: number;
+  missing_sheet_ids: string[];
+  uploaded_sheet_ids: string[];
+  extra_sheet_ids: string[];
+  expected_by_test_type: Record<number, number>;
+  uploaded_by_test_type: Record<number, number>;
+  expected_sheet_ids_info: SheetIdInfo[];
+  missing_sheet_ids_info: SheetIdInfo[];
+  uploaded_sheet_ids_info: SheetIdInfo[];
+  extra_sheet_ids_info: SheetIdInfo[];
 }

@@ -73,6 +73,10 @@ const getNavMain = (userRole?: UserRole | number) => {
           title: "Generate ICMs",
           url: "/icm-studio/generate-icms",
         },
+        {
+          title: "Track ICMS",
+          url: "/icm-studio/track-icms",
+        },
       ],
     },
     {
