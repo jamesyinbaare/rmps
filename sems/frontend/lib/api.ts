@@ -1703,13 +1703,15 @@ export async function getReductoData(documentId: number): Promise<ReductoDataRes
 }
 
 export async function updateScoresFromReducto(
-  documentId: number
+  documentId: number,
+  verify: boolean = false
 ): Promise<UpdateScoresFromReductoResponse> {
   const response = await fetch(`${API_BASE_URL}/api/v1/scores/documents/${documentId}/update-from-reducto`, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
     },
+    body: JSON.stringify({ verify }),
   });
   return handleResponse<UpdateScoresFromReductoResponse>(response);
 }
@@ -2157,6 +2159,7 @@ export async function getValidationIssues(
   if (filters.status) params.append("status_filter", filters.status);
   if (filters.issue_type) params.append("issue_type", filters.issue_type);
   if (filters.test_type) params.append("test_type", filters.test_type.toString());
+  if (filters.subject_type) params.append("subject_type", filters.subject_type);
   if (filters.page) params.append("page", filters.page.toString());
   if (filters.page_size) params.append("page_size", filters.page_size.toString());
 

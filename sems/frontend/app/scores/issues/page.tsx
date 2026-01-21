@@ -56,6 +56,7 @@ export default function ValidationIssuesPage() {
   const [schoolIdFilter, setSchoolIdFilter] = useState<number | null>(null);
   const [subjectIdFilter, setSubjectIdFilter] = useState<number | null>(null);
   const [testTypeFilter, setTestTypeFilter] = useState<number[]>([]);
+  const [subjectTypeFilter, setSubjectTypeFilter] = useState<string[]>([]);
 
   // Validation run dialog
   const [runDialogOpen, setRunDialogOpen] = useState(false);
@@ -119,6 +120,10 @@ export default function ValidationIssuesPage() {
         filters.test_type = testTypeFilter[0];
       }
 
+      if (subjectTypeFilter.length === 1) {
+        filters.subject_type = subjectTypeFilter[0];
+      }
+
       const response = await getValidationIssues(filters);
       setIssues(response.issues);
       setTotal(response.total);
@@ -138,7 +143,7 @@ export default function ValidationIssuesPage() {
     } finally {
       setLoading(false);
     }
-  }, [page, pageSize, statusFilter, issueTypeFilter, examIdFilter, schoolIdFilter, subjectIdFilter, testTypeFilter]);
+  }, [page, pageSize, statusFilter, issueTypeFilter, examIdFilter, schoolIdFilter, subjectIdFilter, testTypeFilter, subjectTypeFilter]);
 
   useEffect(() => {
     loadIssues();
@@ -159,8 +164,26 @@ export default function ValidationIssuesPage() {
     setLoadingFilterOptions(true);
     try {
       console.log("Loading filter options...");
-      // Load exams, schools, and subjects
-      const [examsData, schoolsData, subjectsData] = await Promise.all([
+
+      // Fetch all subjects by paginating through all pages
+      const allSubjects: Subject[] = [];
+      let page = 1;
+      let hasMore = true;
+
+      while (hasMore) {
+        try {
+          const subjectsData = await listSubjects(page, 100);
+          allSubjects.push(...subjectsData);
+          hasMore = subjectsData.length === 100;
+          page++;
+        } catch (err) {
+          console.error("Error loading subjects page:", err);
+          hasMore = false;
+        }
+      }
+
+      // Load exams, schools
+      const [examsData, schoolsData] = await Promise.all([
         getAllExams().catch((err) => {
           console.error("Error loading exams:", err);
           return [];
@@ -169,16 +192,12 @@ export default function ValidationIssuesPage() {
           console.error("Error loading schools:", err);
           return [];
         }),
-        listSubjects(1, 100).catch((err) => {
-          console.error("Error loading subjects:", err);
-          return [];
-        }),
       ]);
 
-      console.log("Filter options loaded:", { exams: examsData?.length, schools: schoolsData?.length, subjects: subjectsData?.length });
+      console.log("Filter options loaded:", { exams: examsData?.length, schools: schoolsData?.length, subjects: allSubjects.length });
       setExams(Array.isArray(examsData) ? examsData : []);
       setSchools(Array.isArray(schoolsData) ? schoolsData : []);
-      setSubjects(Array.isArray(subjectsData) ? subjectsData : []);
+      setSubjects(allSubjects);
     } catch (err) {
       console.error("Error loading filter options:", err);
       toast.error("Failed to load filter options");
@@ -683,6 +702,65 @@ export default function ValidationIssuesPage() {
                             className="text-sm font-medium leading-none cursor-pointer flex-1"
                           >
                             {getTestTypeLabel(testType)}
+                          </label>
+                        </div>
+                      ))}
+                    </div>
+                  </PopoverContent>
+                </Popover>
+
+                {/* Subject Type Filter */}
+                <Popover>
+                  <PopoverTrigger asChild>
+                    <Button variant="outline" size="sm" className="gap-2">
+                      Subject Type
+                      {subjectTypeFilter.length > 0 && (
+                        <Badge variant="secondary" className="ml-1">
+                          {subjectTypeFilter.length}
+                        </Badge>
+                      )}
+                      <ChevronDown className="h-4 w-4" />
+                    </Button>
+                  </PopoverTrigger>
+                  <PopoverContent className="w-56 p-0" align="start">
+                    <div className="p-2 space-y-2">
+                      <div className="flex items-center space-x-2 p-2 hover:bg-muted rounded-sm">
+                        <Checkbox
+                          id="subject-type-all"
+                          checked={subjectTypeFilter.length === 0}
+                          onCheckedChange={(checked) => {
+                            if (checked) {
+                              setSubjectTypeFilter([]);
+                              setPage(1);
+                            }
+                          }}
+                        />
+                        <label
+                          htmlFor="subject-type-all"
+                          className="text-sm font-medium leading-none cursor-pointer flex-1"
+                        >
+                          All
+                        </label>
+                      </div>
+                      {(["CORE", "ELECTIVE"] as const).map((subjectType) => (
+                        <div key={subjectType} className="flex items-center space-x-2 p-2 hover:bg-muted rounded-sm">
+                          <Checkbox
+                            id={`subject-type-${subjectType}`}
+                            checked={subjectTypeFilter.includes(subjectType)}
+                            onCheckedChange={(checked) => {
+                              if (checked) {
+                                setSubjectTypeFilter([...subjectTypeFilter, subjectType]);
+                              } else {
+                                setSubjectTypeFilter(subjectTypeFilter.filter((t) => t !== subjectType));
+                              }
+                              setPage(1);
+                            }}
+                          />
+                          <label
+                            htmlFor={`subject-type-${subjectType}`}
+                            className="text-sm font-medium leading-none cursor-pointer flex-1"
+                          >
+                            {subjectType}
                           </label>
                         </div>
                       ))}

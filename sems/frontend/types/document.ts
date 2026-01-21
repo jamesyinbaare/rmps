@@ -581,6 +581,7 @@ export interface ValidationIssuesFilters {
   status?: ValidationIssueStatus;
   issue_type?: ValidationIssueType;
   test_type?: number;
+  subject_type?: string;
   page?: number;
   page_size?: number;
 }

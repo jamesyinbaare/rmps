@@ -50,10 +50,8 @@ export default function ScoreDataEntryPage() {
   const [subjects, setSubjects] = useState<Subject[]>([]);
   const [loadingFilters, setLoadingFilters] = useState(true);
 
-  // Exam filtering state (three-step: type, series, year)
-  const [examType, setExamType] = useState<ExamType | undefined>();
-  const [examSeries, setExamSeries] = useState<ExamSeries | undefined>();
-  const [examYear, setExamYear] = useState<number | undefined>();
+  // Exam filtering state (combined)
+  const [selectedExamId, setSelectedExamId] = useState<number | undefined>();
 
   // Load filter options
   useEffect(() => {
@@ -120,75 +118,39 @@ export default function ScoreDataEntryPage() {
     loadDocuments();
   };
 
-  // Update filters when exam type, series, or year changes
+  // Update filters when selected exam changes
   useEffect(() => {
     const newFilters: ScoreDocumentFilters = { ...filters };
 
-    // Set or clear exam_type, series, and year based on selections
-    if (examType) {
-      newFilters.exam_type = examType;
+    if (selectedExamId && exams.length > 0) {
+      const exam = exams.find((e) => e.id === selectedExamId);
+      if (exam) {
+        newFilters.exam_id = exam.id;
+        newFilters.exam_type = exam.exam_type as ExamType;
+        newFilters.series = exam.series as ExamSeries;
+        newFilters.year = exam.year;
+      }
     } else {
+      delete newFilters.exam_id;
       delete newFilters.exam_type;
       delete newFilters.series;
       delete newFilters.year;
     }
 
-    if (examSeries && examType) {
-      newFilters.series = examSeries;
-    } else {
-      delete newFilters.series;
-      delete newFilters.year;
-    }
-
-    if (examYear && examType && examSeries) {
-      newFilters.year = examYear;
-    } else {
-      delete newFilters.year;
-    }
-
-    // If all three are selected, also set exam_id for backward compatibility
-    if (examType && examSeries && examYear && exams.length > 0) {
-      const foundExamId = findExamId(exams, examType, examSeries, examYear);
-      if (foundExamId) {
-        newFilters.exam_id = foundExamId;
-      } else {
-        delete newFilters.exam_id;
-      }
-    } else {
-      delete newFilters.exam_id;
-    }
-
     newFilters.page = 1;
     setFilters(newFilters);
-  }, [examType, examSeries, examYear, exams]);
+  }, [selectedExamId, exams]);
 
-  // Reverse lookup: if filters have exam_type, series, year, populate local state
+  // Reverse lookup: if filters have exam_id, populate selectedExamId
   useEffect(() => {
-    if (exams.length > 0) {
-      if (filters.exam_type || filters.series || filters.year) {
-        if (filters.exam_type && filters.exam_type !== examType) {
-          setExamType(filters.exam_type);
-        }
-        if (filters.series && filters.series !== examSeries) {
-          setExamSeries(filters.series);
-        }
-        if (filters.year && filters.year !== examYear) {
-          setExamYear(filters.year);
-        }
-      } else if (filters.exam_id && (!examType || !examSeries || !examYear)) {
-        const exam = exams.find((e) => e.id === filters.exam_id);
-        if (exam) {
-          setExamType(exam.exam_type as ExamType);
-          setExamSeries(exam.series as ExamSeries);
-          setExamYear(exam.year);
-        }
-      } else if (!filters.exam_id && !filters.exam_type && !filters.series && !filters.year) {
-        setExamType(undefined);
-        setExamSeries(undefined);
-        setExamYear(undefined);
+    if (exams.length > 0 && filters.exam_id) {
+      if (filters.exam_id !== selectedExamId) {
+        setSelectedExamId(filters.exam_id);
       }
+    } else if (!filters.exam_id && selectedExamId !== undefined) {
+      setSelectedExamId(undefined);
     }
-  }, [filters.exam_id, filters.exam_type, filters.series, filters.year, exams]);
+  }, [filters.exam_id, exams]);
 
   const handleFilterChange = (key: keyof ScoreDocumentFilters, value: string | undefined) => {
     const newFilters = { ...filters };
@@ -205,34 +167,29 @@ export default function ScoreDataEntryPage() {
     setFilters(newFilters);
   };
 
-  const handleExamTypeChange = (value: string) => {
+  const handleExamChange = (value: string | number | "all" | "") => {
     if (value === "all" || value === "") {
-      setExamType(undefined);
+      setSelectedExamId(undefined);
     } else {
-      setExamType(value as ExamType);
-      // Clear series and year when type changes
-      setExamSeries(undefined);
-      setExamYear(undefined);
+      setSelectedExamId(typeof value === "number" ? value : parseInt(String(value), 10));
     }
   };
 
-  const handleExamSeriesChange = (value: string) => {
-    if (value === "all" || value === "") {
-      setExamSeries(undefined);
-    } else {
-      setExamSeries(value as ExamSeries);
-      // Clear year when series changes
-      setExamYear(undefined);
-    }
-  };
-
-  const handleExamYearChange = (value: string) => {
-    if (value === "all" || value === "") {
-      setExamYear(undefined);
-    } else {
-      setExamYear(parseInt(value, 10));
-    }
-  };
+  // Generate exam options for the combined dropdown
+  const examOptions = exams
+    .sort((a, b) => {
+      // Sort by year (descending), then series, then type
+      if (b.year !== a.year) return b.year - a.year;
+      if (a.series !== b.series) return a.series.localeCompare(b.series);
+      return (a.exam_type || "").localeCompare(b.exam_type || "");
+    })
+    .map((exam) => {
+      const typeLabel = exam.exam_type === "Certificate II Examination" ? "Certificate II" : exam.exam_type;
+      return {
+        value: exam.id,
+        label: `${exam.year} ${exam.series} ${typeLabel}`,
+      };
+    });
 
   const handlePageChange = (page: number) => {
     const newFilters = { ...filters, page };
@@ -370,21 +327,7 @@ export default function ScoreDataEntryPage() {
   };
 
   // Get available exam types, series, and years from exams
-  const availableExamTypes = Array.from(new Set(exams.map((e) => e.exam_type as ExamType)));
-  const availableSeries = examType
-    ? Array.from(new Set(exams.filter((e) => e.exam_type === examType).map((e) => e.series as ExamSeries)))
-    : Array.from(new Set(exams.map((e) => e.series as ExamSeries)));
-  let filteredExamsForYears = exams;
-  if (examType) {
-    filteredExamsForYears = filteredExamsForYears.filter((e) => e.exam_type === examType);
-  }
-  if (examSeries) {
-    filteredExamsForYears = filteredExamsForYears.filter((e) => e.series === examSeries);
-  }
-  const availableYears = Array.from(new Set(filteredExamsForYears.map((e) => e.year)))
-    .sort((a, b) => b - a);
-
-  const hasActiveFilters = filters.exam_id || filters.exam_type || filters.series || filters.year || filters.school_id || filters.subject_id || filters.test_type || filters.extraction_status;
+  const hasActiveFilters = filters.exam_id || filters.school_id || filters.subject_id || filters.test_type || filters.extraction_status;
 
   // Calculate statistics from documents
   const stats = {
@@ -398,23 +341,15 @@ export default function ScoreDataEntryPage() {
   const getActiveFilterChips = () => {
     const chips: Array<{ label: string; onRemove: () => void }> = [];
 
-    if (examType) {
-      chips.push({
-        label: `Type: ${examType === "Certificate II Examination" ? "Certificate II" : examType}`,
-        onRemove: () => handleExamTypeChange("all"),
-      });
-    }
-    if (examSeries) {
-      chips.push({
-        label: `Series: ${examSeries}`,
-        onRemove: () => handleExamSeriesChange("all"),
-      });
-    }
-    if (examYear) {
-      chips.push({
-        label: `Year: ${examYear}`,
-        onRemove: () => handleExamYearChange("all"),
-      });
+    if (selectedExamId) {
+      const exam = exams.find((e) => e.id === selectedExamId);
+      if (exam) {
+        const typeLabel = exam.exam_type === "Certificate II Examination" ? "Certificate II" : exam.exam_type;
+        chips.push({
+          label: `Exam: ${exam.year} ${exam.series} ${typeLabel}`,
+          onRemove: () => handleExamChange("all"),
+        });
+      }
     }
     if (filters.school_id) {
       const school = schools.find((s) => s.id === filters.school_id);
@@ -514,62 +449,20 @@ export default function ScoreDataEntryPage() {
         <div className="border-b border-border bg-background px-4 py-3">
           <div className="max-w-[2000px] mx-auto">
             <div className="flex items-center gap-2 flex-wrap">
-            {/* Examination Type */}
-            <Select
-              value={examType || "all"}
-              onValueChange={handleExamTypeChange}
-              disabled={loadingFilters}
-            >
-              <SelectTrigger className="h-8 w-[180px]">
-                <SelectValue placeholder="Exam Type" />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="all">All types</SelectItem>
-                {availableExamTypes.map((type) => (
-                  <SelectItem key={type} value={type}>
-                    {type === "Certificate II Examination" ? "Certificate II" : type}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-
-            {/* Examination Series */}
-            <Select
-              value={examSeries || "all"}
-              onValueChange={handleExamSeriesChange}
-              disabled={loadingFilters || !examType}
-            >
-              <SelectTrigger className="h-8 w-[180px]">
-                <SelectValue placeholder="Series" />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="all">All series</SelectItem>
-                {availableSeries.map((series) => (
-                  <SelectItem key={series} value={series}>
-                    {series}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-
-            {/* Examination Year */}
-            <Select
-              value={examYear?.toString() || "all"}
-              onValueChange={handleExamYearChange}
-              disabled={loadingFilters || !examType || !examSeries}
-            >
-              <SelectTrigger className="h-8 w-[120px]">
-                <SelectValue placeholder="Year" />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="all">All years</SelectItem>
-                {availableYears.map((year) => (
-                  <SelectItem key={year} value={year.toString()}>
-                    {year}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
+            {/* Examination - Combined */}
+            <div className="w-[280px]">
+              <SearchableSelect
+                options={examOptions}
+                value={selectedExamId || ""}
+                onValueChange={handleExamChange}
+                placeholder="Examination"
+                disabled={loadingFilters}
+                allowAll={true}
+                allLabel="All examinations"
+                searchPlaceholder="Search examinations..."
+                emptyMessage="No examinations found"
+              />
+            </div>
 
             {/* School - Searchable */}
             <div className="w-[240px]">
