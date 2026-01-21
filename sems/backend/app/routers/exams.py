@@ -505,6 +505,7 @@ async def add_subject_to_exam(
         exam_id=db_exam_subject.exam_id,
         subject_id=db_exam_subject.subject_id,
         subject_code=subject.code,
+        original_code=subject.original_code,
         subject_name=subject.name,
         subject_type=subject.subject_type,
         obj_pct=db_exam_subject.obj_pct,
@@ -513,6 +514,7 @@ async def add_subject_to_exam(
         obj_max_score=db_exam_subject.obj_max_score,
         essay_max_score=db_exam_subject.essay_max_score,
         pract_max_score=db_exam_subject.pract_max_score,
+        grade_ranges_json=db_exam_subject.grade_ranges_json,
         created_at=db_exam_subject.created_at,
         updated_at=db_exam_subject.updated_at,
     )
@@ -585,6 +587,7 @@ async def update_exam_subject(
         exam_id=exam_subject.exam_id,
         subject_id=exam_subject.subject_id,
         subject_code=subject.code,
+        original_code=subject.original_code,
         subject_name=subject.name,
         subject_type=subject.subject_type,
         obj_pct=exam_subject.obj_pct,
@@ -593,6 +596,7 @@ async def update_exam_subject(
         obj_max_score=exam_subject.obj_max_score,
         essay_max_score=exam_subject.essay_max_score,
         pract_max_score=exam_subject.pract_max_score,
+        grade_ranges_json=exam_subject.grade_ranges_json,
         created_at=exam_subject.created_at,
         updated_at=exam_subject.updated_at,
     )

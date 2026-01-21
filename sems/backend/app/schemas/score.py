@@ -10,13 +10,13 @@ class ScoreUpdate(BaseModel):
     """Schema for updating raw scores."""
 
     obj_raw_score: str | None = Field(
-        None, description="Objectives score: numeric string (>=0), 'A'/'AA' (absent), or None (not entered)"
+        None, description="Objectives score: numeric string (>=0), 'A'/'AA'/'AAA' (absent), or None (not entered)"
     )
     essay_raw_score: str | None = Field(
-        None, description="Essay score: numeric string (>=0), 'A'/'AA' (absent), or None (not entered)"
+        None, description="Essay score: numeric string (>=0), 'A'/'AA'/'AAA' (absent), or None (not entered)"
     )
     pract_raw_score: str | None = Field(
-        None, description="Practical score: numeric string (>=0), 'A'/'AA' (absent), or None (not entered)"
+        None, description="Practical score: numeric string (>=0), 'A'/'AA'/'AAA' (absent), or None (not entered)"
     )
     extraction_method: DataExtractionMethod | None = Field(
         None, description="Extraction method used for this update. If not provided, will be inferred from endpoint context."
@@ -151,6 +151,12 @@ class ReductoDataResponse(BaseModel):
     status: str
     confidence: float | None
     extracted_at: datetime | None
+
+
+class UpdateScoresFromReductoRequest(BaseModel):
+    """Request for updating scores from reducto data."""
+
+    verify: bool = Field(default=False, description="If True, compare score and verify fields before inserting")
 
 
 class UpdateScoresFromReductoResponse(BaseModel):

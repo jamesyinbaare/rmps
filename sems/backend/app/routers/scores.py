@@ -37,9 +37,10 @@ from app.schemas.score import (
     ScoreUpdate,
     UnmatchedExtractionRecordResponse,
     UnmatchedRecordsListResponse,
+    UpdateScoresFromReductoRequest,
     UpdateScoresFromReductoResponse,
 )
-from app.utils.score_utils import add_extraction_method_to_document, calculate_grade, parse_score_value
+from app.utils.score_utils import add_extraction_method_to_document, calculate_grade, is_absent, parse_score_value
 from app.services.results_export import generate_results_export
 
 logger = logging.getLogger(__name__)
@@ -983,8 +984,49 @@ async def get_reducto_data(document_id: int, session: DBSessionDep) -> ReductoDa
     )
 
 
+def scores_match(score: str | None, verify: str | None) -> bool:
+    """
+    Check if score and verify fields match for insertion.
+
+    Returns True if:
+    - Both are numeric AND their integer values are equal, OR
+    - Both are A/AA/AAA (any combination is acceptable)
+
+    Args:
+        score: The score value to check
+        verify: The verify value to check against score
+
+    Returns:
+        True if scores match, False otherwise
+    """
+    parsed_score = parse_score_value(score) if score else None
+    parsed_verify = parse_score_value(verify) if verify else None
+
+    # Both None - consider as match (no data to verify)
+    if parsed_score is None and parsed_verify is None:
+        return True
+
+    # One is None, other is not - no match
+    if parsed_score is None or parsed_verify is None:
+        return False
+
+    # Both are A/AA/AAA - any combination is acceptable
+    if is_absent(parsed_score) and is_absent(parsed_verify):
+        return True
+
+    # Both are numeric - check if integer values match
+    try:
+        score_int = int(float(parsed_score))
+        verify_int = int(float(parsed_verify))
+        return score_int == verify_int
+    except (ValueError, TypeError):
+        return False
+
+
 @router.post("/documents/{document_id}/update-from-reducto", response_model=UpdateScoresFromReductoResponse)
-async def update_scores_from_reducto(document_id: int, session: DBSessionDep) -> UpdateScoresFromReductoResponse:
+async def update_scores_from_reducto(
+    document_id: int, request: UpdateScoresFromReductoRequest, session: DBSessionDep
+) -> UpdateScoresFromReductoResponse:
     """Update existing SubjectScore records with data from reducto extraction."""
     logger.info(f"Starting update_scores_from_reducto for document_id={document_id}")
 
@@ -1137,16 +1179,19 @@ async def update_scores_from_reducto(document_id: int, session: DBSessionDep) ->
 
     updated_count = 0
     unmatched_count = 0
+    skipped_count = 0
     unmatched_records = []
     errors: list[dict[str, str]] = []
+    verify_enabled = request.verify
 
     # Process each candidate from reducto data
-    logger.info(f"Processing {len(candidates)} candidates from reducto data")
+    logger.info(f"Processing {len(candidates)} candidates from reducto data (verify={verify_enabled})")
     for idx, candidate_data in enumerate(candidates):
         try:
             index_number = candidate_data.get("index_number")
             candidate_name = candidate_data.get("candidate_name")
             score_value = candidate_data.get("score")
+            verify_value = candidate_data.get("verify")
             # Extract SN: try sn, serial_number, row_number, or fallback to array index + 1
             sn = candidate_data.get("sn") or candidate_data.get("serial_number") or candidate_data.get("row_number") or (idx + 1)
             # Ensure sn is an integer
@@ -1156,7 +1201,7 @@ async def update_scores_from_reducto(document_id: int, session: DBSessionDep) ->
                 except (ValueError, TypeError):
                     sn = idx + 1
 
-            logger.debug(f"Processing candidate {idx+1}/{len(candidates)}: index_number={index_number}, name={candidate_name}, score={score_value}, sn={sn}")
+            logger.debug(f"Processing candidate {idx+1}/{len(candidates)}: index_number={index_number}, name={candidate_name}, score={score_value}, verify={verify_value}, sn={sn}")
 
             if not index_number:
                 logger.warning(f"Candidate {idx+1} missing index_number: {candidate_data}")
@@ -1251,6 +1296,15 @@ async def update_scores_from_reducto(document_id: int, session: DBSessionDep) ->
                 errors.append({"index_number": index_number, "error": f"Invalid score format: {e}"})
                 continue
 
+            # If verify is enabled, check if score and verify fields match
+            if verify_enabled:
+                if not scores_match(score_value, verify_value):
+                    logger.debug(
+                        f"Skipping candidate {index_number}: score={score_value} and verify={verify_value} do not match"
+                    )
+                    skipped_count += 1
+                    continue
+
             # Update appropriate score field based on test_type
             old_score = getattr(subject_score, update_score_attr)
             setattr(subject_score, update_score_attr, parsed_score)
@@ -1278,7 +1332,7 @@ async def update_scores_from_reducto(document_id: int, session: DBSessionDep) ->
 
     logger.info(
         f"Completed update_scores_from_reducto for document_id={document_id}: "
-        f"updated={updated_count}, unmatched={unmatched_count}, errors={len(errors)}"
+        f"updated={updated_count}, unmatched={unmatched_count}, skipped={skipped_count}, errors={len(errors)}"
     )
 
     return UpdateScoresFromReductoResponse(

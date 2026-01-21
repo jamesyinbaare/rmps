@@ -20,6 +20,7 @@ from app.models import (
     SubjectRegistration,
     SubjectScore,
     SubjectScoreValidationIssue,
+    SubjectType,
     ValidationIssueStatus,
     ValidationIssueType,
 )
@@ -108,6 +109,7 @@ async def list_validation_issues(
     status_filter: ValidationIssueStatus | None = Query(None, description="Filter by issue status"),
     issue_type: str | None = Query(None, description="Filter by issue type (missing_score, invalid_score)"),
     test_type: int | None = Query(None, description="Filter by test type (1 = Objectives, 2 = Essay, 3 = Practical)"),
+    subject_type: str | None = Query(None, description="Filter by subject type (CORE, ELECTIVE)"),
 ) -> ValidationIssueListResponse:
     """List validation issues with pagination and optional filters."""
     # Generate cache key
@@ -120,6 +122,7 @@ async def list_validation_issues(
         status_filter=status_filter.value if status_filter else None,
         issue_type=issue_type,
         test_type=test_type,
+        subject_type=subject_type,
     )
 
     # Try to get from cache
@@ -135,12 +138,23 @@ async def list_validation_issues(
     stmt = select(SubjectScoreValidationIssue)
 
     # Apply filters
-    if exam_id is not None or subject_id is not None:
+    # Need to join ExamSubject for exam_id, subject_id, or subject_type filters
+    needs_exam_subject_join = exam_id is not None or subject_id is not None or subject_type is not None
+    if needs_exam_subject_join:
         stmt = stmt.join(ExamSubject, SubjectScoreValidationIssue.exam_subject_id == ExamSubject.id)
         if exam_id is not None:
             stmt = stmt.where(ExamSubject.exam_id == exam_id)
         if subject_id is not None:
             stmt = stmt.where(ExamSubject.subject_id == subject_id)
+        if subject_type is not None:
+            # Join with Subject to filter by subject_type
+            stmt = stmt.join(Subject, ExamSubject.subject_id == Subject.id)
+            try:
+                subject_type_enum = SubjectType(subject_type)
+                stmt = stmt.where(Subject.subject_type == subject_type_enum)
+            except ValueError:
+                # Invalid subject_type, return empty results
+                stmt = stmt.where(False)
 
     if school_id is not None:
         # Join through SubjectScore -> SubjectRegistration -> ExamRegistration -> Candidate

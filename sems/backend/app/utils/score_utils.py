@@ -11,7 +11,7 @@ if TYPE_CHECKING:
 def validate_score_value(value: str | float | None) -> bool:
     """
     Validate that score value is allowed format.
-    Returns True if value is: None, numeric string (>=0), "A", or "AA"
+    Returns True if value is: None, numeric string (>=0), "A", "AA", or "AAA"
     """
     if value is None:
         return True
@@ -19,7 +19,7 @@ def validate_score_value(value: str | float | None) -> bool:
     value_str = str(value).strip().upper()
 
     # Check for absence indicators
-    if value_str in ("A", "AA"):
+    if value_str in ("A", "AA", "AAA"):
         return True
 
     # Check for numeric value (>= 0)
@@ -33,7 +33,7 @@ def validate_score_value(value: str | float | None) -> bool:
 def parse_score_value(value: str | float | None) -> str | None:
     """
     Parse and normalize score value.
-    Returns: None, numeric string (>=0), "A", or "AA"
+    Returns: None, numeric string (>=0), "A", "AA", or "AAA"
     Raises ValueError if invalid format.
     """
     if value is None:
@@ -46,7 +46,7 @@ def parse_score_value(value: str | float | None) -> str | None:
         return None
 
     # Check for absence indicators
-    if value_str in ("A", "AA"):
+    if value_str in ("A", "AA", "AAA"):
         return value_str
 
     # Parse as numeric
@@ -61,14 +61,14 @@ def parse_score_value(value: str | float | None) -> str | None:
     except ValueError as e:
         if "cannot be negative" in str(e):
             raise
-        raise ValueError(f"Score must be a number (>=0), 'A', 'AA', or None. Got: {value_str}")
+        raise ValueError(f"Score must be a number (>=0), 'A', 'AA', 'AAA', or None. Got: {value_str}")
 
 
 def is_absent(score: str | None) -> bool:
     """Check if score indicates absence."""
     if score is None:
         return False
-    return str(score).strip().upper() in ("A", "AA")
+    return str(score).strip().upper() in ("A", "AA", "AAA")
 
 
 def is_present(score: str | None) -> bool:
@@ -129,10 +129,10 @@ def calculate_total_score(
 
 def validate_score_range(score: str | None, max_score: float) -> tuple[bool, str | None]:
     """
-    Validate that a score value is within the allowed range (0 to max_score) or is "A"/"AA".
+    Validate that a score value is within the allowed range (0 to max_score) or is "A"/"AA"/"AAA".
 
     Args:
-        score: The score value to validate (can be None, "A", "AA", or numeric string)
+        score: The score value to validate (can be None, "A", "AA", "AAA", or numeric string)
         max_score: The maximum allowed score value
 
     Returns:
@@ -148,19 +148,19 @@ def validate_score_range(score: str | None, max_score: float) -> tuple[bool, str
     max_score_display = int(max_score) if max_score == int(max_score) else max_score
 
     # Check for absence indicators - these are always valid
-    if score_str in ("A", "AA"):
+    if score_str in ("A", "AA", "AAA"):
         return True, None
 
     # Check for numeric value
     try:
         num_value = float(score_str)
         if num_value < 0:
-            return False, f"Score cannot be negative. Please enter a value between 0 and {max_score_display}, or 'A'/'AA' for absent"
+            return False, f"Score cannot be negative. Please enter a value between 0 and {max_score_display}, or 'A'/'AA'/'AAA' for absent"
         if num_value > max_score:
-            return False, f"Score {score_str} exceeds the maximum of {max_score_display}. Please enter a value between 0 and {max_score_display}, or 'A'/'AA' for absent"
+            return False, f"Score {score_str} exceeds the maximum of {max_score_display}. Please enter a value between 0 and {max_score_display}, or 'A'/'AA'/'AAA' for absent"
         return True, None
     except ValueError:
-        return False, f"Invalid score format. Please enter a number between 0 and {max_score_display}, or 'A'/'AA' for absent"
+        return False, f"Invalid score format. Please enter a number between 0 and {max_score_display}, or 'A'/'AA'/'AAA' for absent"
 
 
 def add_extraction_method_to_document(
@@ -224,14 +224,14 @@ def calculate_component_score(
     Calculate a single component score: (raw_score/max_score)*pct
 
     Args:
-        raw_score: The raw score value (can be None, numeric string, or "A"/"AA")
+        raw_score: The raw score value (can be None, numeric string, or "A"/"AA"/"AAA")
         max_score: The maximum score for this component (can be None or positive number)
         pct: The percentage weight for this component (can be None)
 
     Returns:
         Tuple of (score_value, is_absent):
         - score_value: The calculated component score, or None if component should be excluded
-        - is_absent: True if raw_score is "A"/"AA", False otherwise
+        - is_absent: True if raw_score is "A"/"AA"/"AAA", False otherwise
 
     Raises:
         ValueError: If max_score is 0 or negative
@@ -248,7 +248,7 @@ def calculate_component_score(
     if raw_score is None:
         return None, False
 
-    # Check if raw_score is "A"/"AA"
+    # Check if raw_score is "A"/"AA"/"AAA"
     if is_absent(raw_score):
         # Component contributes 0, but mark as absent
         return 0.0, True
@@ -308,8 +308,8 @@ def calculate_final_score(
     - C = (pract_raw_score/pract_max_score)*pract_pct (if both pract_max_score and pract_pct are not None)
 
     Special handling:
-    - If any raw_score is "A"/"AA" but others have values, that component contributes 0
-    - If ALL raw_scores (that have corresponding max_score/pct) are "A"/"AA", returns ABSENT_RESULT_SENTINEL (-1.0)
+    - If any raw_score is "A"/"AA"/"AAA" but others have values, that component contributes 0
+    - If ALL raw_scores (that have corresponding max_score/pct) are "A"/"AA"/"AAA", returns ABSENT_RESULT_SENTINEL (-1.0)
     - Components are excluded if max_score or pct is None
     - Components are excluded if raw_score is None (should flag as issue)
     - IMPORTANT: This function should NOT be called if is_grade_pending() returns True
@@ -385,7 +385,7 @@ def is_grade_pending(subject_score: "SubjectScore", exam_subject: "ExamSubject")
     A grade is pending if any expected component is not explicitly set:
     - An ExamSubject has a max_score set for a component (obj, essay, or pract) - this means the component is expected
     - But the corresponding SubjectScore raw_score is None (not set)
-    - Note: "A"/"AA" counts as explicitly set (absent is still a valid value), so it does NOT cause pending status
+    - Note: "A"/"AA"/"AAA" counts as explicitly set (absent is still a valid value), so it does NOT cause pending status
     - Only None (not set) causes pending status
 
     Examples:
