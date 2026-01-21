@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import { DashboardLayout } from "@/components/DashboardLayout";
 import { TopBar } from "@/components/TopBar";
 import { Button } from "@/components/ui/button";
@@ -25,7 +25,7 @@ import type {
   School,
   Subject,
 } from "@/types/document";
-import { Loader2, AlertCircle, CheckCircle2, XCircle, Play, Filter, ChevronLeft, ChevronRight, ChevronDown } from "lucide-react";
+import { Loader2, AlertCircle, CheckCircle2, XCircle, Play, Filter, ChevronLeft, ChevronRight, ChevronDown, ChevronUp } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { format } from "date-fns";
 import { toast } from "sonner";
@@ -39,6 +39,7 @@ import {
 } from "@/components/ui/dialog";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Checkbox } from "@/components/ui/checkbox";
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 
 export default function ValidationIssuesPage() {
   const [issues, setIssues] = useState<SubjectScoreValidationIssue[]>([]);
@@ -83,6 +84,8 @@ export default function ValidationIssuesPage() {
   const [ignoringIssue, setIgnoringIssue] = useState(false);
   const [imageLoading, setImageLoading] = useState(true);
   const [imageError, setImageError] = useState(false);
+  const [allDetailsOpen, setAllDetailsOpen] = useState(false);
+  const correctedScoreInputRef = useRef<HTMLInputElement>(null);
 
   // Load issues
   const loadIssues = useCallback(async () => {
@@ -159,6 +162,84 @@ export default function ValidationIssuesPage() {
       loadFilterOptions();
     }
   }, [runDialogOpen]);
+
+  // Keyboard navigation for issue dialog
+  useEffect(() => {
+    if (!issueModalOpen) return;
+
+    const handleKeyDown = async (e: KeyboardEvent) => {
+      // Allow navigation with arrow keys even when input is focused
+      // Only prevent if user is actively typing (has text selected or cursor is not at edge)
+      const isInputFocused = e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement;
+
+      if (isInputFocused) {
+        const input = e.target as HTMLInputElement;
+        const hasSelection = input.selectionStart !== input.selectionEnd;
+        const isAtStart = input.selectionStart === 0;
+        const isAtEnd = input.selectionStart === input.value.length;
+
+        // Only allow navigation if at edge of input or has no selection
+        if (e.key === "ArrowLeft" && !isAtStart && !hasSelection) return;
+        if (e.key === "ArrowRight" && !isAtEnd && !hasSelection) return;
+      }
+
+      if (e.key === "ArrowLeft") {
+        e.preventDefault();
+        if (currentIssueIndex !== null && currentIssueIndex > 0 && issues.length > 0) {
+          const newIndex = currentIssueIndex - 1;
+          setCurrentIssueIndex(newIndex);
+          setImageLoading(true);
+          setImageError(false);
+          setAllDetailsOpen(false);
+          setLoadingIssueDetail(true);
+          try {
+            const detail = await getValidationIssue(issues[newIndex].id);
+            setIssueDetail(detail);
+            setCorrectedScore(detail.current_score_value || "");
+          } catch (err) {
+            toast.error(err instanceof Error ? err.message : "Failed to load issue details");
+            console.error("Error loading issue detail:", err);
+          } finally {
+            setLoadingIssueDetail(false);
+          }
+        }
+      } else if (e.key === "ArrowRight") {
+        e.preventDefault();
+        if (currentIssueIndex !== null && currentIssueIndex < issues.length - 1) {
+          const newIndex = currentIssueIndex + 1;
+          setCurrentIssueIndex(newIndex);
+          setImageLoading(true);
+          setImageError(false);
+          setAllDetailsOpen(false);
+          setLoadingIssueDetail(true);
+          try {
+            const detail = await getValidationIssue(issues[newIndex].id);
+            setIssueDetail(detail);
+            setCorrectedScore(detail.current_score_value || "");
+          } catch (err) {
+            toast.error(err instanceof Error ? err.message : "Failed to load issue details");
+            console.error("Error loading issue detail:", err);
+          } finally {
+            setLoadingIssueDetail(false);
+          }
+        }
+      }
+    };
+
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [issueModalOpen, currentIssueIndex, issues]);
+
+  // Auto-focus corrected score input when dialog opens
+  useEffect(() => {
+    if (issueModalOpen && issueDetail && issueDetail.status === "pending" && !loadingIssueDetail) {
+      // Small delay to ensure the input is rendered
+      const timer = setTimeout(() => {
+        correctedScoreInputRef.current?.focus();
+      }, 100);
+      return () => clearTimeout(timer);
+    }
+  }, [issueModalOpen, issueDetail, loadingIssueDetail]);
 
   const loadFilterOptions = async () => {
     setLoadingFilterOptions(true);
@@ -261,6 +342,8 @@ export default function ValidationIssuesPage() {
     setLoadingIssueDetail(true);
     setImageLoading(true);
     setImageError(false);
+    // Reset collapsible state when loading new issue
+    setAllDetailsOpen(false);
     try {
       const detail = await getValidationIssue(issueId);
       setIssueDetail(detail);
@@ -289,6 +372,8 @@ export default function ValidationIssuesPage() {
     setCorrectedScore("");
     setImageLoading(true);
     setImageError(false);
+    // Reset collapsible state when closing modal
+    setAllDetailsOpen(false);
   };
 
   const handleNavigateIssue = (direction: "prev" | "next") => {
@@ -1065,10 +1150,23 @@ export default function ValidationIssuesPage() {
         <Dialog open={issueModalOpen} onOpenChange={handleCloseIssueModal}>
           <DialogContent className="2xl:max-w-[60vw] min-w-[80vw] max-h-[90vh] overflow-hidden flex flex-col">
             <DialogHeader>
-              <DialogTitle>Issue Details</DialogTitle>
-              <DialogDescription>
-                Review and resolve validation issues
-              </DialogDescription>
+              {issueDetail ? (
+                <>
+                  <DialogTitle className="text-2xl font-bold">
+                    {issueDetail.candidate_name || "Unknown Candidate"}
+                  </DialogTitle>
+                  <DialogDescription className="text-lg font-semibold text-foreground mt-1">
+                    {issueDetail.candidate_index_number || "No Index Number"}
+                  </DialogDescription>
+                </>
+              ) : (
+                <>
+                  <DialogTitle>Issue Details</DialogTitle>
+                  <DialogDescription>
+                    Review and resolve validation issues
+                  </DialogDescription>
+                </>
+              )}
             </DialogHeader>
 
             {loadingIssueDetail ? (
@@ -1079,7 +1177,7 @@ export default function ValidationIssuesPage() {
               <div className="flex gap-6 flex-1 overflow-hidden min-h-0">
                 {/* Document Image on Left */}
                 {issueDetail.document_id && issueDetail.document_mime_type?.startsWith("image/") && issueDetail.exam_id && (
-                  <div className="w-1/2 shrink-0 border-r pr-6 overflow-y-auto flex flex-col">
+                  <div className="w-2/3 shrink-0 border-r pr-6 overflow-y-auto flex flex-col">
                     <div className="relative bg-muted rounded-lg overflow-auto flex-1 flex items-center justify-center min-h-0" style={{ minHeight: '400px' }}>
                       {imageError ? (
                         <div className="flex items-center justify-center h-full text-muted-foreground">
@@ -1118,36 +1216,9 @@ export default function ValidationIssuesPage() {
                 )}
 
                 {/* Issue Details on Right */}
-                <div className={`space-y-6 py-4 overflow-y-auto flex-1 min-h-0 ${issueDetail.document_id && issueDetail.document_mime_type?.startsWith("image/") && issueDetail.exam_id ? "" : "w-full"}`}>
-                {/* Issue Info */}
+                <div className={`space-y-6 py-4 overflow-y-auto flex-1 min-h-0 ${issueDetail.document_id && issueDetail.document_mime_type?.startsWith("image/") && issueDetail.exam_id ? "w-1/3" : "w-full"}`}>
+                {/* Candidate/Subject Info - Always visible */}
                 <div className="space-y-3">
-                  <div className="flex items-center gap-2">
-                    {getStatusBadge(issueDetail.status)}
-                    {getIssueTypeBadge(issueDetail.issue_type)}
-                    <Badge variant="outline" className="text-xs">
-                      {getTestTypeLabel(issueDetail.test_type)}
-                    </Badge>
-                  </div>
-                  <div>
-                    <p className="text-sm font-medium text-muted-foreground">Message</p>
-                    <p className="text-sm mt-1">{issueDetail.message}</p>
-                  </div>
-                  <div className="grid grid-cols-2 gap-4 text-sm">
-                    <div>
-                      <p className="text-muted-foreground">Created</p>
-                      <p>{format(new Date(issueDetail.created_at), "MMM d, yyyy HH:mm")}</p>
-                    </div>
-                    {issueDetail.resolved_at && (
-                      <div>
-                        <p className="text-muted-foreground">Resolved</p>
-                        <p>{format(new Date(issueDetail.resolved_at), "MMM d, yyyy HH:mm")}</p>
-                      </div>
-                    )}
-                  </div>
-                </div>
-
-                {/* Candidate/Subject Info */}
-                <div className="space-y-3 border-t pt-4">
                   <h3 className="font-semibold text-sm">Candidate & Subject Information</h3>
                   <div className="grid grid-cols-2 gap-4 text-sm">
                     {issueDetail.candidate_name && (
@@ -1162,75 +1233,161 @@ export default function ValidationIssuesPage() {
                         <p className="font-medium">{issueDetail.candidate_index_number}</p>
                       </div>
                     )}
-                    {issueDetail.subject_name && (
-                      <div>
-                        <p className="text-muted-foreground">Subject</p>
-                        <p className="font-medium">
-                          {issueDetail.subject_code} - {issueDetail.subject_name}
-                        </p>
-                      </div>
-                    )}
-                    {issueDetail.exam_type && issueDetail.exam_year && issueDetail.exam_series && (
-                      <div>
-                        <p className="text-muted-foreground">Exam</p>
-                        <p className="font-medium">
-                          {issueDetail.exam_type} - {issueDetail.exam_series} {issueDetail.exam_year}
-                        </p>
-                      </div>
-                    )}
                   </div>
                 </div>
 
-                {/* Score Information */}
+                {/* Score Information - Reorganized with current score, input, and resolve button on same row */}
                 <div className="space-y-3 border-t pt-4">
                   <h3 className="font-semibold text-sm">Score Information</h3>
-                  <div className="space-y-2">
-                    <div>
-                      <label className="text-sm font-medium text-muted-foreground">Field</label>
-                      <p className="text-sm font-medium mt-1">{getFieldNameLabel(issueDetail.field_name)}</p>
+                  {issueDetail.status === "pending" ? (
+                    <div className="flex items-end gap-3">
+                      <div className="flex-1">
+                        <label className="text-sm font-medium text-muted-foreground">Current Score Value</label>
+                        <p className="text-sm mt-1 font-mono">
+                          {issueDetail.current_score_value ?? <span className="text-muted-foreground">Not set</span>}
+                        </p>
+                      </div>
+                      <div className="flex-1">
+                        <label htmlFor="corrected-score" className="text-sm font-medium text-muted-foreground">
+                          Corrected Score Value
+                        </label>
+                        <Input
+                          ref={correctedScoreInputRef}
+                          id="corrected-score"
+                          value={correctedScore}
+                          onChange={(e) => setCorrectedScore(e.target.value)}
+                          placeholder="Enter score (e.g., 85, A, AA)"
+                          className="mt-1"
+                        />
+                      </div>
+                      <Button
+                        onClick={handleResolveIssue}
+                        disabled={resolvingIssue || ignoringIssue}
+                        className="gap-2 shrink-0"
+                      >
+                        {resolvingIssue ? (
+                          <>
+                            <Loader2 className="h-4 w-4 animate-spin" />
+                            Resolving...
+                          </>
+                        ) : (
+                          <>
+                            <CheckCircle2 className="h-4 w-4" />
+                            Resolve
+                          </>
+                        )}
+                      </Button>
                     </div>
+                  ) : (
                     <div>
                       <label className="text-sm font-medium text-muted-foreground">Current Score Value</label>
                       <p className="text-sm mt-1 font-mono">
                         {issueDetail.current_score_value ?? <span className="text-muted-foreground">Not set</span>}
                       </p>
                     </div>
-                    {issueDetail.status === "pending" && (
-                      <div>
-                        <label htmlFor="corrected-score" className="text-sm font-medium text-muted-foreground">
-                          Corrected Score Value
-                        </label>
-                        <Input
-                          id="corrected-score"
-                          value={correctedScore}
-                          onChange={(e) => setCorrectedScore(e.target.value)}
-                          placeholder="Enter score (e.g., 85, A, AA) or leave empty"
-                          className="mt-1"
-                        />
-                        <p className="text-xs text-muted-foreground mt-1">
-                          Enter a numeric value, "A" for absent, "AA" for absent with reason, or leave empty
-                        </p>
-                      </div>
-                    )}
-                  </div>
+                  )}
+                  <p className="text-xs text-muted-foreground">
+                    Enter a numeric value, "A" for absent, "AA" for absent with reason, or leave empty
+                  </p>
                 </div>
 
-                {/* Related Document Info (if not showing image) */}
-                {issueDetail.document_id && (!issueDetail.document_numeric_id || !issueDetail.document_mime_type?.startsWith("image/")) && (
-                  <div className="space-y-3 border-t pt-4">
-                    <h3 className="font-semibold text-sm">Related Document</h3>
-                    <div className="text-sm">
-                      <p className="text-muted-foreground">Document ID</p>
-                      <p className="font-mono">{issueDetail.document_id}</p>
-                      {issueDetail.document_file_name && (
-                        <>
-                          <p className="text-muted-foreground mt-2">File Name</p>
-                          <p>{issueDetail.document_file_name}</p>
-                        </>
-                      )}
+                {/* All Additional Details - Consolidated into one collapsible */}
+                <Collapsible open={allDetailsOpen} onOpenChange={setAllDetailsOpen}>
+                  <CollapsibleTrigger className="flex items-center gap-2 text-sm text-muted-foreground hover:text-foreground transition-colors border-t pt-4">
+                    {allDetailsOpen ? (
+                      <ChevronUp className="h-4 w-4" />
+                    ) : (
+                      <ChevronDown className="h-4 w-4" />
+                    )}
+                    View All Details
+                  </CollapsibleTrigger>
+                  <CollapsibleContent className="space-y-4 mt-3">
+                    {/* Issue Info */}
+                    <div className="space-y-3">
+                      <h4 className="font-semibold text-sm">Issue Information</h4>
+                      <div className="flex items-center gap-2">
+                        {getStatusBadge(issueDetail.status)}
+                        {getIssueTypeBadge(issueDetail.issue_type)}
+                        <Badge variant="outline" className="text-xs">
+                          {getTestTypeLabel(issueDetail.test_type)}
+                        </Badge>
+                      </div>
+                      <div>
+                        <p className="text-sm font-medium text-muted-foreground">Message</p>
+                        <p className="text-sm mt-1">{issueDetail.message}</p>
+                      </div>
+                      <div className="grid grid-cols-2 gap-4 text-sm">
+                        <div>
+                          <p className="text-muted-foreground">Created</p>
+                          <p>{format(new Date(issueDetail.created_at), "MMM d, yyyy HH:mm")}</p>
+                        </div>
+                        {issueDetail.resolved_at && (
+                          <div>
+                            <p className="text-muted-foreground">Resolved</p>
+                            <p>{format(new Date(issueDetail.resolved_at), "MMM d, yyyy HH:mm")}</p>
+                          </div>
+                        )}
+                      </div>
                     </div>
-                  </div>
-                )}
+
+                    {/* Subject and Exam Details */}
+                    {(issueDetail.subject_name || (issueDetail.exam_type && issueDetail.exam_year && issueDetail.exam_series) || issueDetail.school_name) && (
+                      <div className="space-y-3 border-t pt-4">
+                        <h4 className="font-semibold text-sm">Additional Candidate Information</h4>
+                        <div className="grid grid-cols-2 gap-4 text-sm">
+                          {issueDetail.school_name && (
+                            <div>
+                              <p className="text-muted-foreground">School</p>
+                              <p className="font-medium">{issueDetail.school_name}</p>
+                            </div>
+                          )}
+                          {issueDetail.subject_name && (
+                            <div>
+                              <p className="text-muted-foreground">Subject</p>
+                              <p className="font-medium">
+                                {issueDetail.subject_code} - {issueDetail.subject_name}
+                              </p>
+                            </div>
+                          )}
+                          {issueDetail.exam_type && issueDetail.exam_year && issueDetail.exam_series && (
+                            <div>
+                              <p className="text-muted-foreground">Exam</p>
+                              <p className="font-medium">
+                                {issueDetail.exam_type} - {issueDetail.exam_series} {issueDetail.exam_year}
+                              </p>
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Field Name */}
+                    <div className="space-y-3 border-t pt-4">
+                      <h4 className="font-semibold text-sm">Field Information</h4>
+                      <div>
+                        <label className="text-sm font-medium text-muted-foreground">Field</label>
+                        <p className="text-sm font-medium mt-1">{getFieldNameLabel(issueDetail.field_name)}</p>
+                      </div>
+                    </div>
+
+                    {/* Related Document Info */}
+                    {issueDetail.document_id && (!issueDetail.document_numeric_id || !issueDetail.document_mime_type?.startsWith("image/")) && (
+                      <div className="space-y-3 border-t pt-4">
+                        <h4 className="font-semibold text-sm">Related Document</h4>
+                        <div className="text-sm">
+                          <p className="text-muted-foreground">Document ID</p>
+                          <p className="font-mono">{issueDetail.document_id}</p>
+                          {issueDetail.document_file_name && (
+                            <>
+                              <p className="text-muted-foreground mt-2">File Name</p>
+                              <p>{issueDetail.document_file_name}</p>
+                            </>
+                          )}
+                        </div>
+                      </div>
+                    )}
+                  </CollapsibleContent>
+                </Collapsible>
                 </div>
               </div>
             ) : (
@@ -1263,23 +1420,6 @@ export default function ValidationIssuesPage() {
                     <>
                       <XCircle className="h-4 w-4" />
                       Ignore
-                    </>
-                  )}
-                </Button>
-                <Button
-                  onClick={handleResolveIssue}
-                  disabled={resolvingIssue || ignoringIssue}
-                  className="gap-2"
-                >
-                  {resolvingIssue ? (
-                    <>
-                      <Loader2 className="h-4 w-4 animate-spin" />
-                      Resolving...
-                    </>
-                  ) : (
-                    <>
-                      <CheckCircle2 className="h-4 w-4" />
-                      Resolve
                     </>
                   )}
                 </Button>

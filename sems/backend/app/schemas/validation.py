@@ -98,6 +98,8 @@ class ValidationIssueDetailResponse(BaseModel):
     exam_type: str | None = None
     exam_year: int | None = None
     exam_series: str | None = None
+    school_id: int | None = None
+    school_name: str | None = None
     current_score_value: str | None = None
     document_id: str | None = None
     document_file_name: str | None = None

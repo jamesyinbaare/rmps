@@ -16,6 +16,7 @@ from app.models import (
     Exam,
     ExamRegistration,
     ExamSubject,
+    School,
     Subject,
     SubjectRegistration,
     SubjectScore,
@@ -235,11 +236,13 @@ async def get_validation_issue(
             ExamSubject,
             Subject,
             Exam,
+            School,
         )
         .join(SubjectScore, SubjectScoreValidationIssue.subject_score_id == SubjectScore.id)
         .join(SubjectRegistration, SubjectScore.subject_registration_id == SubjectRegistration.id)
         .join(ExamRegistration, SubjectRegistration.exam_registration_id == ExamRegistration.id)
         .join(Candidate, ExamRegistration.candidate_id == Candidate.id)
+        .join(School, Candidate.school_id == School.id)
         .join(ExamSubject, SubjectRegistration.exam_subject_id == ExamSubject.id)
         .join(Subject, ExamSubject.subject_id == Subject.id)
         .join(Exam, ExamSubject.exam_id == Exam.id)
@@ -264,6 +267,7 @@ async def get_validation_issue(
         exam_subject,
         subject,
         exam,
+        school,
     ) = row
 
     # Get current score value for the problematic field
@@ -318,6 +322,8 @@ async def get_validation_issue(
         exam_type=exam.exam_type.value if exam.exam_type else None,
         exam_year=exam.year,
         exam_series=exam.series.value if exam.series else None,
+        school_id=school.id,
+        school_name=school.name,
         current_score_value=current_score_value,
         document_id=document_id,
         document_file_name=document_file_name,
