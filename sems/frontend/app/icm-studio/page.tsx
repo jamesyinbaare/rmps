@@ -13,9 +13,9 @@ import {
 } from "@/components/ui/select";
 import { DashboardLayout } from "@/components/DashboardLayout";
 import { TopBar } from "@/components/TopBar";
-import { listDocuments, getAllExams } from "@/lib/api";
-import type { Exam } from "@/types/document";
-import { Files, Upload, AlertCircle, CheckCircle2, Clock, ArrowRight } from "lucide-react";
+import { listDocuments, getAllExams, compareSheetIds } from "@/lib/api";
+import type { Exam, SheetIdComparisonResponse } from "@/types/document";
+import { Files, Upload, AlertCircle, CheckCircle2, Clock, ArrowRight, FileSearch, TrendingUp } from "lucide-react";
 
 export default function ICMStudioPage() {
   const [exams, setExams] = useState<Exam[]>([]);
@@ -28,6 +28,10 @@ export default function ICMStudioPage() {
     pending: 0,
     loading: true,
   });
+  const [sheetIdComparison, setSheetIdComparison] = useState<SheetIdComparisonResponse | null>(null);
+  const [sheetIdLoading, setSheetIdLoading] = useState(false);
+  const [documentsWithoutExtractedId, setDocumentsWithoutExtractedId] = useState<number>(0);
+  const [documentsWithoutExtractedIdLoading, setDocumentsWithoutExtractedIdLoading] = useState(false);
 
   // Load all exams and set default to newest
   useEffect(() => {
@@ -118,18 +122,85 @@ export default function ICMStudioPage() {
     loadStats();
   }, [selectedExamId]);
 
+  // Load sheet ID comparison when exam changes
+  useEffect(() => {
+    const loadSheetIdComparison = async () => {
+      if (!selectedExamId) {
+        setSheetIdComparison(null);
+        return;
+      }
+
+      setSheetIdLoading(true);
+      try {
+        const comparison = await compareSheetIds(selectedExamId);
+        setSheetIdComparison(comparison);
+      } catch (error) {
+        console.error("Error loading sheet ID comparison:", error);
+        setSheetIdComparison(null);
+      } finally {
+        setSheetIdLoading(false);
+      }
+    };
+
+    loadSheetIdComparison();
+  }, [selectedExamId]);
+
+  // Load documents without extracted_id when exam changes
+  useEffect(() => {
+    const loadDocumentsWithoutExtractedId = async () => {
+      if (!selectedExamId) {
+        setDocumentsWithoutExtractedId(0);
+        return;
+      }
+
+      setDocumentsWithoutExtractedIdLoading(true);
+      try {
+        // Fetch documents for this exam and count those without extracted_id
+        // Use maximum allowed page_size (100) and paginate if needed for accurate count
+        let totalWithoutExtractedId = 0;
+        let page = 1;
+        const pageSize = 100; // Maximum allowed by API
+        let hasMorePages = true;
+
+        while (hasMorePages) {
+          const response = await listDocuments({
+            exam_id: selectedExamId,
+            page,
+            page_size: pageSize,
+          });
+
+          // Count documents without extracted_id in this page
+          const withoutExtractedId = response.items.filter(doc => !doc.extracted_id).length;
+          totalWithoutExtractedId += withoutExtractedId;
+
+          // Check if we've fetched all documents
+          if (page >= response.total_pages || response.items.length === 0) {
+            hasMorePages = false;
+          } else {
+            page++;
+          }
+
+          // Limit pagination to prevent infinite loops (safety check)
+          if (page > 100) {
+            hasMorePages = false;
+          }
+        }
+
+        setDocumentsWithoutExtractedId(totalWithoutExtractedId);
+      } catch (error) {
+        console.error("Error loading documents without extracted_id:", error);
+        setDocumentsWithoutExtractedId(0);
+      } finally {
+        setDocumentsWithoutExtractedIdLoading(false);
+      }
+    };
+
+    loadDocumentsWithoutExtractedId();
+  }, [selectedExamId]);
+
   const selectedExam = exams.find((e) => e.id === selectedExamId);
 
   const statCards = [
-    {
-      title: "Total Documents",
-      value: stats.loading ? "..." : stats.total.toLocaleString(),
-      description: "All documents in system",
-      icon: Files,
-      color: "text-blue-600",
-      bgColor: "bg-blue-50 dark:bg-blue-950",
-      href: selectedExamId ? `/icm-studio/documents?exam_id=${selectedExamId}` : "/icm-studio/documents",
-    },
     {
       title: "Successful Extractions",
       value: stats.loading ? "..." : stats.success.toLocaleString(),
@@ -148,24 +219,51 @@ export default function ICMStudioPage() {
       bgColor: "bg-yellow-50 dark:bg-yellow-950",
       href: selectedExamId ? `/icm-studio/documents?exam_id=${selectedExamId}` : "/icm-studio/documents",
     },
-    {
-      title: "Failed Extractions",
-      value: stats.loading ? "..." : stats.failed.toLocaleString(),
-      description: "Requires attention",
-      icon: AlertCircle,
-      color: "text-red-600",
-      bgColor: "bg-red-50 dark:bg-red-950",
-      href: "/icm-studio/documents/failed-extractions",
-    },
+    ...(selectedExamId
+      ? [
+          {
+            title: "Expected Sheets",
+            value: sheetIdLoading ? "..." : sheetIdComparison?.total_expected_sheets.toLocaleString() || "0",
+            description: "Sheets generated for this exam",
+            icon: FileSearch,
+            color: "text-blue-600",
+            bgColor: "bg-blue-50 dark:bg-blue-950",
+            href: selectedExamId ? `/icm-studio/track-icms?exam_id=${selectedExamId}&tab=expected` : "/icm-studio/track-icms?tab=expected",
+          },
+          {
+            title: "Uploaded Sheets",
+            value: sheetIdLoading ? "..." : sheetIdComparison?.total_uploaded_sheets.toLocaleString() || "0",
+            description: "Documents uploaded successfully",
+            icon: CheckCircle2,
+            color: "text-green-600",
+            bgColor: "bg-green-50 dark:bg-green-950",
+            href: selectedExamId ? `/icm-studio/track-icms?exam_id=${selectedExamId}&tab=uploaded` : "/icm-studio/track-icms?tab=uploaded",
+          },
+          {
+            title: "Missing Sheets",
+            value: sheetIdLoading ? "..." : sheetIdComparison?.missing_sheet_ids.length.toLocaleString() || "0",
+            description: "Expected but not uploaded",
+            icon: AlertCircle,
+            color: "text-red-600",
+            bgColor: "bg-red-50 dark:bg-red-950",
+            href: `/icm-studio/track-icms?exam_id=${selectedExamId}`,
+          },
+          {
+            title: "Extra Sheets",
+            value: (sheetIdLoading || documentsWithoutExtractedIdLoading)
+              ? "..."
+              : ((sheetIdComparison?.extra_sheet_ids.length || 0) + documentsWithoutExtractedId).toLocaleString(),
+            description: "Uploaded but not expected, or documents without extracted_id",
+            icon: TrendingUp,
+            color: "text-yellow-600",
+            bgColor: "bg-yellow-50 dark:bg-yellow-950",
+            href: selectedExamId ? `/icm-studio/track-icms?exam_id=${selectedExamId}&tab=extra` : "/icm-studio/track-icms?tab=extra",
+          },
+        ]
+      : []),
   ];
 
   const quickActions = [
-    {
-      title: "All Documents",
-      description: "View and manage all documents",
-      href: selectedExamId ? `/icm-studio/documents?exam_id=${selectedExamId}` : "/icm-studio/documents",
-      icon: Files,
-    },
     {
       title: "Recent Files",
       description: "Recently uploaded documents",
@@ -233,30 +331,74 @@ export default function ICMStudioPage() {
               </div>
             )}
 
-            {/* Stats Grid */}
-            <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
-              {statCards.map((stat) => {
-                const Icon = stat.icon;
-                return (
-                  <Link key={stat.title} href={stat.href}>
-                    <Card className="hover:shadow-md transition-shadow cursor-pointer">
-                      <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-                        <CardTitle className="text-sm font-medium">{stat.title}</CardTitle>
-                        <div className={`p-2 rounded-md ${stat.bgColor}`}>
-                          <Icon className={`h-4 w-4 ${stat.color}`} />
-                        </div>
-                      </CardHeader>
-                      <CardContent>
-                        <div className="text-2xl font-bold">{stat.value}</div>
-                        <p className="text-xs text-muted-foreground mt-1">
-                          {stat.description}
-                        </p>
-                      </CardContent>
-                    </Card>
-                  </Link>
-                );
-              })}
+            {/* Extraction Status Section */}
+            <div className="space-y-4">
+              <div>
+                <h2 className="text-xl font-semibold">Extraction Status</h2>
+                <p className="text-sm text-muted-foreground">Document ID extraction progress</p>
+              </div>
+              <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-2">
+                {statCards
+                  .filter((stat) => !stat.title.includes("Sheet") && !stat.title.includes("Expected"))
+                  .map((stat) => {
+                    const Icon = stat.icon;
+                    return (
+                      <Link key={stat.title} href={stat.href}>
+                        <Card className="hover:shadow-md transition-shadow cursor-pointer">
+                          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+                            <CardTitle className="text-sm font-medium">{stat.title}</CardTitle>
+                            <div className={`p-2 rounded-md ${stat.bgColor}`}>
+                              <Icon className={`h-4 w-4 ${stat.color}`} />
+                            </div>
+                          </CardHeader>
+                          <CardContent>
+                            <div className="text-2xl font-bold">{stat.value}</div>
+                            <p className="text-xs text-muted-foreground mt-1">
+                              {stat.description}
+                            </p>
+                          </CardContent>
+                        </Card>
+                      </Link>
+                    );
+                  })}
+              </div>
             </div>
+
+            {/* Sheet Tracking Section */}
+            {selectedExamId && (
+              <div className="space-y-4">
+                <div>
+                  <h2 className="text-xl font-semibold">Sheet Tracking</h2>
+                  <p className="text-sm text-muted-foreground">Expected vs uploaded score sheets</p>
+                </div>
+                <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
+                  {statCards
+                    .filter((stat) => stat.title.includes("Sheet") || stat.title.includes("Expected"))
+                    .map((stat) => {
+                      const Icon = stat.icon;
+                      return (
+                        <Link key={stat.title} href={stat.href}>
+                          <Card className="hover:shadow-md transition-shadow cursor-pointer">
+                            <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+                              <CardTitle className="text-sm font-medium">{stat.title}</CardTitle>
+                              <div className={`p-2 rounded-md ${stat.bgColor}`}>
+                                <Icon className={`h-4 w-4 ${stat.color}`} />
+                              </div>
+                            </CardHeader>
+                            <CardContent>
+                              <div className="text-2xl font-bold">{stat.value}</div>
+                              <p className="text-xs text-muted-foreground mt-1">
+                                {stat.description}
+                              </p>
+                            </CardContent>
+                          </Card>
+                        </Link>
+                      );
+                    })}
+                </div>
+              </div>
+            )}
+
 
             {/* Quick Actions */}
             <div className="space-y-4">

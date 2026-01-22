@@ -52,6 +52,7 @@ import type {
   UserPasswordReset,
   UserListFilters,
   BackfillTestTypeResponse,
+  SheetIdComparisonResponse,
 } from "@/types/document";
 
 export const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL || "http://localhost:8000";
@@ -235,7 +236,31 @@ async function handleResponse<T>(response: Response): Promise<T> {
         try {
           const error: ApiError = JSON.parse(text);
           // FastAPI returns errors with a "detail" field
-          errorDetail = error.detail || text;
+          // Handle case where detail might be an object (validation errors)
+          if (error.detail) {
+            if (typeof error.detail === "string") {
+              errorDetail = error.detail;
+            } else if (typeof error.detail === "object") {
+              // For validation errors, detail is an array of objects
+              // Format them nicely
+              if (Array.isArray(error.detail)) {
+                errorDetail = error.detail
+                  .map((item: any) => {
+                    if (typeof item === "object" && item.msg && item.loc) {
+                      return `${item.loc.join(".")}: ${item.msg}`;
+                    }
+                    return JSON.stringify(item);
+                  })
+                  .join(", ");
+              } else {
+                errorDetail = JSON.stringify(error.detail);
+              }
+            } else {
+              errorDetail = String(error.detail);
+            }
+          } else {
+            errorDetail = text;
+          }
         } catch {
           // If JSON parsing fails, use the text as-is
           errorDetail = text;
@@ -630,6 +655,33 @@ export async function getSubjectsForExamAndSchool(
     .map((subjectId) => subjectsMap.get(subjectId))
     .filter((subject): subject is Subject => subject !== undefined)
     .sort((a, b) => a.name.localeCompare(b.name));
+}
+
+/**
+ * Compare expected sheet IDs (from score sheet generation) with uploaded document IDs
+ */
+export async function compareSheetIds(
+  examId: number,
+  filters?: {
+    school_id?: number;
+    subject_id?: number;
+    test_type?: number;
+  }
+): Promise<SheetIdComparisonResponse> {
+  const params = new URLSearchParams();
+  if (filters?.school_id !== undefined) {
+    params.append("school_id", filters.school_id.toString());
+  }
+  if (filters?.subject_id !== undefined) {
+    params.append("subject_id", filters.subject_id.toString());
+  }
+  if (filters?.test_type !== undefined) {
+    params.append("test_type", filters.test_type.toString());
+  }
+
+  const url = `${API_BASE_URL}/api/v1/exams/${examId}/sheet-ids/compare${params.toString() ? `?${params.toString()}` : ""}`;
+  const response = await fetch(url);
+  return handleResponse<SheetIdComparisonResponse>(response);
 }
 
 // Programme API Functions

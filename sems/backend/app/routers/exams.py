@@ -36,30 +36,32 @@ from app.schemas.exam import (
     ExamListResponse,
     ExamProgressResponse,
     ExamResponse,
-    ExamSubjectBulkUploadResponse,
     ExamSubjectBulkUploadError,
+    ExamSubjectBulkUploadResponse,
     ExamSubjectCreate,
     ExamSubjectResponse,
     ExamSubjectUpdate,
     ExamUpdate,
+    GradeRangesProgress,
+    IcmPdfGenerationProgress,
+    DocumentProcessingProgress,
     PdfGenerationJobCreate,
     PdfGenerationJobResponse,
     PdfGenerationResponse,
     PreparationsProgress,
     RegistrationProgress,
-    SerializationProgress,
-    IcmPdfGenerationProgress,
     ResultsProcessingOverallProgress,
-    ScoreInterpretationProgress,
-    DocumentProcessingProgress,
-    ScoringDataEntryProgress,
-    ValidationIssuesProgress,
     ResultsProcessingProgress,
     ResultsReleaseProgress,
-    GradeRangesProgress,
+    ScoreInterpretationProgress,
     ScoreSheetGenerationResponse,
+    ScoringDataEntryProgress,
+    SerializationProgress,
     SerializationResponse,
+    SheetIdComparisonResponse,
+    ValidationIssuesProgress,
 )
+from app.services.document_id_tracker import compare_sheet_ids
 from app.services.score_sheet_generator import generate_score_sheets
 from app.services.score_sheet_pdf_service import combine_pdfs_for_school, generate_pdfs_for_exam
 from app.services.serialization import serialize_exam
@@ -1759,6 +1761,35 @@ async def generate_exam_pdf_score_sheets(
     except Exception as e:
         await session.rollback()
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"PDF generation failed: {str(e)}")
+
+
+@router.get("/{exam_id}/sheet-ids/compare", response_model=SheetIdComparisonResponse, status_code=status.HTTP_200_OK)
+async def compare_exam_sheet_ids(
+    exam_id: int,
+    session: DBSessionDep,
+    school_id: int | None = Query(None, description="Optional school ID to filter by"),
+    subject_id: int | None = Query(None, description="Optional subject ID to filter by"),
+    test_type: int | None = Query(None, description="Optional test type to filter by (1=Objectives, 2=Essay, 3=Practicals)"),
+) -> SheetIdComparisonResponse:
+    """
+    Compare expected sheet IDs (from score sheet generation) with uploaded document IDs.
+
+    Returns:
+    - Expected sheet IDs: All sheet IDs generated during score sheet generation
+    - Uploaded sheet IDs: All sheet IDs that have been uploaded (via Document.extracted_id)
+    - Missing sheet IDs: Expected but not yet uploaded
+    - Extra sheet IDs: Uploaded but not expected (potential errors)
+
+    The response includes detailed metadata about each sheet ID including school, subject, series, etc.
+    """
+    try:
+        result = await compare_sheet_ids(session, exam_id, school_id, subject_id, test_type)
+        return SheetIdComparisonResponse.model_validate(result)
+    except ValueError as e:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
+    except Exception as e:
+        await session.rollback()
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Sheet ID comparison failed: {str(e)}")
 
 
 @router.get("/{exam_id}/schools")
