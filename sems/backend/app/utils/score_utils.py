@@ -64,6 +64,19 @@ def parse_score_value(value: str | float | None) -> str | None:
         raise ValueError(f"Score must be a number (>=0), 'A', 'AA', 'AAA', or None. Got: {value_str}")
 
 
+def parse_score_value_safe(value: str | float | None) -> str | None:
+    """
+    Parse and normalize score value, returning None instead of raising ValueError for invalid formats.
+    This is a safe version that fails silently for invalid input.
+
+    Returns: None, numeric string (>=0), "A", "AA", or "AAA", or None if invalid format
+    """
+    try:
+        return parse_score_value(value)
+    except ValueError:
+        return None
+
+
 def is_absent(score: str | None) -> bool:
     """Check if score indicates absence."""
     if score is None:

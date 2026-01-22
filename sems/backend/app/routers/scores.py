@@ -40,7 +40,7 @@ from app.schemas.score import (
     UpdateScoresFromReductoRequest,
     UpdateScoresFromReductoResponse,
 )
-from app.utils.score_utils import add_extraction_method_to_document, calculate_grade, is_absent, parse_score_value
+from app.utils.score_utils import add_extraction_method_to_document, calculate_grade, is_absent, parse_score_value, parse_score_value_safe
 from app.services.results_export import generate_results_export
 
 logger = logging.getLogger(__name__)
@@ -999,8 +999,8 @@ def scores_match(score: str | None, verify: str | None) -> bool:
     Returns:
         True if scores match, False otherwise
     """
-    parsed_score = parse_score_value(score) if score else None
-    parsed_verify = parse_score_value(verify) if verify else None
+    parsed_score = parse_score_value_safe(score) if score else None
+    parsed_verify = parse_score_value_safe(verify) if verify else None
 
     # Both None - consider as match (no data to verify)
     if parsed_score is None and parsed_verify is None:
@@ -1040,7 +1040,7 @@ async def update_scores_from_reducto(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Document not found")
 
     logger.debug(f"Document found: id={document.id}, extracted_id={document.extracted_id}, test_type={document.test_type}, exam_id={document.exam_id}, subject_id={document.subject_id}")
-    print(document)
+    # print(document)
     if not document.scores_extraction_data:
         logger.warning(f"No extraction data available for document_id={document_id}")
         raise HTTPException(
@@ -1292,8 +1292,7 @@ async def update_scores_from_reducto(
                 parsed_score = parse_score_value(score_value) if score_value is not None else None
                 logger.debug(f"Parsed score: {score_value} -> {parsed_score}")
             except ValueError as e:
-                logger.error(f"Invalid score format for index_number={index_number}, score={score_value}: {e}")
-                errors.append({"index_number": index_number, "error": f"Invalid score format: {e}"})
+                logger.debug(f"Invalid score format for index_number={index_number}, score={score_value}: {e}. Skipping candidate.")
                 continue
 
             # If verify is enabled, check if score and verify fields match
@@ -1318,7 +1317,14 @@ async def update_scores_from_reducto(
 
             updated_count += 1
 
+        except ValueError as e:
+            # Handle ValueError (invalid score format) silently at DEBUG level
+            index_number = candidate_data.get("index_number", "unknown")
+            logger.debug(f"Invalid score format for candidate {idx+1} (index_number={index_number}): {e}. Skipping candidate.")
+            # Do not add to errors list - this is expected behavior for invalid formats
+            continue
         except Exception as e:
+            # Handle other unexpected errors at ERROR level
             logger.error(f"Error processing candidate {idx+1} (index_number={candidate_data.get('index_number', 'unknown')}): {e}", exc_info=True)
             errors.append({"index_number": candidate_data.get("index_number", "unknown"), "error": str(e)})
 
