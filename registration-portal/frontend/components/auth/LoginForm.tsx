@@ -46,7 +46,20 @@ export function LoginForm({ onLoginSuccess }: LoginFormProps = {}) {
       // Default redirect logic (only runs if no custom handler)
       toast.success("Login successful");
       if (user.role === "PublicUser") {
-        router.push("/dashboard/private");
+        // Check if user has examiner applications - redirect to examiner dashboard if they do
+        // Otherwise redirect to private candidate dashboard
+        try {
+          const { listExaminerApplications } = await import("@/lib/api");
+          const examinerApps = await listExaminerApplications();
+          if (examinerApps && examinerApps.length > 0) {
+            router.push("/examiner-applications");
+          } else {
+            router.push("/dashboard/private");
+          }
+        } catch (error) {
+          // If we can't check, default to private dashboard
+          router.push("/dashboard/private");
+        }
       } else if (user.role === "APIUSER") {
         // Use blocking redirect for API users
         window.location.replace("/api/dashboard");

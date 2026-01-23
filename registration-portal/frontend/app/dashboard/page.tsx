@@ -41,7 +41,7 @@ export default function DashboardPage() {
 
     // CRITICAL: Check API users FIRST before any rendering
     getCurrentUser()
-      .then((userData) => {
+      .then(async (userData) => {
         // CRITICAL: Redirect API users FIRST, before any state updates
         if (userData.role === "APIUSER") {
           window.location.replace("/api/dashboard");
@@ -53,10 +53,22 @@ export default function DashboardPage() {
         setUser(userData);
         setLoading(false);
 
-        // Redirect private users to their dashboard
+        // Redirect private users - check if they have examiner applications
         if (userData.role === "PublicUser") {
           setRedirecting(true);
-          router.push("/dashboard/private");
+          // Check if user has examiner applications
+          try {
+            const { listExaminerApplications } = await import("@/lib/api");
+            const examinerApps = await listExaminerApplications();
+            if (examinerApps && examinerApps.length > 0) {
+              router.push("/examiner-applications");
+            } else {
+              router.push("/dashboard/private");
+            }
+          } catch (error) {
+            // If we can't check, default to private dashboard
+            router.push("/dashboard/private");
+          }
           return;
         }
 

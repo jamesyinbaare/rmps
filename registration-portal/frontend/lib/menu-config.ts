@@ -29,6 +29,7 @@ export interface MenuItem {
   icon: LucideIcon;
   roles: Role[]; // Roles that can access this menu item
   requiresCoordinator?: boolean; // Only for SchoolAdmin (coordinators)
+  items?: MenuItem[]; // Submenu items
 }
 
 // System Admin Menu Items (for SystemAdmin, Director, DeputyDirector, PrincipalManager, SeniorManager, Manager, Staff)
@@ -41,9 +42,23 @@ export const systemAdminMenuItems: MenuItem[] = [
   },
   {
     href: "/dashboard/exams",
-    label: "Exams",
+    label: "Examinations",
     icon: GraduationCap,
     roles: ["SystemAdmin", "Director", "DeputyDirector", "PrincipalManager", "SeniorManager", "Manager", "Staff"],
+    items: [
+      {
+        href: "/dashboard/exams",
+        label: "Exams",
+        icon: GraduationCap,
+        roles: ["SystemAdmin", "Director", "DeputyDirector", "PrincipalManager", "SeniorManager", "Manager", "Staff"],
+      },
+      {
+        href: "/dashboard/admin/examiner-applications",
+        label: "Examiners Application (Admin)",
+        icon: UserCircle,
+        roles: ["SystemAdmin", "Director", "DeputyDirector", "PrincipalManager", "SeniorManager", "Manager", "Staff"],
+      },
+    ],
   },
   {
     href: "/dashboard/admin/certificate-requests",
