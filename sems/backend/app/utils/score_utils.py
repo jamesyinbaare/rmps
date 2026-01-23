@@ -176,6 +176,34 @@ def validate_score_range(score: str | None, max_score: float) -> tuple[bool, str
         return False, f"Invalid score format. Please enter a number between 0 and {max_score_display}, or 'A'/'AA'/'AAA' for absent"
 
 
+def validate_integer_format(score: str | None) -> tuple[bool, str | None]:
+    """
+    Validate that a score value does not contain decimal points.
+    Raw scores must be whole numbers only.
+
+    Args:
+        score: The score value to validate (can be None, "A", "AA", "AAA", or numeric string)
+
+    Returns:
+        Tuple of (is_valid, error_message). is_valid is True if score is valid, False otherwise.
+        error_message is None if valid, otherwise contains the error description.
+    """
+    if score is None:
+        return True, None
+
+    score_str = str(score).strip()
+
+    # Check for absence indicators - these are always valid
+    if score_str.upper() in ("A", "AA", "AAA"):
+        return True, None
+
+    # Check if the string contains a decimal point
+    if "." in score_str:
+        return False, "Score contains decimal point. Raw scores must be whole numbers only. Please enter as whole number (e.g., '2' instead of '2.0' or '1.5')"
+
+    return True, None
+
+
 def add_extraction_method_to_document(
     document: "Document", extraction_method: "DataExtractionMethod"
 ) -> None:
