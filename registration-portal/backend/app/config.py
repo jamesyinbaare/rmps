@@ -71,6 +71,9 @@ class Settings(BaseSettings):
     result_access_pin_default_max_uses: int = 5
     result_access_pin_length: int = 6
     result_access_serial_length: int = 8
+    # Examiner application settings
+    examiner_application_fee: float = 30.00  # GH¢30.00 application fee
+    recommendation_token_expiry_days: int = 30  # Days until recommendation token expires
 
 
 class LoggingSettings(BaseSettings):

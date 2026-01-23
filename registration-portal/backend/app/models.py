@@ -157,6 +157,29 @@ class ServiceType(enum.Enum):
     EXPRESS = "express"
 
 
+class ExaminerApplicationStatus(enum.Enum):
+    DRAFT = "DRAFT"
+    SUBMITTED = "SUBMITTED"
+    UNDER_REVIEW = "UNDER_REVIEW"
+    ACCEPTED = "ACCEPTED"
+    REJECTED = "REJECTED"
+
+
+class ExaminerDocumentType(enum.Enum):
+    PHOTOGRAPH = "PHOTOGRAPH"
+    CERTIFICATE = "CERTIFICATE"
+    TRANSCRIPT = "TRANSCRIPT"
+
+
+class ExaminerSubjectPreferenceType(enum.Enum):
+    ELECTIVE = "ELECTIVE"
+    CORE = "CORE"
+    TECHNICAL_DRAWING_BUILDING = "TECHNICAL_DRAWING_BUILDING"
+    TECHNICAL_DRAWING_MECHANICAL = "TECHNICAL_DRAWING_MECHANICAL"
+    PRACTICAL_COMPONENT = "PRACTICAL_COMPONENT"
+    ACCESS_COURSE = "ACCESS_COURSE"
+
+
 class TicketActivityType(enum.Enum):
     COMMENT = "comment"
     STATUS_CHANGE = "status_change"
@@ -1109,6 +1132,258 @@ class ResultAccessPin(Base):
     )
 
 
+# Examiner Application Models
+
+
+class ExaminerApplication(Base):
+    """Model for examiner application (Section A)."""
+
+    __tablename__ = "examiner_applications"
+
+    id = Column(Integer, primary_key=True)
+    applicant_id = Column(UUID(as_uuid=True), ForeignKey("portal_users.id", ondelete="CASCADE"), nullable=False, index=True)
+    application_number = Column(String(50), unique=True, nullable=False, index=True)
+    status = Column(Enum(ExaminerApplicationStatus, create_constraint=False, values_callable=lambda x: [e.value for e in x]), default=ExaminerApplicationStatus.DRAFT, nullable=False, index=True)
+
+    # Personal Particulars (Section A, Q1-7)
+    full_name = Column(String(255), nullable=False)
+    title = Column(String(20), nullable=True)  # Mr./Mrs./Ms./Miss./Rev./Dr./Prof.
+    nationality = Column(String(100), nullable=True)
+    date_of_birth = Column(Date, nullable=True)
+    office_address = Column(Text, nullable=True)
+    residential_address = Column(Text, nullable=True)
+    email_address = Column(String(255), nullable=True)
+    telephone_office = Column(String(50), nullable=True)
+    telephone_cell = Column(String(50), nullable=True)
+    present_school_institution = Column(String(255), nullable=True)
+    present_rank_position = Column(String(255), nullable=True)
+
+    # Subject preferences (Section A, Q7)
+    subject_area = Column(Text, nullable=True)
+
+    # Additional information (Section A, Q14)
+    additional_information = Column(Text, nullable=True)
+
+    # Ceased examining explanation (Section A, Q12)
+    ceased_examining_explanation = Column(Text, nullable=True)
+
+    # Payment and submission
+    payment_status = Column(Enum(PaymentStatus, create_constraint=False, values_callable=lambda x: [e.name for e in x]), nullable=True, index=True)
+    invoice_id = Column(Integer, ForeignKey("invoices.id", ondelete="SET NULL"), nullable=True, index=True)
+    submitted_at = Column(DateTime, nullable=True, index=True)
+
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False, index=True)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+
+    applicant = relationship("PortalUser", foreign_keys=[applicant_id])
+    invoice = relationship("Invoice", foreign_keys=[invoice_id])
+    qualifications = relationship("ExaminerAcademicQualification", back_populates="application", cascade="all, delete-orphan", order_by="ExaminerAcademicQualification.order_index")
+    teaching_experiences = relationship("ExaminerTeachingExperience", back_populates="application", cascade="all, delete-orphan", order_by="ExaminerTeachingExperience.order_index")
+    work_experiences = relationship("ExaminerWorkExperience", back_populates="application", cascade="all, delete-orphan", order_by="ExaminerWorkExperience.order_index")
+    examining_experiences = relationship("ExaminerExaminingExperience", back_populates="application", cascade="all, delete-orphan", order_by="ExaminerExaminingExperience.order_index")
+    training_courses = relationship("ExaminerTrainingCourse", back_populates="application", cascade="all, delete-orphan", order_by="ExaminerTrainingCourse.order_index")
+    subject_preferences = relationship("ExaminerApplicationSubjectPreference", back_populates="application", cascade="all, delete-orphan")
+    documents = relationship("ExaminerApplicationDocument", back_populates="application", cascade="all, delete-orphan")
+    recommendation = relationship("ExaminerRecommendation", back_populates="application", uselist=False, cascade="all, delete-orphan")
+    processing = relationship("ExaminerApplicationProcessing", back_populates="application", uselist=False, cascade="all, delete-orphan")
+
+
+class ExaminerAcademicQualification(Base):
+    """Model for academic qualifications (Section A, Q8)."""
+
+    __tablename__ = "examiner_academic_qualifications"
+
+    id = Column(Integer, primary_key=True)
+    application_id = Column(Integer, ForeignKey("examiner_applications.id", ondelete="CASCADE"), nullable=False, index=True)
+    university_college = Column(String(255), nullable=False)
+    degree_diploma = Column(String(255), nullable=False)
+    class_of_degree = Column(String(100), nullable=True)
+    major_subjects = Column(Text, nullable=True)
+    date_of_award = Column(Date, nullable=True)
+    order_index = Column(Integer, nullable=False, default=0)
+
+    application = relationship("ExaminerApplication", back_populates="qualifications")
+
+
+class ExaminerTeachingExperience(Base):
+    """Model for teaching experience (Section A, Q9)."""
+
+    __tablename__ = "examiner_teaching_experiences"
+
+    id = Column(Integer, primary_key=True)
+    application_id = Column(Integer, ForeignKey("examiner_applications.id", ondelete="CASCADE"), nullable=False, index=True)
+    institution_name = Column(String(255), nullable=False)
+    date_from = Column(Date, nullable=True)
+    date_to = Column(Date, nullable=True)
+    subject = Column(String(255), nullable=True)
+    level = Column(String(100), nullable=True)
+    order_index = Column(Integer, nullable=False, default=0)
+
+    application = relationship("ExaminerApplication", back_populates="teaching_experiences")
+
+
+class ExaminerWorkExperience(Base):
+    """Model for work experience other than teaching (Section A, Q10)."""
+
+    __tablename__ = "examiner_work_experiences"
+
+    id = Column(Integer, primary_key=True)
+    application_id = Column(Integer, ForeignKey("examiner_applications.id", ondelete="CASCADE"), nullable=False, index=True)
+    occupation = Column(String(255), nullable=False)
+    employer_name = Column(String(255), nullable=False)
+    date_from = Column(Date, nullable=True)
+    date_to = Column(Date, nullable=True)
+    position_held = Column(String(255), nullable=True)
+    order_index = Column(Integer, nullable=False, default=0)
+
+    application = relationship("ExaminerApplication", back_populates="work_experiences")
+
+
+class ExaminerExaminingExperience(Base):
+    """Model for examining experience (Section A, Q11)."""
+
+    __tablename__ = "examiner_examining_experiences"
+
+    id = Column(Integer, primary_key=True)
+    application_id = Column(Integer, ForeignKey("examiner_applications.id", ondelete="CASCADE"), nullable=False, index=True)
+    examination_body = Column(String(255), nullable=False)
+    subject = Column(String(255), nullable=True)
+    level = Column(String(100), nullable=True)  # Access, O' Level, WASSCE, Tertiary, etc.
+    status = Column(String(100), nullable=True)  # Assist. Examiner, Team Leader, Chief Examiner, etc.
+    date_from = Column(Date, nullable=True)
+    date_to = Column(Date, nullable=True)
+    order_index = Column(Integer, nullable=False, default=0)
+
+    application = relationship("ExaminerApplication", back_populates="examining_experiences")
+
+
+class ExaminerTrainingCourse(Base):
+    """Model for training courses (Section A, Q13)."""
+
+    __tablename__ = "examiner_training_courses"
+
+    id = Column(Integer, primary_key=True)
+    application_id = Column(Integer, ForeignKey("examiner_applications.id", ondelete="CASCADE"), nullable=False, index=True)
+    organizer = Column(String(255), nullable=False)
+    course_name = Column(String(255), nullable=False)
+    place = Column(String(255), nullable=True)
+    date_from = Column(Date, nullable=True)
+    date_to = Column(Date, nullable=True)
+    reason_for_participation = Column(Text, nullable=True)
+    order_index = Column(Integer, nullable=False, default=0)
+
+    application = relationship("ExaminerApplication", back_populates="training_courses")
+
+
+class ExaminerApplicationSubjectPreference(Base):
+    """Model for subject preferences (Section A, Q7)."""
+
+    __tablename__ = "examiner_application_subject_preferences"
+
+    id = Column(Integer, primary_key=True)
+    application_id = Column(Integer, ForeignKey("examiner_applications.id", ondelete="CASCADE"), nullable=False, index=True)
+    preference_type = Column(Enum(ExaminerSubjectPreferenceType, create_constraint=False, values_callable=lambda x: [e.value for e in x]), nullable=False)
+    subject_area = Column(Text, nullable=True)
+
+    application = relationship("ExaminerApplication", back_populates="subject_preferences")
+
+
+class ExaminerApplicationDocument(Base):
+    """Model for application documents (photographs, certificates, transcripts)."""
+
+    __tablename__ = "examiner_application_documents"
+
+    id = Column(Integer, primary_key=True)
+    application_id = Column(Integer, ForeignKey("examiner_applications.id", ondelete="CASCADE"), nullable=False, index=True)
+    document_type = Column(Enum(ExaminerDocumentType, create_constraint=False, values_callable=lambda x: [e.value for e in x]), nullable=False, index=True)
+    file_path = Column(String(512), nullable=False)
+    file_name = Column(String(255), nullable=False)
+    mime_type = Column(String(100), nullable=False)
+    file_size = Column(Integer, nullable=False)
+    uploaded_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+
+    application = relationship("ExaminerApplication", back_populates="documents")
+
+
+class ExaminerRecommendation(Base):
+    """Model for official recommendation (Section B)."""
+
+    __tablename__ = "examiner_recommendations"
+
+    id = Column(Integer, primary_key=True)
+    application_id = Column(Integer, ForeignKey("examiner_applications.id", ondelete="CASCADE"), nullable=False, unique=True, index=True)
+
+    # Recommender details
+    recommender_name = Column(String(255), nullable=True)
+    recommender_status = Column(String(255), nullable=True)  # Status/position of recommender
+    recommender_office_address = Column(Text, nullable=True)
+    recommender_phone = Column(String(50), nullable=True)
+
+    # Quality ratings (JSON: {quality_name: rating_value})
+    quality_ratings = Column(JSON, nullable=True)  # e.g., {"knowledge_of_subject": 5, "reliability": 4, ...}
+
+    # Integrity assessment
+    integrity_assessment = Column(Text, nullable=True)
+
+    # Certification statement
+    certification_statement = Column(Text, nullable=True)
+
+    # Recommendation decision
+    recommendation_decision = Column(Boolean, nullable=True)  # True = recommend, False = do not recommend
+
+    # Signature and date
+    recommender_signature = Column(String(255), nullable=True)
+    recommender_date = Column(Date, nullable=True)
+
+    # Token for email link
+    token = Column(String(64), unique=True, nullable=True, index=True)
+    token_expires_at = Column(DateTime, nullable=True, index=True)
+    completed_at = Column(DateTime, nullable=True, index=True)
+
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+
+    application = relationship("ExaminerApplication", back_populates="recommendation")
+
+
+class ExaminerApplicationProcessing(Base):
+    """Model for office processing (Section C)."""
+
+    __tablename__ = "examiner_application_processing"
+
+    id = Column(Integer, primary_key=True)
+    application_id = Column(Integer, ForeignKey("examiner_applications.id", ondelete="CASCADE"), nullable=False, unique=True, index=True)
+
+    # Submission of Application Form
+    checked_by_user_id = Column(UUID(as_uuid=True), ForeignKey("portal_users.id", ondelete="SET NULL"), nullable=True, index=True)
+    received_date = Column(Date, nullable=True)
+
+    # Photocopies of Certificate/Transcript Attached
+    certificate_types = Column(JSON, nullable=True)  # Array of certificate/transcript types
+    certificates_checked_by_user_id = Column(UUID(as_uuid=True), ForeignKey("portal_users.id", ondelete="SET NULL"), nullable=True, index=True)
+    certificates_checked_date = Column(Date, nullable=True)
+
+    # Application Accepted
+    accepted_first_invitation_date = Column(Date, nullable=True)
+    accepted_subject = Column(String(255), nullable=True)
+    accepted_officer_user_id = Column(UUID(as_uuid=True), ForeignKey("portal_users.id", ondelete="SET NULL"), nullable=True, index=True)
+    accepted_date = Column(Date, nullable=True)
+
+    # Application Rejected
+    rejected_reasons = Column(Text, nullable=True)
+    rejected_officer_user_id = Column(UUID(as_uuid=True), ForeignKey("portal_users.id", ondelete="SET NULL"), nullable=True, index=True)
+    rejected_date = Column(Date, nullable=True)
+
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+
+    application = relationship("ExaminerApplication", back_populates="processing")
+    checked_by_user = relationship("PortalUser", foreign_keys=[checked_by_user_id])
+    certificates_checked_by_user = relationship("PortalUser", foreign_keys=[certificates_checked_by_user_id])
+    accepted_officer_user = relationship("PortalUser", foreign_keys=[accepted_officer_user_id])
+    rejected_officer_user = relationship("PortalUser", foreign_keys=[rejected_officer_user_id])
+
+
 # Define the relationship after both classes are defined to avoid forward reference issues
 PortalUser.user_permissions = relationship(
     UserPermission,
@@ -1120,3 +1395,4 @@ PortalUser.user_permissions = relationship(
 # Add relationships to PortalUser for new models
 PortalUser.credit_account = relationship("UserCredit", back_populates="user", uselist=False, cascade="all, delete-orphan")
 PortalUser.api_keys = relationship("ApiKey", back_populates="user", cascade="all, delete-orphan")
+PortalUser.examiner_applications = relationship("ExaminerApplication", back_populates="applicant", cascade="all, delete-orphan")
