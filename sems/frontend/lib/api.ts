@@ -1854,7 +1854,10 @@ export async function getCandidatesForManualEntry(
 export async function exportCandidateResults(
   filters: ManualEntryFilters,
   fields: string[],
-  subjectType?: "CORE" | "ELECTIVE"
+  subjectType?: "CORE" | "ELECTIVE",
+  exportFormat?: "standard" | "multi_subject",
+  testType?: "obj" | "essay",
+  subjectIds?: number[]
 ): Promise<void> {
   const params = new URLSearchParams();
   if (filters.exam_id) params.append("exam_id", filters.exam_id.toString());
@@ -1871,6 +1874,18 @@ export async function exportCandidateResults(
   // Add subject type parameter if provided
   if (subjectType) {
     params.append("subject_type", subjectType);
+  }
+  // Add export format parameter
+  if (exportFormat) {
+    params.append("export_format", exportFormat);
+  }
+  // Add test type parameter for multi-subject format
+  if (testType) {
+    params.append("test_type", testType);
+  }
+  // Add subject IDs parameter for multi-subject format
+  if (subjectIds && subjectIds.length > 0) {
+    params.append("subject_ids", subjectIds.join(","));
   }
 
   const response = await fetch(`${API_BASE_URL}/api/v1/scores/export?${params.toString()}`, {

@@ -6,7 +6,7 @@ if TYPE_CHECKING:
     from app.models import ExamSubject, SubjectScore
 
 from app.models import ValidationIssueType
-from app.utils.score_utils import validate_score_range
+from app.utils.score_utils import validate_integer_format, validate_score_range
 
 
 def validate_subject_score(
@@ -39,9 +39,8 @@ def validate_subject_score(
                 "message": f"Objectives score is missing. Maximum score is {max_score}",
             })
         else:
-            is_valid, error_message = validate_score_range(
-                subject_score.obj_raw_score, exam_subject.obj_max_score
-            )
+            # Check for decimal point in integer format
+            is_valid, error_message = validate_integer_format(subject_score.obj_raw_score)
             if not is_valid:
                 issues.append({
                     "issue_type": ValidationIssueType.INVALID_SCORE,
@@ -49,6 +48,18 @@ def validate_subject_score(
                     "test_type": 1,
                     "message": error_message or f"Objectives score '{subject_score.obj_raw_score}' is invalid",
                 })
+            else:
+                # Check score range
+                is_valid, error_message = validate_score_range(
+                    subject_score.obj_raw_score, exam_subject.obj_max_score
+                )
+                if not is_valid:
+                    issues.append({
+                        "issue_type": ValidationIssueType.INVALID_SCORE,
+                        "field_name": "obj_raw_score",
+                        "test_type": 1,
+                        "message": error_message or f"Objectives score '{subject_score.obj_raw_score}' is invalid",
+                    })
 
     # Validate essay_raw_score (test_type=2)
     if exam_subject.essay_max_score is not None and exam_subject.essay_max_score > 0:
@@ -61,9 +72,8 @@ def validate_subject_score(
                 "message": f"Essay score is missing. Maximum score is {max_score}",
             })
         else:
-            is_valid, error_message = validate_score_range(
-                subject_score.essay_raw_score, exam_subject.essay_max_score
-            )
+            # Check for decimal point in integer format
+            is_valid, error_message = validate_integer_format(subject_score.essay_raw_score)
             if not is_valid:
                 issues.append({
                     "issue_type": ValidationIssueType.INVALID_SCORE,
@@ -71,6 +81,18 @@ def validate_subject_score(
                     "test_type": 2,
                     "message": error_message or f"Essay score '{subject_score.essay_raw_score}' is invalid",
                 })
+            else:
+                # Check score range
+                is_valid, error_message = validate_score_range(
+                    subject_score.essay_raw_score, exam_subject.essay_max_score
+                )
+                if not is_valid:
+                    issues.append({
+                        "issue_type": ValidationIssueType.INVALID_SCORE,
+                        "field_name": "essay_raw_score",
+                        "test_type": 2,
+                        "message": error_message or f"Essay score '{subject_score.essay_raw_score}' is invalid",
+                    })
 
     # Validate pract_raw_score (test_type=3)
     # Check if pract_max_score > 0 OR pract_pct > 0
@@ -91,17 +113,27 @@ def validate_subject_score(
                 "message": f"Practical score is missing.{max_score_text}",
             })
         else:
-            # Use pract_max_score if available, otherwise we can't validate range (just check it's set)
-            if exam_subject.pract_max_score is not None and exam_subject.pract_max_score > 0:
-                is_valid, error_message = validate_score_range(
-                    subject_score.pract_raw_score, exam_subject.pract_max_score
-                )
-                if not is_valid:
-                    issues.append({
-                        "issue_type": ValidationIssueType.INVALID_SCORE,
-                        "field_name": "pract_raw_score",
-                        "test_type": 3,
-                        "message": error_message or f"Practical score '{subject_score.pract_raw_score}' is invalid",
-                    })
+            # Check for decimal point in integer format
+            is_valid, error_message = validate_integer_format(subject_score.pract_raw_score)
+            if not is_valid:
+                issues.append({
+                    "issue_type": ValidationIssueType.INVALID_SCORE,
+                    "field_name": "pract_raw_score",
+                    "test_type": 3,
+                    "message": error_message or f"Practical score '{subject_score.pract_raw_score}' is invalid",
+                })
+            else:
+                # Use pract_max_score if available, otherwise we can't validate range (just check it's set)
+                if exam_subject.pract_max_score is not None and exam_subject.pract_max_score > 0:
+                    is_valid, error_message = validate_score_range(
+                        subject_score.pract_raw_score, exam_subject.pract_max_score
+                    )
+                    if not is_valid:
+                        issues.append({
+                            "issue_type": ValidationIssueType.INVALID_SCORE,
+                            "field_name": "pract_raw_score",
+                            "test_type": 3,
+                            "message": error_message or f"Practical score '{subject_score.pract_raw_score}' is invalid",
+                        })
 
     return issues

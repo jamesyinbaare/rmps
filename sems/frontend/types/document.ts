@@ -435,6 +435,9 @@ export interface ReductoStatusResponse {
   queue_position: number | null;
 }
 
+export type ExportFormat = "standard" | "multi_subject";
+export type TestType = "obj" | "essay";
+
 export interface ManualEntryFilters {
   exam_id?: number;
   exam_type?: ExamType;

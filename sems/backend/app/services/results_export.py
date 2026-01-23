@@ -209,6 +209,9 @@ async def generate_results_export(
     document_id: str | None = None,
     fields: list[str] | None = None,
     subject_type: SubjectType | None = None,
+    export_format: str = "standard",
+    test_type: str | None = None,
+    subject_ids: list[int] | None = None,
 ) -> bytes:
     """
     Generate Excel export for candidate processed results.
@@ -225,6 +228,9 @@ async def generate_results_export(
         document_id: Filter by document ID (matches obj/essay/pract document IDs)
         fields: List of field names to include in export. If None, includes all fields.
         subject_type: Filter by subject type (CORE or ELECTIVE). If ELECTIVE, programme_id is required.
+        export_format: "standard" or "multi_subject" - determines export format
+        test_type: "obj" or "essay" - required for multi_subject format
+        subject_ids: List of subject IDs - used for multi_subject format
 
     Returns:
         Bytes of Excel file
@@ -232,6 +238,23 @@ async def generate_results_export(
     Raises:
         ValueError: If invalid fields are provided, no results found, or invalid filter combination
     """
+    # Route to multi-subject export if requested
+    if export_format == "multi_subject":
+        return await generate_multi_subject_export(
+            session=session,
+            exam_id=exam_id,
+            exam_type=exam_type,
+            series=series,
+            year=year,
+            school_id=school_id,
+            programme_id=programme_id,
+            test_type=test_type or "obj",
+            subject_ids=subject_ids,
+            subject_type=subject_type,
+            fields=fields,
+        )
+
+    # Continue with standard export format
     # Validate fields if provided
     if fields is not None:
         invalid_fields = [f for f in fields if f not in EXPORT_FIELDS]
@@ -499,6 +522,290 @@ async def generate_results_export(
                 ) if len(df) > 0 else len(str(col))
                 col_letter = get_column_letter(idx)
                 worksheet.column_dimensions[col_letter].width = min(max_length + 2, 50)
+
+    output.seek(0)
+    return output.getvalue()
+
+
+async def generate_multi_subject_export(
+    session: AsyncSession,
+    exam_id: int | None = None,
+    exam_type: ExamType | None = None,
+    series: ExamSeries | None = None,
+    year: int | None = None,
+    school_id: int | None = None,
+    programme_id: int | None = None,
+    test_type: str = "obj",
+    subject_ids: list[int] | None = None,
+    subject_type: SubjectType | None = None,
+    fields: list[str] | None = None,
+) -> bytes:
+    """
+    Generate Excel export with multiple subjects on the same sheet.
+
+    Format: Each row is a candidate, columns are candidate info fields + subject codes.
+    For each subject column, shows the raw score for the selected test_type, or "N/A" if not registered.
+
+    Args:
+        session: Database session
+        exam_id: Filter by exam ID
+        exam_type: Filter by exam type
+        series: Filter by exam series
+        year: Filter by exam year
+        school_id: Filter by school ID
+        programme_id: Filter by programme ID
+        test_type: "obj" or "essay" - which raw score to export
+        subject_ids: List of subject IDs to include (mutually exclusive with subject_type)
+        subject_type: Subject type filter (CORE or ELECTIVE) - mutually exclusive with subject_ids
+        fields: List of candidate info fields to include
+
+    Returns:
+        Bytes of Excel file
+
+    Raises:
+        ValueError: If invalid configuration or no results found
+    """
+    # Validate fields if provided
+    if fields is not None:
+        # Filter out subject-specific fields for multi-subject format
+        allowed_fields = [
+            "candidate_name", "candidate_index_number", "school_name", "school_code",
+            "exam_name", "exam_type", "exam_year", "exam_series",
+            "programme_name", "programme_code"
+        ]
+        invalid_fields = [f for f in fields if f not in allowed_fields]
+        if invalid_fields:
+            raise ValueError(f"Invalid fields for multi-subject format: {', '.join(invalid_fields)}")
+
+    # Determine which fields to export
+    fields_to_export = fields if fields is not None else ["candidate_name", "candidate_index_number"]
+
+    # Step 1: Get all candidates for the exam (with filters)
+    candidate_stmt = (
+        select(Candidate, ExamRegistration, Exam, School, Programme)
+        .join(ExamRegistration, ExamRegistration.candidate_id == Candidate.id)
+        .join(Exam, ExamRegistration.exam_id == Exam.id)
+        .join(School, Candidate.school_id == School.id)
+        .outerjoin(Programme, Candidate.programme_id == Programme.id)
+    )
+
+    # Apply filters
+    if exam_id is not None:
+        candidate_stmt = candidate_stmt.where(Exam.id == exam_id)
+    else:
+        if exam_type is not None:
+            candidate_stmt = candidate_stmt.where(Exam.exam_type == exam_type)
+        if series is not None:
+            candidate_stmt = candidate_stmt.where(Exam.series == series)
+        if year is not None:
+            candidate_stmt = candidate_stmt.where(Exam.year == year)
+    if school_id is not None:
+        candidate_stmt = candidate_stmt.where(Candidate.school_id == school_id)
+    if programme_id is not None:
+        candidate_stmt = candidate_stmt.where(Candidate.programme_id == programme_id)
+
+    candidate_stmt = candidate_stmt.order_by(Candidate.index_number)
+    candidate_result = await session.execute(candidate_stmt)
+    candidate_rows = candidate_result.all()
+
+    if not candidate_rows:
+        raise ValueError("No candidates found matching the specified filters")
+
+    # Step 2: Determine which subjects to include
+    selected_subject_ids = set()
+
+    if subject_ids is not None:
+        # Use provided subject IDs
+        selected_subject_ids = set(subject_ids)
+
+        # Validate that these subjects exist in the exam
+        exam_subject_stmt = (
+            select(ExamSubject.subject_id)
+            .join(Exam, ExamSubject.exam_id == Exam.id)
+        )
+        if exam_id is not None:
+            exam_subject_stmt = exam_subject_stmt.where(Exam.id == exam_id)
+        else:
+            if exam_type is not None:
+                exam_subject_stmt = exam_subject_stmt.where(Exam.exam_type == exam_type)
+            if series is not None:
+                exam_subject_stmt = exam_subject_stmt.where(Exam.series == series)
+            if year is not None:
+                exam_subject_stmt = exam_subject_stmt.where(Exam.year == year)
+
+        exam_subject_result = await session.execute(exam_subject_stmt)
+        exam_subject_ids = {row[0] for row in exam_subject_result.all()}
+
+        # Filter to only subjects that exist in the exam
+        selected_subject_ids = selected_subject_ids & exam_subject_ids
+
+        if not selected_subject_ids:
+            raise ValueError("None of the specified subject IDs exist in the exam")
+
+    elif subject_type is not None:
+        # Get subjects by type
+        subject_stmt = select(Subject.id).join(ExamSubject, Subject.id == ExamSubject.subject_id).join(Exam, ExamSubject.exam_id == Exam.id)
+
+        if exam_id is not None:
+            subject_stmt = subject_stmt.where(Exam.id == exam_id)
+        else:
+            if exam_type is not None:
+                subject_stmt = subject_stmt.where(Exam.exam_type == exam_type)
+            if series is not None:
+                subject_stmt = subject_stmt.where(Exam.series == series)
+            if year is not None:
+                subject_stmt = subject_stmt.where(Exam.year == year)
+
+        subject_stmt = subject_stmt.where(Subject.subject_type == subject_type)
+
+        if subject_type == SubjectType.ELECTIVE and programme_id is not None:
+            # For electives, also filter by programme
+            from app.models import programme_subjects
+            subject_stmt = subject_stmt.join(
+                programme_subjects, Subject.id == programme_subjects.c.subject_id
+            ).where(programme_subjects.c.programme_id == programme_id)
+
+        subject_result = await session.execute(subject_stmt)
+        selected_subject_ids = {row[0] for row in subject_result.all()}
+
+        if not selected_subject_ids:
+            raise ValueError(f"No {subject_type.value} subjects found for the specified exam")
+    else:
+        raise ValueError("Either subject_ids or subject_type must be provided")
+
+    # Step 3: Get subject codes for the selected subjects
+    subject_code_stmt = select(Subject.id, Subject.code).where(Subject.id.in_(selected_subject_ids)).order_by(Subject.code)
+    subject_code_result = await session.execute(subject_code_stmt)
+    subject_codes_map = {row[0]: row[1] for row in subject_code_result.all()}
+    subject_codes_sorted = sorted(subject_codes_map.values())
+
+    # Step 4: Get all subject registrations and scores for these candidates
+    # Get exam registration IDs for the candidates
+    exam_reg_ids = {row[1].id for row in candidate_rows}  # ExamRegistration is at index 1
+
+    # Create a map from exam_registration_id to candidate_id
+    exam_reg_to_candidate: dict[int, int] = {}
+    for candidate, exam_reg, exam, school, programme in candidate_rows:
+        exam_reg_to_candidate[exam_reg.id] = candidate.id
+
+    # Get subject registrations (to know which subjects candidates registered for)
+    subject_reg_stmt = (
+        select(SubjectRegistration, SubjectScore, Subject, ExamSubject, ExamRegistration)
+        .join(ExamSubject, SubjectRegistration.exam_subject_id == ExamSubject.id)
+        .join(Subject, ExamSubject.subject_id == Subject.id)
+        .join(ExamRegistration, SubjectRegistration.exam_registration_id == ExamRegistration.id)
+        .outerjoin(SubjectScore, SubjectRegistration.id == SubjectScore.subject_registration_id)
+        .where(
+            SubjectRegistration.exam_registration_id.in_(exam_reg_ids),
+            Subject.id.in_(selected_subject_ids)
+        )
+    )
+
+    subject_reg_result = await session.execute(subject_reg_stmt)
+    subject_reg_rows = subject_reg_result.all()
+
+    # Step 5: Build pivot structure
+    # Map: candidate_id -> {subject_code: value}
+    # Value can be:
+    #   - raw_score string if registered and has score
+    #   - "" (empty string) if registered but no score
+    #   - "N/A" if not registered
+    candidate_scores: dict[int, dict[str, str]] = {}
+
+    # Initialize all candidates with "N/A" (not registered)
+    for candidate, exam_reg, exam, school, programme in candidate_rows:
+        candidate_scores[candidate.id] = {code: "N/A" for code in subject_codes_sorted}
+
+    # Fill in scores from subject registrations
+    for subject_reg, subject_score, subject, exam_subject, exam_reg in subject_reg_rows:
+        candidate_id = exam_reg.candidate_id
+        subject_code = subject.code
+
+        if subject_code in subject_codes_sorted:
+            # Candidate registered for this subject
+            # Get the raw score for the selected test_type
+            if subject_score:
+                if test_type == "obj":
+                    raw_score = subject_score.obj_raw_score
+                elif test_type == "essay":
+                    raw_score = subject_score.essay_raw_score
+                else:
+                    raw_score = None
+            else:
+                raw_score = None
+
+            if candidate_id in candidate_scores:
+                # If registered but no score, leave blank (empty string)
+                # If registered and has score, use the score
+                candidate_scores[candidate_id][subject_code] = raw_score if raw_score is not None else ""
+
+    # Step 6: Build Excel rows
+    export_rows = []
+    for candidate, exam_reg, exam, school, programme in candidate_rows:
+        row_data: dict[str, Any] = {}
+
+        # Add candidate info fields
+        if "candidate_name" in fields_to_export:
+            row_data["Candidate Name"] = candidate.name
+        if "candidate_index_number" in fields_to_export:
+            row_data["Index Number"] = candidate.index_number
+        if "school_name" in fields_to_export:
+            row_data["School Name"] = school.name
+        if "school_code" in fields_to_export:
+            row_data["School Code"] = school.code
+        if "exam_name" in fields_to_export:
+            row_data["Exam Name"] = exam.exam_type.value
+        if "exam_type" in fields_to_export:
+            row_data["Exam Type"] = exam.exam_type.value
+        if "exam_year" in fields_to_export:
+            row_data["Exam Year"] = exam.year
+        if "exam_series" in fields_to_export:
+            row_data["Exam Series"] = exam.series.value
+        if "programme_name" in fields_to_export:
+            row_data["Programme Name"] = programme.name if programme else None
+        if "programme_code" in fields_to_export:
+            row_data["Programme Code"] = programme.code if programme else None
+
+        # Add subject scores
+        candidate_id = candidate.id
+        if candidate_id in candidate_scores:
+            for subject_code in subject_codes_sorted:
+                value = candidate_scores[candidate_id][subject_code]
+                # value is already set correctly:
+                # - raw_score string if registered and has score
+                # - "" (empty string) if registered but no score
+                # - "N/A" if not registered
+                row_data[subject_code] = value
+        else:
+            # Should not happen, but handle gracefully
+            for subject_code in subject_codes_sorted:
+                row_data[subject_code] = "N/A"
+
+        export_rows.append(row_data)
+
+    # Step 7: Generate Excel
+    output = io.BytesIO()
+    from openpyxl.utils import get_column_letter
+
+    df = pd.DataFrame(export_rows)
+
+    with pd.ExcelWriter(output, engine="openpyxl") as writer:
+        # Generate sheet name
+        sheet_name = "Multi_Subject_Scores"
+        if len(sheet_name) > 31:
+            sheet_name = sheet_name[:31]
+
+        df.to_excel(writer, index=False, sheet_name=sheet_name)
+
+        # Auto-size columns
+        worksheet = writer.sheets[sheet_name]
+        for idx, col in enumerate(df.columns, 1):
+            max_length = max(
+                df[col].astype(str).map(len).max(),
+                len(str(col))
+            ) if len(df) > 0 else len(str(col))
+            col_letter = get_column_letter(idx)
+            worksheet.column_dimensions[col_letter].width = min(max_length + 2, 50)
 
     output.seek(0)
     return output.getvalue()

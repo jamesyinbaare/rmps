@@ -1,5 +1,6 @@
 from datetime import datetime
 import logging
+from typing import Literal
 
 from fastapi import APIRouter, HTTPException, Query, status
 from fastapi.responses import StreamingResponse
@@ -1630,6 +1631,9 @@ async def export_candidate_results(
     document_id: str | None = Query(None, description="Filter by document ID (extracted_id) - matches obj_document_id, essay_document_id, or pract_document_id"),
     fields: str = Query(..., description="Comma-separated list of fields to export. Available fields: candidate_name, candidate_index_number, school_name, school_code, exam_name, exam_type, exam_year, exam_series, programme_name, programme_code, subject_name, subject_code, subject_series, obj_raw_score, essay_raw_score, pract_raw_score, obj_normalized, essay_normalized, pract_normalized, total_score, grade, obj_document_id, essay_document_id, pract_document_id, created_at, updated_at"),
     subject_type: SubjectType | None = Query(None, description="Filter by subject type (CORE or ELECTIVE). If ELECTIVE, programme_id is required. Mutually exclusive with subject_id."),
+    export_format: Literal["standard", "multi_subject"] = Query("standard", description="Export format: 'standard' for traditional format, 'multi_subject' for multiple subjects on same sheet"),
+    test_type: Literal["obj", "essay"] | None = Query(None, description="Test type for multi_subject format: 'obj' for objectives or 'essay' for essay raw scores"),
+    subject_ids: str | None = Query(None, description="Comma-separated list of subject IDs for multi_subject format (mutually exclusive with subject_type)"),
 ) -> StreamingResponse:
     """
     Export candidate processed results as Excel file.
@@ -1643,6 +1647,12 @@ async def export_candidate_results(
     - If subject_type is CORE, exports all core subjects (each on separate sheet)
     - If subject_type is ELECTIVE, exports all elective subjects for the programme (each on separate sheet)
     - If subject_id is specified, exports single subject (single sheet)
+
+    Multi-subject format rules:
+    - export_format must be "multi_subject" to use multi-subject format
+    - test_type is required when export_format is "multi_subject"
+    - Either subject_ids or subject_type must be provided when export_format is "multi_subject"
+    - subject_ids and subject_type are mutually exclusive
     """
     try:
         # Parse fields parameter
@@ -1667,6 +1677,36 @@ async def export_candidate_results(
                 detail="programme_id is required when subject_type is ELECTIVE"
             )
 
+        # Validate multi-subject format requirements
+        if export_format == "multi_subject":
+            if test_type is None:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="test_type is required when export_format is 'multi_subject'"
+                )
+            if subject_ids is None and subject_type is None:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="Either subject_ids or subject_type must be provided when export_format is 'multi_subject'"
+                )
+            if subject_ids is not None and subject_type is not None:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="subject_ids and subject_type cannot both be specified"
+                )
+            # Parse subject_ids if provided
+            subject_ids_list = None
+            if subject_ids:
+                try:
+                    subject_ids_list = [int(sid.strip()) for sid in subject_ids.split(",") if sid.strip()]
+                except ValueError:
+                    raise HTTPException(
+                        status_code=status.HTTP_400_BAD_REQUEST,
+                        detail="subject_ids must be comma-separated integers"
+                    )
+        else:
+            subject_ids_list = None
+
         # Generate Excel export
         excel_bytes = await generate_results_export(
             session=session,
@@ -1680,21 +1720,47 @@ async def export_candidate_results(
             document_id=document_id,
             fields=fields_list,
             subject_type=subject_type,
+            export_format=export_format,
+            test_type=test_type,
+            subject_ids=subject_ids_list,
         )
 
         # Generate descriptive filename based on filters
         from app.services.results_export import generate_export_filename
         try:
-            filename = await generate_export_filename(
-                session=session,
-                exam_id=exam_id,
-                exam_type=exam_type,
-                series=series,
-                year=year,
-                subject_type=subject_type,
-                programme_id=programme_id,
-                subject_id=subject_id,
-            )
+            if export_format == "multi_subject":
+                # Generate filename for multi-subject format
+                parts = []
+                if exam_id:
+                    exam_stmt = select(Exam).where(Exam.id == exam_id)
+                    exam_result = await session.execute(exam_stmt)
+                    exam = exam_result.scalar_one_or_none()
+                    if exam:
+                        parts.append(str(exam.year))
+                        parts.append(exam.series.value)
+                        parts.append(exam.exam_type.value.replace(" ", "_"))
+
+                parts.append("multi_subject")
+                if test_type:
+                    parts.append(test_type)
+                if subject_type:
+                    parts.append(subject_type.value)
+                elif subject_ids_list:
+                    parts.append(f"{len(subject_ids_list)}_subjects")
+
+                parts.append("scores")
+                filename = "_".join(parts) + ".xlsx"
+            else:
+                filename = await generate_export_filename(
+                    session=session,
+                    exam_id=exam_id,
+                    exam_type=exam_type,
+                    series=series,
+                    year=year,
+                    subject_type=subject_type,
+                    programme_id=programme_id,
+                    subject_id=subject_id,
+                )
         except Exception as e:
             # Fallback to timestamp-based filename if generation fails
             logger.error(f"Error generating export filename: {e}")
