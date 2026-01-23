@@ -34,7 +34,7 @@ import {
   listProgrammeSubjects,
   exportCandidateResults
 } from "@/lib/api";
-import type { Exam, Programme, Subject, School, ManualEntryFilters, CandidateScoreEntry, ExamType, ExamSeries } from "@/types/document";
+import type { Exam, Programme, Subject, School, ManualEntryFilters, CandidateScoreEntry, ExamType, ExamSeries, ExportFormat, TestType } from "@/types/document";
 import { Loader2, Download, Search, X, Filter, FileText, ChevronDown, ChevronUp, Check } from "lucide-react";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { toast } from "sonner";
@@ -123,6 +123,11 @@ export default function ExportResultsPage() {
 
   // Subject type selection state
   const [subjectType, setSubjectType] = useState<"CORE" | "ELECTIVE" | null>(null);
+
+  // Export format selection state
+  const [exportFormat, setExportFormat] = useState<ExportFormat>("standard");
+  const [testType, setTestType] = useState<TestType>("obj");
+  const [selectedSubjectIds, setSelectedSubjectIds] = useState<Set<number>>(new Set());
 
   // Field selection state
   const [selectedFields, setSelectedFields] = useState<Set<string>>(
@@ -480,27 +485,99 @@ export default function ExportResultsPage() {
       return;
     }
 
-    // Validate filter combinations
-    if (subjectType && filters.subject_id) {
-      toast.error("Cannot select both subject type and specific subject. Please choose one.");
-      return;
+    // Validation for standard format
+    if (exportFormat === "standard") {
+      // Validate filter combinations
+      if (subjectType && filters.subject_id) {
+        toast.error("Cannot select both subject type and specific subject. Please choose one.");
+        return;
+      }
+
+      // For ELECTIVE subject type, require programme
+      if (subjectType === "ELECTIVE" && !filters.programme_id) {
+        toast.error("Please select a programme for elective subjects export");
+        return;
+      }
+
+      // If no subject type and no subject selected, show error
+      if (!subjectType && !filters.subject_id) {
+        toast.error("Please select either a subject type (CORE/ELECTIVE) or a specific subject");
+        return;
+      }
     }
 
-    // For ELECTIVE subject type, require programme
-    if (subjectType === "ELECTIVE" && !filters.programme_id) {
-      toast.error("Please select a programme for elective subjects export");
-      return;
-    }
+    // Validation for multi-subject format
+    if (exportFormat === "multi_subject") {
+      // Test type is always required (has default value, but validate anyway)
+      if (!testType) {
+        toast.error("Please select a test type (Objectives or Essay)");
+        return;
+      }
 
-    // If no subject type and no subject selected, show error
-    if (!subjectType && !filters.subject_id) {
-      toast.error("Please select either a subject type (CORE/ELECTIVE) or a specific subject");
-      return;
+      // Either subject type or specific subjects must be selected
+      if (subjectType === null && selectedSubjectIds.size === 0) {
+        toast.error("Please select either a subject type or specific subjects for multi-subject export");
+        return;
+      }
+
+      // Cannot have both subject type and specific subjects
+      if (subjectType !== null && selectedSubjectIds.size > 0) {
+        toast.error("Please select either subject type OR specific subjects, not both");
+        return;
+      }
+
+      // For ELECTIVE subject type, require programme
+      if (subjectType === "ELECTIVE" && !filters.programme_id) {
+        toast.error("Please select a programme for elective subjects export");
+        return;
+      }
     }
 
     setExporting(true);
     try {
-      await exportCandidateResults(filters, Array.from(selectedFields), subjectType || undefined);
+      // Filter fields based on export format
+      let fieldsToExport = Array.from(selectedFields);
+      if (exportFormat === "multi_subject") {
+        // Only allow candidate info fields for multi-subject format
+        const allowedFields = [
+          "candidate_name",
+          "candidate_index_number",
+          "school_name",
+          "school_code",
+          "exam_name",
+          "exam_type",
+          "exam_year",
+          "exam_series",
+          "programme_name",
+          "programme_code",
+        ];
+        fieldsToExport = fieldsToExport.filter((field) => allowedFields.includes(field));
+
+        if (fieldsToExport.length === 0) {
+          toast.error("Please select at least one valid candidate info field for multi-subject export");
+          setExporting(false);
+          return;
+        }
+      }
+
+      const subjectIdsArray = selectedSubjectIds.size > 0 ? Array.from(selectedSubjectIds) : undefined;
+      // For multi-subject format: if subjectIds are selected, don't pass subjectType; otherwise pass subjectType
+      // For standard format: pass subjectType as before
+      let exportSubjectType: "CORE" | "ELECTIVE" | undefined = undefined;
+      if (exportFormat === "standard") {
+        exportSubjectType = subjectType || undefined;
+      } else if (exportFormat === "multi_subject" && subjectIdsArray === undefined && subjectType !== null) {
+        exportSubjectType = subjectType;
+      }
+
+      await exportCandidateResults(
+        filters,
+        fieldsToExport,
+        exportSubjectType,
+        exportFormat,
+        exportFormat === "multi_subject" ? testType : undefined,
+        exportFormat === "multi_subject" ? subjectIdsArray : undefined
+      );
       toast.success("Export started successfully");
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Failed to export results");
@@ -699,6 +776,195 @@ export default function ExportResultsPage() {
             </Collapsible>
           </Card>
 
+          {/* Export Format Selection */}
+          <Card>
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2">
+                <FileText className="h-5 w-5" />
+                Export Format
+              </CardTitle>
+            </CardHeader>
+            <CardContent>
+              <div className="space-y-4">
+                <div>
+                  <label className="text-sm font-medium mb-2 block">Format Type</label>
+                  <Select
+                    value={exportFormat}
+                    onValueChange={(value) => {
+                      const newFormat = value as ExportFormat;
+                      setExportFormat(newFormat);
+
+                      if (newFormat === "standard") {
+                        // Reset multi-subject specific selections when switching to standard
+                        setSelectedSubjectIds(new Set());
+                        setTestType("obj");
+                      } else if (newFormat === "multi_subject") {
+                        // Remove invalid fields when switching to multi-subject format
+                        const invalidFields = [
+                          "subject_name",
+                          "subject_code",
+                          "subject_series",
+                          "obj_raw_score",
+                          "essay_raw_score",
+                          "pract_raw_score",
+                          "obj_normalized",
+                          "essay_normalized",
+                          "pract_normalized",
+                          "total_score",
+                          "grade",
+                          "obj_document_id",
+                          "essay_document_id",
+                          "pract_document_id",
+                        ];
+                        setSelectedFields((prev) => {
+                          const newSet = new Set(prev);
+                          invalidFields.forEach((field) => newSet.delete(field));
+                          return newSet;
+                        });
+                      }
+                    }}
+                  >
+                    <SelectTrigger>
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="standard">Standard Format</SelectItem>
+                      <SelectItem value="multi_subject">Multi-Subject Format</SelectItem>
+                    </SelectContent>
+                  </Select>
+                  <p className="text-xs text-muted-foreground mt-1">
+                    {exportFormat === "standard"
+                      ? "Traditional format with one row per candidate-subject combination"
+                      : "Multiple subjects on same sheet with subject codes as column headers"}
+                  </p>
+                </div>
+
+                {exportFormat === "multi_subject" && (
+                  <>
+                    <div>
+                      <label className="text-sm font-medium mb-2 block">
+                        Test Type <span className="text-red-500">*</span>
+                      </label>
+                      <Select value={testType} onValueChange={(value) => setTestType(value as TestType)}>
+                        <SelectTrigger>
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="obj">Objectives (OBJ)</SelectItem>
+                          <SelectItem value="essay">Essay</SelectItem>
+                        </SelectContent>
+                      </Select>
+                      <p className="text-xs text-muted-foreground mt-1">
+                        Select which raw score type to export for each subject
+                      </p>
+                    </div>
+
+                    <div>
+                      <label className="text-sm font-medium mb-2 block">
+                        Subject Selection <span className="text-red-500">*</span>
+                      </label>
+                      <div className="space-y-2">
+                        <div className="flex gap-4">
+                          <label className="flex items-center gap-2">
+                            <input
+                              type="radio"
+                              name="subjectSelection"
+                              checked={subjectType !== null}
+                              onChange={() => {
+                                setSelectedSubjectIds(new Set());
+                                if (subjectType === null) setSubjectType("CORE");
+                              }}
+                              className="w-4 h-4"
+                            />
+                            <span className="text-sm">By Subject Type</span>
+                          </label>
+                          <label className="flex items-center gap-2">
+                            <input
+                              type="radio"
+                              name="subjectSelection"
+                              checked={subjectType === null && selectedSubjectIds.size > 0}
+                              onChange={() => {
+                                setSubjectType(null);
+                              }}
+                              className="w-4 h-4"
+                            />
+                            <span className="text-sm">Select Specific Subjects</span>
+                          </label>
+                        </div>
+
+                        {subjectType !== null ? (
+                          <div className="space-y-2">
+                            <Select
+                              value={subjectType || ""}
+                              onValueChange={(value) => {
+                                setSubjectType(value as "CORE" | "ELECTIVE");
+                              }}
+                            >
+                              <SelectTrigger>
+                                <SelectValue placeholder="Select subject type" />
+                              </SelectTrigger>
+                              <SelectContent>
+                                <SelectItem value="CORE">CORE</SelectItem>
+                                <SelectItem value="ELECTIVE">ELECTIVE</SelectItem>
+                              </SelectContent>
+                            </Select>
+                            {subjectType === "ELECTIVE" && (
+                              <p className="text-xs text-muted-foreground">
+                                Programme selection is required for ELECTIVE subjects
+                              </p>
+                            )}
+                          </div>
+                        ) : (
+                          <div className="border rounded-md p-4 max-h-60 overflow-y-auto">
+                            {loadingSubjects ? (
+                              <div className="flex items-center justify-center py-4">
+                                <Loader2 className="h-4 w-4 animate-spin" />
+                                <span className="ml-2 text-sm text-muted-foreground">Loading subjects...</span>
+                              </div>
+                            ) : allSubjects.length === 0 ? (
+                              <p className="text-sm text-muted-foreground">Please select an examination first</p>
+                            ) : (
+                              <div className="space-y-2">
+                                {allSubjects
+                                  .filter((subject) => {
+                                    // Filter subjects based on exam if available
+                                    if (!filters.exam_id) return true;
+                                    // For now, show all subjects - could be filtered by exam subjects
+                                    return true;
+                                  })
+                                  .map((subject) => (
+                                    <div key={subject.id} className="flex items-center gap-2">
+                                      <Checkbox
+                                        checked={selectedSubjectIds.has(subject.id)}
+                                        onCheckedChange={(checked) => {
+                                          setSelectedSubjectIds((prev) => {
+                                            const newSet = new Set(prev);
+                                            if (checked) {
+                                              newSet.add(subject.id);
+                                            } else {
+                                              newSet.delete(subject.id);
+                                            }
+                                            return newSet;
+                                          });
+                                        }}
+                                      />
+                                      <label className="text-sm cursor-pointer">
+                                        {subject.code} - {subject.name}
+                                      </label>
+                                    </div>
+                                  ))}
+                              </div>
+                            )}
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  </>
+                )}
+              </div>
+            </CardContent>
+          </Card>
+
           {/* Field Selection */}
           <Card>
             <Collapsible open={fieldsOpen} onOpenChange={setFieldsOpen}>
@@ -712,14 +978,29 @@ export default function ExportResultsPage() {
                 </CollapsibleTrigger>
               </CardHeader>
               <CollapsibleContent>
-                <CardContent>
-                  <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-                    {Object.entries(EXPORT_FIELDS).map(([categoryKey, categoryFields]) => {
-                      const categoryLabel = categoryKey
-                        .replace(/([A-Z])/g, " $1")
-                        .replace(/^./, (str) => str.toUpperCase());
-                      const allSelected = categoryFields.every((f) => selectedFields.has(f.id));
-                      const someSelected = categoryFields.some((f) => selectedFields.has(f.id));
+              <CardContent>
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+                  {Object.entries(EXPORT_FIELDS).map(([categoryKey, categoryFields]) => {
+                    // Filter out subject-specific fields for multi-subject format
+                    const filteredFields = exportFormat === "multi_subject"
+                      ? categoryFields.filter((f) => {
+                          // Exclude subject-specific fields
+                          return !["subject_name", "subject_code", "subject_series"].includes(f.id) &&
+                                 !f.id.includes("raw_score") &&
+                                 !f.id.includes("normalized") &&
+                                 !f.id.includes("total_score") &&
+                                 !f.id.includes("grade") &&
+                                 !f.id.includes("document_id");
+                        })
+                      : categoryFields;
+
+                    if (filteredFields.length === 0) return null;
+
+                    const categoryLabel = categoryKey
+                      .replace(/([A-Z])/g, " $1")
+                      .replace(/^./, (str) => str.toUpperCase());
+                    const allSelected = filteredFields.every((f) => selectedFields.has(f.id));
+                    const someSelected = filteredFields.some((f) => selectedFields.has(f.id));
 
                       return (
                         <div key={categoryKey} className="space-y-2">
@@ -729,14 +1010,42 @@ export default function ExportResultsPage() {
                               ref={(el) => {
                                 if (el) el.indeterminate = someSelected && !allSelected;
                               }}
-                              onCheckedChange={() => handleSelectAllFields(categoryKey as keyof typeof EXPORT_FIELDS)}
+                              onCheckedChange={() => {
+                                // Only toggle filtered fields
+                                const filteredFieldIds = filteredFields.map((f) => f.id);
+                                setSelectedFields((prev) => {
+                                  const newSet = new Set(prev);
+                                  const allSelected = filteredFieldIds.every((f) => newSet.has(f));
+                                  if (allSelected) {
+                                    filteredFieldIds.forEach((f) => newSet.delete(f));
+                                  } else {
+                                    filteredFieldIds.forEach((f) => newSet.add(f));
+                                  }
+                                  return newSet;
+                                });
+                              }}
                             />
-                            <label className="text-sm font-medium cursor-pointer" onClick={() => handleSelectAllFields(categoryKey as keyof typeof EXPORT_FIELDS)}>
+                            <label
+                              className="text-sm font-medium cursor-pointer"
+                              onClick={() => {
+                                const filteredFieldIds = filteredFields.map((f) => f.id);
+                                setSelectedFields((prev) => {
+                                  const newSet = new Set(prev);
+                                  const allSelected = filteredFieldIds.every((f) => newSet.has(f));
+                                  if (allSelected) {
+                                    filteredFieldIds.forEach((f) => newSet.delete(f));
+                                  } else {
+                                    filteredFieldIds.forEach((f) => newSet.add(f));
+                                  }
+                                  return newSet;
+                                });
+                              }}
+                            >
                               {categoryLabel}
                             </label>
                           </div>
                           <div className="space-y-1 pl-6">
-                            {categoryFields.map((field) => (
+                            {filteredFields.map((field) => (
                               <div key={field.id} className="flex items-center gap-2">
                                 <Checkbox
                                   checked={selectedFields.has(field.id)}
