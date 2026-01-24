@@ -4184,3 +4184,282 @@ export async function downloadAdminReferralInvoiceSummaryPdf(examId: number): Pr
   }
   return response.blob();
 }
+
+// Examiner Application Types and Interfaces
+export interface ExaminerApplication {
+  id: number;
+  applicant_id: string;
+  application_number: string;
+  status: "DRAFT" | "SUBMITTED" | "UNDER_REVIEW" | "ACCEPTED" | "REJECTED";
+  payment_status: "pending" | "success" | "failed" | "cancelled" | null;
+  invoice_id: number | null;
+  submitted_at: string | null;
+  full_name: string;
+  title: string | null;
+  nationality: string | null;
+  date_of_birth: string | null;
+  office_address: string | null;
+  residential_address: string | null;
+  email_address: string | null;
+  telephone_office: string | null;
+  telephone_cell: string | null;
+  present_school_institution: string | null;
+  present_rank_position: string | null;
+  subject_area: string | null;
+  additional_information: string | null;
+  ceased_examining_explanation: string | null;
+  qualifications: ExaminerAcademicQualification[];
+  teaching_experiences: ExaminerTeachingExperience[];
+  work_experiences: ExaminerWorkExperience[];
+  examining_experiences: ExaminerExaminingExperience[];
+  training_courses: ExaminerTrainingCourse[];
+  subject_preferences: ExaminerSubjectPreference[];
+  documents: ExaminerApplicationDocument[];
+  created_at: string;
+  updated_at: string;
+}
+
+export interface ExaminerAcademicQualification {
+  id: number;
+  application_id: number;
+  university_college: string;
+  degree_diploma: string;
+  class_of_degree: string | null;
+  major_subjects: string | null;
+  date_of_award: string | null;
+  order_index: number;
+}
+
+export interface ExaminerTeachingExperience {
+  id: number;
+  application_id: number;
+  institution_name: string;
+  date_from: string | null;
+  date_to: string | null;
+  subject: string | null;
+  level: string | null;
+  order_index: number;
+}
+
+export interface ExaminerWorkExperience {
+  id: number;
+  application_id: number;
+  occupation: string;
+  employer_name: string;
+  date_from: string | null;
+  date_to: string | null;
+  position_held: string | null;
+  order_index: number;
+}
+
+export interface ExaminerExaminingExperience {
+  id: number;
+  application_id: number;
+  examination_body: string;
+  subject: string | null;
+  level: string | null;
+  status: string | null;
+  date_from: string | null;
+  date_to: string | null;
+  order_index: number;
+}
+
+export interface ExaminerTrainingCourse {
+  id: number;
+  application_id: number;
+  organizer: string;
+  course_name: string;
+  place: string | null;
+  date_from: string | null;
+  date_to: string | null;
+  reason_for_participation: string | null;
+  order_index: number;
+}
+
+export interface ExaminerSubjectPreference {
+  id: number;
+  application_id: number;
+  preference_type: "ELECTIVE" | "CORE" | "TECHNICAL_DRAWING_BUILDING" | "TECHNICAL_DRAWING_MECHANICAL" | "PRACTICAL_COMPONENT" | "ACCESS_COURSE";
+  subject_area: string | null;
+}
+
+export interface ExaminerApplicationDocument {
+  id: number;
+  application_id: number;
+  document_type: "PHOTOGRAPH" | "CERTIFICATE" | "TRANSCRIPT";
+  file_path: string;
+  file_name: string;
+  mime_type: string;
+  file_size: number;
+  uploaded_at: string;
+}
+
+export interface ExaminerRecommendation {
+  id: number;
+  application_id: number;
+  recommender_name: string | null;
+  recommender_status: string | null;
+  recommender_office_address: string | null;
+  recommender_phone: string | null;
+  quality_ratings: Record<string, number> | null;
+  integrity_assessment: string | null;
+  certification_statement: string | null;
+  recommendation_decision: boolean | null;
+  recommender_signature: string | null;
+  recommender_date: string | null;
+  completed_at: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface ExaminerApplicationSubmitResponse {
+  message: string;
+  application_id: number;
+  application_number: string;
+  invoice_id: number;
+  invoice_number: string;
+  amount: number;
+  payment_url: string;
+  payment_reference: string;
+}
+
+export interface ExaminerRecommendationTokenRequest {
+  recommender_email: string;
+  recommender_name: string;
+}
+
+// Examiner Application API Functions
+export async function createExaminerApplication(data: any): Promise<ExaminerApplication> {
+  const response = await fetchWithAuth(`/api/v1/private/examiner-applications`, {
+    method: "POST",
+    body: JSON.stringify(data),
+  });
+  return handleResponse<ExaminerApplication>(response);
+}
+
+export async function listExaminerApplications(status?: string): Promise<ExaminerApplication[]> {
+  const params = new URLSearchParams();
+  if (status) params.append("status", status);
+  const response = await fetchWithAuth(`/api/v1/private/examiner-applications?${params.toString()}`);
+  return handleResponse<ExaminerApplication[]>(response);
+}
+
+export async function getExaminerApplication(applicationId: number): Promise<ExaminerApplication> {
+  const response = await fetchWithAuth(`/api/v1/private/examiner-applications/${applicationId}`);
+  return handleResponse<ExaminerApplication>(response);
+}
+
+export async function updateExaminerApplication(applicationId: number, data: any): Promise<ExaminerApplication> {
+  const response = await fetchWithAuth(`/api/v1/private/examiner-applications/${applicationId}`, {
+    method: "PUT",
+    body: JSON.stringify(data),
+  });
+  return handleResponse<ExaminerApplication>(response);
+}
+
+export async function submitExaminerApplication(applicationId: number): Promise<ExaminerApplicationSubmitResponse> {
+  const response = await fetchWithAuth(`/api/v1/private/examiner-applications/${applicationId}/submit`, {
+    method: "POST",
+  });
+  return handleResponse<ExaminerApplicationSubmitResponse>(response);
+}
+
+export async function uploadExaminerDocument(
+  applicationId: number,
+  documentType: "PHOTOGRAPH" | "CERTIFICATE" | "TRANSCRIPT",
+  file: File
+): Promise<ExaminerApplicationDocument> {
+  const formData = new FormData();
+  formData.append("file", file);
+  formData.append("document_type", documentType);
+
+  const response = await fetchWithAuth(`/api/v1/private/examiner-applications/${applicationId}/documents`, {
+    method: "POST",
+    body: formData,
+  });
+  return handleResponse<ExaminerApplicationDocument>(response);
+}
+
+export async function deleteExaminerDocument(applicationId: number, documentId: number): Promise<void> {
+  const response = await fetchWithAuth(`/api/v1/private/examiner-applications/${applicationId}/documents/${documentId}`, {
+    method: "DELETE",
+  });
+  if (!response.ok) {
+    throw new Error(`Failed to delete document: ${response.statusText}`);
+  }
+}
+
+export async function requestRecommendation(
+  applicationId: number,
+  data: ExaminerRecommendationTokenRequest
+): Promise<{ message: string; recommender_email: string; token: string }> {
+  const response = await fetchWithAuth(`/api/v1/private/examiner-applications/${applicationId}/request-recommendation`, {
+    method: "POST",
+    body: JSON.stringify(data),
+  });
+  return handleResponse(response);
+}
+
+// Public Recommendation API Functions
+export async function getRecommendationByToken(token: string): Promise<ExaminerRecommendation> {
+  const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL || "http://localhost:8001";
+  const response = await fetch(`${API_BASE_URL}/api/v1/public/examiner-recommendations/${token}`);
+  return handleResponse<ExaminerRecommendation>(response);
+}
+
+export async function submitRecommendation(token: string, data: any): Promise<ExaminerRecommendation> {
+  const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL || "http://localhost:8001";
+  const response = await fetch(`${API_BASE_URL}/api/v1/public/examiner-recommendations/${token}`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(data),
+  });
+  return handleResponse<ExaminerRecommendation>(response);
+}
+
+// Admin Examiner Application API Functions
+export async function listAdminExaminerApplications(filters: {
+  status?: string;
+  search?: string;
+  page?: number;
+  page_size?: number;
+}): Promise<ExaminerApplication[]> {
+  const params = new URLSearchParams();
+  if (filters.status) params.append("status", filters.status);
+  if (filters.search) params.append("search", filters.search);
+  if (filters.page) params.append("page", filters.page.toString());
+  if (filters.page_size) params.append("page_size", filters.page_size.toString());
+  const response = await fetchWithAuth(`/api/v1/admin/examiner-applications?${params.toString()}`);
+  return handleResponse<ExaminerApplication[]>(response);
+}
+
+export async function getAdminExaminerApplication(applicationId: number): Promise<ExaminerApplication> {
+  const response = await fetchWithAuth(`/api/v1/admin/examiner-applications/${applicationId}`);
+  return handleResponse<ExaminerApplication>(response);
+}
+
+export async function processExaminerApplication(applicationId: number, data: any): Promise<any> {
+  const response = await fetchWithAuth(`/api/v1/admin/examiner-applications/${applicationId}/process`, {
+    method: "POST",
+    body: JSON.stringify(data),
+  });
+  return handleResponse(response);
+}
+
+export async function acceptExaminerApplication(applicationId: number, data: any): Promise<ExaminerApplication> {
+  const response = await fetchWithAuth(`/api/v1/admin/examiner-applications/${applicationId}/accept`, {
+    method: "POST",
+    body: JSON.stringify(data),
+  });
+  return handleResponse<ExaminerApplication>(response);
+}
+
+export async function rejectExaminerApplication(applicationId: number, data: any): Promise<ExaminerApplication> {
+  const response = await fetchWithAuth(`/api/v1/admin/examiner-applications/${applicationId}/reject`, {
+    method: "POST",
+    body: JSON.stringify(data),
+  });
+  return handleResponse<ExaminerApplication>(response);
+}

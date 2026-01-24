@@ -3,7 +3,7 @@
 import { useState, useEffect } from "react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
-import { MoreVertical, Upload } from "lucide-react";
+import { MoreVertical, Upload, ChevronDown, ChevronRight } from "lucide-react";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -15,7 +15,78 @@ import { Button } from "@/components/ui/button";
 import { BulkUploadSchoolsDialog } from "@/components/admin/BulkUploadSchoolsDialog";
 import { getCurrentUser, getSchoolDashboard } from "@/lib/api";
 import type { User, SchoolDashboardData } from "@/types";
-import { getMenuItemsForRole, getMoreActionsForRole, shouldShowMoreActions } from "@/lib/menu-config";
+import { getMenuItemsForRole, getMoreActionsForRole, shouldShowMoreActions, type MenuItem } from "@/lib/menu-config";
+
+// Component for menu items with submenus
+function MenuItemWithSubmenu({ item, pathname }: { item: MenuItem; pathname: string }) {
+  const [isOpen, setIsOpen] = useState(false);
+  const Icon = item.icon;
+
+  // Check if any submenu item is active
+  const isSubmenuActive = item.items?.some(subItem => {
+    if (subItem.href === "/dashboard") {
+      return pathname === "/dashboard";
+    }
+    return pathname === subItem.href || pathname.startsWith(subItem.href + "/");
+  });
+
+  // Auto-open if submenu item is active
+  useEffect(() => {
+    if (isSubmenuActive) {
+      setIsOpen(true);
+    }
+  }, [isSubmenuActive]);
+
+  return (
+    <div className="space-y-1">
+      <button
+        onClick={() => setIsOpen(!isOpen)}
+        className={`w-full flex items-center justify-between gap-3 rounded-lg px-3 py-2 text-sm font-medium transition-colors ${
+          isSubmenuActive
+            ? "bg-primary text-primary-foreground"
+            : "text-gray-700 hover:bg-gray-100"
+        }`}
+      >
+        <div className="flex items-center gap-3">
+          <Icon className="h-5 w-5" />
+          {item.label}
+        </div>
+        {isOpen ? (
+          <ChevronDown className="h-4 w-4" />
+        ) : (
+          <ChevronRight className="h-4 w-4" />
+        )}
+      </button>
+      {isOpen && item.items && (
+        <div className="ml-4 space-y-1 border-l-2 border-gray-200 pl-2">
+          {item.items.map((subItem) => {
+            const SubIcon = subItem.icon;
+            let isSubActive = false;
+            if (subItem.href === "/dashboard") {
+              isSubActive = pathname === "/dashboard";
+            } else {
+              isSubActive = pathname === subItem.href || pathname.startsWith(subItem.href + "/");
+            }
+            return (
+              <Link
+                key={subItem.href}
+                href={subItem.href}
+                className={`flex items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium transition-colors ${
+                  isSubActive
+                    ? "bg-primary text-primary-foreground"
+                    : "text-gray-700 hover:bg-gray-100"
+                }`}
+              >
+                <SubIcon className="h-4 w-4" />
+                {subItem.label}
+              </Link>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
 
 export function Sidebar() {
   const pathname = usePathname();
@@ -76,9 +147,19 @@ export function Sidebar() {
           <h2 className="text-lg font-semibold">Registration Portal</h2>
         )}
       </div>
-      <nav className="flex-1 space-y-1 p-4">
+      <nav className="flex-1 space-y-1 p-4 overflow-y-auto">
         {navItems.map((item) => {
           const Icon = item.icon;
+          const hasSubmenu = item.items && item.items.length > 0;
+
+          // Check if any submenu item is active
+          const isSubmenuActive = hasSubmenu && item.items?.some(subItem => {
+            if (subItem.href === "/dashboard") {
+              return pathname === "/dashboard";
+            }
+            return pathname === subItem.href || pathname.startsWith(subItem.href + "/");
+          });
+
           let isActive = false;
           // Special handling for dashboard base path - only active when exactly matching
           if (item.href === "/dashboard") {
@@ -91,12 +172,19 @@ export function Sidebar() {
             // This ensures /dashboard/exams matches /dashboard/exams/... but /dashboard doesn't match everything
             isActive = pathname === item.href || pathname.startsWith(item.href + "/");
           }
+
+          // If item has submenu, show collapsible menu
+          if (hasSubmenu) {
+            return <MenuItemWithSubmenu key={item.href} item={item} pathname={pathname} />;
+          }
+
+          // Regular menu item without submenu
           return (
             <Link
               key={item.href}
               href={item.href}
               className={`flex items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium transition-colors ${
-                isActive
+                isActive || isSubmenuActive
                   ? "bg-primary text-primary-foreground"
                   : "text-gray-700 hover:bg-gray-100"
               }`}

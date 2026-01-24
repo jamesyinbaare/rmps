@@ -52,9 +52,21 @@ export default function DashboardLayoutWrapper({
             setChecking(false);
             return;
           }
-          // Redirect private users to their dashboard
+          // Redirect private users - check if they have examiner applications
           if (user.role === "PublicUser") {
-            router.push("/dashboard/private");
+            // Check if user has examiner applications
+            try {
+              const { listExaminerApplications } = await import("@/lib/api");
+              const examinerApps = await listExaminerApplications();
+              if (examinerApps && examinerApps.length > 0) {
+                router.push("/examiner-applications");
+              } else {
+                router.push("/dashboard/private");
+              }
+            } catch (error) {
+              // If we can't check, default to private dashboard
+              router.push("/dashboard/private");
+            }
             setChecking(false);
             return;
           }
