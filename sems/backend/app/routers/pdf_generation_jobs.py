@@ -193,8 +193,16 @@ async def download_job_school_pdf(
 async def download_job_all_pdfs(
     job_id: int,
     session: DBSessionDep,
+    merge_per_school: bool = Query(False, description="If True, merge PDFs per school into a single PDF per school"),
 ) -> StreamingResponse:
-    """Download all completed PDFs from a job as a ZIP file."""
+    """Download all completed PDFs from a job as a ZIP file.
+
+    Args:
+        job_id: The job ID
+        merge_per_school: If True, merge PDFs per school into a single PDF per school
+    """
+    from app.services.score_sheet_pdf_service import combine_pdfs_for_school
+
     job_stmt = select(PdfGenerationJob).where(PdfGenerationJob.id == job_id)
     job_result = await session.execute(job_stmt)
     job = job_result.scalar_one_or_none()
@@ -219,21 +227,53 @@ async def download_job_all_pdfs(
             if not file_paths and result.get("pdf_file_path"):
                 file_paths = [result["pdf_file_path"]]
 
-            for rel_path in file_paths:
-                pdf_path = Path(settings.pdf_output_path) / rel_path
-                if pdf_path.exists():
-                    zip_file.write(pdf_path, f"{school_folder}/{pdf_path.name}")
-                    files_added = True
+            if not file_paths:
+                continue
+
+            if merge_per_school:
+                # Merge PDFs for this school into a single PDF
+                absolute_paths = []
+                for rel_path in file_paths:
+                    pdf_path = Path(settings.pdf_output_path) / rel_path
+                    if pdf_path.exists():
+                        absolute_paths.append(str(pdf_path))
+
+                if absolute_paths:
+                    try:
+                        # Sort paths by filename to ensure consistent ordering
+                        absolute_paths.sort()
+                        combined_pdf_bytes = combine_pdfs_for_school(Path("/"), file_paths=absolute_paths)
+                        merged_filename = f"{school_code}_{school_name_safe}_combined_score_sheets.pdf"
+                        zip_file.writestr(f"{school_folder}/{merged_filename}", combined_pdf_bytes)
+                        files_added = True
+                    except Exception as e:
+                        import logging
+                        logger = logging.getLogger(__name__)
+                        logger.error(f"Failed to merge PDFs for school {school_code} in job {job_id}: {e}")
+                        # Fallback to individual files if merge fails
+                        for rel_path in file_paths:
+                            pdf_path = Path(settings.pdf_output_path) / rel_path
+                            if pdf_path.exists():
+                                zip_file.write(pdf_path, f"{school_folder}/{pdf_path.name}")
+                                files_added = True
+            else:
+                # Add individual PDFs
+                for rel_path in file_paths:
+                    pdf_path = Path(settings.pdf_output_path) / rel_path
+                    if pdf_path.exists():
+                        zip_file.write(pdf_path, f"{school_folder}/{pdf_path.name}")
+                        files_added = True
 
     if not files_added:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="No PDF files found for this job")
 
     zip_buffer.seek(0)
 
+    filename_suffix = "merged" if merge_per_school else "all_schools"
     return StreamingResponse(
         iter([zip_buffer.getvalue()]),
         media_type="application/zip",
-        headers={"Content-Disposition": f'attachment; filename="job_{job_id}_all_schools.zip"'},
+        headers={"Content-Disposition": f'attachment; filename="job_{job_id}_{filename_suffix}.zip"'},
     )
 
 

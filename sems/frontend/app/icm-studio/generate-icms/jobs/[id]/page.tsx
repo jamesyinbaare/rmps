@@ -9,6 +9,8 @@ import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/com
 import { Badge } from "@/components/ui/badge";
 import { Progress } from "@/components/ui/progress";
 import { Alert, AlertDescription } from "@/components/ui/alert";
+import { Checkbox } from "@/components/ui/checkbox";
+import { Label } from "@/components/ui/label";
 import {
   getPdfGenerationJob,
   downloadJobSchoolPdf,
@@ -41,6 +43,7 @@ export default function JobDetailsPage() {
   const [polling, setPolling] = useState(false);
   const [downloading, setDownloading] = useState<number | null>(null);
   const [cancelling, setCancelling] = useState(false);
+  const [mergePerSchool, setMergePerSchool] = useState(false);
 
   const loadJob = async () => {
     if (!jobId) {
@@ -142,16 +145,21 @@ export default function JobDetailsPage() {
 
     setDownloading(-1);
     try {
-      const blob = await downloadJobAllPdfs(jobId);
+      const blob = await downloadJobAllPdfs(jobId, mergePerSchool);
       const url = window.URL.createObjectURL(blob);
       const a = document.createElement("a");
+      const filename = mergePerSchool
+        ? `job_${jobId}_merged.zip`
+        : `job_${jobId}_all_schools.zip`;
       a.href = url;
-      a.download = `job_${jobId}_all_schools.zip`;
+      a.download = filename;
       document.body.appendChild(a);
       a.click();
       window.URL.revokeObjectURL(url);
       document.body.removeChild(a);
-      toast.success("Downloaded all PDFs as ZIP");
+      toast.success(mergePerSchool
+        ? "Downloaded merged PDFs per school as ZIP"
+        : "Downloaded all PDFs as ZIP");
     } catch (err) {
       toast.error("Failed to download all PDFs");
       console.error("Download error:", err);
@@ -353,19 +361,35 @@ export default function JobDetailsPage() {
                     </Button>
                   )}
                   {job.status === "completed" && successfulResults.length > 0 && (
-                    <Button onClick={handleDownloadAll} disabled={downloading === -1}>
-                      {downloading === -1 ? (
-                        <>
-                          <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                          Downloading...
-                        </>
-                      ) : (
-                        <>
-                          <Download className="h-4 w-4 mr-2" />
-                          Download All ({successfulResults.length} Schools)
-                        </>
-                      )}
-                    </Button>
+                    <div className="flex items-center gap-4">
+                      <div className="flex items-center gap-2">
+                        <Checkbox
+                          id="merge-per-school"
+                          checked={mergePerSchool}
+                          onCheckedChange={(checked) => setMergePerSchool(checked === true)}
+                          disabled={downloading === -1}
+                        />
+                        <Label
+                          htmlFor="merge-per-school"
+                          className="text-sm cursor-pointer"
+                        >
+                          Merge per school
+                        </Label>
+                      </div>
+                      <Button onClick={handleDownloadAll} disabled={downloading === -1}>
+                        {downloading === -1 ? (
+                          <>
+                            <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                            Downloading...
+                          </>
+                        ) : (
+                          <>
+                            <Download className="h-4 w-4 mr-2" />
+                            Download All ({successfulResults.length} Schools)
+                          </>
+                        )}
+                      </Button>
+                    </div>
                   )}
                 </div>
               </CardContent>

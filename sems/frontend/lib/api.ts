@@ -2157,9 +2157,16 @@ export async function downloadJobSchoolPdf(jobId: number, schoolId: number): Pro
 
 /**
  * Download all PDFs from a job as a ZIP file.
+ * @param jobId - The job ID
+ * @param mergePerSchool - If true, merge PDFs per school into a single PDF per school
  */
-export async function downloadJobAllPdfs(jobId: number): Promise<Blob> {
-  const response = await fetch(`${API_BASE_URL}/api/v1/pdf-generation-jobs/${jobId}/download-all`);
+export async function downloadJobAllPdfs(jobId: number, mergePerSchool: boolean = false): Promise<Blob> {
+  const params = new URLSearchParams();
+  if (mergePerSchool) {
+    params.append("merge_per_school", "true");
+  }
+  const url = `${API_BASE_URL}/api/v1/pdf-generation-jobs/${jobId}/download-all${params.toString() ? `?${params.toString()}` : ""}`;
+  const response = await fetch(url);
   if (!response.ok) {
     const error: ApiError = await response.json().catch(() => ({ detail: "An error occurred" }));
     throw new Error(error.detail || `HTTP error! status: ${response.status}`);
