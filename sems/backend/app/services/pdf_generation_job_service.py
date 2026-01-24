@@ -2,7 +2,6 @@
 
 from datetime import datetime
 from pathlib import Path
-from typing import Any
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -13,9 +12,8 @@ from app.models import (
     PdfGenerationJob,
     PdfGenerationJobStatus,
     School,
-    Subject,
 )
-from app.services.score_sheet_pdf_service import combine_pdfs_for_school, generate_pdfs_for_exam
+from app.services.score_sheet_pdf_service import generate_pdfs_for_exam
 
 
 async def process_pdf_generation_job(job_id: int, session: AsyncSession) -> None:
@@ -88,6 +86,10 @@ async def process_pdf_generation_job(job_id: int, session: AsyncSession) -> None
         await session.commit()
         await session.refresh(job)
 
+        # Isolate output for this job
+        output_root = Path(settings.pdf_output_path) / "jobs" / f"job_{job.id}"
+        output_root.mkdir(parents=True, exist_ok=True)
+
         # Process each school
         for school in schools:
             # Check if job was cancelled
@@ -103,43 +105,39 @@ async def process_pdf_generation_job(job_id: int, session: AsyncSession) -> None
                 await session.refresh(job)
 
                 # Generate PDFs for this school
-                await generate_pdfs_for_exam(
+                result = await generate_pdfs_for_exam(
                     session,
                     job.exam_id,
                     school.id,
                     job.subject_id,
                     job.test_types,
+                    subject_ids=job.subject_ids,
+                    output_root=output_root,
+                    include_file_paths=True,
+                    temp_root=output_root / ".tmp",
                 )
 
-                # Combine PDFs for this school
-                school_name_safe = school.name.replace("/", " ").replace("\\", " ")
-                school_dir = Path(settings.pdf_output_path) / school_name_safe
+                school_file_paths = None
+                if result:
+                    school_file_paths = (result.get("school_pdf_paths") or {}).get(school.id)
 
-                if school_dir.exists():
-                    # Combine PDFs
-                    try:
-                        combined_pdf_bytes = combine_pdfs_for_school(school_dir)
+                if school_file_paths:
+                    relative_paths: list[str] = []
+                    for file_path in school_file_paths:
+                        try:
+                            relative_paths.append(
+                                str(Path(file_path).relative_to(Path(settings.pdf_output_path)))
+                            )
+                        except ValueError:
+                            relative_paths.append(file_path)
 
-                        # Save combined PDF
-                        combined_filename = f"{school.code}_{school.name.replace('/', '_').replace('\\', '_')}_combined_score_sheets.pdf"
-                        combined_path = school_dir / combined_filename
-                        combined_path.write_bytes(combined_pdf_bytes)
-
-                        # Add to results
-                        results.append({
-                            "school_id": school.id,
-                            "school_name": school.name,
-                            "school_code": school.code,
-                            "pdf_file_path": str(combined_path.relative_to(Path(settings.pdf_output_path))),
-                        })
-                    except Exception as e:
-                        # If combination fails, still mark school as processed but note the error
-                        results.append({
-                            "school_id": school.id,
-                            "school_name": school.name,
-                            "school_code": school.code,
-                            "error": str(e),
-                        })
+                    # Add to results
+                    results.append({
+                        "school_id": school.id,
+                        "school_name": school.name,
+                        "school_code": school.code,
+                        "pdf_file_paths": relative_paths,
+                    })
                 else:
                     # No PDFs generated for this school
                     results.append({

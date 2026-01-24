@@ -1,6 +1,7 @@
 """Service for generating PDF score sheets and assigning sheet IDs."""
 
 import logging
+import shutil
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -50,6 +51,10 @@ async def generate_pdfs_for_exam(
     school_id: int | None = None,
     subject_id: int | None = None,
     test_types: list[int] | None = None,
+    subject_ids: list[int] | None = None,
+    output_root: Path | None = None,
+    include_file_paths: bool = False,
+    temp_root: Path | None = None,
 ) -> dict[str, Any]:
     """
     Generate PDF score sheets for an exam and assign sheet IDs to candidates.
@@ -67,7 +72,11 @@ async def generate_pdfs_for_exam(
         exam_id: ID of the exam
         school_id: Optional school ID to filter by
         subject_id: Optional subject ID to filter by
+        subject_ids: Optional list of subject IDs to filter by
         test_types: List of test types to generate (default: [1, 2])
+        output_root: Optional root directory for PDF output (defaults to settings.pdf_output_path)
+        include_file_paths: When True, include generated file paths per school in result
+        temp_root: Optional root directory for temporary unannotated PDFs
 
     Returns:
         Dictionary with generation statistics
@@ -94,8 +103,16 @@ async def generate_pdfs_for_exam(
         if not school:
             raise ValueError(f"School with id {school_id} not found")
 
-    # Validate subject exists if provided
-    if subject_id is not None:
+    # Validate subject(s) if provided
+    if subject_ids is not None:
+        if len(subject_ids) > 0:
+            subject_stmt = select(Subject.id).where(Subject.id.in_(subject_ids))
+            subject_result = await session.execute(subject_stmt)
+            existing_subject_ids = {row[0] for row in subject_result.all()}
+            missing_subject_ids = set(subject_ids) - existing_subject_ids
+            if missing_subject_ids:
+                raise ValueError(f"Subject(s) with id(s) {sorted(missing_subject_ids)} not found")
+    elif subject_id is not None:
         subject_stmt = select(Subject).where(Subject.id == subject_id)
         subject_result = await session.execute(subject_stmt)
         subject = subject_result.scalar_one_or_none()
@@ -129,8 +146,10 @@ async def generate_pdfs_for_exam(
     if school_id is not None:
         base_stmt = base_stmt.where(School.id == school_id)
 
-    # Filter by subject if provided
-    if subject_id is not None:
+    # Filter by subject(s) if provided
+    if subject_ids is not None:
+        base_stmt = base_stmt.where(Subject.id.in_(subject_ids))
+    elif subject_id is not None:
         base_stmt = base_stmt.where(Subject.id == subject_id)
 
     # Execute query
@@ -189,6 +208,11 @@ async def generate_pdfs_for_exam(
     sheets_by_series: dict[int, int] = {}
     # Track PDF file paths for ProcessTracking
     pdf_tracking_data: dict[tuple[int, int], dict[str, Any]] = {}
+    school_pdf_paths: dict[int, list[str]] = {}
+
+    output_root_path = Path(output_root) if output_root is not None else Path(settings.pdf_output_path)
+    temp_root_path = Path(temp_root) if temp_root is not None else output_root_path / ".tmp"
+    temp_root_path.mkdir(parents=True, exist_ok=True)
 
     # Reorganize grouped_data into nested structure: school -> subject -> series
     # This ensures we can process in explicit order: school -> subject -> series -> test_type
@@ -220,6 +244,10 @@ async def generate_pdfs_for_exam(
             "sheets_count": 0,
             "candidates_count": 0,
         }
+        school_pdf_paths[school_id_key] = []
+        school_name_safe = school.name.replace("/", " ").replace("\\", " ")
+        temp_school_dir = temp_root_path / school_name_safe
+        temp_school_dir.mkdir(parents=True, exist_ok=True)
 
         # Process all subjects for this school
         subjects_list = sorted(nested_data[school_id_key].keys())
@@ -302,8 +330,19 @@ async def generate_pdfs_for_exam(
                             test_type=test_type,
                             candidates=candidates_data,
                         )
-                    except Exception:
-                        # Skip this group if PDF generation fails
+                    except Exception as e:
+                        logger.error(
+                            "PDF generation failed",
+                            extra={
+                                "school_id": school_id_key,
+                                "subject_id": subject_id_key,
+                                "school_code": school.code,
+                                "subject_code": subject.code,
+                                "series": effective_series,
+                                "test_type": test_type,
+                                "error": str(e),
+                            },
+                        )
                         continue
 
                     # Split candidates into batches of 25 (matching pages)
@@ -311,13 +350,24 @@ async def generate_pdfs_for_exam(
 
                     # Ensure page_count matches number of batches
                     if page_count != len(batches):
-                        # Adjust: use the actual page count from PDF
-                        # If there are more batches than pages, we have an issue
-                        # If there are more pages than batches, we need to handle it
-                        pass
+                        logger.error(
+                            "PDF page count does not match expected batches; skipping group",
+                            extra={
+                                "school_id": school_id_key,
+                                "subject_id": subject_id_key,
+                                "school_code": school.code,
+                                "subject_code": subject.code,
+                                "series": effective_series,
+                                "test_type": test_type,
+                                "page_count": page_count,
+                                "batch_count": len(batches),
+                            },
+                        )
+                        continue
 
                     # Generate sheet IDs for each page
                     sheet_ids = []
+                    sheet_id_failed = False
                     for page_index in range(page_count):
                         sheet_number = page_index + 1
                         try:
@@ -330,7 +380,6 @@ async def generate_pdfs_for_exam(
                             )
                             sheet_ids.append(sheet_id)
                         except ValueError as e:
-                            # Skip if sheet ID generation fails
                             logger.error(
                                 f"Failed to generate sheet ID for PDF: {e}",
                                 extra={
@@ -341,33 +390,85 @@ async def generate_pdfs_for_exam(
                                     "sheet_number": sheet_number,
                                 }
                             )
-                            continue
+                            sheet_id_failed = True
+                            break
+
+                    if sheet_id_failed or len(sheet_ids) != page_count:
+                        logger.error(
+                            "Incomplete sheet IDs generated; skipping group",
+                            extra={
+                                "school_id": school_id_key,
+                                "subject_id": subject_id_key,
+                                "school_code": school.code,
+                                "subject_code": subject.code,
+                                "series": effective_series,
+                                "test_type": test_type,
+                                "page_count": page_count,
+                                "sheet_ids_count": len(sheet_ids),
+                            },
+                        )
+                        continue
 
                     # Annotate PDF with sheet IDs
                     try:
                         annotated_pdf = annotate_pdf_with_sheet_ids(pdf_bytes, sheet_ids)
-                    except Exception:
-                        # If annotation fails, use original PDF
-                        annotated_pdf = pdf_bytes
+                    except Exception as e:
+                        logger.error(
+                            "PDF annotation failed; skipping group",
+                            extra={
+                                "school_id": school_id_key,
+                                "subject_id": subject_id_key,
+                                "school_code": school.code,
+                                "subject_code": subject.code,
+                                "series": effective_series,
+                                "test_type": test_type,
+                                "error": str(e),
+                            },
+                        )
+                        continue
 
                     # Save PDF to filesystem
                     pdf_file_path = None
                     try:
                         # Create directory structure: pdf_output_path/{school_name}/
-                        school_name_safe = school.name.replace("/", " ").replace("\\", " ")
-                        output_dir = Path(settings.pdf_output_path) / school_name_safe
+                        output_dir = output_root_path / school_name_safe
                         output_dir.mkdir(parents=True, exist_ok=True)
 
                         # Generate filename: {school_code}_{subject_code}_{series}_{test_type}.pdf
                         filename = f"{school.code}_{subject.code}_{effective_series}_{test_type}.pdf"
                         output_path = output_dir / filename
 
-                        # Write PDF to file
-                        output_path.write_bytes(annotated_pdf)
+                        # Save unannotated PDF to temp directory only
+                        temp_unannotated_path = temp_school_dir / filename
+                        temp_unannotated_path.write_bytes(pdf_bytes)
+
+                        # Write annotated PDF to temp file and atomically replace the output file
+                        # This ensures annotated files replace any existing unannotated files
+                        temp_annotated_path = temp_school_dir / f".annotated.{filename}.tmp"
+                        temp_annotated_path.write_bytes(annotated_pdf)
+
+                        # Remove existing file if it exists (shouldn't happen, but ensure clean replacement)
+                        if output_path.exists():
+                            output_path.unlink()
+
+                        # Atomically move annotated file to final location
+                        temp_annotated_path.replace(output_path)
                         pdf_file_path = str(output_path)
-                    except Exception:
-                        # If saving fails, continue (PDF generation and ID assignment still succeeded)
-                        pass
+                        school_pdf_paths[school_id_key].append(pdf_file_path)
+                    except Exception as e:
+                        logger.error(
+                            "Failed to save annotated PDF; skipping group",
+                            extra={
+                                "school_id": school_id_key,
+                                "subject_id": subject_id_key,
+                                "school_code": school.code,
+                                "subject_code": subject.code,
+                                "series": effective_series,
+                                "test_type": test_type,
+                                "error": str(e),
+                            },
+                        )
+                        continue
 
                     # Track PDF file path for this (school_id, subject_id) combination
                     tracking_key = (school_id_key, subject_id_key)
@@ -388,9 +489,8 @@ async def generate_pdfs_for_exam(
                     pdf_tracking_data[tracking_key]["candidates_count"] += len(rows_group)
 
                     # Assign sheet IDs to candidates based on their batch/page
-                    for batch_index in range(min(len(batches), len(sheet_ids))):
+                    for batch_index, batch in enumerate(batches):
                         sheet_id = sheet_ids[batch_index]
-                        batch = batches[batch_index]
 
                         for subject_reg in batch:
                             # Get or create SubjectScore
@@ -440,6 +540,20 @@ async def generate_pdfs_for_exam(
                     if series is not None:
                         sheets_by_series[series] = sheets_by_series.get(series, 0) + page_count
 
+        # Cleanup temp files for this school (best-effort)
+        try:
+            shutil.rmtree(temp_school_dir)
+        except Exception as e:
+            logger.warning(
+                "Failed to cleanup temp directory for school",
+                extra={
+                    "school_id": school_id_key,
+                    "school_name": school.name,
+                    "temp_dir": str(temp_school_dir),
+                    "error": str(e),
+                },
+            )
+
     # Commit changes
     await session.commit()
 
@@ -487,10 +601,11 @@ async def generate_pdfs_for_exam(
         "subjects_processed": subjects_list,
         "sheets_by_series": sheets_by_series,
         "message": message,
+        "school_pdf_paths": school_pdf_paths if include_file_paths else None,
     }
 
 
-def combine_pdfs_for_school(school_dir: Path) -> bytes:
+def combine_pdfs_for_school(school_dir: Path, file_paths: list[str] | None = None) -> bytes:
     """
     Combine all PDF files in a school directory into a single PDF.
 
@@ -499,6 +614,7 @@ def combine_pdfs_for_school(school_dir: Path) -> bytes:
 
     Args:
         school_dir: Path to the school directory containing PDF files
+        file_paths: Optional list of PDF file paths to combine (overrides directory scan)
 
     Returns:
         Combined PDF as bytes
@@ -506,47 +622,50 @@ def combine_pdfs_for_school(school_dir: Path) -> bytes:
     Raises:
         ValueError: If no PDF files found or if PDF combination fails
     """
-    if not school_dir.exists():
-        raise ValueError(f"School directory not found: {school_dir}")
+    if file_paths is not None:
+        pdf_files = [Path(path) for path in file_paths]
+    else:
+        if not school_dir.exists():
+            raise ValueError(f"School directory not found: {school_dir}")
+        # Find all PDF files matching the pattern
+        pdf_files = list(school_dir.glob("*.pdf"))
 
-    # Find all PDF files matching the pattern
-    pdf_files = list(school_dir.glob("*.pdf"))
+    def is_valid_score_sheet_pdf(pdf_path: Path) -> bool:
+        """Check if PDF is a valid score sheet (not a combined file)."""
+        stem = pdf_path.stem
+        if stem.endswith("_combined_score_sheets"):
+            return False
+        # Check if it matches the pattern: {school_code}_{subject_code}_{series}_{test_type}.pdf
+        parts = stem.split("_")
+        return len(parts) == 4
 
-    if not pdf_files:
-        raise ValueError(f"No PDF files found in directory: {school_dir}")
+    # Filter valid score sheet PDFs and sort by filename
+    valid_pdf_files = [pdf_path for pdf_path in pdf_files if is_valid_score_sheet_pdf(pdf_path)]
 
-    # Sort PDFs by: subject_code, series, test_type
-    # Filename format: {school_code}_{subject_code}_{series}_{test_type}.pdf
-    def sort_key(pdf_path: Path) -> tuple[str, int, int]:
-        """Extract sort key from filename."""
-        parts = pdf_path.stem.split("_")
-        if len(parts) >= 4:
-            # school_code, subject_code, series, test_type
-            subject_code = parts[1]
-            try:
-                series = int(parts[2])
-            except (ValueError, IndexError):
-                series = 0
-            try:
-                test_type = int(parts[3])
-            except (ValueError, IndexError):
-                test_type = 0
-            return (subject_code, series, test_type)
-        # Fallback: use filename
-        return (pdf_path.stem, 0, 0)
+    if not valid_pdf_files:
+        if file_paths is not None:
+            raise ValueError("No valid score sheet PDF files found in provided file paths")
+        raise ValueError(f"No score sheet PDF files found in directory: {school_dir}")
 
-    pdf_files.sort(key=sort_key)
+    # Sort files by filename (natural string sort)
+    # This ensures consistent ordering: subject_code, series, test_type
+    valid_pdf_files.sort(key=lambda p: p.name)
 
     # Combine PDFs using PyPDF2
+    # Files are already sorted by filename to ensure consistent ordering
     writer = PdfWriter()
 
-    for pdf_path in pdf_files:
+    for pdf_path in valid_pdf_files:
         try:
             reader = PdfReader(str(pdf_path))
-            for page in reader.pages:
-                writer.add_page(page)
+            # Use append() to preserve all page content including annotations
+            # This ensures barcodes and merged content are preserved
+            writer.append(reader)
         except Exception as e:
             # Skip files that can't be read, but log the error
+            import logging
+            logger = logging.getLogger(__name__)
+            logger.warning(f"Failed to read PDF {pdf_path}: {e}")
             continue
 
     # Write combined PDF to bytes
