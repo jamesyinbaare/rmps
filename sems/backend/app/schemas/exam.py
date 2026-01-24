@@ -257,6 +257,7 @@ class PdfGenerationJobCreate(BaseModel):
     """Schema for creating a PDF generation job."""
 
     school_ids: list[int] | None = None  # None = all schools
+    subject_ids: list[int] | None = None  # None = all subjects
     subject_id: int | None = None
     test_types: list[int] = Field(default=[1, 2], description="List of test types (1 = Objectives, 2 = Essay)")
 
@@ -268,6 +269,7 @@ class PdfGenerationJobResult(BaseModel):
     school_name: str
     school_code: str
     pdf_file_path: str | None = None
+    pdf_file_paths: list[str] | None = None
     error: str | None = None
 
 
@@ -278,6 +280,7 @@ class PdfGenerationJobResponse(BaseModel):
     status: str
     exam_id: int
     school_ids: list[int] | None
+    subject_ids: list[int] | None
     subject_id: int | None
     test_types: list[int]
     progress_current: int

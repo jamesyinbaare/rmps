@@ -465,6 +465,7 @@ class PdfGenerationJob(Base):
     status = Column(Enum(PdfGenerationJobStatus), default=PdfGenerationJobStatus.PENDING, nullable=False, index=True)
     exam_id = Column(Integer, ForeignKey("exams.id", ondelete="CASCADE"), nullable=False, index=True)
     school_ids = Column(JSON, nullable=True)  # JSON array of school IDs, null = all schools
+    subject_ids = Column(JSON, nullable=True)  # JSON array of subject IDs, null = all subjects
     subject_id = Column(Integer, ForeignKey("subjects.id", ondelete="SET NULL"), nullable=True)
     test_types = Column(JSON, nullable=False)  # JSON array of test types [1, 2]
     progress_current = Column(Integer, default=0, nullable=False)

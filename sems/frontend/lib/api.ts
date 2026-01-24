@@ -2062,6 +2062,7 @@ export interface PdfGenerationJobResult {
   school_name: string;
   school_code: string;
   pdf_file_path: string | null;
+  pdf_file_paths: string[] | null;
   error: string | null;
 }
 
@@ -2070,6 +2071,7 @@ export interface PdfGenerationJob {
   status: "pending" | "processing" | "completed" | "failed" | "cancelled";
   exam_id: number;
   school_ids: number[] | null;
+  subject_ids: number[] | null;
   subject_id: number | null;
   test_types: number[];
   progress_current: number;
@@ -2092,6 +2094,7 @@ export interface PdfGenerationJobListResponse {
 
 export interface PdfGenerationJobCreate {
   school_ids?: number[] | null;
+  subject_ids?: number[] | null;
   subject_id?: number | null;
   test_types?: number[];
 }
@@ -2154,9 +2157,28 @@ export async function downloadJobSchoolPdf(jobId: number, schoolId: number): Pro
 
 /**
  * Download all PDFs from a job as a ZIP file.
+ * @param jobId - The job ID
+ * @param mergePerSchool - If true, merge PDFs per school into a single PDF per school
  */
-export async function downloadJobAllPdfs(jobId: number): Promise<Blob> {
-  const response = await fetch(`${API_BASE_URL}/api/v1/pdf-generation-jobs/${jobId}/download-all`);
+export async function downloadJobAllPdfs(jobId: number, mergePerSchool: boolean = false): Promise<Blob> {
+  const params = new URLSearchParams();
+  if (mergePerSchool) {
+    params.append("merge_per_school", "true");
+  }
+  const url = `${API_BASE_URL}/api/v1/pdf-generation-jobs/${jobId}/download-all${params.toString() ? `?${params.toString()}` : ""}`;
+  const response = await fetch(url);
+  if (!response.ok) {
+    const error: ApiError = await response.json().catch(() => ({ detail: "An error occurred" }));
+    throw new Error(error.detail || `HTTP error! status: ${response.status}`);
+  }
+  return response.blob();
+}
+
+/**
+ * Merge existing annotated PDFs for a specific school from a job into a single PDF.
+ */
+export async function mergeJobSchoolPdf(jobId: number, schoolId: number): Promise<Blob> {
+  const response = await fetch(`${API_BASE_URL}/api/v1/pdf-generation-jobs/${jobId}/merge/${schoolId}`);
   if (!response.ok) {
     const error: ApiError = await response.json().catch(() => ({ detail: "An error occurred" }));
     throw new Error(error.detail || `HTTP error! status: ${response.status}`);

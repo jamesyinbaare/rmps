@@ -238,16 +238,15 @@ export default function GenerateICMsPage() {
     setGenerating(true);
 
     try {
-      const subjectIdForJob =
-        selectedSubjectIds.length === 0 ||
-        selectedSubjectIds.length === filteredSubjects.length
-          ? null
-          : selectedSubjectIds.length === 1
-          ? selectedSubjectIds[0]
-          : null;
+      const allSubjectIds = subjects.map((subject) => subject.id);
+      const allSubjectsSelected =
+        allSubjectIds.length > 0 && allSubjectIds.every((id) => selectedSubjectIds.includes(id));
+      const subjectIdsForJob = allSubjectsSelected ? null : selectedSubjectIds.length > 0 ? selectedSubjectIds : null;
+      const subjectIdForJob = subjectIdsForJob && subjectIdsForJob.length === 1 ? subjectIdsForJob[0] : null;
 
       const jobData = {
         school_ids: selectedSchoolId === "all" || selectedSchoolId === "" ? null : [selectedSchoolId as number],
+        subject_ids: subjectIdsForJob,
         subject_id: subjectIdForJob,
         test_types: finalTestTypes,
       };
@@ -275,14 +274,14 @@ export default function GenerateICMsPage() {
       const url = window.URL.createObjectURL(blob);
       const a = document.createElement("a");
       a.href = url;
-      a.download = `${schoolCode}_${schoolName.replace(/\//g, "_").replace(/\\/g, "_")}_combined_score_sheets.pdf`;
+      a.download = `${schoolCode}_${schoolName.replace(/\//g, "_").replace(/\\/g, "_")}_score_sheets.zip`;
       document.body.appendChild(a);
       a.click();
       window.URL.revokeObjectURL(url);
       document.body.removeChild(a);
-      toast.success(`Downloaded PDF for ${schoolName}`);
+      toast.success(`Downloaded ZIP for ${schoolName}`);
     } catch (err) {
-      toast.error(`Failed to download PDF for ${schoolName}`);
+      toast.error(`Failed to download ZIP for ${schoolName}`);
       console.error("Download error:", err);
     }
   };
@@ -1048,7 +1047,11 @@ export default function GenerateICMsPage() {
                       <div className="flex items-center justify-between">
                         <h4 className="text-sm font-semibold">Download Results</h4>
                         <span className="text-xs text-muted-foreground">
-                          {currentJob.results.filter((r) => r.pdf_file_path && !r.error).length} available
+                          {currentJob.results.filter(
+                            (r) =>
+                              !r.error &&
+                              ((r.pdf_file_paths && r.pdf_file_paths.length > 0) || r.pdf_file_path)
+                          ).length} available
                         </span>
                       </div>
                       <div className="border rounded-lg p-3 max-h-64 overflow-y-auto space-y-2">
@@ -1067,7 +1070,7 @@ export default function GenerateICMsPage() {
                                 </div>
                               )}
                             </div>
-                            {result.pdf_file_path && !result.error ? (
+                            {!result.error && ((result.pdf_file_paths && result.pdf_file_paths.length > 0) || result.pdf_file_path) ? (
                               <Button
                                 variant="outline"
                                 size="sm"
@@ -1082,7 +1085,7 @@ export default function GenerateICMsPage() {
                                 className="shrink-0"
                               >
                                 <Download className="h-3 w-3 mr-1" />
-                                Download
+                                Download ZIP
                               </Button>
                             ) : (
                               <span className="text-xs text-red-600 dark:text-red-400 shrink-0">

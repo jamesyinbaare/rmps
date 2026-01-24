@@ -135,29 +135,37 @@ def annotate_pdf_with_sheet_ids(pdf_bytes: bytes, sheet_ids: list[str], barcode_
     pdf_buffer = BytesIO(pdf_bytes)
     reader = PdfReader(pdf_buffer)
     writer = PdfWriter()
+    total_pages = len(reader.pages)
+
+    if len(sheet_ids) == 0:
+        raise ValueError("No sheet IDs provided for PDF annotation")
+
+    if len(sheet_ids) != total_pages:
+        raise ValueError(
+            f"Sheet ID count ({len(sheet_ids)}) does not match PDF page count ({total_pages})"
+        )
 
     # Process each page
     for i, page in enumerate(reader.pages):
-        if i < len(sheet_ids):
-            sheet_id = sheet_ids[i]
+        sheet_id = sheet_ids[i]
 
-            # Create a temporary PDF with the annotations for this page
-            packet = BytesIO()
-            can = canvas.Canvas(packet)
-            can.setFont("Helvetica-Bold", 16)
+        # Create a temporary PDF with the annotations for this page
+        packet = BytesIO()
+        can = canvas.Canvas(packet)
+        can.setFont("Helvetica-Bold", 16)
 
-            # Generate barcode
-            barcode_image = generate_barcode_image(sheet_id)
-            add_barcode_image_to_canvas(can, barcode_image, barcode_x, barcode_y, width=200, height=50)
+        # Generate barcode
+        barcode_image = generate_barcode_image(sheet_id)
+        add_barcode_image_to_canvas(can, barcode_image, barcode_x, barcode_y, width=200, height=50)
 
-            # Add text
-            can.drawString(text_x, text_y, sheet_id)
-            can.save()
+        # Add text
+        can.drawString(text_x, text_y, sheet_id)
+        can.save()
 
-            # Merge the annotation PDF with the original page
-            packet.seek(0)
-            temp_pdf = PdfReader(packet)
-            page.merge_page(temp_pdf.pages[0])
+        # Merge the annotation PDF with the original page
+        packet.seek(0)
+        temp_pdf = PdfReader(packet)
+        page.merge_page(temp_pdf.pages[0])
 
         writer.add_page(page)
 

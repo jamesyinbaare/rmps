@@ -69,6 +69,7 @@ async def list_pdf_generation_jobs(
             status=job.status.value,
             exam_id=job.exam_id,
             school_ids=job.school_ids,
+            subject_ids=job.subject_ids,
             subject_id=job.subject_id,
             test_types=job.test_types,
             progress_current=job.progress_current,
@@ -114,6 +115,7 @@ async def get_pdf_generation_job(
         status=job.status.value,
         exam_id=job.exam_id,
         school_ids=job.school_ids,
+        subject_ids=job.subject_ids,
         subject_id=job.subject_id,
         test_types=job.test_types,
         progress_current=job.progress_current,
@@ -154,22 +156,35 @@ async def download_job_school_pdf(
     if not school_result:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="School not found in job results")
 
-    if not school_result.get("pdf_file_path"):
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="PDF file not available for this school")
+    school_code = school_result.get("school_code", "school")
+    school_name_safe = school_result.get("school_name", "unknown").replace("/", "_").replace("\\", "_")
+    school_folder = f"{school_code}_{school_name_safe}"
 
-    # Read PDF file
-    pdf_path = Path(settings.pdf_output_path) / school_result["pdf_file_path"]
+    file_paths = school_result.get("pdf_file_paths") or []
+    if not file_paths and school_result.get("pdf_file_path"):
+        file_paths = [school_result["pdf_file_path"]]
 
-    if not pdf_path.exists():
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="PDF file not found on server")
+    if not file_paths:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="PDF files not available for this school")
 
-    pdf_bytes = pdf_path.read_bytes()
+    zip_buffer = BytesIO()
+    files_added = False
+    with zipfile.ZipFile(zip_buffer, "w", zipfile.ZIP_DEFLATED) as zip_file:
+        for rel_path in file_paths:
+            pdf_path = Path(settings.pdf_output_path) / rel_path
+            if pdf_path.exists():
+                zip_file.write(pdf_path, f"{school_folder}/{pdf_path.name}")
+                files_added = True
 
-    filename = f"{school_result.get('school_code', 'school')}_{school_result.get('school_name', 'unknown').replace('/', '_').replace('\\', '_')}_combined_score_sheets.pdf"
+    if not files_added:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="No PDF files found for this school")
+
+    zip_buffer.seek(0)
+    filename = f"{school_folder}_score_sheets.zip"
 
     return StreamingResponse(
-        iter([pdf_bytes]),
-        media_type="application/pdf",
+        iter([zip_buffer.getvalue()]),
+        media_type="application/zip",
         headers={"Content-Disposition": f'attachment; filename="{filename}"'},
     )
 
@@ -178,8 +193,16 @@ async def download_job_school_pdf(
 async def download_job_all_pdfs(
     job_id: int,
     session: DBSessionDep,
+    merge_per_school: bool = Query(False, description="If True, merge PDFs per school into a single PDF per school"),
 ) -> StreamingResponse:
-    """Download all completed PDFs from a job as a ZIP file."""
+    """Download all completed PDFs from a job as a ZIP file.
+
+    Args:
+        job_id: The job ID
+        merge_per_school: If True, merge PDFs per school into a single PDF per school
+    """
+    from app.services.score_sheet_pdf_service import combine_pdfs_for_school
+
     job_stmt = select(PdfGenerationJob).where(PdfGenerationJob.id == job_id)
     job_result = await session.execute(job_stmt)
     job = job_result.scalar_one_or_none()
@@ -192,21 +215,139 @@ async def download_job_all_pdfs(
 
     # Create ZIP file in memory
     zip_buffer = BytesIO()
+    files_added = False
 
     with zipfile.ZipFile(zip_buffer, "w", zipfile.ZIP_DEFLATED) as zip_file:
         for result in job.results:
-            if result.get("pdf_file_path"):
-                pdf_path = Path(settings.pdf_output_path) / result["pdf_file_path"]
-                if pdf_path.exists():
-                    filename = f"{result.get('school_code', 'school')}_{result.get('school_name', 'unknown').replace('/', '_').replace('\\', '_')}_combined_score_sheets.pdf"
-                    zip_file.write(pdf_path, filename)
+            school_code = result.get("school_code", "school")
+            school_name_safe = result.get("school_name", "unknown").replace("/", "_").replace("\\", "_")
+            school_folder = f"{school_code}_{school_name_safe}"
+
+            file_paths = result.get("pdf_file_paths") or []
+            if not file_paths and result.get("pdf_file_path"):
+                file_paths = [result["pdf_file_path"]]
+
+            if not file_paths:
+                continue
+
+            if merge_per_school:
+                # Merge PDFs for this school into a single PDF
+                absolute_paths = []
+                for rel_path in file_paths:
+                    pdf_path = Path(settings.pdf_output_path) / rel_path
+                    if pdf_path.exists():
+                        absolute_paths.append(str(pdf_path))
+
+                if absolute_paths:
+                    try:
+                        # Sort paths by filename to ensure consistent ordering
+                        absolute_paths.sort()
+                        combined_pdf_bytes = combine_pdfs_for_school(Path("/"), file_paths=absolute_paths)
+                        merged_filename = f"{school_code}_{school_name_safe}_combined_score_sheets.pdf"
+                        zip_file.writestr(f"{school_folder}/{merged_filename}", combined_pdf_bytes)
+                        files_added = True
+                    except Exception as e:
+                        import logging
+                        logger = logging.getLogger(__name__)
+                        logger.error(f"Failed to merge PDFs for school {school_code} in job {job_id}: {e}")
+                        # Fallback to individual files if merge fails
+                        for rel_path in file_paths:
+                            pdf_path = Path(settings.pdf_output_path) / rel_path
+                            if pdf_path.exists():
+                                zip_file.write(pdf_path, f"{school_folder}/{pdf_path.name}")
+                                files_added = True
+            else:
+                # Add individual PDFs
+                for rel_path in file_paths:
+                    pdf_path = Path(settings.pdf_output_path) / rel_path
+                    if pdf_path.exists():
+                        zip_file.write(pdf_path, f"{school_folder}/{pdf_path.name}")
+                        files_added = True
+
+    if not files_added:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="No PDF files found for this job")
 
     zip_buffer.seek(0)
 
+    filename_suffix = "merged" if merge_per_school else "all_schools"
     return StreamingResponse(
         iter([zip_buffer.getvalue()]),
         media_type="application/zip",
-        headers={"Content-Disposition": f'attachment; filename="job_{job_id}_all_schools.zip"'},
+        headers={"Content-Disposition": f'attachment; filename="job_{job_id}_{filename_suffix}.zip"'},
+    )
+
+
+@router.get("/{job_id}/merge/{school_id}")
+async def merge_job_school_pdf(
+    job_id: int,
+    school_id: int,
+    session: DBSessionDep,
+) -> StreamingResponse:
+    """Merge existing annotated PDFs for a specific school from a job into a single PDF."""
+    from app.services.score_sheet_pdf_service import combine_pdfs_for_school
+
+    job_stmt = select(PdfGenerationJob).where(PdfGenerationJob.id == job_id)
+    job_result = await session.execute(job_stmt)
+    job = job_result.scalar_one_or_none()
+
+    if not job:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Job not found")
+
+    if not job.results:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="No results found for this job")
+
+    # Find the school result
+    school_result = None
+    for result in job.results:
+        if result.get("school_id") == school_id:
+            school_result = result
+            break
+
+    if not school_result:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="School not found in job results")
+
+    file_paths = school_result.get("pdf_file_paths") or []
+    if not file_paths and school_result.get("pdf_file_path"):
+        file_paths = [school_result["pdf_file_path"]]
+
+    if not file_paths:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="PDF files not available for this school")
+
+    # Convert relative paths to absolute paths
+    absolute_paths = []
+    for rel_path in file_paths:
+        pdf_path = Path(settings.pdf_output_path) / rel_path
+        if pdf_path.exists():
+            absolute_paths.append(str(pdf_path))
+        else:
+            import logging
+            logger = logging.getLogger(__name__)
+            logger.warning(f"PDF file not found for merge: {pdf_path}")
+
+    if not absolute_paths:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="No PDF files found for this school")
+
+    # Combine PDFs using existing annotated files
+    # Note: These should be the annotated PDFs from the job
+    try:
+        combined_pdf_bytes = combine_pdfs_for_school(Path("/"), file_paths=absolute_paths)
+    except Exception as e:
+        import logging
+        logger = logging.getLogger(__name__)
+        logger.error(f"Failed to merge PDFs for school {school_id} in job {job_id}: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to merge PDFs: {str(e)}"
+        )
+
+    school_code = school_result.get("school_code", "school")
+    school_name_safe = school_result.get("school_name", "unknown").replace("/", "_").replace("\\", "_")
+    filename = f"{school_code}_{school_name_safe}_combined_score_sheets.pdf"
+
+    return StreamingResponse(
+        iter([combined_pdf_bytes]),
+        media_type="application/pdf",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
     )
 
 

@@ -8,21 +8,41 @@ from urllib.parse import urlparse
 from alembic_utils.replaceable_entity import registry
 from fastapi import Depends
 from pydantic_settings import BaseSettings
-from sqlalchemy import NullPool, text
+from sqlalchemy import text
 from sqlalchemy.ext.asyncio import (
     AsyncConnection,
     AsyncEngine,
     AsyncSession,
-    async_sessionmaker,
     create_async_engine,
 )
-from sqlalchemy.orm import DeclarativeBase
+from sqlalchemy.pool import NullPool
 from sqlalchemy.types import JSON
 
+try:
+    from sqlalchemy.ext.asyncio import async_sessionmaker  # type: ignore[attr-defined]
+except ImportError:  # pragma: no cover
+    from sqlalchemy.orm import sessionmaker as _sessionmaker
 
-class Base(DeclarativeBase):
-    __abstract__ = True
-    type_annotation_map = {
+    def async_sessionmaker(*args: Any, **kwargs: Any):  # type: ignore[no-redef]
+        return _sessionmaker(*args, class_=AsyncSession, **kwargs)
+
+try:
+    from sqlalchemy.orm import DeclarativeBase
+except ImportError:  # pragma: no cover
+    DeclarativeBase = None
+    from sqlalchemy.orm import declarative_base
+
+
+if DeclarativeBase is not None:
+    class Base(DeclarativeBase):
+        __abstract__ = True
+        type_annotation_map = {
+            dict[str, Any]: JSON,
+        }
+else:
+    Base = declarative_base()
+    Base.__abstract__ = True
+    Base.type_annotation_map = {
         dict[str, Any]: JSON,
     }
 
@@ -78,7 +98,7 @@ def convert_to_async_url(url: str) -> str:
 
 class DatabaseSessionManager:
     _engine: AsyncEngine | None
-    _sessionmaker: async_sessionmaker | None
+    _sessionmaker: Any | None
 
     def __init__(self, host: str, engine_kwargs: dict[str, Any] | None = None):
         self._host = host
@@ -91,7 +111,7 @@ class DatabaseSessionManager:
             return  # Already configured
 
         self._engine = create_async_engine(self._host, **self._engine_kwargs)
-        self._sessionmaker: async_sessionmaker = async_sessionmaker(
+        self._sessionmaker: Any = async_sessionmaker(
             autocommit=False, bind=self._engine, expire_on_commit=False
         )
 

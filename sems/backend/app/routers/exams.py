@@ -1,12 +1,14 @@
 from datetime import datetime
-from typing import Any
 from pathlib import Path
+from typing import Any
+from uuid import uuid4
 
 from fastapi import APIRouter, File, HTTPException, Query, UploadFile, status
 from fastapi.responses import StreamingResponse
 from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 
+from app.background_tasks import start_pdf_generation_job
 from app.config import settings
 from app.dependencies.database import DBSessionDep
 from app.models import (
@@ -32,6 +34,7 @@ from app.models import (
     ValidationIssueStatus,
 )
 from app.schemas.exam import (
+    DocumentProcessingProgress,
     ExamCreate,
     ExamListResponse,
     ExamProgressResponse,
@@ -44,7 +47,6 @@ from app.schemas.exam import (
     ExamUpdate,
     GradeRangesProgress,
     IcmPdfGenerationProgress,
-    DocumentProcessingProgress,
     PdfGenerationJobCreate,
     PdfGenerationJobResponse,
     PdfGenerationResponse,
@@ -62,11 +64,6 @@ from app.schemas.exam import (
     ValidationIssuesProgress,
 )
 from app.services.document_id_tracker import compare_sheet_ids
-from app.services.score_sheet_generator import generate_score_sheets
-from app.services.score_sheet_pdf_service import combine_pdfs_for_school, generate_pdfs_for_exam
-from app.services.serialization import serialize_exam
-from app.services.template_generator import generate_exam_subject_template
-from app.services.scannables_export import generate_core_subjects_export, generate_electives_export
 from app.services.exam_subject_upload import (
     SubjectUploadParseError,
     SubjectUploadValidationError,
@@ -74,7 +71,11 @@ from app.services.exam_subject_upload import (
     parse_upload_file,
     validate_exam_subject_columns,
 )
-from app.background_tasks import start_pdf_generation_job
+from app.services.scannables_export import generate_core_subjects_export, generate_electives_export
+from app.services.score_sheet_generator import generate_score_sheets
+from app.services.score_sheet_pdf_service import combine_pdfs_for_school, generate_pdfs_for_exam
+from app.services.serialization import serialize_exam
+from app.services.template_generator import generate_exam_subject_template
 
 router = APIRouter(prefix="/api/v1/exams", tags=["exams"])
 
@@ -1754,7 +1755,17 @@ async def generate_exam_pdf_score_sheets(
     This operation will overwrite existing sheet ID assignments.
     """
     try:
-        result = await generate_pdfs_for_exam(session, exam_id, school_id, subject_id, test_types)
+        output_root = Path(settings.pdf_output_path) / "runs" / f"run_{uuid4().hex}"
+        result = await generate_pdfs_for_exam(
+            session,
+            exam_id,
+            school_id,
+            subject_id,
+            test_types,
+            output_root=output_root,
+            include_file_paths=True,
+            temp_root=output_root / ".tmp",
+        )
         return PdfGenerationResponse.model_validate(result)
     except ValueError as e:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
@@ -1917,15 +1928,26 @@ async def generate_exam_pdf_score_sheets_combined(
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"School with id {school_id} not found")
 
         # Generate PDFs for the school
-        result = await generate_pdfs_for_exam(session, exam_id, school_id, subject_id, test_types)
+        output_root = Path(settings.pdf_output_path) / "runs" / f"run_{uuid4().hex}"
+        result = await generate_pdfs_for_exam(
+            session,
+            exam_id,
+            school_id,
+            subject_id,
+            test_types,
+            output_root=output_root,
+            include_file_paths=True,
+            temp_root=output_root / ".tmp",
+        )
 
         # Get the school directory path
         school_name_safe = school.name.replace("/", " ").replace("\\", " ")
-        school_dir = Path(settings.pdf_output_path) / school_name_safe
+        school_dir = output_root / school_name_safe
 
         # Combine all PDFs for this school
         try:
-            combined_pdf_bytes = combine_pdfs_for_school(school_dir)
+            school_file_paths = (result.get("school_pdf_paths") or {}).get(school_id)
+            combined_pdf_bytes = combine_pdfs_for_school(school_dir, school_file_paths)
         except ValueError as e:
             # If no PDFs found or combination fails, return error
             raise HTTPException(
@@ -1984,11 +2006,21 @@ async def create_pdf_generation_job(
         if test_type not in [1, 2]:
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"Test type must be 1 or 2, got {test_type}")
 
+    # Normalize subject selection
+    subject_ids: list[int] | None = None
+    if job_data.subject_ids is not None:
+        subject_ids = [subject_id for subject_id in job_data.subject_ids if subject_id is not None]
+        if len(subject_ids) == 0:
+            subject_ids = None
+    elif job_data.subject_id is not None:
+        subject_ids = [job_data.subject_id]
+
     # Create job
     job = PdfGenerationJob(
         status=PdfGenerationJobStatus.PENDING,
         exam_id=exam_id,
         school_ids=job_data.school_ids,
+        subject_ids=subject_ids,
         subject_id=job_data.subject_id,
         test_types=job_data.test_types,
         progress_current=0,
@@ -2013,6 +2045,7 @@ async def create_pdf_generation_job(
         status=job.status.value,
         exam_id=job.exam_id,
         school_ids=job.school_ids,
+        subject_ids=job.subject_ids,
         subject_id=job.subject_id,
         test_types=job.test_types,
         progress_current=job.progress_current,
