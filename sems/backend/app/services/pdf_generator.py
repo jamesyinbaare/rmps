@@ -43,6 +43,7 @@ class PdfGenerator:
         base_url: str | None = None,
         side_margin: int = 2,
         extra_vertical_margin: int = 30,
+        extra_vertical_margin_bottom: int | None = None,
         external_stylesheets: list[CSS] | None = None,
     ):
         """
@@ -61,9 +62,11 @@ class PdfGenerator:
         side_margin: int, interpreted in cm, by default 2cm
             The margin to apply on the core of the rendered PDF (i.e. main_html).
         extra_vertical_margin: int, interpreted in pixel, by default 30 pixels
-            An extra margin to apply between the main content and header and the footer.
-            The goal is to avoid having the content of `main_html` touching the header or the
-            footer.
+            An extra margin to apply between the main content and header (and footer if
+            extra_vertical_margin_bottom is not set).
+        extra_vertical_margin_bottom: int | None
+            If set, use this for the bottom margin instead of extra_vertical_margin.
+            Use a more negative value to reduce the gap between content and footer.
         external_stylesheets: list[CSS]
             Optional list of external CSS files to load.
         """
@@ -73,6 +76,11 @@ class PdfGenerator:
         self.base_url = base_url
         self.side_margin = side_margin
         self.extra_vertical_margin = extra_vertical_margin
+        self.extra_vertical_margin_bottom = (
+            extra_vertical_margin_bottom
+            if extra_vertical_margin_bottom is not None
+            else extra_vertical_margin
+        )
         self.external_stylesheets = external_stylesheets or []
 
     def _compute_overlay_element(self, element: str):
@@ -162,7 +170,7 @@ class PdfGenerator:
 
         margins = "{header_size}px {side_margin} {footer_size}px {side_margin}".format(
             header_size=header_height + self.extra_vertical_margin,
-            footer_size=footer_height + self.extra_vertical_margin,
+            footer_size=footer_height + self.extra_vertical_margin_bottom,
             side_margin=f"{self.side_margin}cm",
         )
         content_print_layout = f"@page {{ margin: {margins};}} "
@@ -257,7 +265,8 @@ def generate_score_sheet_pdf(
     main_template: str = "score_sheets/main_2_columns.html",
     header_template: str = "score_sheets/header.html",
     footer_template: str = "score_sheets/footer_series.html",
-    vertical_margins: int = -20,
+    vertical_margins: int = -50,
+    vertical_margins_bottom: int = -200,
 ) -> tuple[bytes, int]:
     """
     Generate a multi-page PDF score sheet for a group of candidates.
@@ -273,11 +282,21 @@ def generate_score_sheet_pdf(
         main_template: Path to main template
         header_template: Path to header template
         footer_template: Path to footer template
-        vertical_margins: Vertical margin adjustment
+        vertical_margins: Vertical margin adjustment for top (header). Less
+            negative = more space reserved, prevents table overlapping header.
+        vertical_margins_bottom: Extra margin for bottom (footer). More negative
+            = less gap between table and footer.
 
     Returns:
         Tuple of (PDF bytes, page count)
     """
+    # Chunk candidates into pages of 25 for explicit pagination
+    batch_size = 25
+    students_by_page = [
+        candidates[i : i + batch_size]
+        for i in range(0, len(candidates), batch_size)
+    ]
+
     # Prepare template context
     context = {
         "center_no": school_code,
@@ -286,6 +305,7 @@ def generate_score_sheet_pdf(
         "paper": str(test_type),
         "series": str(series),
         "students": candidates,
+        "students_by_page": students_by_page,
     }
 
     # Render templates
@@ -296,17 +316,14 @@ def generate_score_sheet_pdf(
     # Get absolute path to score_sheets directory for base_url
     templates_dir = Path(settings.templates_path) / "score_sheets"
     templates_dir = templates_dir.resolve()
-    # Use absolute file path as string for WeasyPrint base_url
-    # WeasyPrint accepts both file:// URIs and file paths, but file paths are more reliable
-    base_url = str(templates_dir)
+    # Use file:// URI with trailing slash so WeasyPrint's urljoin resolves relative
+    # paths (e.g. logo-crest-only.png) correctly under score_sheets/
+    base_url = templates_dir.as_uri() + "/"
 
-    # Verify that required assets exist
-    logo_file = templates_dir / "logo.jpg"
-    footer_file = templates_dir / "footer.jpg"
-    if not logo_file.exists():
-        logger.warning(f"Logo image not found: {logo_file}")
-    if not footer_file.exists():
-        logger.warning(f"Footer image not found: {footer_file}")
+    # Verify that required assets exist (footer is HTML-only; header uses logo crest)
+    logo_crest_file = templates_dir / "logo-crest-only.png"
+    if not logo_crest_file.exists():
+        logger.warning(f"Logo crest image not found: {logo_crest_file}")
 
     logger.info(f"Using base_url for asset resolution: {base_url}")
 
@@ -343,6 +360,7 @@ def generate_score_sheet_pdf(
             footer_html,
             base_url=base_url,
             extra_vertical_margin=vertical_margins,
+            extra_vertical_margin_bottom=vertical_margins_bottom,
             external_stylesheets=stylesheets,
         )
         logger.info(f"Generating PDF with base_url: {base_url}, {len(stylesheets)} stylesheet(s)")

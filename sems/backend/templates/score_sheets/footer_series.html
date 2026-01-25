@@ -1,24 +1,114 @@
-
 <style>
-
-  img{
-width: 100%;
-height: 70%;
-}
-
-
 footer {
   position: fixed;
-
-  bottom: 1%;
-  height: 20%;
+  bottom: -40px;
+  left: 0;
+  right: 0;
   width: 100%;
+  margin: 0;
+  padding: 0;
+  min-height: 78px;
+  font-size: 6.5pt;
+  line-height: 1.1;
+  font-family: Source Sans Pro, sans-serif;
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-end;
+}
+
+.footer-table {
+  width: 100%;
+  border-collapse: collapse;
+  border-top: 0.5px solid #000;
+  border-left: 0.5px solid #000;
+}
+
+.footer-table th,
+.footer-table td {
+  border: 0.5px solid #000;
+  padding: 2px 4px;
+  vertical-align: top;
+  text-align: left;
+}
+
+.footer-table th {
+  font-weight: bold;
+  text-align: center;
+  background: #000;
+  color: #fff;
+  padding: 2px 4px;
+  font-size: 6.5pt;
+}
+.footer-table th { border-top: 0.5px solid #000; }
+.footer-table th:first-child { border-left: 0.5px solid #000; }
+.footer-table th:last-child { border-right: 0.5px solid #000; }
+
+.footer-blank {
+  min-height: 0.5em;
+  border-bottom: 1px solid #ccc;
+}
+
+.footer-sub {
+  font-size: 6pt;
+  padding-left: 4px;
+}
+
+.footer-statement {
+  font-size: 6pt;
+  font-style: italic;
+  padding: 2px 4px;
+  line-height: 1.15;
+}
+
+.footer-sheet-id-reserve {
+  min-height: 26px;
+  border-right-width: 0 !important;
+  border-bottom-width: 0 !important;
+  border-right-style: none !important;
+  border-bottom-style: none !important;
+  /* empty cell; annotator draws barcode + text on top */
 }
 </style>
 
-<footer style="margin-bottom: -100px; margin-top: -15px">
-   <img
-    src="footer.jpg"
-    alt="Python and PDF"
-  />
+<footer>
+  <table class="footer-table">
+    <thead>
+      <tr>
+        <th style="width: 50%;">Invigilator's Use only</th>
+        <th style="width: 50%;">Examiner's Use only</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>Invigilator's Name:<br><span class="footer-blank"></span></td>
+        <td>Examiner's Name:<br><span class="footer-blank"></span></td>
+      </tr>
+      <tr>
+        <td>Sign:<br><span class="footer-blank"></span></td>
+        <td>Sign:<br><span class="footer-blank"></span></td>
+      </tr>
+      <tr>
+        <td>Exam Date:<br><span class="footer-blank"></span></td>
+        <td>Date:<br><span class="footer-blank"></span></td>
+      </tr>
+      <tr>
+        <td>
+          No. of<br>
+          Candidates:
+          <span class="footer-sub">Present:              </span>
+        </td>
+        <td class="footer-statement">
+          The work of the candidates listed on this sheet has been marked, and the appropriate marks/grades entered.
+        </td>
+      </tr>
+      <tr>
+        <td>
+          <br>
+          <span class="footer-sub">Time:</span>
+          <span class="footer-sub">Start:                     End:              </span>
+        </td>
+        <td class="footer-sheet-id-reserve"></td>
+      </tr>
+    </tbody>
+  </table>
 </footer>

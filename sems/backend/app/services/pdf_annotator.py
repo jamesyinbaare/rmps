@@ -7,7 +7,24 @@ from barcode.writer import ImageWriter
 from PIL import Image
 from PyPDF2 import PdfReader, PdfWriter
 from reportlab.lib.utils import ImageReader
+from reportlab.pdfbase.pdfmetrics import stringWidth
 from reportlab.pdfgen import canvas
+
+# A4 width 595 pt; side margin 2 cm ≈ 56.69 pt per side. Score table right edge.
+_MARGIN_PT = 2 * 28.35  # 56.69
+_TABLE_RIGHT_PT = 595 - _MARGIN_PT  # 538.31
+_CONTENT_LEFT_PT = _MARGIN_PT
+_CONTENT_WIDTH_PT = _TABLE_RIGHT_PT - _CONTENT_LEFT_PT  # 481.62
+_BARCODE_WIDTH_PT = 200
+_BARCODE_HEIGHT_PT = 50
+# Barcode right edge aligns with table right; nudged right a little.
+_DEFAULT_BARCODE_X = _TABLE_RIGHT_PT - _BARCODE_WIDTH_PT + 20  # ~358.3
+# Footer right cell (Examiner) = 50% of content area. Center x for sheet ID.
+_FOOTER_CELL_LEFT_PT = _CONTENT_LEFT_PT + _CONTENT_WIDTH_PT / 2  # 297.5
+_FOOTER_CELL_CENTER_X = (_FOOTER_CELL_LEFT_PT + _TABLE_RIGHT_PT) / 2  # 417.9
+_SHEET_ID_FONT = "Helvetica-Bold"
+_SHEET_ID_FONT_SIZE = 16
+_DEFAULT_TEXT_Y = 32  # sheet ID in footer; higher = further up
 
 
 def generate_barcode_image(text: str) -> Image.Image:
@@ -24,8 +41,8 @@ def generate_barcode_image(text: str) -> Image.Image:
     barcode_format = barcode.get_barcode_class("code39")
 
     # Generate the barcode and save it to a BytesIO object
-    barcode_instance = barcode_format(text, writer=ImageWriter(), add_checksum=False)
     barcode_bytes = BytesIO()
+    barcode_instance = barcode_format(text, writer=ImageWriter(), add_checksum=False)
     barcode_instance.write(barcode_bytes)
 
     # Seek to the start of the BytesIO object
@@ -65,17 +82,24 @@ def add_barcode_image_to_canvas(canvas_obj: canvas.Canvas, barcode_image: Image.
     canvas_obj.drawImage(reportlab_image, x, y, width=width, height=height)
 
 
-def annotate_pdf_page_with_sheet_id(pdf_bytes: bytes, page_index: int, sheet_id: str, barcode_x: float = 340, barcode_y: float = 755, text_x: float = 420, text_y: float = 690) -> bytes:
+def _sheet_id_text_x_centered(sheet_id: str) -> float:
+    """X so sheet ID text is centered in the footer right cell."""
+    w = stringWidth(sheet_id, _SHEET_ID_FONT, _SHEET_ID_FONT_SIZE)
+    return _FOOTER_CELL_CENTER_X - w / 2
+
+
+def annotate_pdf_page_with_sheet_id(pdf_bytes: bytes, page_index: int, sheet_id: str, barcode_x: float = _DEFAULT_BARCODE_X, barcode_y: float = 755, text_x: float | None = None, text_y: float = _DEFAULT_TEXT_Y) -> bytes:
     """
     Annotate a specific page of a PDF with barcode and text containing the sheet ID.
 
+    Barcode is drawn in the header; sheet ID text in the footer cell (centered).
     Args:
         pdf_bytes: PDF file as bytes
         page_index: Zero-based index of the page to annotate
         sheet_id: Sheet ID to add as barcode and text
-        barcode_x: X coordinate for barcode
+        barcode_x: X coordinate for barcode (default: right-aligned with score table)
         barcode_y: Y coordinate for barcode
-        text_x: X coordinate for text
+        text_x: X for sheet ID text; if None, centered in footer cell
         text_y: Y coordinate for text
 
     Returns:
@@ -85,6 +109,7 @@ def annotate_pdf_page_with_sheet_id(pdf_bytes: bytes, page_index: int, sheet_id:
     pdf_buffer = BytesIO(pdf_bytes)
     reader = PdfReader(pdf_buffer)
     writer = PdfWriter()
+    tx = text_x if text_x is not None else _sheet_id_text_x_centered(sheet_id)
 
     # Process each page
     for i, page in enumerate(reader.pages):
@@ -92,14 +117,14 @@ def annotate_pdf_page_with_sheet_id(pdf_bytes: bytes, page_index: int, sheet_id:
             # Create a temporary PDF with the annotations for this page
             packet = BytesIO()
             can = canvas.Canvas(packet)
-            can.setFont("Helvetica-Bold", 16)
+            can.setFont(_SHEET_ID_FONT, _SHEET_ID_FONT_SIZE)
 
             # Generate barcode
             barcode_image = generate_barcode_image(sheet_id)
-            add_barcode_image_to_canvas(can, barcode_image, barcode_x, barcode_y, width=200, height=50)
+            add_barcode_image_to_canvas(can, barcode_image, barcode_x, barcode_y, width=_BARCODE_WIDTH_PT, height=_BARCODE_HEIGHT_PT)
 
-            # Add text
-            can.drawString(text_x, text_y, sheet_id)
+            # Add text (centered in footer cell when text_x is None)
+            can.drawString(tx, text_y, sheet_id)
             can.save()
 
             # Merge the annotation PDF with the original page
@@ -116,16 +141,17 @@ def annotate_pdf_page_with_sheet_id(pdf_bytes: bytes, page_index: int, sheet_id:
     return output.getvalue()
 
 
-def annotate_pdf_with_sheet_ids(pdf_bytes: bytes, sheet_ids: list[str], barcode_x: float = 340, barcode_y: float = 755, text_x: float = 420, text_y: float = 690) -> bytes:
+def annotate_pdf_with_sheet_ids(pdf_bytes: bytes, sheet_ids: list[str], barcode_x: float = _DEFAULT_BARCODE_X, barcode_y: float = 755, text_x: float | None = None, text_y: float = _DEFAULT_TEXT_Y) -> bytes:
     """
     Annotate all pages of a PDF with corresponding sheet IDs.
 
+    Barcode in header; sheet ID text in footer cell (centered when text_x is None).
     Args:
         pdf_bytes: PDF file as bytes
         sheet_ids: List of sheet IDs, one per page (in order)
-        barcode_x: X coordinate for barcode
+        barcode_x: X coordinate for barcode (default: right-aligned with score table)
         barcode_y: Y coordinate for barcode
-        text_x: X coordinate for text
+        text_x: X for sheet ID text; if None, centered in footer cell
         text_y: Y coordinate for text
 
     Returns:
@@ -148,18 +174,19 @@ def annotate_pdf_with_sheet_ids(pdf_bytes: bytes, sheet_ids: list[str], barcode_
     # Process each page
     for i, page in enumerate(reader.pages):
         sheet_id = sheet_ids[i]
+        tx = text_x if text_x is not None else _sheet_id_text_x_centered(sheet_id)
 
         # Create a temporary PDF with the annotations for this page
         packet = BytesIO()
         can = canvas.Canvas(packet)
-        can.setFont("Helvetica-Bold", 16)
+        can.setFont(_SHEET_ID_FONT, _SHEET_ID_FONT_SIZE)
 
         # Generate barcode
         barcode_image = generate_barcode_image(sheet_id)
-        add_barcode_image_to_canvas(can, barcode_image, barcode_x, barcode_y, width=200, height=50)
+        add_barcode_image_to_canvas(can, barcode_image, barcode_x, barcode_y, width=_BARCODE_WIDTH_PT, height=_BARCODE_HEIGHT_PT)
 
-        # Add text
-        can.drawString(text_x, text_y, sheet_id)
+        # Add text (centered in footer cell when text_x is None)
+        can.drawString(tx, text_y, sheet_id)
         can.save()
 
         # Merge the annotation PDF with the original page
