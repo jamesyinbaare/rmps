@@ -22,7 +22,6 @@ import { Input } from "@/components/ui/input";
 import { SearchableSelect, type SearchableSelectOption } from "@/components/ui/searchable-select";
 import {
   getAllExams,
-  findExamId,
   getSchoolsForExamWithCandidates,
   getSubjectsForExamAndSchoolByCandidates,
   listExamSubjects,
@@ -31,7 +30,7 @@ import {
   downloadJobSchoolPdf,
   type PdfGenerationJob,
 } from "@/lib/api";
-import type { Exam, School, Subject, ExamType, ExamSeries } from "@/types/document";
+import type { Exam, School, Subject } from "@/types/document";
 import { FileText, Download, Loader2, AlertCircle, CheckCircle2, History, Eye, X, CheckCircle, Circle, RotateCcw } from "lucide-react";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
@@ -40,9 +39,6 @@ type Step = "examination" | "school" | "subjects" | "test-types" | "generate";
 
 export default function GenerateICMsPage() {
   const [exams, setExams] = useState<Exam[]>([]);
-  const [examType, setExamType] = useState<ExamType | "">("");
-  const [series, setSeries] = useState<ExamSeries | "">("");
-  const [year, setYear] = useState<number | "">("");
   const [examId, setExamId] = useState<number | null>(null);
   const [schools, setSchools] = useState<School[]>([]);
   const [selectedSchoolId, setSelectedSchoolId] = useState<number | "all" | "">("");
@@ -51,6 +47,7 @@ export default function GenerateICMsPage() {
   const [subjectTypeFilter, setSubjectTypeFilter] = useState<"ALL" | "CORE" | "ELECTIVE">("ALL");
   const [subjectSearch, setSubjectSearch] = useState<string>("");
   const [testTypes, setTestTypes] = useState<number[]>([1, 2]);
+  const [template, setTemplate] = useState<"new" | "old">("new");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [generating, setGenerating] = useState(false);
@@ -130,20 +127,6 @@ export default function GenerateICMsPage() {
     }
   };
 
-  // Find exam ID when type, series, year are selected
-  useEffect(() => {
-    if (examType && series && year) {
-      const foundExamId = findExamId(exams, examType as ExamType, series as ExamSeries, Number(year));
-      setExamId(foundExamId);
-    } else {
-      setExamId(null);
-      setSchools([]);
-      setSelectedSchoolId("");
-      setSubjects([]);
-      setSelectedSubjectIds([]);
-    }
-  }, [examType, series, year, exams]);
-
   // Load schools when exam is selected
   useEffect(() => {
     const loadSchools = async () => {
@@ -176,6 +159,8 @@ export default function GenerateICMsPage() {
         return;
       }
 
+      const exam = exams.find((e) => e.id === examId);
+
       try {
         setLoading(true);
         if (selectedSchoolId && selectedSchoolId !== "all" && selectedSchoolId !== "") {
@@ -190,7 +175,7 @@ export default function GenerateICMsPage() {
               name: es.subject_name,
               original_code: es.subject_code,
               subject_type: es.subject_type,
-              exam_type: examType as ExamType,
+              exam_type: exam?.exam_type ?? null,
             }))
           );
         }
@@ -203,7 +188,7 @@ export default function GenerateICMsPage() {
     };
 
     loadSubjects();
-  }, [examId, selectedSchoolId, examType]);
+  }, [examId, selectedSchoolId, exams]);
 
   const handleTestTypeChange = (testType: number, checked: boolean) => {
     if (checked) {
@@ -214,13 +199,11 @@ export default function GenerateICMsPage() {
   };
 
   const handleClearForm = () => {
-    setExamType("");
-    setSeries("");
-    setYear("");
     setExamId(null);
     setSelectedSchoolId("");
     setSelectedSubjectIds([]);
     setTestTypes([1, 2]);
+    setTemplate("new");
     setSubjectTypeFilter("ALL");
     setSubjectSearch("");
     setError(null);
@@ -249,6 +232,7 @@ export default function GenerateICMsPage() {
         subject_ids: subjectIdsForJob,
         subject_id: subjectIdForJob,
         test_types: finalTestTypes,
+        template,
       };
 
       const job = await createPdfGenerationJob(examId, jobData);
@@ -292,15 +276,24 @@ export default function GenerateICMsPage() {
     }
   };
 
-  const availableYears = useMemo(() => {
-    const yearsSet = new Set<number>();
-    exams.forEach((exam) => {
-      if (exam.exam_type === examType && exam.series === series) {
-        yearsSet.add(exam.year);
-      }
-    });
-    return Array.from(yearsSet).sort((a, b) => b - a);
-  }, [exams, examType, series]);
+  const examOptions = useMemo(() => {
+    return [...exams]
+      .sort((a, b) => {
+        if (a.year !== b.year) return b.year - a.year;
+        const s = (x: string) => (x === "NOV/DEC" ? 2 : x === "MAY/JUNE" ? 1 : 0);
+        if (a.series !== b.series) return s(b.series) - s(a.series);
+        return (a.exam_type ?? "").localeCompare(b.exam_type ?? "");
+      })
+      .map((e) => ({
+        value: e.id.toString(),
+        label: `${e.year} ${e.series} ${e.exam_type}`,
+      }));
+  }, [exams]);
+
+  const selectedExam = useMemo(
+    () => (examId ? exams.find((e) => e.id === examId) : null),
+    [exams, examId]
+  );
 
   const schoolOptions = useMemo<SearchableSelectOption[]>(() => {
     return schools.map((school) => ({
@@ -506,7 +499,7 @@ export default function GenerateICMsPage() {
                         Select examination details, school, subject, and test types to generate score sheets
                       </CardDescription>
                     </div>
-                    {(examType || selectedSchoolId || selectedSubjectIds.length > 0) && (
+                    {(examId || selectedSchoolId || selectedSubjectIds.length > 0) && (
                       <Button
                         variant="ghost"
                         size="sm"
@@ -535,72 +528,45 @@ export default function GenerateICMsPage() {
                         )}>
                           {examId ? <CheckCircle className="h-4 w-4" /> : "1"}
                         </div>
-                        <h3 className="text-sm font-semibold">Examination Details</h3>
+                        <h3 className="text-sm font-semibold">Examination</h3>
                       </div>
-                      <div className="grid grid-cols-1 md:grid-cols-3 gap-4 pl-8">
-                        <div className="space-y-2">
-                          <label className="text-sm font-medium">Examination Type</label>
-                          <Select
-                            value={examType}
-                            onValueChange={(value) => setExamType(value as ExamType)}
-                            disabled={loading || generating}
-                          >
-                            <SelectTrigger>
-                              <SelectValue placeholder="Select type" />
-                            </SelectTrigger>
-                            <SelectContent>
-                              <SelectItem value="Certificate II Examinations">Certificate II Examinations</SelectItem>
-                              <SelectItem value="Advance">Advance</SelectItem>
-                              <SelectItem value="Technician Part I">Technician Part I</SelectItem>
-                              <SelectItem value="Technician Part II">Technician Part II</SelectItem>
-                              <SelectItem value="Technician Part III">Technician Part III</SelectItem>
-                              <SelectItem value="Diploma">Diploma</SelectItem>
-                            </SelectContent>
-                          </Select>
-                        </div>
-
-                        <div className="space-y-2">
-                          <label className="text-sm font-medium">Series</label>
-                          <Select
-                            value={series}
-                            onValueChange={(value) => setSeries(value as ExamSeries)}
-                            disabled={loading || generating}
-                          >
-                            <SelectTrigger>
-                              <SelectValue placeholder="Select series" />
-                            </SelectTrigger>
-                            <SelectContent>
-                              <SelectItem value="MAY/JUNE">MAY/JUNE</SelectItem>
-                              <SelectItem value="NOV/DEC">NOV/DEC</SelectItem>
-                            </SelectContent>
-                          </Select>
-                        </div>
-
-                        <div className="space-y-2">
-                          <label className="text-sm font-medium">Year</label>
-                          <Select
-                            value={year.toString()}
-                            onValueChange={(value) => setYear(Number(value))}
-                            disabled={loading || generating || !examType || !series}
-                          >
-                            <SelectTrigger>
-                              <SelectValue placeholder={examType && series ? "Select year" : "Select type and series first"} />
-                            </SelectTrigger>
-                            <SelectContent>
-                              {availableYears.length === 0 ? (
-                                <SelectItem value="none" disabled>
-                                  No exams found
+                      <div className="pl-8 space-y-2">
+                        <label className="text-sm font-medium">Examination</label>
+                        <Select
+                          value={examId?.toString() ?? ""}
+                          onValueChange={(value) => {
+                            if (!value) {
+                              setExamId(null);
+                              setSelectedSchoolId("");
+                              setSelectedSubjectIds([]);
+                            } else {
+                              setExamId(Number(value));
+                              setSelectedSchoolId("");
+                              setSelectedSubjectIds([]);
+                            }
+                          }}
+                          disabled={loading || generating}
+                        >
+                          <SelectTrigger className="w-full md:max-w-md">
+                            <SelectValue placeholder="Select examination" />
+                          </SelectTrigger>
+                          <SelectContent>
+                            {examOptions.length === 0 ? (
+                              <SelectItem value="__none__" disabled>
+                                No examinations found
+                              </SelectItem>
+                            ) : (
+                              examOptions.map((opt) => (
+                                <SelectItem key={opt.value} value={opt.value}>
+                                  {opt.label}
                                 </SelectItem>
-                              ) : (
-                                availableYears.map((y) => (
-                                  <SelectItem key={y} value={y.toString()}>
-                                    {y}
-                                  </SelectItem>
-                                ))
-                              )}
-                            </SelectContent>
-                          </Select>
-                        </div>
+                              ))
+                            )}
+                          </SelectContent>
+                        </Select>
+                        <p className="text-xs text-muted-foreground">
+                          Format: year, series, exam type
+                        </p>
                       </div>
                     </div>
 
@@ -858,6 +824,33 @@ export default function GenerateICMsPage() {
                       </div>
                     </div>
 
+                    {/* Score sheet template */}
+                    <div className="space-y-2">
+                      <div className="flex items-center gap-2 mb-2">
+                        <h3 className="text-sm font-semibold">Score Sheet Template</h3>
+                      </div>
+                      <div className="pl-8 space-y-2">
+                        <Select
+                          value={template}
+                          onValueChange={(v) => setTemplate(v as "new" | "old")}
+                          disabled={generating}
+                        >
+                          <SelectTrigger className="w-full md:w-[280px]">
+                            <SelectValue />
+                          </SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="new">New</SelectItem>
+                            <SelectItem value="old">Old</SelectItem>
+                          </SelectContent>
+                        </Select>
+                        <p className="text-xs text-muted-foreground">
+                          {template === "new"
+                            ? "Current layout: logo crest, Invigilator/Examiner footer, barcode + sheet ID, black headers."
+                            : "Legacy layout: logo.jpg, footer.jpg, barcode + sheet ID in header."}
+                        </p>
+                      </div>
+                    </div>
+
                     <Separator />
 
                     {/* Step 5: Generate Button */}
@@ -872,7 +865,9 @@ export default function GenerateICMsPage() {
                             <div className="flex justify-between">
                               <span className="text-muted-foreground">Examination:</span>
                               <span className="font-medium">
-                                {examType} - {series} {year}
+                                {selectedExam
+                                  ? `${selectedExam.year} ${selectedExam.series} ${selectedExam.exam_type}`
+                                  : "—"}
                               </span>
                             </div>
                             <div className="flex justify-between">
@@ -904,6 +899,10 @@ export default function GenerateICMsPage() {
                                   ? "Objectives"
                                   : "Essay"}
                               </span>
+                            </div>
+                            <div className="flex justify-between">
+                              <span className="text-muted-foreground">Template:</span>
+                              <span className="font-medium">{template === "new" ? "New" : "Old"}</span>
                             </div>
                           </CardContent>
                         </Card>

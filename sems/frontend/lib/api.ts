@@ -2000,7 +2000,8 @@ export async function generatePdfScoreSheets(
   examId: number,
   schoolId?: number | null,
   subjectId?: number | null,
-  testTypes?: number[]
+  testTypes?: number[],
+  template?: "new" | "old"
 ): Promise<PdfGenerationResponse> {
   const params = new URLSearchParams();
   if (schoolId !== undefined && schoolId !== null) {
@@ -2013,6 +2014,9 @@ export async function generatePdfScoreSheets(
     testTypes.forEach((type) => {
       params.append("test_types", type.toString());
     });
+  }
+  if (template) {
+    params.append("template", template);
   }
 
   const url = `${API_BASE_URL}/api/v1/exams/${examId}/generate-pdf-score-sheets${params.toString() ? `?${params.toString()}` : ""}`;
@@ -2029,7 +2033,8 @@ export async function generatePdfScoreSheetsCombined(
   examId: number,
   schoolId: number,
   subjectId?: number | null,
-  testTypes?: number[]
+  testTypes?: number[],
+  template?: "new" | "old"
 ): Promise<Blob> {
   const params = new URLSearchParams();
   params.append("school_id", schoolId.toString());
@@ -2040,6 +2045,9 @@ export async function generatePdfScoreSheetsCombined(
     testTypes.forEach((type) => {
       params.append("test_types", type.toString());
     });
+  }
+  if (template) {
+    params.append("template", template);
   }
 
   const url = `${API_BASE_URL}/api/v1/exams/${examId}/generate-pdf-score-sheets-combined?${params.toString()}`;
@@ -2074,6 +2082,7 @@ export interface PdfGenerationJob {
   subject_ids: number[] | null;
   subject_id: number | null;
   test_types: number[];
+  template?: "new" | "old";
   progress_current: number;
   progress_total: number;
   current_school_name: string | null;
@@ -2097,6 +2106,7 @@ export interface PdfGenerationJobCreate {
   subject_ids?: number[] | null;
   subject_id?: number | null;
   test_types?: number[];
+  template?: "new" | "old";
 }
 
 /**
