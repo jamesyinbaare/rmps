@@ -24,7 +24,7 @@ _FOOTER_CELL_LEFT_PT = _CONTENT_LEFT_PT + _CONTENT_WIDTH_PT / 2  # 297.5
 _FOOTER_CELL_CENTER_X = (_FOOTER_CELL_LEFT_PT + _TABLE_RIGHT_PT) / 2  # 417.9
 _SHEET_ID_FONT = "Helvetica-Bold"
 _SHEET_ID_FONT_SIZE = 16
-_DEFAULT_TEXT_Y = 32  # sheet ID in footer; higher = further up
+_DEFAULT_TEXT_Y = 50  # sheet ID in footer; higher = further up
 
 
 def generate_barcode_image(text: str) -> Image.Image:

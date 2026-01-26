@@ -1,6 +1,5 @@
 """PDF generation service for score sheets."""
 import logging
-
 from pathlib import Path
 from typing import Any
 
@@ -262,14 +261,16 @@ def generate_score_sheet_pdf(
     series: int,
     test_type: int,
     candidates: list[dict[str, Any]],
-    main_template: str = "score_sheets/main_2_columns.html",
-    header_template: str = "score_sheets/header.html",
-    footer_template: str = "score_sheets/footer_series.html",
+    main_template: str = "score_sheets/new/main_2_columns.html",
+    header_template: str = "score_sheets/new/header.html",
+    footer_template: str = "score_sheets/new/footer_series.html",
     vertical_margins: int = -50,
     vertical_margins_bottom: int = -200,
 ) -> tuple[bytes, int]:
     """
-    Generate a multi-page PDF score sheet for a group of candidates.
+    Generate a multi-page PDF score sheet for a group of candidates (new layout).
+
+    Use generate_score_sheet_pdf_old (pdf_generator_old) for the legacy layout.
 
     Args:
         school_code: School code (6 characters)

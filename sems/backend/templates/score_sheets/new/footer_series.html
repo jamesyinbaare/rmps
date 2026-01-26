@@ -16,6 +16,49 @@ footer {
   justify-content: flex-end;
 }
 
+.divider-horizontal {
+  width: 100%;
+  height: 3px;
+  background-color: #CE1126;
+  margin: 0 0 4px 0;
+  position: relative;
+  z-index: 1;
+}
+
+.flag-strip {
+  width: 90px;
+  height: 8px;
+  display: flex;
+  margin-left: auto;
+  margin-right: 0;
+  margin-top: 10px;
+  margin-bottom: -2px;
+  position: relative;
+  z-index: 2;
+}
+
+.flag-strip .flag-red {
+  width: 30px;
+  height: 8px;
+  background-color: #CE1126;
+  border: 0.5px solid #CE1126;
+}
+
+.flag-strip .flag-gold {
+  width: 30px;
+  height: 8px;
+  background-color: #FCD116;
+  border: 0.5px solid #FCD116;
+}
+
+.flag-strip .flag-green {
+  width: 30px;
+  height: 8px;
+  background-color: #006B3F;
+  border: 0.5px solid #006B3F;
+}
+
+
 .footer-table {
   width: 100%;
   border-collapse: collapse;
@@ -111,4 +154,10 @@ footer {
       </tr>
     </tbody>
   </table>
+  <div class="flag-strip">
+    <div class="flag-red"></div>
+    <div class="flag-gold"></div>
+    <div class="flag-green"></div>
+  </div>
+  <div class="divider-horizontal"></div>
 </footer>

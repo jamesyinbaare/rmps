@@ -1736,6 +1736,7 @@ async def generate_exam_pdf_score_sheets(
     school_id: int | None = Query(None, description="Optional school ID to generate PDFs only for that school"),
     subject_id: int | None = Query(None, description="Optional subject ID to generate PDFs only for that subject"),
     test_types: list[int] = Query(default=[1, 2], description="List of test types to generate (1 = Objectives, 2 = Essay). Default: [1, 2]"),
+    template: str = Query("new", description="Score sheet layout: 'new' (default) or 'old'"),
 ) -> PdfGenerationResponse:
     """
     Generate PDF score sheets for an exam and assign sheet IDs to candidates.
@@ -1765,6 +1766,7 @@ async def generate_exam_pdf_score_sheets(
             output_root=output_root,
             include_file_paths=True,
             temp_root=output_root / ".tmp",
+            template=template,
         )
         return PdfGenerationResponse.model_validate(result)
     except ValueError as e:
@@ -1907,6 +1909,7 @@ async def generate_exam_pdf_score_sheets_combined(
     school_id: int = Query(..., description="School ID to generate PDFs for (required)"),
     subject_id: int | None = Query(None, description="Optional subject ID to generate PDFs only for that subject"),
     test_types: list[int] = Query(default=[1, 2], description="List of test types to generate (1 = Objectives, 2 = Essay). Default: [1, 2]"),
+    template: str = Query("new", description="Score sheet layout: 'new' (default) or 'old'"),
 ) -> StreamingResponse:
     """
     Generate PDF score sheets for a specific school and combine all PDFs into one downloadable file.
@@ -1938,6 +1941,7 @@ async def generate_exam_pdf_score_sheets_combined(
             output_root=output_root,
             include_file_paths=True,
             temp_root=output_root / ".tmp",
+            template=template,
         )
 
         # Get the school directory path
@@ -2016,6 +2020,7 @@ async def create_pdf_generation_job(
         subject_ids = [job_data.subject_id]
 
     # Create job
+    template = job_data.template or "new"
     job = PdfGenerationJob(
         status=PdfGenerationJobStatus.PENDING,
         exam_id=exam_id,
@@ -2023,6 +2028,7 @@ async def create_pdf_generation_job(
         subject_ids=subject_ids,
         subject_id=job_data.subject_id,
         test_types=job_data.test_types,
+        template=template,
         progress_current=0,
         progress_total=0,
     )
@@ -2048,6 +2054,7 @@ async def create_pdf_generation_job(
         subject_ids=job.subject_ids,
         subject_id=job.subject_id,
         test_types=job.test_types,
+        template=getattr(job, "template", "new") or "new",
         progress_current=job.progress_current,
         progress_total=job.progress_total,
         current_school_name=job.current_school_name,

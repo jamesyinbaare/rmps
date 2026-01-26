@@ -113,7 +113,7 @@ header {
           <tbody>
             <tr>
               <td>CENTRE:</td>
-              <td>{{center}}</td>
+              <td>{{ (center[:47] + '...') if center|length > 50 else center }}</td>
             </tr>
             <tr>
               <td>SUBJECT:</td>

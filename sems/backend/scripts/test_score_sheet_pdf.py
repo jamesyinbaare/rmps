@@ -1,8 +1,9 @@
-"""Minimal test for score sheet PDF generation (new layout). Run from backend: uv run python scripts/test_score_sheet_pdf.py"""
+"""Minimal test for score sheet PDF generation (new + old layout). Run from backend: uv run python scripts/test_score_sheet_pdf.py"""
 from pathlib import Path
 
 from app.services.pdf_annotator import annotate_pdf_with_sheet_ids
 from app.services.pdf_generator import generate_score_sheet_pdf
+from app.services.pdf_generator_old import generate_score_sheet_pdf_old
 
 # Mock candidates: 25 -> 1 page, then 30 -> 2 pages
 for n, expected_pages in [(25, 1), (30, 2)]:
@@ -43,3 +44,31 @@ out = Path("score_sheets") / "test_score_sheet_layout.pdf"
 out.parent.mkdir(parents=True, exist_ok=True)
 out.write_bytes(annotated)
 print(f"Saved to {out.absolute()}")
+
+# Old layout: separate generator (single-table flow), old header/footer, old annotator coords
+candidates_25 = [
+    {"index": f"SB{c:04d}", "index_number": f"SB{c:04d}", "name": f"Candidate {c}"}
+    for c in range(1, 26)
+]
+pdf_old, n_old = generate_score_sheet_pdf_old(
+    school_code="123456",
+    school_name="Test School",
+    subject_code="MTH",
+    subject_name="Mathematics",
+    series=1,
+    test_type=1,
+    candidates=candidates_25,
+)
+assert n_old == 1, f"template=old: expected 1 page, got {n_old}"
+sheet_ids_old = ["123456MTH1101"]
+annotated_old = annotate_pdf_with_sheet_ids(
+    pdf_old,
+    sheet_ids_old,
+    barcode_x=340,
+    barcode_y=755,
+    text_x=420,
+    text_y=690,
+)
+out_old = Path("score_sheets") / "test_score_sheet_old.pdf"
+out_old.write_bytes(annotated_old)
+print(f"template=old: {n_old} page(s) ok, saved to {out_old.absolute()}")
