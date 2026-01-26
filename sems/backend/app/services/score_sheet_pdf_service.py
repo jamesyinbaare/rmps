@@ -28,6 +28,7 @@ from app.models import (
 )
 from app.services.pdf_annotator import annotate_pdf_with_sheet_ids
 from app.services.pdf_generator import generate_score_sheet_pdf
+from app.services.pdf_generator_old import generate_score_sheet_pdf_old
 from app.services.score_sheet_generator import generate_sheet_id, sort_key_index_number
 
 
@@ -55,6 +56,7 @@ async def generate_pdfs_for_exam(
     output_root: Path | None = None,
     include_file_paths: bool = False,
     temp_root: Path | None = None,
+    template: str = "new",
 ) -> dict[str, Any]:
     """
     Generate PDF score sheets for an exam and assign sheet IDs to candidates.
@@ -77,6 +79,7 @@ async def generate_pdfs_for_exam(
         output_root: Optional root directory for PDF output (defaults to settings.pdf_output_path)
         include_file_paths: When True, include generated file paths per school in result
         temp_root: Optional root directory for temporary unannotated PDFs
+        template: "new" (default) or "old" score sheet layout.
 
     Returns:
         Dictionary with generation statistics
@@ -321,15 +324,26 @@ async def generate_pdfs_for_exam(
 
                     # Generate ONE multi-page PDF with all candidates
                     try:
-                        pdf_bytes, page_count = generate_score_sheet_pdf(
-                            school_code=school.code,
-                            school_name=school.name,
-                            subject_code=subject.code,
-                            subject_name=subject.name,
-                            series=effective_series,
-                            test_type=test_type,
-                            candidates=candidates_data,
-                        )
+                        if template == "old":
+                            pdf_bytes, page_count = generate_score_sheet_pdf_old(
+                                school_code=school.code,
+                                school_name=school.name,
+                                subject_code=subject.code,
+                                subject_name=subject.name,
+                                series=effective_series,
+                                test_type=test_type,
+                                candidates=candidates_data,
+                            )
+                        else:
+                            pdf_bytes, page_count = generate_score_sheet_pdf(
+                                school_code=school.code,
+                                school_name=school.name,
+                                subject_code=subject.code,
+                                subject_name=subject.name,
+                                series=effective_series,
+                                test_type=test_type,
+                                candidates=candidates_data,
+                            )
                     except Exception as e:
                         logger.error(
                             "PDF generation failed",
@@ -409,9 +423,19 @@ async def generate_pdfs_for_exam(
                         )
                         continue
 
-                    # Annotate PDF with sheet IDs
+                    # Annotate PDF with sheet IDs (old layout: barcode + text in header; new: barcode header, text footer)
                     try:
-                        annotated_pdf = annotate_pdf_with_sheet_ids(pdf_bytes, sheet_ids)
+                        if template == "old":
+                            annotated_pdf = annotate_pdf_with_sheet_ids(
+                                pdf_bytes,
+                                sheet_ids,
+                                barcode_x=340,
+                                barcode_y=755,
+                                text_x=420,
+                                text_y=690,
+                            )
+                        else:
+                            annotated_pdf = annotate_pdf_with_sheet_ids(pdf_bytes, sheet_ids)
                     except Exception as e:
                         logger.error(
                             "PDF annotation failed; skipping group",

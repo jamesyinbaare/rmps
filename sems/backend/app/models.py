@@ -468,6 +468,7 @@ class PdfGenerationJob(Base):
     subject_ids = Column(JSON, nullable=True)  # JSON array of subject IDs, null = all subjects
     subject_id = Column(Integer, ForeignKey("subjects.id", ondelete="SET NULL"), nullable=True)
     test_types = Column(JSON, nullable=False)  # JSON array of test types [1, 2]
+    template = Column(String(32), default="new", nullable=False)  # "new" or "old" score sheet layout
     progress_current = Column(Integer, default=0, nullable=False)
     progress_total = Column(Integer, default=0, nullable=False)
     current_school_name = Column(String(255), nullable=True)

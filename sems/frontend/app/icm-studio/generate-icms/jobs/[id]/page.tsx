@@ -315,6 +315,14 @@ export default function JobDetailsPage() {
                       {job.test_types.map((t) => (t === 1 ? "Objectives" : "Essay")).join(", ")}
                     </span>
                   </div>
+                  {job.template && (
+                    <div>
+                      <span className="text-muted-foreground">Template:</span>
+                      <span className="ml-2 font-medium">
+                        {job.template === "new" ? "New" : "Old"}
+                      </span>
+                    </div>
+                  )}
                 </div>
 
                 {job.error_message && (

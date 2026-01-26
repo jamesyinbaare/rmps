@@ -260,6 +260,7 @@ class PdfGenerationJobCreate(BaseModel):
     subject_ids: list[int] | None = None  # None = all subjects
     subject_id: int | None = None
     test_types: list[int] = Field(default=[1, 2], description="List of test types (1 = Objectives, 2 = Essay)")
+    template: str = Field(default="new", description="Score sheet layout: 'new' or 'old'")
 
 
 class PdfGenerationJobResult(BaseModel):
@@ -283,6 +284,7 @@ class PdfGenerationJobResponse(BaseModel):
     subject_ids: list[int] | None
     subject_id: int | None
     test_types: list[int]
+    template: str = "new"
     progress_current: int
     progress_total: int
     current_school_name: str | None

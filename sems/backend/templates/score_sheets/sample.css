@@ -86,3 +86,10 @@ td {
   margin-left: 10px;
   padding-left: 0;
 }
+
+/* Score sheet: OCR-friendly score/verify cells (main template uses .main-table .cell-score/verify) */
+.cell-score,
+.cell-verify {
+  min-height: 1.15em;
+  padding: 4px 6px;
+}

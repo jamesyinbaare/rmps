@@ -105,6 +105,7 @@ async def process_pdf_generation_job(job_id: int, session: AsyncSession) -> None
                 await session.refresh(job)
 
                 # Generate PDFs for this school
+                template = getattr(job, "template", "new") or "new"
                 result = await generate_pdfs_for_exam(
                     session,
                     job.exam_id,
@@ -115,6 +116,7 @@ async def process_pdf_generation_job(job_id: int, session: AsyncSession) -> None
                     output_root=output_root,
                     include_file_paths=True,
                     temp_root=output_root / ".tmp",
+                    template=template,
                 )
 
                 school_file_paths = None

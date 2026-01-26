@@ -1,0 +1,136 @@
+<style>
+header {
+  position: fixed;
+  top: 0;
+  height: 14%;
+  width: 100%;
+}
+
+.header-layout {
+  width: 100%;
+  border-collapse: collapse;
+  border: none;
+}
+
+.header-layout td {
+  border: none;
+  padding: 0;
+  vertical-align: top;
+}
+
+.header-logo {
+  width: 10%;
+  padding: 0;
+}
+
+.header-logo img {
+  margin-left: -10px;
+  width: 100%;
+  height: 58px;
+  max-width: 70px;
+  display: block;
+}
+
+.header-divider-wrap {
+  width: 5px;
+  padding: 0 2px;
+  vertical-align: top;
+  text-align: center;
+}
+
+.header-divider-line {
+  display: block;
+  width: 1px;
+  min-height: 52px;
+  margin-left: -10px;
+  margin-right: 2px;
+  background-color: #000;
+}
+
+.header-text {
+  width: 75%;
+  padding: 0 2px 0 0;
+  margin-left: 2px;
+}
+
+.header-text p {
+  margin: 0;
+  font-weight: bold;
+  text-align: left;
+  font-size: 8pt;
+  line-height: 1.1;
+}
+
+.header-barcode-reserve {
+  width: 25%;
+  min-width: 100px;
+}
+
+#header-table {
+  border-collapse: collapse;
+  border: none;
+  border-spacing: 0;
+  margin: 0;
+  margin-top: 1px;
+}
+
+#header-table th,
+#header-table td {
+  border: none;
+  padding: 0;
+  margin: 0;
+  line-height: 1.15;
+  vertical-align: top;
+  text-align: left;
+  white-space: nowrap;
+  font-size: 7.5pt;
+}
+
+#header-table td:first-child {
+  padding-right: 8px;
+  width: 1%;
+  white-space: nowrap;
+}
+
+#header-table td:last-child {
+  margin-left: 0;
+  padding-left: 0;
+  white-space: normal;
+  word-wrap: break-word;
+}
+</style>
+
+<header>
+  <table class="header-layout">
+    <tr>
+      <td class="header-logo">
+        <img src="logo-crest-only.png" alt="Logo" />
+      </td>
+      <td class="header-divider-wrap"><span class="header-divider-line"></span></td>
+      <td class="header-text">
+        <p>2025 NOV/DEC Certificate II Examinations</p>
+        <table id="header-table">
+          <tbody>
+            <tr>
+              <td>CENTRE:</td>
+              <td>{{ (center[:47] + '...') if center|length > 50 else center }}</td>
+            </tr>
+            <tr>
+              <td>SUBJECT:</td>
+              <td>{{subject}}</td>
+            </tr>
+            <tr>
+              <td>PAPER:</td>
+              <td>{{paper}}</td>
+            </tr>
+            <tr>
+              <td>SERIES:</td>
+              <td>{{series}}</td>
+            </tr>
+          </tbody>
+        </table>
+      </td>
+      <td class="header-barcode-reserve"></td>
+    </tr>
+  </table>
+</header>
