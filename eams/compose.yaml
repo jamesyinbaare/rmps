@@ -1,0 +1,131 @@
+services:
+  eams-backend:
+    build:
+      context: backend
+      dockerfile: Dockerfile
+    container_name: eams-backend
+    ports:
+      - "8002:80"
+      - "5679:5678"  # For Python debugging
+    env_file:
+      - .env
+    environment:
+      - ENVIRONMENT=development
+      - PYTHONUNBUFFERED=1
+      - PYTHONDONTWRITEBYTECODE=1
+      - DEBUG=true
+      - RELOAD=true
+      - FASTAPI_HOST=0.0.0.0
+      - FASTAPI_PORT=80
+    volumes:
+      - eams_storage_data:/app/storage/documents
+      - eams_examiner_docs_data:/app/storage/examiner-applications
+      - backend_python_cache:/root/.cache
+      - uv_cache:/root/.cache/uv
+    develop:
+      watch:
+        - action: sync+restart
+          path: ./backend
+          target: /app
+          ignore:
+            - .venv/
+            - __pycache__/
+            - "*.pyc"
+            - .pytest_cache/
+            - .mypy_cache/
+            - .coverage
+            - htmlcov/
+            - storage/
+        - action: rebuild
+          path: ./backend/pyproject.toml
+    command: >
+      sh -c "
+        if [ -f app/scripts/prestart.sh ]; then
+          bash app/scripts/prestart.sh
+        fi &&
+        uv run fastapi dev app/main.py --host 0.0.0.0 --port 80
+      "
+    restart: unless-stopped
+    depends_on:
+      eams_postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:80/health || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    networks:
+      - eams-network
+    ulimits:
+      nofile:
+        soft: 65536
+        hard: 65536
+
+  eams_postgres:
+    image: postgres:18
+    container_name: eams-postgres
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 10s
+      retries: 5
+      start_period: 30s
+      timeout: 10s
+    volumes:
+      - eams_db_data:/var/lib/postgresql/data/pgdata
+    env_file:
+      - .env
+    environment:
+      - PGDATA=/var/lib/postgresql/data/pgdata
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD?Variable not set}
+      - POSTGRES_USER=${POSTGRES_USER?Variable not set}
+      - POSTGRES_DB=${EAMS_POSTGRES_DB:-eams_db}
+      - POSTGRES_HOST_AUTH_METHOD=trust
+    ports:
+      - "5434:5432"
+    command:
+      - "postgres"
+      - "-c"
+      - "max_connections=200"
+      - "-c"
+      - "shared_buffers=256MB"
+    networks:
+      - eams-network
+
+  # Database administration (optional)
+  eams-pgadmin:
+    image: dpage/pgadmin4
+    container_name: eams-pgadmin
+    restart: unless-stopped
+    environment:
+      - PGADMIN_DEFAULT_EMAIL=admin@localhost.dev
+      - PGADMIN_DEFAULT_PASSWORD=admin
+      - PGADMIN_CONFIG_SERVER_MODE=False
+    ports:
+      - "5051:80"
+    volumes:
+      - eams_pgadmin_data:/var/lib/pgadmin
+    depends_on:
+      - eams_postgres
+    networks:
+      - eams-network
+
+volumes:
+  eams_db_data:
+    driver: local
+  eams_storage_data:
+    driver: local
+  eams_examiner_docs_data:
+    driver: local
+  backend_python_cache:
+    driver: local
+  uv_cache:
+    driver: local
+  eams_pgadmin_data:
+    driver: local
+
+networks:
+  eams-network:
+    driver: bridge
+    name: eams-network
