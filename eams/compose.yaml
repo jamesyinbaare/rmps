@@ -62,6 +62,41 @@ services:
         soft: 65536
         hard: 65536
 
+  eams-frontend:
+    build:
+      context: frontend
+      dockerfile: Dockerfile
+    container_name: eams-frontend
+    ports:
+      - "3002:3002"
+      - "9229:9229"  # For Node.js debugging
+    environment:
+      - NODE_ENV=development
+      - NEXT_PUBLIC_API_BASE_URL=http://localhost:8002
+      - WATCHPACK_POLLING=true
+      - CHOKIDAR_USEPOLLING=true
+      - NEXT_TELEMETRY_DISABLED=1
+    volumes:
+      - /app/node_modules  # Anonymous volume to prevent host node_modules interference
+      - /app/.next  # Anonymous volume for build cache
+      - node_cache:/root/.npm  # Cache npm packages
+    develop:
+      watch:
+        - action: sync+restart
+          path: ./frontend
+          target: /app
+          ignore:
+            - .next/
+            - node_modules/
+            - .git/
+            - coverage/
+            - "*.log"
+        - action: rebuild
+          path: ./frontend/package.json
+    restart: unless-stopped
+    networks:
+      - eams-network
+
   eams_postgres:
     image: postgres:18
     container_name: eams-postgres
@@ -123,6 +158,8 @@ volumes:
   uv_cache:
     driver: local
   eams_pgadmin_data:
+    driver: local
+  node_cache:
     driver: local
 
 networks:
