@@ -24,10 +24,12 @@ class Settings(BaseSettings):
     smtp_password: str = ""
     smtp_from_email: str = ""
     smtp_from_name: str = "EAMS"
+    # Frontend URL for public links (recommendations, etc.)
+    frontend_base_url: str = "http://localhost:3002"  # EAMS frontend URL
     # Storage settings
     storage_backend: str = "local"  # local, gcs, s3, azure
     storage_path: str = "storage/documents"
-    storage_max_size: int = 2 * 1024 * 1024  # 50MB default
+    storage_max_size: int = 2 * 1024 * 1024
     examiner_document_storage_path: str = "storage/examiner-applications"
     # Examiner application settings
     examiner_application_fee: float = 100.00  # GH¢30.00 application fee

@@ -1,6 +1,9 @@
 """Service for sending examiner recommendation emails."""
 import logging
 import secrets
+import smtplib
+from email.mime.text import MIMEText
+from email.mime.multipart import MIMEMultipart
 from datetime import datetime, timedelta
 
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -58,9 +61,8 @@ def get_recommendation_url(token: str) -> str:
     Returns:
         Full URL to recommendation form
     """
-    # TODO: Configure frontend URL in settings
-    frontend_url = "http://localhost:3002"  # EAMS frontend URL
-    return f"{frontend_url}/examiner-recommendation/{token}"
+    frontend_url = getattr(settings, "frontend_base_url", "http://localhost:3002")
+    return f"{frontend_url.rstrip('/')}/examiner-recommendation/{token}"
 
 
 async def send_recommendation_email(
@@ -113,14 +115,62 @@ Best regards,
 CTVET EAMS
 """
 
-    # TODO: Integrate with actual email service
-    # For now, log the email details
+    # Try to send email via SMTP if configured
+    if settings.smtp_host and settings.smtp_from_email:
+        try:
+            # Create message
+            msg = MIMEMultipart()
+            msg["From"] = f"{settings.smtp_from_name} <{settings.smtp_from_email}>"
+            msg["To"] = recommender_email
+            msg["Subject"] = subject
+
+            # Add body to email
+            msg.attach(MIMEText(body, "plain"))
+
+            # Create SMTP connection
+            if settings.smtp_port == 465:
+                # SSL connection
+                server = smtplib.SMTP_SSL(settings.smtp_host, settings.smtp_port)
+            else:
+                # TLS connection
+                server = smtplib.SMTP(settings.smtp_host, settings.smtp_port)
+                server.starttls()
+
+            # Login if credentials provided
+            if settings.smtp_user and settings.smtp_password:
+                server.login(settings.smtp_user, settings.smtp_password)
+
+            # Send email
+            server.send_message(msg)
+            server.quit()
+
+            logger.info(
+                f"Recommendation email sent successfully to {recommender_email} "
+                f"(Application: {recommendation.application_id}, Token: {recommendation.token})"
+            )
+            return True
+
+        except Exception as e:
+            logger.error(
+                f"Failed to send recommendation email to {recommender_email}: {e}",
+                exc_info=True,
+            )
+            # Fall through to logging mode
+    else:
+        logger.warning(
+            "SMTP not configured. Email sending is disabled. "
+            "Configure SMTP settings to enable email sending."
+        )
+
+    # Log email details (for development or when SMTP not configured)
     logger.info(
         f"Recommendation email prepared for {recommender_email} "
         f"(Application: {recommendation.application_id}, Token: {recommendation.token})"
     )
     logger.info(f"Email subject: {subject}")
     logger.info(f"Email body:\n{body}")
+    logger.info(f"Recommendation URL: {recommendation_url}")
 
-    # In production, replace this with actual email sending
+    # Return True even in logging mode to allow workflow to continue
+    # In production, you may want to return False if email sending fails
     return True

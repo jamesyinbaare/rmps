@@ -29,6 +29,7 @@ from app.schemas.examiner import (
     ExaminerApplicationDocumentResponse,
     ExaminerApplicationResponse,
     ExaminerApplicationUpdate,
+    ExaminerRecommendationStatus,
     ExaminerRecommendationTokenRequest,
 )
 from app.services.examiner_email_service import send_recommendation_email
@@ -123,6 +124,7 @@ async def list_examiner_applications(
             selectinload(ExaminerApplication.examining_experiences),
             selectinload(ExaminerApplication.training_courses),
             selectinload(ExaminerApplication.documents),
+            selectinload(ExaminerApplication.recommendation),
         )
     )
 
@@ -133,7 +135,19 @@ async def list_examiner_applications(
     result = await session.execute(stmt)
     applications = result.scalars().all()
 
-    return [ExaminerApplicationResponse.model_validate(app) for app in applications]
+    out = []
+    for app in applications:
+        data = ExaminerApplicationResponse.model_validate(app).model_dump()
+        if app.recommendation:
+            rec = app.recommendation
+            data["recommendation_status"] = ExaminerRecommendationStatus(
+                completed=rec.completed_at is not None,
+                recommender_name=rec.recommender_name if rec.completed_at else None,
+            )
+        else:
+            data["recommendation_status"] = None
+        out.append(ExaminerApplicationResponse(**data))
+    return out
 
 
 @router.get("/{application_id}", response_model=ExaminerApplicationResponse)
@@ -167,6 +181,7 @@ async def get_examiner_application(
             selectinload(ExaminerApplication.examining_experiences),
             selectinload(ExaminerApplication.training_courses),
             selectinload(ExaminerApplication.documents),
+            selectinload(ExaminerApplication.recommendation),
         )
     )
 
@@ -179,7 +194,16 @@ async def get_examiner_application(
             detail="Examiner application not found",
         )
 
-    return ExaminerApplicationResponse.model_validate(application)
+    data = ExaminerApplicationResponse.model_validate(application).model_dump()
+    if application.recommendation:
+        rec = application.recommendation
+        data["recommendation_status"] = ExaminerRecommendationStatus(
+            completed=rec.completed_at is not None,
+            recommender_name=rec.recommender_name if rec.completed_at else None,
+        )
+    else:
+        data["recommendation_status"] = None
+    return ExaminerApplicationResponse(**data)
 
 
 @router.put("/{application_id}", response_model=ExaminerApplicationResponse)
@@ -843,7 +867,12 @@ async def request_recommendation(
             detail="Examiner application not found",
         )
 
-    if application.status != ExaminerApplicationStatus.SUBMITTED:
+    # Allow recommendation requests for any status that indicates the application has been submitted
+    if application.status not in [
+        ExaminerApplicationStatus.SUBMITTED,
+        ExaminerApplicationStatus.UNDER_REVIEW,
+        ExaminerApplicationStatus.ACCEPTED,
+    ]:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Recommendation can only be requested for submitted applications",

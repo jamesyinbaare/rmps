@@ -203,6 +203,13 @@ class ExaminerApplicationDocumentResponse(BaseModel):
         from_attributes = True
 
 
+class ExaminerRecommendationStatus(BaseModel):
+    """Summary of recommendation for examiner view (no recommendation details)."""
+
+    completed: bool
+    recommender_name: str | None = None
+
+
 class ExaminerApplicationResponse(BaseModel):
     """Examiner application response."""
 
@@ -236,6 +243,7 @@ class ExaminerApplicationResponse(BaseModel):
     examining_experiences: list[ExaminingExperienceResponse] = []
     training_courses: list[TrainingCourseResponse] = []
     documents: list[ExaminerApplicationDocumentResponse] = []
+    recommendation_status: ExaminerRecommendationStatus | None = None
 
     class Config:
         from_attributes = True
@@ -279,6 +287,7 @@ class ExaminerRecommendationResponse(BaseModel):
 
     id: UUID
     application_id: UUID
+    applicant_name: str | None = None
     recommender_name: str | None
     recommender_status: str | None
     recommender_office_address: str | None

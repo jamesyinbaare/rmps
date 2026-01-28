@@ -50,7 +50,9 @@ async def get_recommendation_by_token(
             detail="Recommendation has already been submitted",
         )
 
-    return ExaminerRecommendationResponse.model_validate(recommendation)
+    data = ExaminerRecommendationResponse.model_validate(recommendation).model_dump()
+    data["applicant_name"] = recommendation.application.full_name if recommendation.application else None
+    return ExaminerRecommendationResponse(**data)
 
 
 @router.post("/{token}", response_model=ExaminerRecommendationResponse)
@@ -103,6 +105,8 @@ async def submit_recommendation(
     recommendation.completed_at = datetime.utcnow()
 
     await session.commit()
-    await session.refresh(recommendation)
+    await session.refresh(recommendation, ["application"])
 
-    return ExaminerRecommendationResponse.model_validate(recommendation)
+    data = ExaminerRecommendationResponse.model_validate(recommendation).model_dump()
+    data["applicant_name"] = recommendation.application.full_name if recommendation.application else None
+    return ExaminerRecommendationResponse(**data)
