@@ -150,11 +150,26 @@ CTVET EAMS
                 f"Failed to send recommendation email to {recommender_email}: {e}",
                 exc_info=True,
             )
-            # Fall through to logging mode
+            # Fall through to console fallback so dev can still get the link
     else:
         logger.warning(
             "SMTP not configured. Email sending is disabled. "
             "Configure SMTP settings to enable email sending."
+        )
+
+    # Console fallback for testing: log the recommendation link when SMTP not used or send failed
+    if getattr(settings, "email_console_fallback", True):
+        logger.info(
+            "Recommendation email (console fallback): To=%s | Link: %s",
+            recommender_email,
+            recommendation_url,
+        )
+        print(
+            f"\n--- Recommendation email (console fallback) ---\n"
+            f"To: {recommender_email}\n"
+            f"Subject: {subject.strip()}\n"
+            f"Recommendation link: {recommendation_url}\n"
+            f"--- Copy the link above to test the recommendation form ---\n"
         )
 
     # Return True even in logging mode to allow workflow to continue

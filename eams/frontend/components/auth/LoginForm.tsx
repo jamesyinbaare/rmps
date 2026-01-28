@@ -22,6 +22,18 @@ export function LoginForm() {
       await login(email, password);
       const me = await getCurrentUser();
       toast.success("Login successful");
+      const role = me.role as string | number;
+      const isAdmin =
+        role === "ADMIN" ||
+        role === "SYSTEM_ADMIN" ||
+        role === 10 ||
+        role === 0 ||
+        role === "10" ||
+        role === "0";
+      if (isAdmin) {
+        router.push("/dashboard/admin");
+        return;
+      }
       const apps = await getApplications();
       const submitted = apps.find(
         (a) =>

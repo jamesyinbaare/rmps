@@ -24,6 +24,8 @@ class Settings(BaseSettings):
     smtp_password: str = ""
     smtp_from_email: str = ""
     smtp_from_name: str = "EAMS"
+    # When SMTP is not configured, log recommendation link to console for testing
+    email_console_fallback: bool = True
     # Frontend URL for public links (recommendations, etc.)
     frontend_base_url: str = "http://localhost:3002"  # EAMS frontend URL
     # Storage settings
