@@ -6,6 +6,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { ApplicationStatusTracker } from "@/components/applications/ApplicationStatusTracker";
+import { RecommendationRequest } from "@/components/applications/RecommendationRequest";
 import { getCurrentUser, getApplications, getApplication, getAccessToken } from "@/lib/api";
 import type { ExaminerApplicationResponse } from "@/types";
 import { toast } from "sonner";
@@ -348,6 +349,18 @@ export default function ExaminerProfilePage() {
           </div>
         </CardContent>
       </Card>
+
+      {/* Recommendation Request - For submitted applications (SUBMITTED, UNDER_REVIEW, ACCEPTED) */}
+      {(application.status === "SUBMITTED" ||
+        application.status === "UNDER_REVIEW" ||
+        application.status === "ACCEPTED") && (
+        <RecommendationRequest
+          applicationId={application.id}
+          applicationNumber={application.application_number}
+          applicantName={application.full_name}
+          recommendationStatus={application.recommendation_status}
+        />
+      )}
     </div>
   );
 }

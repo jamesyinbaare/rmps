@@ -290,12 +290,15 @@ export default function ApplicationDetailPage() {
             />
           )}
 
-          {/* Recommendation Request - Only for SUBMITTED applications */}
-          {application.status === "SUBMITTED" && (
+          {/* Recommendation Request - For submitted applications (SUBMITTED, UNDER_REVIEW, ACCEPTED) */}
+          {(application.status === "SUBMITTED" ||
+            application.status === "UNDER_REVIEW" ||
+            application.status === "ACCEPTED") && (
             <RecommendationRequest
               applicationId={application.id}
               applicationNumber={application.application_number}
               applicantName={application.full_name}
+              recommendationStatus={application.recommendation_status}
             />
           )}
         </div>

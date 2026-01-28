@@ -13,16 +13,21 @@ interface RecommendationRequestProps {
   applicationId: string;
   applicationNumber: string;
   applicantName: string;
+  recommendationStatus?: { completed: boolean; recommender_name: string | null } | null;
 }
 
 export function RecommendationRequest({
   applicationId,
   applicationNumber,
   applicantName,
+  recommendationStatus,
 }: RecommendationRequestProps) {
   const [requesting, setRequesting] = useState(false);
   const [recommenderEmail, setRecommenderEmail] = useState("");
   const [recommenderName, setRecommenderName] = useState("");
+
+  const completed = recommendationStatus?.completed;
+  const completedRecommenderName = recommendationStatus?.recommender_name ?? null;
 
   const handleRequest = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -57,8 +62,19 @@ export function RecommendationRequest({
         <CardDescription>
           Send a recommendation request to a recommender. They will receive an email with a link to complete the recommendation form.
         </CardDescription>
+        {completed && (
+          <p className="text-sm text-muted-foreground mt-2">
+            {completedRecommenderName ? (
+              <>Recommendation received from <strong>{completedRecommenderName}</strong>. </>
+            ) : (
+              "Recommendation received. "
+            )}
+            The contents of the recommendation are confidential.
+          </p>
+        )}
       </CardHeader>
       <CardContent>
+        {completed ? null : (
         <form onSubmit={handleRequest} className="space-y-4">
           <div className="space-y-2">
             <Label htmlFor="recommenderName">Recommender Name</Label>
@@ -94,6 +110,7 @@ export function RecommendationRequest({
             {requesting ? "Sending Request..." : "Send Recommendation Request"}
           </Button>
         </form>
+        )}
       </CardContent>
     </Card>
   );

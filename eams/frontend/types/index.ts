@@ -113,6 +113,7 @@ export interface ExaminerApplicationResponse {
   work_experiences?: WorkExperience[] | null;
   examining_experiences?: ExaminingExperience[] | null;
   training_courses?: TrainingCourse[] | null;
+  recommendation_status?: { completed: boolean; recommender_name: string | null } | null;
 }
 
 export interface ApplicationSubmitResponse {
@@ -204,6 +205,7 @@ export interface ExaminerRecommendationTokenRequest {
 export interface ExaminerRecommendationResponse {
   id: string;
   application_id: string;
+  applicant_name?: string | null;
   recommender_name?: string | null;
   recommender_status?: string | null;
   recommender_office_address?: string | null;
