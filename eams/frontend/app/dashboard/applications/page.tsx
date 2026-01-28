@@ -28,8 +28,8 @@ export default function ApplicationsPage() {
         const apps = await getApplications();
         setApplications(apps);
         setFilteredApplications(apps);
-      } catch (error) {
-        console.error("Failed to load applications:", error);
+      } catch {
+        // Failed to load applications
       } finally {
         setLoading(false);
       }

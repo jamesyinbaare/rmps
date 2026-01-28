@@ -17,9 +17,9 @@ interface DocumentUploadProps {
   onUploadSuccess?: (updatedDocuments: ExaminerApplicationDocumentResponse[]) => void;
 }
 
-const documentTypes: { value: ExaminerDocumentType; label: string; maxFiles: number; accept: string }[] = [
-  { value: "PHOTOGRAPH", label: "Photograph", maxFiles: 1, accept: "image/jpeg,image/png,image/jpg" },
-  { value: "CERTIFICATE", label: "Certificate", maxFiles: 3, accept: "image/jpeg,image/png,image/jpg,application/pdf" },
+const documentTypes: { value: ExaminerDocumentType; label: string; maxFiles: number; accept: string; required?: boolean; requiredHint?: string }[] = [
+  { value: "PHOTOGRAPH", label: "Photograph", maxFiles: 1, accept: "image/jpeg,image/png,image/jpg", required: true },
+  { value: "CERTIFICATE", label: "Certificate", maxFiles: 3, accept: "image/jpeg,image/png,image/jpg,application/pdf", required: true, requiredHint: "At least one required" },
   { value: "TRANSCRIPT", label: "Transcript", maxFiles: 3, accept: "image/jpeg,image/png,image/jpg,application/pdf" },
 ];
 
@@ -94,8 +94,7 @@ export function DocumentUpload({ applicationId, documents = [], onUploadSuccess 
           // Delete old photo
           try {
             await deleteDocument(applicationId, existingPhotos[0].id);
-          } catch (error) {
-            console.error("Failed to delete old photo:", error);
+          } catch {
             // Continue with upload anyway
           }
         }
@@ -199,7 +198,14 @@ export function DocumentUpload({ applicationId, documents = [], onUploadSuccess 
         return (
           <Card key={typeConfig.value} className="w-full">
             <CardHeader>
-              <CardTitle className="text-lg">{typeConfig.label}</CardTitle>
+              <CardTitle className="text-lg">
+                {typeConfig.label}
+                {typeConfig.required && (
+                  <span className="text-destructive font-normal ml-1">
+                    {typeConfig.requiredHint ?? "(required)"}
+                  </span>
+                )}
+              </CardTitle>
               <CardDescription className="text-sm">
                 {typeConfig.value === "PHOTOGRAPH"
                   ? "Upload one photograph (JPEG, PNG). New upload will replace existing."
@@ -251,7 +257,9 @@ export function DocumentUpload({ applicationId, documents = [], onUploadSuccess 
                           onDragLeave={handleDragLeave}
                         >
                           <input
-                            ref={(el) => (fileInputRefs.current[typeConfig.value] = el)}
+                            ref={(el) => {
+                              fileInputRefs.current[typeConfig.value] = el;
+                            }}
                             type="file"
                             accept={typeConfig.accept}
                             onChange={(e) => handleFileSelect(e, typeConfig.value)}
@@ -287,7 +295,9 @@ export function DocumentUpload({ applicationId, documents = [], onUploadSuccess 
                       onDragLeave={handleDragLeave}
                     >
                       <input
-                        ref={(el) => (fileInputRefs.current[typeConfig.value] = el)}
+                        ref={(el) => {
+                              fileInputRefs.current[typeConfig.value] = el;
+                            }}
                         type="file"
                         accept={typeConfig.accept}
                         onChange={(e) => handleFileSelect(e, typeConfig.value)}
@@ -326,7 +336,9 @@ export function DocumentUpload({ applicationId, documents = [], onUploadSuccess 
                       onDragLeave={handleDragLeave}
                     >
                       <input
-                        ref={(el) => (fileInputRefs.current[typeConfig.value] = el)}
+                        ref={(el) => {
+                              fileInputRefs.current[typeConfig.value] = el;
+                            }}
                         type="file"
                         accept={typeConfig.accept}
                         onChange={(e) => handleFileSelect(e, typeConfig.value)}

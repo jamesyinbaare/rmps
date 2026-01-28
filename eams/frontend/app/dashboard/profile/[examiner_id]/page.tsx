@@ -48,14 +48,12 @@ export default function ExaminerProfilePage() {
           if (photo && photo.id) {
             try {
               await loadPhoto(app.id, photo.id);
-            } catch (error) {
-              console.error("Error loading photo:", error);
+            } catch {
               // Continue even if photo fails to load
             }
           }
         }
-      } catch (e) {
-        console.error(e);
+      } catch {
         toast.error("Failed to load profile");
       } finally {
         setLoading(false);
@@ -69,7 +67,6 @@ export default function ExaminerProfilePage() {
     try {
       const token = getAccessToken();
       if (!token) {
-        console.warn("No access token available for photo loading");
         return;
       }
 
@@ -83,8 +80,6 @@ export default function ExaminerProfilePage() {
       });
 
       if (!response.ok) {
-        const errorText = await response.text().catch(() => response.statusText);
-        console.error(`Failed to load photo: ${response.status} ${response.statusText}`, errorText);
         throw new Error(`Failed to load photo: ${response.status} ${response.statusText}`);
       }
 
@@ -98,8 +93,7 @@ export default function ExaminerProfilePage() {
       const blobUrl = URL.createObjectURL(blob);
       photoUrlRef.current = blobUrl;
       setPhotoUrl(blobUrl);
-    } catch (error) {
-      console.error("Failed to load photo:", error);
+    } catch {
       setPhotoUrl(null);
       // Don't show error toast as it's not critical - just show placeholder
     } finally {
@@ -117,29 +111,73 @@ export default function ExaminerProfilePage() {
   }, []);
 
   if (loading) {
-    return <div className="p-6">Loading…</div>;
+    return (
+      <div className="mx-auto max-w-4xl space-y-4 md:space-y-6">
+        <div className="flex items-center gap-3">
+          <div className="h-11 w-11 shrink-0 rounded-md bg-muted animate-pulse" />
+          <div className="space-y-1">
+            <div className="h-8 w-48 rounded bg-muted animate-pulse" />
+            <div className="h-4 w-64 rounded bg-muted animate-pulse" />
+          </div>
+        </div>
+        <div className="rounded-lg border bg-card p-4 md:p-6">
+          <div className="flex flex-wrap items-center gap-3 md:gap-4">
+            <div className="h-16 w-16 shrink-0 rounded-full bg-muted animate-pulse md:h-24 md:w-24" />
+            <div className="space-y-2">
+              <div className="h-6 w-40 rounded bg-muted animate-pulse" />
+              <div className="h-4 w-24 rounded bg-muted animate-pulse" />
+            </div>
+            <div className="h-6 w-20 rounded-full bg-muted animate-pulse" />
+          </div>
+        </div>
+        <div className="rounded-lg border bg-card p-4 md:p-6">
+          <div className="space-y-3 md:space-y-4">
+            <div className="grid gap-4 md:grid-cols-2">
+              <div className="space-y-1">
+                <div className="h-4 w-20 rounded bg-muted animate-pulse" />
+                <div className="h-5 w-32 rounded bg-muted animate-pulse" />
+              </div>
+              <div className="space-y-1">
+                <div className="h-4 w-16 rounded bg-muted animate-pulse" />
+                <div className="h-5 w-28 rounded bg-muted animate-pulse" />
+              </div>
+            </div>
+            <div className="h-4 w-full rounded bg-muted animate-pulse" />
+            <div className="h-4 w-2/3 rounded bg-muted animate-pulse" />
+          </div>
+        </div>
+      </div>
+    );
   }
 
   if (forbidden) {
     return (
-      <div className="p-6">
-        <p>You can only view your own profile.</p>
-        <Link href="/dashboard/application">
-          <Button variant="outline" className="mt-4">
-            Back to application
-          </Button>
-        </Link>
+      <div className="mx-auto max-w-4xl">
+        <Card className="mx-auto max-w-md">
+          <CardContent className="p-6">
+            <p className="text-muted-foreground">You can only view your own profile.</p>
+            <Link href="/dashboard/application" className="mt-4 block">
+              <Button variant="outline" className="w-full min-h-11 sm:w-auto">
+                Back to application
+              </Button>
+            </Link>
+          </CardContent>
+        </Card>
       </div>
     );
   }
 
   if (!application) {
     return (
-      <div className="p-6">
-        <p className="text-muted-foreground">No submitted application found.</p>
-        <Link href="/dashboard/application">
-          <Button className="mt-4">Go to application</Button>
-        </Link>
+      <div className="mx-auto max-w-4xl">
+        <Card className="mx-auto max-w-md">
+          <CardContent className="p-6">
+            <p className="text-muted-foreground">No submitted application found.</p>
+            <Link href="/dashboard/application" className="mt-4 block">
+              <Button className="w-full min-h-11 sm:w-auto">Go to application</Button>
+            </Link>
+          </CardContent>
+        </Card>
       </div>
     );
   }
@@ -160,49 +198,48 @@ export default function ExaminerProfilePage() {
   };
 
   return (
-    <div className="space-y-6">
-      <div className="flex items-center gap-4">
-        <Link href="/dashboard/application">
-          <Button variant="ghost" size="icon">
+    <div className="mx-auto max-w-4xl space-y-4 md:space-y-6">
+      <div className="flex items-center gap-3">
+        <Link href="/dashboard/application" className="shrink-0">
+          <Button variant="ghost" size="icon" className="min-h-11 min-w-11 sm:min-w-[unset] sm:gap-2 sm:px-3">
             <ArrowLeft className="h-4 w-4" />
+            <span className="hidden sm:inline">Back</span>
           </Button>
         </Link>
-        <div>
-          <h1 className="text-3xl font-bold">Profile</h1>
-          <p className="text-muted-foreground">Your examiner application profile</p>
+        <div className="min-w-0 flex-1">
+          <h1 className="text-2xl font-bold md:text-3xl">Profile</h1>
+          <p className="text-sm text-muted-foreground md:text-base">Your examiner application profile</p>
         </div>
       </div>
 
       {/* Header: name, title, status */}
       <Card>
-        <CardContent className="pt-6">
-          <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
-            <div className="flex items-center gap-4">
-              {photoLoading ? (
-                <div className="flex h-16 w-16 items-center justify-center rounded-full bg-muted shrink-0">
-                  <div className="h-6 w-6 border-2 border-primary border-t-transparent rounded-full animate-spin" />
-                </div>
-              ) : photoUrl ? (
-                <div className="relative h-16 w-16 rounded-full overflow-hidden border-2 border-primary bg-muted shrink-0">
-                  <img
-                    src={photoUrl}
-                    alt={`${application.full_name} photo`}
-                    className="w-full h-full object-cover"
-                  />
-                </div>
-              ) : (
-                <div className="flex h-16 w-16 items-center justify-center rounded-full bg-muted shrink-0">
-                  <User className="h-8 w-8 text-muted-foreground" />
-                </div>
-              )}
-              <div>
-                <h2 className="text-2xl font-semibold">{application.full_name}</h2>
-                {application.title && (
-                  <p className="text-muted-foreground">{application.title}</p>
-                )}
+        <CardContent className="p-4 pt-6 md:p-6">
+          <div className="flex flex-wrap items-center gap-3 md:gap-4">
+            {photoLoading ? (
+              <div className="flex h-16 w-16 shrink-0 items-center justify-center rounded-full bg-muted md:h-20 md:w-20 lg:h-24 lg:w-24">
+                <div className="h-6 w-6 border-2 border-primary border-t-transparent rounded-full animate-spin" />
               </div>
+            ) : photoUrl ? (
+              <div className="relative h-16 w-16 shrink-0 overflow-hidden rounded-full border-2 border-primary bg-muted md:h-20 md:w-20 lg:h-24 lg:w-24">
+                <img
+                  src={photoUrl}
+                  alt={`${application.full_name} photo`}
+                  className="h-full w-full object-cover"
+                />
+              </div>
+            ) : (
+              <div className="flex h-16 w-16 shrink-0 items-center justify-center rounded-full bg-muted md:h-20 md:w-20 lg:h-24 lg:w-24">
+                <User className="h-8 w-8 text-muted-foreground md:h-9 md:w-9 lg:h-10 lg:w-10" />
+              </div>
+            )}
+            <div className="min-w-0 flex-1">
+              <h2 className="wrap-break-word text-xl font-semibold md:text-2xl">{application.full_name}</h2>
+              {application.title && (
+                <p className="wrap-break-word text-muted-foreground">{application.title}</p>
+              )}
             </div>
-            <Badge variant={getStatusBadgeVariant(application.status)} className="w-fit">
+            <Badge variant={getStatusBadgeVariant(application.status)} className="w-fit shrink-0">
               {application.status}
             </Badge>
           </div>
@@ -212,26 +249,26 @@ export default function ExaminerProfilePage() {
       <ApplicationStatusTracker status={application.status} />
 
       <Card>
-        <CardHeader>
-          <CardTitle>Personal particulars</CardTitle>
+        <CardHeader className="p-4 md:p-6">
+          <CardTitle className="text-lg md:text-2xl">Personal particulars</CardTitle>
           <CardDescription>Contact and institutional information</CardDescription>
         </CardHeader>
-        <CardContent className="space-y-4">
+        <CardContent className="space-y-3 p-4 pt-0 md:space-y-4 md:p-6 md:pt-0">
           <div className="grid gap-4 md:grid-cols-2">
             <div>
               <p className="text-sm font-medium text-muted-foreground">Full name</p>
-              <p className="mt-1">{application.full_name}</p>
+              <p className="mt-1 wrap-break-word">{application.full_name}</p>
             </div>
             {application.title && (
               <div>
                 <p className="text-sm font-medium text-muted-foreground">Title</p>
-                <p className="mt-1">{application.title}</p>
+                <p className="mt-1 wrap-break-word">{application.title}</p>
               </div>
             )}
             {application.nationality && (
               <div>
                 <p className="text-sm font-medium text-muted-foreground">Nationality</p>
-                <p className="mt-1">{application.nationality}</p>
+                <p className="mt-1 wrap-break-word">{application.nationality}</p>
               </div>
             )}
             {application.date_of_birth && (
@@ -242,17 +279,17 @@ export default function ExaminerProfilePage() {
             )}
           </div>
           {(application.office_address || application.residential_address) && (
-            <div className="space-y-2">
+            <div className="space-y-3 md:space-y-4">
               {application.office_address && (
                 <div>
                   <p className="text-sm font-medium text-muted-foreground">Office address</p>
-                  <p className="mt-1">{application.office_address}</p>
+                  <p className="mt-1 wrap-break-word">{application.office_address}</p>
                 </div>
               )}
               {application.residential_address && (
                 <div>
                   <p className="text-sm font-medium text-muted-foreground">Residential address</p>
-                  <p className="mt-1">{application.residential_address}</p>
+                  <p className="mt-1 wrap-break-word">{application.residential_address}</p>
                 </div>
               )}
             </div>
@@ -261,31 +298,31 @@ export default function ExaminerProfilePage() {
             {application.email_address && (
               <div>
                 <p className="text-sm font-medium text-muted-foreground">Email</p>
-                <p className="mt-1">{application.email_address}</p>
+                <p className="mt-1 wrap-break-word">{application.email_address}</p>
               </div>
             )}
             {application.telephone_office && (
               <div>
                 <p className="text-sm font-medium text-muted-foreground">Telephone (office)</p>
-                <p className="mt-1">{application.telephone_office}</p>
+                <p className="mt-1 wrap-break-word">{application.telephone_office}</p>
               </div>
             )}
             {application.telephone_cell && (
               <div>
                 <p className="text-sm font-medium text-muted-foreground">Telephone (cell)</p>
-                <p className="mt-1">{application.telephone_cell}</p>
+                <p className="mt-1 wrap-break-word">{application.telephone_cell}</p>
               </div>
             )}
             {application.present_school_institution && (
               <div>
                 <p className="text-sm font-medium text-muted-foreground">Present school</p>
-                <p className="mt-1">{application.present_school_institution}</p>
+                <p className="mt-1 wrap-break-word">{application.present_school_institution}</p>
               </div>
             )}
             {application.present_rank_position && (
               <div>
                 <p className="text-sm font-medium text-muted-foreground">Present rank</p>
-                <p className="mt-1">{application.present_rank_position}</p>
+                <p className="mt-1 wrap-break-word">{application.present_rank_position}</p>
               </div>
             )}
           </div>
@@ -293,12 +330,14 @@ export default function ExaminerProfilePage() {
       </Card>
 
       <Card>
-        <CardHeader>
-          <CardTitle>Subject area</CardTitle>
+        <CardHeader className="p-4 md:p-6">
+          <CardTitle className="text-lg md:text-2xl">Subject</CardTitle>
         </CardHeader>
-        <CardContent>
-          {application.subject_area ? (
-            <p className="whitespace-pre-wrap">{application.subject_area}</p>
+        <CardContent className="p-4 pt-0 md:p-6 md:pt-0">
+          {application.subject?.name ? (
+            <p className="wrap-break-word">{application.subject.name}</p>
+          ) : application.subject_area ? (
+            <p className="whitespace-pre-wrap wrap-break-word">{application.subject_area}</p>
           ) : (
             <p className="text-muted-foreground">—</p>
           )}
@@ -307,14 +346,14 @@ export default function ExaminerProfilePage() {
 
       {(application.additional_information || application.ceased_examining_explanation) && (
         <Card>
-          <CardHeader>
-            <CardTitle>Additional information</CardTitle>
+          <CardHeader className="p-4 md:p-6">
+            <CardTitle className="text-lg md:text-2xl">Additional information</CardTitle>
           </CardHeader>
-          <CardContent className="space-y-4">
+          <CardContent className="space-y-3 p-4 pt-0 md:space-y-4 md:p-6 md:pt-0">
             {application.additional_information && (
               <div>
                 <p className="text-sm font-medium text-muted-foreground">Additional information</p>
-                <p className="mt-1 whitespace-pre-wrap">{application.additional_information}</p>
+                <p className="mt-1 whitespace-pre-wrap wrap-break-word">{application.additional_information}</p>
               </div>
             )}
             {application.ceased_examining_explanation && (
@@ -322,7 +361,7 @@ export default function ExaminerProfilePage() {
                 <p className="text-sm font-medium text-muted-foreground">
                   Ceased examining explanation
                 </p>
-                <p className="mt-1 whitespace-pre-wrap">{application.ceased_examining_explanation}</p>
+                <p className="mt-1 whitespace-pre-wrap wrap-break-word">{application.ceased_examining_explanation}</p>
               </div>
             )}
           </CardContent>
@@ -330,14 +369,14 @@ export default function ExaminerProfilePage() {
       )}
 
       <Card>
-        <CardHeader>
-          <CardTitle>Application</CardTitle>
+        <CardHeader className="p-4 md:p-6">
+          <CardTitle className="text-lg md:text-2xl">Application</CardTitle>
           <CardDescription>Reference and timeline</CardDescription>
         </CardHeader>
-        <CardContent className="space-y-2">
+        <CardContent className="space-y-2 p-4 pt-0 md:p-6 md:pt-0">
           <div>
             <p className="text-sm font-medium text-muted-foreground">Application number</p>
-            <p className="mt-1">{application.application_number}</p>
+            <p className="mt-1 wrap-break-word">{application.application_number}</p>
           </div>
           <div>
             <p className="text-sm font-medium text-muted-foreground">Submitted</p>

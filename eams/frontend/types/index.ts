@@ -57,6 +57,7 @@ export interface ExaminerApplicationCreate {
   present_school_institution?: string | null;
   present_rank_position?: string | null;
   subject_area?: string | null;
+  subject_id?: string | null;
   additional_information?: string | null;
   ceased_examining_explanation?: string | null;
 }
@@ -74,6 +75,7 @@ export interface ExaminerApplicationUpdate {
   present_school_institution?: string | null;
   present_rank_position?: string | null;
   subject_area?: string | null;
+  subject_id?: string | null;
   additional_information?: string | null;
   ceased_examining_explanation?: string | null;
   last_completed_step?: number | null;
@@ -101,6 +103,7 @@ export interface ExaminerApplicationResponse {
   present_school_institution?: string | null;
   present_rank_position?: string | null;
   subject_area?: string | null;
+  subject_id?: string | null;
   additional_information?: string | null;
   ceased_examining_explanation?: string | null;
   payment_status?: string | null;
@@ -114,6 +117,8 @@ export interface ExaminerApplicationResponse {
   examining_experiences?: ExaminingExperience[] | null;
   training_courses?: TrainingCourse[] | null;
   recommendation_status?: { completed: boolean; recommender_name: string | null } | null;
+  documents?: ExaminerApplicationDocumentResponse[] | null;
+  subject?: Subject | null;
 }
 
 export interface ApplicationSubmitResponse {
@@ -178,6 +183,27 @@ export type ExaminerSubjectPreferenceType =
   | "PRACTICAL_COMPONENT"
   | "ACCESS_COURSE";
 
+// Subject type for application subject selection (first dropdown)
+export type SubjectType =
+  | "ELECTIVE"
+  | "CORE"
+  | "TECHNICAL_DRAWING_BUILDING_OPTION"
+  | "TECHNICAL_DRAWING_MECHANICAL_OPTION"
+  | "PRACTICAL";
+
+export interface Subject {
+  id: string;
+  code: string;
+  name: string;
+  type: SubjectType | null;
+  description?: string | null;
+}
+
+export interface SubjectTypeOption {
+  value: string;
+  label: string;
+}
+
 export interface SubjectPreference {
   preference_type: ExaminerSubjectPreferenceType;
   subject_area?: string | null;
@@ -211,8 +237,6 @@ export interface ExaminerRecommendationResponse {
   recommender_office_address?: string | null;
   recommender_phone?: string | null;
   quality_ratings?: Record<string, number> | null;
-  integrity_assessment?: string | null;
-  certification_statement?: string | null;
   recommendation_decision?: boolean | null;
   recommender_signature?: string | null;
   recommender_date?: string | null;

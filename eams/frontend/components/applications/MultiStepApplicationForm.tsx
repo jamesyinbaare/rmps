@@ -12,6 +12,13 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Badge } from "@/components/ui/badge";
 import { DatePicker } from "@/components/ui/date-picker";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { Plus, Trash2, ChevronRight, ChevronLeft, Check, FileText } from "lucide-react";
 import type {
   ExaminerApplicationCreate,
@@ -24,16 +31,33 @@ import type {
   TrainingCourse,
 } from "@/types";
 import { format } from "date-fns";
-import { getApplicationPrice, initializeApplicationPayment, getApplication } from "@/lib/api";
+import { getApplicationPrice, initializeApplicationPayment, getApplication, getSubjectTypes, getSubjects } from "@/lib/api";
 import { toast } from "sonner";
 import { DocumentUpload } from "@/components/applications/DocumentUpload";
-import type { ExaminerApplicationDocumentResponse, ExaminerDocumentType } from "@/types";
+import { SearchableSubjectSelect } from "@/components/ui/searchable-subject-select";
+import type {
+  ExaminerApplicationDocumentResponse,
+  ExaminerDocumentType,
+  Subject,
+  SubjectTypeOption,
+} from "@/types";
+
+const TITLE_OPTIONS = [
+  { value: "__none__", label: "Select title" },
+  { value: "Mr.", label: "Mr." },
+  { value: "Mrs.", label: "Mrs." },
+  { value: "Ms.", label: "Ms." },
+  { value: "Miss", label: "Miss" },
+  { value: "Rev.", label: "Rev." },
+  { value: "Dr.", label: "Dr." },
+  { value: "Prof.", label: "Prof." },
+] as const;
 
 // Step 1: Personal Particulars only (validates current step without touching step 2+ fields)
 const step1Schema = z
   .object({
     full_name: z.string().min(1, "Full name is required"),
-    title: z.string().optional().nullable(),
+    title: z.string().refine((v) => v && v !== "__none__", "Title is required"),
     nationality: z.string().optional().nullable(),
     date_of_birth: z.string().optional().nullable(),
     office_address: z.string().optional().nullable(),
@@ -54,7 +78,10 @@ const step1Schema = z
   );
 
 const step2Schema = z.object({
-  subject_area: z.string().min(1, "Subject area is required"),
+  subject_type: z.string().min(1, "Subject type is required"),
+  subject_id: z
+    .union([z.string().uuid(), z.literal(""), z.null()])
+    .refine((v) => v != null && v !== "", "Please select a subject"),
 });
 
 const step8Schema = z.object({
@@ -66,7 +93,7 @@ const step8Schema = z.object({
 const multiStepSchema = z.object({
   // Step 1: Personal Particulars
   full_name: z.string().min(1, "Full name is required"),
-  title: z.string().optional().nullable(),
+  title: z.string().refine((v) => v && v !== "__none__", "Title is required"),
   nationality: z.string().optional().nullable(),
   date_of_birth: z.string().optional().nullable(),
   office_address: z.string().optional().nullable(),
@@ -77,8 +104,11 @@ const multiStepSchema = z.object({
   present_school_institution: z.string().optional().nullable(),
   present_rank_position: z.string().optional().nullable(),
 
-  // Step 2: Subject Area
-  subject_area: z.string().min(1, "Subject area is required"),
+  // Step 2: Subject (type + subject)
+  subject_type: z.string().min(1, "Subject type is required"),
+  subject_id: z
+    .union([z.string().uuid(), z.literal(""), z.null()])
+    .refine((v) => v != null && v !== "", "Please select a subject"),
 
   // Step 3: Qualifications
   qualifications: z.array(
@@ -205,6 +235,8 @@ export function MultiStepApplicationForm({
   } | null>(null);
   const [paymentLoading, setPaymentLoading] = useState(false);
   const [documents, setDocuments] = useState<ExaminerApplicationDocumentResponse[]>([]);
+  const [subjectTypeOptions, setSubjectTypeOptions] = useState<SubjectTypeOption[]>([]);
+  const [subjectsByType, setSubjectsByType] = useState<Subject[]>([]);
   const activeDraftId = localDraftId ?? draftId;
   const lastInitialStepRef = useRef<number | null>(null);
 
@@ -212,6 +244,8 @@ export function MultiStepApplicationForm({
     register,
     handleSubmit,
     control,
+    watch,
+    setValue,
     formState: { errors },
     getValues,
     reset,
@@ -221,7 +255,7 @@ export function MultiStepApplicationForm({
     resolver: zodResolver(multiStepSchema),
     defaultValues: {
       full_name: "",
-      title: null,
+      title: "__none__",
       nationality: null,
       date_of_birth: null,
       office_address: null,
@@ -231,7 +265,8 @@ export function MultiStepApplicationForm({
       telephone_cell: null,
       present_school_institution: null,
       present_rank_position: null,
-      subject_area: "",
+      subject_type: "",
+      subject_id: null,
       qualifications: [],
       teaching_experiences: [],
       work_experiences: [],
@@ -292,6 +327,25 @@ export function MultiStepApplicationForm({
     setLocalDraftId(draftId);
   }, [draftId]);
 
+  // Load subject type options for step 2
+  useEffect(() => {
+    getSubjectTypes()
+      .then(setSubjectTypeOptions)
+      .catch(() => setSubjectTypeOptions([]));
+  }, []);
+
+  // Load subjects when subject type changes (step 2)
+  const watchedSubjectType = watch("subject_type");
+  useEffect(() => {
+    if (!watchedSubjectType) {
+      setSubjectsByType([]);
+      return;
+    }
+    getSubjects(watchedSubjectType as import("@/types").SubjectType)
+      .then(setSubjectsByType)
+      .catch(() => setSubjectsByType([]));
+  }, [watchedSubjectType]);
+
   const hasInitializedRef = useRef(false);
   useEffect(() => {
     if (initialData) {
@@ -305,21 +359,21 @@ export function MultiStepApplicationForm({
       let cleanedAdditionalInfo = initialData.additional_information || null;
       if (cleanedAdditionalInfo) {
         // Remove [Structured Data: ...] blocks
-        cleanedAdditionalInfo = cleanedAdditionalInfo.replace(/\[Structured Data:.*?\]/gs, "");
+        cleanedAdditionalInfo = cleanedAdditionalInfo.replace(/\[Structured Data:[\s\S]*?\]/g, "");
 
         // Remove JSON objects that contain nested arrays (legacy format) - handle various patterns
         // Pattern 1: Full JSON objects with empty arrays
-        cleanedAdditionalInfo = cleanedAdditionalInfo.replace(/\{[^}]*"qualifications"\[[^\]]*\][^}]*\}/gs, "");
-        cleanedAdditionalInfo = cleanedAdditionalInfo.replace(/\{[^}]*"teaching_experiences"\[[^\]]*\][^}]*\}/gs, "");
-        cleanedAdditionalInfo = cleanedAdditionalInfo.replace(/\{[^}]*"work_experiences"\[[^\]]*\][^}]*\}/gs, "");
-        cleanedAdditionalInfo = cleanedAdditionalInfo.replace(/\{[^}]*"examining_experiences"\[[^\]]*\][^}]*\}/gs, "");
-        cleanedAdditionalInfo = cleanedAdditionalInfo.replace(/\{[^}]*"training_courses"\[[^\]]*\][^}]*\}/gs, "");
+        cleanedAdditionalInfo = cleanedAdditionalInfo.replace(/\{[^}]*"qualifications"\[[^\]]*\][^}]*\}/g, "");
+        cleanedAdditionalInfo = cleanedAdditionalInfo.replace(/\{[^}]*"teaching_experiences"\[[^\]]*\][^}]*\}/g, "");
+        cleanedAdditionalInfo = cleanedAdditionalInfo.replace(/\{[^}]*"work_experiences"\[[^\]]*\][^}]*\}/g, "");
+        cleanedAdditionalInfo = cleanedAdditionalInfo.replace(/\{[^}]*"examining_experiences"\[[^\]]*\][^}]*\}/g, "");
+        cleanedAdditionalInfo = cleanedAdditionalInfo.replace(/\{[^}]*"training_courses"\[[^\]]*\][^}]*\}/g, "");
 
         // Pattern 2: JSON objects with empty arrays (standard format)
-        cleanedAdditionalInfo = cleanedAdditionalInfo.replace(/\{[^}]*"teaching_experiences"\s*:\s*\[\][^}]*\}/gs, "");
-        cleanedAdditionalInfo = cleanedAdditionalInfo.replace(/\{[^}]*"work_experiences"\s*:\s*\[\][^}]*\}/gs, "");
-        cleanedAdditionalInfo = cleanedAdditionalInfo.replace(/\{[^}]*"examining_experiences"\s*:\s*\[\][^}]*\}/gs, "");
-        cleanedAdditionalInfo = cleanedAdditionalInfo.replace(/\{[^}]*"training_courses"\s*:\s*\[\][^}]*\}/gs, "");
+        cleanedAdditionalInfo = cleanedAdditionalInfo.replace(/\{[^}]*"teaching_experiences"\s*:\s*\[\][^}]*\}/g, "");
+        cleanedAdditionalInfo = cleanedAdditionalInfo.replace(/\{[^}]*"work_experiences"\s*:\s*\[\][^}]*\}/g, "");
+        cleanedAdditionalInfo = cleanedAdditionalInfo.replace(/\{[^}]*"examining_experiences"\s*:\s*\[\][^}]*\}/g, "");
+        cleanedAdditionalInfo = cleanedAdditionalInfo.replace(/\{[^}]*"training_courses"\s*:\s*\[\][^}]*\}/g, "");
 
         // Pattern 3: Standalone JSON fragments starting with comma (like ,"teaching_experiences":[],...)
         cleanedAdditionalInfo = cleanedAdditionalInfo.replace(/,\s*"teaching_experiences"\s*:\s*\[\]/g, "");
@@ -333,10 +387,10 @@ export function MultiStepApplicationForm({
         cleanedAdditionalInfo = cleanedAdditionalInfo.replace(/,\s*$/g, "");
 
         // Pattern 5: Remove any remaining JSON objects that only contain empty arrays (multiline)
-        cleanedAdditionalInfo = cleanedAdditionalInfo.replace(/\{[^}]*"teaching_experiences"\s*:\s*\[\]\s*,\s*"work_experiences"\s*:\s*\[\]\s*,\s*"examining_experiences"\s*:\s*\[\]\s*,\s*"training_courses"\s*:\s*\[\][^}]*\}/gs, "");
+        cleanedAdditionalInfo = cleanedAdditionalInfo.replace(/\{[^}]*"teaching_experiences"\s*:\s*\[\]\s*,\s*"work_experiences"\s*:\s*\[\]\s*,\s*"examining_experiences"\s*:\s*\[\]\s*,\s*"training_courses"\s*:\s*\[\][^}]*\}/g, "");
 
         // Pattern 6: Remove any JSON-like structures with whitespace/newlines
-        cleanedAdditionalInfo = cleanedAdditionalInfo.replace(/\{\s*"teaching_experiences"\s*:\s*\[\]\s*,\s*"work_experiences"\s*:\s*\[\]\s*,\s*"examining_experiences"\s*:\s*\[\]\s*,\s*"training_courses"\s*:\s*\[\]\s*\}/gs, "");
+        cleanedAdditionalInfo = cleanedAdditionalInfo.replace(/\{\s*"teaching_experiences"\s*:\s*\[\]\s*,\s*"work_experiences"\s*:\s*\[\]\s*,\s*"examining_experiences"\s*:\s*\[\]\s*,\s*"training_courses"\s*:\s*\[\]\s*\}/g, "");
 
         // Pattern 7: Remove multiple occurrences of the same pattern (handle repeated artifacts)
         let prevLength = 0;
@@ -352,7 +406,7 @@ export function MultiStepApplicationForm({
       }
       reset({
         full_name: initialData.full_name ?? "",
-        title: initialData.title ?? null,
+        title: initialData.title ?? "__none__",
         nationality: initialData.nationality ?? null,
         date_of_birth: initialData.date_of_birth ?? null,
         office_address: initialData.office_address ?? null,
@@ -362,7 +416,8 @@ export function MultiStepApplicationForm({
         telephone_cell: initialData.telephone_cell ?? null,
         present_school_institution: initialData.present_school_institution ?? null,
         present_rank_position: initialData.present_rank_position ?? null,
-        subject_area: initialData.subject_area ?? "",
+        subject_type: initialData.subject?.type ?? initialData.subject_area ?? "",
+        subject_id: initialData.subject_id ?? null,
         additional_information: cleanedAdditionalInfo,
         ceased_examining_explanation: initialData.ceased_examining_explanation ?? null,
         // Load from backend response if available, otherwise preserve existing or use empty
@@ -462,9 +517,11 @@ export function MultiStepApplicationForm({
 
   const buildCreatePayload = (): ExaminerApplicationCreate => {
     const d = getValues();
+    const title = d.title === "__none__" ? undefined : d.title;
+    if (!title) throw new Error("Title is required");
     return {
       full_name: d.full_name,
-      title: d.title,
+      title,
       nationality: d.nationality,
       date_of_birth: d.date_of_birth || null,
       office_address: d.office_address || null,
@@ -475,6 +532,7 @@ export function MultiStepApplicationForm({
       present_school_institution: d.present_school_institution || null,
       present_rank_position: d.present_rank_position || null,
       subject_area: d.subject_area || null,
+      subject_id: d.subject_id || null,
       additional_information: d.additional_information || null,
       ceased_examining_explanation: d.ceased_examining_explanation || null,
     };
@@ -524,21 +582,21 @@ export function MultiStepApplicationForm({
     let cleanedAdditionalInfo = d.additional_information || null;
     if (cleanedAdditionalInfo) {
       // Remove [Structured Data: ...] blocks
-      cleanedAdditionalInfo = cleanedAdditionalInfo.replace(/\[Structured Data:.*?\]/gs, "");
+      cleanedAdditionalInfo = cleanedAdditionalInfo.replace(/\[Structured Data:[\s\S]*?\]/g, "");
 
       // Remove JSON objects that contain nested arrays (legacy format) - handle various patterns
       // Pattern 1: Full JSON objects with empty arrays
-      cleanedAdditionalInfo = cleanedAdditionalInfo.replace(/\{[^}]*"qualifications"\[[^\]]*\][^}]*\}/gs, "");
-      cleanedAdditionalInfo = cleanedAdditionalInfo.replace(/\{[^}]*"teaching_experiences"\[[^\]]*\][^}]*\}/gs, "");
-      cleanedAdditionalInfo = cleanedAdditionalInfo.replace(/\{[^}]*"work_experiences"\[[^\]]*\][^}]*\}/gs, "");
-      cleanedAdditionalInfo = cleanedAdditionalInfo.replace(/\{[^}]*"examining_experiences"\[[^\]]*\][^}]*\}/gs, "");
-      cleanedAdditionalInfo = cleanedAdditionalInfo.replace(/\{[^}]*"training_courses"\[[^\]]*\][^}]*\}/gs, "");
+      cleanedAdditionalInfo = cleanedAdditionalInfo.replace(/\{[^}]*"qualifications"\[[^\]]*\][^}]*\}/g, "");
+      cleanedAdditionalInfo = cleanedAdditionalInfo.replace(/\{[^}]*"teaching_experiences"\[[^\]]*\][^}]*\}/g, "");
+      cleanedAdditionalInfo = cleanedAdditionalInfo.replace(/\{[^}]*"work_experiences"\[[^\]]*\][^}]*\}/g, "");
+      cleanedAdditionalInfo = cleanedAdditionalInfo.replace(/\{[^}]*"examining_experiences"\[[^\]]*\][^}]*\}/g, "");
+      cleanedAdditionalInfo = cleanedAdditionalInfo.replace(/\{[^}]*"training_courses"\[[^\]]*\][^}]*\}/g, "");
 
       // Pattern 2: JSON objects with empty arrays (standard format)
-      cleanedAdditionalInfo = cleanedAdditionalInfo.replace(/\{[^}]*"teaching_experiences"\s*:\s*\[\][^}]*\}/gs, "");
-      cleanedAdditionalInfo = cleanedAdditionalInfo.replace(/\{[^}]*"work_experiences"\s*:\s*\[\][^}]*\}/gs, "");
-      cleanedAdditionalInfo = cleanedAdditionalInfo.replace(/\{[^}]*"examining_experiences"\s*:\s*\[\][^}]*\}/gs, "");
-      cleanedAdditionalInfo = cleanedAdditionalInfo.replace(/\{[^}]*"training_courses"\s*:\s*\[\][^}]*\}/gs, "");
+      cleanedAdditionalInfo = cleanedAdditionalInfo.replace(/\{[^}]*"teaching_experiences"\s*:\s*\[\][^}]*\}/g, "");
+      cleanedAdditionalInfo = cleanedAdditionalInfo.replace(/\{[^}]*"work_experiences"\s*:\s*\[\][^}]*\}/g, "");
+      cleanedAdditionalInfo = cleanedAdditionalInfo.replace(/\{[^}]*"examining_experiences"\s*:\s*\[\][^}]*\}/g, "");
+      cleanedAdditionalInfo = cleanedAdditionalInfo.replace(/\{[^}]*"training_courses"\s*:\s*\[\][^}]*\}/g, "");
 
       // Pattern 3: Standalone JSON fragments starting with comma (like ,"teaching_experiences":[],...)
       cleanedAdditionalInfo = cleanedAdditionalInfo.replace(/,\s*"teaching_experiences"\s*:\s*\[\]/g, "");
@@ -552,10 +610,10 @@ export function MultiStepApplicationForm({
       cleanedAdditionalInfo = cleanedAdditionalInfo.replace(/,\s*$/g, "");
 
       // Pattern 5: Remove any remaining JSON objects that only contain empty arrays (multiline)
-      cleanedAdditionalInfo = cleanedAdditionalInfo.replace(/\{[^}]*"teaching_experiences"\s*:\s*\[\]\s*,\s*"work_experiences"\s*:\s*\[\]\s*,\s*"examining_experiences"\s*:\s*\[\]\s*,\s*"training_courses"\s*:\s*\[\][^}]*\}/gs, "");
+      cleanedAdditionalInfo = cleanedAdditionalInfo.replace(/\{[^}]*"teaching_experiences"\s*:\s*\[\]\s*,\s*"work_experiences"\s*:\s*\[\]\s*,\s*"examining_experiences"\s*:\s*\[\]\s*,\s*"training_courses"\s*:\s*\[\][^}]*\}/g, "");
 
       // Pattern 6: Remove any JSON-like structures with whitespace/newlines
-      cleanedAdditionalInfo = cleanedAdditionalInfo.replace(/\{\s*"teaching_experiences"\s*:\s*\[\]\s*,\s*"work_experiences"\s*:\s*\[\]\s*,\s*"examining_experiences"\s*:\s*\[\]\s*,\s*"training_courses"\s*:\s*\[\]\s*\}/gs, "");
+      cleanedAdditionalInfo = cleanedAdditionalInfo.replace(/\{\s*"teaching_experiences"\s*:\s*\[\]\s*,\s*"work_experiences"\s*:\s*\[\]\s*,\s*"examining_experiences"\s*:\s*\[\]\s*,\s*"training_courses"\s*:\s*\[\]\s*\}/g, "");
 
       // Pattern 7: Remove multiple occurrences of the same pattern (handle repeated artifacts)
       let prevLength = 0;
@@ -570,9 +628,10 @@ export function MultiStepApplicationForm({
         cleanedAdditionalInfo = null;
       }
     }
+    const title = d.title === "__none__" ? undefined : d.title;
     return {
       full_name: d.full_name,
-      title: d.title,
+      title,
       nationality: d.nationality,
       date_of_birth: d.date_of_birth || null,
       office_address: d.office_address || null,
@@ -583,6 +642,7 @@ export function MultiStepApplicationForm({
       present_school_institution: d.present_school_institution || null,
       present_rank_position: d.present_rank_position || null,
       subject_area: d.subject_area || null,
+      subject_id: d.subject_id || null,
       additional_information: cleanedAdditionalInfo,
       ceased_examining_explanation: d.ceased_examining_explanation || null,
       last_completed_step: step,
@@ -628,7 +688,7 @@ export function MultiStepApplicationForm({
       case 2: {
         const v = getValues();
         schema = step2Schema as StepSchema;
-        payload = { subject_area: v.subject_area };
+        payload = { subject_type: v.subject_type, subject_id: v.subject_id };
         break;
       }
       case 8: {
@@ -702,7 +762,17 @@ export function MultiStepApplicationForm({
     }
 
     if (currentStep === 9 && activeDraftId) {
-      // Documents step - optional, no validation needed
+      // Documents step - photograph and at least one certificate required
+      const hasPhotograph = documents.some((d) => d.document_type === "PHOTOGRAPH");
+      const certificateCount = documents.filter((d) => d.document_type === "CERTIFICATE").length;
+      if (!hasPhotograph) {
+        toast.error("A photograph is required before continuing.");
+        return;
+      }
+      if (certificateCount < 1) {
+        toast.error("At least one certificate is required before continuing.");
+        return;
+      }
       const payload = buildUpdatePayload(9);
       try {
         await onSaveDraft(payload, 9);
@@ -711,7 +781,6 @@ export function MultiStepApplicationForm({
       } catch (saveError) {
         const errorMessage = saveError instanceof Error ? saveError.message : "Failed to save progress";
         toast.error(errorMessage);
-        // Still allow navigation to payment step
         setCompletedSteps((prev) => new Set([...prev, 9]));
         setCurrentStep(10);
       }
@@ -792,13 +861,34 @@ export function MultiStepApplicationForm({
                 )}
               </div>
               <div className="space-y-2">
-                <Label htmlFor="title">Title</Label>
-                <Input
-                  id="title"
-                  {...register("title")}
-                  placeholder="e.g., Dr., Prof., Mr., Mrs."
-                  disabled={loading}
+                <Label htmlFor="title">
+                  Title <span className="text-destructive">*</span>
+                </Label>
+                <Controller
+                  name="title"
+                  control={control}
+                  render={({ field }) => (
+                    <Select
+                      value={field.value ?? "__none__"}
+                      onValueChange={(v) => field.onChange(v)}
+                      disabled={loading}
+                    >
+                      <SelectTrigger id="title">
+                        <SelectValue placeholder="Select title" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {TITLE_OPTIONS.map((opt) => (
+                          <SelectItem key={opt.value} value={opt.value}>
+                            {opt.label}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  )}
                 />
+                {errors.title && (
+                  <p className="text-sm text-destructive">{errors.title.message}</p>
+                )}
               </div>
               <div className="space-y-2">
                 <Label htmlFor="nationality">Nationality</Label>
@@ -900,18 +990,66 @@ export function MultiStepApplicationForm({
         return (
           <div className="space-y-4">
             <div className="space-y-2">
-              <Label htmlFor="subject_area">
-                Subject Area <span className="text-destructive">*</span>
+              <Label htmlFor="subject_type">
+                Subject Type <span className="text-destructive">*</span>
               </Label>
-              <Textarea
-                id="subject_area"
-                {...register("subject_area")}
-                placeholder="Describe the subject areas you are qualified to examine"
-                disabled={loading}
-                rows={6}
+              <Controller
+                name="subject_type"
+                control={control}
+                render={({ field }) => (
+                  <Select
+                    value={field.value || ""}
+                    onValueChange={(v) => {
+                      field.onChange(v);
+                      setValue("subject_id", null);
+                    }}
+                    disabled={loading}
+                  >
+                    <SelectTrigger id="subject_type" className="w-full">
+                      <SelectValue placeholder="Select subject type" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {subjectTypeOptions.map((opt) => (
+                        <SelectItem key={opt.value} value={opt.value}>
+                          {opt.label}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                )}
               />
-              {errors.subject_area && (
-                <p className="text-sm text-destructive">{errors.subject_area.message}</p>
+              {errors.subject_type && (
+                <p className="text-sm text-destructive">{errors.subject_type.message}</p>
+              )}
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="subject_id">
+                Subject <span className="text-destructive">*</span>
+              </Label>
+              <Controller
+                name="subject_id"
+                control={control}
+                render={({ field }) => (
+                  <SearchableSubjectSelect
+                    id="subject_id"
+                    subjects={subjectsByType}
+                    value={field.value}
+                    onValueChange={field.onChange}
+                    placeholder={
+                      getValues("subject_type")
+                        ? "Search or select subject..."
+                        : "Select a subject type first"
+                    }
+                    disabled={loading || !getValues("subject_type")}
+                    aria-invalid={!!errors.subject_id}
+                    aria-describedby={errors.subject_id ? "subject_id_error" : undefined}
+                  />
+                )}
+              />
+              {errors.subject_id && (
+                <p id="subject_id_error" className="text-sm text-destructive" role="alert">
+                  {errors.subject_id.message}
+                </p>
               )}
             </div>
           </div>
@@ -1532,15 +1670,15 @@ export function MultiStepApplicationForm({
         }
         return (
           <div className="space-y-4">
+            <p className="text-sm text-muted-foreground">
+              A photograph and at least one certificate are required before you can continue.
+            </p>
             <DocumentUpload
               applicationId={activeDraftId}
-              onUploadSuccess={async () => {
-                // Reload application to get updated documents
-                if (initialData) {
-                  // Trigger a reload by calling the parent's refresh if available
-                  // For now, we'll just show a success message
-                  toast.success("Document uploaded successfully");
-                }
+              documents={documents}
+              onUploadSuccess={(updatedDocuments) => {
+                setDocuments(updatedDocuments);
+                toast.success("Document uploaded successfully");
               }}
             />
             {documents.length > 0 && (
@@ -1665,13 +1803,18 @@ export function MultiStepApplicationForm({
               </CardContent>
             </Card>
 
-            {/* Subject Area */}
+            {/* Subject */}
             <Card>
               <CardHeader>
-                <CardTitle className="text-lg">Subject Area</CardTitle>
+                <CardTitle className="text-lg">Subject</CardTitle>
               </CardHeader>
               <CardContent>
-                <p className="text-sm whitespace-pre-wrap">{d.subject_area || "—"}</p>
+                <p className="text-sm">
+                  {initialData?.subject?.name ??
+                    subjectsByType.find((s) => s.id === d.subject_id)?.name ??
+                    d.subject_id ??
+                    "—"}
+                </p>
               </CardContent>
             </Card>
 

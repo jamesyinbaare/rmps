@@ -225,13 +225,15 @@ export default function ApplicationDetailPage() {
 
           <Card>
             <CardHeader>
-              <CardTitle>Subject Area & Additional Information</CardTitle>
+              <CardTitle>Subject & Additional Information</CardTitle>
             </CardHeader>
             <CardContent className="space-y-4">
-              {application.subject_area && (
+              {(application.subject?.name || application.subject_area) && (
                 <div>
-                  <p className="text-sm font-medium text-muted-foreground">Subject Area</p>
-                  <p className="mt-1 whitespace-pre-wrap">{application.subject_area}</p>
+                  <p className="text-sm font-medium text-muted-foreground">Subject</p>
+                  <p className="mt-1 whitespace-pre-wrap">
+                    {application.subject?.name ?? application.subject_area}
+                  </p>
                 </div>
               )}
               {application.additional_information && (
@@ -285,7 +287,7 @@ export default function ApplicationDetailPage() {
               applicationId={application.id}
               onUploadSuccess={() => {
                 // Optionally reload application to show uploaded documents
-                getApplication(application.id).then(setApplication).catch(console.error);
+                getApplication(application.id).then(setApplication).catch(() => {});
               }}
             />
           )}

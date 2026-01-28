@@ -31,8 +31,6 @@ interface RecommendationFormData {
   recommender_office_address: string;
   recommender_phone: string;
   quality_ratings: Record<string, number>;
-  integrity_assessment: string;
-  certification_statement: string;
   recommendation_decision: boolean | null;
   recommender_signature: string;
   recommender_date: string;
@@ -50,13 +48,12 @@ export default function ExaminerRecommendationPage() {
     recommender_office_address: "",
     recommender_phone: "",
     quality_ratings: {},
-    integrity_assessment: "",
-    certification_statement: "",
     recommendation_decision: null,
     recommender_signature: "",
     recommender_date: "",
   });
   const [errors, setErrors] = useState<Record<string, string>>({});
+  const [photoError, setPhotoError] = useState(false);
 
   useEffect(() => {
     if (token) {
@@ -78,8 +75,6 @@ export default function ExaminerRecommendationPage() {
           recommender_office_address: data.recommender_office_address || "",
           recommender_phone: data.recommender_phone || "",
           quality_ratings: data.quality_ratings || {},
-          integrity_assessment: data.integrity_assessment || "",
-          certification_statement: data.certification_statement || "",
           recommendation_decision: data.recommendation_decision ?? null,
           recommender_signature: data.recommender_signature || "",
           recommender_date: "", // Date will be set automatically on submission
@@ -134,8 +129,6 @@ export default function ExaminerRecommendationPage() {
         recommender_office_address: formData.recommender_office_address || null,
         recommender_phone: formData.recommender_phone || null,
         quality_ratings: formData.quality_ratings,
-        integrity_assessment: formData.integrity_assessment || null,
-        certification_statement: formData.certification_statement || null,
         recommendation_decision: formData.recommendation_decision!,
         recommender_signature: formData.recommender_signature || null,
         recommender_date: today,
@@ -221,11 +214,19 @@ export default function ExaminerRecommendationPage() {
               Recommendation for <strong>{recommendation.applicant_name}</strong>
             </p>
           )}
-          <p className="text-sm text-muted-foreground mt-2">
-            Please complete all sections. All quality ratings are required.
-          </p>
+          {!photoError && (
+            <div className="mt-3 flex justify-start">
+              <img
+                src={`${process.env.NEXT_PUBLIC_API_BASE_URL || "http://localhost:8002"}/api/v1/public/examiner-recommendations/${token}/applicant-photo`}
+                alt="Applicant photograph"
+                className="h-24 w-24 rounded-lg border object-cover object-top"
+                onError={() => setPhotoError(true)}
+              />
+            </div>
+          )}
+
           <p className="text-sm text-muted-foreground mt-2 rounded-md border border-border bg-muted/50 p-3">
-            The applicant will not see what you submit. They will only be informed that a recommendation was received and who submitted it. Please be candid in your responses.
+          Please complete this form honestly and to the best of your knowledge. Your responses will be used to assess the applicant's suitability to serve as an examiner. All information provided will be treated as confidential and used solely for this purpose.
           </p>
         </CardHeader>
         <CardContent>
@@ -350,36 +351,6 @@ export default function ExaminerRecommendationPage() {
                   {errors.quality_ratings}
                 </p>
               )}
-            </div>
-
-            {/* Integrity Assessment */}
-            <div className="space-y-2">
-              <Label htmlFor="integrity_assessment">Integrity Assessment</Label>
-              <Textarea
-                id="integrity_assessment"
-                value={formData.integrity_assessment}
-                onChange={(e) =>
-                  setFormData((prev) => ({ ...prev, integrity_assessment: e.target.value }))
-                }
-                rows={5}
-                placeholder="Please provide your assessment of the applicant's integrity, character, and ethical conduct..."
-                className="text-base"
-              />
-            </div>
-
-            {/* Certification Statement */}
-            <div className="space-y-2">
-              <Label htmlFor="certification_statement">Certification Statement</Label>
-              <Textarea
-                id="certification_statement"
-                value={formData.certification_statement}
-                onChange={(e) =>
-                  setFormData((prev) => ({ ...prev, certification_statement: e.target.value }))
-                }
-                rows={4}
-                placeholder="Please provide any additional certification or statement regarding the applicant..."
-                className="text-base"
-              />
             </div>
 
             {/* Recommendation Decision */}

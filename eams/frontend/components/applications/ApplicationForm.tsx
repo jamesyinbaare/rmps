@@ -1,6 +1,7 @@
 "use client";
 
-import { useForm } from "react-hook-form";
+import { useEffect, useState } from "react";
+import { useForm, Controller } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import * as z from "zod";
 import { Button } from "@/components/ui/button";
@@ -8,11 +9,36 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
-import type { ExaminerApplicationCreate, ExaminerApplicationUpdate } from "@/types";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import { SearchableSubjectSelect } from "@/components/ui/searchable-subject-select";
+import { getSubjectTypes, getSubjects } from "@/lib/api";
+import type {
+  ExaminerApplicationCreate,
+  ExaminerApplicationUpdate,
+  Subject,
+  SubjectTypeOption,
+} from "@/types";
+
+const TITLE_OPTIONS = [
+  { value: "__none__", label: "Select title" },
+  { value: "Mr.", label: "Mr." },
+  { value: "Mrs.", label: "Mrs." },
+  { value: "Ms.", label: "Ms." },
+  { value: "Miss", label: "Miss" },
+  { value: "Rev.", label: "Rev." },
+  { value: "Dr.", label: "Dr." },
+  { value: "Prof.", label: "Prof." },
+] as const;
 
 const applicationSchema = z.object({
   full_name: z.string().min(1, "Full name is required"),
-  title: z.string().optional().nullable(),
+  title: z.string().refine((v) => v && v !== "__none__", "Title is required"),
   nationality: z.string().optional().nullable(),
   date_of_birth: z.string().optional().nullable(),
   office_address: z.string().optional().nullable(),
@@ -22,7 +48,10 @@ const applicationSchema = z.object({
   telephone_cell: z.string().optional().nullable(),
   present_school_institution: z.string().optional().nullable(),
   present_rank_position: z.string().optional().nullable(),
-  subject_area: z.string().min(1, "Subject area is required"),
+  subject_type: z.string().min(1, "Subject type is required"),
+  subject_id: z
+    .union([z.string().uuid(), z.literal(""), z.null()])
+    .refine((v) => v != null && v !== "", "Please select a subject"),
   additional_information: z.string().optional().nullable(),
   ceased_examining_explanation: z.string().optional().nullable(),
 }).refine(
@@ -35,8 +64,13 @@ const applicationSchema = z.object({
 
 type ApplicationFormData = z.infer<typeof applicationSchema>;
 
+interface ApplicationFormInitialData extends ExaminerApplicationCreate, Partial<ExaminerApplicationUpdate> {
+  subject_id?: string | null;
+  subject?: { id: string; name: string; type?: string } | null;
+}
+
 interface ApplicationFormProps {
-  initialData?: ExaminerApplicationCreate | ExaminerApplicationUpdate;
+  initialData?: ApplicationFormInitialData;
   onSubmit: (data: ExaminerApplicationCreate | ExaminerApplicationUpdate) => Promise<void>;
   onCancel?: () => void;
   submitLabel?: string;
@@ -53,7 +87,7 @@ export function ApplicationForm({
   const defaultValues: ApplicationFormData = initialData
     ? {
         full_name: initialData.full_name ?? "",
-        title: initialData.title ?? null,
+        title: initialData.title ?? "__none__",
         nationality: initialData.nationality ?? null,
         date_of_birth: initialData.date_of_birth ?? null,
         office_address: initialData.office_address ?? null,
@@ -63,13 +97,14 @@ export function ApplicationForm({
         telephone_cell: initialData.telephone_cell ?? null,
         present_school_institution: initialData.present_school_institution ?? null,
         present_rank_position: initialData.present_rank_position ?? null,
-        subject_area: initialData.subject_area ?? "",
+        subject_type: (initialData as ApplicationFormInitialData).subject?.type ?? (initialData as ApplicationFormInitialData).subject_area ?? "",
+        subject_id: (initialData as ApplicationFormInitialData).subject_id ?? null,
         additional_information: initialData.additional_information ?? null,
         ceased_examining_explanation: initialData.ceased_examining_explanation ?? null,
       }
     : {
         full_name: "",
-        title: null,
+        title: "__none__",
         nationality: null,
         date_of_birth: null,
         office_address: null,
@@ -79,19 +114,44 @@ export function ApplicationForm({
         telephone_cell: null,
         present_school_institution: null,
         present_rank_position: null,
-        subject_area: "",
+        subject_type: "",
+        subject_id: null,
         additional_information: null,
         ceased_examining_explanation: null,
       };
 
+  const [subjectTypeOptions, setSubjectTypeOptions] = useState<SubjectTypeOption[]>([]);
+  const [subjectsByType, setSubjectsByType] = useState<Subject[]>([]);
+
   const {
     register,
+    control,
     handleSubmit,
+    watch,
+    setValue,
+    getValues,
     formState: { errors },
   } = useForm<ApplicationFormData>({
     resolver: zodResolver(applicationSchema),
     defaultValues,
   });
+
+  useEffect(() => {
+    getSubjectTypes()
+      .then(setSubjectTypeOptions)
+      .catch(() => setSubjectTypeOptions([]));
+  }, []);
+
+  const watchedSubjectType = watch("subject_type");
+  useEffect(() => {
+    if (!watchedSubjectType) {
+      setSubjectsByType([]);
+      return;
+    }
+    getSubjects(watchedSubjectType as import("@/types").SubjectType)
+      .then(setSubjectsByType)
+      .catch(() => setSubjectsByType([]));
+  }, [watchedSubjectType]);
 
   const handleFormSubmit = async (data: ApplicationFormData) => {
     await onSubmit(data);
@@ -120,13 +180,34 @@ export function ApplicationForm({
               )}
             </div>
             <div className="space-y-2">
-              <Label htmlFor="title">Title</Label>
-              <Input
-                id="title"
-                {...register("title")}
-                placeholder="e.g., Dr., Prof., Mr., Mrs."
-                disabled={loading}
+              <Label htmlFor="title">
+                Title <span className="text-destructive">*</span>
+              </Label>
+              <Controller
+                name="title"
+                control={control}
+                render={({ field }) => (
+                  <Select
+                    value={field.value ?? "__none__"}
+                    onValueChange={(v) => field.onChange(v)}
+                    disabled={loading}
+                  >
+                    <SelectTrigger id="title">
+                      <SelectValue placeholder="Select title" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {TITLE_OPTIONS.map((opt) => (
+                        <SelectItem key={opt.value} value={opt.value}>
+                          {opt.label}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                )}
               />
+              {errors.title && (
+                <p className="text-sm text-destructive">{errors.title.message}</p>
+              )}
             </div>
             <div className="space-y-2">
               <Label htmlFor="nationality">Nationality</Label>
@@ -224,22 +305,70 @@ export function ApplicationForm({
 
       <Card>
         <CardHeader>
-          <CardTitle>Subject Area & Additional Information</CardTitle>
+          <CardTitle>Subject & Additional Information</CardTitle>
         </CardHeader>
         <CardContent className="space-y-4">
           <div className="space-y-2">
-            <Label htmlFor="subject_area">
-              Subject Area <span className="text-destructive">*</span>
+            <Label htmlFor="subject_type">
+              Subject Type <span className="text-destructive">*</span>
             </Label>
-            <Textarea
-              id="subject_area"
-              {...register("subject_area")}
-              placeholder="Describe the subject areas you are qualified to examine"
-              disabled={loading}
-              rows={4}
+            <Controller
+              name="subject_type"
+              control={control}
+              render={({ field }) => (
+                <Select
+                  value={field.value || ""}
+                  onValueChange={(v) => {
+                    field.onChange(v);
+                    setValue("subject_id", null);
+                  }}
+                  disabled={loading}
+                >
+                  <SelectTrigger id="subject_type" className="w-full">
+                    <SelectValue placeholder="Select subject type" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {subjectTypeOptions.map((opt) => (
+                      <SelectItem key={opt.value} value={opt.value}>
+                        {opt.label}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              )}
             />
-            {errors.subject_area && (
-              <p className="text-sm text-destructive">{errors.subject_area.message}</p>
+            {errors.subject_type && (
+              <p className="text-sm text-destructive">{errors.subject_type.message}</p>
+            )}
+          </div>
+          <div className="space-y-2">
+            <Label htmlFor="subject_id">
+              Subject <span className="text-destructive">*</span>
+            </Label>
+            <Controller
+              name="subject_id"
+              control={control}
+              render={({ field }) => (
+                <SearchableSubjectSelect
+                  id="subject_id"
+                  subjects={subjectsByType}
+                  value={field.value}
+                  onValueChange={field.onChange}
+                  placeholder={
+                    getValues("subject_type")
+                      ? "Search or select subject..."
+                      : "Select a subject type first"
+                  }
+                  disabled={loading || !getValues("subject_type")}
+                  aria-invalid={!!errors.subject_id}
+                  aria-describedby={errors.subject_id ? "subject_id_error" : undefined}
+                />
+              )}
+            />
+            {errors.subject_id && (
+              <p id="subject_id_error" className="text-sm text-destructive" role="alert">
+                {errors.subject_id.message}
+              </p>
             )}
           </div>
           <div className="space-y-2">

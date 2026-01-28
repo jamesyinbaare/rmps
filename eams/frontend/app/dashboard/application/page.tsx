@@ -46,8 +46,7 @@ export default function ApplicationFlowPage() {
           setDraft(draftApp);
           setDraftId(draftApp.id);
         }
-      } catch (e) {
-        console.error(e);
+      } catch {
         toast.error("Failed to load applications");
       } finally {
         setLoading(false);

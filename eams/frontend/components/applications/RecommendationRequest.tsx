@@ -7,7 +7,7 @@ import { Label } from "@/components/ui/label";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { requestRecommendation } from "@/lib/api";
 import { toast } from "sonner";
-import { Mail, Send } from "lucide-react";
+import { Send } from "lucide-react";
 
 interface RecommendationRequestProps {
   applicationId: string;
@@ -100,12 +100,12 @@ export function RecommendationRequest({
               disabled={requesting}
             />
           </div>
-          <div className="rounded-lg bg-muted p-4 text-sm">
+          <div className="rounded-lg bg-muted p-4 text-sm wrap-break-word">
             <p className="font-medium mb-2">Application Details:</p>
             <p>Application Number: {applicationNumber}</p>
             <p>Applicant Name: {applicantName}</p>
           </div>
-          <Button type="submit" disabled={requesting}>
+          <Button type="submit" disabled={requesting} className="w-full sm:w-auto min-h-11">
             <Send className="mr-2 h-4 w-4" />
             {requesting ? "Sending Request..." : "Send Recommendation Request"}
           </Button>
