@@ -1,0 +1,227 @@
+@import "tailwindcss";
+@import "tw-animate-css";
+
+@custom-variant dark (&:is(.dark *));
+
+/* ============================================
+   CTVET THEME - GHANA FLAG COLOR PALETTE
+   (Registration portal setup)
+   ============================================ */
+
+@theme inline {
+  /* Primary Ghana Flag Colors */
+  --ghana-red: #CE1126;
+  --ghana-gold: #FCD116;
+  --ghana-green: #006B3F;
+  --ghana-black: #000000;
+
+  /* Extended Palette */
+  --ghana-deep-red: #A50E1E;
+  --ghana-rich-gold: #E6B80A;
+  --ghana-forest-green: #005530;
+  --ghana-volta-blue: #0047AB;
+
+  /* Neutrals */
+  --ghana-charcoal: #2C3E50;
+  --ghana-slate: #5D6D7E;
+  --ghana-light-gray: #ECF0F1;
+  --ghana-off-white: #F8F9FA;
+  --ghana-white: #FFFFFF;
+
+  /* Semantic Colors - Mapped to Tailwind */
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-success: var(--success);
+  --color-success-foreground: var(--success-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-input-border: var(--input-border);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-destructive: var(--destructive);
+  --color-destructive-foreground: var(--destructive-foreground);
+  --color-warning: var(--warning);
+  --color-warning-foreground: var(--warning-foreground);
+  --color-ring: var(--ring);
+
+  /* Border Radius */
+  --radius-sm: 4px;
+  --radius-md: 6px;
+  --radius-lg: 8px;
+  --radius-xl: 12px;
+  --radius-2xl: 16px;
+}
+
+/* Light Mode */
+:root {
+  --background: var(--ghana-off-white);
+  --foreground: var(--ghana-black);
+  --primary: var(--ghana-red);
+  --primary-hover: var(--ghana-deep-red);
+  --primary-foreground: var(--ghana-white);
+  --secondary: var(--ghana-gold);
+  --secondary-hover: var(--ghana-rich-gold);
+  --secondary-foreground: var(--ghana-black);
+  --success: var(--ghana-green);
+  --success-hover: var(--ghana-forest-green);
+  --success-foreground: var(--ghana-white);
+  --accent: var(--ghana-volta-blue);
+  --accent-foreground: var(--ghana-white);
+  --card: var(--ghana-white);
+  --card-foreground: var(--ghana-black);
+  --border: var(--ghana-light-gray);
+  --input: var(--ghana-white);
+  --input-border: var(--ghana-slate);
+  --muted: var(--ghana-light-gray);
+  --muted-foreground: var(--ghana-slate);
+  --destructive: var(--ghana-red);
+  --destructive-foreground: var(--ghana-white);
+  --warning: var(--ghana-gold);
+  --warning-foreground: var(--ghana-black);
+  --ring: var(--ghana-red);
+  --radius: 8px;
+
+  --popover: var(--ghana-white);
+  --popover-foreground: var(--ghana-black);
+}
+
+/* Dark Mode */
+.dark {
+  --background: #0F1419;
+  --foreground: #F8F9FA;
+  --primary: #E63946;
+  --primary-hover: #CE1126;
+  --primary-foreground: #FFFFFF;
+  --secondary: #FCD116;
+  --secondary-hover: #E6B80A;
+  --secondary-foreground: #000000;
+  --success: #2ECC71;
+  --success-hover: #006B3F;
+  --success-foreground: #FFFFFF;
+  --accent: #3498DB;
+  --accent-foreground: #FFFFFF;
+  --card: #1A1F2E;
+  --card-foreground: #F8F9FA;
+  --border: #2C3E50;
+  --input: #1A1F2E;
+  --input-border: #5D6D7E;
+  --muted: #2C3E50;
+  --muted-foreground: #95A5A6;
+  --destructive: #E63946;
+  --destructive-foreground: #FFFFFF;
+  --warning: #FCD116;
+  --warning-foreground: #000000;
+  --ring: #E63946;
+
+  --popover: #1A1F2E;
+  --popover-foreground: #F8F9FA;
+}
+
+/* CTVET Theme - Light Mode with Green Primary */
+.ctvet {
+  --background: var(--ghana-off-white);
+  --foreground: var(--ghana-black);
+  --primary: #22C55E;
+  --primary-hover: #16A34A;
+  --primary-foreground: var(--ghana-white);
+  --secondary: var(--ghana-gold);
+  --secondary-hover: var(--ghana-rich-gold);
+  --secondary-foreground: var(--ghana-black);
+  --success: var(--ghana-green);
+  --success-hover: var(--ghana-forest-green);
+  --success-foreground: var(--ghana-white);
+  --accent: var(--ghana-volta-blue);
+  --accent-foreground: var(--ghana-white);
+  --card: var(--ghana-white);
+  --card-foreground: var(--ghana-black);
+  --border: var(--ghana-light-gray);
+  --input: var(--ghana-white);
+  --input-border: var(--ghana-slate);
+  --muted: var(--ghana-light-gray);
+  --muted-foreground: var(--ghana-slate);
+  --destructive: var(--ghana-red);
+  --destructive-foreground: var(--ghana-white);
+  --warning: var(--ghana-gold);
+  --warning-foreground: var(--ghana-black);
+  --ring: #22C55E;
+  --radius: 8px;
+
+  --popover: var(--ghana-white);
+  --popover-foreground: var(--ghana-black);
+}
+
+/* CTVET Theme - Dark Mode with Green Primary */
+.ctvet.dark {
+  --background: #0F1419;
+  --foreground: #F8F9FA;
+  --primary: #10B981;
+  --primary-hover: #059669;
+  --primary-foreground: #FFFFFF;
+  --secondary: #FCD116;
+  --secondary-hover: #E6B80A;
+  --secondary-foreground: #000000;
+  --success: #2ECC71;
+  --success-hover: #006B3F;
+  --success-foreground: #FFFFFF;
+  --accent: #3498DB;
+  --accent-foreground: #FFFFFF;
+  --card: #1A1F2E;
+  --card-foreground: #F8F9FA;
+  --border: #2C3E50;
+  --input: #1A1F2E;
+  --input-border: #5D6D7E;
+  --muted: #2C3E50;
+  --muted-foreground: #95A5A6;
+  --destructive: #E63946;
+  --destructive-foreground: #FFFFFF;
+  --warning: #FCD116;
+  --warning-foreground: #000000;
+  --ring: #10B981;
+
+  --popover: #1A1F2E;
+  --popover-foreground: #F8F9FA;
+}
+
+@layer base {
+  * {
+    @apply border-border;
+  }
+
+  body {
+    @apply bg-background text-foreground antialiased;
+    font-feature-settings: "rlig" 1, "calt" 1;
+  }
+
+  h1, h2, h3, h4, h5, h6 {
+    @apply text-foreground font-semibold;
+  }
+
+  *:focus-visible {
+    @apply outline-2 outline-offset-2 outline-ring;
+  }
+}
+
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+::-webkit-scrollbar-track {
+  @apply bg-muted;
+}
+
+::-webkit-scrollbar-thumb {
+  @apply bg-muted-foreground/30 rounded-lg;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  @apply bg-muted-foreground/50;
+}
