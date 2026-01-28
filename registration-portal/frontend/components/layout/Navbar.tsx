@@ -114,18 +114,6 @@ export function Navbar() {
                     <li>
                       <NavigationMenuLink asChild>
                         <Link
-                          href={authenticated ? "/examiner-applications" : "/login/private?redirect=examiner-applications"}
-                          className={`block rounded-md px-3 py-2 text-sm text-foreground hover:bg-accent hover:text-accent-foreground transition-colors ${
-                            pathname?.startsWith("/examiner-applications") ? "bg-accent text-accent-foreground" : ""
-                          }`}
-                        >
-                          Examiner Application
-                        </Link>
-                      </NavigationMenuLink>
-                    </li>
-                    <li>
-                      <NavigationMenuLink asChild>
-                        <Link
                           href="/timetable"
                           className={`block rounded-md px-3 py-2 text-sm text-foreground hover:bg-accent hover:text-accent-foreground transition-colors ${
                             pathname === "/timetable" ? "bg-accent text-accent-foreground" : ""
@@ -331,20 +319,6 @@ export function Navbar() {
                       }`}
                     >
                       CTVET Private
-                    </Link>
-                    <Link
-                      href={authenticated ? "/examiner-applications" : "/login/private?redirect=examiner-applications"}
-                      onClick={() => {
-                        setMobileMenuOpen(false);
-                        setExaminationsMenuOpen(false);
-                      }}
-                      className={`text-sm transition-colors hover:text-primary ${
-                        pathname?.startsWith("/examiner-applications")
-                          ? "text-primary font-medium"
-                          : "text-muted-foreground"
-                      }`}
-                    >
-                      Examiner Application
                     </Link>
                     <Link
                       href="/timetable"
