@@ -117,6 +117,7 @@ export interface ExaminerApplicationResponse {
   examining_experiences?: ExaminingExperience[] | null;
   training_courses?: TrainingCourse[] | null;
   recommendation_status?: { completed: boolean; recommender_name: string | null } | null;
+  recommendation?: ExaminerRecommendationResponse | null;
   documents?: ExaminerApplicationDocumentResponse[] | null;
   subject?: Subject | null;
 }
@@ -279,4 +280,98 @@ export interface ExaminerMeResponse {
   examiner_id: string;
   full_name: string;
   email_address: string | null;
+}
+
+// Admin - Marking cycles
+export type MarkingCycleStatus = "DRAFT" | "OPEN" | "ALLOCATED" | "CLOSED";
+
+export interface MarkingCycleResponse {
+  id: string;
+  year: number;
+  subject_id: string;
+  total_required: number;
+  experience_ratio: number;
+  acceptance_deadline: string | null;
+  status: MarkingCycleStatus;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface MarkingCycleCreate {
+  year: number;
+  subject_id: string;
+  total_required: number;
+  experience_ratio: number;
+  acceptance_deadline?: string | null;
+}
+
+export interface MarkingCycleUpdate {
+  total_required?: number | null;
+  experience_ratio?: number | null;
+  acceptance_deadline?: string | null;
+  status?: MarkingCycleStatus | null;
+}
+
+// Admin - Quotas
+export type QuotaType = "REGION" | "GENDER";
+
+export interface SubjectQuotaResponse {
+  id: string;
+  cycle_id: string;
+  subject_id: string;
+  quota_type: QuotaType;
+  quota_key: string;
+  min_count: number | null;
+  max_count: number | null;
+  percentage: number | null;
+}
+
+export interface SubjectQuotaCreate {
+  quota_type: QuotaType;
+  quota_key: string;
+  min_count?: number | null;
+  max_count?: number | null;
+  percentage?: number | null;
+}
+
+// Admin - Allocations
+export type AllocationStatus = "APPROVED" | "WAITLISTED" | "REJECTED";
+
+export interface ExaminerAllocationResponse {
+  id: string;
+  examiner_id: string;
+  cycle_id: string;
+  subject_id: string;
+  score: number | null;
+  rank: number | null;
+  allocation_status: AllocationStatus;
+  allocated_at: string;
+}
+
+export interface AllocationResult {
+  approved: number;
+  waitlisted: number;
+  rejected: number;
+  message: string;
+}
+
+// Admin - Subject create and bulk upload
+export interface SubjectCreate {
+  code: string;
+  name: string;
+  type?: SubjectType | null;
+  description?: string | null;
+}
+
+export interface SubjectBulkUploadError {
+  row_number: number;
+  error_message: string;
+  field?: string | null;
+}
+
+export interface SubjectBulkUploadResponse {
+  total_rows: number;
+  successful: number;
+  failed: number;
+  errors: SubjectBulkUploadError[];
 }
