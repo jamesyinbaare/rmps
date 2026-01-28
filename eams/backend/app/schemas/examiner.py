@@ -12,6 +12,59 @@ from app.models import (
 )
 
 
+# Nested schemas for related objects
+class QualificationUpdate(BaseModel):
+    """Qualification data for update."""
+
+    university_college: str
+    degree_diploma: str
+    class_of_degree: str | None = None
+    major_subjects: str | None = None
+    date_of_award: date | None = None
+
+
+class TeachingExperienceUpdate(BaseModel):
+    """Teaching experience data for update."""
+
+    institution_name: str
+    date_from: date | None = None
+    date_to: date | None = None
+    subject: str | None = None
+    level: str | None = None
+
+
+class WorkExperienceUpdate(BaseModel):
+    """Work experience data for update."""
+
+    occupation: str
+    employer_name: str
+    date_from: date | None = None
+    date_to: date | None = None
+    position_held: str | None = None
+
+
+class ExaminingExperienceUpdate(BaseModel):
+    """Examining experience data for update."""
+
+    examination_body: str
+    subject: str | None = None
+    level: str | None = None
+    status: str | None = None
+    date_from: date | None = None
+    date_to: date | None = None
+
+
+class TrainingCourseUpdate(BaseModel):
+    """Training course data for update."""
+
+    organizer: str
+    course_name: str
+    place: str | None = None
+    date_from: date | None = None
+    date_to: date | None = None
+    reason_for_participation: str | None = None
+
+
 class ExaminerApplicationCreate(BaseModel):
     """Create examiner application request."""
 
@@ -49,6 +102,105 @@ class ExaminerApplicationUpdate(BaseModel):
     subject_area: str | None = None
     additional_information: str | None = None
     ceased_examining_explanation: str | None = None
+    last_completed_step: int | None = None
+    # Nested related objects
+    qualifications: list[QualificationUpdate] | None = None
+    teaching_experiences: list[TeachingExperienceUpdate] | None = None
+    work_experiences: list[WorkExperienceUpdate] | None = None
+    examining_experiences: list[ExaminingExperienceUpdate] | None = None
+    training_courses: list[TrainingCourseUpdate] | None = None
+
+
+class QualificationResponse(BaseModel):
+    """Qualification response."""
+
+    id: UUID
+    university_college: str
+    degree_diploma: str
+    class_of_degree: str | None
+    major_subjects: str | None
+    date_of_award: date | None
+    order_index: int
+
+    class Config:
+        from_attributes = True
+
+
+class TeachingExperienceResponse(BaseModel):
+    """Teaching experience response."""
+
+    id: UUID
+    institution_name: str
+    date_from: date | None
+    date_to: date | None
+    subject: str | None
+    level: str | None
+    order_index: int
+
+    class Config:
+        from_attributes = True
+
+
+class WorkExperienceResponse(BaseModel):
+    """Work experience response."""
+
+    id: UUID
+    occupation: str
+    employer_name: str
+    date_from: date | None
+    date_to: date | None
+    position_held: str | None
+    order_index: int
+
+    class Config:
+        from_attributes = True
+
+
+class ExaminingExperienceResponse(BaseModel):
+    """Examining experience response."""
+
+    id: UUID
+    examination_body: str
+    subject: str | None
+    level: str | None
+    status: str | None
+    date_from: date | None
+    date_to: date | None
+    order_index: int
+
+    class Config:
+        from_attributes = True
+
+
+class TrainingCourseResponse(BaseModel):
+    """Training course response."""
+
+    id: UUID
+    organizer: str
+    course_name: str
+    place: str | None
+    date_from: date | None
+    date_to: date | None
+    reason_for_participation: str | None
+    order_index: int
+
+    class Config:
+        from_attributes = True
+
+
+class ExaminerApplicationDocumentResponse(BaseModel):
+    """Examiner application document response."""
+
+    id: UUID
+    application_id: UUID
+    document_type: ExaminerDocumentType
+    file_name: str
+    file_size: int
+    mime_type: str
+    uploaded_at: datetime
+
+    class Config:
+        from_attributes = True
 
 
 class ExaminerApplicationResponse(BaseModel):
@@ -74,23 +226,27 @@ class ExaminerApplicationResponse(BaseModel):
     ceased_examining_explanation: str | None
     payment_status: PaymentStatus | None
     submitted_at: datetime | None
+    last_completed_step: int | None
     created_at: datetime
     updated_at: datetime
+    # Nested relationships
+    qualifications: list[QualificationResponse] = []
+    teaching_experiences: list[TeachingExperienceResponse] = []
+    work_experiences: list[WorkExperienceResponse] = []
+    examining_experiences: list[ExaminingExperienceResponse] = []
+    training_courses: list[TrainingCourseResponse] = []
+    documents: list[ExaminerApplicationDocumentResponse] = []
 
     class Config:
         from_attributes = True
 
 
-class ExaminerApplicationDocumentResponse(BaseModel):
-    """Examiner application document response."""
+class ExaminerMeResponse(BaseModel):
+    """Examiner profile summary for GET /examiner/me."""
 
-    id: UUID
-    application_id: UUID
-    document_type: ExaminerDocumentType
-    file_name: str
-    file_size: int
-    mime_type: str
-    uploaded_at: datetime
+    examiner_id: UUID
+    full_name: str
+    email_address: str | None = None
 
     class Config:
         from_attributes = True

@@ -31,6 +31,12 @@ class UserResponse(BaseModel):
         from_attributes = True
 
 
+class UserMeResponse(UserResponse):
+    """User + examiner_id for GET /me. Used for login redirect to profile/{examiner_id}."""
+
+    examiner_id: str | None = None
+
+
 class UserCreate(BaseModel):
     """User creation request."""
 

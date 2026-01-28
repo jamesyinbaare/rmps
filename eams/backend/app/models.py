@@ -518,6 +518,7 @@ class ExaminerApplication(Base):
 
     payment_status = Column(Enum(PaymentStatus, create_constraint=False, values_callable=lambda x: [e.name for e in x]), nullable=True, index=True)
     submitted_at = Column(DateTime, nullable=True, index=True)
+    last_completed_step = Column(Integer, nullable=True, index=True)
 
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False, index=True)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)

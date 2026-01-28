@@ -10,7 +10,7 @@ class Settings(BaseSettings):
     # Authentication settings
     secret_key: str = "eams-secret-key-change-in-production"  # Should be set via environment variable
     algorithm: str = "HS256"
-    access_token_expire_minutes: int = 30
+    access_token_expire_minutes: int = 60
     refresh_token_expire_days: int = 7
     password_min_length: int = 8
     # System admin initialization settings
@@ -27,10 +27,10 @@ class Settings(BaseSettings):
     # Storage settings
     storage_backend: str = "local"  # local, gcs, s3, azure
     storage_path: str = "storage/documents"
-    storage_max_size: int = 50 * 1024 * 1024  # 50MB default
+    storage_max_size: int = 2 * 1024 * 1024  # 50MB default
     examiner_document_storage_path: str = "storage/examiner-applications"
     # Examiner application settings
-    examiner_application_fee: float = 30.00  # GH¢30.00 application fee
+    examiner_application_fee: float = 100.00  # GH¢30.00 application fee
     recommendation_token_expiry_days: int = 30  # Days until recommendation token expires
 
 

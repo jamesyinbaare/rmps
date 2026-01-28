@@ -173,6 +173,7 @@ from app.routers import (
     auth,
     cycles,
     examiner,
+    examiner_profile,
     examiner_recommendation,
     overrides,
     quotas,
@@ -180,6 +181,7 @@ from app.routers import (
 )
 
 app.include_router(auth.router)
+app.include_router(examiner_profile.router)
 app.include_router(examiner.router)
 app.include_router(examiner_recommendation.router)
 app.include_router(admin_examiner.router)

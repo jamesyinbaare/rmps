@@ -8,8 +8,8 @@ from app.config import settings
 from app.core.security import create_access_token, create_refresh_token, get_password_hash, verify_password
 from app.dependencies.auth import CurrentUserDep
 from app.dependencies.database import DBSessionDep
-from app.models import User, UserRole
-from app.schemas.auth import Token, UserCreate, UserLogin, UserPasswordChange, UserResponse
+from app.models import Examiner, User, UserRole
+from app.schemas.auth import Token, UserCreate, UserLogin, UserMeResponse, UserPasswordChange, UserResponse
 
 router = APIRouter(prefix="/api/v1/auth", tags=["authentication"])
 
@@ -87,10 +87,21 @@ async def register(user_data: UserCreate, session: DBSessionDep) -> UserResponse
     return UserResponse.model_validate(new_user)
 
 
-@router.get("/me", response_model=UserResponse)
-async def get_current_user_info(current_user: CurrentUserDep) -> UserResponse:
-    """Get current user information."""
-    return UserResponse.model_validate(current_user)
+@router.get("/me", response_model=UserMeResponse)
+async def get_current_user_info(
+    session: DBSessionDep,
+    current_user: CurrentUserDep,
+) -> UserMeResponse:
+    """Get current user information. Includes examiner_id when user has an examiner profile."""
+    base = UserResponse.model_validate(current_user)
+    examiner_stmt = select(Examiner).where(Examiner.user_id == current_user.id)
+    examiner_result = await session.execute(examiner_stmt)
+    examiner = examiner_result.scalar_one_or_none()
+    examiner_id_str: str | None = str(examiner.id) if examiner else None
+    return UserMeResponse(
+        **base.model_dump(),
+        examiner_id=examiner_id_str,
+    )
 
 
 @router.post("/change-password", status_code=status.HTTP_200_OK)
