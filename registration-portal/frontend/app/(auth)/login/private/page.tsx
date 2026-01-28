@@ -47,8 +47,6 @@ function PrivateLoginContent() {
               router.push("/certificate-confirmation");
             } else if (redirect === "exam-registration") {
               router.push("/dashboard/private/register");
-            } else if (redirect === "examiner-applications") {
-              router.push("/examiner-applications");
             } else {
               router.push("/dashboard/private");
             }

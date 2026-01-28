@@ -21,9 +21,6 @@ from app.routers import (
     credits,
     api_verification,
     dashboard_verification,
-    examiner,
-    examiner_recommendation,
-    admin_examiner,
 )
 from app.config import logging_settings
 from starlette.types import ASGIApp
@@ -196,9 +193,6 @@ app.include_router(api_keys.router)
 app.include_router(credits.router)
 app.include_router(api_verification.router)
 app.include_router(dashboard_verification.router)
-app.include_router(examiner.router)
-app.include_router(examiner_recommendation.router)
-app.include_router(admin_examiner.router)
 
 
 @app.get("/health", status_code=status.HTTP_200_OK)

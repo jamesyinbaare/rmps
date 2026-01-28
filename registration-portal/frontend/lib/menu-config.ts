@@ -52,12 +52,6 @@ export const systemAdminMenuItems: MenuItem[] = [
         icon: GraduationCap,
         roles: ["SystemAdmin", "Director", "DeputyDirector", "PrincipalManager", "SeniorManager", "Manager", "Staff"],
       },
-      {
-        href: "/dashboard/admin/examiner-applications",
-        label: "Examiners Application (Admin)",
-        icon: UserCircle,
-        roles: ["SystemAdmin", "Director", "DeputyDirector", "PrincipalManager", "SeniorManager", "Manager", "Staff"],
-      },
     ],
   },
   {

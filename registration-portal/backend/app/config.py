@@ -33,6 +33,13 @@ class Settings(BaseSettings):
     system_admin_email: str = ""  # Required: Email for the initial SYSTEM_ADMIN user
     system_admin_password: str = ""  # Required: Password for the initial SYSTEM_ADMIN user
     system_admin_full_name: str = ""  # Required: Full name for the initial SYSTEM_ADMIN user
+    # Email settings
+    smtp_host: str = ""
+    smtp_port: int = 587
+    smtp_user: str = ""
+    smtp_password: str = ""
+    smtp_from_email: str = ""
+    smtp_from_name: str = "Registration Portal"
     # Paystack settings
     paystack_secret_key: str = ""  # Paystack secret key
     paystack_public_key: str = ""  # Paystack public key (for frontend)
@@ -71,9 +78,6 @@ class Settings(BaseSettings):
     result_access_pin_default_max_uses: int = 5
     result_access_pin_length: int = 6
     result_access_serial_length: int = 8
-    # Examiner application settings
-    examiner_application_fee: float = 30.00  # GH¢30.00 application fee
-    recommendation_token_expiry_days: int = 30  # Days until recommendation token expires
 
 
 class LoggingSettings(BaseSettings):
