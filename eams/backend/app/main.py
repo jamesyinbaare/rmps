@@ -116,17 +116,6 @@ class RequestLoggingMiddleware(BaseHTTPMiddleware):
 
         try:
             response = await call_next(request)
-            duration_ms = (time.monotonic() - start_time) * 1000
-
-            self.logger.info(
-                "request completed",
-                extra={
-                    "method": request.method,
-                    "path": request.url.path,
-                    "status": response.status_code,
-                    "duration_ms": round(duration_ms, 2),
-                },
-            )
             return response
 
         except Exception as exc:

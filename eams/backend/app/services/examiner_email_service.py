@@ -143,11 +143,6 @@ CTVET EAMS
             # Send email
             server.send_message(msg)
             server.quit()
-
-            logger.info(
-                f"Recommendation email sent successfully to {recommender_email} "
-                f"(Application: {recommendation.application_id}, Token: {recommendation.token})"
-            )
             return True
 
         except Exception as e:
@@ -161,15 +156,6 @@ CTVET EAMS
             "SMTP not configured. Email sending is disabled. "
             "Configure SMTP settings to enable email sending."
         )
-
-    # Log email details (for development or when SMTP not configured)
-    logger.info(
-        f"Recommendation email prepared for {recommender_email} "
-        f"(Application: {recommendation.application_id}, Token: {recommendation.token})"
-    )
-    logger.info(f"Email subject: {subject}")
-    logger.info(f"Email body:\n{body}")
-    logger.info(f"Recommendation URL: {recommendation_url}")
 
     # Return True even in logging mode to allow workflow to continue
     # In production, you may want to return False if email sending fails

@@ -22,7 +22,6 @@ async def ensure_system_admin_user(session: AsyncSession) -> None:
     existing_user = result.scalar_one_or_none()
 
     if existing_user:
-        logger.info(f"System admin user already exists: {settings.system_admin_email}")
         return
 
     # Create system admin user
@@ -37,4 +36,3 @@ async def ensure_system_admin_user(session: AsyncSession) -> None:
 
     session.add(system_admin)
     await session.commit()
-    logger.info(f"Created system admin user: {settings.system_admin_email}")

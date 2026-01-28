@@ -76,6 +76,16 @@ class ExaminerSubjectPreferenceType(enum.Enum):
     ACCESS_COURSE = "ACCESS_COURSE"
 
 
+class SubjectType(enum.Enum):
+    """Subject type for application subject selection (first dropdown)."""
+
+    ELECTIVE = "ELECTIVE"
+    CORE = "CORE"
+    TECHNICAL_DRAWING_BUILDING_OPTION = "TECHNICAL_DRAWING_BUILDING_OPTION"
+    TECHNICAL_DRAWING_MECHANICAL_OPTION = "TECHNICAL_DRAWING_MECHANICAL_OPTION"
+    PRACTICAL = "PRACTICAL"
+
+
 class ExaminerStatus(enum.Enum):
     """Examiner status."""
 
@@ -169,6 +179,11 @@ class Subject(Base):
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid4, index=True)
     code = Column(String(50), unique=True, nullable=False, index=True)
     name = Column(String(255), nullable=False)
+    type = Column(
+        Enum(SubjectType, create_constraint=False, values_callable=lambda x: [e.value for e in x]),
+        nullable=True,
+        index=True,
+    )
     description = Column(Text, nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
@@ -179,6 +194,7 @@ class Subject(Base):
     quotas = relationship("SubjectQuota", back_populates="subject", cascade="all, delete-orphan")
     allocations = relationship("ExaminerAllocation", back_populates="subject", cascade="all, delete-orphan")
     acceptances = relationship("ExaminerAcceptance", back_populates="subject", cascade="all, delete-orphan")
+    applications = relationship("ExaminerApplication", back_populates="subject")
 
 
 # -----------------------------------------------------------------------------
@@ -513,6 +529,7 @@ class ExaminerApplication(Base):
     present_rank_position = Column(String(255), nullable=True)
 
     subject_area = Column(Text, nullable=True)
+    subject_id = Column(UUID(as_uuid=True), ForeignKey("subjects.id", ondelete="SET NULL"), nullable=True, index=True)
     additional_information = Column(Text, nullable=True)
     ceased_examining_explanation = Column(Text, nullable=True)
 
@@ -533,6 +550,7 @@ class ExaminerApplication(Base):
     documents = relationship("ExaminerApplicationDocument", back_populates="application", cascade="all, delete-orphan")
     recommendation = relationship("ExaminerRecommendation", back_populates="application", uselist=False, cascade="all, delete-orphan")
     processing = relationship("ExaminerApplicationProcessing", back_populates="application", uselist=False, cascade="all, delete-orphan")
+    subject = relationship("Subject", back_populates="applications")
 
 
 class ExaminerApplicationQualification(Base):
@@ -749,6 +767,7 @@ __all__ = [
     "ExaminerApplicationStatus",
     "ExaminerDocumentType",
     "ExaminerSubjectPreferenceType",
+    "SubjectType",
     "MarkingCycleStatus",
     "AllocationStatus",
     "AcceptanceStatus",

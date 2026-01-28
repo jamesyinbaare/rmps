@@ -10,6 +10,7 @@ from app.models import (
     ExaminerSubjectPreferenceType,
     PaymentStatus,
 )
+from app.schemas.subject import SubjectResponse
 
 
 # Nested schemas for related objects
@@ -70,7 +71,7 @@ class ExaminerApplicationCreate(BaseModel):
 
     # Personal Particulars
     full_name: str
-    title: str | None = None
+    title: str
     nationality: str | None = None
     date_of_birth: date | None = None
     office_address: str | None = None
@@ -81,6 +82,7 @@ class ExaminerApplicationCreate(BaseModel):
     present_school_institution: str | None = None
     present_rank_position: str | None = None
     subject_area: str | None = None
+    subject_id: UUID | None = None
     additional_information: str | None = None
     ceased_examining_explanation: str | None = None
 
@@ -100,6 +102,7 @@ class ExaminerApplicationUpdate(BaseModel):
     present_school_institution: str | None = None
     present_rank_position: str | None = None
     subject_area: str | None = None
+    subject_id: UUID | None = None
     additional_information: str | None = None
     ceased_examining_explanation: str | None = None
     last_completed_step: int | None = None
@@ -229,6 +232,7 @@ class ExaminerApplicationResponse(BaseModel):
     present_school_institution: str | None
     present_rank_position: str | None
     subject_area: str | None
+    subject_id: UUID | None = None
     additional_information: str | None
     ceased_examining_explanation: str | None
     payment_status: PaymentStatus | None
@@ -244,6 +248,7 @@ class ExaminerApplicationResponse(BaseModel):
     training_courses: list[TrainingCourseResponse] = []
     documents: list[ExaminerApplicationDocumentResponse] = []
     recommendation_status: ExaminerRecommendationStatus | None = None
+    subject: SubjectResponse | None = None
 
     class Config:
         from_attributes = True
@@ -275,8 +280,6 @@ class ExaminerRecommendationCreate(BaseModel):
     recommender_office_address: str | None = None
     recommender_phone: str | None = None
     quality_ratings: dict[str, int] | None = None  # {quality_name: rating (1-6)}
-    integrity_assessment: str | None = None
-    certification_statement: str | None = None
     recommendation_decision: bool  # True = recommend, False = do not recommend
     recommender_signature: str | None = None
     recommender_date: date | None = None
@@ -293,8 +296,6 @@ class ExaminerRecommendationResponse(BaseModel):
     recommender_office_address: str | None
     recommender_phone: str | None
     quality_ratings: dict[str, int] | None
-    integrity_assessment: str | None
-    certification_statement: str | None
     recommendation_decision: bool | None
     recommender_signature: str | None
     recommender_date: date | None

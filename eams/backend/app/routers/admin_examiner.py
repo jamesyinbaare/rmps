@@ -18,12 +18,24 @@ from app.models import (
     ExaminerApplicationStatus,
     User,
 )
-from app.schemas.examiner import ExaminerApplicationResponse
+from app.schemas.examiner import ExaminerApplicationResponse, ExaminerRecommendationStatus
 from app.services.storage.factory import get_storage_backend
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/v1/admin/applications", tags=["admin-examiner"])
+
+# Eager-load these to avoid lazy-load greenlet errors when building ExaminerApplicationResponse
+_APPLICATION_LOAD_OPTIONS = (
+    selectinload(ExaminerApplication.qualifications),
+    selectinload(ExaminerApplication.teaching_experiences),
+    selectinload(ExaminerApplication.work_experiences),
+    selectinload(ExaminerApplication.examining_experiences),
+    selectinload(ExaminerApplication.training_courses),
+    selectinload(ExaminerApplication.documents),
+    selectinload(ExaminerApplication.recommendation),
+    selectinload(ExaminerApplication.subject),
+)
 
 
 @router.get("", response_model=list[ExaminerApplicationResponse])
@@ -58,12 +70,24 @@ async def list_admin_examiner_applications(
 
     # Pagination
     offset = (page - 1) * page_size
-    stmt = stmt.offset(offset).limit(page_size)
+    stmt = stmt.offset(offset).limit(page_size).options(*_APPLICATION_LOAD_OPTIONS)
 
     result = await session.execute(stmt)
     applications = result.scalars().all()
 
-    return [ExaminerApplicationResponse.model_validate(app) for app in applications]
+    out = []
+    for app in applications:
+        data = ExaminerApplicationResponse.model_validate(app).model_dump()
+        if app.recommendation:
+            rec = app.recommendation
+            data["recommendation_status"] = ExaminerRecommendationStatus(
+                completed=rec.completed_at is not None,
+                recommender_name=rec.recommender_name if rec.completed_at else None,
+            )
+        else:
+            data["recommendation_status"] = None
+        out.append(ExaminerApplicationResponse(**data))
+    return out
 
 
 @router.get("/{application_id}", response_model=ExaminerApplicationResponse)
@@ -73,7 +97,11 @@ async def get_admin_examiner_application(
     current_user: AdminDep,
 ) -> ExaminerApplicationResponse:
     """Get a specific examiner application for processing (admin view)."""
-    stmt = select(ExaminerApplication).where(ExaminerApplication.id == application_id)
+    stmt = (
+        select(ExaminerApplication)
+        .where(ExaminerApplication.id == application_id)
+        .options(*_APPLICATION_LOAD_OPTIONS)
+    )
 
     result = await session.execute(stmt)
     application = result.scalar_one_or_none()
@@ -84,7 +112,16 @@ async def get_admin_examiner_application(
             detail="Examiner application not found",
         )
 
-    return ExaminerApplicationResponse.model_validate(application)
+    data = ExaminerApplicationResponse.model_validate(application).model_dump()
+    if application.recommendation:
+        rec = application.recommendation
+        data["recommendation_status"] = ExaminerRecommendationStatus(
+            completed=rec.completed_at is not None,
+            recommender_name=rec.recommender_name if rec.completed_at else None,
+        )
+    else:
+        data["recommendation_status"] = None
+    return ExaminerApplicationResponse(**data)
 
 
 @router.post("/{application_id}/process", response_model=dict)
@@ -168,9 +205,26 @@ async def accept_examiner_application(
     application.status = ExaminerApplicationStatus.ACCEPTED
 
     await session.commit()
-    await session.refresh(application)
+    app_id = application.id
 
-    return ExaminerApplicationResponse.model_validate(application)
+    # Re-query with eager-loaded relationships to avoid lazy-load greenlet errors
+    stmt = (
+        select(ExaminerApplication)
+        .where(ExaminerApplication.id == app_id)
+        .options(*_APPLICATION_LOAD_OPTIONS)
+    )
+    result = await session.execute(stmt)
+    application = result.scalar_one()
+    data = ExaminerApplicationResponse.model_validate(application).model_dump()
+    if application.recommendation:
+        rec = application.recommendation
+        data["recommendation_status"] = ExaminerRecommendationStatus(
+            completed=rec.completed_at is not None,
+            recommender_name=rec.recommender_name if rec.completed_at else None,
+        )
+    else:
+        data["recommendation_status"] = None
+    return ExaminerApplicationResponse(**data)
 
 
 @router.post("/{application_id}/reject", response_model=ExaminerApplicationResponse)
@@ -224,9 +278,26 @@ async def reject_examiner_application(
     application.status = ExaminerApplicationStatus.REJECTED
 
     await session.commit()
-    await session.refresh(application)
+    app_id = application.id
 
-    return ExaminerApplicationResponse.model_validate(application)
+    # Re-query with eager-loaded relationships to avoid lazy-load greenlet errors
+    stmt = (
+        select(ExaminerApplication)
+        .where(ExaminerApplication.id == app_id)
+        .options(*_APPLICATION_LOAD_OPTIONS)
+    )
+    result = await session.execute(stmt)
+    application = result.scalar_one()
+    data = ExaminerApplicationResponse.model_validate(application).model_dump()
+    if application.recommendation:
+        rec = application.recommendation
+        data["recommendation_status"] = ExaminerRecommendationStatus(
+            completed=rec.completed_at is not None,
+            recommender_name=rec.recommender_name if rec.completed_at else None,
+        )
+    else:
+        data["recommendation_status"] = None
+    return ExaminerApplicationResponse(**data)
 
 
 @router.get("/{application_id}/documents/{document_id}/download")
@@ -262,8 +333,6 @@ async def download_examiner_document(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Document not found",
         )
-
-    logger.info(f"Retrieving document {document_id}: file_path={document.file_path}, mime_type={document.mime_type}")
 
     try:
         # Retrieve file from storage

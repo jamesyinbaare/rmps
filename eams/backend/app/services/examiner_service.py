@@ -72,12 +72,21 @@ def validate_application_completeness(application: ExaminerApplication) -> tuple
     if not application.telephone_cell and not application.telephone_office:
         errors.append("At least one telephone number is required")
 
-    # At least one subject preference (check via subject_area for now)
-    if not application.subject_area or not application.subject_area.strip():
+    # At least one subject preference (subject_id or subject_area)
+    has_subject = application.subject_id is not None or (
+        application.subject_area and application.subject_area.strip()
+    )
+    if not has_subject:
         errors.append("At least one subject preference is required")
 
-    # Photograph is required (check documents)
-    # Note: This requires loading documents relationship
-    # For now, we'll skip this check or make it optional
+    # Documents: photograph required, at least one certificate required
+    # Requires application.documents to be loaded (e.g. selectinload in submit endpoint)
+    documents = getattr(application, "documents", None) or []
+    has_photograph = any(d.document_type == ExaminerDocumentType.PHOTOGRAPH for d in documents)
+    certificate_count = sum(1 for d in documents if d.document_type == ExaminerDocumentType.CERTIFICATE)
+    if not has_photograph:
+        errors.append("A photograph is required")
+    if certificate_count < 1:
+        errors.append("At least one certificate is required")
 
     return len(errors) == 0, errors

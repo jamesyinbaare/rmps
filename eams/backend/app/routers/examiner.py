@@ -94,9 +94,35 @@ async def create_examiner_application(
 
     session.add(application)
     await session.commit()
-    await session.refresh(application)
+    app_id = application.id
 
-    return ExaminerApplicationResponse.model_validate(application)
+    # Re-query with eager-loaded relationships to avoid lazy-load greenlet errors
+    stmt = (
+        select(ExaminerApplication)
+        .where(ExaminerApplication.id == app_id)
+        .options(
+            selectinload(ExaminerApplication.qualifications),
+            selectinload(ExaminerApplication.teaching_experiences),
+            selectinload(ExaminerApplication.work_experiences),
+            selectinload(ExaminerApplication.examining_experiences),
+            selectinload(ExaminerApplication.training_courses),
+            selectinload(ExaminerApplication.documents),
+            selectinload(ExaminerApplication.recommendation),
+            selectinload(ExaminerApplication.subject),
+        )
+    )
+    result = await session.execute(stmt)
+    application = result.scalar_one()
+    data = ExaminerApplicationResponse.model_validate(application).model_dump()
+    if application.recommendation:
+        rec = application.recommendation
+        data["recommendation_status"] = ExaminerRecommendationStatus(
+            completed=rec.completed_at is not None,
+            recommender_name=rec.recommender_name if rec.completed_at else None,
+        )
+    else:
+        data["recommendation_status"] = None
+    return ExaminerApplicationResponse(**data)
 
 
 @router.get("", response_model=list[ExaminerApplicationResponse])
@@ -125,6 +151,7 @@ async def list_examiner_applications(
             selectinload(ExaminerApplication.training_courses),
             selectinload(ExaminerApplication.documents),
             selectinload(ExaminerApplication.recommendation),
+            selectinload(ExaminerApplication.subject),
         )
     )
 
@@ -182,6 +209,7 @@ async def get_examiner_application(
             selectinload(ExaminerApplication.training_courses),
             selectinload(ExaminerApplication.documents),
             selectinload(ExaminerApplication.recommendation),
+            selectinload(ExaminerApplication.subject),
         )
     )
 
@@ -237,6 +265,7 @@ async def update_examiner_application(
             selectinload(ExaminerApplication.work_experiences),
             selectinload(ExaminerApplication.examining_experiences),
             selectinload(ExaminerApplication.training_courses),
+            selectinload(ExaminerApplication.subject),
         )
     )
 
@@ -306,15 +335,16 @@ async def update_examiner_application(
         if nested_field in raw_dump:
             update_data[nested_field] = raw_dump[nested_field]
 
-    logger.info(f"Update data keys: {list(update_data.keys())}")
-    logger.info(f"Has qualifications: {'qualifications' in update_data}, count: {len(update_data.get('qualifications', [])) if 'qualifications' in update_data else 0}")
     for field, value in update_data.items():
         if field not in nested_fields:
             setattr(application, field, value)
 
+    # subject_id can be explicitly None to clear selection
+    if "subject_id" in raw_dump:
+        application.subject_id = raw_dump["subject_id"]
+
     # Handle nested relationships
     if "qualifications" in update_data and update_data["qualifications"] is not None and len(update_data["qualifications"]) > 0:
-        logger.info(f"Saving {len(update_data['qualifications'])} qualifications")
         # Delete existing qualifications
         await session.execute(
             delete(ExaminerApplicationQualification).where(
@@ -323,7 +353,6 @@ async def update_examiner_application(
         )
         # Create new qualifications
         for idx, qual_data in enumerate(update_data["qualifications"]):
-            logger.info(f"Creating qualification {idx}: {qual_data.get('university_college', 'N/A')}")
             qualification = ExaminerApplicationQualification(
                 application_id=application.id,
                 university_college=qual_data["university_college"],
@@ -336,7 +365,6 @@ async def update_examiner_application(
             session.add(qualification)
 
     if "teaching_experiences" in update_data and update_data["teaching_experiences"] is not None and len(update_data["teaching_experiences"]) > 0:
-        logger.info(f"Saving {len(update_data['teaching_experiences'])} teaching experiences")
         # Delete existing teaching experiences
         await session.execute(
             delete(ExaminerApplicationTeachingExperience).where(
@@ -345,7 +373,6 @@ async def update_examiner_application(
         )
         # Create new teaching experiences
         for idx, exp_data in enumerate(update_data["teaching_experiences"]):
-            logger.info(f"Creating teaching experience {idx}: {exp_data.get('institution_name', 'N/A')}")
             experience = ExaminerApplicationTeachingExperience(
                 application_id=application.id,
                 institution_name=exp_data["institution_name"],
@@ -358,7 +385,6 @@ async def update_examiner_application(
             session.add(experience)
 
     if "work_experiences" in update_data and update_data["work_experiences"] is not None and len(update_data["work_experiences"]) > 0:
-        logger.info(f"Saving {len(update_data['work_experiences'])} work experiences")
         # Delete existing work experiences
         await session.execute(
             delete(ExaminerApplicationWorkExperience).where(
@@ -367,7 +393,6 @@ async def update_examiner_application(
         )
         # Create new work experiences
         for idx, exp_data in enumerate(update_data["work_experiences"]):
-            logger.info(f"Creating work experience {idx}: {exp_data.get('occupation', 'N/A')}")
             experience = ExaminerApplicationWorkExperience(
                 application_id=application.id,
                 occupation=exp_data["occupation"],
@@ -437,12 +462,22 @@ async def update_examiner_application(
             selectinload(ExaminerApplication.examining_experiences),
             selectinload(ExaminerApplication.training_courses),
             selectinload(ExaminerApplication.documents),
+            selectinload(ExaminerApplication.recommendation),
+            selectinload(ExaminerApplication.subject),
         )
     )
     result = await session.execute(stmt)
     application = result.scalar_one()
-
-    return ExaminerApplicationResponse.model_validate(application)
+    data = ExaminerApplicationResponse.model_validate(application).model_dump()
+    if application.recommendation:
+        rec = application.recommendation
+        data["recommendation_status"] = ExaminerRecommendationStatus(
+            completed=rec.completed_at is not None,
+            recommender_name=rec.recommender_name if rec.completed_at else None,
+        )
+    else:
+        data["recommendation_status"] = None
+    return ExaminerApplicationResponse(**data)
 
 
 @router.get("/{application_id}/price")
@@ -567,6 +602,7 @@ async def submit_examiner_application(
             ExaminerApplication.id == application_id,
             ExaminerApplication.examiner_id == examiner.id,
         )
+        .options(selectinload(ExaminerApplication.documents))
     )
 
     result = await session.execute(stmt)
@@ -591,7 +627,7 @@ async def submit_examiner_application(
             detail="Payment required before submission. Please complete payment first.",
         )
 
-    # Validate completeness
+    # Validate completeness (includes photograph and at least one certificate)
     is_valid, errors = validate_application_completeness(application)
     if not is_valid:
         raise HTTPException(
