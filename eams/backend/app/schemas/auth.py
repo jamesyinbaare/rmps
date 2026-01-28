@@ -1,7 +1,9 @@
 """Authentication schemas."""
 from uuid import UUID
 
-from pydantic import BaseModel, EmailStr
+from pydantic import BaseModel, EmailStr, field_serializer, field_validator
+
+from app.models import UserRole
 
 
 class UserLogin(BaseModel):
@@ -29,6 +31,21 @@ class UserResponse(BaseModel):
 
     class Config:
         from_attributes = True
+
+    @field_validator("role", mode="before")
+    @classmethod
+    def role_to_name(cls, value: UserRole | str) -> str:
+        """Accept role enum from ORM and normalize to enum name for API."""
+        if isinstance(value, UserRole):
+            return value.name
+        return str(value)
+
+    @field_serializer("role")
+    def serialize_role(self, value: UserRole | str) -> str:
+        """Serialize role as name (e.g. SYSTEM_ADMIN) for JSON."""
+        if isinstance(value, UserRole):
+            return value.name
+        return str(value)
 
 
 class UserMeResponse(UserResponse):

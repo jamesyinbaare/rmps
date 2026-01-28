@@ -1,10 +1,21 @@
 """Allocation schemas."""
-from datetime import datetime
+from datetime import datetime, timezone
 from uuid import UUID
 
-from pydantic import BaseModel
+from pydantic import BaseModel, field_validator
 
 from app.models import AcceptanceStatus, AllocationStatus, MarkingCycleStatus, QuotaType
+
+
+def _naive_utc(dt: datetime | None) -> datetime | None:
+    """Convert to naive UTC for TIMESTAMP WITHOUT TIME ZONE columns."""
+    if dt is None:
+        return None
+    if not isinstance(dt, datetime):
+        return dt
+    if dt.tzinfo is not None:
+        dt = dt.astimezone(timezone.utc).replace(tzinfo=None)
+    return dt
 
 
 class MarkingCycleCreate(BaseModel):
@@ -16,6 +27,11 @@ class MarkingCycleCreate(BaseModel):
     experience_ratio: float
     acceptance_deadline: datetime | None = None
 
+    @field_validator("acceptance_deadline", mode="after")
+    @classmethod
+    def acceptance_deadline_naive_utc(cls, v: datetime | None) -> datetime | None:
+        return _naive_utc(v)
+
 
 class MarkingCycleUpdate(BaseModel):
     """Update marking cycle request."""
@@ -24,6 +40,11 @@ class MarkingCycleUpdate(BaseModel):
     experience_ratio: float | None = None
     acceptance_deadline: datetime | None = None
     status: MarkingCycleStatus | None = None
+
+    @field_validator("acceptance_deadline", mode="after")
+    @classmethod
+    def acceptance_deadline_naive_utc(cls, v: datetime | None) -> datetime | None:
+        return _naive_utc(v)
 
 
 class MarkingCycleResponse(BaseModel):

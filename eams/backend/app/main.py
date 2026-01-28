@@ -158,6 +158,7 @@ app.add_middleware(
 from app.routers import (
     acceptance,
     admin_examiner,
+    admin_subjects,
     allocation,
     auth,
     cycles,
@@ -174,6 +175,7 @@ app.include_router(examiner_profile.router)
 app.include_router(examiner.router)
 app.include_router(examiner_recommendation.router)
 app.include_router(admin_examiner.router)
+app.include_router(admin_subjects.router)
 app.include_router(cycles.router)
 app.include_router(quotas.router)
 app.include_router(allocation.router)

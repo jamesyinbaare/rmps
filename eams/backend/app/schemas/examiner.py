@@ -248,6 +248,7 @@ class ExaminerApplicationResponse(BaseModel):
     training_courses: list[TrainingCourseResponse] = []
     documents: list[ExaminerApplicationDocumentResponse] = []
     recommendation_status: ExaminerRecommendationStatus | None = None
+    recommendation: "ExaminerRecommendationResponse | None" = None  # Full details (e.g. for admin view)
     subject: SubjectResponse | None = None
 
     class Config:

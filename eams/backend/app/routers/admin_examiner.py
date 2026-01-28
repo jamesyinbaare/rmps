@@ -18,7 +18,11 @@ from app.models import (
     ExaminerApplicationStatus,
     User,
 )
-from app.schemas.examiner import ExaminerApplicationResponse, ExaminerRecommendationStatus
+from app.schemas.examiner import (
+    ExaminerApplicationResponse,
+    ExaminerRecommendationResponse,
+    ExaminerRecommendationStatus,
+)
 from app.services.storage.factory import get_storage_backend
 
 logger = logging.getLogger(__name__)
@@ -77,15 +81,19 @@ async def list_admin_examiner_applications(
 
     out = []
     for app in applications:
-        data = ExaminerApplicationResponse.model_validate(app).model_dump()
+        data = ExaminerApplicationResponse.model_validate(app).model_dump(exclude={"recommendation"})
         if app.recommendation:
             rec = app.recommendation
             data["recommendation_status"] = ExaminerRecommendationStatus(
                 completed=rec.completed_at is not None,
                 recommender_name=rec.recommender_name if rec.completed_at else None,
             )
+            rec_data = ExaminerRecommendationResponse.model_validate(rec).model_dump()
+            rec_data["applicant_name"] = app.full_name
+            data["recommendation"] = ExaminerRecommendationResponse(**rec_data)
         else:
             data["recommendation_status"] = None
+            data["recommendation"] = None
         out.append(ExaminerApplicationResponse(**data))
     return out
 
@@ -112,15 +120,19 @@ async def get_admin_examiner_application(
             detail="Examiner application not found",
         )
 
-    data = ExaminerApplicationResponse.model_validate(application).model_dump()
+    data = ExaminerApplicationResponse.model_validate(application).model_dump(exclude={"recommendation"})
     if application.recommendation:
         rec = application.recommendation
         data["recommendation_status"] = ExaminerRecommendationStatus(
             completed=rec.completed_at is not None,
             recommender_name=rec.recommender_name if rec.completed_at else None,
         )
+        rec_data = ExaminerRecommendationResponse.model_validate(rec).model_dump()
+        rec_data["applicant_name"] = application.full_name
+        data["recommendation"] = ExaminerRecommendationResponse(**rec_data)
     else:
         data["recommendation_status"] = None
+        data["recommendation"] = None
     return ExaminerApplicationResponse(**data)
 
 
@@ -130,7 +142,7 @@ async def process_examiner_application(
     session: DBSessionDep,
     current_user: AdminDep,
 ) -> dict:
-    """Update Section C processing information."""
+    """Update Section C processing information and move application to UNDER_REVIEW if SUBMITTED."""
     stmt = select(ExaminerApplication).where(ExaminerApplication.id == application_id)
     result = await session.execute(stmt)
     application = result.scalar_one_or_none()
@@ -156,6 +168,10 @@ async def process_examiner_application(
         )
         session.add(processing)
         await session.flush()
+
+    # Transition status from SUBMITTED to UNDER_REVIEW so the UI reflects "processed"
+    if application.status == ExaminerApplicationStatus.SUBMITTED:
+        application.status = ExaminerApplicationStatus.UNDER_REVIEW
 
     await session.commit()
     await session.refresh(processing)
@@ -215,15 +231,19 @@ async def accept_examiner_application(
     )
     result = await session.execute(stmt)
     application = result.scalar_one()
-    data = ExaminerApplicationResponse.model_validate(application).model_dump()
+    data = ExaminerApplicationResponse.model_validate(application).model_dump(exclude={"recommendation"})
     if application.recommendation:
         rec = application.recommendation
         data["recommendation_status"] = ExaminerRecommendationStatus(
             completed=rec.completed_at is not None,
             recommender_name=rec.recommender_name if rec.completed_at else None,
         )
+        rec_data = ExaminerRecommendationResponse.model_validate(rec).model_dump()
+        rec_data["applicant_name"] = application.full_name
+        data["recommendation"] = ExaminerRecommendationResponse(**rec_data)
     else:
         data["recommendation_status"] = None
+        data["recommendation"] = None
     return ExaminerApplicationResponse(**data)
 
 
@@ -288,15 +308,19 @@ async def reject_examiner_application(
     )
     result = await session.execute(stmt)
     application = result.scalar_one()
-    data = ExaminerApplicationResponse.model_validate(application).model_dump()
+    data = ExaminerApplicationResponse.model_validate(application).model_dump(exclude={"recommendation"})
     if application.recommendation:
         rec = application.recommendation
         data["recommendation_status"] = ExaminerRecommendationStatus(
             completed=rec.completed_at is not None,
             recommender_name=rec.recommender_name if rec.completed_at else None,
         )
+        rec_data = ExaminerRecommendationResponse.model_validate(rec).model_dump()
+        rec_data["applicant_name"] = application.full_name
+        data["recommendation"] = ExaminerRecommendationResponse(**rec_data)
     else:
         data["recommendation_status"] = None
+        data["recommendation"] = None
     return ExaminerApplicationResponse(**data)
 
 
