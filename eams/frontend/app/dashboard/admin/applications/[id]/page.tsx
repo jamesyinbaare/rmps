@@ -597,7 +597,8 @@ export default function AdminApplicationDetailPage() {
                       className={`rounded border p-3 text-sm ${i % 2 === 0 ? "bg-muted/50" : "bg-transparent"}`}
                     >
                       <Field label="Institution" value={q.university_college} />
-                      <Field label="Degree / diploma" value={q.degree_diploma} />
+                      <Field label="Degree type" value={q.degree_type} />
+                      <Field label="Programme" value={q.programme} />
                       <Field label="Class of degree" value={q.class_of_degree} />
                       <Field label="Major subjects" value={q.major_subjects} />
                       <Field

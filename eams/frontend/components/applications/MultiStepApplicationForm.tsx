@@ -21,7 +21,9 @@ import {
 } from "@/components/ui/select";
 import { Plus, Trash2, ChevronRight, ChevronLeft, Check, FileText } from "lucide-react";
 import {
+  DEGREE_TYPES,
   GHANA_REGIONS,
+  TEACHING_LEVELS,
   type ExaminerApplicationCreate,
   type ExaminerApplicationResponse,
   type ExaminerApplicationUpdate,
@@ -124,7 +126,8 @@ const multiStepSchema = z.object({
   qualifications: z.array(
     z.object({
       university_college: z.string().min(1, "University/College is required"),
-      degree_diploma: z.string().min(1, "Degree/Diploma is required"),
+      degree_type: z.enum(DEGREE_TYPES),
+      programme: z.string().optional().nullable(),
       class_of_degree: z.string().optional().nullable(),
       major_subjects: z.string().optional().nullable(),
       date_of_award: z.string().optional().nullable(),
@@ -138,7 +141,10 @@ const multiStepSchema = z.object({
       date_from: z.string().optional().nullable(),
       date_to: z.string().optional().nullable(),
       subject: z.string().optional().nullable(),
-      level: z.string().optional().nullable(),
+      level: z
+        .union([z.enum(TEACHING_LEVELS), z.literal(""), z.null()])
+        .optional()
+        .nullable(),
     })
   ).optional(),
 
@@ -436,7 +442,8 @@ export function MultiStepApplicationForm({
         qualifications: loadNestedData
           ? (initialData.qualifications || []).map((q) => ({
               university_college: q.university_college,
-              degree_diploma: q.degree_diploma,
+              degree_type: q.degree_type,
+              programme: q.programme ?? null,
               class_of_degree: q.class_of_degree ?? null,
               major_subjects: q.major_subjects ?? null,
               date_of_award: q.date_of_award ?? null,
@@ -545,7 +552,7 @@ export function MultiStepApplicationForm({
       telephone_cell: d.telephone_cell || null,
       present_school_institution: d.present_school_institution || null,
       present_rank_position: d.present_rank_position || null,
-      subject_area: d.subject_area || null,
+      subject_area: d.subject_type || null,
       subject_id: d.subject_id || null,
       additional_information: d.additional_information || null,
       ceased_examining_explanation: d.ceased_examining_explanation || null,
@@ -556,7 +563,8 @@ export function MultiStepApplicationForm({
     const d = getValues();
     const qualifications = (d.qualifications || []).map((q) => ({
       university_college: q.university_college,
-      degree_diploma: q.degree_diploma,
+      degree_type: q.degree_type,
+      programme: q.programme || null,
       class_of_degree: q.class_of_degree || null,
       major_subjects: q.major_subjects || null,
       date_of_award: q.date_of_award || null,
@@ -656,7 +664,7 @@ export function MultiStepApplicationForm({
       telephone_cell: d.telephone_cell || null,
       present_school_institution: d.present_school_institution || null,
       present_rank_position: d.present_rank_position || null,
-      subject_area: d.subject_area || null,
+      subject_area: d.subject_type || null,
       subject_id: d.subject_id || null,
       additional_information: cleanedAdditionalInfo,
       ceased_examining_explanation: d.ceased_examining_explanation || null,
@@ -1116,7 +1124,8 @@ export function MultiStepApplicationForm({
                 onClick={() =>
                   appendQualification({
                     university_college: "",
-                    degree_diploma: "",
+                    degree_type: "Other",
+                    programme: null,
                     class_of_degree: null,
                     major_subjects: null,
                     date_of_award: null,
@@ -1160,17 +1169,43 @@ export function MultiStepApplicationForm({
                     </div>
                     <div className="space-y-2">
                       <Label>
-                        Degree/Diploma <span className="text-destructive">*</span>
+                        Degree type <span className="text-destructive">*</span>
                       </Label>
-                      <Input
-                        {...register(`qualifications.${index}.degree_diploma`)}
-                        disabled={loading}
+                      <Controller
+                        name={`qualifications.${index}.degree_type`}
+                        control={control}
+                        render={({ field }) => (
+                          <Select
+                            value={field.value}
+                            onValueChange={field.onChange}
+                            disabled={loading}
+                          >
+                            <SelectTrigger>
+                              <SelectValue placeholder="Select degree type" />
+                            </SelectTrigger>
+                            <SelectContent>
+                              {DEGREE_TYPES.map((value) => (
+                                <SelectItem key={value} value={value}>
+                                  {value}
+                                </SelectItem>
+                              ))}
+                            </SelectContent>
+                          </Select>
+                        )}
                       />
-                      {errors.qualifications?.[index]?.degree_diploma && (
+                      {errors.qualifications?.[index]?.degree_type && (
                         <p className="text-sm text-destructive">
-                          {errors.qualifications[index]?.degree_diploma?.message}
+                          {errors.qualifications[index]?.degree_type?.message}
                         </p>
                       )}
+                    </div>
+                    <div className="space-y-2">
+                      <Label>Programme</Label>
+                      <Input
+                        {...register(`qualifications.${index}.programme`)}
+                        disabled={loading}
+                        placeholder="e.g. Mathematics Education"
+                      />
                     </div>
                     <div className="space-y-2">
                       <Label>Class of Degree</Label>
@@ -1278,9 +1313,27 @@ export function MultiStepApplicationForm({
                     </div>
                     <div className="space-y-2">
                       <Label>Level</Label>
-                      <Input
-                        {...register(`teaching_experiences.${index}.level`)}
-                        disabled={loading}
+                      <Controller
+                        name={`teaching_experiences.${index}.level`}
+                        control={control}
+                        render={({ field }) => (
+                          <Select
+                            value={field.value ?? ""}
+                            onValueChange={(v) => field.onChange(v || null)}
+                            disabled={loading}
+                          >
+                            <SelectTrigger>
+                              <SelectValue placeholder="Select level" />
+                            </SelectTrigger>
+                            <SelectContent>
+                              {TEACHING_LEVELS.map((value) => (
+                                <SelectItem key={value} value={value}>
+                                  {value}
+                                </SelectItem>
+                              ))}
+                            </SelectContent>
+                          </Select>
+                        )}
                       />
                     </div>
                     <Controller
@@ -1907,8 +1960,12 @@ export function MultiStepApplicationForm({
                             <p className="font-medium mt-1">{q.university_college}</p>
                           </div>
                           <div>
-                            <p className="text-muted-foreground text-xs">Degree/Diploma</p>
-                            <p className="font-medium mt-1">{q.degree_diploma}</p>
+                            <p className="text-muted-foreground text-xs">Degree type</p>
+                            <p className="font-medium mt-1">{q.degree_type}</p>
+                          </div>
+                          <div>
+                            <p className="text-muted-foreground text-xs">Programme</p>
+                            <p className="font-medium mt-1">{q.programme || "—"}</p>
                           </div>
                           <div>
                             <p className="text-muted-foreground text-xs">Class of Degree</p>

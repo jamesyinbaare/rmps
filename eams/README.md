@@ -65,31 +65,39 @@ docker compose exec eams-backend uv run alembic upgrade head
 - `PUT /api/v1/examiner/applications/{id}` - Update application
 - `POST /api/v1/examiner/applications/{id}/submit` - Submit application
 
-### Admin - Cycles
-- `POST /api/v1/admin/cycles` - Create marking cycle
-- `GET /api/v1/admin/cycles` - List cycles
-- `PUT /api/v1/admin/cycles/{id}` - Update cycle
-- `POST /api/v1/admin/cycles/{id}/open` - Open cycle
-- `POST /api/v1/admin/cycles/{id}/close` - Close cycle
-- `POST /api/v1/admin/cycles/{id}/archive` - Archive cycle
+### Admin - Examinations
+- `POST /api/v1/admin/examinations` - Create examination
+- `GET /api/v1/admin/examinations` - List examinations
+- `GET /api/v1/admin/examinations/{examination_id}` - Get examination
+- `PUT /api/v1/admin/examinations/{examination_id}` - Update examination
+- `GET /api/v1/admin/examinations/{examination_id}/subject-examiners` - List subject examiners for an examination
+
+### Admin - Subject examiners
+- `POST /api/v1/admin/examinations/{examination_id}/subject-examiners` - Create subject examiner
+- `GET /api/v1/admin/subject-examiners/{subject_examiner_id}` - Get subject examiner
+- `PUT /api/v1/admin/subject-examiners/{subject_examiner_id}` - Update subject examiner
+- `POST /api/v1/admin/subject-examiners/{subject_examiner_id}/open` - Open subject examiner
+- `POST /api/v1/admin/subject-examiners/{subject_examiner_id}/close` - Close subject examiner
+- `POST /api/v1/admin/subject-examiners/{subject_examiner_id}/archive` - Archive subject examiner
 
 ### Admin - Quotas
-- `POST /api/v1/admin/quotas/cycles/{cycle_id}/subjects/{subject_id}` - Set quotas
-- `GET /api/v1/admin/quotas/cycles/{cycle_id}/subjects/{subject_id}` - Get quotas
+- `GET /api/v1/admin/quotas/subject-examiners/{subject_examiner_id}` - Get quotas
+- `PUT /api/v1/admin/quotas/subject-examiners/{subject_examiner_id}` - Set quotas (bulk)
 
-### Admin - Allocation
-- `POST /api/v1/admin/allocations/cycles/{cycle_id}/subjects/{subject_id}/allocate` - Run allocation
-- `POST /api/v1/admin/allocations/cycles/{cycle_id}/subjects/{subject_id}/promote-waitlist` - Promote waitlist
-- `GET /api/v1/admin/allocations/cycles/{cycle_id}/subjects/{subject_id}` - View allocations
+### Admin - Invitations
+- `POST /api/v1/admin/invitations/subject-examiners/{subject_examiner_id}/run` - Run invitation (or rerun; replaces existing)
+- `POST /api/v1/admin/invitations/subject-examiners/{subject_examiner_id}/promote-waitlist` - Promote waitlist
+- `GET /api/v1/admin/invitations/subject-examiners/{subject_examiner_id}` - List invitations
+- `POST /api/v1/admin/invitations/subject-examiners/{subject_examiner_id}/notify` - Send invitations to approved examiners
 
 ### Examiner - Acceptance
-- `POST /api/v1/examiner/acceptances/{id}/accept` - Accept allocation
-- `POST /api/v1/examiner/acceptances/{id}/decline` - Decline allocation
-- `GET /api/v1/examiner/allocations` - List allocations
+- `POST /api/v1/examiner/acceptances/{id}/accept` - Accept invitation
+- `POST /api/v1/examiner/acceptances/{id}/decline` - Decline invitation
+- `GET /api/v1/examiner/allocations` - List my invitations (acceptances)
 
 ### Reports
-- `GET /api/v1/admin/reports/allocations/{cycle_id}` - Allocation report
-- `GET /api/v1/admin/reports/quota-compliance/{cycle_id}` - Quota compliance
+- `GET /api/v1/admin/reports/invitations/{subject_examiner_id}` - Invitation report
+- `GET /api/v1/admin/reports/quota-compliance/{subject_examiner_id}` - Quota compliance
 - `GET /api/v1/examiner/reports/history` - Examiner history
 
 ## Development

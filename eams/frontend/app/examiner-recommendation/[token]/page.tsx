@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect, useRef } from "react";
-import { useParams } from "next/navigation";
+import { useParams, useRouter } from "next/navigation";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
@@ -38,6 +38,7 @@ interface RecommendationFormData {
 
 export default function ExaminerRecommendationPage() {
   const params = useParams();
+  const router = useRouter();
   const token = params.token as string;
   const [recommendation, setRecommendation] = useState<ExaminerRecommendationResponse | null>(null);
   const [loading, setLoading] = useState(true);
@@ -140,13 +141,11 @@ export default function ExaminerRecommendationPage() {
 
       await submitRecommendation(token, submitData);
       toast.success("Thank you. Your recommendation has been submitted.");
-
-      // Reload to show success state
-      await loadRecommendation();
+      router.push("/examiner-recommendation/thank-you");
     } catch (error: any) {
       const message = error?.message ?? "";
       if (message.includes("already been submitted")) {
-        await loadRecommendation();
+        router.push("/examiner-recommendation/thank-you");
       } else {
         toast.error(message || "Failed to submit recommendation");
       }

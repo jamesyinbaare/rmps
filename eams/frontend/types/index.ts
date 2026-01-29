@@ -153,14 +153,32 @@ export interface ApplicationSubmitResponse {
   application_number: string;
 }
 
+// Degree type values (must match backend DegreeType enum)
+export const DEGREE_TYPES = [
+  "PhD",
+  "M.Ed",
+  "M.Sc",
+  "B.Ed",
+  "B.Sc",
+  "Bachelor",
+  "Diploma",
+  "Other",
+] as const;
+export type DegreeType = (typeof DEGREE_TYPES)[number];
+
 // Qualification types
 export interface Qualification {
   university_college: string;
-  degree_diploma: string;
+  degree_type: DegreeType;
+  programme?: string | null;
   class_of_degree?: string | null;
   major_subjects?: string | null;
   date_of_award?: string | null; // ISO date string
 }
+
+// Teaching level values (must match backend TeachingLevel enum)
+export const TEACHING_LEVELS = ["Tertiary", "SHS", "JHS", "Basic", "Other"] as const;
+export type TeachingLevel = (typeof TEACHING_LEVELS)[number];
 
 // Teaching Experience types
 export interface TeachingExperience {
@@ -168,7 +186,7 @@ export interface TeachingExperience {
   date_from?: string | null;
   date_to?: string | null;
   subject?: string | null;
-  level?: string | null;
+  level?: TeachingLevel | null;
 }
 
 // Work Experience types
@@ -307,34 +325,74 @@ export interface ExaminerMeResponse {
   email_address: string | null;
 }
 
-// Admin - Marking cycles
-export type MarkingCycleStatus = "DRAFT" | "OPEN" | "ALLOCATED" | "CLOSED";
+// Admin - Examinations (type/series/year; aligns with registration portal)
+export type ExamType =
+  | "CERTIFICATE_II"
+  | "ADVANCE"
+  | "TECHNICIAN_PART_I"
+  | "TECHNICIAN_PART_II"
+  | "TECHNICIAN_PART_III"
+  | "DIPLOMA";
+export type ExamSeries = "MAY_JUNE" | "NOV_DEC";
 
-export interface MarkingCycleResponse {
+export interface ExaminationResponse {
   id: string;
+  type: ExamType;
+  series: ExamSeries | null;
   year: number;
-  subject_id: string;
-  total_required: number;
-  experience_ratio: number;
   acceptance_deadline: string | null;
-  status: MarkingCycleStatus;
   created_at: string;
   updated_at: string;
 }
 
-export interface MarkingCycleCreate {
+export interface ExaminationCreate {
+  type: ExamType;
+  series?: ExamSeries | null;
   year: number;
-  subject_id: string;
-  total_required: number;
-  experience_ratio: number;
   acceptance_deadline?: string | null;
 }
 
-export interface MarkingCycleUpdate {
+export interface ExaminationUpdate {
+  type?: ExamType | null;
+  series?: ExamSeries | null;
+  year?: number | null;
+  acceptance_deadline?: string | null;
+}
+
+// Admin - Subject examiners (per examination + subject; replaces marking cycle)
+export type SubjectExaminerStatus = "DRAFT" | "OPEN" | "ALLOCATED" | "CLOSED";
+/** @deprecated Use SubjectExaminerStatus. Kept for backend enum name. */
+export type MarkingCycleStatus = SubjectExaminerStatus;
+
+export interface SubjectExaminerResponse {
+  id: string;
+  examination_id: string;
+  subject_id: string;
+  total_required: number;
+  experience_ratio: number;
+  status: SubjectExaminerStatus;
+  created_at: string;
+  updated_at: string;
+  /** Display: examination type */
+  examination_type?: ExamType | null;
+  /** Display: examination series */
+  examination_series?: ExamSeries | null;
+  /** Display: examination year */
+  examination_year?: number | null;
+  /** Display: acceptance deadline from examination */
+  acceptance_deadline?: string | null;
+}
+
+export interface SubjectExaminerCreate {
+  subject_id: string;
+  total_required: number;
+  experience_ratio: number;
+}
+
+export interface SubjectExaminerUpdate {
   total_required?: number | null;
   experience_ratio?: number | null;
-  acceptance_deadline?: string | null;
-  status?: MarkingCycleStatus | null;
+  status?: SubjectExaminerStatus | null;
 }
 
 // Admin - Quotas
@@ -342,7 +400,7 @@ export type QuotaType = "REGION" | "GENDER";
 
 export interface SubjectQuotaResponse {
   id: string;
-  cycle_id: string;
+  subject_examiner_id: string;
   subject_id: string;
   quota_type: QuotaType;
   quota_key: string;
@@ -359,13 +417,25 @@ export interface SubjectQuotaCreate {
   percentage?: number | null;
 }
 
+export interface SubjectQuotaItem {
+  quota_key: string;
+  min_count?: number | null;
+  max_count?: number | null;
+  percentage?: number | null;
+}
+
+export interface SubjectQuotaBulkUpdate {
+  region_quotas: SubjectQuotaItem[];
+  gender_quotas: SubjectQuotaItem[];
+}
+
 // Admin - Allocations
 export type AllocationStatus = "APPROVED" | "WAITLISTED" | "REJECTED";
 
 export interface ExaminerAllocationResponse {
   id: string;
   examiner_id: string;
-  cycle_id: string;
+  subject_examiner_id: string;
   subject_id: string;
   score: number | null;
   rank: number | null;
@@ -373,11 +443,50 @@ export interface ExaminerAllocationResponse {
   allocated_at: string;
 }
 
+/** Invitation list row with examiner name and region (admin list). */
+export interface InvitationWithExaminerResponse extends ExaminerAllocationResponse {
+  examiner_full_name: string | null;
+  examiner_region: string | null;
+}
+
 export interface AllocationResult {
   approved: number;
   waitlisted: number;
   rejected: number;
   message: string;
+}
+
+// Examiner - My allocations (acceptances)
+export type AcceptanceStatus = "PENDING" | "ACCEPTED" | "DECLINED" | "EXPIRED";
+
+/** Admin list of acceptances for a cycle/subject */
+export interface AdminAcceptanceListResponse {
+  id: string;
+  examiner_id: string;
+  examiner_full_name: string | null;
+  examiner_region: string | null;
+  status: AcceptanceStatus;
+  notified_at: string | null;
+  responded_at: string | null;
+  response_deadline: string;
+}
+
+export interface ExaminerAcceptanceResponse {
+  id: string;
+  examiner_id: string;
+  subject_examiner_id: string;
+  subject_id: string;
+  allocation_id: string;
+  status: AcceptanceStatus;
+  notified_at: string | null;
+  responded_at: string | null;
+  response_deadline: string;
+  /** Display: subject code (e.g. MATH101) */
+  subject_code?: string | null;
+  /** Display: subject name */
+  subject_name?: string | null;
+  /** Display: examination year */
+  examination_year?: number | null;
 }
 
 // Admin - Subject create and bulk upload
