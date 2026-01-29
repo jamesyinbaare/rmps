@@ -2,7 +2,10 @@
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
-import { listAdminApplications } from "@/lib/api";
+import {
+  listAdminApplications,
+  type AdminApplicationsSortField,
+} from "@/lib/api";
 import type {
   ExaminerApplicationResponse,
   ExaminerApplicationStatus,
@@ -13,6 +16,14 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
 import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/ui/table";
+import {
   Select,
   SelectContent,
   SelectItem,
@@ -20,7 +31,16 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { toast } from "sonner";
-import { FileText } from "lucide-react";
+import {
+  FileText,
+  Search,
+  ArrowDown,
+  ArrowUp,
+  ChevronsUpDown,
+  Filter,
+  X,
+} from "lucide-react";
+import { cn } from "@/lib/utils";
 
 const STATUS_OPTIONS: { value: ExaminerApplicationStatus | "ALL"; label: string }[] = [
   { value: "ALL", label: "All statuses" },
@@ -31,11 +51,52 @@ const STATUS_OPTIONS: { value: ExaminerApplicationStatus | "ALL"; label: string 
   { value: "REJECTED", label: "Rejected" },
 ];
 
+type SortDir = "asc" | "desc";
+
+function SortableHeader({
+  label,
+  sortKey,
+  currentSort,
+  onSort,
+}: {
+  label: string;
+  sortKey: AdminApplicationsSortField;
+  currentSort: { key: AdminApplicationsSortField; dir: SortDir } | null;
+  onSort: (key: AdminApplicationsSortField) => void;
+}) {
+  const isActive = currentSort?.key === sortKey;
+  const dir = isActive ? currentSort.dir : null;
+  return (
+    <TableHead>
+      <Button
+        variant="ghost"
+        size="sm"
+        className="-ml-3 h-8 data-[state=open]:bg-accent"
+        onClick={() => onSort(sortKey)}
+      >
+        <span>{label}</span>
+        {dir === "desc" ? (
+          <ArrowDown className="ml-2 h-4 w-4" />
+        ) : dir === "asc" ? (
+          <ArrowUp className="ml-2 h-4 w-4" />
+        ) : (
+          <ChevronsUpDown className="ml-2 h-4 w-4" />
+        )}
+      </Button>
+    </TableHead>
+  );
+}
+
 export default function AdminApplicationsPage() {
   const [applications, setApplications] = useState<ExaminerApplicationResponse[]>([]);
   const [loading, setLoading] = useState(true);
   const [statusFilter, setStatusFilter] = useState<ExaminerApplicationStatus | "ALL">("ALL");
   const [search, setSearch] = useState("");
+  const [searchSubmitted, setSearchSubmitted] = useState("");
+  const [sort, setSort] = useState<{
+    key: AdminApplicationsSortField;
+    dir: SortDir;
+  } | null>({ key: "created_at", dir: "desc" });
   const [page, setPage] = useState(1);
   const pageSize = 20;
 
@@ -44,7 +105,9 @@ export default function AdminApplicationsPage() {
     const p = pageOverride ?? page;
     listAdminApplications({
       status: statusFilter === "ALL" ? undefined : statusFilter,
-      search: search.trim() || undefined,
+      search: searchSubmitted.trim() || undefined,
+      sort_by: sort?.key ?? undefined,
+      order: sort?.dir ?? undefined,
       page: p,
       page_size: pageSize,
     })
@@ -58,12 +121,29 @@ export default function AdminApplicationsPage() {
 
   useEffect(() => {
     load();
-  }, [statusFilter, page]);
+  }, [statusFilter, page, sort?.key, sort?.dir, searchSubmitted]);
 
   const handleSearch = (e: React.FormEvent) => {
     e.preventDefault();
     setPage(1);
-    load(1);
+    setSearchSubmitted(search);
+  };
+
+  const handleSort = (key: AdminApplicationsSortField) => {
+    setSort((prev) => {
+      if (prev?.key !== key) return { key, dir: "asc" as SortDir };
+      if (prev.dir === "asc") return { key, dir: "desc" as SortDir };
+      return { key: "created_at", dir: "desc" as SortDir };
+    });
+    setPage(1);
+  };
+
+  const hasActiveFilters = searchSubmitted.trim() !== "" || statusFilter !== "ALL";
+  const clearFilters = () => {
+    setSearch("");
+    setSearchSubmitted("");
+    setStatusFilter("ALL");
+    setPage(1);
   };
 
   return (
@@ -72,18 +152,21 @@ export default function AdminApplicationsPage() {
 
       <Card>
         <CardHeader className="pb-2">
-          <CardTitle className="text-base">Filters</CardTitle>
+          <CardTitle className="text-base flex items-center gap-2">
+            <Filter className="h-4 w-4" />
+            Filters & search
+          </CardTitle>
         </CardHeader>
-        <CardContent className="flex flex-wrap gap-4">
-          <form onSubmit={handleSearch} className="flex gap-2 items-end">
-            <div className="space-y-2">
-              <Label htmlFor="search">Search (application number, name, email)</Label>
+        <CardContent className="flex flex-wrap gap-4 items-end">
+          <form onSubmit={handleSearch} className="flex gap-2 items-end flex-1 min-w-[200px]">
+            <div className="relative flex-1 max-w-sm">
+              <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground pointer-events-none" />
               <Input
                 id="search"
-                placeholder="Search..."
+                placeholder="Application #, name, email..."
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}
-                className="w-64"
+                className="pl-9 w-full"
               />
             </div>
             <Button type="submit">Search</Button>
@@ -109,6 +192,17 @@ export default function AdminApplicationsPage() {
               </SelectContent>
             </Select>
           </div>
+          {hasActiveFilters && (
+            <Button
+              variant="ghost"
+              size="sm"
+              className="gap-1.5 text-muted-foreground hover:text-foreground"
+              onClick={clearFilters}
+            >
+              <X className="h-4 w-4" />
+              Clear filters
+            </Button>
+          )}
         </CardContent>
       </Card>
 
@@ -121,59 +215,105 @@ export default function AdminApplicationsPage() {
         </CardHeader>
         <CardContent>
           {loading ? (
-            <p className="text-muted-foreground">Loading...</p>
-          ) : applications.length === 0 ? (
-            <p className="text-muted-foreground">No applications found.</p>
+            <p className="text-muted-foreground py-4">Loading...</p>
           ) : (
-            <div className="overflow-x-auto">
-              <table className="w-full text-sm">
-                <thead>
-                  <tr className="border-b">
-                    <th className="p-2 text-left font-medium">Application #</th>
-                    <th className="p-2 text-left font-medium">Name</th>
-                    <th className="p-2 text-left font-medium">Subject</th>
-                    <th className="p-2 text-left font-medium">Status</th>
-                    <th className="p-2 text-left font-medium">Submitted</th>
-                    <th className="p-2 text-left font-medium">Recommendation</th>
-                    <th className="p-2 text-left font-medium">Actions</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {applications.map((app) => (
-                    <tr key={app.id} className="border-b">
-                      <td className="p-2 font-medium">{app.application_number}</td>
-                      <td className="p-2">{app.full_name}</td>
-                      <td className="p-2">
-                        {app.subject ? `${app.subject.code} – ${app.subject.name}` : "—"}
-                      </td>
-                      <td className="p-2">
-                        <Badge variant="secondary">{app.status}</Badge>
-                      </td>
-                      <td className="p-2">
-                        {app.submitted_at
-                          ? new Date(app.submitted_at).toLocaleDateString()
-                          : "—"}
-                      </td>
-                      <td className="p-2">
-                        {app.recommendation_status?.completed
-                          ? `Done${app.recommendation_status.recommender_name ? ` (${app.recommendation_status.recommender_name})` : ""}`
-                          : "—"}
-                      </td>
-                      <td className="p-2">
-                        <Button variant="link" size="sm" asChild>
-                          <Link href={`/dashboard/admin/applications/${app.id}`}>
-                            View
-                          </Link>
-                        </Button>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
+            <div className="overflow-x-auto rounded-md border">
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <SortableHeader
+                      label="Application #"
+                      sortKey="application_number"
+                      currentSort={sort}
+                      onSort={handleSort}
+                    />
+                    <SortableHeader
+                      label="Name"
+                      sortKey="full_name"
+                      currentSort={sort}
+                      onSort={handleSort}
+                    />
+                    <TableHead>Subject</TableHead>
+                    <SortableHeader
+                      label="Status"
+                      sortKey="status"
+                      currentSort={sort}
+                      onSort={handleSort}
+                    />
+                    <SortableHeader
+                      label="Submitted"
+                      sortKey="submitted_at"
+                      currentSort={sort}
+                      onSort={handleSort}
+                    />
+                    <TableHead>Recommendation</TableHead>
+                    <TableHead className="w-[80px]">Actions</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {applications.length === 0 ? (
+                    <TableRow>
+                      <TableCell
+                        colSpan={7}
+                        className="h-24 text-center text-muted-foreground"
+                      >
+                        {hasActiveFilters
+                          ? "No applications match your search or filters."
+                          : "No applications found."}
+                        {hasActiveFilters && (
+                          <span className="block text-xs mt-1">
+                            Try clearing filters or changing search.
+                          </span>
+                        )}
+                      </TableCell>
+                    </TableRow>
+                  ) : (
+                    applications.map((app, index) => (
+                      <TableRow
+                        key={app.id}
+                        className={cn(
+                          "transition-colors hover:bg-muted/50",
+                          index % 2 === 0 ? "bg-muted/30" : "bg-background"
+                        )}
+                      >
+                        <TableCell className="font-medium">
+                          {app.application_number}
+                        </TableCell>
+                        <TableCell>{app.full_name}</TableCell>
+                        <TableCell className="text-muted-foreground">
+                          {app.subject
+                            ? `${app.subject.code} – ${app.subject.name}`
+                            : "—"}
+                        </TableCell>
+                        <TableCell>
+                          <Badge variant="secondary">{app.status}</Badge>
+                        </TableCell>
+                        <TableCell className="text-muted-foreground">
+                          {app.submitted_at
+                            ? new Date(app.submitted_at).toLocaleDateString()
+                            : "—"}
+                        </TableCell>
+                        <TableCell className="text-muted-foreground">
+                          {app.recommendation_status?.completed
+                            ? `Done${app.recommendation_status.recommender_name ? ` (${app.recommendation_status.recommender_name})` : ""}`
+                            : "—"}
+                        </TableCell>
+                        <TableCell>
+                          <Button variant="link" size="sm" asChild>
+                            <Link href={`/dashboard/admin/applications/${app.id}`}>
+                              View
+                            </Link>
+                          </Button>
+                        </TableCell>
+                      </TableRow>
+                    ))
+                  )}
+                </TableBody>
+              </Table>
             </div>
           )}
-          {applications.length === pageSize && (
-            <div className="mt-4 flex justify-center gap-2">
+          {!loading && applications.length === pageSize && (
+            <div className="mt-4 flex justify-center gap-2 items-center">
               <Button
                 variant="outline"
                 size="sm"
@@ -182,7 +322,7 @@ export default function AdminApplicationsPage() {
               >
                 Previous
               </Button>
-              <span className="flex items-center px-2 text-sm text-muted-foreground">
+              <span className="text-sm text-muted-foreground px-2">
                 Page {page}
               </span>
               <Button

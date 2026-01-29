@@ -15,6 +15,7 @@ from app.schemas.examination import (
     SubjectExaminerCreate,
     SubjectExaminerResponse,
 )
+from app.schemas.examination import _parse_exam_type
 
 router = APIRouter(prefix="/api/v1/admin/examinations", tags=["admin-examinations"])
 
@@ -79,14 +80,21 @@ async def list_examinations(
     session: DBSessionDep,
     current_user: AdminDep,
     year: int | None = None,
-    type_filter: ExamType | None = None,
+    type_filter: str | None = None,
 ) -> list[ExaminationResponse]:
-    """List examinations."""
+    """List examinations. type_filter accepts enum name (e.g. CERTIFICATE_II) or value (e.g. Certificate II Examinations)."""
     stmt = select(Examination)
     if year is not None:
         stmt = stmt.where(Examination.year == year)
     if type_filter is not None:
-        stmt = stmt.where(Examination.type == type_filter)
+        try:
+            exam_type = _parse_exam_type(type_filter)
+        except ValueError:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail=f"Invalid type_filter: {type_filter!r}. Use enum name (e.g. CERTIFICATE_II) or value (e.g. Certificate II Examinations).",
+            )
+        stmt = stmt.where(Examination.type == exam_type)
     stmt = stmt.order_by(Examination.year.desc(), Examination.created_at.desc())
     result = await session.execute(stmt)
     examinations = result.scalars().all()
