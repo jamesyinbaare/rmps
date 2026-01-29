@@ -44,7 +44,7 @@ export function LoginForm() {
       if (submitted && me.examiner_id) {
         router.push(`/dashboard/profile/${me.examiner_id}`);
       } else {
-        router.push("/dashboard/application");
+        router.push("/application");
       }
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "Login failed");

@@ -44,9 +44,32 @@ export type ExaminerApplicationStatus =
   | "ACCEPTED"
   | "REJECTED";
 
+/** Ghana regions for examiner application (values match backend GhanaRegion enum). */
+export const GHANA_REGIONS = [
+  "Ashanti Region",
+  "Bono Region",
+  "Bono East Region",
+  "Ahafo Region",
+  "Central Region",
+  "Eastern Region",
+  "Greater Accra Region",
+  "Northern Region",
+  "North East Region",
+  "Savannah Region",
+  "Upper East Region",
+  "Upper West Region",
+  "Volta Region",
+  "Oti Region",
+  "Western Region",
+  "Western North Region",
+] as const;
+
+export type GhanaRegion = (typeof GHANA_REGIONS)[number];
+
 export interface ExaminerApplicationCreate {
   full_name: string;
   title?: string | null;
+  region: GhanaRegion;
   nationality?: string | null;
   date_of_birth?: string | null; // ISO date string
   office_address?: string | null;
@@ -65,6 +88,7 @@ export interface ExaminerApplicationCreate {
 export interface ExaminerApplicationUpdate {
   full_name?: string | null;
   title?: string | null;
+  region?: GhanaRegion | null;
   nationality?: string | null;
   date_of_birth?: string | null;
   office_address?: string | null;
@@ -93,6 +117,7 @@ export interface ExaminerApplicationResponse {
   status: ExaminerApplicationStatus;
   full_name: string;
   title?: string | null;
+  region?: string | null;
   nationality?: string | null;
   date_of_birth?: string | null;
   office_address?: string | null;

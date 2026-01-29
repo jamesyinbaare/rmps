@@ -156,7 +156,7 @@ export default function ExaminerProfilePage() {
         <Card className="mx-auto max-w-md">
           <CardContent className="p-6">
             <p className="text-muted-foreground">You can only view your own profile.</p>
-            <Link href="/dashboard/application" className="mt-4 block">
+            <Link href="/application" className="mt-4 block">
               <Button variant="outline" className="w-full min-h-11 sm:w-auto">
                 Back to application
               </Button>
@@ -173,7 +173,7 @@ export default function ExaminerProfilePage() {
         <Card className="mx-auto max-w-md">
           <CardContent className="p-6">
             <p className="text-muted-foreground">No submitted application found.</p>
-            <Link href="/dashboard/application" className="mt-4 block">
+            <Link href="/application" className="mt-4 block">
               <Button className="w-full min-h-11 sm:w-auto">Go to application</Button>
             </Link>
           </CardContent>
@@ -200,7 +200,7 @@ export default function ExaminerProfilePage() {
   return (
     <div className="mx-auto max-w-4xl space-y-4 md:space-y-6">
       <div className="flex items-center gap-3">
-        <Link href="/dashboard/application" className="shrink-0">
+        <Link href="/application" className="shrink-0">
           <Button variant="ghost" size="icon" className="min-h-11 min-w-11 sm:min-w-[unset] sm:gap-2 sm:px-3">
             <ArrowLeft className="h-4 w-4" />
             <span className="hidden sm:inline">Back</span>

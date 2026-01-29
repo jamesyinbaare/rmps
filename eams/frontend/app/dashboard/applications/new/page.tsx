@@ -7,7 +7,7 @@ import { useRouter } from "next/navigation";
 export default function NewApplicationRedirectPage() {
   const router = useRouter();
   useEffect(() => {
-    router.replace("/dashboard/application");
+    router.replace("/application");
   }, [router]);
   return <div className="p-6">Redirecting…</div>;
 }

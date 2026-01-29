@@ -13,7 +13,7 @@ export default function RegisterPage() {
 
   useEffect(() => {
     if (isAuthenticated()) {
-      router.push("/dashboard/application");
+      router.push("/application");
     } else {
       setChecking(false);
     }

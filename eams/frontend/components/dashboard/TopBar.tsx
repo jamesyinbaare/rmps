@@ -19,7 +19,7 @@ import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 
 const NAV_ITEMS = [
-  { label: "Application", href: "/dashboard/application", icon: FileEdit },
+  { label: "Application", href: "/application", icon: FileEdit },
   { label: "Profile", href: "/dashboard/profile", icon: User },
   { label: "Account settings", href: "/dashboard/account-settings", icon: Settings },
 ];
@@ -49,7 +49,7 @@ export function TopBar() {
   return (
     <header className="flex h-14 shrink-0 items-center justify-between border-b border-border bg-card px-4 md:px-6">
       <div className="flex items-center gap-4 md:gap-6">
-        <Link href="/dashboard/application" className="shrink-0">
+        <Link href="/application" className="shrink-0">
           <h1 className="text-lg font-semibold text-foreground">EAMS</h1>
           <p className="text-xs text-muted-foreground">Examiner Portal</p>
         </Link>

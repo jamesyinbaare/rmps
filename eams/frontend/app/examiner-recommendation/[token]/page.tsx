@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { useParams } from "next/navigation";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Alert, AlertDescription } from "@/components/ui/alert";
@@ -54,6 +54,7 @@ export default function ExaminerRecommendationPage() {
   });
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [photoError, setPhotoError] = useState(false);
+  const submittingRef = useRef(false);
 
   useEffect(() => {
     if (token) {
@@ -113,11 +114,14 @@ export default function ExaminerRecommendationPage() {
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
 
+    if (submittingRef.current) return;
+
     if (!validateForm()) {
       toast.error("Please fill in all required fields");
       return;
     }
 
+    submittingRef.current = true;
     setSubmitting(true);
     try {
       // Automatically set date to today's date
@@ -140,8 +144,14 @@ export default function ExaminerRecommendationPage() {
       // Reload to show success state
       await loadRecommendation();
     } catch (error: any) {
-      toast.error(error.message || "Failed to submit recommendation");
+      const message = error?.message ?? "";
+      if (message.includes("already been submitted")) {
+        await loadRecommendation();
+      } else {
+        toast.error(message || "Failed to submit recommendation");
+      }
     } finally {
+      submittingRef.current = false;
       setSubmitting(false);
     }
   };
