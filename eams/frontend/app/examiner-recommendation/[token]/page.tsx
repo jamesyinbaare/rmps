@@ -1,7 +1,7 @@
 "use client";
 
-import { useState, useEffect } from "react";
-import { useParams } from "next/navigation";
+import { useState, useEffect, useRef } from "react";
+import { useParams, useRouter } from "next/navigation";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
@@ -38,6 +38,7 @@ interface RecommendationFormData {
 
 export default function ExaminerRecommendationPage() {
   const params = useParams();
+  const router = useRouter();
   const token = params.token as string;
   const [recommendation, setRecommendation] = useState<ExaminerRecommendationResponse | null>(null);
   const [loading, setLoading] = useState(true);
@@ -54,6 +55,7 @@ export default function ExaminerRecommendationPage() {
   });
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [photoError, setPhotoError] = useState(false);
+  const submittingRef = useRef(false);
 
   useEffect(() => {
     if (token) {
@@ -113,11 +115,14 @@ export default function ExaminerRecommendationPage() {
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
 
+    if (submittingRef.current) return;
+
     if (!validateForm()) {
       toast.error("Please fill in all required fields");
       return;
     }
 
+    submittingRef.current = true;
     setSubmitting(true);
     try {
       // Automatically set date to today's date
@@ -136,12 +141,16 @@ export default function ExaminerRecommendationPage() {
 
       await submitRecommendation(token, submitData);
       toast.success("Thank you. Your recommendation has been submitted.");
-
-      // Reload to show success state
-      await loadRecommendation();
+      router.push("/examiner-recommendation/thank-you");
     } catch (error: any) {
-      toast.error(error.message || "Failed to submit recommendation");
+      const message = error?.message ?? "";
+      if (message.includes("already been submitted")) {
+        router.push("/examiner-recommendation/thank-you");
+      } else {
+        toast.error(message || "Failed to submit recommendation");
+      }
     } finally {
+      submittingRef.current = false;
       setSubmitting(false);
     }
   };

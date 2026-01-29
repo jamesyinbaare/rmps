@@ -35,7 +35,7 @@ export function RegisterForm() {
       await register(email, password, fullName);
       await login(email, password);
       toast.success("Account created successfully!");
-      router.push("/dashboard/application");
+      router.push("/application");
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "Failed to create account");
     } finally {

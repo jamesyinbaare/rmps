@@ -94,8 +94,46 @@ class ExaminerStatus(enum.Enum):
     SUSPENDED = "SUSPENDED"
 
 
+class GhanaRegion(enum.Enum):
+
+    ASHANTI = "Ashanti Region"
+    BONO = "Bono Region"
+    BONO_EAST = "Bono East Region"
+    AHAFO = "Ahafo Region"
+    CENTRAL = "Central Region"
+    EASTERN = "Eastern Region"
+    GREATER_ACCRA = "Greater Accra Region"
+    NORTHERN = "Northern Region"
+    NORTH_EAST = "North East Region"
+    SAVANNAH = "Savannah Region"
+    UPPER_EAST = "Upper East Region"
+    UPPER_WEST = "Upper West Region"
+    VOLTA = "Volta Region"
+    OTI = "Oti Region"
+    WESTERN = "Western Region"
+    WESTERN_NORTH = "Western North Region"
+
+
+class ExamType(enum.Enum):
+    """Examination type (aligned with registration portal)."""
+
+    CERTIFICATE_II = "Certificate II Examinations"
+    ADVANCE = "Advance"
+    TECHNICIAN_PART_I = "Technician Part I"
+    TECHNICIAN_PART_II = "Technician Part II"
+    TECHNICIAN_PART_III = "Technician Part III"
+    DIPLOMA = "Diploma"
+
+
+class ExamSeries(enum.Enum):
+    """Examination series (aligned with registration portal)."""
+
+    MAY_JUNE = "MAY/JUNE"
+    NOV_DEC = "NOV/DEC"
+
+
 class MarkingCycleStatus(enum.Enum):
-    """Marking cycle status."""
+    """Subject examiner status (formerly marking cycle status)."""
 
     DRAFT = "DRAFT"
     OPEN = "OPEN"
@@ -118,6 +156,29 @@ class AcceptanceStatus(enum.Enum):
     ACCEPTED = "ACCEPTED"
     DECLINED = "DECLINED"
     EXPIRED = "EXPIRED"
+
+
+class DegreeType(enum.Enum):
+    """Degree or diploma type for examiner qualifications."""
+
+    PhD = "PhD"
+    MEd = "M.Ed"
+    MSc = "M.Sc"
+    BEd = "B.Ed"
+    BSc = "B.Sc"
+    Bachelor = "Bachelor"
+    Diploma = "Diploma"
+    Other = "Other"
+
+
+class TeachingLevel(enum.Enum):
+    """Teaching level for teaching experience."""
+
+    TERTIARY = "Tertiary"
+    SHS = "SHS"
+    JHS = "JHS"
+    BASIC = "Basic"
+    OTHER = "Other"
 
 
 class QuotaType(enum.Enum):
@@ -190,7 +251,7 @@ class Subject(Base):
 
     eligibilities = relationship("ExaminerSubjectEligibility", back_populates="subject", cascade="all, delete-orphan")
     history = relationship("ExaminerSubjectHistory", back_populates="subject", cascade="all, delete-orphan")
-    cycles = relationship("MarkingCycle", back_populates="subject", cascade="all, delete-orphan")
+    subject_examiners = relationship("SubjectExaminer", back_populates="subject", cascade="all, delete-orphan")
     quotas = relationship("SubjectQuota", back_populates="subject", cascade="all, delete-orphan")
     allocations = relationship("ExaminerAllocation", back_populates="subject", cascade="all, delete-orphan")
     acceptances = relationship("ExaminerAcceptance", back_populates="subject", cascade="all, delete-orphan")
@@ -251,7 +312,8 @@ class ExaminerQualification(Base):
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid4, index=True)
     examiner_id = Column(UUID(as_uuid=True), ForeignKey("examiners.id", ondelete="CASCADE"), nullable=False, index=True)
     university_college = Column(String(255), nullable=False)
-    degree_diploma = Column(String(255), nullable=False)
+    degree_type = Column(Enum(DegreeType, create_constraint=False, values_callable=lambda x: [e.value for e in x]), nullable=False, index=True)
+    programme = Column(String(255), nullable=True)
     class_of_degree = Column(String(100), nullable=True)
     major_subjects = Column(Text, nullable=True)
     date_of_award = Column(Date, nullable=True)
@@ -271,7 +333,11 @@ class ExaminerTeachingExperience(Base):
     date_from = Column(Date, nullable=True)
     date_to = Column(Date, nullable=True)
     subject = Column(String(255), nullable=True)
-    level = Column(String(100), nullable=True)
+    level = Column(
+        Enum(TeachingLevel, create_constraint=False, values_callable=lambda x: [e.value for e in x], native_enum=False),
+        nullable=True,
+        index=True,
+    )
     order_index = Column(Integer, nullable=False, default=0)
 
     examiner = relationship("Examiner", back_populates="teaching_experiences")
@@ -387,41 +453,70 @@ class ExaminerSubjectHistory(Base):
 
 
 # -----------------------------------------------------------------------------
-# Allocation
+# Examination and subject examiners (replaces marking cycles)
 # -----------------------------------------------------------------------------
 
 
-class MarkingCycle(Base):
-    """Annual marking cycle configuration."""
+class Examination(Base):
+    """Examination (type, series, year) - parent of subject examiners."""
 
-    __tablename__ = "marking_cycles"
+    __tablename__ = "examinations"
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid4, index=True)
+    type = Column(
+        Enum(ExamType, create_constraint=False, values_callable=lambda x: [e.value for e in x]),
+        nullable=False,
+        index=True,
+    )
+    series = Column(
+        Enum(ExamSeries, create_constraint=False, values_callable=lambda x: [e.value for e in x]),
+        nullable=True,
+        index=True,
+    )
     year = Column(Integer, nullable=False, index=True)
+    acceptance_deadline = Column(DateTime, nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+
+    subject_examiners = relationship("SubjectExaminer", back_populates="examination", cascade="all, delete-orphan")
+
+
+class SubjectExaminer(Base):
+    """Subject examiner configuration per examination (replaces marking cycle)."""
+
+    __tablename__ = "subject_examiners"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid4, index=True)
+    examination_id = Column(UUID(as_uuid=True), ForeignKey("examinations.id", ondelete="CASCADE"), nullable=False, index=True)
     subject_id = Column(UUID(as_uuid=True), ForeignKey("subjects.id", ondelete="CASCADE"), nullable=False, index=True)
     total_required = Column(Integer, nullable=False)
     experience_ratio = Column(Float, nullable=False)
-    acceptance_deadline = Column(DateTime, nullable=True)
     status = Column(Enum(MarkingCycleStatus, create_constraint=False, values_callable=lambda x: [e.value for e in x]), default=MarkingCycleStatus.DRAFT, nullable=False, index=True)
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
 
-    subject = relationship("Subject", back_populates="cycles")
-    quotas = relationship("SubjectQuota", back_populates="cycle", cascade="all, delete-orphan")
-    allocations = relationship("ExaminerAllocation", back_populates="cycle", cascade="all, delete-orphan")
-    acceptances = relationship("ExaminerAcceptance", back_populates="cycle", cascade="all, delete-orphan")
-    audit_logs = relationship("AllocationAuditLog", back_populates="cycle", cascade="all, delete-orphan")
+    examination = relationship("Examination", back_populates="subject_examiners")
+    subject = relationship("Subject", back_populates="subject_examiners")
+    quotas = relationship("SubjectQuota", back_populates="subject_examiner", cascade="all, delete-orphan")
+    allocations = relationship("ExaminerAllocation", back_populates="subject_examiner", cascade="all, delete-orphan")
+    acceptances = relationship("ExaminerAcceptance", back_populates="subject_examiner", cascade="all, delete-orphan")
+    audit_logs = relationship("AllocationAuditLog", back_populates="subject_examiner", cascade="all, delete-orphan")
 
-    __table_args__ = (UniqueConstraint("year", "subject_id", name="uq_marking_cycle_year_subject"),)
+    __table_args__ = (UniqueConstraint("examination_id", "subject_id", name="uq_subject_examiner_examination_subject"),)
+
+
+# -----------------------------------------------------------------------------
+# Allocation
+# -----------------------------------------------------------------------------
 
 
 class SubjectQuota(Base):
-    """Quota configuration per cycle."""
+    """Quota configuration per subject examiner."""
 
     __tablename__ = "subject_quotas"
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid4, index=True)
-    cycle_id = Column(UUID(as_uuid=True), ForeignKey("marking_cycles.id", ondelete="CASCADE"), nullable=False, index=True)
+    subject_examiner_id = Column(UUID(as_uuid=True), ForeignKey("subject_examiners.id", ondelete="CASCADE"), nullable=False, index=True)
     subject_id = Column(UUID(as_uuid=True), ForeignKey("subjects.id", ondelete="CASCADE"), nullable=False, index=True)
     quota_type = Column(Enum(QuotaType, create_constraint=False, values_callable=lambda x: [e.value for e in x]), nullable=False, index=True)
     quota_key = Column(String(100), nullable=False)
@@ -429,10 +524,10 @@ class SubjectQuota(Base):
     max_count = Column(Integer, nullable=True)
     percentage = Column(Float, nullable=True)
 
-    cycle = relationship("MarkingCycle", back_populates="quotas")
+    subject_examiner = relationship("SubjectExaminer", back_populates="quotas")
     subject = relationship("Subject", back_populates="quotas")
 
-    __table_args__ = (UniqueConstraint("cycle_id", "subject_id", "quota_type", "quota_key", name="uq_subject_quota"),)
+    __table_args__ = (UniqueConstraint("subject_examiner_id", "subject_id", "quota_type", "quota_key", name="uq_subject_quota"),)
 
 
 class ExaminerAllocation(Base):
@@ -442,7 +537,7 @@ class ExaminerAllocation(Base):
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid4, index=True)
     examiner_id = Column(UUID(as_uuid=True), ForeignKey("examiners.id", ondelete="CASCADE"), nullable=False, index=True)
-    cycle_id = Column(UUID(as_uuid=True), ForeignKey("marking_cycles.id", ondelete="CASCADE"), nullable=False, index=True)
+    subject_examiner_id = Column(UUID(as_uuid=True), ForeignKey("subject_examiners.id", ondelete="CASCADE"), nullable=False, index=True)
     subject_id = Column(UUID(as_uuid=True), ForeignKey("subjects.id", ondelete="CASCADE"), nullable=False, index=True)
     score = Column(Float, nullable=True)
     rank = Column(Integer, nullable=True)
@@ -451,12 +546,12 @@ class ExaminerAllocation(Base):
     allocated_by_user_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True, index=True)
 
     examiner = relationship("Examiner", back_populates="allocations")
-    cycle = relationship("MarkingCycle", back_populates="allocations")
+    subject_examiner = relationship("SubjectExaminer", back_populates="allocations")
     subject = relationship("Subject", back_populates="allocations")
     allocated_by_user = relationship("User", foreign_keys=[allocated_by_user_id])
     acceptance = relationship("ExaminerAcceptance", back_populates="allocation", uselist=False, cascade="all, delete-orphan")
 
-    __table_args__ = (UniqueConstraint("examiner_id", "cycle_id", "subject_id", name="uq_examiner_allocation"),)
+    __table_args__ = (UniqueConstraint("examiner_id", "subject_examiner_id", "subject_id", name="uq_examiner_allocation"),)
 
 
 class ExaminerAcceptance(Base):
@@ -466,7 +561,7 @@ class ExaminerAcceptance(Base):
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid4, index=True)
     examiner_id = Column(UUID(as_uuid=True), ForeignKey("examiners.id", ondelete="CASCADE"), nullable=False, index=True)
-    cycle_id = Column(UUID(as_uuid=True), ForeignKey("marking_cycles.id", ondelete="CASCADE"), nullable=False, index=True)
+    subject_examiner_id = Column(UUID(as_uuid=True), ForeignKey("subject_examiners.id", ondelete="CASCADE"), nullable=False, index=True)
     subject_id = Column(UUID(as_uuid=True), ForeignKey("subjects.id", ondelete="CASCADE"), nullable=False, index=True)
     allocation_id = Column(UUID(as_uuid=True), ForeignKey("examiner_allocations.id", ondelete="CASCADE"), nullable=False, index=True)
     status = Column(Enum(AcceptanceStatus, create_constraint=False, values_callable=lambda x: [e.value for e in x]), default=AcceptanceStatus.PENDING, nullable=False, index=True)
@@ -475,11 +570,11 @@ class ExaminerAcceptance(Base):
     response_deadline = Column(DateTime, nullable=False)
 
     examiner = relationship("Examiner", back_populates="acceptances")
-    cycle = relationship("MarkingCycle", back_populates="acceptances")
+    subject_examiner = relationship("SubjectExaminer", back_populates="acceptances")
     subject = relationship("Subject", back_populates="acceptances")
     allocation = relationship("ExaminerAllocation", back_populates="acceptance")
 
-    __table_args__ = (UniqueConstraint("examiner_id", "cycle_id", "subject_id", name="uq_examiner_acceptance"),)
+    __table_args__ = (UniqueConstraint("examiner_id", "subject_examiner_id", "subject_id", name="uq_examiner_acceptance"),)
 
 
 class AllocationAuditLog(Base):
@@ -489,8 +584,8 @@ class AllocationAuditLog(Base):
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid4, index=True)
     action_type = Column(String(100), nullable=False, index=True)
-    performed_by_user_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=False, index=True)
-    cycle_id = Column(UUID(as_uuid=True), ForeignKey("marking_cycles.id", ondelete="CASCADE"), nullable=True, index=True)
+    performed_by_user_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True, index=True)
+    subject_examiner_id = Column(UUID(as_uuid=True), ForeignKey("subject_examiners.id", ondelete="CASCADE"), nullable=True, index=True)
     subject_id = Column(UUID(as_uuid=True), ForeignKey("subjects.id", ondelete="CASCADE"), nullable=True, index=True)
     examiner_id = Column(UUID(as_uuid=True), ForeignKey("examiners.id", ondelete="CASCADE"), nullable=True, index=True)
     allocation_id = Column(UUID(as_uuid=True), ForeignKey("examiner_allocations.id", ondelete="CASCADE"), nullable=True, index=True)
@@ -498,7 +593,7 @@ class AllocationAuditLog(Base):
     timestamp = Column(DateTime, default=datetime.utcnow, nullable=False, index=True)
 
     performed_by_user = relationship("User", foreign_keys=[performed_by_user_id])
-    cycle = relationship("MarkingCycle", back_populates="audit_logs")
+    subject_examiner = relationship("SubjectExaminer", back_populates="audit_logs")
 
 
 # -----------------------------------------------------------------------------
@@ -518,6 +613,7 @@ class ExaminerApplication(Base):
 
     full_name = Column(String(255), nullable=False)
     title = Column(String(20), nullable=True)
+    region = Column(Enum(GhanaRegion, create_constraint=False, values_callable=lambda x: [e.value for e in x]), nullable=False, index=True)
     nationality = Column(String(100), nullable=True)
     date_of_birth = Column(Date, nullable=True)
     office_address = Column(Text, nullable=True)
@@ -561,7 +657,8 @@ class ExaminerApplicationQualification(Base):
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid4, index=True)
     application_id = Column(UUID(as_uuid=True), ForeignKey("examiner_applications.id", ondelete="CASCADE"), nullable=False, index=True)
     university_college = Column(String(255), nullable=False)
-    degree_diploma = Column(String(255), nullable=False)
+    degree_type = Column(Enum(DegreeType, create_constraint=False, values_callable=lambda x: [e.value for e in x]), nullable=False, index=True)
+    programme = Column(String(255), nullable=True)
     class_of_degree = Column(String(100), nullable=True)
     major_subjects = Column(Text, nullable=True)
     date_of_award = Column(Date, nullable=True)
@@ -581,7 +678,11 @@ class ExaminerApplicationTeachingExperience(Base):
     date_from = Column(Date, nullable=True)
     date_to = Column(Date, nullable=True)
     subject = Column(String(255), nullable=True)
-    level = Column(String(100), nullable=True)
+    level = Column(
+        Enum(TeachingLevel, create_constraint=False, values_callable=lambda x: [e.value for e in x], native_enum=False),
+        nullable=True,
+        index=True,
+    )
     order_index = Column(Integer, nullable=False, default=0)
 
     application = relationship("ExaminerApplication", back_populates="teaching_experiences")
@@ -748,7 +849,8 @@ __all__ = [
     "Subject",
     "ExaminerSubjectEligibility",
     "ExaminerSubjectHistory",
-    "MarkingCycle",
+    "Examination",
+    "SubjectExaminer",
     "SubjectQuota",
     "ExaminerAllocation",
     "ExaminerAcceptance",
@@ -765,9 +867,14 @@ __all__ = [
     "ExaminerApplicationProcessing",
     "ExaminerStatus",
     "ExaminerApplicationStatus",
+    "DegreeType",
     "ExaminerDocumentType",
     "ExaminerSubjectPreferenceType",
     "SubjectType",
+    "TeachingLevel",
+    "GhanaRegion",
+    "ExamType",
+    "ExamSeries",
     "MarkingCycleStatus",
     "AllocationStatus",
     "AcceptanceStatus",

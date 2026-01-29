@@ -9,54 +9,53 @@ from app.models import (
     AllocationStatus,
     ExaminerAcceptance,
     ExaminerAllocation,
-    MarkingCycle,
+    SubjectExaminer,
 )
+from sqlalchemy.orm import selectinload
 
 
 async def generate_allocation_report(
     session: AsyncSession,
-    cycle_id: UUID,
-    subject_id: UUID,
+    subject_examiner_id: UUID,
 ) -> dict:
     """
-    Generate allocation report for a cycle and subject.
+    Generate allocation report for a subject examiner.
 
     Args:
         session: Database session
-        cycle_id: Marking cycle UUID
-        subject_id: Subject UUID
+        subject_examiner_id: Subject examiner UUID
 
     Returns:
         Dictionary with allocation summary and details
     """
-    # Get cycle
-    cycle_stmt = select(MarkingCycle).where(MarkingCycle.id == cycle_id)
-    cycle_result = await session.execute(cycle_stmt)
-    cycle = cycle_result.scalar_one_or_none()
+    se_stmt = (
+        select(SubjectExaminer)
+        .where(SubjectExaminer.id == subject_examiner_id)
+        .options(selectinload(SubjectExaminer.examination))
+    )
+    se_result = await session.execute(se_stmt)
+    se = se_result.scalar_one_or_none()
+    if not se:
+        raise ValueError(f"Subject examiner {subject_examiner_id} not found")
 
-    if not cycle:
-        raise ValueError(f"Marking cycle {cycle_id} not found")
-
-    # Get allocations
+    subject_id = se.subject_id
     allocation_stmt = select(ExaminerAllocation).where(
-        ExaminerAllocation.cycle_id == cycle_id,
-        ExaminerAllocation.subject_id == subject_id,
+        ExaminerAllocation.subject_examiner_id == subject_examiner_id,
     )
     allocation_result = await session.execute(allocation_stmt)
     allocations = allocation_result.scalars().all()
 
-    # Count by status
     approved_count = sum(1 for a in allocations if a.allocation_status == AllocationStatus.APPROVED)
     waitlisted_count = sum(1 for a in allocations if a.allocation_status == AllocationStatus.WAITLISTED)
     rejected_count = sum(1 for a in allocations if a.allocation_status == AllocationStatus.REJECTED)
 
-    # Get quota compliance
     approved_ids = [a.examiner_id for a in allocations if a.allocation_status == AllocationStatus.APPROVED]
     from app.services.quota_validator import validate_quota_compliance
 
-    is_compliant, violations = await validate_quota_compliance(session, cycle_id, subject_id, approved_ids)
+    is_compliant, violations = await validate_quota_compliance(
+        session, subject_examiner_id, subject_id, approved_ids
+    )
 
-    # Build examiner list with scores and ranks
     examiner_list = []
     for allocation in sorted(allocations, key=lambda x: x.rank or 0):
         examiner_list.append({
@@ -66,11 +65,12 @@ async def generate_allocation_report(
             "status": allocation.allocation_status.value,
         })
 
+    year = se.examination.year if se.examination else None
     return {
-        "cycle_id": str(cycle_id),
+        "subject_examiner_id": str(subject_examiner_id),
         "subject_id": str(subject_id),
-        "year": cycle.year,
-        "total_required": cycle.total_required,
+        "year": year,
+        "total_required": se.total_required,
         "summary": {
             "approved": approved_count,
             "waitlisted": waitlisted_count,
@@ -158,9 +158,8 @@ async def generate_examiner_history_report(
         ],
         "allocation_history": [
             {
-                "cycle_id": str(alloc.cycle_id),
+                "subject_examiner_id": str(alloc.subject_examiner_id),
                 "subject_id": str(alloc.subject_id),
-                "year": None,  # Would need to join with cycle
                 "status": alloc.allocation_status.value,
                 "score": alloc.score,
                 "rank": alloc.rank,
@@ -170,7 +169,7 @@ async def generate_examiner_history_report(
         ],
         "acceptance_history": [
             {
-                "cycle_id": str(acc.cycle_id),
+                "subject_examiner_id": str(acc.subject_examiner_id),
                 "subject_id": str(acc.subject_id),
                 "status": acc.status.value,
                 "notified_at": acc.notified_at.isoformat() if acc.notified_at else None,

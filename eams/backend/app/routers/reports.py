@@ -13,16 +13,15 @@ from app.services.reporting_service import generate_allocation_report, generate_
 router = APIRouter(prefix="/api/v1", tags=["reports"])
 
 
-@router.get("/admin/reports/allocations/{cycle_id}")
-async def get_allocation_report(
-    cycle_id: UUID,
-    subject_id: UUID,
+@router.get("/admin/reports/invitations/{subject_examiner_id}")
+async def get_invitation_report(
+    subject_examiner_id: UUID,
     session: DBSessionDep,
     current_user: AdminDep,
 ) -> dict:
-    """Get allocation report for a cycle and subject."""
+    """Get invitation report for a subject examiner."""
     try:
-        report = await generate_allocation_report(session, cycle_id, subject_id)
+        report = await generate_allocation_report(session, subject_examiner_id)
         return report
     except ValueError as e:
         raise HTTPException(
@@ -31,19 +30,17 @@ async def get_allocation_report(
         )
 
 
-@router.get("/admin/reports/quota-compliance/{cycle_id}")
+@router.get("/admin/reports/quota-compliance/{subject_examiner_id}")
 async def get_quota_compliance_report(
-    cycle_id: UUID,
-    subject_id: UUID,
+    subject_examiner_id: UUID,
     session: DBSessionDep,
     current_user: AdminDep,
 ) -> dict:
-    """Get quota compliance report for a cycle and subject."""
+    """Get quota compliance report for a subject examiner."""
     try:
-        report = await generate_allocation_report(session, cycle_id, subject_id)
+        report = await generate_allocation_report(session, subject_examiner_id)
         return {
-            "cycle_id": str(cycle_id),
-            "subject_id": str(subject_id),
+            "subject_examiner_id": str(subject_examiner_id),
             "quota_compliance": report.get("quota_compliance", {}),
             "summary": report.get("summary", {}),
         }
@@ -84,25 +81,19 @@ async def get_examiner_history(
         )
 
 
-@router.get("/admin/reports/export/{cycle_id}")
-async def export_allocations(
-    cycle_id: UUID,
-    subject_id: UUID,
+@router.get("/admin/reports/export/{subject_examiner_id}")
+async def export_invitations(
+    subject_examiner_id: UUID,
     session: DBSessionDep,
     current_user: AdminDep,
 ) -> StreamingResponse:
-    """Export allocations to CSV."""
+    """Export invitations to CSV."""
     try:
-        report = await generate_allocation_report(session, cycle_id, subject_id)
+        report = await generate_allocation_report(session, subject_examiner_id)
 
-        # Create CSV
         output = io.StringIO()
         writer = csv.writer(output)
-
-        # Write header
         writer.writerow(["Examiner ID", "Score", "Rank", "Status"])
-
-        # Write data
         for examiner in report.get("examiners", []):
             writer.writerow([
                 examiner["examiner_id"],
@@ -110,15 +101,13 @@ async def export_allocations(
                 examiner.get("rank", ""),
                 examiner.get("status", ""),
             ])
-
         output.seek(0)
         csv_content = output.getvalue()
-
         return StreamingResponse(
             iter([csv_content]),
             media_type="text/csv",
             headers={
-                "Content-Disposition": f'attachment; filename="allocations_{cycle_id}_{subject_id}.csv"',
+                "Content-Disposition": f'attachment; filename="invitations_{subject_examiner_id}.csv"',
             },
         )
     except ValueError as e:

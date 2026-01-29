@@ -5,17 +5,21 @@ from uuid import UUID
 
 from fastapi import APIRouter, HTTPException, Query, status
 from fastapi.responses import StreamingResponse
-from sqlalchemy import select, or_
+from sqlalchemy import delete, select, or_
 from sqlalchemy.orm import selectinload
 
 from app.config import settings
 from app.dependencies.auth import AdminDep
 from app.dependencies.database import DBSessionDep
 from app.models import (
+    Examiner,
     ExaminerApplication,
     ExaminerApplicationDocument,
     ExaminerApplicationProcessing,
+    ExaminerApplicationQualification,
     ExaminerApplicationStatus,
+    ExaminerQualification,
+    ExaminerSubjectEligibility,
     User,
 )
 from app.schemas.examiner import (
@@ -186,7 +190,11 @@ async def accept_examiner_application(
     current_user: AdminDep,
 ) -> ExaminerApplicationResponse:
     """Accept an examiner application (updates status and Section C)."""
-    stmt = select(ExaminerApplication).where(ExaminerApplication.id == application_id)
+    stmt = (
+        select(ExaminerApplication)
+        .where(ExaminerApplication.id == application_id)
+        .options(selectinload(ExaminerApplication.qualifications))
+    )
     result = await session.execute(stmt)
     application = result.scalar_one_or_none()
 
@@ -220,6 +228,46 @@ async def accept_examiner_application(
     # Update application status
     application.status = ExaminerApplicationStatus.ACCEPTED
 
+    # Ensure examiner is eligible for this subject so they appear in allocation pool
+    if application.subject_id:
+        eligibility_stmt = select(ExaminerSubjectEligibility).where(
+            ExaminerSubjectEligibility.examiner_id == application.examiner_id,
+            ExaminerSubjectEligibility.subject_id == application.subject_id,
+        )
+        eligibility_result = await session.execute(eligibility_stmt)
+        eligibility = eligibility_result.scalar_one_or_none()
+        if not eligibility:
+            eligibility = ExaminerSubjectEligibility(
+                examiner_id=application.examiner_id,
+                subject_id=application.subject_id,
+                eligible=True,
+            )
+            session.add(eligibility)
+        else:
+            eligibility.eligible = True
+
+    # Sync examiner profile from application so allocation (e.g. quotas, qualifications) can use it
+    examiner_stmt = select(Examiner).where(Examiner.id == application.examiner_id)
+    examiner_result = await session.execute(examiner_stmt)
+    examiner = examiner_result.scalar_one_or_none()
+    if examiner:
+        if application.region is not None:
+            examiner.region = application.region.value if hasattr(application.region, "value") else str(application.region)
+        # Sync qualifications from application to examiner for allocation scoring
+        await session.execute(delete(ExaminerQualification).where(ExaminerQualification.examiner_id == examiner.id))
+        for idx, app_qual in enumerate(application.qualifications):
+            examiner_qual = ExaminerQualification(
+                examiner_id=examiner.id,
+                university_college=app_qual.university_college,
+                degree_type=app_qual.degree_type,
+                programme=app_qual.programme,
+                class_of_degree=app_qual.class_of_degree,
+                major_subjects=app_qual.major_subjects,
+                date_of_award=app_qual.date_of_award,
+                order_index=idx,
+            )
+            session.add(examiner_qual)
+
     await session.commit()
     app_id = application.id
 
@@ -245,6 +293,66 @@ async def accept_examiner_application(
         data["recommendation_status"] = None
         data["recommendation"] = None
     return ExaminerApplicationResponse(**data)
+
+
+@router.post("/{application_id}/sync-eligibility", response_model=dict)
+async def sync_accepted_application_eligibility(
+    application_id: UUID,
+    session: DBSessionDep,
+    current_user: AdminDep,
+) -> dict:
+    """
+    For an already-accepted application, ensure ExaminerSubjectEligibility exists
+    and Examiner.region is synced so the examiner appears in the allocation pool.
+    Use this to fix applications that were accepted before eligibility was auto-created.
+    """
+    stmt = select(ExaminerApplication).where(ExaminerApplication.id == application_id)
+    result = await session.execute(stmt)
+    application = result.scalar_one_or_none()
+
+    if not application:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Examiner application not found",
+        )
+
+    if application.status != ExaminerApplicationStatus.ACCEPTED:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Application must be accepted to sync eligibility",
+        )
+
+    updated = False
+    if application.subject_id:
+        eligibility_stmt = select(ExaminerSubjectEligibility).where(
+            ExaminerSubjectEligibility.examiner_id == application.examiner_id,
+            ExaminerSubjectEligibility.subject_id == application.subject_id,
+        )
+        eligibility_result = await session.execute(eligibility_stmt)
+        eligibility = eligibility_result.scalar_one_or_none()
+        if not eligibility:
+            eligibility = ExaminerSubjectEligibility(
+                examiner_id=application.examiner_id,
+                subject_id=application.subject_id,
+                eligible=True,
+            )
+            session.add(eligibility)
+            updated = True
+        elif not eligibility.eligible:
+            eligibility.eligible = True
+            updated = True
+
+    examiner_stmt = select(Examiner).where(Examiner.id == application.examiner_id)
+    examiner_result = await session.execute(examiner_stmt)
+    examiner = examiner_result.scalar_one_or_none()
+    if examiner and application.region is not None:
+        region_value = application.region.value if hasattr(application.region, "value") else str(application.region)
+        if examiner.region != region_value:
+            examiner.region = region_value
+            updated = True
+
+    await session.commit()
+    return {"message": "Eligibility synced" if updated else "Already in sync"}
 
 
 @router.post("/{application_id}/reject", response_model=ExaminerApplicationResponse)

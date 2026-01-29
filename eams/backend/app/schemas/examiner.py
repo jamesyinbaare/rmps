@@ -5,10 +5,13 @@ from uuid import UUID
 from pydantic import BaseModel, EmailStr
 
 from app.models import (
+    DegreeType,
     ExaminerApplicationStatus,
     ExaminerDocumentType,
     ExaminerSubjectPreferenceType,
+    GhanaRegion,
     PaymentStatus,
+    TeachingLevel,
 )
 from app.schemas.subject import SubjectResponse
 
@@ -18,7 +21,8 @@ class QualificationUpdate(BaseModel):
     """Qualification data for update."""
 
     university_college: str
-    degree_diploma: str
+    degree_type: DegreeType
+    programme: str | None = None
     class_of_degree: str | None = None
     major_subjects: str | None = None
     date_of_award: date | None = None
@@ -31,7 +35,7 @@ class TeachingExperienceUpdate(BaseModel):
     date_from: date | None = None
     date_to: date | None = None
     subject: str | None = None
-    level: str | None = None
+    level: TeachingLevel | None = None
 
 
 class WorkExperienceUpdate(BaseModel):
@@ -72,6 +76,7 @@ class ExaminerApplicationCreate(BaseModel):
     # Personal Particulars
     full_name: str
     title: str
+    region: GhanaRegion
     nationality: str | None = None
     date_of_birth: date | None = None
     office_address: str | None = None
@@ -92,6 +97,7 @@ class ExaminerApplicationUpdate(BaseModel):
 
     full_name: str | None = None
     title: str | None = None
+    region: GhanaRegion | None = None
     nationality: str | None = None
     date_of_birth: date | None = None
     office_address: str | None = None
@@ -119,7 +125,8 @@ class QualificationResponse(BaseModel):
 
     id: UUID
     university_college: str
-    degree_diploma: str
+    degree_type: DegreeType
+    programme: str | None
     class_of_degree: str | None
     major_subjects: str | None
     date_of_award: date | None
@@ -137,7 +144,7 @@ class TeachingExperienceResponse(BaseModel):
     date_from: date | None
     date_to: date | None
     subject: str | None
-    level: str | None
+    level: TeachingLevel | None
     order_index: int
 
     class Config:
@@ -222,6 +229,7 @@ class ExaminerApplicationResponse(BaseModel):
     status: ExaminerApplicationStatus
     full_name: str
     title: str | None
+    region: GhanaRegion | None
     nationality: str | None
     date_of_birth: date | None
     office_address: str | None

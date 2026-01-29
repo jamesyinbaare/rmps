@@ -20,15 +20,19 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Plus, Trash2, ChevronRight, ChevronLeft, Check, FileText } from "lucide-react";
-import type {
-  ExaminerApplicationCreate,
-  ExaminerApplicationResponse,
-  ExaminerApplicationUpdate,
-  Qualification,
-  TeachingExperience,
-  WorkExperience,
-  ExaminingExperience,
-  TrainingCourse,
+import {
+  DEGREE_TYPES,
+  GHANA_REGIONS,
+  TEACHING_LEVELS,
+  type ExaminerApplicationCreate,
+  type ExaminerApplicationResponse,
+  type ExaminerApplicationUpdate,
+  type GhanaRegion,
+  type Qualification,
+  type TeachingExperience,
+  type WorkExperience,
+  type ExaminingExperience,
+  type TrainingCourse,
 } from "@/types";
 import { format } from "date-fns";
 import { getApplicationPrice, initializeApplicationPayment, getApplication, getSubjectTypes, getSubjects } from "@/lib/api";
@@ -53,11 +57,18 @@ const TITLE_OPTIONS = [
   { value: "Prof.", label: "Prof." },
 ] as const;
 
+const EXAMINING_STATUS_OPTIONS = [
+  { value: "__none__", label: "Select status" },
+  { value: "Active", label: "Active" },
+  { value: "Inactive", label: "Inactive" },
+] as const;
+
 // Step 1: Personal Particulars only (validates current step without touching step 2+ fields)
 const step1Schema = z
   .object({
     full_name: z.string().min(1, "Full name is required"),
     title: z.string().refine((v) => v && v !== "__none__", "Title is required"),
+    region: z.string().min(1, "Region is required"),
     nationality: z.string().optional().nullable(),
     date_of_birth: z.string().optional().nullable(),
     office_address: z.string().optional().nullable(),
@@ -94,6 +105,7 @@ const multiStepSchema = z.object({
   // Step 1: Personal Particulars
   full_name: z.string().min(1, "Full name is required"),
   title: z.string().refine((v) => v && v !== "__none__", "Title is required"),
+  region: z.string().min(1, "Region is required"),
   nationality: z.string().optional().nullable(),
   date_of_birth: z.string().optional().nullable(),
   office_address: z.string().optional().nullable(),
@@ -114,7 +126,8 @@ const multiStepSchema = z.object({
   qualifications: z.array(
     z.object({
       university_college: z.string().min(1, "University/College is required"),
-      degree_diploma: z.string().min(1, "Degree/Diploma is required"),
+      degree_type: z.enum(DEGREE_TYPES),
+      programme: z.string().optional().nullable(),
       class_of_degree: z.string().optional().nullable(),
       major_subjects: z.string().optional().nullable(),
       date_of_award: z.string().optional().nullable(),
@@ -128,7 +141,10 @@ const multiStepSchema = z.object({
       date_from: z.string().optional().nullable(),
       date_to: z.string().optional().nullable(),
       subject: z.string().optional().nullable(),
-      level: z.string().optional().nullable(),
+      level: z
+        .union([z.enum(TEACHING_LEVELS), z.literal(""), z.null()])
+        .optional()
+        .nullable(),
     })
   ).optional(),
 
@@ -256,6 +272,7 @@ export function MultiStepApplicationForm({
     defaultValues: {
       full_name: "",
       title: "__none__",
+      region: "",
       nationality: null,
       date_of_birth: null,
       office_address: null,
@@ -407,6 +424,7 @@ export function MultiStepApplicationForm({
       reset({
         full_name: initialData.full_name ?? "",
         title: initialData.title ?? "__none__",
+        region: initialData.region ?? "",
         nationality: initialData.nationality ?? null,
         date_of_birth: initialData.date_of_birth ?? null,
         office_address: initialData.office_address ?? null,
@@ -424,7 +442,8 @@ export function MultiStepApplicationForm({
         qualifications: loadNestedData
           ? (initialData.qualifications || []).map((q) => ({
               university_college: q.university_college,
-              degree_diploma: q.degree_diploma,
+              degree_type: q.degree_type,
+              programme: q.programme ?? null,
               class_of_degree: q.class_of_degree ?? null,
               major_subjects: q.major_subjects ?? null,
               date_of_award: q.date_of_award ?? null,
@@ -519,9 +538,11 @@ export function MultiStepApplicationForm({
     const d = getValues();
     const title = d.title === "__none__" ? undefined : d.title;
     if (!title) throw new Error("Title is required");
+    if (!d.region) throw new Error("Region is required");
     return {
       full_name: d.full_name,
       title,
+      region: d.region as GhanaRegion,
       nationality: d.nationality,
       date_of_birth: d.date_of_birth || null,
       office_address: d.office_address || null,
@@ -531,7 +552,7 @@ export function MultiStepApplicationForm({
       telephone_cell: d.telephone_cell || null,
       present_school_institution: d.present_school_institution || null,
       present_rank_position: d.present_rank_position || null,
-      subject_area: d.subject_area || null,
+      subject_area: d.subject_type || null,
       subject_id: d.subject_id || null,
       additional_information: d.additional_information || null,
       ceased_examining_explanation: d.ceased_examining_explanation || null,
@@ -542,7 +563,8 @@ export function MultiStepApplicationForm({
     const d = getValues();
     const qualifications = (d.qualifications || []).map((q) => ({
       university_college: q.university_college,
-      degree_diploma: q.degree_diploma,
+      degree_type: q.degree_type,
+      programme: q.programme || null,
       class_of_degree: q.class_of_degree || null,
       major_subjects: q.major_subjects || null,
       date_of_award: q.date_of_award || null,
@@ -632,6 +654,7 @@ export function MultiStepApplicationForm({
     return {
       full_name: d.full_name,
       title,
+      region: d.region ? (d.region as GhanaRegion) : undefined,
       nationality: d.nationality,
       date_of_birth: d.date_of_birth || null,
       office_address: d.office_address || null,
@@ -641,7 +664,7 @@ export function MultiStepApplicationForm({
       telephone_cell: d.telephone_cell || null,
       present_school_institution: d.present_school_institution || null,
       present_rank_position: d.present_rank_position || null,
-      subject_area: d.subject_area || null,
+      subject_area: d.subject_type || null,
       subject_id: d.subject_id || null,
       additional_information: cleanedAdditionalInfo,
       ceased_examining_explanation: d.ceased_examining_explanation || null,
@@ -673,6 +696,7 @@ export function MultiStepApplicationForm({
         payload = {
           full_name: v.full_name,
           title: v.title,
+          region: v.region,
           nationality: v.nationality,
           date_of_birth: v.date_of_birth,
           office_address: v.office_address,
@@ -894,6 +918,37 @@ export function MultiStepApplicationForm({
                 <Label htmlFor="nationality">Nationality</Label>
                 <Input id="nationality" {...register("nationality")} disabled={loading} />
               </div>
+              <div className="space-y-2">
+                <Label htmlFor="region">
+                  Region <span className="text-destructive">*</span>
+                </Label>
+                <Controller
+                  name="region"
+                  control={control}
+                  render={({ field }) => (
+                    <Select
+                      value={field.value || "__none__"}
+                      onValueChange={(v) => field.onChange(v === "__none__" ? "" : v)}
+                      disabled={loading}
+                    >
+                      <SelectTrigger id="region">
+                        <SelectValue placeholder="Select region" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="__none__">Select region</SelectItem>
+                        {GHANA_REGIONS.map((r) => (
+                          <SelectItem key={r} value={r}>
+                            {r}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  )}
+                />
+                {errors.region && (
+                  <p className="text-sm text-destructive">{errors.region.message}</p>
+                )}
+              </div>
               <Controller
                 name="date_of_birth"
                 control={control}
@@ -1069,7 +1124,8 @@ export function MultiStepApplicationForm({
                 onClick={() =>
                   appendQualification({
                     university_college: "",
-                    degree_diploma: "",
+                    degree_type: "Other",
+                    programme: null,
                     class_of_degree: null,
                     major_subjects: null,
                     date_of_award: null,
@@ -1113,17 +1169,43 @@ export function MultiStepApplicationForm({
                     </div>
                     <div className="space-y-2">
                       <Label>
-                        Degree/Diploma <span className="text-destructive">*</span>
+                        Degree type <span className="text-destructive">*</span>
                       </Label>
-                      <Input
-                        {...register(`qualifications.${index}.degree_diploma`)}
-                        disabled={loading}
+                      <Controller
+                        name={`qualifications.${index}.degree_type`}
+                        control={control}
+                        render={({ field }) => (
+                          <Select
+                            value={field.value}
+                            onValueChange={field.onChange}
+                            disabled={loading}
+                          >
+                            <SelectTrigger>
+                              <SelectValue placeholder="Select degree type" />
+                            </SelectTrigger>
+                            <SelectContent>
+                              {DEGREE_TYPES.map((value) => (
+                                <SelectItem key={value} value={value}>
+                                  {value}
+                                </SelectItem>
+                              ))}
+                            </SelectContent>
+                          </Select>
+                        )}
                       />
-                      {errors.qualifications?.[index]?.degree_diploma && (
+                      {errors.qualifications?.[index]?.degree_type && (
                         <p className="text-sm text-destructive">
-                          {errors.qualifications[index]?.degree_diploma?.message}
+                          {errors.qualifications[index]?.degree_type?.message}
                         </p>
                       )}
+                    </div>
+                    <div className="space-y-2">
+                      <Label>Programme</Label>
+                      <Input
+                        {...register(`qualifications.${index}.programme`)}
+                        disabled={loading}
+                        placeholder="e.g. Mathematics Education"
+                      />
                     </div>
                     <div className="space-y-2">
                       <Label>Class of Degree</Label>
@@ -1231,9 +1313,27 @@ export function MultiStepApplicationForm({
                     </div>
                     <div className="space-y-2">
                       <Label>Level</Label>
-                      <Input
-                        {...register(`teaching_experiences.${index}.level`)}
-                        disabled={loading}
+                      <Controller
+                        name={`teaching_experiences.${index}.level`}
+                        control={control}
+                        render={({ field }) => (
+                          <Select
+                            value={field.value ?? ""}
+                            onValueChange={(v) => field.onChange(v || null)}
+                            disabled={loading}
+                          >
+                            <SelectTrigger>
+                              <SelectValue placeholder="Select level" />
+                            </SelectTrigger>
+                            <SelectContent>
+                              {TEACHING_LEVELS.map((value) => (
+                                <SelectItem key={value} value={value}>
+                                  {value}
+                                </SelectItem>
+                              ))}
+                            </SelectContent>
+                          </Select>
+                        )}
                       />
                     </div>
                     <Controller
@@ -1464,9 +1564,29 @@ export function MultiStepApplicationForm({
                     </div>
                     <div className="space-y-2">
                       <Label>Status</Label>
-                      <Input
-                        {...register(`examining_experiences.${index}.status`)}
-                        disabled={loading}
+                      <Controller
+                        name={`examining_experiences.${index}.status`}
+                        control={control}
+                        render={({ field }) => (
+                          <Select
+                            value={field.value ?? "__none__"}
+                            onValueChange={(v) =>
+                              field.onChange(v === "__none__" ? "" : v)
+                            }
+                            disabled={loading}
+                          >
+                            <SelectTrigger>
+                              <SelectValue placeholder="Select status" />
+                            </SelectTrigger>
+                            <SelectContent>
+                              {EXAMINING_STATUS_OPTIONS.map((opt) => (
+                                <SelectItem key={opt.value} value={opt.value}>
+                                  {opt.label}
+                                </SelectItem>
+                              ))}
+                            </SelectContent>
+                          </Select>
+                        )}
                       />
                     </div>
                     <Controller
@@ -1766,6 +1886,10 @@ export function MultiStepApplicationForm({
                     <p className="font-medium mt-1">{d.nationality || "—"}</p>
                   </div>
                   <div>
+                    <p className="text-muted-foreground text-xs">Region</p>
+                    <p className="font-medium mt-1">{d.region || "—"}</p>
+                  </div>
+                  <div>
                     <p className="text-muted-foreground text-xs">Date of Birth</p>
                     <p className="font-medium mt-1">
                       {d.date_of_birth ? format(new Date(d.date_of_birth), "PPP") : "—"}
@@ -1836,8 +1960,12 @@ export function MultiStepApplicationForm({
                             <p className="font-medium mt-1">{q.university_college}</p>
                           </div>
                           <div>
-                            <p className="text-muted-foreground text-xs">Degree/Diploma</p>
-                            <p className="font-medium mt-1">{q.degree_diploma}</p>
+                            <p className="text-muted-foreground text-xs">Degree type</p>
+                            <p className="font-medium mt-1">{q.degree_type}</p>
+                          </div>
+                          <div>
+                            <p className="text-muted-foreground text-xs">Programme</p>
+                            <p className="font-medium mt-1">{q.programme || "—"}</p>
                           </div>
                           <div>
                             <p className="text-muted-foreground text-xs">Class of Degree</p>

@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { FileEdit, User, Settings, Calendar, FileText, BookOpen } from "lucide-react";
+import { LayoutDashboard, FileEdit, User, Settings, Calendar, FileText, BookOpen, ClipboardList } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { getCurrentUser } from "@/lib/api";
 import type { UserMeResponse } from "@/types";
@@ -11,13 +11,15 @@ import type { UserMeResponse } from "@/types";
 type NavItem = { label: string; href: string; icon: React.ComponentType<{ className?: string }> };
 
 const examinerItems: NavItem[] = [
-  { label: "Application", href: "/dashboard/application", icon: FileEdit },
+  { label: "Application", href: "/application", icon: FileEdit },
+  { label: "My invitations", href: "/dashboard/invitations", icon: ClipboardList },
   { label: "Profile", href: "/dashboard/profile", icon: User },
   { label: "Account settings", href: "/dashboard/account-settings", icon: Settings },
 ];
 
 const adminItems: NavItem[] = [
-  { label: "Cycles", href: "/dashboard/admin/cycles", icon: Calendar },
+  { label: "Dashboard", href: "/dashboard/admin", icon: LayoutDashboard },
+  { label: "Examinations", href: "/dashboard/admin/examinations", icon: Calendar },
   { label: "Applications", href: "/dashboard/admin/applications", icon: FileText },
   { label: "Subjects", href: "/dashboard/admin/subjects", icon: BookOpen },
   { label: "Profile", href: "/dashboard/profile", icon: User },

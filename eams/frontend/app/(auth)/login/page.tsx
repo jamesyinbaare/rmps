@@ -13,7 +13,7 @@ export default function LoginPage() {
 
   useEffect(() => {
     if (isAuthenticated()) {
-      router.push("/dashboard/application");
+      router.push("/application");
     } else {
       setChecking(false);
     }

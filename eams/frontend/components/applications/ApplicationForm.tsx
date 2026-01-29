@@ -20,6 +20,7 @@ import { SearchableSubjectSelect } from "@/components/ui/searchable-subject-sele
 import { getSubjectTypes, getSubjects } from "@/lib/api";
 import type {
   ExaminerApplicationCreate,
+  ExaminerApplicationResponse,
   ExaminerApplicationUpdate,
   Subject,
   SubjectTypeOption,
@@ -64,13 +65,14 @@ const applicationSchema = z.object({
 
 type ApplicationFormData = z.infer<typeof applicationSchema>;
 
-interface ApplicationFormInitialData extends ExaminerApplicationCreate, Partial<ExaminerApplicationUpdate> {
+type ApplicationFormInitialData = Partial<ExaminerApplicationCreate> &
+  Partial<ExaminerApplicationUpdate> & {
   subject_id?: string | null;
-  subject?: { id: string; name: string; type?: string } | null;
-}
+  subject?: { id: string; name: string; type?: string | null } | null;
+};
 
 interface ApplicationFormProps {
-  initialData?: ApplicationFormInitialData;
+  initialData?: ApplicationFormInitialData | ExaminerApplicationResponse;
   onSubmit: (data: ExaminerApplicationCreate | ExaminerApplicationUpdate) => Promise<void>;
   onCancel?: () => void;
   submitLabel?: string;

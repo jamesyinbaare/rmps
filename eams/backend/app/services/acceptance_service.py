@@ -13,7 +13,7 @@ from app.models import (
     ExaminerAcceptance,
     ExaminerAllocation,
 )
-from app.services.allocation_service import promote_from_waitlist
+from app.services.invitation_service import promote_from_waitlist
 
 logger = logging.getLogger(__name__)
 
@@ -94,10 +94,9 @@ async def decline_allocation(
         try:
             await promote_from_waitlist(
                 session,
-                acceptance.cycle_id,
-                acceptance.subject_id,
+                acceptance.subject_examiner_id,
                 1,  # Promote one to fill the slot
-                UUID("00000000-0000-0000-0000-000000000000"),  # System user
+                None,  # System-triggered (no user)
             )
         except Exception as e:
             logger.warning(f"Failed to promote from waitlist after decline: {e}")
@@ -110,22 +109,21 @@ async def decline_allocation(
 
 async def process_expired_acceptances(
     session: AsyncSession,
-    cycle_id: UUID,
+    subject_examiner_id: UUID,
 ) -> dict[str, any]:
     """
     Process expired acceptances (auto-decline).
 
     Args:
         session: Database session
-        cycle_id: Marking cycle UUID
+        subject_examiner_id: Subject examiner UUID
 
     Returns:
         Dictionary with processing results
     """
-    # Find pending acceptances past deadline
     now = datetime.utcnow()
     expired_stmt = select(ExaminerAcceptance).where(
-        ExaminerAcceptance.cycle_id == cycle_id,
+        ExaminerAcceptance.subject_examiner_id == subject_examiner_id,
         ExaminerAcceptance.status == AcceptanceStatus.PENDING,
         ExaminerAcceptance.response_deadline < now,
     )
@@ -137,7 +135,6 @@ async def process_expired_acceptances(
         acceptance.status = AcceptanceStatus.EXPIRED
         acceptance.responded_at = now
 
-        # Release slot
         allocation_stmt = select(ExaminerAllocation).where(ExaminerAllocation.id == acceptance.allocation_id)
         allocation_result = await session.execute(allocation_stmt)
         allocation = allocation_result.scalar_one_or_none()
@@ -147,15 +144,13 @@ async def process_expired_acceptances(
 
         expired_count += 1
 
-    # Try to promote from waitlist for each expired acceptance
     for acceptance in expired_acceptances:
         try:
             await promote_from_waitlist(
                 session,
-                acceptance.cycle_id,
-                acceptance.subject_id,
+                acceptance.subject_examiner_id,
                 1,
-                UUID("00000000-0000-0000-0000-000000000000"),  # System user
+                None,  # System-triggered (no user)
             )
         except Exception as e:
             logger.warning(f"Failed to promote from waitlist after expiration: {e}")

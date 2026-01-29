@@ -1,4 +1,4 @@
-"""Service for validating quota compliance."""
+"""Service for validating quota compliance and quota constraints vs total_required."""
 from uuid import UUID
 
 from sqlalchemy import select, func
@@ -13,9 +13,68 @@ from app.models import (
 )
 
 
+def validate_quotas_against_required(
+    total_required: int,
+    region_quotas: list[dict],
+    gender_quotas: list[dict],
+) -> tuple[bool, list[str]]:
+    """
+    Validate that min/max counts in region and gender quotas are consistent with total_required.
+
+    Rules:
+    - Each quota's min_count and max_count (if set) must be <= total_required.
+    - Sum of min_count across region quotas <= total_required (cannot require more minimums than total slots).
+    - Sum of min_count across gender quotas <= total_required.
+    - Sum of max_count across region quotas >= total_required (treat None as total_required: no cap = can take up to total).
+    - Sum of max_count across gender quotas >= total_required.
+
+    Returns:
+        (is_valid, list of violation messages)
+    """
+    violations: list[str] = []
+
+    def check_group(label: str, items: list[dict]) -> None:
+        sum_min = 0
+        sum_max = 0
+        for item in items:
+            min_c = item.get("min_count")
+            max_c = item.get("max_count")
+            key = item.get("quota_key", "?")
+
+            if min_c is not None:
+                if min_c > total_required:
+                    violations.append(
+                        f"{label} '{key}': min_count {min_c} cannot exceed total required ({total_required})"
+                    )
+                sum_min += min_c
+            if max_c is not None:
+                if max_c > total_required:
+                    violations.append(
+                        f"{label} '{key}': max_count {max_c} cannot exceed total required ({total_required})"
+                    )
+                sum_max += max_c
+            else:
+                # No cap: treat as able to take up to total_required for capacity check
+                sum_max += total_required
+
+        if sum_min > total_required:
+            violations.append(
+                f"{label} quotas: sum of min_count ({sum_min}) exceeds total required ({total_required})"
+            )
+        if items and sum_max < total_required:
+            violations.append(
+                f"{label} quotas: sum of max_count ({sum_max}) is less than total required ({total_required})"
+            )
+
+    check_group("Region", region_quotas)
+    check_group("Gender", gender_quotas)
+
+    return len(violations) == 0, violations
+
+
 async def validate_quota_compliance(
     session: AsyncSession,
-    cycle_id: UUID,
+    subject_examiner_id: UUID,
     subject_id: UUID,
     proposed_examiner_ids: list[UUID],
 ) -> tuple[bool, list[str]]:
@@ -24,7 +83,7 @@ async def validate_quota_compliance(
 
     Args:
         session: Database session
-        cycle_id: Marking cycle UUID
+        subject_examiner_id: Subject examiner UUID
         subject_id: Subject UUID
         proposed_examiner_ids: List of examiner UUIDs to check
 
@@ -33,26 +92,22 @@ async def validate_quota_compliance(
     """
     violations = []
 
-    # Get all quotas for this cycle and subject
     quota_stmt = select(SubjectQuota).where(
-        SubjectQuota.cycle_id == cycle_id,
+        SubjectQuota.subject_examiner_id == subject_examiner_id,
         SubjectQuota.subject_id == subject_id,
     )
     quota_result = await session.execute(quota_stmt)
     quotas = quota_result.scalars().all()
 
     if not quotas:
-        # No quotas defined, so always valid
         return True, []
 
-    # Get examiner details for proposed allocations
     examiner_stmt = select(Examiner).where(Examiner.id.in_(proposed_examiner_ids))
     examiner_result = await session.execute(examiner_stmt)
     examiners = {ex.id: ex for ex in examiner_result.scalars().all()}
 
-    # Get existing approved allocations for this cycle/subject
     existing_stmt = select(ExaminerAllocation).where(
-        ExaminerAllocation.cycle_id == cycle_id,
+        ExaminerAllocation.subject_examiner_id == subject_examiner_id,
         ExaminerAllocation.subject_id == subject_id,
         ExaminerAllocation.allocation_status == AllocationStatus.APPROVED,
     )
