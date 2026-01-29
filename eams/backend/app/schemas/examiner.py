@@ -8,6 +8,7 @@ from app.models import (
     ExaminerApplicationStatus,
     ExaminerDocumentType,
     ExaminerSubjectPreferenceType,
+    GhanaRegion,
     PaymentStatus,
 )
 from app.schemas.subject import SubjectResponse
@@ -72,6 +73,7 @@ class ExaminerApplicationCreate(BaseModel):
     # Personal Particulars
     full_name: str
     title: str
+    region: GhanaRegion
     nationality: str | None = None
     date_of_birth: date | None = None
     office_address: str | None = None
@@ -92,6 +94,7 @@ class ExaminerApplicationUpdate(BaseModel):
 
     full_name: str | None = None
     title: str | None = None
+    region: GhanaRegion | None = None
     nationality: str | None = None
     date_of_birth: date | None = None
     office_address: str | None = None
@@ -222,6 +225,7 @@ class ExaminerApplicationResponse(BaseModel):
     status: ExaminerApplicationStatus
     full_name: str
     title: str | None
+    region: GhanaRegion | None
     nationality: str | None
     date_of_birth: date | None
     office_address: str | None

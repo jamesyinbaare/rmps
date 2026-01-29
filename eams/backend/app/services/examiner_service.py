@@ -67,6 +67,8 @@ def validate_application_completeness(application: ExaminerApplication) -> tuple
     # Required personal particulars
     if not application.full_name or not application.full_name.strip():
         errors.append("Full name is required")
+    if not application.region:
+        errors.append("Region is required")
     if not application.email_address:
         errors.append("Email address is required")
     if not application.telephone_cell and not application.telephone_office:

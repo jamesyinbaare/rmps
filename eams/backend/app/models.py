@@ -94,6 +94,26 @@ class ExaminerStatus(enum.Enum):
     SUSPENDED = "SUSPENDED"
 
 
+class GhanaRegion(enum.Enum):
+
+    ASHANTI = "Ashanti Region"
+    BONO = "Bono Region"
+    BONO_EAST = "Bono East Region"
+    AHAFO = "Ahafo Region"
+    CENTRAL = "Central Region"
+    EASTERN = "Eastern Region"
+    GREATER_ACCRA = "Greater Accra Region"
+    NORTHERN = "Northern Region"
+    NORTH_EAST = "North East Region"
+    SAVANNAH = "Savannah Region"
+    UPPER_EAST = "Upper East Region"
+    UPPER_WEST = "Upper West Region"
+    VOLTA = "Volta Region"
+    OTI = "Oti Region"
+    WESTERN = "Western Region"
+    WESTERN_NORTH = "Western North Region"
+
+
 class MarkingCycleStatus(enum.Enum):
     """Marking cycle status."""
 
@@ -518,6 +538,7 @@ class ExaminerApplication(Base):
 
     full_name = Column(String(255), nullable=False)
     title = Column(String(20), nullable=True)
+    region = Column(Enum(GhanaRegion, create_constraint=False, values_callable=lambda x: [e.value for e in x]), nullable=False, index=True)
     nationality = Column(String(100), nullable=True)
     date_of_birth = Column(Date, nullable=True)
     office_address = Column(Text, nullable=True)
@@ -768,6 +789,7 @@ __all__ = [
     "ExaminerDocumentType",
     "ExaminerSubjectPreferenceType",
     "SubjectType",
+    "GhanaRegion",
     "MarkingCycleStatus",
     "AllocationStatus",
     "AcceptanceStatus",
