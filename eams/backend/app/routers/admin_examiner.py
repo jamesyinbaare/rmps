@@ -20,7 +20,6 @@ from app.models import (
     ExaminerApplicationStatus,
     ExaminerQualification,
     ExaminerSubjectEligibility,
-    User,
 )
 from app.schemas.examiner import (
     ExaminerApplicationResponse,
@@ -46,12 +45,24 @@ _APPLICATION_LOAD_OPTIONS = (
 )
 
 
+# Allowed sort fields for admin applications list
+APPLICATION_SORT_FIELDS = {
+    "application_number",
+    "full_name",
+    "status",
+    "submitted_at",
+    "created_at",
+}
+
+
 @router.get("", response_model=list[ExaminerApplicationResponse])
 async def list_admin_examiner_applications(
     session: DBSessionDep,
     current_user: AdminDep,
     status_filter: ExaminerApplicationStatus | None = Query(None, alias="status"),
     search: str | None = Query(None, description="Search by application number or applicant name"),
+    sort_by: str | None = Query(None, description="Sort field: application_number, full_name, status, submitted_at, created_at"),
+    order: str | None = Query(None, description="Sort order: asc or desc"),
     page: int = Query(1, ge=1),
     page_size: int = Query(50, ge=1, le=100),
 ) -> list[ExaminerApplicationResponse]:
@@ -62,10 +73,10 @@ async def list_admin_examiner_applications(
     if status_filter:
         stmt = stmt.where(ExaminerApplication.status == status_filter)
 
-    # Apply search filter
+    # Apply search filter (columns are on ExaminerApplication)
     if search:
         search_pattern = f"%{search}%"
-        stmt = stmt.join(User, ExaminerApplication.examiner_id == ExaminerApplication.examiner_id).where(
+        stmt = stmt.where(
             or_(
                 ExaminerApplication.application_number.ilike(search_pattern),
                 ExaminerApplication.full_name.ilike(search_pattern),
@@ -73,8 +84,12 @@ async def list_admin_examiner_applications(
             )
         )
 
-    # Order by created date (newest first)
-    stmt = stmt.order_by(ExaminerApplication.created_at.desc())
+    # Order
+    order_col = ExaminerApplication.created_at
+    if sort_by and sort_by in APPLICATION_SORT_FIELDS:
+        order_col = getattr(ExaminerApplication, sort_by, ExaminerApplication.created_at)
+    desc = order != "asc"
+    stmt = stmt.order_by(order_col.desc() if desc else order_col.asc())
 
     # Pagination
     offset = (page - 1) * page_size
