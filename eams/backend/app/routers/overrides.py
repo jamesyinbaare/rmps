@@ -1,4 +1,4 @@
-"""Admin override endpoints for allocation management."""
+"""Admin override endpoints for invitation management."""
 from uuid import UUID
 
 from fastapi import APIRouter, HTTPException, status
@@ -7,9 +7,9 @@ from sqlalchemy import select
 from app.dependencies.auth import AdminDep
 from app.dependencies.database import DBSessionDep
 from app.models import AllocationAuditLog, AllocationStatus, ExaminerAllocation
-from app.schemas.allocation import ExaminerAllocationResponse
+from app.schemas.invitation import ExaminerAllocationResponse
 
-router = APIRouter(prefix="/api/v1/admin/allocations", tags=["admin-overrides"])
+router = APIRouter(prefix="/api/v1/admin/invitations", tags=["admin-overrides"])
 
 
 @router.post("/{allocation_id}/force-approve", response_model=ExaminerAllocationResponse)
@@ -36,7 +36,7 @@ async def force_approve_allocation(
     audit_log = AllocationAuditLog(
         action_type="FORCE_APPROVE",
         performed_by_user_id=current_user.id,
-        cycle_id=allocation.cycle_id,
+        subject_examiner_id=allocation.subject_examiner_id,
         subject_id=allocation.subject_id,
         examiner_id=allocation.examiner_id,
         allocation_id=allocation.id,
@@ -74,7 +74,7 @@ async def force_decline_allocation(
     audit_log = AllocationAuditLog(
         action_type="FORCE_DECLINE",
         performed_by_user_id=current_user.id,
-        cycle_id=allocation.cycle_id,
+        subject_examiner_id=allocation.subject_examiner_id,
         subject_id=allocation.subject_id,
         examiner_id=allocation.examiner_id,
         allocation_id=allocation.id,
@@ -117,7 +117,7 @@ async def promote_allocation(
     audit_log = AllocationAuditLog(
         action_type="PROMOTE",
         performed_by_user_id=current_user.id,
-        cycle_id=allocation.cycle_id,
+        subject_examiner_id=allocation.subject_examiner_id,
         subject_id=allocation.subject_id,
         examiner_id=allocation.examiner_id,
         allocation_id=allocation.id,
@@ -160,7 +160,7 @@ async def demote_allocation(
     audit_log = AllocationAuditLog(
         action_type="DEMOTE",
         performed_by_user_id=current_user.id,
-        cycle_id=allocation.cycle_id,
+        subject_examiner_id=allocation.subject_examiner_id,
         subject_id=allocation.subject_id,
         examiner_id=allocation.examiner_id,
         allocation_id=allocation.id,

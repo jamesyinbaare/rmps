@@ -6,8 +6,8 @@ from sqlalchemy import select
 
 from app.dependencies.auth import CurrentUserDep
 from app.dependencies.database import DBSessionDep
-from app.models import Examiner, ExaminerAcceptance, ExaminerAllocation
-from app.schemas.allocation import ExaminerAcceptanceResponse
+from app.models import Examination, Examiner, ExaminerAcceptance, Subject, SubjectExaminer
+from app.schemas.invitation import ExaminerAcceptanceResponse
 from app.services.acceptance_service import accept_allocation, decline_allocation
 
 router = APIRouter(prefix="/api/v1/examiner", tags=["examiner"])
@@ -100,7 +100,12 @@ async def list_examiner_allocations(
     session: DBSessionDep,
     current_user: CurrentUserDep,
 ) -> list[ExaminerAcceptanceResponse]:
-    """List examiner's allocations and acceptances."""
+    """
+    List examiner's invitations (acceptances).
+
+    Returns only invitations that have been sent by the admin (i.e. have an
+    acceptance record). Includes subject_code, subject_name, cycle_year for display.
+    """
     examiner_stmt = select(Examiner).where(Examiner.user_id == current_user.id)
     examiner_result = await session.execute(examiner_stmt)
     examiner = examiner_result.scalar_one_or_none()
@@ -108,11 +113,38 @@ async def list_examiner_allocations(
     if not examiner:
         return []
 
-    stmt = select(ExaminerAcceptance).where(ExaminerAcceptance.examiner_id == examiner.id)
+    stmt = (
+        select(
+            ExaminerAcceptance,
+            Subject.code.label("subject_code"),
+            Subject.name.label("subject_name"),
+            Examination.year.label("examination_year"),
+        )
+        .join(Subject, ExaminerAcceptance.subject_id == Subject.id)
+        .join(SubjectExaminer, ExaminerAcceptance.subject_examiner_id == SubjectExaminer.id)
+        .join(Examination, SubjectExaminer.examination_id == Examination.id)
+        .where(ExaminerAcceptance.examiner_id == examiner.id)
+    )
     result = await session.execute(stmt)
-    acceptances = result.scalars().all()
+    rows = result.all()
 
-    return [ExaminerAcceptanceResponse.model_validate(acc) for acc in acceptances]
+    return [
+        ExaminerAcceptanceResponse(
+            id=acc.id,
+            examiner_id=acc.examiner_id,
+            subject_examiner_id=acc.subject_examiner_id,
+            subject_id=acc.subject_id,
+            allocation_id=acc.allocation_id,
+            status=acc.status,
+            notified_at=acc.notified_at,
+            responded_at=acc.responded_at,
+            response_deadline=acc.response_deadline,
+            subject_code=subject_code,
+            subject_name=subject_name,
+            examination_year=examination_year,
+        )
+        for acc, subject_code, subject_name, examination_year in rows
+    ]
 
 
 @router.get("/allocations/{allocation_id}", response_model=ExaminerAcceptanceResponse)

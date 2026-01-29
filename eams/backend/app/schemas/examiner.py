@@ -5,11 +5,13 @@ from uuid import UUID
 from pydantic import BaseModel, EmailStr
 
 from app.models import (
+    DegreeType,
     ExaminerApplicationStatus,
     ExaminerDocumentType,
     ExaminerSubjectPreferenceType,
     GhanaRegion,
     PaymentStatus,
+    TeachingLevel,
 )
 from app.schemas.subject import SubjectResponse
 
@@ -19,7 +21,8 @@ class QualificationUpdate(BaseModel):
     """Qualification data for update."""
 
     university_college: str
-    degree_diploma: str
+    degree_type: DegreeType
+    programme: str | None = None
     class_of_degree: str | None = None
     major_subjects: str | None = None
     date_of_award: date | None = None
@@ -32,7 +35,7 @@ class TeachingExperienceUpdate(BaseModel):
     date_from: date | None = None
     date_to: date | None = None
     subject: str | None = None
-    level: str | None = None
+    level: TeachingLevel | None = None
 
 
 class WorkExperienceUpdate(BaseModel):
@@ -122,7 +125,8 @@ class QualificationResponse(BaseModel):
 
     id: UUID
     university_college: str
-    degree_diploma: str
+    degree_type: DegreeType
+    programme: str | None
     class_of_degree: str | None
     major_subjects: str | None
     date_of_award: date | None
@@ -140,7 +144,7 @@ class TeachingExperienceResponse(BaseModel):
     date_from: date | None
     date_to: date | None
     subject: str | None
-    level: str | None
+    level: TeachingLevel | None
     order_index: int
 
     class Config:

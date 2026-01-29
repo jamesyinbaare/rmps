@@ -1,11 +1,11 @@
-"""Service for calculating examiner scores for allocation."""
-from datetime import datetime
+"""Service for calculating examiner scores for invitation run."""
 from uuid import UUID
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
 
-from app.models import Examiner, ExaminerSubjectHistory, MarkingCycle
+from app.models import DegreeType, Examiner, ExaminerSubjectHistory
 
 
 async def calculate_examiner_score(
@@ -32,8 +32,12 @@ async def calculate_examiner_score(
     Returns:
         Numeric score for ranking (higher = better)
     """
-    # Get examiner with qualifications
-    examiner_stmt = select(Examiner).where(Examiner.id == examiner_id)
+    # Get examiner with qualifications (eager load to avoid lazy load in async)
+    examiner_stmt = (
+        select(Examiner)
+        .where(Examiner.id == examiner_id)
+        .options(selectinload(Examiner.qualifications))
+    )
     examiner_result = await session.execute(examiner_stmt)
     examiner = examiner_result.scalar_one_or_none()
 
@@ -66,20 +70,22 @@ async def calculate_examiner_score(
         if years_since_last <= 2:
             score += 5.0
 
-    # Factor 4: Qualification weight (weight: 5-15 points based on highest degree)
-    # Check for PhD, Masters, Bachelors, etc.
+    # Factor 4: Qualification weight (weight: 5-15 points based on degree_type)
+    _DEGREE_WEIGHTS = {
+        DegreeType.PhD: 15.0,
+        DegreeType.MEd: 12.0,
+        DegreeType.MSc: 12.0,
+        DegreeType.BEd: 8.0,
+        DegreeType.BSc: 8.0,
+        DegreeType.Bachelor: 8.0,
+        DegreeType.Diploma: 5.0,
+        DegreeType.Other: 0.0,
+    }
     if examiner.qualifications:
         highest_qual_weight = 0.0
         for qual in examiner.qualifications:
-            degree_lower = qual.degree_diploma.lower()
-            if "phd" in degree_lower or "doctor" in degree_lower:
-                highest_qual_weight = max(highest_qual_weight, 15.0)
-            elif "master" in degree_lower or "m.sc" in degree_lower or "m.ed" in degree_lower:
-                highest_qual_weight = max(highest_qual_weight, 12.0)
-            elif "bachelor" in degree_lower or "b.sc" in degree_lower or "b.ed" in degree_lower:
-                highest_qual_weight = max(highest_qual_weight, 8.0)
-            elif "diploma" in degree_lower:
-                highest_qual_weight = max(highest_qual_weight, 5.0)
+            weight = _DEGREE_WEIGHTS.get(qual.degree_type, 0.0)
+            highest_qual_weight = max(highest_qual_weight, weight)
         score += highest_qual_weight
 
     return score

@@ -5,13 +5,14 @@ from uuid import UUID
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
 
 from app.models import (
     AcceptanceStatus,
     AllocationStatus,
     ExaminerAcceptance,
     ExaminerAllocation,
-    MarkingCycle,
+    SubjectExaminer,
 )
 
 logger = logging.getLogger(__name__)
@@ -19,43 +20,43 @@ logger = logging.getLogger(__name__)
 
 async def notify_approved_examiners(
     session: AsyncSession,
-    cycle_id: UUID,
-    subject_id: UUID,
+    subject_examiner_id: UUID,
 ) -> dict[str, any]:
     """
     Notify approved examiners and create acceptance records.
 
     Args:
         session: Database session
-        cycle_id: Marking cycle UUID
-        subject_id: Subject UUID
+        subject_examiner_id: Subject examiner UUID
 
     Returns:
         Dictionary with notification results
     """
-    # Get cycle to determine deadline
-    cycle_stmt = select(MarkingCycle).where(MarkingCycle.id == cycle_id)
-    cycle_result = await session.execute(cycle_stmt)
-    cycle = cycle_result.scalar_one_or_none()
+    se_stmt = (
+        select(SubjectExaminer)
+        .where(SubjectExaminer.id == subject_examiner_id)
+        .options(selectinload(SubjectExaminer.examination))
+    )
+    se_result = await session.execute(se_stmt)
+    se = se_result.scalar_one_or_none()
+    if not se:
+        raise ValueError(f"Subject examiner {subject_examiner_id} not found")
 
-    if not cycle:
-        raise ValueError(f"Marking cycle {cycle_id} not found")
+    response_deadline = (
+        (se.examination.acceptance_deadline if se.examination else None)
+        or (datetime.utcnow() + timedelta(days=7))
+    )
 
-    # Calculate response deadline (default: 7 days from now)
-    response_deadline = cycle.acceptance_deadline or (datetime.utcnow() + timedelta(days=7))
-
-    # Get all approved allocations for cycle/subject
     approved_stmt = select(ExaminerAllocation).where(
-        ExaminerAllocation.cycle_id == cycle_id,
-        ExaminerAllocation.subject_id == subject_id,
+        ExaminerAllocation.subject_examiner_id == subject_examiner_id,
         ExaminerAllocation.allocation_status == AllocationStatus.APPROVED,
     )
     approved_result = await session.execute(approved_stmt)
     approved_allocations = approved_result.scalars().all()
 
+    subject_id = se.subject_id
     notified_count = 0
     for allocation in approved_allocations:
-        # Check if acceptance record already exists
         existing_stmt = select(ExaminerAcceptance).where(
             ExaminerAcceptance.allocation_id == allocation.id,
         )
@@ -63,12 +64,11 @@ async def notify_approved_examiners(
         existing = existing_result.scalar_one_or_none()
 
         if existing:
-            continue  # Already notified
+            continue
 
-        # Create acceptance record
         acceptance = ExaminerAcceptance(
             examiner_id=allocation.examiner_id,
-            cycle_id=cycle_id,
+            subject_examiner_id=subject_examiner_id,
             subject_id=subject_id,
             allocation_id=allocation.id,
             status=AcceptanceStatus.PENDING,
@@ -78,7 +78,17 @@ async def notify_approved_examiners(
         session.add(acceptance)
         notified_count += 1
 
-        # TODO: Send email notification
+        logger.info(
+            "Allocation notification: examiner_id=%s allocation_id=%s subject_examiner_id=%s subject_id=%s. "
+            "Examiner can log in and go to My allocations to accept or decline. "
+            "When email is implemented, examiner can also click the link in the email.",
+            allocation.examiner_id,
+            allocation.id,
+            subject_examiner_id,
+            subject_id,
+        )
+
+        # TODO: Send email notification with link to dashboard to accept/decline
         # await send_acceptance_email(session, acceptance)
 
     await session.commit()

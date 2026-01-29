@@ -11,6 +11,7 @@ from app.config import settings
 from app.dependencies.auth import CurrentUserDep
 from app.dependencies.database import DBSessionDep
 from app.models import (
+    DegreeType,
     Examiner,
     ExaminerApplication,
     ExaminerApplicationDocument,
@@ -23,6 +24,7 @@ from app.models import (
     ExaminerDocumentType,
     ExaminerRecommendation,
     PaymentStatus,
+    TeachingLevel,
 )
 from app.schemas.examiner import (
     ExaminerApplicationCreate,
@@ -353,10 +355,14 @@ async def update_examiner_application(
         )
         # Create new qualifications
         for idx, qual_data in enumerate(update_data["qualifications"]):
+            degree_type = qual_data["degree_type"]
+            if isinstance(degree_type, str):
+                degree_type = DegreeType(degree_type)
             qualification = ExaminerApplicationQualification(
                 application_id=application.id,
                 university_college=qual_data["university_college"],
-                degree_diploma=qual_data["degree_diploma"],
+                degree_type=degree_type,
+                programme=qual_data.get("programme"),
                 class_of_degree=qual_data.get("class_of_degree"),
                 major_subjects=qual_data.get("major_subjects"),
                 date_of_award=qual_data.get("date_of_award"),
@@ -373,13 +379,16 @@ async def update_examiner_application(
         )
         # Create new teaching experiences
         for idx, exp_data in enumerate(update_data["teaching_experiences"]):
+            level = exp_data.get("level")
+            if isinstance(level, str) and level:
+                level = TeachingLevel(level)
             experience = ExaminerApplicationTeachingExperience(
                 application_id=application.id,
                 institution_name=exp_data["institution_name"],
                 date_from=exp_data.get("date_from"),
                 date_to=exp_data.get("date_to"),
                 subject=exp_data.get("subject"),
-                level=exp_data.get("level"),
+                level=level,
                 order_index=idx,
             )
             session.add(experience)
