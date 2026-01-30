@@ -8,8 +8,9 @@ A separate public-facing examination registration portal with its own backend, f
 2. **Private Examination Registration**: Individual users create accounts and register for examinations
 3. **Registration Period Management**: Track registration start/end dates per exam
 4. **Data Export**: System administrators export registration data for import into the main system
-5. **Examination Scheduling**: Set examination date and time for each subject, enable timetable download
-6. **User Management**: System admins create school admin users; school admins create/manage school users
+5. **Admin Candidate Import**: System administrators import candidates via CSV or Excel from the exam detail page. Imported candidates have first/last/other names; optional registration_number, index_number, school_code, programme_code; and subject selections validated by candidate type (private, referral, free_tvet). When `school_code` is omitted, `registration_number` must be provided and must be unique. A template can be downloaded from the Import dialog.
+6. **Examination Scheduling**: Set examination date and time for each subject, enable timetable download
+7. **User Management**: System admins create school admin users; school admins create/manage school users
 
 ## Architecture
 
@@ -61,6 +62,15 @@ registration-portal/
 ├── .env.example      # Environment variables template
 └── README.md
 ```
+
+## Admin candidate import
+
+From the exam detail page (Dashboard → Examinations → select exam), system administrators can use **Import Candidates** to upload a CSV or Excel file. All columns are read as strings (no automatic type casting).
+
+- **Required columns**: `firstname`, `lastname` (or legacy `name`).
+- **Optional columns**: `othername`, `registration_number`, `index_number`, `school_code`, `programme_code`, `programme_id`, `registration_type`, `subject_codes` (comma-separated subject codes), plus bio/guardian fields.
+- **Rule**: When `school_code` is omitted, `registration_number` must be provided in the file and must be unique across the system.
+- **Validation**: Subject selection is validated by candidate type (private, referral, free_tvet) and exam series (MAY/JUNE vs NOV/DEC). Download the template from the Import dialog for the exact column headers and an example row.
 
 ## Environment Variables
 

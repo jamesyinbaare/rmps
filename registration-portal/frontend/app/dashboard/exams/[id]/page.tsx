@@ -46,6 +46,7 @@ import { CreateScheduleDialog } from "@/components/admin/CreateScheduleDialog";
 import { EditScheduleDialog } from "@/components/admin/EditScheduleDialog";
 import { BulkUploadSchedulesDialog } from "@/components/admin/BulkUploadSchedulesDialog";
 import { EditExamDialog } from "@/components/admin/EditExamDialog";
+import { ImportCandidatesDialog } from "@/components/admin/ImportCandidatesDialog";
 
 export default function ExamDetailPage() {
   const params = useParams();
@@ -63,6 +64,7 @@ export default function ExamDetailPage() {
   const [closing, setClosing] = useState(false);
   const [generatingIndexNumbers, setGeneratingIndexNumbers] = useState(false);
   const [exporting, setExporting] = useState(false);
+  const [importDialogOpen, setImportDialogOpen] = useState(false);
   const [currentJobId, setCurrentJobId] = useState<number | null>(null);
   const [schedules, setSchedules] = useState<ExaminationSchedule[]>([]);
   const [loadingSchedules, setLoadingSchedules] = useState(false);
@@ -638,6 +640,15 @@ export default function ExamDetailPage() {
               <Download className="h-4 w-4" />
               {exporting ? "Exporting..." : "Export Candidates"}
             </Button>
+            <Button
+              variant="outline"
+              onClick={() => setImportDialogOpen(true)}
+              className="gap-2"
+              title="Import candidates from CSV or Excel"
+            >
+              <Upload className="h-4 w-4" />
+              Import Candidates
+            </Button>
             {isClosed && (
               <Button
                 variant="outline"
@@ -675,6 +686,17 @@ export default function ExamDetailPage() {
         onConfirm={handleCloseRegistration}
         loading={closing}
       />
+
+      {/* Import Candidates Dialog */}
+      {exam && (
+        <ImportCandidatesDialog
+          examId={exam.id}
+          examLabel={exam.year && exam.exam_series ? `${exam.year} ${exam.exam_series}` : undefined}
+          open={importDialogOpen}
+          onOpenChange={setImportDialogOpen}
+          onSuccess={reloadData}
+        />
+      )}
 
       {/* Timetable Management */}
       <Card>

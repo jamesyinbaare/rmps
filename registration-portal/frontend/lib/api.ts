@@ -1735,6 +1735,54 @@ export async function exportCandidates(examId: number): Promise<void> {
   window.URL.revokeObjectURL(downloadUrl);
 }
 
+export async function downloadCandidatesImportTemplate(examId: number): Promise<void> {
+  const token = getAccessToken();
+  const response = await fetch(`${API_BASE_URL}/api/v1/admin/exams/${examId}/candidates/import-template`, {
+    method: "GET",
+    headers: {
+      Authorization: `Bearer ${token}`,
+    },
+  });
+
+  if (!response.ok) {
+    const error = await response.json().catch(() => ({ detail: "Failed to download template" }));
+    throw new Error((error as { detail?: string }).detail || "Failed to download template");
+  }
+
+  const contentDisposition = response.headers.get("Content-Disposition");
+  let filename = `candidates_import_template_${examId}.csv`;
+  if (contentDisposition) {
+    const match = contentDisposition.match(/filename="?([^"]+)"?/i) || contentDisposition.match(/filename=([^;\s]+)/i);
+    if (match) filename = match[1].replace(/^["']|["']$/g, "");
+  }
+  const blob = await response.blob();
+  const downloadUrl = window.URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = downloadUrl;
+  link.download = filename;
+  document.body.appendChild(link);
+  link.click();
+  document.body.removeChild(link);
+  window.URL.revokeObjectURL(downloadUrl);
+}
+
+export async function importCandidates(
+  examId: number,
+  file: File,
+  defaultRegistrationType?: string
+): Promise<BulkUploadResponse> {
+  const formData = new FormData();
+  formData.append("file", file);
+  if (defaultRegistrationType) {
+    formData.append("default_registration_type", defaultRegistrationType);
+  }
+  const response = await fetchWithAuth(`/api/v1/admin/exams/${examId}/candidates/import`, {
+    method: "POST",
+    body: formData,
+  });
+  return handleResponse<BulkUploadResponse>(response);
+}
+
 // School API - For coordinators
 export interface SchoolUserCreate {
   email: string;
