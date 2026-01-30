@@ -41,6 +41,7 @@ from app.models import (
     RegistrationTieredPricing,
     ProgrammePricing,
     RegistrationType,
+    Disability,
     ExamPricingModel,
     ApiKey,
     ApiUsage,
@@ -92,6 +93,11 @@ from app.schemas.school import (
     BulkUploadError,
 )
 from app.utils.school import check_school_profile_completion
+from app.utils.registration import generate_unique_registration_number
+from app.services.subject_selection import (
+    normalize_exam_series,
+    validate_subject_selections,
+)
 from app.models import RegistrationStatus
 import csv
 import io
@@ -3369,6 +3375,373 @@ async def export_candidates(
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         headers={"Content-Disposition": f'attachment; filename="{filename}"'},
     )
+
+
+@router.get("/exams/{exam_id}/candidates/import-template")
+async def get_candidates_import_template(
+    exam_id: int,
+    session: DBSessionDep,
+    current_user: SystemAdminDep,
+):
+    """Return CSV template for admin candidate import. All columns are string headers with one example row."""
+    stmt = (
+        select(RegistrationExam)
+        .where(RegistrationExam.id == exam_id)
+        .options(selectinload(RegistrationExam.registration_period))
+    )
+    result = await session.execute(stmt)
+    exam = result.scalar_one_or_none()
+    if not exam:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Exam not found")
+    headers = [
+        "firstname",
+        "lastname",
+        "othername",
+        "registration_number",
+        "index_number",
+        "school_code",
+        "programme_code",
+        "registration_type",
+        "subject_codes",
+    ]
+    example_row = [
+        "John",
+        "Doe",
+        "",
+        "",
+        "",
+        "",
+        "1010",
+        "free_tvet",
+        "C701,C702",
+    ]
+    buf = io.StringIO()
+    import csv as csv_module
+    writer = csv_module.writer(buf)
+    writer.writerow(headers)
+    writer.writerow(example_row)
+    filename = f"candidates_import_template_{exam.year}_{(exam.exam_series or '').replace('/', '_')}.csv"
+    return StreamingResponse(
+        iter([buf.getvalue().encode("utf-8")]),
+        media_type="text/csv",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
+@router.post("/exams/{exam_id}/candidates/import", response_model=BulkUploadResponse, status_code=status.HTTP_200_OK)
+async def import_candidates(
+    exam_id: int,
+    file: UploadFile = File(...),
+    default_registration_type: str | None = Form(None, description="Default registration type when row omits it"),
+    session: DBSessionDep = None,
+    current_user: SystemAdminDep = None,
+) -> BulkUploadResponse:
+    """Admin import candidates via CSV or Excel. All columns are read as strings. Subject selection is validated by registration_type (private, referral, free_tvet). When school_code is omitted, registration_number must be provided and unique."""
+    from dateutil import parser as date_parser
+
+    stmt = (
+        select(RegistrationExam)
+        .where(RegistrationExam.id == exam_id)
+        .options(selectinload(RegistrationExam.registration_period))
+    )
+    result = await session.execute(stmt)
+    exam = result.scalar_one_or_none()
+    if not exam:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Exam not found")
+
+    file_content = await file.read()
+    filename = file.filename or "unknown"
+    try:
+        if filename.endswith(".csv"):
+            try:
+                text_content = file_content.decode("utf-8")
+            except UnicodeDecodeError:
+                text_content = file_content.decode("latin-1")
+            df = pd.read_csv(io.StringIO(text_content), dtype=str)
+            df = df.fillna("")
+        elif filename.endswith((".xlsx", ".xls")):
+            df = pd.read_excel(io.BytesIO(file_content), engine="openpyxl", dtype=str)
+            df = df.fillna("")
+        else:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="File must be CSV or Excel format (.csv, .xlsx, .xls)",
+            )
+    except Exception as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"Error parsing file: {str(exc)}")
+
+    df.columns = df.columns.str.strip()
+    column_mapping = {col.lower(): col for col in df.columns}
+    has_name = "name" in column_mapping
+    has_firstname = "firstname" in column_mapping
+    has_lastname = "lastname" in column_mapping
+    if not has_name and not (has_firstname and has_lastname):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Missing required columns: name (or firstname and lastname)",
+        )
+
+    normalized_series = normalize_exam_series(exam.exam_series)
+    is_may_june = normalized_series == "MAY/JUNE"
+    is_nov_dec = normalized_series == "NOV/DEC"
+
+    total_rows = len(df)
+    successful = 0
+    failed = 0
+    errors: list[BulkUploadError] = []
+
+    def get_col(row_data: Any, key: str, default: str = "") -> str:
+        """Get column value as string; always trim leading and trailing whitespace."""
+        key_lower = key.lower()
+        if key_lower in column_mapping:
+            val = row_data[column_mapping[key_lower]]
+            return "" if pd.isna(val) else str(val).strip()
+        return default
+
+    for idx, row in df.iterrows():
+        row_number = int(idx) + 2
+
+        firstname = get_col(row, "firstname")
+        lastname = get_col(row, "lastname")
+        # Othername: do not insert if missing or only whitespace (store None)
+        _other = get_col(row, "othername")
+        othername = _other if (_other and _other.strip()) else None
+        if not firstname or not lastname:
+            name = get_col(row, "name")
+            if not name:
+                errors.append(BulkUploadError(row_number=row_number, error_message="Name (or firstname and lastname) is required", field="name"))
+                failed += 1
+                continue
+            parts = [p.strip() for p in name.split()]
+            if len(parts) >= 2:
+                firstname, lastname = parts[0], parts[1]
+                othername = parts[2] if len(parts) >= 3 and parts[2] else None
+            else:
+                errors.append(BulkUploadError(row_number=row_number, error_message="Name must contain at least firstname and lastname", field="name"))
+                failed += 1
+                continue
+
+        registration_number_str = get_col(row, "registration_number")
+        index_number_str = get_col(row, "index_number") or None
+        school_code_str = get_col(row, "school_code") or None
+        programme_code_str = get_col(row, "programme_code") or None
+        programme_id_str = get_col(row, "programme_id") or None
+        registration_type_str = get_col(row, "registration_type") or default_registration_type
+        if registration_type_str:
+            registration_type_str = registration_type_str.strip().lower()
+
+        date_of_birth = None
+        dob_str = get_col(row, "date_of_birth") or get_col(row, "dob")
+        if dob_str:
+            try:
+                date_of_birth = date_parser.parse(dob_str).date()
+            except Exception:
+                pass
+        gender = get_col(row, "gender") or None
+        contact_email = get_col(row, "contact_email") or get_col(row, "email") or None
+        contact_phone = get_col(row, "contact_phone") or get_col(row, "phone") or None
+        address = get_col(row, "address") or None
+        national_id = get_col(row, "national_id") or None
+        disability_str = get_col(row, "disability") or None
+        disability = None
+        if disability_str:
+            try:
+                disability = Disability(disability_str.strip())
+            except ValueError:
+                disability = None
+        guardian_name = get_col(row, "guardian_name") or None
+        guardian_phone = get_col(row, "guardian_phone") or None
+        guardian_digital_address = get_col(row, "guardian_digital_address") or None
+        guardian_national_id = get_col(row, "guardian_national_id") or None
+
+        if is_nov_dec:
+            if registration_type_str and registration_type_str not in (RegistrationType.REFERRAL.value, RegistrationType.PRIVATE.value):
+                errors.append(BulkUploadError(row_number=row_number, error_message=f"Invalid registration_type for NOV/DEC: {registration_type_str}. Only 'referral' and 'private' allowed.", field="registration_type"))
+                failed += 1
+                continue
+            candidate_registration_type = registration_type_str or RegistrationType.REFERRAL.value
+        elif is_may_june:
+            if registration_type_str and registration_type_str not in (RegistrationType.FREE_TVET.value, RegistrationType.REFERRAL.value):
+                errors.append(BulkUploadError(row_number=row_number, error_message=f"Invalid registration_type for MAY/JUNE: {registration_type_str}. Only 'free_tvet' and 'referral' allowed.", field="registration_type"))
+                failed += 1
+                continue
+            candidate_registration_type = registration_type_str or RegistrationType.FREE_TVET.value
+        else:
+            candidate_registration_type = registration_type_str or RegistrationType.FREE_TVET.value
+            if candidate_registration_type not in (RegistrationType.FREE_TVET.value, RegistrationType.REFERRAL.value, RegistrationType.PRIVATE.value):
+                candidate_registration_type = RegistrationType.FREE_TVET.value
+
+        school_id = None
+        if school_code_str:
+            school_stmt = select(School).where(School.code == school_code_str)
+            school_result = await session.execute(school_stmt)
+            school = school_result.scalar_one_or_none()
+            if not school:
+                errors.append(BulkUploadError(row_number=row_number, error_message=f"School with code '{school_code_str}' not found", field="school_code"))
+                failed += 1
+                continue
+            school_id = school.id
+
+        programme_id = None
+        if programme_code_str:
+            prog_stmt = select(Programme).where(Programme.code == programme_code_str)
+            prog_result = await session.execute(prog_stmt)
+            programme = prog_result.scalar_one_or_none()
+            if not programme:
+                errors.append(BulkUploadError(row_number=row_number, error_message=f"Programme with code '{programme_code_str}' not found", field="programme_code"))
+                failed += 1
+                continue
+            programme_id = programme.id
+        elif programme_id_str:
+            try:
+                pid = int(programme_id_str)
+                prog_stmt = select(Programme).where(Programme.id == pid)
+                prog_result = await session.execute(prog_stmt)
+                programme = prog_result.scalar_one_or_none()
+                if not programme:
+                    errors.append(BulkUploadError(row_number=row_number, error_message=f"Programme with id '{programme_id_str}' not found", field="programme_id"))
+                    failed += 1
+                    continue
+                programme_id = programme.id
+            except ValueError:
+                errors.append(BulkUploadError(row_number=row_number, error_message=f"Invalid programme_id: {programme_id_str}", field="programme_id"))
+                failed += 1
+                continue
+
+        subject_codes_str = get_col(row, "subject_codes") or get_col(row, "subject codes")
+        subject_ids_str = get_col(row, "subject_ids") or get_col(row, "subject ids")
+        selected_subject_ids: list[int] = []
+        if subject_codes_str:
+            for code in [s.strip() for s in subject_codes_str.split(",") if s.strip()]:
+                subj_stmt = select(Subject).where(Subject.original_code == code)
+                subj_res = await session.execute(subj_stmt)
+                subj = subj_res.scalar_one_or_none()
+                if not subj:
+                    subj_stmt = select(Subject).where(Subject.code == code)
+                    subj_res = await session.execute(subj_stmt)
+                    subj = subj_res.scalar_one_or_none()
+                if subj:
+                    selected_subject_ids.append(subj.id)
+                else:
+                    errors.append(BulkUploadError(row_number=row_number, error_message=f"Subject not found: {code}", field="subject_codes"))
+                    failed += 1
+                    continue
+        if subject_ids_str:
+            for part in subject_ids_str.split(","):
+                part = part.strip()
+                if not part:
+                    continue
+                try:
+                    sid = int(part)
+                    subj_stmt = select(Subject).where(Subject.id == sid)
+                    subj_res = await session.execute(subj_stmt)
+                    subj = subj_res.scalar_one_or_none()
+                    if subj and subj.id not in selected_subject_ids:
+                        selected_subject_ids.append(subj.id)
+                except ValueError:
+                    pass
+
+        selected_subject_ids = list(set(selected_subject_ids))
+        if selected_subject_ids and not programme_id:
+            errors.append(BulkUploadError(row_number=row_number, error_message="programme_code or programme_id is required when subjects are provided", field="programme_code"))
+            failed += 1
+            continue
+
+        if programme_id and selected_subject_ids:
+            should_validate = True
+            if should_validate:
+                is_valid, validation_errors = await validate_subject_selections(
+                    session, programme_id, selected_subject_ids, exam.exam_series, candidate_registration_type
+                )
+                if not is_valid:
+                    errors.append(BulkUploadError(row_number=row_number, error_message="; ".join(validation_errors), field="subjects"))
+                    failed += 1
+                    continue
+        elif programme_id and not selected_subject_ids and candidate_registration_type in (RegistrationType.REFERRAL.value, RegistrationType.PRIVATE.value):
+            errors.append(BulkUploadError(row_number=row_number, error_message="At least one subject must be selected", field="subjects"))
+            failed += 1
+            continue
+        elif programme_id and not selected_subject_ids and candidate_registration_type == RegistrationType.FREE_TVET.value:
+            errors.append(BulkUploadError(row_number=row_number, error_message="free_tvet requires all compulsory and elective subjects", field="subjects"))
+            failed += 1
+            continue
+
+        if not school_id and not registration_number_str:
+            errors.append(BulkUploadError(row_number=row_number, error_message="registration_number is required when school_code is not provided", field="registration_number"))
+            failed += 1
+            continue
+
+        reg_num = None
+        if registration_number_str:
+            reg_num = registration_number_str.strip()
+            check_stmt = select(RegistrationCandidate).where(RegistrationCandidate.registration_number == reg_num)
+            check_result = await session.execute(check_stmt)
+            if check_result.scalar_one_or_none():
+                errors.append(BulkUploadError(row_number=row_number, error_message=f"registration_number '{reg_num}' already exists", field="registration_number"))
+                failed += 1
+                continue
+        else:
+            if not school_id:
+                errors.append(BulkUploadError(row_number=row_number, error_message="registration_number is required when school_code is not provided", field="registration_number"))
+                failed += 1
+                continue
+            try:
+                reg_num = await generate_unique_registration_number(session, exam_id, school_id, candidate_registration_type)
+            except (ValueError, RuntimeError) as e:
+                errors.append(BulkUploadError(row_number=row_number, error_message=str(e), field="registration_number"))
+                failed += 1
+                continue
+
+        index_number = index_number_str.strip() if index_number_str and index_number_str.strip() else None
+        programme_code_for_candidate = programme_code_str or (None if not programme_id else None)
+        if programme_id and not programme_code_for_candidate:
+            prog_lookup = await session.get(Programme, programme_id)
+            programme_code_for_candidate = prog_lookup.code if prog_lookup else None
+
+        new_candidate = RegistrationCandidate(
+            registration_exam_id=exam_id,
+            school_id=school_id,
+            portal_user_id=None,
+            firstname=firstname,
+            lastname=lastname,
+            othername=othername,
+            registration_number=reg_num,
+            index_number=index_number,
+            date_of_birth=date_of_birth,
+            gender=gender,
+            programme_code=programme_code_for_candidate,
+            programme_id=programme_id,
+            contact_email=contact_email,
+            contact_phone=contact_phone,
+            address=address,
+            national_id=national_id,
+            disability=disability,
+            registration_type=candidate_registration_type,
+            guardian_name=guardian_name,
+            guardian_phone=guardian_phone,
+            guardian_digital_address=guardian_digital_address,
+            guardian_national_id=guardian_national_id,
+            registration_status=RegistrationStatus.PENDING,
+        )
+        session.add(new_candidate)
+        await session.flush()
+        for subject_id in selected_subject_ids:
+            subj_stmt = select(Subject).where(Subject.id == subject_id)
+            subj_res = await session.execute(subj_stmt)
+            subj = subj_res.scalar_one_or_none()
+            if subj:
+                session.add(
+                    RegistrationSubjectSelection(
+                        registration_candidate_id=new_candidate.id,
+                        subject_id=subj.id,
+                        subject_code=subj.code,
+                        subject_name=subj.name,
+                    )
+                )
+        successful += 1
+
+    await session.commit()
+    return BulkUploadResponse(total_rows=total_rows, successful=successful, failed=failed, errors=errors)
 
 
 @router.get("/candidates/photos/album", response_model=PhotoAlbumResponse)
