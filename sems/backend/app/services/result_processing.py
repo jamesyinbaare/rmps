@@ -1,8 +1,10 @@
 """Service for processing candidate results and calculating final scores."""
 
+import math
 from typing import TYPE_CHECKING
 
 from app.utils.score_utils import (
+    ABSENT_RESULT_SENTINEL,
     calculate_final_score,
     calculate_normalized_scores,
     is_grade_pending,
@@ -46,12 +48,12 @@ class ResultProcessingService:
             )
             # Don't calculate total_score if pending - set it to 0.0 as a placeholder
             # Note: total_score field is not nullable, so we use 0.0
-            # The grade calculation will return None (pending) when calculate_grade is called
+            # The grade calculation will return Grade.PENDING when calculate_grade is called
             subject_score.obj_normalized = obj_normalized
             subject_score.essay_normalized = essay_normalized
             subject_score.pract_normalized = pract_normalized
             # Set total_score to 0.0 when pending (not -1.0 which would show as ABSENT)
-            # The frontend will show PENDING when grade is None
+            # The frontend will show PENDING when grade is Grade.PENDING
             subject_score.total_score = 0.0
             return
 
@@ -68,8 +70,10 @@ class ResultProcessingService:
         except ValueError as e:
             raise ResultProcessingError(str(e))
 
-        # Update subject_score with calculated values
+        # Update subject_score with calculated values; apply math.ceil to total_score (except absent sentinel)
         subject_score.obj_normalized = obj_normalized
         subject_score.essay_normalized = essay_normalized
         subject_score.pract_normalized = pract_normalized
-        subject_score.total_score = total_score
+        subject_score.total_score = (
+            math.ceil(total_score) if total_score != ABSENT_RESULT_SENTINEL else total_score
+        )

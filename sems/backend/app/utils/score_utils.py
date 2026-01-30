@@ -475,21 +475,19 @@ def calculate_grade(
         exam_subject: Optional ExamSubject instance to check for pending components
 
     Returns:
-        Grade enum if a matching range is found, None otherwise.
-        Returns None if:
-        - total_score is ABSENT_RESULT_SENTINEL (-1.0)
-        - Any required component is missing (pending)
-        - No range matches
-        - grade_ranges_json is missing or empty
+        Grade enum if a matching range is found, or Grade.PENDING / Grade.ABSENT for those cases, None otherwise.
+        Returns Grade.PENDING if any required component is missing (not explicitly set).
+        Returns Grade.ABSENT if total_score is ABSENT_RESULT_SENTINEL (-1.0) (all required raw scores A/AA/AAA).
+        Returns None if no range matches or grade_ranges_json is missing or empty.
     """
     # Check if grade should be pending due to missing components
     if subject_score is not None and exam_subject is not None:
         if is_grade_pending(subject_score, exam_subject):
-            return None
+            return Grade.PENDING
 
-    # Handle absent result sentinel
+    # Handle absent result sentinel (all required raw scores A/AA/AAA)
     if total_score == ABSENT_RESULT_SENTINEL:
-        return None
+        return Grade.ABSENT
 
     # Handle missing or empty grade ranges
     if not grade_ranges_json:
