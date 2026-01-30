@@ -320,7 +320,7 @@ async def generate_results_export(
         )
 
     # Execute query - get all results (no pagination for export)
-    stmt = base_stmt.order_by(Candidate.index_number, Subject.code)
+    stmt = base_stmt.order_by(Candidate.index_number, Subject.original_code)
     result = await session.execute(stmt)
     rows = result.all()
 
@@ -361,7 +361,7 @@ async def generate_results_export(
         if "subject_name" in fields_to_export:
             row_data["Subject Name"] = subject.name
         if "subject_code" in fields_to_export:
-            row_data["Subject Code"] = subject.code
+            row_data["Subject Code"] = subject.original_code
         if "subject_series" in fields_to_export:
             row_data["Subject Series"] = subject_reg.series
         if "obj_raw_score" in fields_to_export:
@@ -409,7 +409,7 @@ async def generate_results_export(
         grouped_data: dict[tuple[int, str, str], list] = {}  # (subject_id, subject_code, subject_name) -> rows
         for row in rows:
             subject = row[6]  # Subject is at index 6
-            key = (subject.id, subject.code, subject.name)
+            key = (subject.id, subject.original_code, subject.name)
             if key not in grouped_data:
                 grouped_data[key] = []
             grouped_data[key].append(row)
@@ -449,7 +449,7 @@ async def generate_results_export(
         grouped_data: dict[tuple[int, str, str], list] = {}  # (subject_id, subject_code, subject_name) -> rows
         for row in filtered_rows:
             subject = row[6]  # Subject is at index 6
-            key = (subject.id, subject.code, subject.name)
+            key = (subject.id, subject.original_code, subject.name)
             if key not in grouped_data:
                 grouped_data[key] = []
             grouped_data[key].append(row)
@@ -459,7 +459,7 @@ async def generate_results_export(
         # Get subject info from first row
         if rows:
             subject = rows[0][6]  # Subject is at index 6
-            grouped_data = {(subject.id, subject.code, subject.name): rows}
+            grouped_data = {(subject.id, subject.original_code, subject.name): rows}
         else:
             raise ValueError("No results found for the specified subject")
 
@@ -678,7 +678,7 @@ async def generate_multi_subject_export(
         raise ValueError("Either subject_ids or subject_type must be provided")
 
     # Step 3: Get subject codes for the selected subjects
-    subject_code_stmt = select(Subject.id, Subject.code).where(Subject.id.in_(selected_subject_ids)).order_by(Subject.code)
+    subject_code_stmt = select(Subject.id, Subject.original_code).where(Subject.id.in_(selected_subject_ids)).order_by(Subject.original_code)
     subject_code_result = await session.execute(subject_code_stmt)
     subject_codes_map = {row[0]: row[1] for row in subject_code_result.all()}
     subject_codes_sorted = sorted(subject_codes_map.values())
@@ -723,7 +723,7 @@ async def generate_multi_subject_export(
     # Fill in scores from subject registrations
     for subject_reg, subject_score, subject, exam_subject, exam_reg in subject_reg_rows:
         candidate_id = exam_reg.candidate_id
-        subject_code = subject.code
+        subject_code = subject.original_code
 
         if subject_code in subject_codes_sorted:
             # Candidate registered for this subject
