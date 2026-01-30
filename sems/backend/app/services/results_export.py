@@ -3,6 +3,7 @@ Service for exporting candidate processed results to Excel.
 """
 
 import io
+import math
 import re
 from typing import Any
 
@@ -24,7 +25,7 @@ from app.models import (
     SubjectScore,
     SubjectType,
 )
-from app.utils.score_utils import calculate_grade
+from app.utils.score_utils import ABSENT_RESULT_SENTINEL, calculate_grade
 
 
 def sanitize_filename_part(text: str) -> str:
@@ -376,7 +377,10 @@ async def generate_results_export(
         if "pract_normalized" in fields_to_export:
             row_data["Practical Normalized"] = subject_score.pract_normalized
         if "total_score" in fields_to_export:
-            row_data["Total Score"] = subject_score.total_score
+            ts = subject_score.total_score
+            row_data["Total Score"] = (
+                math.ceil(ts) if ts != ABSENT_RESULT_SENTINEL else ts
+            )
         if "grade" in fields_to_export:
             row_data["Grade"] = grade.value if grade else None
         if "obj_document_id" in fields_to_export:

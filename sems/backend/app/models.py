@@ -134,6 +134,10 @@ class Grade(enum.Enum):
     CREDIT = "Credit"
     UPPER_CREDIT = "Upper Credit"
     DISTINCTION = "Distinction"
+    ABSENT = "Absent"
+    PENDING = "Pending"
+    BLOCKED = "Blocked"
+    CANCELLED = "Cancelled"
 
 
 class User(Base):
