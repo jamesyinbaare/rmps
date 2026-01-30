@@ -6262,9 +6262,15 @@ async def bulk_upload_results(
             detail="File must be Excel format (.xlsx or .xls)"
         )
 
-    # Parse Excel file
+    # Parse Excel file; read identifier columns as string to preserve leading zeros
     try:
-        df = pd.read_excel(io.BytesIO(file_content), engine='openpyxl')
+        header_df = pd.read_excel(io.BytesIO(file_content), engine='openpyxl', nrows=0)
+        id_cols = [
+            c for c in header_df.columns
+            if str(c).strip().lower() in ("index_number", "registration_number", "school_code")
+        ]
+        dtype = {c: str for c in id_cols}
+        df = pd.read_excel(io.BytesIO(file_content), engine='openpyxl', dtype=dtype)
     except Exception as e:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -6300,6 +6306,7 @@ async def bulk_upload_results(
     # Convert DataFrame to list of result dictionaries
     results = []
     for idx, row in df.iterrows():
+        # Treat identifier columns as strings (Excel may give numbers)
         registration_number = None
         if has_reg_num:
             val = row[column_mapping['registration_number']]

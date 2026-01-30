@@ -59,15 +59,16 @@ async def upload_results_bulk(
 
     for idx, result_data in enumerate(results):
         try:
+            # Treat identifier fields as strings (coerce from Excel/JSON numbers)
             registration_number = result_data.get("registration_number")
-            if registration_number and isinstance(registration_number, str):
-                registration_number = registration_number.strip() or None
+            registration_number = str(registration_number).strip() if registration_number is not None else None
+            registration_number = registration_number or None
             school_code = result_data.get("school_code")
-            if school_code and isinstance(school_code, str):
-                school_code = school_code.strip() or None
+            school_code = str(school_code).strip() if school_code is not None else None
+            school_code = school_code or None
             index_number = result_data.get("index_number")
-            if index_number and isinstance(index_number, str):
-                index_number = index_number.strip() or None
+            index_number = str(index_number).strip() if index_number is not None else None
+            index_number = index_number or None
             subject_code = result_data.get("subject_code")
             grade_str = result_data.get("grade")
 
