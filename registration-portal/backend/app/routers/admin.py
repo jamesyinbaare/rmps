@@ -6262,9 +6262,15 @@ async def bulk_upload_results(
             detail="File must be Excel format (.xlsx or .xls)"
         )
 
-    # Parse Excel file
+    # Parse Excel file; read identifier columns as string to preserve leading zeros
     try:
-        df = pd.read_excel(io.BytesIO(file_content), engine='openpyxl')
+        header_df = pd.read_excel(io.BytesIO(file_content), engine='openpyxl', nrows=0)
+        id_cols = [
+            c for c in header_df.columns
+            if str(c).strip().lower() in ("index_number", "registration_number", "school_code")
+        ]
+        dtype = {c: str for c in id_cols}
+        df = pd.read_excel(io.BytesIO(file_content), engine='openpyxl', dtype=dtype)
     except Exception as e:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -6281,41 +6287,59 @@ async def bulk_upload_results(
     df.columns = df.columns.str.strip()
     column_mapping = {col.lower(): col for col in df.columns}
 
-    # Required columns
-    required_columns = ['registration_number', 'subject_code', 'grade']
-    missing_columns = []
-    for req_col in required_columns:
-        if req_col.lower() not in column_mapping:
-            missing_columns.append(req_col)
-
-    if missing_columns:
+    # Required columns: subject_code and grade always; identifier is either registration_number or (school_code + index_number)
+    base_required = ['subject_code', 'grade']
+    missing_base = [c for c in base_required if c.lower() not in column_mapping]
+    if missing_base:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Missing required columns: {', '.join(missing_columns)}"
+            detail=f"Missing required columns: {', '.join(missing_base)}"
+        )
+    has_reg_num = 'registration_number' in column_mapping
+    has_school_index = 'school_code' in column_mapping and 'index_number' in column_mapping
+    if not has_reg_num and not has_school_index:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="File must have either column registration_number or both columns school_code and index_number"
         )
 
     # Convert DataFrame to list of result dictionaries
     results = []
     for idx, row in df.iterrows():
-        registration_number = str(row[column_mapping['registration_number']]).strip() if pd.notna(row[column_mapping['registration_number']]) else None
+        # Treat identifier columns as strings (Excel may give numbers)
+        registration_number = None
+        if has_reg_num:
+            val = row[column_mapping['registration_number']]
+            registration_number = str(val).strip() if pd.notna(val) else None
+        school_code = None
+        if 'school_code' in column_mapping:
+            val = row[column_mapping['school_code']]
+            school_code = str(val).strip() if pd.notna(val) else None
+        index_number = None
+        if 'index_number' in column_mapping:
+            val = row[column_mapping['index_number']]
+            index_number = str(val).strip() if pd.notna(val) else None
+
         subject_code = str(row[column_mapping['subject_code']]).strip() if pd.notna(row[column_mapping['subject_code']]) else None
         grade_str = str(row[column_mapping['grade']]).strip() if pd.notna(row[column_mapping['grade']]) else None
 
-        # Optional index_number
-        index_number = None
-        if 'index_number' in column_mapping:
-            index_number_val = row[column_mapping['index_number']]
-            if pd.notna(index_number_val):
-                index_number = str(index_number_val).strip()
-
-        if not registration_number or not subject_code or not grade_str:
+        if not subject_code or not grade_str:
             continue  # Skip rows with missing required data
+
+        # Skip row if no valid identifier (let service error would also work; skipping keeps current behavior for bad rows)
+        if registration_number:
+            pass
+        elif school_code and index_number:
+            pass
+        else:
+            continue
 
         results.append({
             "registration_number": registration_number,
+            "school_code": school_code,
+            "index_number": index_number,
             "subject_code": subject_code,
             "grade": grade_str,
-            "index_number": index_number,
         })
 
     if not results:

@@ -73,7 +73,6 @@ class ExamType(enum.Enum):
     ADVANCE = "Advance"
     TECHNICIAN_PART_I = "Technician Part I"
     TECHNICIAN_PART_II = "Technician Part II"
-    TECHNICIAN_PART_III = "Technician Part III"
     DIPLOMA = "Diploma"
 
 
@@ -92,6 +91,7 @@ class Grade(enum.Enum):
     BLOCKED = "Blocked"
     CANCELLED = "Cancelled"
     ABSENT = "Absent"
+    PENDING = "Pending"
 
 
 class ResultBlockType(enum.Enum):

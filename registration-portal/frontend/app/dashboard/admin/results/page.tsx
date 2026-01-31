@@ -548,7 +548,7 @@ export default function AdminResultsPage() {
           <DialogHeader>
             <DialogTitle>Upload Results</DialogTitle>
             <DialogDescription>
-              Upload an Excel file (.xlsx or .xls) with columns: registration_number, subject_code, grade, index_number (optional)
+              Upload an Excel file (.xlsx or .xls) with columns: subject_code, grade; and either registration_number (with optional index_number) or both school_code and index_number to identify the candidate.
             </DialogDescription>
           </DialogHeader>
           <div className="space-y-4 py-4">

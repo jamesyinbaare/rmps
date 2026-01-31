@@ -29,10 +29,16 @@ async def upload_results_bulk(
     """
     Validate and upload results in bulk (without publishing them).
 
+    Each result row must include subject_code and grade. The candidate is identified by
+    either registration_number (with optional index_number as extra filter) or by
+    school_code + index_number.
+
     Args:
         session: Database session
         exam_id: Exam ID
-        results: List of result dictionaries with registration_number, subject_code, grade
+        results: List of result dicts with subject_code, grade, and either
+            registration_number or (school_code and index_number). May include
+            index_number when using registration_number.
         uploaded_by_user_id: User ID who is uploading
 
     Returns:
@@ -53,15 +59,18 @@ async def upload_results_bulk(
 
     for idx, result_data in enumerate(results):
         try:
+            # Treat identifier fields as strings (coerce from Excel/JSON numbers)
             registration_number = result_data.get("registration_number")
+            registration_number = str(registration_number).strip() if registration_number is not None else None
+            registration_number = registration_number or None
+            school_code = result_data.get("school_code")
+            school_code = str(school_code).strip() if school_code is not None else None
+            school_code = school_code or None
             index_number = result_data.get("index_number")
+            index_number = str(index_number).strip() if index_number is not None else None
+            index_number = index_number or None
             subject_code = result_data.get("subject_code")
             grade_str = result_data.get("grade")
-
-            if not registration_number:
-                errors.append({"row": str(idx + 1), "error": "Missing registration_number"})
-                failed += 1
-                continue
 
             if not subject_code:
                 errors.append({"row": str(idx + 1), "error": "Missing subject_code"})
@@ -70,6 +79,21 @@ async def upload_results_bulk(
 
             if not grade_str:
                 errors.append({"row": str(idx + 1), "error": "Missing grade"})
+                failed += 1
+                continue
+
+            # Require either registration_number or (school_code + index_number)
+            if registration_number:
+                pass  # identifier by registration_number (optional index_number filter)
+            elif school_code and index_number:
+                pass  # identifier by school_code + index_number
+            else:
+                errors.append(
+                    {
+                        "row": str(idx + 1),
+                        "error": "Provide either registration_number or both school_code and index_number",
+                    }
+                )
                 failed += 1
                 continue
 
@@ -82,29 +106,60 @@ async def upload_results_bulk(
                 continue
 
             # Find candidate
-            candidate_stmt = select(RegistrationCandidate).where(
-                and_(
-                    RegistrationCandidate.registration_exam_id == exam_id,
-                    RegistrationCandidate.registration_number == registration_number,
+            if registration_number:
+                candidate_stmt = select(RegistrationCandidate).where(
+                    and_(
+                        RegistrationCandidate.registration_exam_id == exam_id,
+                        RegistrationCandidate.registration_number == registration_number,
+                    )
                 )
-            )
-            if index_number:
-                candidate_stmt = candidate_stmt.where(
-                    RegistrationCandidate.index_number == index_number
+                if index_number:
+                    candidate_stmt = candidate_stmt.where(
+                        RegistrationCandidate.index_number == index_number
+                    )
+                candidate_result = await session.execute(candidate_stmt)
+                candidate = candidate_result.scalar_one_or_none()
+                if not candidate:
+                    errors.append(
+                        {
+                            "row": str(idx + 1),
+                            "error": f"Candidate not found: registration_number={registration_number}",
+                        }
+                    )
+                    failed += 1
+                    continue
+            else:
+                # Lookup by school_code + index_number
+                school_stmt = select(School).where(School.code == school_code)
+                school_result = await session.execute(school_stmt)
+                school = school_result.scalar_one_or_none()
+                if not school:
+                    errors.append(
+                        {
+                            "row": str(idx + 1),
+                            "error": f"School not found: {school_code}",
+                        }
+                    )
+                    failed += 1
+                    continue
+                candidate_stmt = select(RegistrationCandidate).where(
+                    and_(
+                        RegistrationCandidate.registration_exam_id == exam_id,
+                        RegistrationCandidate.school_id == school.id,
+                        RegistrationCandidate.index_number == index_number,
+                    )
                 )
-
-            candidate_result = await session.execute(candidate_stmt)
-            candidate = candidate_result.scalar_one_or_none()
-
-            if not candidate:
-                errors.append(
-                    {
-                        "row": str(idx + 1),
-                        "error": f"Candidate not found: registration_number={registration_number}",
-                    }
-                )
-                failed += 1
-                continue
+                candidate_result = await session.execute(candidate_stmt)
+                candidate = candidate_result.scalar_one_or_none()
+                if not candidate:
+                    errors.append(
+                        {
+                            "row": str(idx + 1),
+                            "error": f"Candidate not found: school_code={school_code}, index_number={index_number}",
+                        }
+                    )
+                    failed += 1
+                    continue
 
             # Find subject - try original_code first, then fall back to code
             subject_stmt = select(Subject).where(Subject.original_code == subject_code)
