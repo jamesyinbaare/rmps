@@ -57,17 +57,32 @@ async def verify_candidates(
     # Authenticate API key
     user, api_key = await get_api_key_user(session, authorization, x_api_key)
 
-    # Check credit balance
+    # Get request body first so we can check credit for full bulk size
+    import json
+    body = await request.json()
+    is_bulk = "items" in body and isinstance(body["items"], list)
+
     from decimal import Decimal
     cost = Decimal(str(settings.credit_cost_per_verification))
-    has_credit = await check_credit_balance(session, user.id, cost)
+    if is_bulk:
+        bulk_request = BulkVerificationRequest(**body)
+        if len(bulk_request.items) > settings.api_key_bulk_request_max_items:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Maximum {settings.api_key_bulk_request_max_items} items allowed per bulk request",
+            )
+        required_credits = cost * len(bulk_request.items)
+    else:
+        required_credits = cost
+
+    has_credit = await check_credit_balance(session, user.id, required_credits)
     if not has_credit:
         await record_api_usage(
             session,
             user_id=user.id,
             api_key_id=api_key.id,
             request_source=ApiRequestSource.API_KEY,
-            request_type=ApiRequestType.SINGLE,
+            request_type=ApiRequestType.BULK if is_bulk else ApiRequestType.SINGLE,
             verification_count=0,
             response_status=status.HTTP_402_PAYMENT_REQUIRED,
             duration_ms=int((datetime.utcnow() - start_time).total_seconds() * 1000),
@@ -75,7 +90,7 @@ async def verify_candidates(
         )
         raise HTTPException(
             status_code=status.HTTP_402_PAYMENT_REQUIRED,
-            detail=f"Insufficient credit. Required: {cost} credit(s) per verification request.",
+            detail=f"Insufficient credit. Required: {required_credits} credit(s) for this request ({len(bulk_request.items) if is_bulk else 1} verification(s)).",
         )
 
     # Check rate limit
@@ -102,24 +117,9 @@ async def verify_candidates(
             headers={"X-RateLimit-Remaining": "0"},
         )
 
-    # Get request body
-    import json
-    body = await request.json()
-
-    # Detect request type
-    is_bulk = "items" in body and isinstance(body["items"], list)
-
     try:
         if is_bulk:
-            # Bulk request
-            bulk_request = BulkVerificationRequest(**body)
-
-            if len(bulk_request.items) > settings.api_key_bulk_request_max_items:
-                raise HTTPException(
-                    status_code=status.HTTP_400_BAD_REQUEST,
-                    detail=f"Maximum {settings.api_key_bulk_request_max_items} items allowed per bulk request",
-                )
-
+            # Bulk request (bulk_request already parsed above)
             results = []
             successful = 0
             failed = 0

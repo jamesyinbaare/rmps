@@ -75,14 +75,15 @@ async def record_api_usage(
         Created ApiUsage record
     """
     cost = Decimal(str(settings.credit_cost_per_verification))
+    total_cost = cost * verification_count
 
-    # Deduct credit after successful verification (status 200)
-    if response_status == 200:
+    # Deduct credit after successful verification (status 200), per individual result
+    if response_status == 200 and total_cost > 0:
         await deduct_credit(
             session,
             user_id,
-            cost,
-            description=f"Credit used for {request_source.value} {request_type.value} verification",
+            total_cost,
+            description=f"Credit used for {request_source.value} {request_type.value} verification ({verification_count} candidate(s))",
         )
 
     # Update API key stats if applicable
