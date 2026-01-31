@@ -4,12 +4,11 @@ import { useState, useEffect } from "react";
 import {
   verifyCandidate,
   verifyCandidatesBulk,
-  getCreditBalance,
   type PublicResultCheckRequest,
   type PublicResultResponse,
   type BulkVerificationResponse,
-  type CreditBalance,
 } from "@/lib/api";
+import { useApiDashboard } from "../ApiDashboardContext";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -27,9 +26,9 @@ import { toast } from "sonner";
 import Link from "next/link";
 
 export default function VerifyPage() {
+  const { creditBalance, refreshCreditBalance } = useApiDashboard();
   const [mode, setMode] = useState<"single" | "bulk">("single");
   const [loading, setLoading] = useState(false);
-  const [creditBalance, setCreditBalance] = useState<CreditBalance | null>(null);
 
   // Single verification state
   const [singleData, setSingleData] = useState<PublicResultCheckRequest>({
@@ -57,26 +56,12 @@ export default function VerifyPage() {
 
   const isCertificateII = singleData.exam_type === "Certificate II Examinations";
 
-  // Load credit balance on mount
-  useEffect(() => {
-    loadCreditBalance();
-  }, []);
-
   // Clear exam_series when exam_type changes away from Certificate II
   useEffect(() => {
     if (singleData.exam_type !== "Certificate II Examinations" && singleData.exam_series) {
       setSingleData((prev) => ({ ...prev, exam_series: "" }));
     }
   }, [singleData.exam_type]);
-
-  const loadCreditBalance = async () => {
-    try {
-      const balance = await getCreditBalance();
-      setCreditBalance(balance);
-    } catch (error) {
-      // Ignore errors for credit balance
-    }
-  };
 
   const handleSingleVerify = async () => {
     if (!singleData.index_number) {
@@ -100,7 +85,7 @@ export default function VerifyPage() {
       setLoading(true);
       const result = await verifyCandidate(singleData);
       setSingleResult(result);
-      await loadCreditBalance();
+      await refreshCreditBalance();
       toast.success("Verification successful");
     } catch (error: any) {
       toast.error(error.message || "Verification failed");
@@ -176,7 +161,7 @@ export default function VerifyPage() {
 
       const result = await verifyCandidatesBulk({ items });
       setBulkResults(result);
-      await loadCreditBalance();
+      await refreshCreditBalance();
       toast.success(`Verified ${result.successful} of ${result.total} candidates`);
     } catch (error: any) {
       toast.error(error.message || "Bulk verification failed");
