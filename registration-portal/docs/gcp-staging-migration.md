@@ -2,6 +2,8 @@
 
 This guide covers migrating from local services (PostgreSQL and file storage) to GCP services (Cloud SQL and Cloud Storage).
 
+**Note:** Staging Compose (`compose.staging.gcp.yaml`) now uses Cloud SQL only; there is no local Postgres container. Use this guide to create and configure Cloud SQL and to migrate data from an existing local Postgres if needed.
+
 ## Table of Contents
 
 1. [Migrating from Local PostgreSQL to Cloud SQL](#migrating-from-local-postgresql-to-cloud-sql)
@@ -22,8 +24,9 @@ This guide covers migrating from local services (PostgreSQL and file storage) to
 ```bash
 gcloud sql instances create registration-portal-staging \
   --database-version=POSTGRES_18 \
+  --edition=ENTERPRISE \
   --tier=db-f1-micro \
-  --region=us-central1 \
+  --region=europe-west9 \
   --network=default \
   --backup-start-time=03:00 \
   --enable-bin-log
@@ -90,8 +93,7 @@ gcloud sql import sql registration-portal-staging \
 Update `.env.staging.gcp`:
 
 ```env
-# Use Cloud SQL
-USE_CLOUD_SQL=true
+# Cloud SQL (staging uses Cloud SQL only)
 CLOUD_SQL_CONNECTION_NAME=PROJECT_ID:REGION:registration-portal-staging
 DATABASE_URL=postgresql+asyncpg://registration_user:YOUR_PASSWORD@cloud-sql-proxy-staging:5432/registration_portal_db
 
@@ -135,7 +137,7 @@ docker compose -f compose.staging.gcp.yaml exec registration-backend-staging \
 ### Step 1: Create GCS Bucket
 
 ```bash
-gsutil mb -l us-central1 gs://registration-portal-staging-files
+gsutil mb -l europe-west9 gs://registration-portal-staging-files
 
 # Set bucket lifecycle (optional)
 gsutil lifecycle set lifecycle.json gs://registration-portal-staging-files
@@ -232,36 +234,20 @@ docker compose -f compose.staging.gcp.yaml restart registration-backend-staging
 
 ## Rollback Procedures
 
-### Rollback: Cloud SQL to Local PostgreSQL
+### Rollback: Cloud SQL
 
-1. **Stop Cloud SQL Proxy:**
-   ```bash
-   docker compose -f compose.staging.gcp.yaml stop cloud-sql-proxy-staging
-   ```
+Staging Compose uses Cloud SQL only; there is no local Postgres container. To move data off Cloud SQL (e.g. for backup or migration to another environment):
 
-2. **Update environment:**
-   ```env
-   USE_CLOUD_SQL=false
-   DATABASE_URL=postgresql+asyncpg://registration_user:YOUR_PASSWORD@registration-postgres-staging:5432/registration_portal_db
-   ```
-
-3. **Export from Cloud SQL (if needed):**
+1. **Export from Cloud SQL:**
    ```bash
    gcloud sql export sql registration-portal-staging \
      gs://your-bucket/cloud-sql-backup.sql \
      --database=registration_portal_db
    ```
 
-4. **Import to local PostgreSQL:**
+2. **Download backup (if needed):**
    ```bash
    gsutil cp gs://your-bucket/cloud-sql-backup.sql .
-   docker compose -f compose.staging.gcp.yaml exec -T registration-postgres-staging \
-     psql -U registration_user -d registration_portal_db < cloud-sql-backup.sql
-   ```
-
-5. **Restart services:**
-   ```bash
-   docker compose -f compose.staging.gcp.yaml up -d
    ```
 
 ### Rollback: Cloud Storage to Local Storage

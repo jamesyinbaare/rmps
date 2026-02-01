@@ -16,7 +16,7 @@ This directory contains configuration and scripts for deploying the registration
 2. **Create GCE VM:**
    ```bash
    gcloud compute instances create registration-portal-staging-vm \
-     --zone=us-central1-a \
+     --zone=europe-west9-a \
      --machine-type=e2-medium \
      --image-family=ubuntu-2204-lts \
      --tags=registration-portal-staging
@@ -25,7 +25,7 @@ This directory contains configuration and scripts for deploying the registration
 3. **Set up VM:**
    ```bash
    # SSH into VM
-   gcloud compute ssh registration-portal-staging-vm --zone=us-central1-a
+   gcloud compute ssh registration-portal-staging-vm --zone=europe-west9-a
 
    # Clone repository and run setup script
    ./gcp/staging/infrastructure/scripts/setup-gce-vm.sh
@@ -73,20 +73,10 @@ gcp/staging/
 
 ## Features
 
-- **Swappable Services:**
-  - Database: Local PostgreSQL ↔ Cloud SQL (via environment variable)
-  - Storage: Local filesystem ↔ Cloud Storage (via `STORAGE_BACKEND`)
-
-- **Starting Configuration:**
-  - Local PostgreSQL container
-  - Local file storage volumes
-  - Traefik reverse proxy with Let's Encrypt
-  - Docker Compose orchestration
-
-- **Migration Path:**
-  - Easy migration to Cloud SQL via Cloud SQL Proxy
-  - Easy migration to Cloud Storage via environment variable
-  - Rollback support for both services
+- **Database:** Cloud SQL only (via Cloud SQL Proxy container)
+- **Storage:** Local filesystem or GCS (via `STORAGE_BACKEND`)
+- **Reverse proxy:** Traefik with Let's Encrypt
+- **Orchestration:** Docker Compose
 
 ## Key Files
 
@@ -96,20 +86,6 @@ gcp/staging/
 - `.env.staging.gcp.example` - Environment variables template
 
 ## Switching Services
-
-### Switch to Cloud SQL
-
-1. Create Cloud SQL instance
-2. Update `.env.staging.gcp`:
-   ```env
-   USE_CLOUD_SQL=true
-   CLOUD_SQL_CONNECTION_NAME=project-id:region:instance
-   DATABASE_URL=postgresql+asyncpg://user:pass@cloud-sql-proxy-staging:5432/dbname
-   ```
-3. Start with Cloud SQL profile:
-   ```bash
-   docker compose -f compose.staging.gcp.yaml --profile cloud-sql up -d
-   ```
 
 ### Switch to Cloud Storage
 

@@ -17,7 +17,7 @@ services:
     labels:
       - "traefik.enable=true"
       # Dashboard (restricted by firewall)
-      - "traefik.http.routers.dashboard-staging.rule=Host(`traefik-staging.yourdomain.com`)" # TODO: Change to the actual domain
+      - "traefik.http.routers.dashboard-staging.rule=Host(`traefik-staging.jamesyin.com`)" # TODO: Change to the actual domain
       - "traefik.http.routers.dashboard-staging.entrypoints=web"
       - "traefik.http.routers.dashboard-staging.service=api@internal"
     restart: unless-stopped
@@ -62,8 +62,8 @@ services:
       "
     restart: unless-stopped
     depends_on:
-      registration_postgres:
-        condition: service_healthy
+      cloud-sql-proxy:
+        condition: service_started
     healthcheck:
       test: ["CMD-SHELL", "curl -f http://localhost:80/health || exit 1"]
       interval: 30s
@@ -77,13 +77,13 @@ services:
       # Backend service (must be defined before routers)
       - "traefik.http.services.backend-staging.loadbalancer.server.port=80"
       # Backend API router - Domain-based
-      - "traefik.http.routers.backend-staging.rule=Host(`staging-api.yourdomain.com`)" # TODO: Change to the actual domain
+      - "traefik.http.routers.backend-staging.rule=Host(`reg-api.jamesyin.com`)" # TODO: Change to the actual domain
       - "traefik.http.routers.backend-staging.entrypoints=websecure"
       - "traefik.http.routers.backend-staging.tls=true"
       - "traefik.http.routers.backend-staging.tls.certresolver=letsencrypt"
       - "traefik.http.routers.backend-staging.service=backend-staging"
       # Backend API router - HTTP (redirect to HTTPS)
-      - "traefik.http.routers.backend-staging-http.rule=Host(`staging-api.yourdomain.com`)" # TODO: Change to the actual domain
+      - "traefik.http.routers.backend-staging-http.rule=Host(`reg-api.jamesyin.com`)" # TODO: Change to the actual domain
       - "traefik.http.routers.backend-staging-http.entrypoints=web"
       - "traefik.http.routers.backend-staging-http.service=backend-staging"
     deploy:
@@ -100,11 +100,11 @@ services:
       context: frontend
       dockerfile: Dockerfile.prod
       args:
-        - NEXT_PUBLIC_API_BASE_URL=${FRONTEND_API_BASE_URL:-https://staging-api.yourdomain.com} # TODO: Change to the actual domain
+        - NEXT_PUBLIC_API_BASE_URL=${FRONTEND_API_BASE_URL:-https://reg-api.jamesyin.com} # TODO: Change to the actual domain
     container_name: registration-frontend-staging
     environment:
       - NODE_ENV=production
-      - NEXT_PUBLIC_API_BASE_URL=${FRONTEND_API_BASE_URL:-https://staging-api.yourdomain.com} # TODO: Change to the actual domain
+      - NEXT_PUBLIC_API_BASE_URL=${FRONTEND_API_BASE_URL:-https://reg-api.jamesyin.com} # TODO: Change to the actual domain
     restart: unless-stopped
     depends_on:
       registration-backend:
@@ -121,13 +121,13 @@ services:
       - "traefik.enable=true"
       - "traefik.http.services.frontend-staging.loadbalancer.server.port=3001"
       # Frontend router - HTTPS
-      - "traefik.http.routers.frontend-staging.rule=Host(`staging.yourdomain.com`)" # TODO: Change to the actual domain
+      - "traefik.http.routers.frontend-staging.rule=Host(`reg.jamesyin.com`)" # TODO: Change to the actual domain
       - "traefik.http.routers.frontend-staging.entrypoints=websecure"
       - "traefik.http.routers.frontend-staging.tls=true"
       - "traefik.http.routers.frontend-staging.tls.certresolver=letsencrypt"
       - "traefik.http.routers.frontend-staging.service=frontend-staging"
       # Frontend router - HTTP (redirect to HTTPS)
-      - "traefik.http.routers.frontend-staging-http.rule=Host(`staging.yourdomain.com`)" # TODO: Change to the actual domain
+      - "traefik.http.routers.frontend-staging-http.rule=Host(`reg.jamesyin.com`)" # TODO: Change to the actual domain
       - "traefik.http.routers.frontend-staging-http.entrypoints=web"
       - "traefik.http.routers.frontend-staging-http.service=frontend-staging"
     deploy:
@@ -139,57 +139,21 @@ services:
           cpus: '0.5'
           memory: 512M
 
-  registration_postgres:
-    image: postgres:18
-    container_name: registration-postgres-staging
-    restart: unless-stopped
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
-      interval: 10s
-      retries: 5
-      start_period: 30s
-      timeout: 10s
-    volumes:
-      - registration_db_data:/var/lib/postgresql/data/pgdata
-      - ./docker/postgres/init:/docker-entrypoint-initdb.d:ro
-    env_file:
-      - .env.staging.gcp
-    environment:
-      - PGDATA=/var/lib/postgresql/data/pgdata
-      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD?Variable not set}
-      - POSTGRES_USER=${POSTGRES_USER?Variable not set}
-      - POSTGRES_DB=${REGISTRATION_POSTGRES_DB:-registration_portal_db}
-      - POSTGRES_HOST_AUTH_METHOD=trust
-    networks:
-      - registration-network
-    deploy:
-      resources:
-        limits:
-          cpus: '1'
-          memory: 1G
-        reservations:
-          cpus: '0.5'
-          memory: 512M
-
-  # Cloud SQL Proxy (optional - enabled when USE_CLOUD_SQL=true)
+  # Cloud SQL Proxy: backend connects via this to Cloud SQL
   cloud-sql-proxy:
     image: gcr.io/cloud-sql-connectors/cloud-sql-proxy:latest
     container_name: cloud-sql-proxy-staging
+    env_file:
+      - .env.staging.gcp
     command:
-      - /cloud-sql-proxy
+      - --address=0.0.0.0
       - --port=5432
       - ${CLOUD_SQL_CONNECTION_NAME}
     networks:
       - registration-network
     restart: unless-stopped
-    profiles:
-      - cloud-sql
-    # Only start if USE_CLOUD_SQL is set to true in environment
-    # Can be enabled via: docker compose --profile cloud-sql up
 
 volumes:
-  registration_db_data:
-    driver: local
   registration_storage_data:
     driver: local
   registration_photos_data:

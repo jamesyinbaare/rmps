@@ -73,7 +73,7 @@ gcloud iam service-accounts keys create service-account-key.json \
 
 ```bash
 gcloud compute instances create registration-portal-staging-vm \
-  --zone=us-central1-a \
+  --zone=europe-west9-a \
   --machine-type=e2-medium \
   --boot-disk-size=50GB \
   --boot-disk-type=pd-ssd \
@@ -124,7 +124,7 @@ gcloud compute firewall-rules create allow-registration-portal-traefik-dashboard
 SSH into the VM:
 
 ```bash
-gcloud compute ssh registration-portal-staging-vm --zone=us-central1-a
+gcloud compute ssh registration-portal-staging-vm --zone=europe-west9-a
 ```
 
 Run the setup script:
@@ -204,7 +204,7 @@ Point your domains to the VM's external IP:
 ```bash
 # Get VM external IP
 gcloud compute instances describe registration-portal-staging-vm \
-  --zone=us-central1-a \
+  --zone=europe-west9-a \
   --format="get(networkInterfaces[0].accessConfigs[0].natIP)"
 ```
 
@@ -220,30 +220,15 @@ Update domain names in:
 
 ## Environment Configuration
 
-### Local Services (Default)
+### Database (Cloud SQL)
 
-Start with local PostgreSQL and file storage:
+Staging uses Cloud SQL only. Configure:
 
 ```env
 ENVIRONMENT=staging
-DATABASE_URL=postgresql+asyncpg://user:pass@registration-postgres-staging:5432/dbname
-STORAGE_BACKEND=local
-```
-
-### Cloud SQL
-
-Switch to Cloud SQL:
-
-```env
-USE_CLOUD_SQL=true
 CLOUD_SQL_CONNECTION_NAME=project-id:region:instance-name
 DATABASE_URL=postgresql+asyncpg://user:pass@cloud-sql-proxy-staging:5432/dbname
-```
-
-Start with Cloud SQL Proxy profile:
-
-```bash
-docker compose -f compose.staging.gcp.yaml --profile cloud-sql up -d
+STORAGE_BACKEND=local
 ```
 
 ### Cloud Storage
@@ -304,15 +289,32 @@ curl -I https://staging.yourdomain.com/
 
 ## Troubleshooting
 
-### Certificate Issues
+### Certificate Issues (SSL/TLS "Not Secure")
 
-**Problem:** Let's Encrypt certificates not generating
+**Problem:** Browser shows "Not Secure" or Let's Encrypt certificates not generating.
 
-**Solutions:**
-- Verify domain DNS points to VM IP
-- Check firewall allows HTTP (80) traffic
-- Check Traefik logs: `docker compose logs traefik`
-- Verify email in `traefik.staging.yml` is correct
+**Prerequisites for ACME certificate issuance:**
+- **DNS**: `reg.jamesyin.com` and `reg-api.jamesyin.com` must have A records pointing to the VM's external IP.
+- **Firewall**: Allow inbound TCP 80 and 443 from the internet (Let's Encrypt needs both for HTTP redirect and TLS-ALPN-01 challenge).
+- **Ports**: Traefik must be reachable on port 443 for the TLS-ALPN-01 challenge.
+
+**Diagnostic steps:**
+1. **Trigger certificate request**: Visit `https://reg.jamesyin.com` and `https://reg-api.jamesyin.com`. Traefik requests certs on first HTTPS access.
+2. **Check Traefik logs for ACME errors:**
+   ```bash
+   docker logs registration-traefik-staging 2>&1 | grep -i acme
+   ```
+3. **Verify email in `traefik/traefik.staging.yml`** is correct for Let's Encrypt notifications.
+4. **acme.json permissions**: Let's Encrypt expects mode `600`. If challenges fail, try:
+   ```bash
+   docker exec registration-traefik-staging chmod 600 /certificates/acme.json
+   ```
+5. **Restart Traefik** after config changes: `docker compose -f compose.staging.gcp.yaml restart traefik`
+6. **Staging ACME endpoint**: For testing without hitting rate limits, set in `traefik.staging.yml`:
+   ```yaml
+   caServer: "https://acme-staging-v02.api.letsencrypt.org/directory"
+   ```
+   (Use production endpoint for real certs.)
 
 ### Database Connection Issues
 

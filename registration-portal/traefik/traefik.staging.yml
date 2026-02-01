@@ -35,14 +35,14 @@ providers:
     watch: true
 
 # Let's Encrypt Configuration (Production endpoint for staging)
+# TLS-ALPN-01 uses port 443 only, no conflict with HTTP-to-HTTPS redirect
 certificatesResolvers:
   letsencrypt:
     acme:
       email: jamesyinbaare@gmail.com  # Update with your email for Let's Encrypt
       storage: /certificates/acme.json
       caServer: "https://acme-v02.api.letsencrypt.org/directory"  # Production endpoint
-      httpChallenge:
-        entryPoint: web
+      tlsChallenge: {}
 
 # Logging Configuration
 # For GCP, consider using Cloud Logging integration

@@ -5,7 +5,7 @@ http:
   routers:
     # Frontend router - HTTPS
     frontend-staging:
-      rule: "Host(`staging.yourdomain.com`)"
+      rule: "Host(`reg.jamesyin.com`)"
       entryPoints:
         - websecure
       service: frontend-staging
@@ -16,7 +16,7 @@ http:
 
     # Frontend router - HTTP (redirect to HTTPS handled by entrypoint)
     frontend-staging-http:
-      rule: "Host(`staging.yourdomain.com`)"
+      rule: "Host(`reg.jamesyin.com`)"
       entryPoints:
         - web
       service: frontend-staging
@@ -25,7 +25,7 @@ http:
 
     # Backend router - HTTPS
     backend-staging:
-      rule: "Host(`staging-api.yourdomain.com`)"
+      rule: "Host(`reg-api.jamesyin.com`)"
       entryPoints:
         - websecure
       service: backend-staging
@@ -37,7 +37,7 @@ http:
 
     # Backend router - HTTP (redirect to HTTPS handled by entrypoint)
     backend-staging-http:
-      rule: "Host(`staging-api.yourdomain.com`)"
+      rule: "Host(`reg-api.jamesyin.com`)"
       entryPoints:
         - web
       service: backend-staging
@@ -73,8 +73,8 @@ http:
           - Authorization
           - X-Requested-With
         accessControlAllowOriginList:
-          - "https://staging.yourdomain.com"
-          - "http://staging.yourdomain.com"  # For development/testing
+          - "https://reg.jamesyin.com"
+          - "http://reg.jamesyin.com"  # For development/testing
         accessControlAllowCredentials: true
         accessControlExposeHeaders:
           - Content-Disposition

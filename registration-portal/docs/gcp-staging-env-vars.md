@@ -13,43 +13,20 @@ Complete reference for all environment variables used in GCP staging deployment.
 | `APP_LOG_LEVEL` | Log level (INFO, DEBUG, etc.) | `INFO` | No |
 | `APP_LOG_FORMAT` | Log format (json, text) | `json` | No |
 
-## Database Configuration
+## Database Configuration (Cloud SQL)
 
-### Local PostgreSQL (Default)
-
-| Variable | Description | Example | Required |
-|----------|-------------|---------|----------|
-| `DATABASE_URL` | PostgreSQL connection URL | `postgresql+asyncpg://user:pass@registration-postgres-staging:5432/dbname` | Yes |
-| `POSTGRES_USER` | PostgreSQL username | `registration_user` | Yes |
-| `POSTGRES_PASSWORD` | PostgreSQL password | `secure-password` | Yes |
-| `REGISTRATION_POSTGRES_DB` | Database name | `registration_portal_db` | No (default: `registration_portal_db`) |
-
-### Cloud SQL
+Staging uses Cloud SQL only. The backend connects via the Cloud SQL Proxy container.
 
 | Variable | Description | Example | Required |
 |----------|-------------|---------|----------|
-| `USE_CLOUD_SQL` | Enable Cloud SQL (true/false) | `true` | No (default: `false`) |
-| `CLOUD_SQL_CONNECTION_NAME` | Cloud SQL connection name | `project-id:region:instance-name` | Yes (if `USE_CLOUD_SQL=true`) |
-| `DATABASE_URL` | PostgreSQL connection URL (via proxy) | `postgresql+asyncpg://user:pass@cloud-sql-proxy-staging:5432/dbname` | Yes (if `USE_CLOUD_SQL=true`) |
+| `CLOUD_SQL_CONNECTION_NAME` | Cloud SQL connection name | `project-id:region:instance-name` | Yes |
+| `DATABASE_URL` | PostgreSQL connection URL (host = proxy container) | `postgresql+asyncpg://user:pass@cloud-sql-proxy-staging:5432/dbname` | Yes |
 
-**Switching between local and Cloud SQL:**
-
-1. **To use Cloud SQL:**
-   ```env
-   USE_CLOUD_SQL=true
-   CLOUD_SQL_CONNECTION_NAME=project-id:region:instance-name
-   DATABASE_URL=postgresql+asyncpg://user:pass@cloud-sql-proxy-staging:5432/dbname
-   ```
-   Then start with Cloud SQL profile:
-   ```bash
-   docker compose -f compose.staging.gcp.yaml --profile cloud-sql up -d
-   ```
-
-2. **To use local PostgreSQL:**
-   ```env
-   USE_CLOUD_SQL=false
-   DATABASE_URL=postgresql+asyncpg://user:pass@registration-postgres-staging:5432/dbname
-   ```
+Example `.env.staging.gcp`:
+```env
+CLOUD_SQL_CONNECTION_NAME=project-id:region:instance-name
+DATABASE_URL=postgresql+asyncpg://user:pass@cloud-sql-proxy-staging:5432/dbname
+```
 
 ## Storage Configuration
 
@@ -89,6 +66,23 @@ Complete reference for all environment variables used in GCP staging deployment.
    ```env
    STORAGE_BACKEND=local
    ```
+
+## CORS Configuration
+
+| Variable | Description | Example | Required |
+|----------|-------------|---------|----------|
+| `CORS_ORIGINS` | Comma-separated list of allowed origins | `https://reg.example.com,https://admin.example.com` | No |
+| `CORS_ALLOW_CREDENTIALS` | Allow credentials (cookies, auth headers) | `true` | No (default: `true`) |
+| `CORS_ALLOW_METHODS` | Allowed HTTP methods (`*` or comma-separated) | `*` or `GET,POST,PUT,DELETE` | No |
+| `CORS_ALLOW_HEADERS` | Allowed request headers (`*` or comma-separated) | `*` | No |
+| `CORS_EXPOSE_HEADERS` | Headers exposed to browser (comma-separated) | `Content-Disposition,content-disposition` | No |
+
+Example for staging:
+```env
+CORS_ORIGINS=https://reg.jamesyin.com,https://reg-api.jamesyin.com,http://localhost:3001
+```
+
+Default origins (when not set): localhost variants for development.
 
 ## Authentication Configuration
 
@@ -218,28 +212,6 @@ STAGING_API_DOMAIN=staging-api.yourdomain.com
 ```
 
 ## Switching Configuration
-
-### Quick Reference: Database Switch
-
-**Local PostgreSQL → Cloud SQL:**
-```env
-USE_CLOUD_SQL=true
-CLOUD_SQL_CONNECTION_NAME=project-id:region:instance
-DATABASE_URL=postgresql+asyncpg://user:pass@cloud-sql-proxy-staging:5432/dbname
-```
-```bash
-docker compose -f compose.staging.gcp.yaml --profile cloud-sql up -d
-```
-
-**Cloud SQL → Local PostgreSQL:**
-```env
-USE_CLOUD_SQL=false
-DATABASE_URL=postgresql+asyncpg://user:pass@registration-postgres-staging:5432/dbname
-```
-```bash
-docker compose -f compose.staging.gcp.yaml stop cloud-sql-proxy-staging
-docker compose -f compose.staging.gcp.yaml up -d
-```
 
 ### Quick Reference: Storage Switch
 

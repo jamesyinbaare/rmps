@@ -41,7 +41,7 @@ fi
 # Check if bucket exists
 if ! gsutil ls -b "gs://$GCS_BUCKET" > /dev/null 2>&1; then
     echo "Bucket $GCS_BUCKET does not exist. Creating..."
-    gsutil mb -l "${GCS_BUCKET_LOCATION:-us-central1}" "gs://$GCS_BUCKET"
+    gsutil mb -l "${GCS_BUCKET_LOCATION:-europe-west9}" "gs://$GCS_BUCKET"
     echo "Bucket created: gs://$GCS_BUCKET"
 fi
 

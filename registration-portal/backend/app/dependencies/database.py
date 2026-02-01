@@ -1,11 +1,10 @@
 import contextlib
 import logging
 from collections.abc import AsyncIterator
-from http.client import HTTPException
 from typing import Annotated, Any
 from urllib.parse import urlparse
 
-from fastapi import Depends
+from fastapi import Depends, HTTPException
 from pydantic_settings import BaseSettings
 from sqlalchemy import NullPool, text
 from sqlalchemy.ext.asyncio import (
@@ -76,14 +75,59 @@ def convert_to_async_url(url: str) -> str:
     return url
 
 
+def validate_database_url(url: str) -> None:
+    """Validate database URL has a non-empty, valid host to avoid IDNA/socket errors.
+
+    Raises ValueError if the host is missing, empty, or invalid (e.g. leading dot).
+    """
+    if not url or not url.strip():
+        raise ValueError(
+            "DATABASE_URL is empty. Set it to your PostgreSQL URL, e.g. "
+            "postgresql+asyncpg://user:pass@cloud-sql-proxy-staging:5432/dbname"
+        )
+    parsed = urlparse(url)
+    host = (parsed.hostname or "").strip()
+    if not host:
+        raise ValueError(
+            "DATABASE_URL has no host (e.g. '@:5432' or '@/db'). "
+            "For Cloud SQL proxy use host 'cloud-sql-proxy-staging', e.g. "
+            "postgresql+asyncpg://user:pass@cloud-sql-proxy-staging:5432/dbname"
+        )
+    if host.startswith(".") or ".." in host or host.endswith("."):
+        raise ValueError(
+            f"DATABASE_URL has invalid host '{host}' (empty label or leading/trailing dot). "
+            "Use a valid hostname, e.g. cloud-sql-proxy-staging"
+        )
+
+
+def should_disable_ssl(url: str) -> bool:
+    """Check if URL connects to Cloud SQL Proxy (which requires plain TCP).
+
+    The proxy handles TLS to Cloud SQL; the client→proxy connection must not use SSL.
+    """
+    parsed = urlparse(url)
+    host = (parsed.hostname or "").strip().lower()
+    return "cloud-sql-proxy" in host
+
+
 class DatabaseSessionManager:
     _engine: AsyncEngine | None
     _sessionmaker: async_sessionmaker | None
 
     def __init__(self, host: str, engine_kwargs: dict[str, Any] | None = None):
+        validate_database_url(host)
         # Convert database URL to use async driver if needed
-        self._host = convert_to_async_url(host)
+        url = convert_to_async_url(host)
+        self._host = url
         self._engine_kwargs = engine_kwargs or {}
+
+        # Cloud SQL Proxy expects plain TCP; disable SSL via connect_args
+        if should_disable_ssl(url):
+            if "connect_args" not in self._engine_kwargs:
+                self._engine_kwargs["connect_args"] = {}
+            # asyncpg uses ssl=False (not sslmode) to disable SSL
+            self._engine_kwargs["connect_args"]["ssl"] = False
+
         self._engine = None
         self._sessionmaker = None
 

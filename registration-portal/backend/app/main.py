@@ -22,7 +22,7 @@ from app.routers import (
     api_verification,
     dashboard_verification,
 )
-from app.config import logging_settings
+from app.config import logging_settings, settings
 from starlette.types import ASGIApp
 
 SENSITIVE_KEYS = {"password", "token", "authorization"}
@@ -168,18 +168,11 @@ app.add_middleware(RequestLoggingMiddleware)
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[
-        "http://localhost:3001",
-        "http://127.0.0.1:3001",
-        "https://frontend.localhost",
-        "https://localhost",
-        "http://frontend.localhost",
-        "http://localhost",
-    ],  # Development and Traefik routes
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-    expose_headers=["Content-Disposition", "content-disposition"],
+    allow_origins=settings.cors_origins,
+    allow_credentials=settings.cors_allow_credentials,
+    allow_methods=settings.cors_allow_methods,
+    allow_headers=settings.cors_allow_headers,
+    expose_headers=settings.cors_expose_headers,
 )
 
 # Include routers
