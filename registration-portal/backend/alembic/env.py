@@ -28,10 +28,11 @@ target_metadata = Base.metadata
 def get_url() -> str:
     """Get database URL from settings and convert to async URL if needed."""
     from app.config import settings
-    from app.dependencies.database import convert_to_async_url
+    from app.dependencies.database import convert_to_async_url, validate_database_url
 
     url = settings.database_url
-    # Convert to async URL if using async migrations
+    validate_database_url(url)
+    # Convert to async URL
     return convert_to_async_url(url)
 
 
@@ -71,13 +72,22 @@ async def run_async_migrations() -> None:
     and associate a connection with the context.
 
     """
+    from app.dependencies.database import should_disable_ssl
 
     configuration = config.get_section(config.config_ini_section, {})
-    configuration["sqlalchemy.url"] = get_url()
+    url = get_url()
+    configuration["sqlalchemy.url"] = url
+
+    # Cloud SQL Proxy requires plain TCP (ssl=False for asyncpg)
+    connect_args = {}
+    if should_disable_ssl(url):
+        connect_args["ssl"] = False
+
     connectable = async_engine_from_config(
         configuration,
         prefix="sqlalchemy.",
         poolclass=pool.NullPool,
+        connect_args=connect_args,
     )
 
     async with connectable.connect() as connection:

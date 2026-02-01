@@ -1,4 +1,12 @@
+from pydantic import field_validator
 from pydantic_settings import BaseSettings
+
+
+def _parse_comma_separated_list(v: str | list[str]) -> list[str]:
+    """Parse comma-separated string to list of stripped non-empty strings."""
+    if isinstance(v, list):
+        return v
+    return [x.strip() for x in str(v).split(",") if x.strip()]
 
 
 class Settings(BaseSettings):
@@ -78,6 +86,31 @@ class Settings(BaseSettings):
     result_access_pin_default_max_uses: int = 5
     result_access_pin_length: int = 6
     result_access_serial_length: int = 8
+    # CORS settings (CORS_ORIGINS: comma-separated list of allowed origins)
+    cors_origins: str | list[str] = "http://localhost:3001,http://127.0.0.1:3001,https://frontend.localhost,https://localhost,http://frontend.localhost,http://localhost"
+    cors_allow_credentials: bool = True
+    cors_allow_methods: str | list[str] = "*"
+    cors_allow_headers: str | list[str] = "*"
+    cors_expose_headers: str | list[str] = "Content-Disposition,content-disposition"
+
+    @field_validator("cors_origins", mode="before")
+    @classmethod
+    def parse_cors_origins(cls, v: str | list[str] | None) -> list[str]:
+        return _parse_comma_separated_list(v) if v else []
+
+    @field_validator("cors_allow_methods", "cors_allow_headers", mode="before")
+    @classmethod
+    def parse_cors_wildcard_or_list(cls, v: str | list[str] | None) -> list[str] | str:
+        if not v:
+            return "*"
+        if v == "*" or (isinstance(v, str) and v.strip() == "*"):
+            return "*"
+        return _parse_comma_separated_list(v)
+
+    @field_validator("cors_expose_headers", mode="before")
+    @classmethod
+    def parse_cors_expose_headers(cls, v: str | list[str] | None) -> list[str]:
+        return _parse_comma_separated_list(v) if v else []
 
 
 class LoggingSettings(BaseSettings):
