@@ -1,8 +1,7 @@
 /**
- * Photo validation utility for frontend validation
- * Matches backend settings:
- * - Photo: 200-600px dimensions, 2MB max
- * - ID Scan: Any dimensions, 5MB max
+ * Photo validation utility for frontend validation.
+ * Matches backend: candidate (exact dimensions), certificate_request_photo (exact dimensions), national_id (file type + max size only).
+ * Config can be fetched from GET /api/v1/public/photo-validation-config or passed in.
  */
 
 export interface PhotoValidationResult {
@@ -12,17 +11,39 @@ export interface PhotoValidationResult {
   fileSizeMB?: number;
 }
 
-// Photo requirements (from backend settings)
-const PHOTO_MIN_WIDTH = 200;
-const PHOTO_MAX_WIDTH = 600;
-const PHOTO_MIN_HEIGHT = 200;
-const PHOTO_MAX_HEIGHT = 600;
-const PHOTO_MAX_SIZE = 2 * 1024 * 1024; // 2MB
+export interface PhotoValidationConfig {
+  candidate: { width: number; height: number };
+  certificate_request_photo: { width: number; height: number };
+  national_id_max_file_size: number;
+}
 
-// ID Scan requirements
-const ID_SCAN_MAX_SIZE = 5 * 1024 * 1024; // 5MB
+// Defaults (match backend defaults when config not yet loaded)
+const DEFAULT_CONFIG: PhotoValidationConfig = {
+  candidate: { width: 155, height: 191 },
+  certificate_request_photo: { width: 600, height: 600 },
+  national_id_max_file_size: 5 * 1024 * 1024, // 5MB
+};
+
+let cachedConfig: PhotoValidationConfig | null = null;
 
 const ALLOWED_MIME_TYPES = ["image/jpeg", "image/jpg", "image/png"];
+
+/**
+ * Fetch photo validation config from the public API. Result is cached.
+ */
+export async function getPhotoValidationConfig(): Promise<PhotoValidationConfig> {
+  if (cachedConfig) return cachedConfig;
+  const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL || "http://localhost:8001";
+  const response = await fetch(`${API_BASE_URL}/api/v1/public/photo-validation-config`);
+  if (!response.ok) return DEFAULT_CONFIG;
+  const data = await response.json();
+  cachedConfig = {
+    candidate: data.candidate ?? DEFAULT_CONFIG.candidate,
+    certificate_request_photo: data.certificate_request_photo ?? DEFAULT_CONFIG.certificate_request_photo,
+    national_id_max_file_size: data.national_id_max_file_size ?? DEFAULT_CONFIG.national_id_max_file_size,
+  };
+  return cachedConfig;
+}
 
 /**
  * Validate image dimensions by loading the image
@@ -47,42 +68,39 @@ function getImageDimensions(file: File): Promise<{ width: number; height: number
 }
 
 /**
- * Validate passport photograph
- * Requirements: 200-600px dimensions, 2MB max, JPEG/PNG
+ * Validate candidate passport photo.
+ * Requirements: exact width x height (from config, e.g. 155x191), 2MB max, JPEG/PNG.
+ * Used by: school photo album, registration, bulk photo validation UI.
  */
-export async function validatePassportPhoto(file: File): Promise<PhotoValidationResult> {
+export async function validatePassportPhoto(
+  file: File,
+  config?: PhotoValidationConfig | null
+): Promise<PhotoValidationResult> {
+  const cfg = config ?? cachedConfig ?? DEFAULT_CONFIG;
+  const requiredWidth = cfg.candidate.width;
+  const requiredHeight = cfg.candidate.height;
+  const maxSize = 2 * 1024 * 1024; // 2MB for candidate photos
   const errors: string[] = [];
   const fileSizeMB = file.size / (1024 * 1024);
 
-  // Check file type
   if (!ALLOWED_MIME_TYPES.includes(file.type.toLowerCase())) {
     errors.push(`File must be JPEG or PNG format. Got: ${file.type || "unknown"}`);
     return { isValid: false, errors, fileSizeMB };
   }
 
-  // Check file size
-  if (file.size > PHOTO_MAX_SIZE) {
+  if (file.size > maxSize) {
     errors.push(
       `File size (${fileSizeMB.toFixed(2)}MB) exceeds maximum allowed size (2MB)`
     );
   }
 
-  // Check dimensions
   try {
     const { width, height } = await getImageDimensions(file);
-
-    if (width < PHOTO_MIN_WIDTH || height < PHOTO_MIN_HEIGHT) {
+    if (width !== requiredWidth || height !== requiredHeight) {
       errors.push(
-        `Image dimensions (${width}x${height}px) are too small. Minimum required: ${PHOTO_MIN_WIDTH}x${PHOTO_MIN_HEIGHT}px`
+        `Image dimensions must be exactly ${requiredWidth}x${requiredHeight} pixels. Got: ${width}x${height} pixels`
       );
     }
-
-    if (width > PHOTO_MAX_WIDTH || height > PHOTO_MAX_HEIGHT) {
-      errors.push(
-        `Image dimensions (${width}x${height}px) are too large. Maximum allowed: ${PHOTO_MAX_WIDTH}x${PHOTO_MAX_HEIGHT}px`
-      );
-    }
-
     return {
       isValid: errors.length === 0,
       errors,
@@ -96,27 +114,76 @@ export async function validatePassportPhoto(file: File): Promise<PhotoValidation
 }
 
 /**
- * Validate National ID scan
- * Requirements: Any dimensions, 5MB max, JPEG/PNG
+ * Validate certificate request photograph.
+ * Requirements: exact width x height (from config, e.g. 600x600), 2MB max, JPEG/PNG.
+ * Used by: certificate request page for the photograph.
  */
-export async function validateIdScan(file: File): Promise<PhotoValidationResult> {
+export async function validateCertificateRequestPhoto(
+  file: File,
+  config?: PhotoValidationConfig | null
+): Promise<PhotoValidationResult> {
+  const cfg = config ?? cachedConfig ?? DEFAULT_CONFIG;
+  const requiredWidth = cfg.certificate_request_photo.width;
+  const requiredHeight = cfg.certificate_request_photo.height;
+  const maxSize = 2 * 1024 * 1024; // 2MB
   const errors: string[] = [];
   const fileSizeMB = file.size / (1024 * 1024);
 
-  // Check file type
   if (!ALLOWED_MIME_TYPES.includes(file.type.toLowerCase())) {
     errors.push(`File must be JPEG or PNG format. Got: ${file.type || "unknown"}`);
     return { isValid: false, errors, fileSizeMB };
   }
 
-  // Check file size
-  if (file.size > ID_SCAN_MAX_SIZE) {
+  if (file.size > maxSize) {
     errors.push(
-      `File size (${fileSizeMB.toFixed(2)}MB) exceeds maximum allowed size (5MB)`
+      `File size (${fileSizeMB.toFixed(2)}MB) exceeds maximum allowed size (2MB)`
     );
   }
 
-  // Get dimensions for display (not validated)
+  try {
+    const { width, height } = await getImageDimensions(file);
+    if (width !== requiredWidth || height !== requiredHeight) {
+      errors.push(
+        `Image dimensions must be exactly ${requiredWidth}x${requiredHeight} pixels. Got: ${width}x${height} pixels`
+      );
+    }
+    return {
+      isValid: errors.length === 0,
+      errors,
+      dimensions: { width, height },
+      fileSizeMB,
+    };
+  } catch (error) {
+    errors.push("Failed to read image dimensions. Please ensure the file is a valid image.");
+    return { isValid: false, errors, fileSizeMB };
+  }
+}
+
+/**
+ * Validate National ID scan (and other document scans).
+ * Requirements: any dimensions; file type JPEG/PNG and max file size only (e.g. 5MB).
+ */
+export async function validateIdScan(
+  file: File,
+  config?: PhotoValidationConfig | null
+): Promise<PhotoValidationResult> {
+  const cfg = config ?? cachedConfig ?? DEFAULT_CONFIG;
+  const maxSize = cfg.national_id_max_file_size;
+  const maxSizeMB = maxSize / (1024 * 1024);
+  const errors: string[] = [];
+  const fileSizeMB = file.size / (1024 * 1024);
+
+  if (!ALLOWED_MIME_TYPES.includes(file.type.toLowerCase())) {
+    errors.push(`File must be JPEG or PNG format. Got: ${file.type || "unknown"}`);
+    return { isValid: false, errors, fileSizeMB };
+  }
+
+  if (file.size > maxSize) {
+    errors.push(
+      `File size (${fileSizeMB.toFixed(2)}MB) exceeds maximum allowed size (${maxSizeMB}MB)`
+    );
+  }
+
   try {
     const { width, height } = await getImageDimensions(file);
     return {

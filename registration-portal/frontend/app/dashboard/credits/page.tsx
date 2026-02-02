@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
 import {
   getCreditBalance,
   getCreditTransactions,
@@ -26,6 +27,8 @@ import { toast } from "sonner";
 import Link from "next/link";
 
 export default function CreditsPage() {
+  const router = useRouter();
+  const searchParams = useSearchParams();
   const [balance, setBalance] = useState<CreditBalance | null>(null);
   const [transactions, setTransactions] = useState<CreditTransaction[]>([]);
   const [loading, setLoading] = useState(true);
@@ -37,6 +40,16 @@ export default function CreditsPage() {
   useEffect(() => {
     loadData();
   }, [page]);
+
+  // Handle return from Paystack: show success and refresh balance
+  useEffect(() => {
+    const paymentSuccess = searchParams.get("payment") === "success";
+    if (paymentSuccess) {
+      toast.success("Payment successful. Your credits have been added.");
+      router.replace("/dashboard/credits");
+      loadData();
+    }
+  }, [searchParams, router]);
 
   const loadData = async () => {
     try {

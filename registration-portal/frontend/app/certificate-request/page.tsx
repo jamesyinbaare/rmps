@@ -25,7 +25,12 @@ import {
 import { toast } from "sonner";
 import { Award, CheckCircle2, AlertCircle, FileText, Mail, X } from "lucide-react";
 import { Alert, AlertDescription } from "@/components/ui/alert";
-import { validatePassportPhoto, validateIdScan } from "@/lib/photo-validation";
+import {
+  getPhotoValidationConfig,
+  validateCertificateRequestPhoto,
+  validateIdScan,
+  type PhotoValidationConfig,
+} from "@/lib/photo-validation";
 
 type RequestType = "certificate" | "attestation";
 type DeliveryMethod = "pickup" | "courier";
@@ -75,6 +80,7 @@ export default function CertificateRequestPage() {
   const [idScanDimensions, setIdScanDimensions] = useState<{ width: number; height: number } | null>(null);
   const [idScanInputKey, setIdScanInputKey] = useState(0);
   const [requestNumber, setRequestNumber] = useState<string | null>(null);
+  const [photoValidationConfig, setPhotoValidationConfig] = useState<PhotoValidationConfig | null>(null);
 
   // Load examination centers (all schools, regardless of active status)
   useEffect(() => {
@@ -92,6 +98,11 @@ export default function CertificateRequestPage() {
     };
 
     loadCenters();
+  }, []);
+
+  // Load photo validation config for certificate request photograph and National ID
+  useEffect(() => {
+    getPhotoValidationConfig().then(setPhotoValidationConfig);
   }, []);
 
   // Reset examination series to NOV/DEC when request type changes to certificate
@@ -119,7 +130,7 @@ export default function CertificateRequestPage() {
     setPhotographErrors([]);
 
     try {
-      const validation = await validatePassportPhoto(file);
+      const validation = await validateCertificateRequestPhoto(file, photoValidationConfig);
 
       if (validation.isValid) {
         setPhotographFile(file);
@@ -164,7 +175,7 @@ export default function CertificateRequestPage() {
     setIdScanErrors([]);
 
     try {
-      const validation = await validateIdScan(file);
+      const validation = await validateIdScan(file, photoValidationConfig);
 
       if (validation.isValid) {
         setIdScanFile(file);
@@ -212,7 +223,7 @@ export default function CertificateRequestPage() {
         return false;
       }
       if (!photographFile || photographErrors.length > 0) {
-        toast.error("Please upload a valid passport photograph that meets all requirements");
+        toast.error("Please upload a valid photograph that meets all requirements (exact dimensions required)");
         return false;
       }
       if (!idScanFile || idScanErrors.length > 0) {
@@ -256,7 +267,7 @@ export default function CertificateRequestPage() {
 
     // Ensure files exist and have no errors
     if (!photographFile || photographErrors.length > 0) {
-      toast.error("Please upload a valid passport photograph");
+      toast.error("Please upload a valid photograph");
       return;
     }
 
@@ -373,8 +384,14 @@ export default function CertificateRequestPage() {
                           {step.number === 3 && (
                             <div className="text-sm text-muted-foreground mt-2">
                               <p>• Enter your National ID number</p>
-                              <p>• Upload passport photo (200-600px, max 2MB, JPEG/PNG)</p>
-                              <p>• Upload National ID scan (any size, max 5MB, JPEG/PNG)</p>
+                              <p>
+                                • Upload photograph (exactly{" "}
+                                {photoValidationConfig
+                                  ? `${photoValidationConfig.certificate_request_photo.width}x${photoValidationConfig.certificate_request_photo.height}`
+                                  : "600x600"}
+                                px, max 2MB, JPEG/PNG)
+                              </p>
+                              <p>• Upload National ID scan (any dimensions, max 5MB, JPEG/PNG)</p>
                             </div>
                           )}
                           {step.number === 4 && (
@@ -662,7 +679,13 @@ export default function CertificateRequestPage() {
                           <AlertDescription className="text-xs">
                             <strong>Requirements:</strong>
                             <ul className="list-disc list-inside mt-1 space-y-0.5">
-                              <li>Dimensions: 155x191px (passport photo standard)</li>
+                              <li>
+                                Dimensions: exactly{" "}
+                                {photoValidationConfig
+                                  ? `${photoValidationConfig.certificate_request_photo.width}x${photoValidationConfig.certificate_request_photo.height}`
+                                  : "600x600"}
+                                px
+                              </li>
                               <li>File size: Maximum 2MB</li>
                               <li>Format: JPEG or PNG only</li>
                               <li>Must be a clear, recent passport-style photograph</li>
@@ -732,9 +755,8 @@ export default function CertificateRequestPage() {
                           <AlertDescription className="text-xs">
                             <strong>Requirements:</strong>
                             <ul className="list-disc list-inside mt-1 space-y-0.5">
-                              <li>File size: Maximum 5MB</li>
+                              <li>Any dimensions; maximum file size 5MB</li>
                               <li>Format: JPEG or PNG only</li>
-                              <li>Any dimensions accepted</li>
                               <li>Must be a clear, readable scan of your National ID</li>
                             </ul>
                           </AlertDescription>

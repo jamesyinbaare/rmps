@@ -100,13 +100,28 @@ export default function MyCertificateRequestsPage() {
   ]);
 
   useEffect(() => {
-    const requestParam = searchParams.get("request");
+    const requestParam = searchParams.get("request") || searchParams.get("request_number");
     if (requestParam) {
       loadRequestByNumber(requestParam);
     } else {
       loadRequests();
     }
   }, [page, requestTypeFilter, statusFilter, searchParams]);
+
+  // Handle return from Paystack: show success, refetch list, clear payment=success from URL
+  useEffect(() => {
+    const paymentSuccess = searchParams.get("payment") === "success";
+    const requestNumber = searchParams.get("request_number");
+    if (paymentSuccess) {
+      toast.success("Payment successful. Your request has been paid.");
+      loadRequests();
+      if (requestNumber) {
+        router.replace(`/certificate-confirmation/requests?request_number=${requestNumber}`);
+      } else {
+        router.replace("/certificate-confirmation/requests");
+      }
+    }
+  }, [searchParams, router]);
 
   const loadRequestByNumber = async (requestNumber: string) => {
     try {

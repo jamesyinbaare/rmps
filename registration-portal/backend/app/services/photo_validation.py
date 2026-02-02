@@ -45,23 +45,37 @@ class PhotoValidationService:
         return True, None
 
     @staticmethod
-    def validate_dimensions(image_data: bytes) -> tuple[bool, str | None]:
+    def validate_dimensions(
+        image_data: bytes, photo_type: str = "candidate"
+    ) -> tuple[bool, str | None]:
         """
-        Validate image dimensions are exactly 155x191px (passport photo requirement).
+        Validate image dimensions by photo type.
 
         Args:
             image_data: Image file content as bytes
+            photo_type: "candidate" (exact candidate_photo_width x candidate_photo_height)
+                or "certificate_request_photo" (exact certificate_request_photo_width x certificate_request_photo_height).
+                National ID should not call this; use file type + size only.
 
         Returns:
             tuple[bool, str | None]: (is_valid, error_message)
         """
+        if photo_type == "candidate":
+            required_width = settings.candidate_photo_width
+            required_height = settings.candidate_photo_height
+        elif photo_type == "certificate_request_photo":
+            required_width = settings.certificate_request_photo_width
+            required_height = settings.certificate_request_photo_height
+        else:
+            return False, f"Unknown photo_type for dimension validation: {photo_type}"
+
         try:
             image = Image.open(io.BytesIO(image_data))
             width, height = image.size
 
-            if width != settings.photo_min_width or height != settings.photo_min_height:
+            if width != required_width or height != required_height:
                 return False, (
-                    f"Image dimensions must be exactly {settings.photo_min_width}x{settings.photo_min_height} pixels. "
+                    f"Image dimensions must be exactly {required_width}x{required_height} pixels. "
                     f"Got: {width}x{height} pixels"
                 )
 
@@ -71,27 +85,36 @@ class PhotoValidationService:
             return False, f"Failed to read image dimensions: {str(e)}"
 
     @staticmethod
-    def validate_file_size(content: bytes) -> tuple[bool, str | None]:
+    def validate_file_size(
+        content: bytes, max_size: int | None = None
+    ) -> tuple[bool, str | None]:
         """
         Validate file size is within the maximum limit.
 
         Args:
             content: File content as bytes
+            max_size: Optional max size in bytes; defaults to settings.photo_max_file_size
 
         Returns:
             tuple[bool, str | None]: (is_valid, error_message)
         """
+        limit = max_size if max_size is not None else settings.photo_max_file_size
         file_size = len(content)
-        if file_size > settings.photo_max_file_size:
-            max_size_mb = settings.photo_max_file_size / (1024 * 1024)
+        if file_size > limit:
+            limit_mb = limit / (1024 * 1024)
             file_size_mb = file_size / (1024 * 1024)
             return False, (
-                f"File size ({file_size_mb:.2f}MB) exceeds maximum allowed size ({max_size_mb:.2f}MB)"
+                f"File size ({file_size_mb:.2f}MB) exceeds maximum allowed size ({limit_mb:.2f}MB)"
             )
         return True, None
 
     @staticmethod
-    def validate_all(content: bytes, mime_type: str, validation_level: str = "basic") -> None:
+    def validate_all(
+        content: bytes,
+        mime_type: str,
+        validation_level: str = "basic",
+        photo_type: str = "candidate",
+    ) -> None:
         """
         Perform all validation checks and raise HTTPException if invalid.
 
@@ -99,9 +122,12 @@ class PhotoValidationService:
             content: File content as bytes
             mime_type: MIME type of the file
             validation_level: Validation level - "basic", "standard", or "strict"
-                - "basic": File type, dimensions (155x191px), size only (no MediaPipe)
+                - "basic": File type, dimensions, size only (no MediaPipe)
                 - "standard": Basic + face detection (single face required)
                 - "strict": Basic + face detection + background color (white/off-white)
+            photo_type: "candidate" (exact candidate dimensions), "certificate_request_photo"
+                (exact certificate request photo dimensions, e.g. 600x600), or "national_id"
+                (file type + max file size only; no dimension validation).
 
         Raises:
             HTTPException: If validation fails
@@ -113,12 +139,26 @@ class PhotoValidationService:
         if not is_valid:
             errors.append(error)
 
-        # Validate dimensions
-        is_valid, error = PhotoValidationService.validate_dimensions(content)
+        # National ID: only file type + size; no dimensions, no MediaPipe
+        if photo_type == "national_id":
+            is_valid, error = PhotoValidationService.validate_file_size(
+                content, max_size=settings.national_id_max_file_size
+            )
+            if not is_valid:
+                errors.append(error)
+            if errors:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail={"errors": errors, "message": "National ID scan validation failed"},
+                )
+            return
+
+        # Validate dimensions (candidate or certificate_request_photo)
+        is_valid, error = PhotoValidationService.validate_dimensions(content, photo_type)
         if not is_valid:
             errors.append(error)
 
-        # Validate file size
+        # Validate file size (candidate/certificate request use photo_max_file_size)
         is_valid, error = PhotoValidationService.validate_file_size(content)
         if not is_valid:
             errors.append(error)

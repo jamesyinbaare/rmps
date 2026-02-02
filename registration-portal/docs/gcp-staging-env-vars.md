@@ -110,6 +110,8 @@ Default origins (when not set): localhost variants for development.
 | `PAYSTACK_WEBHOOK_SECRET` | Webhook verification secret | `whsec_xxx` | No |
 | `PAYSTACK_CALLBACK_BASE_URL` | Callback base URL | `https://staging.yourdomain.com` | No |
 
+**Paystack Dashboard – Webhook URL:** Set to `https://<API_DOMAIN>/api/v1/public/payments/paystack-webhook` (for all payment types: registration, certificate request, confirmation, credits). Copy the webhook secret into `PAYSTACK_WEBHOOK_SECRET`.
+
 ## Domain/URL Configuration
 
 | Variable | Description | Example | Required |

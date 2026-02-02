@@ -60,14 +60,12 @@ async def initialize_payment(
         }
 
     # Prepare Paystack transaction data
-    # Get callback URL from settings or use default
+    # Get callback URL from settings or use default (one branch per payment type)
     callback_url = None
     if hasattr(settings, 'paystack_callback_base_url') and settings.paystack_callback_base_url:
-        # Build callback URL based on invoice type
+        base = settings.paystack_callback_base_url.strip("/")
         if invoice.registration_candidate_id:
-            # For registration candidates, redirect to registration page with registration_number
-            # Payment status will be updated via webhook, and frontend will check status on return
-            # Get the registration candidate to get the registration_number
+            # Registration: redirect to registration page with registration_number
             from app.models import RegistrationCandidate
             candidate_stmt = select(RegistrationCandidate).where(
                 RegistrationCandidate.id == invoice.registration_candidate_id
@@ -75,25 +73,37 @@ async def initialize_payment(
             candidate_result = await session.execute(candidate_stmt)
             candidate = candidate_result.scalar_one_or_none()
             if candidate and candidate.registration_number:
-                callback_url = f"{settings.paystack_callback_base_url}/dashboard/private/register?registration_number={candidate.registration_number}"
+                callback_url = f"{base}/dashboard/private/register?registration_number={candidate.registration_number}"
             else:
-                # Registration number should always exist, but if not, redirect without params
-                # Frontend will load draft normally
-                callback_url = f"{settings.paystack_callback_base_url}/dashboard/private/register"
-        else:
-            # For certificate requests, use existing logic
-            request_number = metadata.get("request_number") if metadata else None
+                callback_url = f"{base}/dashboard/private/register"
+        elif invoice.certificate_confirmation_request_id:
+            # Certificate confirmation: redirect to confirmation requests page
+            request_number = (metadata or {}).get("request_number")
             if request_number:
-                # Redirect to receipt page with request number
-                callback_url = f"{settings.paystack_callback_base_url}/certificate-request/receipt?request_number={request_number}"
+                callback_url = f"{base}/certificate-confirmation/requests?request_number={request_number}&payment=success"
             else:
-                # Fallback to receipt page
-                callback_url = f"{settings.paystack_callback_base_url}/certificate-request/receipt"
+                callback_url = f"{base}/certificate-confirmation/requests?payment=success"
+        elif invoice.certificate_request_id:
+            # Certificate request: redirect to receipt page
+            request_number = (metadata or {}).get("request_number")
+            if request_number:
+                callback_url = f"{base}/certificate-request/receipt?request_number={request_number}"
+            else:
+                callback_url = f"{base}/certificate-request/receipt"
+        elif metadata and metadata.get("type") == "credit_purchase":
+            # Credit purchase: redirect to credits page with success
+            callback_url = f"{base}/dashboard/credits?payment=success"
+        else:
+            logger.warning(
+                f"Unknown invoice type for callback_url: invoice_id={invoice.id}, "
+                "falling back to certificate-request receipt"
+            )
+            callback_url = f"{base}/certificate-request/receipt"
 
-    # Generate unique reference with timestamp to avoid duplicates
+    # Unique Paystack reference: invoice number + time suffix (no duplicate INV- prefix)
     from datetime import datetime
-    timestamp = datetime.utcnow().strftime("%Y%m%d%H%M%S")
-    reference = f"INV-{invoice.invoice_number}-{timestamp}"
+    time_suffix = datetime.utcnow().strftime("%H%M%S")  # 6 chars, e.g. 170655
+    reference = f"{invoice.invoice_number}-{time_suffix}"
 
     paystack_data = {
         "amount": int(amount * 100),  # Convert to kobo (cents) - Paystack uses smallest currency unit
@@ -325,8 +335,27 @@ async def process_webhook_event(
                     confirmation_request_result = await session.execute(confirmation_request_stmt)
                     confirmation_request = confirmation_request_result.scalar_one_or_none()
                     if confirmation_request:
+                        from app.models import TicketActivity, TicketStatusHistory, TicketActivityType
+                        old_status = confirmation_request.status
                         confirmation_request.status = RequestStatus.PAID
                         confirmation_request.paid_at = payment.paid_at
+                        # Record status history and activity (single source of truth for webhook)
+                        session.add(TicketStatusHistory(
+                            ticket_type="certificate_confirmation_request",
+                            ticket_id=confirmation_request.id,
+                            from_status=old_status.value if old_status else None,
+                            to_status=RequestStatus.PAID.value,
+                            changed_by_user_id=None,  # System/automatic via payment
+                        ))
+                        session.add(TicketActivity(
+                            ticket_type="certificate_confirmation_request",
+                            ticket_id=confirmation_request.id,
+                            activity_type=TicketActivityType.STATUS_CHANGE,
+                            user_id=None,  # System/automatic via payment
+                            old_status=old_status.value if old_status else None,
+                            new_status=RequestStatus.PAID.value,
+                            comment="Payment received via Paystack",
+                        ))
                 elif invoice.certificate_request_id:
                     from app.models import CertificateRequest
                     cert_request_stmt = select(CertificateRequest).where(

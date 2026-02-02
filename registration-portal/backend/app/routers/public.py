@@ -36,6 +36,27 @@ from app.services.result_access_pin_service import validate_pin_serial
 router = APIRouter(prefix="/api/v1/public", tags=["public"])
 
 
+@router.get("/photo-validation-config")
+async def get_photo_validation_config() -> dict:
+    """
+    Public config for photo validation (no auth).
+    Returns candidate photo dimensions, certificate request photo dimensions, and national_id max file size.
+    Frontend uses this for client-side validation.
+    """
+    from app.config import settings
+    return {
+        "candidate": {
+            "width": settings.candidate_photo_width,
+            "height": settings.candidate_photo_height,
+        },
+        "certificate_request_photo": {
+            "width": settings.certificate_request_photo_width,
+            "height": settings.certificate_request_photo_height,
+        },
+        "national_id_max_file_size": settings.national_id_max_file_size,
+    }
+
+
 @router.get("/debug/results-check")
 async def debug_results_check(
     registration_number: str,
@@ -1107,11 +1128,14 @@ async def submit_certificate_request(
                     detail="ID scan file is empty or invalid",
                 )
 
-            # Validate passport photograph using PhotoValidationService
-            # This validates: file type (JPEG/PNG), dimensions (200-600px), and file size (2MB max)
+            # Validate passport photograph: exact certificate_request_photo dimensions (e.g. 600x600)
             from app.services.photo_validation import PhotoValidationService
             try:
-                PhotoValidationService.validate_all(photo_content, photograph.content_type or "")
+                PhotoValidationService.validate_all(
+                    photo_content,
+                    photograph.content_type or "",
+                    photo_type="certificate_request_photo",
+                )
             except HTTPException:
                 raise  # Re-raise validation errors from PhotoValidationService
             except Exception as e:
@@ -1121,12 +1145,20 @@ async def submit_certificate_request(
                     detail=f"Failed to validate photograph: {str(e)}",
                 )
 
-            # Validate ID scan: only file size (5MB max), any dimensions
-            id_scan_max_size = 5 * 1024 * 1024  # 5MB
-            if len(id_scan_content) > id_scan_max_size:
+            # Validate National ID scan: file type + max file size only (no dimensions)
+            try:
+                PhotoValidationService.validate_all(
+                    id_scan_content,
+                    national_id_scan.content_type or "",
+                    photo_type="national_id",
+                )
+            except HTTPException:
+                raise
+            except Exception as e:
+                logger.error(f"National ID scan validation error: {str(e)}", exc_info=True)
                 raise HTTPException(
                     status_code=status.HTTP_400_BAD_REQUEST,
-                    detail="National ID scan file size exceeds 5MB limit",
+                    detail=f"Failed to validate National ID scan: {str(e)}",
                 )
         else:
             # Files are optional for confirmation/verification
@@ -2073,15 +2105,13 @@ async def initialize_payment(
         )
 
 
-@router.post("/certificate-requests/paystack-webhook")
+@router.post("/payments/paystack-webhook")
 async def paystack_webhook(
     request: Request,
     session: DBSessionDep = None,
 ) -> dict:
-    """Handle Paystack webhook events."""
+    """Handle Paystack webhook events (all payment types: registration, certificate request, confirmation, credits)."""
     from app.services.payment_service import verify_webhook_signature, process_webhook_event
-    from app.services.certificate_service import update_request_status
-    from app.models import RequestStatus
 
     # Get signature from headers
     signature = request.headers.get("X-Paystack-Signature", "")
@@ -2114,82 +2144,13 @@ async def paystack_webhook(
     try:
         payment = await process_webhook_event(session, event_data)
         if payment:
-            # Refresh payment to ensure we have the latest status
             await session.refresh(payment)
-
-            # Update certificate request status if payment successful
-            # Use enum comparison instead of value comparison for reliability
-            from app.models import PaymentStatus
             logger.info(
                 f"Webhook processed payment {payment.id}, status: {payment.status}, "
                 f"certificate_request_id: {payment.certificate_request_id}, "
+                f"certificate_confirmation_request_id: {payment.certificate_confirmation_request_id}, "
                 f"registration_candidate_id: {payment.registration_candidate_id}"
             )
-
-            if payment.status == PaymentStatus.SUCCESS:
-                # Handle registration candidate payment (already handled in process_webhook_event)
-                # The candidate's total_paid_amount is updated in process_webhook_event
-                # We just need to commit the session, which happens at the end
-                if payment.registration_candidate_id:
-                    logger.info(
-                        f"Registration candidate {payment.registration_candidate_id} payment successful. "
-                        f"Payment amount: {payment.amount}"
-                    )
-
-                # Handle certificate request
-                # Handle certificate request
-                if payment.certificate_request_id:
-                    logger.info(f"Updating certificate request {payment.certificate_request_id} status to PAID")
-                    await update_request_status(
-                        session,
-                        payment.certificate_request_id,
-                        RequestStatus.PAID,
-                    )
-                    await session.flush()  # Ensure status update is flushed before commit
-
-                    # Verify the update
-                    from app.services.certificate_service import get_certificate_request_by_id
-                    updated_request = await get_certificate_request_by_id(session, payment.certificate_request_id)
-                    if updated_request:
-                        logger.info(f"Certificate request {payment.certificate_request_id} status updated to: {updated_request.status}")
-
-                # Handle confirmation request
-                elif payment.certificate_confirmation_request_id:
-                    from app.services.certificate_confirmation_service import get_certificate_confirmation_by_id
-                    from app.models import TicketActivity, TicketStatusHistory, TicketActivityType
-                    from uuid import UUID
-                    from datetime import datetime
-
-                    logger.info(f"Updating confirmation request {payment.certificate_confirmation_request_id} status to PAID")
-                    confirmation_request = await get_certificate_confirmation_by_id(session, payment.certificate_confirmation_request_id)
-                    if confirmation_request:
-                        old_status = confirmation_request.status
-                        confirmation_request.status = RequestStatus.PAID
-                        confirmation_request.paid_at = payment.paid_at or datetime.utcnow()
-
-                        # Record status history
-                        status_history = TicketStatusHistory(
-                            ticket_type="certificate_confirmation_request",
-                            ticket_id=confirmation_request.id,
-                            from_status=old_status.value if old_status else None,
-                            to_status=RequestStatus.PAID.value,
-                            changed_by_user_id=None,  # System/automatic via payment
-                        )
-                        session.add(status_history)
-
-                        # Record activity
-                        activity = TicketActivity(
-                            ticket_type="certificate_confirmation_request",
-                            ticket_id=confirmation_request.id,
-                            activity_type=TicketActivityType.STATUS_CHANGE,
-                            user_id=None,  # System/automatic via payment
-                            old_status=old_status.value if old_status else None,
-                            new_status=RequestStatus.PAID.value,
-                            comment="Payment received via Paystack",
-                        )
-                        session.add(activity)
-                        await session.flush()
-                        logger.info(f"Confirmation request {payment.certificate_confirmation_request_id} status updated to: {confirmation_request.status}")
             await session.commit()
             return {"status": "success"}
         return {"status": "ignored"}
