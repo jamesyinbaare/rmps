@@ -4,6 +4,16 @@ from pydantic import BaseModel, Field, field_validator
 
 from app.models import Grade
 
+# Only these 6 grades have score ranges (min/max). The other 4 (Pending, Blocked, Absent, Cancelled) are status-only.
+SCORE_GRADE_VALUES = {
+    Grade.FAIL.value,
+    Grade.PASS.value,
+    Grade.LOWER_CREDIT.value,
+    Grade.CREDIT.value,
+    Grade.UPPER_CREDIT.value,
+    Grade.DISTINCTION.value,
+}
+
 
 class GradeRangeConfig(BaseModel):
     """Schema for a single grade range configuration."""
@@ -42,13 +52,13 @@ class GradeRangesUpdate(BaseModel):
     """Schema for updating grade ranges JSON field on ExamSubject."""
 
     grade_ranges: list[GradeRangeConfig] = Field(
-        ..., min_length=1, max_length=6, description="Array of grade range configurations"
+        ..., min_length=6, max_length=6, description="Array of 6 grade range configurations (Fail, Pass, Lower Credit, Credit, Upper Credit, Distinction)"
     )
 
     @field_validator("grade_ranges")
     @classmethod
     def validate_grade_ranges(cls, v: list[GradeRangeConfig]) -> list[GradeRangeConfig]:
-        """Validate that all 6 grades are present."""
+        """Validate that all 6 score-based grades are present (Fail, Pass, Lower Credit, Credit, Upper Credit, Distinction)."""
         if len(v) != 6:
             raise ValueError("Must provide exactly 6 grade ranges")
 
@@ -57,17 +67,16 @@ class GradeRangesUpdate(BaseModel):
         if len(grades) != len(set(grades)):
             raise ValueError("Duplicate grades found. Each grade must be unique.")
 
-        # Check that all required grades are present
-        required_grades = {g.value for g in Grade}
+        # Check that all required score-based grades are present (status grades Pending/Blocked/Absent/Cancelled do not have score ranges)
         provided_grades = set(grades)
-        if required_grades != provided_grades:
-            missing = required_grades - provided_grades
-            extra = provided_grades - required_grades
+        if SCORE_GRADE_VALUES != provided_grades:
+            missing = SCORE_GRADE_VALUES - provided_grades
+            extra = provided_grades - SCORE_GRADE_VALUES
             error_msg = []
             if missing:
-                error_msg.append(f"Missing grades: {', '.join(missing)}")
+                error_msg.append(f"Missing grades: {', '.join(sorted(missing))}")
             if extra:
-                error_msg.append(f"Invalid grades: {', '.join(extra)}")
+                error_msg.append(f"Invalid grades: {', '.join(sorted(extra))}. Only score-based grades (Fail, Pass, Lower Credit, Credit, Upper Credit, Distinction) are allowed.")
             raise ValueError("; ".join(error_msg))
 
         return v
