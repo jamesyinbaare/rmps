@@ -118,6 +118,97 @@ export type InspectorBulkUploadResponse = {
   created: InspectorBulkCreatedRow[];
 };
 
+export type SubjectTypeEnum = "CORE" | "ELECTIVE";
+
+export type Programme = {
+  id: number;
+  code: string;
+  name: string;
+  created_at: string;
+  updated_at: string;
+};
+
+export type ProgrammeListResponse = {
+  items: Programme[];
+  total: number;
+  page: number;
+  page_size: number;
+  total_pages: number;
+};
+
+export type Subject = {
+  id: number;
+  code: string;
+  original_code: string | null;
+  name: string;
+  subject_type: SubjectTypeEnum;
+  created_at: string;
+  updated_at: string;
+};
+
+export type SubjectListResponse = {
+  items: Subject[];
+  total: number;
+  page: number;
+  page_size: number;
+  total_pages: number;
+};
+
+export type ProgrammeBulkUploadError = {
+  row_number: number;
+  error_message: string;
+  field: string | null;
+};
+
+export type ProgrammeBulkUploadResponse = {
+  total_rows: number;
+  successful: number;
+  failed: number;
+  errors: ProgrammeBulkUploadError[];
+};
+
+export type SubjectBulkUploadError = {
+  row_number: number;
+  error_message: string;
+  field: string | null;
+};
+
+export type SubjectBulkUploadResponse = {
+  total_rows: number;
+  successful: number;
+  failed: number;
+  errors: SubjectBulkUploadError[];
+};
+
+export type ProgrammeSubjectRow = {
+  subject_id: number;
+  subject_code: string;
+  subject_name: string;
+  subject_type: SubjectTypeEnum;
+  is_compulsory: boolean | null;
+  choice_group_id: number | null;
+  created_at: string;
+};
+
+export type SubjectChoiceGroup = {
+  choice_group_id: number;
+  subjects: ProgrammeSubjectRow[];
+};
+
+export type ProgrammeSubjectRequirements = {
+  compulsory_core: ProgrammeSubjectRow[];
+  optional_core_groups: SubjectChoiceGroup[];
+  electives: ProgrammeSubjectRow[];
+};
+
+export type ProgrammeSubjectAssociation = {
+  programme_id: number;
+  subject_id: number;
+  subject_type: SubjectTypeEnum;
+  is_compulsory: boolean | null;
+  choice_group_id: number | null;
+};
+
 export async function apiFetch(path: string, init: RequestInit = {}): Promise<Response> {
   const token = getStoredToken();
   if (!token) throw new Error("Not authenticated");
@@ -148,4 +239,15 @@ export async function apiJson<T>(path: string, init?: RequestInit): Promise<T> {
     return undefined as T;
   }
   return (await res.json()) as T;
+}
+
+export async function downloadApiFile(path: string, filename: string): Promise<void> {
+  const res = await apiFetch(path);
+  const blob = await res.blob();
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename;
+  a.click();
+  URL.revokeObjectURL(url);
 }

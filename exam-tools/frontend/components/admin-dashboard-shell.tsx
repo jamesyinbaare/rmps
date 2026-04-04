@@ -12,6 +12,8 @@ const inputFocusRing =
 const nav = [
   { href: "/dashboard/admin", label: "Overview" },
   { href: "/dashboard/admin/schools", label: "Schools" },
+  { href: "/dashboard/admin/programmes", label: "Programmes" },
+  { href: "/dashboard/admin/subjects", label: "Subjects" },
   { href: "/dashboard/admin/examination-centres", label: "Examination centres" },
   { href: "/dashboard/admin/inspectors", label: "Inspectors" },
 ];

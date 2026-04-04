@@ -14,7 +14,7 @@ from starlette.types import ASGIApp
 from app.config import logging_settings
 from app.dependencies.database import get_sessionmanager, initialize_db
 from app.initial_data import ensure_super_admin_user
-from app.routers import auth, inspectors, schools
+from app.routers import auth, inspectors, programmes, schools, subjects
 
 SENSITIVE_KEYS = {"password", "token", "authorization"}
 
@@ -160,6 +160,8 @@ app.add_middleware(
 app.include_router(auth.router)
 app.include_router(inspectors.router)
 app.include_router(schools.router)
+app.include_router(programmes.router)
+app.include_router(subjects.router)
 
 
 

@@ -1,13 +1,12 @@
-from datetime import datetime
 import enum
 import uuid
+from datetime import datetime
 
-from sqlalchemy import Boolean, Column, DateTime, Enum, ForeignKey, String
+from sqlalchemy import Boolean, Column, DateTime, Enum, ForeignKey, Integer, String, Table, UniqueConstraint
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import relationship
 
 from app.dependencies.database import Base
-
 
 
 class Region(enum.Enum):
@@ -61,6 +60,11 @@ class Zone(enum.Enum):
 class SchoolType(enum.Enum):
     PRIVATE = "private"
     PUBLIC = "public"
+
+
+class SubjectType(enum.Enum):
+    CORE = "CORE"
+    ELECTIVE = "ELECTIVE"
 
 
 class UserRole(enum.IntEnum):
@@ -144,3 +148,57 @@ class School(Base):
         back_populates="writes_at_center",
         foreign_keys=[writes_at_center_id],
     )
+    programmes = relationship("Programme", secondary="school_programmes", back_populates="schools")
+
+
+class Subject(Base):
+    __tablename__ = "subjects"
+
+    id = Column(Integer, primary_key=True)
+    code = Column(String(10), unique=True, nullable=False, index=True)
+    original_code = Column(String(50), unique=True, nullable=True, index=True)
+    name = Column(String(255), nullable=False)
+    subject_type = Column(Enum(SubjectType), nullable=False)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+
+    programmes = relationship("Programme", secondary="programme_subjects", back_populates="subjects")
+
+
+class Programme(Base):
+    __tablename__ = "programmes"
+
+    id = Column(Integer, primary_key=True)
+    code = Column(String(50), unique=True, nullable=False, index=True)
+    name = Column(String(255), nullable=False)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+
+    subjects = relationship("Subject", secondary="programme_subjects", back_populates="programmes")
+    schools = relationship("School", secondary="school_programmes", back_populates="programmes")
+
+
+programme_subjects = Table(
+    "programme_subjects",
+    Base.metadata,
+    Column("programme_id", Integer, ForeignKey("programmes.id", ondelete="CASCADE"), primary_key=True),
+    Column("subject_id", Integer, ForeignKey("subjects.id", ondelete="CASCADE"), primary_key=True),
+    Column(
+        "is_compulsory",
+        Boolean,
+        nullable=True,
+    ),
+    Column("choice_group_id", Integer, nullable=True, index=True),
+    Column("created_at", DateTime, default=datetime.utcnow, nullable=False),
+    UniqueConstraint("programme_id", "subject_id", name="uq_programme_subject"),
+)
+
+
+school_programmes = Table(
+    "school_programmes",
+    Base.metadata,
+    Column("school_id", UUID(as_uuid=True), ForeignKey("schools.id", ondelete="CASCADE"), primary_key=True),
+    Column("programme_id", Integer, ForeignKey("programmes.id", ondelete="CASCADE"), primary_key=True),
+    Column("created_at", DateTime, default=datetime.utcnow, nullable=False),
+    UniqueConstraint("school_id", "programme_id", name="uq_school_programme"),
+)

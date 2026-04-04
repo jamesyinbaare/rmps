@@ -4,13 +4,14 @@ from typing import cast
 from uuid import UUID
 
 from fastapi import APIRouter, File, HTTPException, Query, UploadFile, status
-from sqlalchemy import func, or_, select
+from sqlalchemy import delete, func, insert, or_, select
 from sqlalchemy.exc import IntegrityError
 
 from app.dependencies.auth import SuperAdminDep
 from app.dependencies.database import DBSessionDep
-from app.models import Region, School, SchoolType, User, UserRole, Zone
+from app.models import Programme, Region, School, SchoolType, User, UserRole, Zone, school_programmes
 from app.schemas.inspector import InspectorSchoolRow
+from app.schemas.programme import ProgrammeResponse
 from app.schemas.school import (
     ExaminationCenterDetailResponse,
     ExaminationCenterListResponse,
@@ -177,6 +178,99 @@ async def get_examination_center_detail(
         hosted_schools=hosted_schools,
         inspectors=inspectors,
     )
+
+
+@router.get(
+    "/{school_id}/programmes",
+    response_model=list[ProgrammeResponse],
+    summary="Programmes linked to this school",
+)
+async def get_school_programmes(
+    school_id: UUID,
+    session: DBSessionDep,
+    _admin: SuperAdminDep,
+) -> list[ProgrammeResponse]:
+    school = await session.get(School, school_id)
+    if school is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="School not found")
+
+    programme_stmt = (
+        select(Programme)
+        .join(school_programmes, Programme.id == school_programmes.c.programme_id)
+        .where(school_programmes.c.school_id == school_id)
+        .order_by(Programme.code)
+    )
+    programme_result = await session.execute(programme_stmt)
+    programmes = programme_result.scalars().all()
+    return [ProgrammeResponse.model_validate(p) for p in programmes]
+
+
+@router.post(
+    "/{school_id}/programmes/{programme_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+    summary="Link a programme to this school",
+)
+async def attach_school_programme(
+    school_id: UUID,
+    programme_id: int,
+    session: DBSessionDep,
+    _admin: SuperAdminDep,
+) -> None:
+    school = await session.get(School, school_id)
+    if school is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="School not found")
+
+    programme = await session.get(Programme, programme_id)
+    if programme is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Programme not found")
+
+    assoc_stmt = select(school_programmes).where(
+        school_programmes.c.school_id == school_id,
+        school_programmes.c.programme_id == programme_id,
+    )
+    assoc_result = await session.execute(assoc_stmt)
+    if assoc_result.first() is not None:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Programme already linked to this school",
+        )
+
+    await session.execute(
+        insert(school_programmes).values(school_id=school_id, programme_id=programme_id)
+    )
+    await session.commit()
+
+
+@router.delete(
+    "/{school_id}/programmes/{programme_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+    summary="Remove a programme link from this school",
+)
+async def detach_school_programme(
+    school_id: UUID,
+    programme_id: int,
+    session: DBSessionDep,
+    _admin: SuperAdminDep,
+) -> None:
+    school = await session.get(School, school_id)
+    if school is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="School not found")
+
+    assoc_stmt = select(school_programmes).where(
+        school_programmes.c.school_id == school_id,
+        school_programmes.c.programme_id == programme_id,
+    )
+    assoc_result = await session.execute(assoc_stmt)
+    if assoc_result.first() is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Programme link not found")
+
+    await session.execute(
+        delete(school_programmes).where(
+            school_programmes.c.school_id == school_id,
+            school_programmes.c.programme_id == programme_id,
+        )
+    )
+    await session.commit()
 
 
 @router.get(
