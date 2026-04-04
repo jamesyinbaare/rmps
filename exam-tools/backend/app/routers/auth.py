@@ -1,11 +1,13 @@
 from typing import Any
+from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, HTTPException, status
 from pydantic import BaseModel, EmailStr
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.security import create_access_token, verify_password
+from app.dependencies.auth import CurrentUserDep
 from app.dependencies.database import DBSessionDep
 from app.models import User, UserRole
 
@@ -31,6 +33,26 @@ class SupervisorLoginRequest(BaseModel):
 class InspectorLoginRequest(BaseModel):
     school_code: str
     phone_number: str
+
+
+class UserMe(BaseModel):
+    id: UUID
+    full_name: str
+    email: EmailStr | None = None
+    school_code: str | None = None
+    phone_number: str | None = None
+    role: str
+
+    @classmethod
+    def from_user(cls, user: User) -> "UserMe":
+        return cls(
+            id=user.id,
+            full_name=user.full_name,
+            email=user.email,
+            school_code=user.school_code,
+            phone_number=user.phone_number,
+            role=user.role.name,
+        )
 
 
 router = APIRouter(prefix="/auth", tags=["auth"])
@@ -109,3 +131,8 @@ async def inspector_login(
     )
     user = await _get_user_by_stmt(session, stmt)
     return _make_token_response(user)
+
+
+@router.get("/me", response_model=UserMe)
+async def get_me(current_user: CurrentUserDep) -> UserMe:
+    return UserMe.from_user(current_user)

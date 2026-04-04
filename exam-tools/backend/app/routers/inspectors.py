@@ -2,8 +2,8 @@
 
 from typing import cast
 
-from fastapi import APIRouter, File, HTTPException, UploadFile, status
-from sqlalchemy import select
+from fastapi import APIRouter, File, HTTPException, Query, UploadFile, status
+from sqlalchemy import asc, desc, func, or_, select
 from sqlalchemy.exc import IntegrityError
 
 from app.dependencies.auth import SuperAdminDep
@@ -15,6 +15,8 @@ from app.schemas.inspector import (
     InspectorBulkUploadResponse,
     InspectorCreate,
     InspectorCreatedResponse,
+    InspectorListResponse,
+    InspectorSchoolRow,
 )
 from app.services.school_bulk_upload import (
     SchoolUploadParseError,
@@ -27,6 +29,89 @@ from app.services.school_bulk_upload import (
 )
 
 router = APIRouter(prefix="/inspectors", tags=["inspectors"])
+
+_MAX_PAGE_SIZE = 100
+_DEFAULT_PAGE_SIZE = 20
+
+_SORT_COLUMNS = {
+    "center": School.name,
+    "full_name": User.full_name,
+    "phone": User.phone_number,
+    "school_code": User.school_code,
+}
+
+
+@router.get(
+    "",
+    response_model=InspectorListResponse,
+    summary="List inspectors (paginated, searchable, sortable)",
+)
+async def list_inspectors(
+    session: DBSessionDep,
+    _admin: SuperAdminDep,
+    skip: int = Query(0, ge=0),
+    limit: int = Query(_DEFAULT_PAGE_SIZE, ge=1, le=_MAX_PAGE_SIZE),
+    q: str | None = Query(None, description="Search name, phone, school code, or centre name"),
+    sort: str = Query(
+        "full_name",
+        description="Sort field: center, full_name, phone, school_code",
+    ),
+    order: str = Query("asc", description="asc or desc"),
+) -> InspectorListResponse:
+    sort_key = (sort or "full_name").lower()
+    if sort_key not in _SORT_COLUMNS:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="sort must be one of: center, full_name, phone, school_code",
+        )
+    order_key = (order or "asc").lower()
+    if order_key not in ("asc", "desc"):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="order must be asc or desc",
+        )
+
+    filters = [User.role == UserRole.INSPECTOR]
+    search_filter = None
+    if q and q.strip():
+        pattern = f"%{q.strip()}%"
+        search_filter = or_(
+            User.full_name.ilike(pattern),
+            User.phone_number.ilike(pattern),
+            User.school_code.ilike(pattern),
+            School.name.ilike(pattern),
+        )
+
+    id_subq = select(User.id).join(School, School.code == User.school_code).where(*filters)
+    if search_filter is not None:
+        id_subq = id_subq.where(search_filter)
+    count_stmt = select(func.count()).select_from(id_subq.subquery())
+    total = int(await session.scalar(count_stmt) or 0)
+
+    sort_col = _SORT_COLUMNS[sort_key]
+    order_clause = asc(sort_col) if order_key == "asc" else desc(sort_col)
+
+    list_stmt = (
+        select(User, School.name.label("school_name"))
+        .join(School, School.code == User.school_code)
+        .where(*filters)
+    )
+    if search_filter is not None:
+        list_stmt = list_stmt.where(search_filter)
+    list_stmt = list_stmt.order_by(order_clause, asc(User.id)).offset(skip).limit(limit)
+
+    result = await session.execute(list_stmt)
+    items = [
+        InspectorSchoolRow(
+            id=row[0].id,
+            full_name=cast(str, row[0].full_name),
+            phone_number=cast(str | None, row[0].phone_number),
+            school_code=cast(str | None, row[0].school_code),
+            school_name=cast(str, row[1]),
+        )
+        for row in result.all()
+    ]
+    return InspectorListResponse(items=items, total=total)
 
 
 @router.post(

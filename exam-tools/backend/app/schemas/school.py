@@ -4,6 +4,7 @@ from uuid import UUID
 from pydantic import BaseModel, ConfigDict, Field
 
 from app.models import Region, SchoolType, Zone
+from app.schemas.inspector import InspectorSchoolRow
 
 
 class SchoolCreate(BaseModel):
@@ -13,6 +14,17 @@ class SchoolCreate(BaseModel):
     zone: Zone
     school_type: SchoolType | None = None
     is_private_examination_center: bool = False
+    writes_at_center_id: UUID | None = None
+
+
+class SchoolUpdate(BaseModel):
+    """Partial update. School ``code`` is immutable (supervisor login)."""
+
+    name: str | None = Field(None, max_length=255)
+    region: Region | None = None
+    zone: Zone | None = None
+    school_type: SchoolType | None = None
+    is_private_examination_center: bool | None = None
     writes_at_center_id: UUID | None = None
 
 
@@ -59,3 +71,26 @@ class SchoolBulkUploadResponse(BaseModel):
     failed: int
     errors: list[SchoolBulkUploadError]
     provisioned_supervisors: list[ProvisionedSupervisor] = []
+
+
+class SchoolListResponse(BaseModel):
+    items: list[SchoolResponse]
+    total: int
+
+
+class ExaminationCenterSummary(BaseModel):
+    """A school with ``writes_at_center_id`` null acts as an examination centre host."""
+
+    school: SchoolResponse
+    hosted_school_count: int
+
+
+class ExaminationCenterListResponse(BaseModel):
+    items: list[ExaminationCenterSummary]
+    total: int
+
+
+class ExaminationCenterDetailResponse(BaseModel):
+    center: SchoolResponse
+    hosted_schools: list[SchoolResponse]
+    inspectors: list[InspectorSchoolRow]

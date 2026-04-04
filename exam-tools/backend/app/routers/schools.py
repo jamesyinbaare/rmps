@@ -3,20 +3,26 @@
 from typing import cast
 from uuid import UUID
 
-from fastapi import APIRouter, File, HTTPException, UploadFile, status
-from sqlalchemy import select
+from fastapi import APIRouter, File, HTTPException, Query, UploadFile, status
+from sqlalchemy import func, or_, select
 from sqlalchemy.exc import IntegrityError
 
 from app.dependencies.auth import SuperAdminDep
 from app.dependencies.database import DBSessionDep
-from app.models import Region, School, SchoolType, Zone
+from app.models import Region, School, SchoolType, User, UserRole, Zone
+from app.schemas.inspector import InspectorSchoolRow
 from app.schemas.school import (
+    ExaminationCenterDetailResponse,
+    ExaminationCenterListResponse,
+    ExaminationCenterSummary,
     ProvisionedSupervisor,
     SchoolBulkUploadError,
     SchoolBulkUploadResponse,
     SchoolCreate,
     SchoolCreatedResponse,
+    SchoolListResponse,
     SchoolResponse,
+    SchoolUpdate,
 )
 from app.services.school_bulk_upload import (
     SchoolUploadParseError,
@@ -35,6 +41,236 @@ from app.services.school_bulk_upload import (
 from app.services.supervisor_provisioning import provision_supervisor_for_school
 
 router = APIRouter(prefix="/schools", tags=["schools"])
+
+_MAX_PAGE_SIZE = 100
+_DEFAULT_PAGE_SIZE = 20
+
+
+@router.get(
+    "",
+    response_model=SchoolListResponse,
+    summary="List schools (paginated)",
+)
+async def list_schools(
+    session: DBSessionDep,
+    _admin: SuperAdminDep,
+    skip: int = Query(0, ge=0),
+    limit: int = Query(_DEFAULT_PAGE_SIZE, ge=1, le=_MAX_PAGE_SIZE),
+    q: str | None = Query(None, description="Search code or name (case-insensitive)"),
+) -> SchoolListResponse:
+    conditions = []
+    if q and q.strip():
+        pattern = f"%{q.strip()}%"
+        conditions.append(or_(School.code.ilike(pattern), School.name.ilike(pattern)))
+
+    count_stmt = select(func.count()).select_from(School)
+    list_stmt = select(School).order_by(School.code)
+    if conditions:
+        count_stmt = count_stmt.where(*conditions)
+        list_stmt = list_stmt.where(*conditions)
+
+    total = int(await session.scalar(count_stmt) or 0)
+    result = await session.execute(list_stmt.offset(skip).limit(limit))
+    items = [SchoolResponse.model_validate(s) for s in result.scalars().all()]
+    return SchoolListResponse(items=items, total=total)
+
+
+@router.get(
+    "/examination-centers",
+    response_model=ExaminationCenterListResponse,
+    summary="List examination centres (schools with no writes_at_center)",
+)
+async def list_examination_centers(
+    session: DBSessionDep,
+    _admin: SuperAdminDep,
+    skip: int = Query(0, ge=0),
+    limit: int = Query(_DEFAULT_PAGE_SIZE, ge=1, le=_MAX_PAGE_SIZE),
+    q: str | None = Query(None, description="Search code or name (case-insensitive)"),
+) -> ExaminationCenterListResponse:
+    """Schools where ``writes_at_center_id`` is null are treated as examination centre hosts."""
+
+    base_filter = School.writes_at_center_id.is_(None)
+    conditions: list = [base_filter]
+    if q and q.strip():
+        pattern = f"%{q.strip()}%"
+        conditions.append(or_(School.code.ilike(pattern), School.name.ilike(pattern)))
+
+    hosted_counts = (
+        select(
+            School.writes_at_center_id.label("center_id"),
+            func.count().label("cnt"),
+        )
+        .where(School.writes_at_center_id.isnot(None))
+        .group_by(School.writes_at_center_id)
+    ).subquery()
+
+    count_stmt = select(func.count()).select_from(School).where(*conditions)
+    total = int(await session.scalar(count_stmt) or 0)
+
+    list_stmt = (
+        select(School, func.coalesce(hosted_counts.c.cnt, 0).label("hosted_count"))
+        .outerjoin(hosted_counts, hosted_counts.c.center_id == School.id)
+        .where(*conditions)
+        .order_by(School.code)
+        .offset(skip)
+        .limit(limit)
+    )
+    result = await session.execute(list_stmt)
+    items = [
+        ExaminationCenterSummary(
+            school=SchoolResponse.model_validate(row[0]),
+            hosted_school_count=int(row[1]),
+        )
+        for row in result.all()
+    ]
+    return ExaminationCenterListResponse(items=items, total=total)
+
+
+@router.get(
+    "/examination-centers/{center_id}",
+    response_model=ExaminationCenterDetailResponse,
+    summary="Examination centre detail (host school and schools that write there)",
+)
+async def get_examination_center_detail(
+    center_id: UUID,
+    session: DBSessionDep,
+    _admin: SuperAdminDep,
+) -> ExaminationCenterDetailResponse:
+    school = await session.get(School, center_id)
+    if school is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="School not found")
+    if school.writes_at_center_id is not None:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="This school writes at another centre and is not an examination centre host",
+        )
+
+    hosted_stmt = (
+        select(School).where(School.writes_at_center_id == center_id).order_by(School.code)
+    )
+    hosted_result = await session.execute(hosted_stmt)
+    hosted_schools = [
+        SchoolResponse.model_validate(s) for s in hosted_result.scalars().all()
+    ]
+
+    codes: set[str] = {cast(str, school.code)}
+    codes.update(cast(str, s.code) for s in hosted_schools)
+    insp_stmt = (
+        select(User, School.name.label("school_name"))
+        .join(School, School.code == User.school_code)
+        .where(User.role == UserRole.INSPECTOR, User.school_code.in_(codes))
+        .order_by(User.full_name, User.school_code)
+    )
+    insp_result = await session.execute(insp_stmt)
+    inspectors = [
+        InspectorSchoolRow(
+            id=row[0].id,
+            full_name=cast(str, row[0].full_name),
+            phone_number=cast(str | None, row[0].phone_number),
+            school_code=cast(str | None, row[0].school_code),
+            school_name=cast(str, row[1]),
+        )
+        for row in insp_result.all()
+    ]
+    return ExaminationCenterDetailResponse(
+        center=SchoolResponse.model_validate(school),
+        hosted_schools=hosted_schools,
+        inspectors=inspectors,
+    )
+
+
+@router.get(
+    "/{school_id}",
+    response_model=SchoolResponse,
+    summary="Get a school by id",
+)
+async def get_school(
+    school_id: UUID,
+    session: DBSessionDep,
+    _admin: SuperAdminDep,
+) -> SchoolResponse:
+    school = await session.get(School, school_id)
+    if school is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="School not found")
+    return SchoolResponse.model_validate(school)
+
+
+@router.patch(
+    "/{school_id}",
+    response_model=SchoolResponse,
+    summary="Update a school",
+)
+async def update_school(
+    school_id: UUID,
+    data: SchoolUpdate,
+    session: DBSessionDep,
+    _admin: SuperAdminDep,
+) -> SchoolResponse:
+    school = await session.get(School, school_id)
+    if school is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="School not found")
+
+    payload = data.model_dump(exclude_unset=True)
+    if not payload:
+        return SchoolResponse.model_validate(school)
+
+    if "writes_at_center_id" in payload:
+        wid = payload["writes_at_center_id"]
+        if wid is not None:
+            if wid == school_id:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="writes_at_center_id cannot reference this school",
+                )
+            host = await session.get(School, wid)
+            if host is None:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="writes_at_center_id does not reference an existing school",
+                )
+
+    for key, value in payload.items():
+        setattr(school, key, value)
+
+    try:
+        await session.commit()
+        await session.refresh(school)
+    except IntegrityError:
+        await session.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Could not update school (constraint violation)",
+        ) from None
+
+    return SchoolResponse.model_validate(school)
+
+
+@router.delete(
+    "/{school_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+    summary="Delete a school",
+)
+async def delete_school(
+    school_id: UUID,
+    session: DBSessionDep,
+    _admin: SuperAdminDep,
+) -> None:
+    """Remove a school only if no user is linked via ``school_code`` (supervisors/inspectors)."""
+    school = await session.get(School, school_id)
+    if school is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="School not found")
+
+    code = cast(str, school.code)
+    user_count_stmt = select(func.count()).select_from(User).where(User.school_code == code)
+    user_count = int(await session.scalar(user_count_stmt) or 0)
+    if user_count > 0:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Cannot delete school: supervisors or inspectors are linked to this school code",
+        )
+
+    await session.delete(school)
+    await session.commit()
 
 
 @router.post(

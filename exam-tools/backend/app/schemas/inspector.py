@@ -45,3 +45,20 @@ class InspectorBulkUploadResponse(BaseModel):
     failed: int
     errors: list[InspectorBulkUploadError]
     created: list[InspectorBulkCreatedRow] = []
+
+
+class InspectorSchoolRow(BaseModel):
+    """Inspector with the name of the school they are assigned to (by ``school_code``)."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: UUID
+    full_name: str
+    phone_number: str | None
+    school_code: str | None
+    school_name: str
+
+
+class InspectorListResponse(BaseModel):
+    items: list[InspectorSchoolRow]
+    total: int
