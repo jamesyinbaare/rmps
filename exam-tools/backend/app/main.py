@@ -1,9 +1,9 @@
-from collections.abc import AsyncIterator
-from contextlib import asynccontextmanager
-from typing import Any
 import json
 import logging
 import time
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
+from typing import Any
 
 import uvicorn
 from fastapi import FastAPI, Request, Response, status
@@ -14,7 +14,7 @@ from starlette.types import ASGIApp
 from app.config import logging_settings
 from app.dependencies.database import get_sessionmanager, initialize_db
 from app.initial_data import ensure_super_admin_user
-from app.routers import auth
+from app.routers import auth, inspectors, schools
 
 SENSITIVE_KEYS = {"password", "token", "authorization"}
 
@@ -158,6 +158,8 @@ app.add_middleware(
 
 # Include routers
 app.include_router(auth.router)
+app.include_router(inspectors.router)
+app.include_router(schools.router)
 
 
 
