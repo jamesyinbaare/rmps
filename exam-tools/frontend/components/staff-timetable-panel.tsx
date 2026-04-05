@@ -7,6 +7,7 @@ import {
   downloadApiFile,
   timetableDownloadQuery,
   type Examination,
+  type MyCenterSchoolsResponse,
   type TimetableDownloadFilter,
   type TimetablePreviewResponse,
 } from "@/lib/api";
@@ -24,6 +25,8 @@ export function StaffTimetablePanel() {
   const [mergeByDate, setMergeByDate] = useState(false);
   const [orientation, setOrientation] = useState<"portrait" | "landscape">("portrait");
   const [programmeId, setProgrammeId] = useState("");
+  const [filterSchoolId, setFilterSchoolId] = useState("");
+  const [centerSchools, setCenterSchools] = useState<MyCenterSchoolsResponse | null>(null);
   const [preview, setPreview] = useState<TimetablePreviewResponse | null>(null);
   const [loadingExams, setLoadingExams] = useState(true);
   const [error, setError] = useState("");
@@ -33,9 +36,17 @@ export function StaffTimetablePanel() {
     setLoadingExams(true);
     setError("");
     try {
-      const data = await apiJson<Examination[]>("/examinations/public-list");
-      setExams(data);
-      setExamId((prev) => (prev ? prev : data.length ? String(data[0].id) : ""));
+      const examData = await apiJson<Examination[]>("/examinations/public-list");
+      setExams(examData);
+      setExamId((prev) => (prev ? prev : examData.length ? String(examData[0].id) : ""));
+      try {
+        const scopeData = await apiJson<MyCenterSchoolsResponse>(
+          "/examinations/timetable/my-center-schools",
+        );
+        setCenterSchools(scopeData);
+      } catch {
+        setCenterSchools(null);
+      }
     } catch (e) {
       setError(e instanceof Error ? e.message : "Could not load examinations");
     } finally {
@@ -49,10 +60,12 @@ export function StaffTimetablePanel() {
 
   const programmeIdNum =
     programmeId.trim() === "" ? null : parseInt(programmeId.trim(), 10);
+  const filterSchoolIdTrimmed = filterSchoolId.trim();
   const qs = timetableDownloadQuery({
     subject_filter: subjectFilter,
     programme_id:
       programmeIdNum != null && !Number.isNaN(programmeIdNum) ? programmeIdNum : null,
+    filter_school_id: filterSchoolIdTrimmed !== "" ? filterSchoolIdTrimmed : null,
     merge_by_date: mergeByDate,
     orientation,
   });
@@ -96,8 +109,9 @@ export function StaffTimetablePanel() {
     <div className="rounded-2xl border border-border bg-card p-4 sm:p-6">
       <h2 className="text-lg font-semibold text-card-foreground">Examination timetable</h2>
       <p className="mt-1 text-sm text-muted-foreground">
-        Download a PDF of the timetable for subjects your school offers (from its programmes). You only
-        see your own school&apos;s timetable.
+        Rows are built from registered candidates in your examination centre (the centre host and every school
+        that writes there). Use the optional school filter to limit to one school. If no candidates are
+        registered for this examination yet, the timetable is empty.
       </p>
 
       {error ? (
@@ -135,6 +149,29 @@ export function StaffTimetablePanel() {
               ))}
             </select>
           </div>
+          {centerSchools && centerSchools.schools.length > 0 ? (
+            <div>
+              <label className={formLabelClass} htmlFor="staff-school-filter">
+                School filter (optional)
+              </label>
+              <select
+                id="staff-school-filter"
+                className={formInputClass}
+                value={filterSchoolId}
+                onChange={(e) => {
+                  setFilterSchoolId(e.target.value);
+                  setPreview(null);
+                }}
+              >
+                <option value="">All schools at centre</option>
+                {centerSchools.schools.map((s) => (
+                  <option key={s.id} value={s.id}>
+                    {s.code} — {s.name}
+                  </option>
+                ))}
+              </select>
+            </div>
+          ) : null}
           <div className="grid gap-4 sm:grid-cols-2">
             <div>
               <label className={formLabelClass} htmlFor="staff-subf">
@@ -222,13 +259,14 @@ export function StaffTimetablePanel() {
               disabled={previewLoading}
               onClick={() => void loadPreview()}
             >
-              {previewLoading ? "Loading preview…" : "Preview school timetable"}
+              {previewLoading ? "Loading preview…" : "Preview timetable"}
             </button>
           </div>
           {preview && preview.entries.length > 0 ? (
             <div className="overflow-x-auto pt-2">
               <p className="mb-2 text-sm font-medium text-card-foreground">
-                {preview.entries.length} entries for school {preview.school_code}
+                {preview.entries.length} entries
+                {preview.school_code ? ` (PDF header: ${preview.school_code})` : ""}
               </p>
               <table className="w-full min-w-[520px] border-collapse text-left text-sm">
                 <thead>
@@ -259,7 +297,10 @@ export function StaffTimetablePanel() {
             </div>
           ) : null}
           {preview && preview.entries.length === 0 ? (
-            <p className="text-sm text-muted-foreground">No timetable rows for your school&apos;s subjects.</p>
+            <p className="text-sm text-muted-foreground">
+              No timetable rows for candidates in scope (or their subject codes do not match this
+              examination&apos;s schedule).
+            </p>
           ) : null}
         </div>
       )}

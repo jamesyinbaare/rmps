@@ -2,7 +2,7 @@ import enum
 import uuid
 from datetime import datetime
 
-from sqlalchemy import JSON, Boolean, CheckConstraint, Column, DateTime, Enum, ForeignKey, Index, Integer, SmallInteger, String, Table, Text, UniqueConstraint
+from sqlalchemy import JSON, Boolean, CheckConstraint, Column, Date, DateTime, Enum, ForeignKey, Index, Integer, SmallInteger, String, Table, Text, UniqueConstraint
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import relationship
 
@@ -223,6 +223,67 @@ class Examination(Base):
         back_populates="examination",
         cascade="all, delete-orphan",
     )
+    candidates = relationship(
+        "ExaminationCandidate",
+        back_populates="examination",
+        cascade="all, delete-orphan",
+    )
+
+
+class ExaminationCandidate(Base):
+    """Registered candidate for an examination (e.g. imported from registration portal export)."""
+
+    __tablename__ = "examination_candidates"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    examination_id = Column(Integer, ForeignKey("examinations.id", ondelete="CASCADE"), nullable=False, index=True)
+    school_id = Column(UUID(as_uuid=True), ForeignKey("schools.id", ondelete="SET NULL"), nullable=True, index=True)
+    programme_id = Column(Integer, ForeignKey("programmes.id", ondelete="SET NULL"), nullable=True, index=True)
+    registration_number = Column(String(50), nullable=False)
+    index_number = Column(String(50), nullable=True, index=True)
+    full_name = Column(String(512), nullable=False)
+    date_of_birth = Column(Date, nullable=True)
+    registration_status = Column(String(32), nullable=True)
+    source_candidate_id = Column(Integer, nullable=True, index=True)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+
+    examination = relationship("Examination", back_populates="candidates")
+    school = relationship("School")
+    programme = relationship("Programme")
+    subject_selections = relationship(
+        "ExaminationCandidateSubject",
+        back_populates="candidate",
+        cascade="all, delete-orphan",
+        order_by="ExaminationCandidateSubject.id",
+    )
+
+    __table_args__ = (
+        UniqueConstraint("examination_id", "registration_number", name="uq_examination_candidate_reg_number"),
+    )
+
+
+class ExaminationCandidateSubject(Base):
+    """Subject selection for an examination candidate."""
+
+    __tablename__ = "examination_candidate_subjects"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    examination_candidate_id = Column(
+        Integer,
+        ForeignKey("examination_candidates.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    subject_id = Column(Integer, ForeignKey("subjects.id", ondelete="SET NULL"), nullable=True, index=True)
+    subject_code = Column(String(50), nullable=False)
+    subject_name = Column(String(255), nullable=False)
+    series = Column(Integer, nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+
+    candidate = relationship("ExaminationCandidate", back_populates="subject_selections")
+    subject = relationship("Subject")
 
 
 class ExaminationSchedule(Base):

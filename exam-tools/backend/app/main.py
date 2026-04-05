@@ -14,7 +14,17 @@ from starlette.types import ASGIApp
 from app.config import logging_settings
 from app.dependencies.database import get_sessionmanager, initialize_db
 from app.initial_data import ensure_super_admin_user
-from app.routers import auth, documents, examinations, inspectors, programmes, schools, script_control, subjects
+from app.routers import (
+    auth,
+    documents,
+    examination_candidates,
+    examinations,
+    inspectors,
+    programmes,
+    schools,
+    script_control,
+    subjects,
+)
 
 SENSITIVE_KEYS = {"password", "token", "authorization"}
 
@@ -163,6 +173,7 @@ app.include_router(schools.router)
 app.include_router(programmes.router)
 app.include_router(subjects.router)
 app.include_router(examinations.router)
+app.include_router(examination_candidates.router)
 app.include_router(script_control.router)
 app.include_router(documents.router)
 

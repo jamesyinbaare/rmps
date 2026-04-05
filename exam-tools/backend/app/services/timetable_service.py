@@ -14,6 +14,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models import (
     Examination,
+    ExaminationCandidate,
+    ExaminationCandidateSubject,
     ExaminationSchedule,
     Programme,
     School,
@@ -136,6 +138,74 @@ async def filter_schedule_codes_by_subject_type(
     return schedule_codes
 
 
+async def resolve_center_host_school(session: AsyncSession, school: School) -> School:
+    """Host school for examination-centre scope; unchanged if ``school`` is already the host."""
+    if school.writes_at_center_id is None:
+        return school
+    host = await session.get(School, school.writes_at_center_id)
+    if host is None:
+        raise ValueError("Centre host school is missing (invalid writes_at_center_id)")
+    return host
+
+
+async def center_scope_school_ids(session: AsyncSession, center_host: School) -> set[UUID]:
+    """Host plus every school that writes at this host."""
+    ids: set[UUID] = {center_host.id}
+    hosted_stmt = select(School.id).where(School.writes_at_center_id == center_host.id)
+    hosted_result = await session.execute(hosted_stmt)
+    ids.update(row[0] for row in hosted_result.all())
+    return ids
+
+
+async def schools_in_center_scope_ordered(session: AsyncSession, center_host: School) -> list[School]:
+    """Host first, then hosted schools ordered by code."""
+    hosted_stmt = (
+        select(School).where(School.writes_at_center_id == center_host.id).order_by(School.code)
+    )
+    hosted_result = await session.execute(hosted_stmt)
+    hosted = list(hosted_result.scalars().all())
+    return [center_host, *hosted]
+
+
+async def get_candidate_schedule_codes_for_exam(
+    session: AsyncSession,
+    exam_id: int,
+    scope_school_ids: set[UUID],
+    *,
+    programme_id: int | None = None,
+    filter_school_id: UUID | None = None,
+) -> set[str]:
+    """
+    Distinct subject codes from registered candidates in scope, optionally narrowed to one school
+    or one programme. Candidates with null school_id are excluded.
+    """
+    school_ids: set[UUID] = set(scope_school_ids)
+    if filter_school_id is not None:
+        school_ids = {filter_school_id}
+
+    stmt = (
+        select(ExaminationCandidateSubject.subject_code)
+        .join(
+            ExaminationCandidate,
+            ExaminationCandidateSubject.examination_candidate_id == ExaminationCandidate.id,
+        )
+        .where(
+            ExaminationCandidate.examination_id == exam_id,
+            ExaminationCandidate.school_id.isnot(None),
+            ExaminationCandidate.school_id.in_(school_ids),
+        )
+    )
+    if programme_id is not None:
+        stmt = stmt.where(ExaminationCandidate.programme_id == programme_id)
+
+    result = await session.execute(stmt.distinct())
+    out: set[str] = set()
+    for (code,) in result.all():
+        if code:
+            out.add(str(code).strip())
+    return out
+
+
 async def generate_timetable_pdf(
     session: AsyncSession,
     exam_id: int,
@@ -144,6 +214,7 @@ async def generate_timetable_pdf(
     subject_filter: TimetableDownloadFilter = TimetableDownloadFilter.ALL,
     merge_by_date: bool = False,
     orientation: str = "portrait",
+    explicit_schedule_codes: set[str] | None = None,
 ) -> bytes:
     exam_stmt = select(Examination).where(Examination.id == exam_id)
     exam_result = await session.execute(exam_stmt)
@@ -175,14 +246,20 @@ async def generate_timetable_pdf(
 
     filtered_schedule_codes: set[str] | None = None
 
-    if programme_id is not None:
+    if explicit_schedule_codes is not None:
+        filtered_schedule_codes = explicit_schedule_codes & schedule_codes
+        filtered_schedule_codes = await filter_schedule_codes_by_subject_type(
+            session, filtered_schedule_codes, subject_filter
+        )
+    elif programme_id is not None:
         programme_schedule_codes = await get_programme_subject_schedule_codes(session, programme_id)
         filtered_schedule_codes = programme_schedule_codes & schedule_codes
+        filtered_schedule_codes = await filter_schedule_codes_by_subject_type(
+            session, filtered_schedule_codes, subject_filter
+        )
     elif school_id is not None:
         school_schedule_codes = await get_school_subject_schedule_codes(session, school_id)
         filtered_schedule_codes = school_schedule_codes & schedule_codes
-
-    if filtered_schedule_codes is not None:
         filtered_schedule_codes = await filter_schedule_codes_by_subject_type(
             session, filtered_schedule_codes, subject_filter
         )
@@ -190,8 +267,6 @@ async def generate_timetable_pdf(
         filtered_schedule_codes = await filter_schedule_codes_by_subject_type(
             session, schedule_codes, subject_filter
         )
-    else:
-        filtered_schedule_codes = None
 
     if filtered_schedule_codes is not None:
         schedules = [s for s in all_schedules if s.subject_code in filtered_schedule_codes]

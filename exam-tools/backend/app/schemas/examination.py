@@ -156,3 +156,16 @@ class TimetablePreviewResponse(BaseModel):
     school_id: UUID | None = None
     school_code: str | None = None
     entries: list[TimetableEntry]
+
+
+class CenterScopeSchoolItem(BaseModel):
+    id: UUID
+    code: str
+    name: str
+
+    model_config = {"from_attributes": True}
+
+
+class MyCenterSchoolsResponse(BaseModel):
+    center_school_id: UUID
+    schools: list[CenterScopeSchoolItem]

@@ -11,8 +11,18 @@ from sqlalchemy.exc import IntegrityError
 
 from app.dependencies.auth import SuperAdminDep, SupervisorOrInspectorDep
 from app.dependencies.database import DBSessionDep
-from app.models import Examination, ExaminationSchedule, School, Subject, User, UserRole, school_programmes
+from app.models import (
+    Examination,
+    ExaminationSchedule,
+    Programme,
+    School,
+    Subject,
+    User,
+    UserRole,
+    school_programmes,
+)
 from app.schemas.examination import (
+    CenterScopeSchoolItem,
     ExaminationCreate,
     ExaminationResponse,
     ExaminationScheduleBulkUploadError,
@@ -21,6 +31,7 @@ from app.schemas.examination import (
     ExaminationScheduleResponse,
     ExaminationScheduleUpdate,
     ExaminationUpdate,
+    MyCenterSchoolsResponse,
     TimetablePreviewResponse,
 )
 from app.schemas.timetable import TimetableDownloadFilter
@@ -33,6 +44,12 @@ from app.services.exam_timetable_pdf import (
     load_examination_or_raise,
     load_schedules_for_exam,
     schedules_to_entries,
+)
+from app.services.timetable_service import (
+    center_scope_school_ids,
+    get_candidate_schedule_codes_for_exam,
+    resolve_center_host_school,
+    schools_in_center_scope_ordered,
 )
 from app.services.schedule_upload import (
     ScheduleUploadParseError,
@@ -104,6 +121,24 @@ async def list_examinations_for_staff(
     stmt = select(Examination).order_by(Examination.year.desc(), Examination.id.desc())
     result = await session.execute(stmt)
     return [ExaminationResponse.model_validate(e) for e in result.scalars().all()]
+
+
+@router.get("/timetable/my-center-schools", response_model=MyCenterSchoolsResponse)
+async def list_my_center_schools_for_timetable(
+    session: DBSessionDep,
+    user: SupervisorOrInspectorDep,
+) -> MyCenterSchoolsResponse:
+    """Host centre plus schools that write there; for supervisor/inspector timetable school filter."""
+    user_school = await _school_from_user(session, user)
+    try:
+        center_host = await resolve_center_host_school(session, user_school)
+    except ValueError as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e)) from None
+    ordered = await schools_in_center_scope_ordered(session, center_host)
+    return MyCenterSchoolsResponse(
+        center_school_id=center_host.id,
+        schools=[CenterScopeSchoolItem(id=s.id, code=s.code, name=s.name) for s in ordered],
+    )
 
 
 @router.get("/{exam_id}", response_model=ExaminationResponse)
@@ -599,6 +634,49 @@ async def _school_from_user(session: DBSessionDep, user: User) -> School:
     return school
 
 
+async def _staff_scope_and_display_school(
+    session: DBSessionDep,
+    user_school: School,
+    filter_school_id: UUID | None,
+) -> tuple[set[UUID], School]:
+    try:
+        center_host = await resolve_center_host_school(session, user_school)
+    except ValueError as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e)) from None
+    scope_ids = await center_scope_school_ids(session, center_host)
+    if filter_school_id is not None:
+        if filter_school_id not in scope_ids:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="School is not in your examination centre scope",
+            )
+        display = await session.get(School, filter_school_id)
+        if display is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="School not found")
+        return scope_ids, display
+    return scope_ids, center_host
+
+
+async def _validate_programme_in_scope(
+    session: DBSessionDep,
+    programme_id: int,
+    scope_ids: set[UUID],
+) -> None:
+    programme = await session.get(Programme, programme_id)
+    if programme is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Programme not found")
+    assoc_stmt = select(school_programmes.c.school_id).where(
+        school_programmes.c.programme_id == programme_id,
+        school_programmes.c.school_id.in_(scope_ids),
+    ).limit(1)
+    assoc_result = await session.execute(assoc_stmt)
+    if assoc_result.first() is None:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Programme is not offered by any school in your examination centre",
+        )
+
+
 @router.get("/{exam_id}/timetable/my-school/pdf")
 async def download_my_school_timetable_pdf(
     exam_id: int,
@@ -606,30 +684,34 @@ async def download_my_school_timetable_pdf(
     user: SupervisorOrInspectorDep,
     subject_filter: TimetableDownloadFilter = Query(default=TimetableDownloadFilter.ALL),
     programme_id: int | None = Query(default=None),
+    filter_school_id: UUID | None = Query(
+        default=None,
+        description="Limit to candidates from this school (must be in your examination centre scope)",
+    ),
     merge_by_date: bool = Query(default=False, description="Merge subjects written on the same day"),
     orientation: str = Query(default="portrait", description="Page orientation: portrait or landscape"),
 ) -> Response:
-    school = await _school_from_user(session, user)
+    user_school = await _school_from_user(session, user)
+    scope_ids, display_school = await _staff_scope_and_display_school(session, user_school, filter_school_id)
     if programme_id is not None:
-        assoc_stmt = select(school_programmes).where(
-            school_programmes.c.school_id == school.id,
-            school_programmes.c.programme_id == programme_id,
-        )
-        assoc_result = await session.execute(assoc_stmt)
-        if assoc_result.first() is None:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Programme is not associated with the school",
-            )
+        await _validate_programme_in_scope(session, programme_id, scope_ids)
+    explicit_codes = await get_candidate_schedule_codes_for_exam(
+        session,
+        exam_id,
+        scope_ids,
+        programme_id=programme_id,
+        filter_school_id=filter_school_id,
+    )
     try:
         pdf = await build_school_timetable_pdf(
             session,
             exam_id,
-            school.id,
+            display_school.id,
             programme_id=programme_id,
             subject_filter=subject_filter,
             merge_by_date=merge_by_date,
             orientation=orientation,
+            explicit_schedule_codes=explicit_codes,
         )
     except ValueError as e:
         detail = str(e) if str(e) else "Not found"
@@ -637,7 +719,7 @@ async def download_my_school_timetable_pdf(
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=detail) from None
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Examination not found") from None
     exam = await load_examination_or_raise(session, exam_id)
-    base = _sanitize_filename_part(f"{exam.year}_{exam.exam_series or 'exam'}_{school.code}")
+    base = _sanitize_filename_part(f"{exam.year}_{exam.exam_series or 'exam'}_{display_school.code}")
     filename = f"timetable_{base}.pdf"
     return Response(
         content=pdf,
@@ -653,26 +735,40 @@ async def preview_my_school_timetable(
     user: SupervisorOrInspectorDep,
     subject_filter: TimetableDownloadFilter = Query(default=TimetableDownloadFilter.ALL),
     programme_id: int | None = Query(default=None),
+    filter_school_id: UUID | None = Query(
+        default=None,
+        description="Limit to candidates from this school (must be in your examination centre scope)",
+    ),
 ) -> TimetablePreviewResponse:
-    school = await _school_from_user(session, user)
+    user_school = await _school_from_user(session, user)
     try:
         exam = await load_examination_or_raise(session, exam_id)
     except ValueError:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Examination not found") from None
 
-    schedule_codes = await get_school_subject_schedule_codes(session, school.id)
+    scope_ids, display_school = await _staff_scope_and_display_school(session, user_school, filter_school_id)
     if programme_id is not None:
-        schedule_codes = schedule_codes & await get_programme_subject_schedule_codes(session, programme_id)
-    schedule_codes = await filter_schedule_codes_by_subject_type(session, schedule_codes, subject_filter)
+        await _validate_programme_in_scope(session, programme_id, scope_ids)
+
+    explicit_codes = await get_candidate_schedule_codes_for_exam(
+        session,
+        exam_id,
+        scope_ids,
+        programme_id=programme_id,
+        filter_school_id=filter_school_id,
+    )
     all_schedules = await load_schedules_for_exam(session, exam_id)
-    filtered = [s for s in all_schedules if s.subject_code in schedule_codes]
+    schedule_codes = {s.subject_code for s in all_schedules}
+    intersected = explicit_codes & schedule_codes
+    filtered_codes = await filter_schedule_codes_by_subject_type(session, intersected, subject_filter)
+    filtered = [s for s in all_schedules if s.subject_code in filtered_codes]
     entries = schedules_to_entries(filtered)
     return TimetablePreviewResponse(
         examination_id=exam.id,
         exam_type=exam.exam_type,
         exam_series=exam.exam_series,
         year=exam.year,
-        school_id=school.id,
-        school_code=school.code,
+        school_id=display_school.id,
+        school_code=display_school.code,
         entries=entries,
     )

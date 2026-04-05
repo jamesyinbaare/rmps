@@ -87,6 +87,7 @@ async def build_school_timetable_pdf(
     subject_filter: TimetableDownloadFilter = TimetableDownloadFilter.ALL,
     merge_by_date: bool = False,
     orientation: str = "portrait",
+    explicit_schedule_codes: set[str] | None = None,
 ) -> bytes:
     await load_examination_or_raise(session, exam_id)
     return await generate_timetable_pdf(
@@ -97,6 +98,7 @@ async def build_school_timetable_pdf(
         subject_filter=subject_filter,
         merge_by_date=merge_by_date,
         orientation=orientation,
+        explicit_schedule_codes=explicit_schedule_codes,
     )
 
 

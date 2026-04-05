@@ -368,9 +368,21 @@ export type TimetablePreviewResponse = {
   entries: TimetableEntry[];
 };
 
+export type CenterScopeSchoolItem = {
+  id: string;
+  code: string;
+  name: string;
+};
+
+export type MyCenterSchoolsResponse = {
+  center_school_id: string;
+  schools: CenterScopeSchoolItem[];
+};
+
 export function timetableDownloadQuery(params: {
   subject_filter?: TimetableDownloadFilter;
   programme_id?: number | null;
+  filter_school_id?: string | null;
   merge_by_date?: boolean;
   orientation?: "portrait" | "landscape";
 }): string {
@@ -380,6 +392,9 @@ export function timetableDownloadQuery(params: {
   }
   if (params.programme_id != null && params.programme_id !== undefined && !Number.isNaN(params.programme_id)) {
     u.set("programme_id", String(params.programme_id));
+  }
+  if (params.filter_school_id != null && params.filter_school_id !== undefined && params.filter_school_id.trim() !== "") {
+    u.set("filter_school_id", params.filter_school_id.trim());
   }
   if (params.merge_by_date) {
     u.set("merge_by_date", "true");
@@ -438,6 +453,78 @@ export async function bulkUploadExaminationSchedules(
     throw new Error(await parseErrorMessage(res));
   }
   return (await res.json()) as ExaminationScheduleBulkUploadResponse;
+}
+
+export type ExaminationCandidateSubject = {
+  id: number;
+  subject_id: number | null;
+  subject_code: string;
+  subject_name: string;
+  series: number | null;
+  created_at: string;
+  updated_at: string;
+};
+
+export type ExaminationCandidate = {
+  id: number;
+  examination_id: number;
+  school_id: string | null;
+  school_code: string | null;
+  school_name: string | null;
+  programme_id: number | null;
+  programme_code: string | null;
+  registration_number: string;
+  index_number: string | null;
+  full_name: string;
+  date_of_birth: string | null;
+  registration_status: string | null;
+  source_candidate_id: number | null;
+  subject_selections: ExaminationCandidateSubject[];
+  created_at: string;
+  updated_at: string;
+};
+
+export type ExaminationCandidateImportError = {
+  row_number: number;
+  error_message: string;
+  field: string | null;
+};
+
+export type ExaminationCandidateImportResponse = {
+  total_rows: number;
+  successful: number;
+  failed: number;
+  errors: ExaminationCandidateImportError[];
+};
+
+export async function listExaminationCandidates(examId: number): Promise<ExaminationCandidate[]> {
+  return apiJson<ExaminationCandidate[]>(`/examinations/${examId}/candidates`);
+}
+
+export async function downloadExaminationCandidatesTemplate(
+  examId: number,
+  filename = "candidates_template.xlsx",
+): Promise<void> {
+  await downloadApiFile(`/examinations/${examId}/candidates/import-template`, filename);
+}
+
+export async function importExaminationCandidates(
+  examId: number,
+  file: File,
+): Promise<ExaminationCandidateImportResponse> {
+  const token = getStoredToken();
+  if (!token) throw new Error("Not authenticated");
+  const formData = new FormData();
+  formData.append("file", file);
+  const res = await fetch(`${getApiBaseUrl()}/examinations/${examId}/candidates/import`, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${token}` },
+    body: formData,
+  });
+  if (!res.ok) {
+    throw new Error(await parseErrorMessage(res));
+  }
+  return (await res.json()) as ExaminationCandidateImportResponse;
 }
 
 export type ScriptEnvelopeItem = {

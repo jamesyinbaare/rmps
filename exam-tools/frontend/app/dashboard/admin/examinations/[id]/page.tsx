@@ -9,8 +9,13 @@ import {
   apiFetch,
   apiJson,
   bulkUploadExaminationSchedules,
+  downloadExaminationCandidatesTemplate,
   downloadScheduleTemplate,
+  importExaminationCandidates,
+  listExaminationCandidates,
   type Examination,
+  type ExaminationCandidate,
+  type ExaminationCandidateImportResponse,
   type ExaminationSchedule,
   type ExaminationScheduleBulkUploadResponse,
 } from "@/lib/api";
@@ -100,6 +105,13 @@ export default function ExaminationDetailPage() {
   const [bulkUploading, setBulkUploading] = useState(false);
   const [bulkResult, setBulkResult] = useState<ExaminationScheduleBulkUploadResponse | null>(null);
 
+  const [candidates, setCandidates] = useState<ExaminationCandidate[]>([]);
+  const [candidatesError, setCandidatesError] = useState("");
+  const [candFile, setCandFile] = useState<File | null>(null);
+  const [candUploading, setCandUploading] = useState(false);
+  const [candResult, setCandResult] = useState<ExaminationCandidateImportResponse | null>(null);
+  const [subjectsModalCandidate, setSubjectsModalCandidate] = useState<ExaminationCandidate | null>(null);
+
   const load = useCallback(async () => {
     if (!Number.isFinite(examId)) return;
     setError("");
@@ -115,6 +127,14 @@ export default function ExaminationDetailPage() {
       setYear(String(ex.year));
       setDescription(ex.description ?? "");
       setSchedules(sch);
+      try {
+        const c = await listExaminationCandidates(examId);
+        setCandidates(c);
+        setCandidatesError("");
+      } catch (ce) {
+        setCandidates([]);
+        setCandidatesError(ce instanceof Error ? ce.message : "Failed to load registered candidates");
+      }
     } catch (e) {
       setError(e instanceof Error ? e.message : "Failed to load");
     } finally {
@@ -478,7 +498,171 @@ export default function ExaminationDetailPage() {
         )}
       </section>
 
+      <section className="rounded-2xl border border-border bg-card p-4 sm:p-6">
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+          <h3 className="text-lg font-semibold text-card-foreground">Registered candidates</h3>
+          <p className="text-sm text-muted-foreground sm:text-right">
+            Import the Excel file exported from the registration portal for the exam linked to this examination (
+            <code className="rounded bg-muted px-1 text-xs">exam_id_main_system</code>).
+          </p>
+        </div>
+        <div className="mt-4 rounded-xl border border-border bg-muted/20 p-4">
+          <div className="flex flex-wrap items-center gap-3">
+            <button
+              type="button"
+              className={outlineBtn}
+              onClick={() =>
+                void downloadExaminationCandidatesTemplate(
+                  examId,
+                  `exam_${examId}_candidates_template.xlsx`,
+                )
+              }
+            >
+              Download import template
+            </button>
+            <label className="text-sm text-muted-foreground">
+              <span className="sr-only">Candidate file</span>
+              <input
+                type="file"
+                accept=".xlsx,.xls,.csv"
+                className="block max-w-xs text-sm file:mr-2 file:rounded-lg file:border file:border-input-border file:bg-background file:px-3 file:py-2"
+                onChange={(e) => setCandFile(e.target.files?.[0] ?? null)}
+              />
+            </label>
+            <button
+              type="button"
+              className={outlineBtn}
+              disabled={!candFile || candUploading}
+              onClick={() => {
+                if (!candFile) return;
+                setCandUploading(true);
+                setCandResult(null);
+                void importExaminationCandidates(examId, candFile)
+                  .then((r) => {
+                    setCandResult(r);
+                    return load();
+                  })
+                  .catch((e: unknown) => {
+                    setCandResult({
+                      total_rows: 0,
+                      successful: 0,
+                      failed: 0,
+                      errors: [
+                        {
+                          row_number: 0,
+                          error_message: e instanceof Error ? e.message : "Import failed",
+                          field: null,
+                        },
+                      ],
+                    });
+                  })
+                  .finally(() => setCandUploading(false));
+              }}
+            >
+              {candUploading ? "Importing…" : "Import candidates"}
+            </button>
+          </div>
+          {candResult ? (
+            <div className="mt-3 text-sm">
+              <p className="text-card-foreground">
+                Processed {candResult.total_rows} rows:{" "}
+                <span className="text-primary">{candResult.successful} saved</span>
+                {candResult.failed > 0 ? (
+                  <span className="text-destructive"> · {candResult.failed} failed</span>
+                ) : null}
+              </p>
+              {candResult.errors.length > 0 ? (
+                <ul className="mt-2 max-h-40 list-inside list-disc overflow-y-auto text-muted-foreground">
+                  {candResult.errors.slice(0, 50).map((err, i) => (
+                    <li key={`${err.row_number}-${i}`}>
+                      Row {err.row_number}
+                      {err.field ? ` (${err.field})` : ""}: {err.error_message}
+                    </li>
+                  ))}
+                </ul>
+              ) : null}
+            </div>
+          ) : null}
+        </div>
+        {candidatesError ? (
+          <p className="mt-3 text-sm text-destructive" role="alert">
+            {candidatesError}
+          </p>
+        ) : null}
+        {candidates.length === 0 && !candidatesError ? (
+          <p className="mt-4 text-sm text-muted-foreground">No registered candidates yet.</p>
+        ) : null}
+        {candidates.length > 0 ? (
+          <div className="mt-4 overflow-x-auto">
+            <table className="w-full min-w-[720px] border-collapse text-left text-sm">
+              <thead>
+                <tr className="border-b border-border text-muted-foreground">
+                  <th className="py-2 pr-3 font-medium">Name</th>
+                  <th className="py-2 pr-3 font-medium">Reg. #</th>
+                  <th className="py-2 pr-3 font-medium">Index</th>
+                  <th className="py-2 pr-3 font-medium">School</th>
+                  <th className="py-2 pr-3 font-medium">Programme</th>
+                  <th className="py-2 pr-3 font-medium">Subjects</th>
+                  <th className="py-2 font-medium">Actions</th>
+                </tr>
+              </thead>
+              <tbody>
+                {candidates.map((c) => (
+                  <tr key={c.id} className="border-b border-border/80">
+                    <td className="py-2 pr-3">{c.full_name}</td>
+                    <td className="py-2 pr-3 font-mono text-xs">{c.registration_number}</td>
+                    <td className="py-2 pr-3 font-mono text-xs">{c.index_number ?? "—"}</td>
+                    <td className="py-2 pr-3 text-muted-foreground">
+                      {c.school_code ?? "—"}
+                      {c.school_name ? (
+                        <span className="block text-xs text-card-foreground">{c.school_name}</span>
+                      ) : null}
+                    </td>
+                    <td className="py-2 pr-3 font-mono text-xs">{c.programme_code ?? "—"}</td>
+                    <td className="py-2 pr-3">{c.subject_selections.length}</td>
+                    <td className="py-2">
+                      <button
+                        type="button"
+                        className={`text-primary hover:underline ${inputFocusRing}`}
+                        onClick={() => setSubjectsModalCandidate(c)}
+                      >
+                        View subjects
+                      </button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        ) : null}
+      </section>
+
       <AdminTimetableDownloadsPanel examId={examId} schoolFirst />
+
+      {subjectsModalCandidate ? (
+        <Modal
+          title={`Subjects — ${subjectsModalCandidate.full_name}`}
+          titleId="subjects-modal"
+          onClose={() => setSubjectsModalCandidate(null)}
+          wide
+        >
+          {subjectsModalCandidate.subject_selections.length === 0 ? (
+            <p className="text-sm text-muted-foreground">No subjects recorded.</p>
+          ) : (
+            <ul className="divide-y divide-border text-sm">
+              {subjectsModalCandidate.subject_selections.map((s) => (
+                <li key={s.id} className="flex flex-wrap gap-2 py-2">
+                  <span className="font-mono text-xs">{s.subject_code}</span>
+                  <span>{s.subject_name}</span>
+                  {s.series != null ? (
+                    <span className="text-muted-foreground">(series {s.series})</span>
+                  ) : null}
+                </li>
+              ))}
+            </ul>
+          )}
+        </Modal>
+      ) : null}
 
       {scheduleModal ? (
         <Modal
