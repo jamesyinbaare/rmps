@@ -1,8 +1,11 @@
 import Link from "next/link";
 
+import { PublicSiteNav } from "@/components/public-site-nav";
+
 export default function HomePage() {
   return (
     <div className="flex min-h-screen flex-col bg-background">
+      <PublicSiteNav />
       <main className="mx-auto flex w-full max-w-lg flex-1 flex-col px-4 py-8 sm:max-w-2xl sm:px-6 sm:py-12">
         <div className="mb-8 text-center sm:mb-12 sm:text-left">
           <p className="text-sm font-medium uppercase tracking-wide text-muted-foreground">

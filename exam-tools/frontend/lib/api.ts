@@ -225,10 +225,21 @@ export async function apiFetch(path: string, init: RequestInit = {}): Promise<Re
     headers.set("Content-Type", "application/json");
   }
 
-  const res = await fetch(`${getApiBaseUrl()}${path.startsWith("/") ? path : `/${path}`}`, {
-    ...init,
-    headers,
-  });
+  const url = `${getApiBaseUrl()}${path.startsWith("/") ? path : `/${path}`}`;
+  let res: Response;
+  try {
+    res = await fetch(url, {
+      ...init,
+      headers,
+    });
+  } catch (e) {
+    if (e instanceof TypeError) {
+      throw new Error(
+        "Network error: could not reach the API. Check that the backend is running, NEXT_PUBLIC_API_BASE_URL matches the server, and browser devtools Network tab for CORS or blocked requests.",
+      );
+    }
+    throw e;
+  }
   if (!res.ok) throw new Error(await parseErrorMessage(res));
   return res;
 }
@@ -250,4 +261,181 @@ export async function downloadApiFile(path: string, filename: string): Promise<v
   a.download = filename;
   a.click();
   URL.revokeObjectURL(url);
+}
+
+export type ExamDocument = {
+  id: string;
+  title: string;
+  description: string | null;
+  original_filename: string;
+  size_bytes: number;
+  created_at: string;
+};
+
+export type ExamDocumentListResponse = {
+  items: ExamDocument[];
+  total: number;
+};
+
+export async function listExamDocuments(): Promise<ExamDocumentListResponse> {
+  return apiJson<ExamDocumentListResponse>("/documents");
+}
+
+export async function uploadExamDocument(
+  title: string,
+  description: string | null | undefined,
+  file: File,
+): Promise<ExamDocument> {
+  const token = getStoredToken();
+  if (!token) throw new Error("Not authenticated");
+
+  const formData = new FormData();
+  formData.append("title", title);
+  if (description != null && description !== "") {
+    formData.append("description", description);
+  }
+  formData.append("file", file);
+
+  const res = await fetch(`${getApiBaseUrl()}/documents`, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${token}` },
+    body: formData,
+  });
+  if (!res.ok) {
+    throw new Error(await parseErrorMessage(res));
+  }
+  return (await res.json()) as ExamDocument;
+}
+
+export async function deleteExamDocument(id: string): Promise<void> {
+  await apiFetch(`/documents/${id}`, { method: "DELETE" });
+}
+
+export async function downloadExamDocument(doc: ExamDocument): Promise<void> {
+  await downloadApiFile(`/documents/${doc.id}/file`, doc.original_filename);
+}
+
+/** Fetch file bytes for thumbnail preview. Caller must revoke blob URLs. */
+export async function fetchExamDocumentBlob(documentId: string): Promise<Blob> {
+  const res = await apiFetch(`/documents/${documentId}/file`);
+  return res.blob();
+}
+
+export type TimetableDownloadFilter = "ALL" | "CORE_ONLY" | "ELECTIVE_ONLY";
+
+export type Examination = {
+  id: number;
+  exam_type: string;
+  exam_series: string | null;
+  year: number;
+  description: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
+export type ExaminationSchedule = {
+  id: number;
+  examination_id: number;
+  subject_code: string;
+  subject_name: string;
+  papers: Record<string, unknown>[];
+  venue: string | null;
+  duration_minutes: number | null;
+  instructions: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
+export type TimetableEntry = {
+  subject_code: string;
+  subject_name: string;
+  paper: number;
+  examination_date: string;
+  examination_time: string;
+  examination_end_time: string | null;
+  venue: string | null;
+  duration_minutes: number | null;
+  instructions: string | null;
+};
+
+export type TimetablePreviewResponse = {
+  examination_id: number;
+  exam_type: string;
+  exam_series: string | null;
+  year: number;
+  school_id: string | null;
+  school_code: string | null;
+  entries: TimetableEntry[];
+};
+
+export function timetableDownloadQuery(params: {
+  subject_filter?: TimetableDownloadFilter;
+  programme_id?: number | null;
+  merge_by_date?: boolean;
+  orientation?: "portrait" | "landscape";
+}): string {
+  const u = new URLSearchParams();
+  if (params.subject_filter && params.subject_filter !== "ALL") {
+    u.set("subject_filter", params.subject_filter);
+  }
+  if (params.programme_id != null && params.programme_id !== undefined && !Number.isNaN(params.programme_id)) {
+    u.set("programme_id", String(params.programme_id));
+  }
+  if (params.merge_by_date) {
+    u.set("merge_by_date", "true");
+  }
+  if (params.orientation === "landscape") {
+    u.set("orientation", "landscape");
+  }
+  const s = u.toString();
+  return s ? `?${s}` : "";
+}
+
+export type ExaminationScheduleBulkUploadError = {
+  row_number: number;
+  error_message: string;
+  field: string | null;
+};
+
+export type ExaminationScheduleBulkUploadResponse = {
+  total_rows: number;
+  successful: number;
+  failed: number;
+  errors: ExaminationScheduleBulkUploadError[];
+};
+
+export async function downloadScheduleTemplate(
+  examId: number,
+  filename = "examination_timetable_template.xlsx",
+): Promise<void> {
+  await downloadApiFile(`/examinations/${examId}/schedules/template`, filename);
+}
+
+export async function bulkUploadExaminationSchedules(
+  examId: number,
+  file: File,
+  overrideExisting: boolean,
+): Promise<ExaminationScheduleBulkUploadResponse> {
+  const token = getStoredToken();
+  if (!token) throw new Error("Not authenticated");
+
+  const q = new URLSearchParams();
+  if (overrideExisting) {
+    q.set("override_existing", "true");
+  }
+  const qs = q.toString();
+  const path = `/examinations/${examId}/schedules/bulk-upload${qs ? `?${qs}` : ""}`;
+
+  const formData = new FormData();
+  formData.append("file", file);
+
+  const res = await fetch(`${getApiBaseUrl()}${path}`, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${token}` },
+    body: formData,
+  });
+  if (!res.ok) {
+    throw new Error(await parseErrorMessage(res));
+  }
+  return (await res.json()) as ExaminationScheduleBulkUploadResponse;
 }

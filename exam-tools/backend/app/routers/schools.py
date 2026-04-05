@@ -43,7 +43,7 @@ from app.services.supervisor_provisioning import provision_supervisor_for_school
 
 router = APIRouter(prefix="/schools", tags=["schools"])
 
-_MAX_PAGE_SIZE = 100
+_MAX_PAGE_SIZE = 200
 _DEFAULT_PAGE_SIZE = 20
 
 

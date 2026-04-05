@@ -2,7 +2,7 @@ import enum
 import uuid
 from datetime import datetime
 
-from sqlalchemy import Boolean, Column, DateTime, Enum, ForeignKey, Integer, String, Table, UniqueConstraint
+from sqlalchemy import JSON, Boolean, Column, DateTime, Enum, ForeignKey, Index, Integer, String, Table, Text, UniqueConstraint
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import relationship
 
@@ -103,6 +103,7 @@ class User(Base):
     last_login = Column(DateTime, nullable=True)
 
     refresh_tokens = relationship("RefreshToken", back_populates="user", cascade="all, delete-orphan")
+    uploaded_exam_documents = relationship("ExamDocument", back_populates="uploaded_by")
 
 
 class RefreshToken(Base):
@@ -202,3 +203,76 @@ school_programmes = Table(
     Column("created_at", DateTime, default=datetime.utcnow, nullable=False),
     UniqueConstraint("school_id", "programme_id", name="uq_school_programme"),
 )
+
+
+class Examination(Base):
+    """Certificate examination instance (timetable container)."""
+
+    __tablename__ = "examinations"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    exam_type = Column(String(50), nullable=False)
+    exam_series = Column(String(20), nullable=True)
+    year = Column(Integer, nullable=False)
+    description = Column(Text, nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+
+    schedules = relationship(
+        "ExaminationSchedule",
+        back_populates="examination",
+        cascade="all, delete-orphan",
+    )
+
+
+class ExaminationSchedule(Base):
+    """Per-subject schedule (papers with dates/times) for an examination."""
+
+    __tablename__ = "examination_schedules"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    examination_id = Column(
+        Integer,
+        ForeignKey("examinations.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    subject_code = Column(String(50), nullable=False)
+    subject_name = Column(String(255), nullable=False)
+    papers = Column(JSON, nullable=False)
+    venue = Column(String(255), nullable=True)
+    duration_minutes = Column(Integer, nullable=True)
+    instructions = Column(Text, nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+
+    examination = relationship("Examination", back_populates="schedules")
+
+    __table_args__ = (
+        UniqueConstraint("examination_id", "subject_code", name="uq_examination_subject_schedule"),
+    )
+
+
+class ExamDocument(Base):
+    """Files uploaded by super admins for supervisors and inspectors to download."""
+
+    __tablename__ = "exam_documents"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    title = Column(String(255), nullable=False)
+    description = Column(Text, nullable=True)
+    original_filename = Column(String(512), nullable=False)
+    stored_path = Column(String(512), unique=True, nullable=False)
+    content_type = Column(String(255), nullable=True)
+    size_bytes = Column(Integer, nullable=False)
+    uploaded_by_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("users.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+
+    uploaded_by = relationship("User", back_populates="uploaded_exam_documents")
+
+    __table_args__ = (Index("ix_exam_documents_created_at", "created_at"),)
