@@ -752,7 +752,15 @@ export default function AdminSchoolsPage() {
             <code className="rounded bg-muted px-1">school_type</code>,{" "}
             <code className="rounded bg-muted px-1">is_private_examination_center</code>,{" "}
             <code className="rounded bg-muted px-1">writes_at_center_code</code> or{" "}
-            <code className="rounded bg-muted px-1">writes_at_center_id</code>.
+            <code className="rounded bg-muted px-1">writes_at_center_id</code>,{" "}
+            <code className="rounded bg-muted px-1">programme_codes</code> (comma-separated programme
+            codes, same as registration portal). Header aliases:{" "}
+            <code className="rounded bg-muted px-1">programmes</code>,{" "}
+            <code className="rounded bg-muted px-1">programme_list</code>,{" "}
+            <code className="rounded bg-muted px-1">programme_code</code>, or any column named{" "}
+            <code className="rounded bg-muted px-1">programme</code> /{" "}
+            <code className="rounded bg-muted px-1">programme_*</code>. Unknown codes are reported per
+            row; the school is still created and valid codes are linked.
           </p>
           <form onSubmit={submitUpload} className="mt-4">
             <label htmlFor="school-bulk-file" className={formLabelClass}>

@@ -439,3 +439,87 @@ export async function bulkUploadExaminationSchedules(
   }
   return (await res.json()) as ExaminationScheduleBulkUploadResponse;
 }
+
+export type ScriptEnvelopeItem = {
+  envelope_number: number;
+  booklet_count: number;
+};
+
+export type ScriptSeriesPackingResponse = {
+  id: string;
+  scripts_per_envelope: number;
+  candidate_count: number | null;
+  envelopes: ScriptEnvelopeItem[];
+};
+
+export type ScriptSeriesSlotResponse = {
+  series_number: number;
+  packing: ScriptSeriesPackingResponse | null;
+};
+
+export type ScriptPaperSlotResponse = {
+  paper_number: number;
+  series: ScriptSeriesSlotResponse[];
+};
+
+export type ScriptSubjectRowResponse = {
+  subject_id: number;
+  subject_code: string;
+  subject_name: string;
+  papers: ScriptPaperSlotResponse[];
+};
+
+export type MySchoolScriptControlResponse = {
+  examination_id: number;
+  exam_type: string;
+  exam_series: string | null;
+  year: number;
+  school_id: string;
+  school_code: string;
+  subjects: ScriptSubjectRowResponse[];
+};
+
+export type ScriptSeriesUpsertPayload = {
+  subject_id: number;
+  paper_number: number;
+  series_number: number;
+  scripts_per_envelope: number;
+  candidate_count: number | null;
+  envelopes: ScriptEnvelopeItem[];
+};
+
+export async function getMySchoolScriptControl(
+  examId: number,
+): Promise<MySchoolScriptControlResponse> {
+  return apiJson<MySchoolScriptControlResponse>(
+    `/examinations/${examId}/script-control/my-school`,
+  );
+}
+
+export async function upsertScriptSeries(
+  examId: number,
+  payload: ScriptSeriesUpsertPayload,
+): Promise<ScriptSeriesPackingResponse> {
+  return apiJson<ScriptSeriesPackingResponse>(
+    `/examinations/${examId}/script-control/my-school/series`,
+    {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    },
+  );
+}
+
+export async function deleteScriptSeries(
+  examId: number,
+  params: { subject_id: number; paper_number: number; series_number: number },
+): Promise<void> {
+  const q = new URLSearchParams({
+    subject_id: String(params.subject_id),
+    paper_number: String(params.paper_number),
+    series_number: String(params.series_number),
+  });
+  await apiJson(`/examinations/${examId}/script-control/my-school/series?${q}`, {
+    method: "DELETE",
+  });
+}

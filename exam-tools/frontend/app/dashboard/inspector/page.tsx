@@ -19,6 +19,13 @@ export default function InspectorDashboardPage() {
               </Link>
               .
             </p>
+            <p className="mt-3 text-base text-card-foreground">
+              Record answer-script envelopes (by subject, paper, and series) under{" "}
+              <Link href="/dashboard/inspector/scripts-control" className={linkClass}>
+                Scripts control
+              </Link>
+              .
+            </p>
             <p className="mt-3 text-sm text-muted-foreground">
               More school and examination tasks will appear here as features are added.
             </p>

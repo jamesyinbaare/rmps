@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import io
+import math
+import numbers
 import re
 from typing import Any
 from uuid import UUID
@@ -14,6 +16,9 @@ from app.models import Region, SchoolType, Zone
 REQUIRED_COLUMNS = ("code", "name", "region", "zone")
 
 INSPECTOR_REQUIRED_COLUMNS = ("school_code", "phone_number", "full_name")
+
+# Optional school bulk column: comma-separated programme codes (registration-portal parity).
+_PROGRAMMES_COLUMN_CANDIDATES = ("programme_codes", "programmes", "programme_list", "programme_code")
 
 
 class SchoolUploadParseError(Exception):
@@ -68,11 +73,83 @@ def validate_inspector_required_columns(df: pd.DataFrame) -> None:
         raise SchoolUploadParseError(f"Missing required columns: {', '.join(missing)}")
 
 
+def find_programmes_column(df: pd.DataFrame) -> str | None:
+    """Return the column name for comma-separated programme codes, or None.
+
+    Matches registration-portal bulk school upload: prefers programme_codes, programmes,
+    programme_list, programme_code; else a column named programme or starting with programme_.
+    Expects ``normalize_column_names`` to have been applied.
+    """
+    if df.empty or not len(df.columns):
+        return None
+    cols = [str(c) for c in df.columns]
+    col_set = set(cols)
+    for name in _PROGRAMMES_COLUMN_CANDIDATES:
+        if name in col_set:
+            return name
+    for col in cols:
+        cl = col.lower().strip()
+        if cl == "programme" or cl.startswith("programme_"):
+            return col
+    return None
+
+
+def parse_programme_codes_cell(raw: Any) -> list[str]:
+    """Split a cell into programme codes (comma-separated, trimmed)."""
+    if raw is None or (isinstance(raw, float) and pd.isna(raw)):
+        return []
+    s = str(raw).strip()
+    if not s or s.lower() == "nan":
+        return []
+    tokens = [p.strip() for p in s.split(",") if p.strip()]
+    out: list[str] = []
+    for t in tokens:
+        coerced = _spreadsheet_school_code_cell(t)
+        if coerced:
+            out.append(coerced)
+    return out
+
+
 def _cell_str(val: Any) -> str | None:
     if val is None or (isinstance(val, float) and pd.isna(val)):
         return None
     s = str(val).strip()
     return s if s else None
+
+
+def _spreadsheet_school_code_cell(val: Any) -> str | None:
+    """Normalize school/center-style codes from CSV/Excel.
+
+    Excel often reads numeric-looking codes as floats; ``str(817002.0)`` would not match DB ``817002``.
+    """
+    if val is None:
+        return None
+    if isinstance(val, float) and pd.isna(val):
+        return None
+    try:
+        if pd.isna(val):
+            return None
+    except (TypeError, ValueError):
+        pass
+    if isinstance(val, bool):
+        return None
+    if isinstance(val, numbers.Integral):
+        return str(int(val))
+    if isinstance(val, numbers.Real):
+        f = float(val)
+        if math.isnan(f) or math.isinf(f):
+            return None
+        if f.is_integer():
+            return str(int(f))
+        s = str(val).strip()
+        return s if s else None
+    s = str(val).strip()
+    if not s or s.lower() == "nan":
+        return None
+    m = re.fullmatch(r"(\d+)\.0+", s)
+    if m:
+        return m.group(1)
+    return s
 
 
 def parse_region(raw: Any) -> Region:
@@ -142,12 +219,11 @@ def parse_writes_at_center_id(raw: Any) -> UUID | None:
 
 
 def parse_writes_at_center_code(raw: Any) -> str | None:
-    s = _cell_str(raw)
-    return s
+    return _spreadsheet_school_code_cell(raw)
 
 
 def parse_school_code(raw: Any) -> str:
-    s = _cell_str(raw)
+    s = _spreadsheet_school_code_cell(raw)
     if not s:
         raise ValueError("code is required")
     if len(s) > 6:
@@ -165,7 +241,7 @@ def parse_school_name(raw: Any) -> str:
 
 
 def parse_inspector_school_code(raw: Any) -> str:
-    s = _cell_str(raw)
+    s = _spreadsheet_school_code_cell(raw)
     if not s:
         raise ValueError("school_code is required")
     if len(s) > 10:

@@ -2,7 +2,7 @@ import enum
 import uuid
 from datetime import datetime
 
-from sqlalchemy import JSON, Boolean, Column, DateTime, Enum, ForeignKey, Index, Integer, String, Table, Text, UniqueConstraint
+from sqlalchemy import JSON, Boolean, CheckConstraint, Column, DateTime, Enum, ForeignKey, Index, Integer, SmallInteger, String, Table, Text, UniqueConstraint
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import relationship
 
@@ -276,3 +276,69 @@ class ExamDocument(Base):
     uploaded_by = relationship("User", back_populates="uploaded_exam_documents")
 
     __table_args__ = (Index("ix_exam_documents_created_at", "created_at"),)
+
+class ScriptPackingSeries(Base):
+    """Per examination, school, subject, paper, and series (1–6): envelope capacity and optional candidate count."""
+
+    __tablename__ = "script_packing_series"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    examination_id = Column(Integer, ForeignKey("examinations.id", ondelete="CASCADE"), nullable=False, index=True)
+    school_id = Column(UUID(as_uuid=True), ForeignKey("schools.id", ondelete="CASCADE"), nullable=False, index=True)
+    subject_id = Column(Integer, ForeignKey("subjects.id", ondelete="RESTRICT"), nullable=False, index=True)
+    paper_number = Column(SmallInteger, nullable=False)
+    series_number = Column(SmallInteger, nullable=False)
+    scripts_per_envelope = Column(Integer, nullable=False, default=50)
+    candidate_count = Column(Integer, nullable=True)
+    updated_by_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True, index=True)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+
+    examination = relationship("Examination", backref="script_packing_series")
+    school = relationship("School", backref="script_packing_series")
+    subject = relationship("Subject", backref="script_packing_series")
+    updated_by = relationship("User", foreign_keys=[updated_by_id])
+    envelopes = relationship(
+        "ScriptEnvelope",
+        back_populates="packing_series",
+        cascade="all, delete-orphan",
+        order_by="ScriptEnvelope.envelope_number",
+    )
+
+    __table_args__ = (
+        UniqueConstraint(
+            "examination_id",
+            "school_id",
+            "subject_id",
+            "paper_number",
+            "series_number",
+            name="uq_script_packing_series_exam_school_subject_paper_series",
+        ),
+        CheckConstraint("series_number >= 1 AND series_number <= 6", name="ck_script_packing_series_number"),
+        CheckConstraint("paper_number >= 1", name="ck_script_packing_paper_number"),
+        CheckConstraint("scripts_per_envelope >= 1", name="ck_script_packing_scripts_per_envelope"),
+    )
+
+
+class ScriptEnvelope(Base):
+    """One physical envelope within a script packing series."""
+
+    __tablename__ = "script_envelopes"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    packing_series_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("script_packing_series.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    envelope_number = Column(Integer, nullable=False)
+    booklet_count = Column(Integer, nullable=False)
+
+    packing_series = relationship("ScriptPackingSeries", back_populates="envelopes")
+
+    __table_args__ = (
+        UniqueConstraint("packing_series_id", "envelope_number", name="uq_script_envelope_series_number"),
+        CheckConstraint("envelope_number >= 1", name="ck_script_envelope_number"),
+        CheckConstraint("booklet_count >= 0", name="ck_script_envelope_booklet_count"),
+    )

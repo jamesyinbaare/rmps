@@ -18,6 +18,24 @@ import { formInputClass, formLabelClass } from "@/lib/form-classes";
 const inputFocusRing =
   "focus:border-primary focus:outline-none focus:ring-2 focus:ring-ring/30";
 
+/** Backend `/subjects` enforces page_size ≤ 100; fetch every page for the full catalogue. */
+const SUBJECTS_LIST_PAGE_SIZE = 100;
+
+async function fetchAllSubjectsCatalog(): Promise<Subject[]> {
+  const items: Subject[] = [];
+  let page = 1;
+  let total = 0;
+  do {
+    const res = await apiJson<SubjectListResponse>(
+      `/subjects?page=${page}&page_size=${SUBJECTS_LIST_PAGE_SIZE}`,
+    );
+    total = res.total;
+    items.push(...res.items);
+    page += 1;
+  } while (items.length < total);
+  return items;
+}
+
 function Modal({
   title,
   titleId,
@@ -91,16 +109,16 @@ export default function ProgrammeDetailPage() {
     setLoading(true);
     setError(null);
     try {
-      const [p, list, req, cat] = await Promise.all([
+      const [p, list, req, catItems] = await Promise.all([
         apiJson<Programme>(`/programmes/${programmeId}`),
         apiJson<ProgrammeSubjectRow[]>(`/programmes/${programmeId}/subjects`),
         apiJson<ProgrammeSubjectRequirements>(`/programmes/${programmeId}/subject-requirements`),
-        apiJson<SubjectListResponse>("/subjects?page=1&page_size=500"),
+        fetchAllSubjectsCatalog(),
       ]);
       setProgramme(p);
       setRows(list);
       setRequirements(req);
-      setCatalog(cat.items);
+      setCatalog(catItems);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Failed to load programme");
       setProgramme(null);

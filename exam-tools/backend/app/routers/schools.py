@@ -27,8 +27,10 @@ from app.schemas.school import (
 )
 from app.services.school_bulk_upload import (
     SchoolUploadParseError,
+    find_programmes_column,
     normalize_column_names,
     parse_bool_cell,
+    parse_programme_codes_cell,
     parse_region,
     parse_school_code,
     parse_school_name,
@@ -451,7 +453,10 @@ async def bulk_upload_schools(
     **Required columns:** ``code``, ``name``, ``region``, ``zone``
 
     **Optional columns:** ``school_type`` (private/public), ``is_private_examination_center``,
-    ``writes_at_center_code`` (6-char school code of host), ``writes_at_center_id`` (UUID of host).
+    ``writes_at_center_code`` (6-char school code of host), ``writes_at_center_id`` (UUID of host),
+    ``programme_codes`` (comma-separated programme codes; aliases: ``programmes``, ``programme_list``,
+    ``programme_code``, or any column named ``programme`` / ``programme_*``).
+    Unknown programme codes are reported per row but the school is still created; valid codes are linked.
     Do not set both ``writes_at_center_code`` and ``writes_at_center_id`` on the same row.
 
     Each created school's supervisor uses the school ``code`` as both display name and password;
@@ -459,7 +464,7 @@ async def bulk_upload_schools(
 
     **Example CSV header:**
 
-    ``code,name,region,zone,school_type,is_private_examination_center,writes_at_center_code``
+    ``code,name,region,zone,school_type,is_private_examination_center,writes_at_center_code,programme_codes``
 
     Region and zone accept enum names (e.g. ``GREATER_ACCRA``, ``A``) or display values (e.g. ``Greater Accra``, ``A``).
     """
@@ -471,8 +476,10 @@ async def bulk_upload_schools(
     except SchoolUploadParseError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
 
+    programmes_col = find_programmes_column(df)
+
     row_specs: list[
-        tuple[int, str, str, Region, Zone, SchoolType | None, bool, str | None, UUID | None]
+        tuple[int, str, str, Region, Zone, SchoolType | None, bool, str | None, UUID | None, list[str]]
     ] = []
     errors: list[SchoolBulkUploadError] = []
 
@@ -500,10 +507,25 @@ async def bulk_upload_schools(
             )
             continue
 
-        row_specs.append((row_number, code, name, region, zone, st, is_pec, wcc, wid))
+        prog_codes = parse_programme_codes_cell(row.get(programmes_col)) if programmes_col else []
+        row_specs.append((row_number, code, name, region, zone, st, is_pec, wcc, wid, prog_codes))
+
+    all_programme_codes: set[str] = set()
+    for *_, prog_codes in row_specs:
+        all_programme_codes.update(prog_codes)
+
+    if all_programme_codes:
+        prog_result = await session.execute(
+            select(Programme).where(Programme.code.in_(all_programme_codes))
+        )
+        programme_by_code: dict[str, int] = {
+            cast(str, p.code): cast(int, p.id) for p in prog_result.scalars().all()
+        }
+    else:
+        programme_by_code = {}
 
     codes_for_lookup: set[str] = set()
-    for _, code, _, _, _, _, _, wcc, _ in row_specs:
+    for _, code, _, _, _, _, _, wcc, _, _ in row_specs:
         codes_for_lookup.add(code)
         if wcc:
             codes_for_lookup.add(wcc)
@@ -524,7 +546,7 @@ async def bulk_upload_schools(
 
     provisioned_supervisors: list[ProvisionedSupervisor] = []
 
-    for row_number, code, name, region, zone, st, is_pec, wcc, wid in row_specs:
+    for row_number, code, name, region, zone, st, is_pec, wcc, wid, prog_codes in row_specs:
         if code in seen_in_file:
             errors.append(
                 SchoolBulkUploadError(
@@ -573,6 +595,23 @@ async def bulk_upload_schools(
                 failed += 1
                 continue
 
+        invalid_programme_codes = [pc for pc in prog_codes if pc not in programme_by_code]
+        if invalid_programme_codes:
+            errors.append(
+                SchoolBulkUploadError(
+                    row_number=row_number,
+                    error_message=f"Programme codes not found: {', '.join(invalid_programme_codes)}",
+                )
+            )
+
+        programme_ids_ordered: list[int] = []
+        seen_pid: set[int] = set()
+        for pc in prog_codes:
+            pid = programme_by_code.get(pc)
+            if pid is not None and pid not in seen_pid:
+                seen_pid.add(pid)
+                programme_ids_ordered.append(pid)
+
         school = School(
             code=code,
             name=name,
@@ -585,6 +624,14 @@ async def bulk_upload_schools(
         session.add(school)
         try:
             supervisor_user, plain_password = await provision_supervisor_for_school(session, code)
+            await session.flush()
+            for programme_id in programme_ids_ordered:
+                await session.execute(
+                    insert(school_programmes).values(
+                        school_id=cast(UUID, school.id),
+                        programme_id=programme_id,
+                    )
+                )
             await session.commit()
             await session.refresh(school)
         except ValueError as exc:
