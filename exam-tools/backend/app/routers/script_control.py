@@ -1,4 +1,4 @@
-"""Script packing (answer booklets in envelopes): inspector CRUD for own school; super admin list."""
+"""Script packing (answer booklets in envelopes): inspector CRUD per school in centre scope; super admin list."""
 
 from uuid import UUID
 
@@ -6,6 +6,7 @@ from fastapi import APIRouter, HTTPException, Query, status
 from sqlalchemy import func, select
 from sqlalchemy.orm import selectinload
 
+from app.config import settings
 from app.dependencies.auth import InspectorDep, SuperAdminDep
 from app.dependencies.database import DBSessionDep
 from app.models import School, ScriptEnvelope, ScriptPackingSeries, Subject
@@ -22,12 +23,42 @@ from app.schemas.script_control import (
 )
 from app.services.exam_timetable_pdf import load_examination_or_raise
 from app.services.script_control import (
-    load_subject_paper_rows_for_school_exam,
-    school_from_inspector_user,
-    valid_subject_paper_set,
+    assert_packing_school_in_scope,
+    assert_script_packing_calendar_allowed,
+    inspector_center_scope_school_ids,
+    load_subject_paper_rows_for_exam_and_school,
+    paper_examination_date_for_triple,
+    script_packing_today_in_configured_zone,
+    subject_series_count_map,
+    valid_script_packing_triples,
 )
 
 router = APIRouter(tags=["script-control"])
+
+
+async def _inspector_scope_and_packing_school(
+    session: DBSessionDep,
+    user: InspectorDep,
+    school_id: UUID,
+) -> tuple[School, set[UUID]]:
+    try:
+        scope_ids = await inspector_center_scope_school_ids(session, user)
+    except PermissionError:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Inspector access only") from None
+    except ValueError as e:
+        detail = str(e)
+        if "examination centre scope" in detail or "Centre host school is missing" in detail:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=detail) from None
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=detail) from None
+
+    packing_school = await session.get(School, school_id)
+    if packing_school is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="School not found")
+    try:
+        assert_packing_school_in_scope(school_id, scope_ids)
+    except ValueError as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e)) from None
+    return packing_school, scope_ids
 
 
 def _packing_to_response(ps: ScriptPackingSeries) -> ScriptSeriesPackingResponse:
@@ -35,12 +66,7 @@ def _packing_to_response(ps: ScriptPackingSeries) -> ScriptSeriesPackingResponse
         ScriptEnvelopeItem(envelope_number=e.envelope_number, booklet_count=e.booklet_count)
         for e in sorted(ps.envelopes, key=lambda x: x.envelope_number)
     ]
-    return ScriptSeriesPackingResponse(
-        id=ps.id,
-        scripts_per_envelope=ps.scripts_per_envelope,
-        candidate_count=ps.candidate_count,
-        envelopes=envs,
-    )
+    return ScriptSeriesPackingResponse(id=ps.id, envelopes=envs)
 
 
 @router.get(
@@ -51,25 +77,26 @@ async def get_my_school_script_control(
     exam_id: int,
     session: DBSessionDep,
     user: InspectorDep,
+    school_id: UUID = Query(
+        ...,
+        description="School whose registered candidates define subjects; read/write packing for this school.",
+    ),
 ) -> MySchoolScriptControlResponse:
-    try:
-        school = await school_from_inspector_user(session, user)
-    except PermissionError:
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Inspector access only") from None
-    except ValueError as e:
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(e)) from None
+    packing_school, scope_ids = await _inspector_scope_and_packing_school(session, user, school_id)
 
     try:
         exam = await load_examination_or_raise(session, exam_id)
     except ValueError:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Examination not found") from None
 
-    rows = await load_subject_paper_rows_for_school_exam(session, exam_id, school.id)
+    rows = await load_subject_paper_rows_for_exam_and_school(
+        session, exam_id, scope_ids, packing_school.id
+    )
     pack_stmt = (
         select(ScriptPackingSeries)
         .where(
             ScriptPackingSeries.examination_id == exam_id,
-            ScriptPackingSeries.school_id == school.id,
+            ScriptPackingSeries.school_id == packing_school.id,
         )
         .options(selectinload(ScriptPackingSeries.envelopes))
     )
@@ -79,16 +106,24 @@ async def get_my_school_script_control(
     for ps in packings:
         key_map[(ps.subject_id, ps.paper_number, ps.series_number)] = ps
 
+    counts_map = await subject_series_count_map(session, exam_id)
     subjects_out: list[ScriptSubjectRowResponse] = []
-    for sub, papers in rows:
+    for sub, paper_dates in rows:
         paper_slots: list[ScriptPaperSlotResponse] = []
-        for pn in papers:
+        n_series = counts_map.get(sub.id, 1)
+        for pn in sorted(paper_dates.keys()):
             series_slots: list[ScriptSeriesSlotResponse] = []
-            for sn in range(1, 7):
+            for sn in range(1, n_series + 1):
                 ps = key_map.get((sub.id, pn, sn))
                 packing = _packing_to_response(ps) if ps else None
                 series_slots.append(ScriptSeriesSlotResponse(series_number=sn, packing=packing))
-            paper_slots.append(ScriptPaperSlotResponse(paper_number=pn, series=series_slots))
+            paper_slots.append(
+                ScriptPaperSlotResponse(
+                    paper_number=pn,
+                    examination_date=paper_dates[pn],
+                    series=series_slots,
+                )
+            )
         subjects_out.append(
             ScriptSubjectRowResponse(
                 subject_id=sub.id,
@@ -103,8 +138,9 @@ async def get_my_school_script_control(
         exam_type=exam.exam_type,
         exam_series=exam.exam_series,
         year=exam.year,
-        school_id=school.id,
-        school_code=school.code,
+        school_id=packing_school.id,
+        school_code=packing_school.code,
+        scripts_per_envelope=settings.scripts_per_envelope,
         subjects=subjects_out,
     )
 
@@ -118,38 +154,44 @@ async def upsert_my_school_script_series(
     body: ScriptSeriesUpsertRequest,
     session: DBSessionDep,
     user: InspectorDep,
+    school_id: UUID = Query(
+        ...,
+        description="School whose registered candidates define subjects; read/write packing for this school.",
+    ),
 ) -> ScriptSeriesPackingResponse:
-    try:
-        school = await school_from_inspector_user(session, user)
-    except PermissionError:
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Inspector access only") from None
-    except ValueError as e:
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(e)) from None
+    packing_school, scope_ids = await _inspector_scope_and_packing_school(session, user, school_id)
 
     try:
         await load_examination_or_raise(session, exam_id)
     except ValueError:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Examination not found") from None
 
-    allowed = await valid_subject_paper_set(session, exam_id, school.id)
-    if (body.subject_id, body.paper_number) not in allowed:
+    allowed = await valid_script_packing_triples(session, exam_id, scope_ids, packing_school.id)
+    if (body.subject_id, body.paper_number, body.series_number) not in allowed:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Subject or paper is not on this examination for your school",
+            detail="Subject, paper, or series is not allowed for script packing (check timetable, registrations, and admin series configuration)",
         )
 
+    exam_date = await paper_examination_date_for_triple(session, exam_id, body.subject_id, body.paper_number)
+    try:
+        assert_script_packing_calendar_allowed(exam_date, script_packing_today_in_configured_zone())
+    except ValueError as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e)) from None
+
+    cap = settings.scripts_per_envelope
     for env in body.envelopes:
-        if env.booklet_count > body.scripts_per_envelope:
+        if env.booklet_count > cap:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail=f"Envelope {env.envelope_number}: booklet_count cannot exceed scripts_per_envelope",
+                detail=f"Envelope {env.envelope_number}: booklet_count cannot exceed {cap} (scripts_per_envelope)",
             )
 
     stmt = (
         select(ScriptPackingSeries)
         .where(
             ScriptPackingSeries.examination_id == exam_id,
-            ScriptPackingSeries.school_id == school.id,
+            ScriptPackingSeries.school_id == packing_school.id,
             ScriptPackingSeries.subject_id == body.subject_id,
             ScriptPackingSeries.paper_number == body.paper_number,
             ScriptPackingSeries.series_number == body.series_number,
@@ -162,19 +204,15 @@ async def upsert_my_school_script_series(
     if row is None:
         row = ScriptPackingSeries(
             examination_id=exam_id,
-            school_id=school.id,
+            school_id=packing_school.id,
             subject_id=body.subject_id,
             paper_number=body.paper_number,
             series_number=body.series_number,
-            scripts_per_envelope=body.scripts_per_envelope,
-            candidate_count=body.candidate_count,
             updated_by_id=user.id,
         )
         session.add(row)
         await session.flush()
     else:
-        row.scripts_per_envelope = body.scripts_per_envelope
-        row.candidate_count = body.candidate_count
         row.updated_by_id = user.id
         for env in list(row.envelopes):
             await session.delete(env)
@@ -207,20 +245,30 @@ async def delete_my_school_script_series(
     exam_id: int,
     session: DBSessionDep,
     user: InspectorDep,
+    school_id: UUID = Query(
+        ...,
+        description="School whose registered candidates define subjects; read/write packing for this school.",
+    ),
     subject_id: int = Query(...),
     paper_number: int = Query(..., ge=1),
-    series_number: int = Query(..., ge=1, le=6),
+    series_number: int = Query(..., ge=1, le=32767),
 ) -> None:
+    packing_school, _scope_ids = await _inspector_scope_and_packing_school(session, user, school_id)
+
     try:
-        school = await school_from_inspector_user(session, user)
-    except PermissionError:
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Inspector access only") from None
+        await load_examination_or_raise(session, exam_id)
+    except ValueError:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Examination not found") from None
+
+    exam_date = await paper_examination_date_for_triple(session, exam_id, subject_id, paper_number)
+    try:
+        assert_script_packing_calendar_allowed(exam_date, script_packing_today_in_configured_zone())
     except ValueError as e:
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(e)) from None
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e)) from None
 
     stmt = select(ScriptPackingSeries).where(
         ScriptPackingSeries.examination_id == exam_id,
-        ScriptPackingSeries.school_id == school.id,
+        ScriptPackingSeries.school_id == packing_school.id,
         ScriptPackingSeries.subject_id == subject_id,
         ScriptPackingSeries.paper_number == paper_number,
         ScriptPackingSeries.series_number == series_number,
@@ -294,8 +342,6 @@ async def list_script_control_records(
                 subject_name=sub.name if sub else "",
                 paper_number=ps.paper_number,
                 series_number=ps.series_number,
-                scripts_per_envelope=ps.scripts_per_envelope,
-                candidate_count=ps.candidate_count,
                 envelope_count=len(envs),
                 total_booklets=sum(e.booklet_count for e in envs),
             )

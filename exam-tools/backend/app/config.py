@@ -1,9 +1,14 @@
+from pydantic import Field
 from pydantic_settings import BaseSettings
 
 
 class Settings(BaseSettings):
     database_url: str = ""
     environment: str = "dev"
+    # Script packing: max answer booklets allowed per physical envelope (env: SCRIPTS_PER_ENVELOPE)
+    scripts_per_envelope: int = Field(default=50, ge=1)
+    # IANA timezone for "today" when enforcing packing on/after timetable date (env: SCRIPT_PACKING_TIMEZONE)
+    script_packing_timezone: str = Field(default="UTC")
     # Storage settings
     storage_backend: str = "local"  # local, s3, azure
     storage_path: str = "storage/documents"

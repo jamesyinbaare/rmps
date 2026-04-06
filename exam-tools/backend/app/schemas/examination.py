@@ -169,3 +169,51 @@ class CenterScopeSchoolItem(BaseModel):
 class MyCenterSchoolsResponse(BaseModel):
     center_school_id: UUID
     schools: list[CenterScopeSchoolItem]
+
+
+class StaffCentreOverviewUpcomingItem(BaseModel):
+    """Single timetable slot (subject + paper) for dashboard preview."""
+
+    subject_code: str
+    subject_name: str
+    paper: int
+    examination_date: date
+    examination_time: time
+
+
+class StaffCentreOverviewResponse(BaseModel):
+    """Supervisor/inspector dashboard: centre scope stats and next timetable slots."""
+
+    examination_id: int
+    exam_type: str
+    exam_series: str | None
+    year: int
+    candidate_count: int = Field(ge=0, description="Candidates registered for this exam at schools in the centre scope.")
+    school_count: int = Field(ge=0, description="Schools in the examination centre (host plus schools that write there).")
+    upcoming: list[StaffCentreOverviewUpcomingItem] = Field(
+        default_factory=list,
+        description="Next sessions from the centre timetable (candidate-linked subjects), up to three.",
+    )
+
+
+class ExaminationScriptSeriesConfigRow(BaseModel):
+    subject_id: int
+    subject_code: str
+    subject_name: str
+    series_count: int = Field(ge=1, le=32767, description="Number of packing series for this subject (each paper shows series 1..N).")
+
+
+class ExaminationScriptSeriesConfigResponse(BaseModel):
+    items: list[ExaminationScriptSeriesConfigRow]
+
+
+class ExaminationScriptSeriesConfigPut(BaseModel):
+    items: list[ExaminationScriptSeriesConfigRow]
+
+    @field_validator("items")
+    @classmethod
+    def unique_subject_ids(cls, v: list[ExaminationScriptSeriesConfigRow]) -> list[ExaminationScriptSeriesConfigRow]:
+        ids = [r.subject_id for r in v]
+        if len(ids) != len(set(ids)):
+            raise ValueError("Duplicate subject_id in items")
+        return v

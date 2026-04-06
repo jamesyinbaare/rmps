@@ -11,13 +11,16 @@ import {
   bulkUploadExaminationSchedules,
   downloadExaminationCandidatesTemplate,
   downloadScheduleTemplate,
+  getExaminationScriptSeriesConfig,
   importExaminationCandidates,
   listExaminationCandidates,
+  putExaminationScriptSeriesConfig,
   type Examination,
   type ExaminationCandidate,
   type ExaminationCandidateImportResponse,
   type ExaminationSchedule,
   type ExaminationScheduleBulkUploadResponse,
+  type ExaminationScriptSeriesConfigRow,
 } from "@/lib/api";
 import { formInputClass, formLabelClass, primaryButtonClass } from "@/lib/form-classes";
 
@@ -112,6 +115,10 @@ export default function ExaminationDetailPage() {
   const [candResult, setCandResult] = useState<ExaminationCandidateImportResponse | null>(null);
   const [subjectsModalCandidate, setSubjectsModalCandidate] = useState<ExaminationCandidate | null>(null);
 
+  const [scriptSeriesRows, setScriptSeriesRows] = useState<ExaminationScriptSeriesConfigRow[]>([]);
+  const [scriptSeriesError, setScriptSeriesError] = useState("");
+  const [scriptSeriesSaving, setScriptSeriesSaving] = useState(false);
+
   const load = useCallback(async () => {
     if (!Number.isFinite(examId)) return;
     setError("");
@@ -127,6 +134,14 @@ export default function ExaminationDetailPage() {
       setYear(String(ex.year));
       setDescription(ex.description ?? "");
       setSchedules(sch);
+      try {
+        const sc = await getExaminationScriptSeriesConfig(examId);
+        setScriptSeriesRows(sc.items);
+        setScriptSeriesError("");
+      } catch {
+        setScriptSeriesRows([]);
+        setScriptSeriesError("Could not load script packing series configuration.");
+      }
       try {
         const c = await listExaminationCandidates(examId);
         setCandidates(c);
@@ -167,6 +182,25 @@ export default function ExaminationDetailPage() {
       setError(err instanceof Error ? err.message : "Save failed");
     } finally {
       setSavingExam(false);
+    }
+  }
+
+  function setScriptSeriesCount(subjectId: number, raw: number) {
+    const n = Math.max(1, Math.min(32767, Math.floor(Number.isFinite(raw) ? raw : 1)));
+    setScriptSeriesRows((rows) => rows.map((r) => (r.subject_id === subjectId ? { ...r, series_count: n } : r)));
+  }
+
+  async function saveScriptSeriesConfig() {
+    if (!Number.isFinite(examId)) return;
+    setScriptSeriesSaving(true);
+    setScriptSeriesError("");
+    try {
+      const res = await putExaminationScriptSeriesConfig(examId, { items: scriptSeriesRows });
+      setScriptSeriesRows(res.items);
+    } catch (err) {
+      setScriptSeriesError(err instanceof Error ? err.message : "Save failed");
+    } finally {
+      setScriptSeriesSaving(false);
     }
   }
 
@@ -496,6 +530,66 @@ export default function ExaminationDetailPage() {
             </table>
           </div>
         )}
+      </section>
+
+      <section className="rounded-2xl border border-border bg-card p-4 sm:p-6">
+        <h3 className="text-lg font-semibold text-card-foreground">Script packing — series per subject</h3>
+        <p className="mt-2 text-sm text-muted-foreground">
+          Set how many packing series appear for each subject on this examination&apos;s timetable (default 1). The same
+          count applies to every paper for that subject. Inspectors cannot add series themselves. You cannot reduce a
+          count below a series that already has packing data recorded.
+        </p>
+        {scriptSeriesError ? (
+          <p className="mt-3 text-sm text-destructive" role="alert">
+            {scriptSeriesError}
+          </p>
+        ) : null}
+        {scriptSeriesRows.length === 0 && !scriptSeriesError ? (
+          <p className="mt-4 text-sm text-muted-foreground">
+            Add subject schedules above to configure series counts.
+          </p>
+        ) : null}
+        {scriptSeriesRows.length > 0 ? (
+          <div className="mt-4 space-y-4">
+            <div className="overflow-x-auto">
+              <table className="w-full min-w-[480px] border-collapse text-left text-sm">
+                <thead>
+                  <tr className="border-b border-border text-muted-foreground">
+                    <th className="py-2 pr-3 font-medium">Code</th>
+                    <th className="py-2 pr-3 font-medium">Subject</th>
+                    <th className="py-2 font-medium">Number of series</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {scriptSeriesRows.map((row) => (
+                    <tr key={row.subject_id} className="border-b border-border/80">
+                      <td className="py-2 pr-3 font-mono text-xs">{row.subject_code}</td>
+                      <td className="py-2 pr-3">{row.subject_name}</td>
+                      <td className="py-2">
+                        <input
+                          type="number"
+                          min={1}
+                          max={32767}
+                          className={`w-24 ${formInputClass}`}
+                          value={row.series_count}
+                          onChange={(e) => setScriptSeriesCount(row.subject_id, parseInt(e.target.value, 10) || 1)}
+                        />
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+            <button
+              type="button"
+              className={primaryButtonClass}
+              disabled={scriptSeriesSaving}
+              onClick={() => void saveScriptSeriesConfig()}
+            >
+              {scriptSeriesSaving ? "Saving…" : "Save series configuration"}
+            </button>
+          </div>
+        ) : null}
       </section>
 
       <section className="rounded-2xl border border-border bg-card p-4 sm:p-6">

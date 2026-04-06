@@ -228,6 +228,33 @@ class Examination(Base):
         back_populates="examination",
         cascade="all, delete-orphan",
     )
+    subject_script_series = relationship(
+        "ExaminationSubjectScriptSeries",
+        back_populates="examination",
+        cascade="all, delete-orphan",
+    )
+
+
+class ExaminationSubjectScriptSeries(Base):
+    """Per examination and subject: how many packing series (1..N) inspectors see; default 1 when no row."""
+
+    __tablename__ = "examination_subject_script_series"
+
+    examination_id = Column(Integer, ForeignKey("examinations.id", ondelete="CASCADE"), primary_key=True)
+    subject_id = Column(Integer, ForeignKey("subjects.id", ondelete="CASCADE"), primary_key=True, index=True)
+    series_count = Column(SmallInteger, nullable=False)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+
+    examination = relationship("Examination", back_populates="subject_script_series")
+    subject = relationship("Subject", backref="examination_script_series_configs")
+
+    __table_args__ = (
+        CheckConstraint(
+            "series_count >= 1 AND series_count <= 32767",
+            name="ck_exam_subject_script_series_count",
+        ),
+    )
 
 
 class ExaminationCandidate(Base):
@@ -339,7 +366,7 @@ class ExamDocument(Base):
     __table_args__ = (Index("ix_exam_documents_created_at", "created_at"),)
 
 class ScriptPackingSeries(Base):
-    """Per examination, school, subject, paper, and series (1–6): envelope capacity and optional candidate count."""
+    """Per examination, school, subject, paper, and series: envelope booklet counts only."""
 
     __tablename__ = "script_packing_series"
 
@@ -349,8 +376,6 @@ class ScriptPackingSeries(Base):
     subject_id = Column(Integer, ForeignKey("subjects.id", ondelete="RESTRICT"), nullable=False, index=True)
     paper_number = Column(SmallInteger, nullable=False)
     series_number = Column(SmallInteger, nullable=False)
-    scripts_per_envelope = Column(Integer, nullable=False, default=50)
-    candidate_count = Column(Integer, nullable=True)
     updated_by_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True, index=True)
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
@@ -375,9 +400,8 @@ class ScriptPackingSeries(Base):
             "series_number",
             name="uq_script_packing_series_exam_school_subject_paper_series",
         ),
-        CheckConstraint("series_number >= 1 AND series_number <= 6", name="ck_script_packing_series_number"),
+        CheckConstraint("series_number >= 1 AND series_number <= 32767", name="ck_script_packing_series_number"),
         CheckConstraint("paper_number >= 1", name="ck_script_packing_paper_number"),
-        CheckConstraint("scripts_per_envelope >= 1", name="ck_script_packing_scripts_per_envelope"),
     )
 
 

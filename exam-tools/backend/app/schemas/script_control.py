@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import date
 from uuid import UUID
 
 from pydantic import BaseModel, Field, field_validator
@@ -12,8 +13,6 @@ class ScriptEnvelopeItem(BaseModel):
 
 class ScriptSeriesPackingResponse(BaseModel):
     id: UUID
-    scripts_per_envelope: int
-    candidate_count: int | None
     envelopes: list[ScriptEnvelopeItem]
 
     model_config = {"from_attributes": False}
@@ -21,11 +20,15 @@ class ScriptSeriesPackingResponse(BaseModel):
 
 class ScriptSeriesSlotResponse(BaseModel):
     series_number: int
-    packing: ScriptSeriesPackingResponse | None
+    packing: ScriptSeriesPackingResponse | None = None
 
 
 class ScriptPaperSlotResponse(BaseModel):
     paper_number: int
+    examination_date: date | None = Field(
+        default=None,
+        description="Scheduled examination calendar date for this paper from the timetable, if present.",
+    )
     series: list[ScriptSeriesSlotResponse]
 
 
@@ -37,21 +40,25 @@ class ScriptSubjectRowResponse(BaseModel):
 
 
 class MySchoolScriptControlResponse(BaseModel):
+    """Script packing grid for one school; subjects come from that school’s registered candidates for the exam."""
+
     examination_id: int
     exam_type: str
     exam_series: str | None
     year: int
-    school_id: UUID
+    school_id: UUID = Field(description="School selected for packing; matches query parameter school_id.")
     school_code: str
+    scripts_per_envelope: int = Field(
+        ge=1,
+        description="Configured maximum booklets per envelope; booklet_count must not exceed this on save.",
+    )
     subjects: list[ScriptSubjectRowResponse]
 
 
 class ScriptSeriesUpsertRequest(BaseModel):
     subject_id: int
     paper_number: int = Field(ge=1)
-    series_number: int = Field(ge=1, le=6)
-    scripts_per_envelope: int = Field(default=50, ge=1)
-    candidate_count: int | None = Field(default=None, ge=0)
+    series_number: int = Field(ge=1, le=32767)
 
     envelopes: list[ScriptEnvelopeItem] = Field(default_factory=list)
 
@@ -74,8 +81,6 @@ class ScriptControlAdminRow(BaseModel):
     subject_name: str
     paper_number: int
     series_number: int
-    scripts_per_envelope: int
-    candidate_count: int | None
     envelope_count: int
     total_booklets: int
 

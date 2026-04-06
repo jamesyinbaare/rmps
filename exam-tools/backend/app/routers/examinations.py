@@ -3,19 +3,24 @@
 import logging
 from datetime import datetime
 from uuid import UUID
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from fastapi import APIRouter, File, HTTPException, Query, Response, UploadFile, status
 from fastapi.responses import StreamingResponse
-from sqlalchemy import or_, select
+from sqlalchemy import delete, func, or_, select
 from sqlalchemy.exc import IntegrityError
 
+from app.config import settings
 from app.dependencies.auth import SuperAdminDep, SupervisorOrInspectorDep
 from app.dependencies.database import DBSessionDep
 from app.models import (
     Examination,
+    ExaminationCandidate,
     ExaminationSchedule,
+    ExaminationSubjectScriptSeries,
     Programme,
     School,
+    ScriptPackingSeries,
     Subject,
     User,
     UserRole,
@@ -30,8 +35,14 @@ from app.schemas.examination import (
     ExaminationScheduleCreate,
     ExaminationScheduleResponse,
     ExaminationScheduleUpdate,
+    ExaminationScriptSeriesConfigPut,
+    ExaminationScriptSeriesConfigResponse,
+    ExaminationScriptSeriesConfigRow,
     ExaminationUpdate,
     MyCenterSchoolsResponse,
+    StaffCentreOverviewResponse,
+    StaffCentreOverviewUpcomingItem,
+    TimetableEntry,
     TimetablePreviewResponse,
 )
 from app.schemas.timetable import TimetableDownloadFilter
@@ -45,12 +56,6 @@ from app.services.exam_timetable_pdf import (
     load_schedules_for_exam,
     schedules_to_entries,
 )
-from app.services.timetable_service import (
-    center_scope_school_ids,
-    get_candidate_schedule_codes_for_exam,
-    resolve_center_host_school,
-    schools_in_center_scope_ordered,
-)
 from app.services.schedule_upload import (
     ScheduleUploadParseError,
     ScheduleUploadValidationError,
@@ -62,7 +67,17 @@ from app.services.schedule_upload import (
 from app.services.schedule_upload import (
     validate_required_columns as validate_schedule_columns,
 )
+from app.services.script_control import (
+    ordered_subjects_on_examination_timetable,
+    subject_series_count_map,
+)
 from app.services.template_generator import generate_schedule_template
+from app.services.timetable_service import (
+    center_scope_school_ids,
+    get_candidate_schedule_codes_for_exam,
+    resolve_center_host_school,
+    schools_in_center_scope_ordered,
+)
 
 router = APIRouter(prefix="/examinations", tags=["examinations"])
 
@@ -170,6 +185,91 @@ async def update_examination(
     await session.commit()
     await session.refresh(exam)
     return ExaminationResponse.model_validate(exam)
+
+
+@router.get(
+    "/{exam_id}/script-series-config",
+    response_model=ExaminationScriptSeriesConfigResponse,
+)
+async def get_examination_script_series_config(
+    exam_id: int,
+    session: DBSessionDep,
+    _: SuperAdminDep,
+) -> ExaminationScriptSeriesConfigResponse:
+    await _get_exam_or_404(session, exam_id)
+    subjects = await ordered_subjects_on_examination_timetable(session, exam_id)
+    cmap = await subject_series_count_map(session, exam_id)
+    items = [
+        ExaminationScriptSeriesConfigRow(
+            subject_id=s.id,
+            subject_code=s.code,
+            subject_name=s.name,
+            series_count=cmap.get(s.id, 1),
+        )
+        for s in subjects
+    ]
+    return ExaminationScriptSeriesConfigResponse(items=items)
+
+
+@router.put(
+    "/{exam_id}/script-series-config",
+    response_model=ExaminationScriptSeriesConfigResponse,
+)
+async def put_examination_script_series_config(
+    exam_id: int,
+    body: ExaminationScriptSeriesConfigPut,
+    session: DBSessionDep,
+    _: SuperAdminDep,
+) -> ExaminationScriptSeriesConfigResponse:
+    await _get_exam_or_404(session, exam_id)
+    scheduled = await ordered_subjects_on_examination_timetable(session, exam_id)
+    scheduled_ids = {s.id for s in scheduled}
+    got_ids = {i.subject_id for i in body.items}
+    if scheduled_ids != got_ids:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Provide exactly one entry per subject on this examination timetable (same subjects, no extras).",
+        )
+    for item in body.items:
+        stmt = select(func.max(ScriptPackingSeries.series_number)).where(
+            ScriptPackingSeries.examination_id == exam_id,
+            ScriptPackingSeries.subject_id == item.subject_id,
+        )
+        max_used = (await session.execute(stmt)).scalar_one()
+        if max_used is not None and item.series_count < int(max_used):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=(
+                    f"Subject '{item.subject_code}' has script packing up to series {int(max_used)}; "
+                    f"cannot set series_count below {int(max_used)}."
+                ),
+            )
+    await session.execute(
+        delete(ExaminationSubjectScriptSeries).where(
+            ExaminationSubjectScriptSeries.examination_id == exam_id
+        )
+    )
+    for item in body.items:
+        if item.series_count > 1:
+            session.add(
+                ExaminationSubjectScriptSeries(
+                    examination_id=exam_id,
+                    subject_id=item.subject_id,
+                    series_count=item.series_count,
+                )
+            )
+    await session.commit()
+    cmap = await subject_series_count_map(session, exam_id)
+    items = [
+        ExaminationScriptSeriesConfigRow(
+            subject_id=s.id,
+            subject_code=s.code,
+            subject_name=s.name,
+            series_count=cmap.get(s.id, 1),
+        )
+        for s in scheduled
+    ]
+    return ExaminationScriptSeriesConfigResponse(items=items)
 
 
 @router.delete("/{exam_id}", status_code=status.HTTP_204_NO_CONTENT)
@@ -771,4 +871,78 @@ async def preview_my_school_timetable(
         school_id=display_school.id,
         school_code=display_school.code,
         entries=entries,
+    )
+
+
+@router.get("/{exam_id}/my-center-overview", response_model=StaffCentreOverviewResponse)
+async def get_my_center_overview(
+    exam_id: int,
+    session: DBSessionDep,
+    user: SupervisorOrInspectorDep,
+) -> StaffCentreOverviewResponse:
+    """Centre-wide candidate count, school count, and next timetable slots for supervisors and inspectors."""
+    user_school = await _school_from_user(session, user)
+    try:
+        exam = await load_examination_or_raise(session, exam_id)
+    except ValueError:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Examination not found") from None
+
+    scope_ids, _center_display = await _staff_scope_and_display_school(session, user_school, None)
+    school_count = len(scope_ids)
+
+    cand_stmt = select(func.count()).select_from(ExaminationCandidate).where(
+        ExaminationCandidate.examination_id == exam_id,
+        ExaminationCandidate.school_id.in_(scope_ids),
+    )
+    candidate_count = int((await session.execute(cand_stmt)).scalar_one())
+
+    explicit_codes = await get_candidate_schedule_codes_for_exam(
+        session,
+        exam_id,
+        scope_ids,
+        programme_id=None,
+        filter_school_id=None,
+    )
+    all_schedules = await load_schedules_for_exam(session, exam_id)
+    schedule_codes = {s.subject_code for s in all_schedules}
+    intersected = explicit_codes & schedule_codes
+    filtered_codes = await filter_schedule_codes_by_subject_type(
+        session, intersected, TimetableDownloadFilter.ALL,
+    )
+    filtered = [s for s in all_schedules if s.subject_code in filtered_codes]
+    entries = schedules_to_entries(filtered)
+
+    try:
+        tz = ZoneInfo(settings.script_packing_timezone)
+    except ZoneInfoNotFoundError:
+        tz = ZoneInfo("UTC")
+    now = datetime.now(tz)
+
+    upcoming_rows: list[TimetableEntry] = []
+    for ent in entries:
+        start = datetime.combine(ent.examination_date, ent.examination_time).replace(tzinfo=tz)
+        if start >= now:
+            upcoming_rows.append(ent)
+    upcoming_rows.sort(
+        key=lambda x: (x.examination_date, x.examination_time, x.subject_code, x.paper),
+    )
+    upcoming_rows = upcoming_rows[:3]
+
+    return StaffCentreOverviewResponse(
+        examination_id=exam.id,
+        exam_type=exam.exam_type,
+        exam_series=exam.exam_series,
+        year=exam.year,
+        candidate_count=candidate_count,
+        school_count=school_count,
+        upcoming=[
+            StaffCentreOverviewUpcomingItem(
+                subject_code=x.subject_code,
+                subject_name=x.subject_name,
+                paper=x.paper,
+                examination_date=x.examination_date,
+                examination_time=x.examination_time,
+            )
+            for x in upcoming_rows
+        ],
     )

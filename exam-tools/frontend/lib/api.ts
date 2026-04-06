@@ -346,6 +346,34 @@ export type ExaminationSchedule = {
   updated_at: string;
 };
 
+export type ExaminationScriptSeriesConfigRow = {
+  subject_id: number;
+  subject_code: string;
+  subject_name: string;
+  series_count: number;
+};
+
+export type ExaminationScriptSeriesConfigResponse = {
+  items: ExaminationScriptSeriesConfigRow[];
+};
+
+export async function getExaminationScriptSeriesConfig(
+  examId: number,
+): Promise<ExaminationScriptSeriesConfigResponse> {
+  return apiJson<ExaminationScriptSeriesConfigResponse>(`/examinations/${examId}/script-series-config`);
+}
+
+export async function putExaminationScriptSeriesConfig(
+  examId: number,
+  payload: ExaminationScriptSeriesConfigResponse,
+): Promise<ExaminationScriptSeriesConfigResponse> {
+  return apiJson<ExaminationScriptSeriesConfigResponse>(`/examinations/${examId}/script-series-config`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+}
+
 export type TimetableEntry = {
   subject_code: string;
   subject_name: string;
@@ -378,6 +406,28 @@ export type MyCenterSchoolsResponse = {
   center_school_id: string;
   schools: CenterScopeSchoolItem[];
 };
+
+export type StaffCentreOverviewUpcomingItem = {
+  subject_code: string;
+  subject_name: string;
+  paper: number;
+  examination_date: string;
+  examination_time: string;
+};
+
+export type StaffCentreOverviewResponse = {
+  examination_id: number;
+  exam_type: string;
+  exam_series: string | null;
+  year: number;
+  candidate_count: number;
+  school_count: number;
+  upcoming: StaffCentreOverviewUpcomingItem[];
+};
+
+export async function getStaffCentreOverview(examId: number): Promise<StaffCentreOverviewResponse> {
+  return apiJson<StaffCentreOverviewResponse>(`/examinations/${examId}/my-center-overview`);
+}
 
 export function timetableDownloadQuery(params: {
   subject_filter?: TimetableDownloadFilter;
@@ -534,8 +584,6 @@ export type ScriptEnvelopeItem = {
 
 export type ScriptSeriesPackingResponse = {
   id: string;
-  scripts_per_envelope: number;
-  candidate_count: number | null;
   envelopes: ScriptEnvelopeItem[];
 };
 
@@ -546,6 +594,8 @@ export type ScriptSeriesSlotResponse = {
 
 export type ScriptPaperSlotResponse = {
   paper_number: number;
+  /** ISO date YYYY-MM-DD from timetable, if present */
+  examination_date: string | null;
   series: ScriptSeriesSlotResponse[];
 };
 
@@ -563,6 +613,8 @@ export type MySchoolScriptControlResponse = {
   year: number;
   school_id: string;
   school_code: string;
+  /** Maximum booklets allowed per envelope (from server config). */
+  scripts_per_envelope: number;
   subjects: ScriptSubjectRowResponse[];
 };
 
@@ -570,25 +622,28 @@ export type ScriptSeriesUpsertPayload = {
   subject_id: number;
   paper_number: number;
   series_number: number;
-  scripts_per_envelope: number;
-  candidate_count: number | null;
   envelopes: ScriptEnvelopeItem[];
 };
 
+/** ``schoolId`` must be a school in the inspector's examination centre (see ``/examinations/timetable/my-center-schools``). */
 export async function getMySchoolScriptControl(
   examId: number,
+  schoolId: string,
 ): Promise<MySchoolScriptControlResponse> {
+  const q = new URLSearchParams({ school_id: schoolId.trim() });
   return apiJson<MySchoolScriptControlResponse>(
-    `/examinations/${examId}/script-control/my-school`,
+    `/examinations/${examId}/script-control/my-school?${q}`,
   );
 }
 
 export async function upsertScriptSeries(
   examId: number,
+  schoolId: string,
   payload: ScriptSeriesUpsertPayload,
 ): Promise<ScriptSeriesPackingResponse> {
+  const q = new URLSearchParams({ school_id: schoolId.trim() });
   return apiJson<ScriptSeriesPackingResponse>(
-    `/examinations/${examId}/script-control/my-school/series`,
+    `/examinations/${examId}/script-control/my-school/series?${q}`,
     {
       method: "PUT",
       headers: { "Content-Type": "application/json" },
@@ -599,9 +654,15 @@ export async function upsertScriptSeries(
 
 export async function deleteScriptSeries(
   examId: number,
-  params: { subject_id: number; paper_number: number; series_number: number },
+  params: {
+    school_id: string;
+    subject_id: number;
+    paper_number: number;
+    series_number: number;
+  },
 ): Promise<void> {
   const q = new URLSearchParams({
+    school_id: params.school_id.trim(),
     subject_id: String(params.subject_id),
     paper_number: String(params.paper_number),
     series_number: String(params.series_number),
