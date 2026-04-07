@@ -16,8 +16,8 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "Exam tools",
-  description: "Certificate examination resource management",
+  title: "CTVET Examination Portal",
+  description: "Certificate examination resource management for CTVET teams.",
 };
 
 export default function RootLayout({

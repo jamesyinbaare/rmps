@@ -21,6 +21,7 @@ from app.routers import (
     examinations,
     inspectors,
     programmes,
+    question_paper_control,
     schools,
     script_control,
     subjects,
@@ -175,6 +176,7 @@ app.include_router(subjects.router)
 app.include_router(examinations.router)
 app.include_router(examination_candidates.router)
 app.include_router(script_control.router)
+app.include_router(question_paper_control.router)
 app.include_router(documents.router)
 
 

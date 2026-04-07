@@ -407,6 +407,28 @@ export type MyCenterSchoolsResponse = {
   schools: CenterScopeSchoolItem[];
 };
 
+export type CentreScopeProgrammeItem = {
+  id: number;
+  code: string;
+  name: string;
+  subject_count: number;
+};
+
+export type MyCenterProgrammesResponse = {
+  programmes: CentreScopeProgrammeItem[];
+};
+
+export async function getMyCenterProgrammes(filterSchoolId?: string | null): Promise<MyCenterProgrammesResponse> {
+  const u = new URLSearchParams();
+  if (filterSchoolId != null && filterSchoolId.trim() !== "") {
+    u.set("school_id", filterSchoolId.trim());
+  }
+  const s = u.toString();
+  return apiJson<MyCenterProgrammesResponse>(
+    `/examinations/timetable/my-center-programmes${s ? `?${s}` : ""}`,
+  );
+}
+
 export type StaffCentreOverviewUpcomingItem = {
   subject_code: string;
   subject_name: string;
@@ -423,10 +445,39 @@ export type StaffCentreOverviewResponse = {
   candidate_count: number;
   school_count: number;
   upcoming: StaffCentreOverviewUpcomingItem[];
+  /** All slots on today's date (centre timezone), including papers that already started. */
+  sessions_today?: StaffCentreOverviewUpcomingItem[];
+};
+
+export type StaffCentreDaySummarySlotRow = {
+  subject_code: string;
+  subject_name: string;
+  papers_label: string;
+  times_label: string;
+  counts_by_school: number[];
+  row_total: number;
+};
+
+export type StaffCentreDaySummaryResponse = {
+  examination_date: string;
+  schools: CenterScopeSchoolItem[];
+  slots: StaffCentreDaySummarySlotRow[];
+  unique_candidates: number;
+  invigilators_required: number;
 };
 
 export async function getStaffCentreOverview(examId: number): Promise<StaffCentreOverviewResponse> {
   return apiJson<StaffCentreOverviewResponse>(`/examinations/${examId}/my-center-overview`);
+}
+
+export async function getStaffCentreDaySummary(
+  examId: number,
+  examinationDateIso: string,
+): Promise<StaffCentreDaySummaryResponse> {
+  const q = new URLSearchParams({ examination_date: examinationDateIso });
+  return apiJson<StaffCentreDaySummaryResponse>(
+    `/examinations/${examId}/my-center-day-summary?${q.toString()}`,
+  );
 }
 
 export function timetableDownloadQuery(params: {
@@ -670,4 +721,81 @@ export async function deleteScriptSeries(
   await apiJson(`/examinations/${examId}/script-control/my-school/series?${q}`, {
     method: "DELETE",
   });
+}
+
+export type QuestionPaperSeriesSlotResponse = {
+  series_number: number;
+  copies_received: number;
+  copies_used: number;
+  copies_to_library: number;
+  copies_remaining: number;
+};
+
+export type QuestionPaperPaperSlotResponse = {
+  paper_number: number;
+  examination_date: string | null;
+  series: QuestionPaperSeriesSlotResponse[];
+};
+
+export type QuestionPaperSubjectRowResponse = {
+  subject_id: number;
+  subject_code: string;
+  /** Timetable / original code when different from ``subject_code``. */
+  subject_original_code?: string | null;
+  subject_name: string;
+  papers: QuestionPaperPaperSlotResponse[];
+};
+
+export type MyCenterQuestionPaperControlResponse = {
+  examination_id: number;
+  exam_type: string;
+  exam_series: string | null;
+  year: number;
+  center_id: string;
+  center_code: string;
+  center_name: string;
+  subjects: QuestionPaperSubjectRowResponse[];
+};
+
+export type QuestionPaperSlotUpsertPayload = {
+  subject_id: number;
+  paper_number: number;
+  series_number: number;
+  copies_received: number;
+  copies_used: number;
+  copies_to_library: number;
+  copies_remaining: number;
+};
+
+export type QuestionPaperSlotUpsertResponse = {
+  id: string;
+  subject_id: number;
+  paper_number: number;
+  series_number: number;
+  copies_received: number;
+  copies_used: number;
+  copies_to_library: number;
+  copies_remaining: number;
+};
+
+export async function getMyCenterQuestionPaperControl(
+  examId: number,
+): Promise<MyCenterQuestionPaperControlResponse> {
+  return apiJson<MyCenterQuestionPaperControlResponse>(
+    `/examinations/${examId}/question-paper-control/my-center`,
+  );
+}
+
+export async function upsertQuestionPaperSlot(
+  examId: number,
+  payload: QuestionPaperSlotUpsertPayload,
+): Promise<QuestionPaperSlotUpsertResponse> {
+  return apiJson<QuestionPaperSlotUpsertResponse>(
+    `/examinations/${examId}/question-paper-control/my-center/slot`,
+    {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    },
+  );
 }

@@ -427,3 +427,51 @@ class ScriptEnvelope(Base):
         CheckConstraint("envelope_number >= 1", name="ck_script_envelope_number"),
         CheckConstraint("booklet_count >= 0", name="ck_script_envelope_booklet_count"),
     )
+
+
+class QuestionPaperControl(Base):
+    """Per examination centre (host school), subject, paper, and series: question paper stock counts."""
+
+    __tablename__ = "question_paper_control"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    examination_id = Column(Integer, ForeignKey("examinations.id", ondelete="CASCADE"), nullable=False, index=True)
+    center_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("schools.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+        doc="Examination centre host school id (schools.writes_at_center_id IS NULL).",
+    )
+    subject_id = Column(Integer, ForeignKey("subjects.id", ondelete="RESTRICT"), nullable=False, index=True)
+    paper_number = Column(SmallInteger, nullable=False)
+    series_number = Column(SmallInteger, nullable=False)
+    copies_received = Column(Integer, nullable=False, default=0)
+    copies_used = Column(Integer, nullable=False, default=0)
+    copies_to_library = Column(Integer, nullable=False, default=0)
+    copies_remaining = Column(Integer, nullable=False, default=0)
+    updated_by_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True, index=True)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+
+    examination = relationship("Examination", backref="question_paper_controls")
+    center = relationship("School", foreign_keys=[center_id], backref="question_paper_controls")
+    subject = relationship("Subject", backref="question_paper_controls")
+    updated_by = relationship("User", foreign_keys=[updated_by_id])
+
+    __table_args__ = (
+        UniqueConstraint(
+            "examination_id",
+            "center_id",
+            "subject_id",
+            "paper_number",
+            "series_number",
+            name="uq_question_paper_control_exam_center_subject_paper_series",
+        ),
+        CheckConstraint("series_number >= 1 AND series_number <= 32767", name="ck_question_paper_control_series"),
+        CheckConstraint("paper_number >= 1", name="ck_question_paper_control_paper"),
+        CheckConstraint("copies_received >= 0", name="ck_question_paper_control_received"),
+        CheckConstraint("copies_used >= 0", name="ck_question_paper_control_used"),
+        CheckConstraint("copies_to_library >= 0", name="ck_question_paper_control_library"),
+        CheckConstraint("copies_remaining >= 0", name="ck_question_paper_control_remaining"),
+    )

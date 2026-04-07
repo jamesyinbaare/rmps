@@ -78,6 +78,8 @@ export function DashboardShell({ title, children, staffRole }: Props) {
   const roleLabel = staffRole === "supervisor" ? "Supervisor" : "Inspector";
 
   const scriptsHref = `${staffBase}/scripts-control`;
+  const questionPaperHref = `${staffBase}/question-paper-control`;
+  const supervisorNoticeHref = `${staffBase}/supervisor-notice`;
 
   const staffNav = [
     { href: staffBase, label: "Overview", active: pathname === staffBase },
@@ -92,6 +94,20 @@ export function DashboardShell({ title, children, staffRole }: Props) {
             href: scriptsHref,
             label: "Scripts control",
             active: pathname.startsWith(scriptsHref),
+          },
+          {
+            href: questionPaperHref,
+            label: "Question paper control",
+            active: pathname.startsWith(questionPaperHref),
+          },
+        ]
+      : []),
+    ...(staffRole === "supervisor"
+      ? [
+          {
+            href: supervisorNoticeHref,
+            label: "Supervisor notice",
+            active: pathname.startsWith(supervisorNoticeHref),
           },
         ]
       : []),

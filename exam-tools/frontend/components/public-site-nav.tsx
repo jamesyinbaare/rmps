@@ -1,11 +1,12 @@
 "use client";
 
+import Image from "next/image";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
 
 const inputFocusRing =
-  "focus:border-primary focus:outline-none focus:ring-2 focus:ring-ring/30";
+  "focus:outline-none focus:ring-2 focus:ring-ring/30 focus:ring-offset-2 focus:ring-offset-background";
 
 const examinationsLinks = [
   { href: "/login/inspector", label: "Inspector" },
@@ -57,13 +58,30 @@ export function PublicSiteNav() {
     }`;
 
   return (
-    <header className="sticky top-0 z-50 border-b border-border bg-card/95 backdrop-blur">
-      <div className="mx-auto flex max-w-6xl items-center justify-between gap-3 px-4 py-3 sm:px-6">
+    <header className="sticky top-0 z-50 border-b border-border/80 bg-background/95 backdrop-blur supports-backdrop-filter:bg-background/90">
+      <div className="mx-auto flex max-w-6xl items-center justify-between gap-2 px-4 py-2.5 sm:px-6">
         <Link
           href="/"
-          className={`min-w-0 shrink text-base font-semibold tracking-tight text-primary sm:text-lg ${inputFocusRing} rounded-md`}
+          className={`inline-flex min-w-0 shrink items-center gap-2.5 rounded-lg px-1 py-1 ${inputFocusRing}`}
         >
-          Exam tools
+          <span className="relative h-8 w-8 overflow-hidden rounded-md border border-border/80 bg-card sm:h-9 sm:w-9">
+            <Image
+              src="/logo-crest-only.png"
+              alt="CTVET crest"
+              fill
+              sizes="(min-width: 640px) 36px, 32px"
+              className="object-cover"
+              priority
+            />
+          </span>
+          <span className="min-w-0">
+            <span className="block truncate text-xs font-semibold uppercase tracking-[0.18em] text-primary sm:text-sm">
+              CTVET
+            </span>
+            <span className="block truncate text-xs text-muted-foreground">
+              Examination Portal
+            </span>
+          </span>
         </Link>
 
         <nav className="hidden items-center gap-1 lg:flex" aria-label="Main">
@@ -96,7 +114,7 @@ export function PublicSiteNav() {
               <div
                 id="examinations-menu-desktop"
                 role="menu"
-                className="absolute left-0 top-full z-100 mt-1 min-w-48 rounded-md border border-border bg-card py-1 shadow-lg"
+                className="absolute left-0 top-full z-100 mt-2 min-w-48 rounded-lg border border-border bg-card p-1 shadow-lg"
               >
                 {examinationsLinks.map(({ href, label }) => (
                   <Link
@@ -113,6 +131,15 @@ export function PublicSiteNav() {
             ) : null}
           </div>
         </nav>
+
+        <div className="hidden items-center gap-2 lg:flex">
+          <Link
+            href="/login/admin"
+            className={`rounded-md px-2.5 py-1.5 text-sm font-medium text-muted-foreground transition-colors hover:text-foreground ${inputFocusRing}`}
+          >
+            Admin
+          </Link>
+        </div>
 
         <button
           type="button"
@@ -138,7 +165,7 @@ export function PublicSiteNav() {
           />
           <div
             id="public-mobile-nav"
-            className="relative z-50 border-t border-border bg-card px-4 py-4 lg:hidden"
+            className="relative z-50 border-t border-border bg-card px-4 py-4 shadow-lg lg:hidden"
           >
             <nav className="flex flex-col gap-1" aria-label="Mobile main">
               <Link
@@ -172,6 +199,15 @@ export function PublicSiteNav() {
                   </Link>
                 );
               })}
+              <div className="mt-2 border-t border-border pt-2">
+                <Link
+                  href="/login/admin"
+                  className={`block rounded-lg px-3 py-2.5 text-sm font-medium text-card-foreground hover:bg-muted ${inputFocusRing}`}
+                  onClick={() => setMobileOpen(false)}
+                >
+                  System administrator
+                </Link>
+              </div>
             </nav>
           </div>
         </>

@@ -171,6 +171,19 @@ class MyCenterSchoolsResponse(BaseModel):
     schools: list[CenterScopeSchoolItem]
 
 
+class CentreScopeProgrammeItem(BaseModel):
+    """Programme linked to the centre (or selected school) with subject count from programme_subjects."""
+
+    id: int
+    code: str
+    name: str
+    subject_count: int = Field(ge=0, description="Subjects associated with this programme.")
+
+
+class MyCenterProgrammesResponse(BaseModel):
+    programmes: list[CentreScopeProgrammeItem]
+
+
 class StaffCentreOverviewUpcomingItem(BaseModel):
     """Single timetable slot (subject + paper) for dashboard preview."""
 
@@ -192,8 +205,35 @@ class StaffCentreOverviewResponse(BaseModel):
     school_count: int = Field(ge=0, description="Schools in the examination centre (host plus schools that write there).")
     upcoming: list[StaffCentreOverviewUpcomingItem] = Field(
         default_factory=list,
-        description="Next sessions from the centre timetable (candidate-linked subjects), up to three.",
+        description="Future sessions from the centre timetable (candidate-linked subjects), sorted by date and time.",
     )
+    sessions_today: list[StaffCentreOverviewUpcomingItem] = Field(
+        default_factory=list,
+        description="All sessions on today's calendar date in the centre timezone (including papers that already started).",
+    )
+
+
+class StaffCentreDaySummarySlotRow(BaseModel):
+    subject_code: str
+    subject_name: str
+    papers_label: str = Field(description='Paper number(s), e.g. "1" or "1 & 2" when merged same day.')
+    times_label: str = Field(description='Start time(s), e.g. "09:00" or "09:00 · 14:00" when times differ.')
+    counts_by_school: list[int] = Field(
+        default_factory=list,
+        description="Per-school counts in the same order as `schools` on the response (after excluding schools with no candidates that day).",
+    )
+    row_total: int = Field(ge=0)
+
+
+class StaffCentreDaySummaryResponse(BaseModel):
+    examination_date: date
+    schools: list[CenterScopeSchoolItem] = Field(
+        default_factory=list,
+        description="Schools with at least one candidate on this day, in centre order; drives pivoted table rows.",
+    )
+    slots: list[StaffCentreDaySummarySlotRow] = Field(default_factory=list)
+    unique_candidates: int = Field(ge=0)
+    invigilators_required: int = Field(ge=0, description="ceil(unique_candidates / 30); 0 if no candidates.")
 
 
 class ExaminationScriptSeriesConfigRow(BaseModel):

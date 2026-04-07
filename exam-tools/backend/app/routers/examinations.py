@@ -1,7 +1,9 @@
 """Examination and schedule CRUD; timetable download (admin + school-scoped)."""
 
 import logging
-from datetime import datetime
+import math
+from collections import defaultdict
+from datetime import date, datetime, time
 from uuid import UUID
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
@@ -9,6 +11,7 @@ from fastapi import APIRouter, File, HTTPException, Query, Response, UploadFile,
 from fastapi.responses import StreamingResponse
 from sqlalchemy import delete, func, or_, select
 from sqlalchemy.exc import IntegrityError
+from sqlalchemy.orm import selectinload
 
 from app.config import settings
 from app.dependencies.auth import SuperAdminDep, SupervisorOrInspectorDep
@@ -24,6 +27,7 @@ from app.models import (
     Subject,
     User,
     UserRole,
+    programme_subjects,
     school_programmes,
 )
 from app.schemas.examination import (
@@ -39,7 +43,11 @@ from app.schemas.examination import (
     ExaminationScriptSeriesConfigResponse,
     ExaminationScriptSeriesConfigRow,
     ExaminationUpdate,
+    CentreScopeProgrammeItem,
+    MyCenterProgrammesResponse,
     MyCenterSchoolsResponse,
+    StaffCentreDaySummaryResponse,
+    StaffCentreDaySummarySlotRow,
     StaffCentreOverviewResponse,
     StaffCentreOverviewUpcomingItem,
     TimetableEntry,
@@ -153,6 +161,64 @@ async def list_my_center_schools_for_timetable(
     return MyCenterSchoolsResponse(
         center_school_id=center_host.id,
         schools=[CenterScopeSchoolItem(id=s.id, code=s.code, name=s.name) for s in ordered],
+    )
+
+
+@router.get("/timetable/my-center-programmes", response_model=MyCenterProgrammesResponse)
+async def list_my_center_programmes_for_timetable(
+    session: DBSessionDep,
+    user: SupervisorOrInspectorDep,
+    school_id: UUID | None = Query(
+        default=None,
+        description="If set, only programmes linked to this school (must be in your centre scope).",
+    ),
+) -> MyCenterProgrammesResponse:
+    """Programmes offered at the centre (or one school), with subject counts for timetable filtering."""
+    user_school = await _school_from_user(session, user)
+    try:
+        center_host = await resolve_center_host_school(session, user_school)
+    except ValueError as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e)) from None
+    scope_ids = await center_scope_school_ids(session, center_host)
+    if school_id is not None:
+        if school_id not in scope_ids:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="School is not in your examination centre scope",
+            )
+
+    if school_id is not None:
+        sp_cond = school_programmes.c.school_id == school_id
+    else:
+        sp_cond = school_programmes.c.school_id.in_(scope_ids)
+
+    prog_ids_subq = select(school_programmes.c.programme_id).where(sp_cond).distinct().subquery()
+
+    stmt = (
+        select(
+            Programme.id,
+            Programme.code,
+            Programme.name,
+            func.count(programme_subjects.c.subject_id).label("subject_count"),
+        )
+        .select_from(Programme)
+        .join(prog_ids_subq, prog_ids_subq.c.programme_id == Programme.id)
+        .outerjoin(programme_subjects, programme_subjects.c.programme_id == Programme.id)
+        .group_by(Programme.id, Programme.code, Programme.name)
+        .order_by(Programme.code)
+    )
+    result = await session.execute(stmt)
+    rows = result.all()
+    return MyCenterProgrammesResponse(
+        programmes=[
+            CentreScopeProgrammeItem(
+                id=r.id,
+                code=r.code,
+                name=r.name,
+                subject_count=int(r.subject_count or 0),
+            )
+            for r in rows
+        ],
     )
 
 
@@ -777,6 +843,63 @@ async def _validate_programme_in_scope(
         )
 
 
+async def _staff_center_filtered_timetable_entries(
+    session: DBSessionDep,
+    exam_id: int,
+    scope_ids: set[UUID],
+) -> list[TimetableEntry]:
+    """Timetable entries for the centre scope (candidate-linked subjects ∩ schedules), same filter as overview PDFs."""
+    explicit_codes = await get_candidate_schedule_codes_for_exam(
+        session,
+        exam_id,
+        scope_ids,
+        programme_id=None,
+        filter_school_id=None,
+    )
+    all_schedules = await load_schedules_for_exam(session, exam_id)
+    schedule_codes = {s.subject_code for s in all_schedules}
+    intersected = explicit_codes & schedule_codes
+    filtered_codes = await filter_schedule_codes_by_subject_type(
+        session,
+        intersected,
+        TimetableDownloadFilter.ALL,
+    )
+    filtered = [s for s in all_schedules if s.subject_code in filtered_codes]
+    return schedules_to_entries(filtered)
+
+
+def _candidate_subject_matches_slot(
+    subject_code: str,
+    paper: int,
+    cand_subject_rows: list[tuple[str, int | None]],
+) -> bool:
+    code_norm = str(subject_code).strip()
+    for scode, series in cand_subject_rows:
+        if str(scode).strip() != code_norm:
+            continue
+        if series is None or series == paper:
+            return True
+    return False
+
+
+def _subject_day_group_key(subject_code: str) -> str:
+    return str(subject_code).strip()
+
+
+def _format_time_hhmm(t: time) -> str:
+    return f"{t.hour:02d}:{t.minute:02d}"
+
+
+def _candidate_matches_any_entry_in_group(
+    cand_subject_rows: list[tuple[str, int | None]],
+    group_entries: list[TimetableEntry],
+) -> bool:
+    for ent in group_entries:
+        if _candidate_subject_matches_slot(ent.subject_code, ent.paper, cand_subject_rows):
+            return True
+    return False
+
+
 @router.get("/{exam_id}/timetable/my-school/pdf")
 async def download_my_school_timetable_pdf(
     exam_id: int,
@@ -896,21 +1019,7 @@ async def get_my_center_overview(
     )
     candidate_count = int((await session.execute(cand_stmt)).scalar_one())
 
-    explicit_codes = await get_candidate_schedule_codes_for_exam(
-        session,
-        exam_id,
-        scope_ids,
-        programme_id=None,
-        filter_school_id=None,
-    )
-    all_schedules = await load_schedules_for_exam(session, exam_id)
-    schedule_codes = {s.subject_code for s in all_schedules}
-    intersected = explicit_codes & schedule_codes
-    filtered_codes = await filter_schedule_codes_by_subject_type(
-        session, intersected, TimetableDownloadFilter.ALL,
-    )
-    filtered = [s for s in all_schedules if s.subject_code in filtered_codes]
-    entries = schedules_to_entries(filtered)
+    entries = await _staff_center_filtered_timetable_entries(session, exam_id, scope_ids)
 
     try:
         tz = ZoneInfo(settings.script_packing_timezone)
@@ -926,7 +1035,12 @@ async def get_my_center_overview(
     upcoming_rows.sort(
         key=lambda x: (x.examination_date, x.examination_time, x.subject_code, x.paper),
     )
-    upcoming_rows = upcoming_rows[:3]
+
+    today_date = now.date()
+    today_rows = [ent for ent in entries if ent.examination_date == today_date]
+    today_rows.sort(
+        key=lambda x: (x.examination_time, x.subject_code, x.paper),
+    )
 
     return StaffCentreOverviewResponse(
         examination_id=exam.id,
@@ -945,4 +1059,134 @@ async def get_my_center_overview(
             )
             for x in upcoming_rows
         ],
+        sessions_today=[
+            StaffCentreOverviewUpcomingItem(
+                subject_code=x.subject_code,
+                subject_name=x.subject_name,
+                paper=x.paper,
+                examination_date=x.examination_date,
+                examination_time=x.examination_time,
+            )
+            for x in today_rows
+        ],
+    )
+
+
+@router.get("/{exam_id}/my-center-day-summary", response_model=StaffCentreDaySummaryResponse)
+async def get_my_center_day_summary(
+    exam_id: int,
+    examination_date: date,
+    session: DBSessionDep,
+    user: SupervisorOrInspectorDep,
+) -> StaffCentreDaySummaryResponse:
+    """Per-day candidate counts by slot and school; invigilators from unique candidates."""
+    user_school = await _school_from_user(session, user)
+    try:
+        await load_examination_or_raise(session, exam_id)
+    except ValueError:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Examination not found") from None
+
+    scope_ids, _ = await _staff_scope_and_display_school(session, user_school, None)
+
+    center_host = await resolve_center_host_school(session, user_school)
+    ordered_schools = await schools_in_center_scope_ordered(session, center_host)
+    school_index = {s.id: i for i, s in enumerate(ordered_schools)}
+
+    entries = await _staff_center_filtered_timetable_entries(session, exam_id, scope_ids)
+    day_entries = [e for e in entries if e.examination_date == examination_date]
+    day_entries.sort(key=lambda x: (x.examination_time, x.subject_code, x.paper))
+
+    by_subject: dict[str, list[TimetableEntry]] = defaultdict(list)
+    for ent in day_entries:
+        by_subject[_subject_day_group_key(ent.subject_code)].append(ent)
+    merged_groups: list[list[TimetableEntry]] = []
+    for _key, group in by_subject.items():
+        group.sort(key=lambda x: (x.examination_time, x.paper))
+        merged_groups.append(group)
+    merged_groups.sort(
+        key=lambda g: (min(e.examination_time for e in g), g[0].subject_code),
+    )
+
+    cand_stmt = (
+        select(ExaminationCandidate)
+        .where(
+            ExaminationCandidate.examination_id == exam_id,
+            ExaminationCandidate.school_id.in_(scope_ids),
+            ExaminationCandidate.school_id.isnot(None),
+        )
+        .options(selectinload(ExaminationCandidate.subject_selections))
+    )
+    cand_result = await session.execute(cand_stmt)
+    candidates = list(cand_result.scalars().unique().all())
+
+    slot_rows: list[StaffCentreDaySummarySlotRow] = []
+    unique_ids: set[int] = set()
+    n_sch = len(ordered_schools)
+
+    for group in merged_groups:
+        first = group[0]
+        papers_sorted = sorted({e.paper for e in group})
+        papers_label = " & ".join(str(p) for p in papers_sorted)
+        times_sorted = sorted({e.examination_time for e in group})
+        times_label = " · ".join(_format_time_hhmm(t) for t in times_sorted)
+
+        counts_by_school = [0] * n_sch
+        row_total = 0
+
+        for cand in candidates:
+            subj_rows = [
+                (s.subject_code, s.series) for s in (cand.subject_selections or []) if s.subject_code
+            ]
+            if not _candidate_matches_any_entry_in_group(subj_rows, group):
+                continue
+            unique_ids.add(cand.id)
+            row_total += 1
+            if cand.school_id is not None:
+                idx = school_index.get(cand.school_id)
+                if idx is not None:
+                    counts_by_school[idx] += 1
+
+        slot_rows.append(
+            StaffCentreDaySummarySlotRow(
+                subject_code=first.subject_code,
+                subject_name=first.subject_name,
+                papers_label=papers_label,
+                times_label=times_label,
+                counts_by_school=counts_by_school,
+                row_total=row_total,
+            )
+        )
+
+    schools_for_response: list[CenterScopeSchoolItem] = []
+    if n_sch and slot_rows:
+        school_day_totals = [0] * n_sch
+        for slot in slot_rows:
+            for i, c in enumerate(slot.counts_by_school):
+                school_day_totals[i] += c
+        keep_idx = [i for i, t in enumerate(school_day_totals) if t > 0]
+        filtered_ordered = [ordered_schools[i] for i in keep_idx]
+        schools_for_response = [
+            CenterScopeSchoolItem(id=s.id, code=s.code, name=s.name) for s in filtered_ordered
+        ]
+        slot_rows = [
+            StaffCentreDaySummarySlotRow(
+                subject_code=s.subject_code,
+                subject_name=s.subject_name,
+                papers_label=s.papers_label,
+                times_label=s.times_label,
+                counts_by_school=[s.counts_by_school[i] for i in keep_idx],
+                row_total=s.row_total,
+            )
+            for s in slot_rows
+        ]
+
+    unique_n = len(unique_ids)
+    invigilators = math.ceil(unique_n / 30) if unique_n else 0
+
+    return StaffCentreDaySummaryResponse(
+        examination_date=examination_date,
+        schools=schools_for_response,
+        slots=slot_rows,
+        unique_candidates=unique_n,
+        invigilators_required=invigilators,
     )

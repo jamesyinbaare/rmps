@@ -5,7 +5,9 @@ import { useCallback, useEffect, useState } from "react";
 import {
   apiJson,
   downloadApiFile,
+  getMyCenterProgrammes,
   timetableDownloadQuery,
+  type CentreScopeProgrammeItem,
   type Examination,
   type MyCenterSchoolsResponse,
   type TimetableDownloadFilter,
@@ -31,6 +33,10 @@ export function StaffTimetablePanel() {
   const [loadingExams, setLoadingExams] = useState(true);
   const [error, setError] = useState("");
   const [previewLoading, setPreviewLoading] = useState(false);
+  const [programmesLoading, setProgrammesLoading] = useState(false);
+  const [programmes, setProgrammes] = useState<CentreScopeProgrammeItem[]>([]);
+
+  const filterSchoolIdTrimmed = filterSchoolId.trim();
 
   const loadExams = useCallback(async () => {
     setLoadingExams(true);
@@ -58,9 +64,32 @@ export function StaffTimetablePanel() {
     void loadExams();
   }, [loadExams]);
 
+  const loadProgrammes = useCallback(async () => {
+    setProgrammesLoading(true);
+    try {
+      const data = await getMyCenterProgrammes(
+        filterSchoolIdTrimmed !== "" ? filterSchoolIdTrimmed : null,
+      );
+      setProgrammes(data.programmes);
+    } catch {
+      setProgrammes([]);
+    } finally {
+      setProgrammesLoading(false);
+    }
+  }, [filterSchoolIdTrimmed]);
+
+  useEffect(() => {
+    void loadProgrammes();
+  }, [loadProgrammes]);
+
+  useEffect(() => {
+    if (programmeId === "") return;
+    const ok = programmes.some((p) => String(p.id) === programmeId);
+    if (!ok) setProgrammeId("");
+  }, [programmes, programmeId]);
+
   const programmeIdNum =
     programmeId.trim() === "" ? null : parseInt(programmeId.trim(), 10);
-  const filterSchoolIdTrimmed = filterSchoolId.trim();
   const qs = timetableDownloadQuery({
     subject_filter: subjectFilter,
     programme_id:
@@ -109,9 +138,8 @@ export function StaffTimetablePanel() {
     <div className="rounded-2xl border border-border bg-card p-4 sm:p-6">
       <h2 className="text-lg font-semibold text-card-foreground">Examination timetable</h2>
       <p className="mt-1 text-sm text-muted-foreground">
-        Rows are built from registered candidates in your examination centre (the centre host and every school
-        that writes there). Use the optional school filter to limit to one school. If no candidates are
-        registered for this examination yet, the timetable is empty.
+        The schedules are generated from registered candidates in your examination centre (the centre host and every school
+        that writes there). Optionally pick a school, programme or subject type (core or elective) to generate the timetable. If there are no candidates registered for the selected options, the timetable is empty.
       </p>
 
       {error ? (
@@ -172,35 +200,50 @@ export function StaffTimetablePanel() {
               </select>
             </div>
           ) : null}
-          <div className="grid gap-4 sm:grid-cols-2">
-            <div>
-              <label className={formLabelClass} htmlFor="staff-subf">
-                Subject filter
-              </label>
-              <select
-                id="staff-subf"
-                className={formInputClass}
-                value={subjectFilter}
-                onChange={(e) => setSubjectFilter(e.target.value as TimetableDownloadFilter)}
-              >
-                <option value="ALL">All subjects</option>
-                <option value="CORE_ONLY">Core only</option>
-                <option value="ELECTIVE_ONLY">Elective only</option>
-              </select>
-            </div>
-            <div>
-              <label className={formLabelClass} htmlFor="staff-pid">
-                Programme ID (optional)
-              </label>
-              <input
-                id="staff-pid"
-                type="number"
-                className={formInputClass}
-                value={programmeId}
-                onChange={(e) => setProgrammeId(e.target.value)}
-                placeholder="Filter to one programme"
-              />
-            </div>
+          <div>
+            <label className={formLabelClass} htmlFor="staff-programme">
+              Programme (optional)
+            </label>
+            <select
+              id="staff-programme"
+              className={formInputClass}
+              value={programmeId}
+              disabled={programmesLoading}
+              onChange={(e) => {
+                setProgrammeId(e.target.value);
+                setPreview(null);
+              }}
+            >
+              <option value="">All programmes at {filterSchoolIdTrimmed ? "this school" : "the centre"}</option>
+              {programmes.map((p) => (
+                <option key={p.id} value={String(p.id)}>
+                  {p.code} — {p.name} ({p.subject_count} subject{p.subject_count === 1 ? "" : "s"})
+                </option>
+              ))}
+            </select>
+            {programmesLoading ? (
+              <p className="mt-1 text-xs text-muted-foreground">Loading programmes…</p>
+            ) : programmes.length === 0 ? (
+              <p className="mt-1 text-xs text-muted-foreground">
+                No programmes linked to schools in your centre scope. Ask an administrator to attach programmes to
+                schools.
+              </p>
+            ) : null}
+          </div>
+          <div>
+            <label className={formLabelClass} htmlFor="staff-subf">
+              Subject filter
+            </label>
+            <select
+              id="staff-subf"
+              className={formInputClass}
+              value={subjectFilter}
+              onChange={(e) => setSubjectFilter(e.target.value as TimetableDownloadFilter)}
+            >
+              <option value="ALL">All subjects</option>
+              <option value="CORE_ONLY">Core only</option>
+              <option value="ELECTIVE_ONLY">Elective only</option>
+            </select>
           </div>
           <fieldset className="space-y-3 border-0 p-0">
             <legend className={formLabelClass}>PDF layout</legend>
@@ -298,8 +341,7 @@ export function StaffTimetablePanel() {
           ) : null}
           {preview && preview.entries.length === 0 ? (
             <p className="text-sm text-muted-foreground">
-              No timetable rows for candidates in scope (or their subject codes do not match this
-              examination&apos;s schedule).
+              No timetable for candidates at this centre.
             </p>
           ) : null}
         </div>

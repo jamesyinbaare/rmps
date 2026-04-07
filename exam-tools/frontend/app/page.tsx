@@ -4,71 +4,87 @@ import { PublicSiteNav } from "@/components/public-site-nav";
 
 export default function HomePage() {
   return (
-    <div className="flex min-h-screen flex-col bg-background">
+    <div className="relative flex min-h-screen flex-col bg-background">
+      <div
+        aria-hidden
+        className="pointer-events-none absolute inset-x-0 top-0 -z-10 h-[420px] bg-[radial-gradient(circle_at_top,color-mix(in_oklab,var(--primary)_16%,transparent)_0%,transparent_62%)]"
+      />
       <PublicSiteNav />
-      <main className="mx-auto flex w-full max-w-lg flex-1 flex-col px-4 py-8 sm:max-w-2xl sm:px-6 sm:py-12">
-        <div className="mb-8 text-center sm:mb-12 sm:text-left">
-          <p className="text-sm font-medium uppercase tracking-wide text-muted-foreground">
-            Certificate examination resource management
-          </p>
-          <h1 className="mt-2 text-2xl font-semibold tracking-tight text-foreground sm:text-3xl">
-            Exam tools
-          </h1>
-          <p className="mt-3 max-w-xl text-base text-muted-foreground">
-            Sign in with your role to open your workspace.
-          </p>
-        </div>
+      <main className="mx-auto flex w-full max-w-6xl flex-1 flex-col px-4 py-6 sm:px-6 sm:py-10">
+        <section className="rounded-3xl border border-border/70 bg-card/75 p-6 shadow-sm backdrop-blur-sm sm:p-8">
+          <div>
+            <p className="inline-flex items-center rounded-full border border-border/80 bg-background/70 px-3 py-1 text-xs font-medium uppercase tracking-[0.12em] text-muted-foreground">
+              Official CTVET Access
+            </p>
 
-        <div className="flex flex-1 flex-col gap-4 sm:gap-6">
+            <h1 className="mt-3 text-3xl font-semibold tracking-tight text-foreground sm:text-4xl">
+              Certificate II Examinations Operations Portal
+            </h1>
+            <p className="mt-4 max-w-2xl text-base leading-7 text-muted-foreground sm:text-lg">
+              Coordinate centre-level examination activities through one secure
+              platform built for smooth delivery, oversight, and reporting.
+            </p>
+          </div>
+        </section>
+
+        <section className="mt-6 grid gap-4 sm:mt-8 sm:gap-5 lg:grid-cols-2">
           <Link
             href="/login/inspector"
-            className="flex min-h-[52px] flex-col justify-center rounded-2xl border border-border bg-card p-5 shadow-sm transition-colors hover:border-primary/40 hover:bg-muted/40 sm:min-h-0 sm:flex-row sm:items-center sm:justify-between sm:p-6"
+            className="group relative flex min-h-[148px] flex-col justify-between overflow-hidden rounded-2xl border border-border/80 bg-card p-5 shadow-sm transition-all duration-200 hover:-translate-y-1 hover:border-primary/40 hover:shadow-lg sm:p-6"
           >
+            <div
+              aria-hidden
+              className="pointer-events-none absolute inset-x-0 top-0 h-20 bg-[linear-gradient(180deg,color-mix(in_oklab,var(--primary)_10%,transparent)_0%,transparent_100%)] opacity-0 transition-opacity duration-200 group-hover:opacity-100"
+            />
             <div>
-              <span className="text-lg font-semibold text-card-foreground">
-                Inspector
-              </span>
-              <p className="mt-1 text-sm text-muted-foreground">
-                School code and phone number
+              <p className="text-lg font-semibold text-card-foreground">Inspector</p>
+              <p className="mt-2 text-sm leading-6 text-muted-foreground">
+                Access all centre resources with additional examination
+                monitoring and reporting tools.
               </p>
             </div>
             <span
-              className="mt-3 text-sm font-medium text-primary sm:mt-0"
+              className="mt-4 text-sm font-medium text-primary transition-transform duration-200 group-hover:translate-x-0.5"
               aria-hidden
             >
-              Sign in →
+              Continue to sign in →
             </span>
           </Link>
 
           <Link
             href="/login/supervisor"
-            className="flex min-h-[52px] flex-col justify-center rounded-2xl border border-border bg-card p-5 shadow-sm transition-colors hover:border-primary/40 hover:bg-muted/40 sm:min-h-0 sm:flex-row sm:items-center sm:justify-between sm:p-6"
+            className="group relative flex min-h-[148px] flex-col justify-between overflow-hidden rounded-2xl border border-border/80 bg-card p-5 shadow-sm transition-all duration-200 hover:-translate-y-1 hover:border-primary/40 hover:shadow-lg sm:p-6"
           >
+            <div
+              aria-hidden
+              className="pointer-events-none absolute inset-x-0 top-0 h-20 bg-[linear-gradient(180deg,color-mix(in_oklab,var(--primary)_10%,transparent)_0%,transparent_100%)] opacity-0 transition-opacity duration-200 group-hover:opacity-100"
+            />
             <div>
-              <span className="text-lg font-semibold text-card-foreground">
+              <p className="text-lg font-semibold text-card-foreground">
                 Supervisor
-              </span>
-              <p className="mt-1 text-sm text-muted-foreground">
-                School code and password
+              </p>
+              <p className="mt-2 text-sm leading-6 text-muted-foreground">
+                Access centre and school resources for the examination using
+                your assigned credentials.
               </p>
             </div>
             <span
-              className="mt-3 text-sm font-medium text-primary sm:mt-0"
+              className="mt-4 text-sm font-medium text-primary transition-transform duration-200 group-hover:translate-x-0.5"
               aria-hidden
             >
-              Sign in →
+              Continue to sign in →
             </span>
           </Link>
-        </div>
+        </section>
       </main>
 
-      <footer className="border-t border-border bg-card py-6">
+      <footer className="border-t border-border/80 bg-card/70 py-6 backdrop-blur-sm">
         <p className="px-4 text-center text-sm text-muted-foreground">
           <Link
             href="/login/admin"
             className="font-medium text-foreground underline-offset-4 hover:underline"
           >
-            System administrator
+            System administrator access
           </Link>
         </p>
       </footer>
