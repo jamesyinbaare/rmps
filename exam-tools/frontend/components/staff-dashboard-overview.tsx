@@ -1,20 +1,27 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useState, type ReactNode } from "react";
 
 import {
   apiJson,
   getStaffCentreDaySummary,
   getStaffCentreOverview,
+  getStaffDepotDaySummary,
+  getStaffDepotOverview,
   type Examination,
   type StaffCentreDaySummaryResponse,
   type StaffCentreOverviewResponse,
   type StaffCentreOverviewUpcomingItem,
+  type StaffDepotOverviewResponse,
 } from "@/lib/api";
 import { formInputClass, formLabelClass } from "@/lib/form-classes";
 
 const statCardClass =
   "rounded-2xl border border-border bg-card p-5 shadow-sm";
+
+/** Satellite schools: examination centre destination — visually distinct from plain stat cards. */
+const satelliteWritesCardClass =
+  "rounded-2xl border-2 border-primary/45 bg-linear-to-br from-primary/15 via-card to-accent/10 p-5 shadow-md ring-1 ring-primary/20";
 
 function formatExamLabel(ex: Examination): string {
   return `${ex.year}${ex.exam_series ? ` ${ex.exam_series}` : ""} — ${ex.exam_type}`;
@@ -108,11 +115,20 @@ function TodayAtCentrePanel({
   summary,
   summaryLoading,
   summaryError,
+  sessionScope = "centre",
+  hideSchoolNameBadges = false,
+  hideCandidateInvigilatorCards = false,
 }: {
   items: StaffCentreOverviewUpcomingItem[];
   summary: StaffCentreDaySummaryResponse | null;
   summaryLoading: boolean;
   summaryError: string | null;
+  /** Wording for the timetable subtitle (depot = schools in depot). */
+  sessionScope?: "centre" | "depot";
+  /** Depot keeper: omit school name chips above the table. */
+  hideSchoolNameBadges?: boolean;
+  /** Depot keeper: omit candidate / invigilator stat cards above the table. */
+  hideCandidateInvigilatorCards?: boolean;
 }) {
   if (items.length === 0) return null;
   const dayDate = parseLocalDateFromIso(items[0].examination_date);
@@ -140,7 +156,9 @@ function TodayAtCentrePanel({
             {weekdayFormatter.format(dayDate)} · {monthDayFormatter.format(dayDate)}
           </p>
           <p className="mt-1 max-w-xl text-sm font-semibold leading-snug text-primary-foreground/90">
-            {cardSlots.length} {sessionLabel} on the timetable for your centre today — breakdown and staffing below.
+            {cardSlots.length} {sessionLabel} on the timetable for{" "}
+            {sessionScope === "depot" ? "schools in your depot" : "your centre"} today —{" "}
+            {hideCandidateInvigilatorCards ? "breakdown below." : "breakdown and staffing below."}
           </p>
         </div>
       </div>
@@ -156,36 +174,41 @@ function TodayAtCentrePanel({
         ) : null}
         {!summaryLoading && !summaryError && summary ? (
           <>
-            {summary.schools.length > 0 ? (
-              <div className="mb-5">
-                <p className="text-[11px] font-bold uppercase tracking-wider text-muted-foreground">
-                  Schools writing today
+            {!hideSchoolNameBadges ? (
+              summary.schools.length > 0 ? (
+                <div className="mb-5">
+                  <p className="text-[11px] font-bold uppercase tracking-wider text-muted-foreground">
+                    Schools writing today
+                  </p>
+                  <ul className="mt-2 flex flex-wrap gap-2" aria-label="Schools with candidates today">
+                    {summary.schools.map((s) => (
+                      <li
+                        key={s.id}
+                        className="inline-flex max-w-full rounded-full border border-primary/25 bg-primary/10 px-3 py-1.5 text-sm font-bold text-foreground"
+                      >
+                        <span className="truncate" title={`${s.name} (${s.code})`}>
+                          {s.name}
+                        </span>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              ) : summary.slots.length > 0 ? (
+                <p className="mb-5 text-sm font-medium text-muted-foreground">
+                  No per-school breakdown yet — no registered candidates today for these papers.
                 </p>
-                <ul className="mt-2 flex flex-wrap gap-2" aria-label="Schools with candidates today">
-                  {summary.schools.map((s) => (
-                    <li
-                      key={s.id}
-                      className="inline-flex max-w-full rounded-full border border-primary/25 bg-primary/10 px-3 py-1.5 text-sm font-bold text-foreground"
-                    >
-                      <span className="truncate" title={`${s.name} (${s.code})`}>
-                        {s.name}
-                      </span>
-                    </li>
-                  ))}
-                </ul>
-              </div>
-            ) : summary.slots.length > 0 ? (
-              <p className="mb-5 text-sm font-medium text-muted-foreground">
-                No per-school breakdown yet — no registered candidates today for these papers.
-              </p>
+              ) : null
             ) : null}
-            <div className="border-t border-border pt-5">
+            <div className={hideSchoolNameBadges ? "" : "border-t border-border pt-5"}>
               <CentreDaySummaryTable
                 summary={summary}
                 embedded
-                statsFirst
-                statsProminent
-                sectionTitle="Candidates, invigilators & school counts"
+                statsFirst={!hideCandidateInvigilatorCards}
+                statsProminent={!hideCandidateInvigilatorCards}
+                hideTopStats={hideCandidateInvigilatorCards}
+                sectionTitle={
+                  hideCandidateInvigilatorCards ? "School counts by paper" : "Candidates, invigilators & school counts"
+                }
               />
             </div>
           </>
@@ -209,6 +232,7 @@ function CentreDaySummaryTable({
   statsProminent = false,
   sectionTitle = "Details",
   showHeading = true,
+  hideTopStats = false,
 }: {
   summary: StaffCentreDaySummaryResponse;
   /** No top border / default spacing; optional heading for use inside Today panel. */
@@ -220,6 +244,8 @@ function CentreDaySummaryTable({
   sectionTitle?: string;
   /** When false, no section heading above stats/table (e.g. Today panel supplies its own labels). */
   showHeading?: boolean;
+  /** Omit candidate / invigilator cards (table only). */
+  hideTopStats?: boolean;
 }) {
   const { schools, slots } = summary;
   const slotCount = slots.length;
@@ -355,7 +381,9 @@ function CentreDaySummaryTable({
           </h3>
         )
       ) : null}
-      {statsFirst ? (
+      {hideTopStats ? (
+        tableBlock
+      ) : statsFirst ? (
         <>
           {statsGrid}
           {tableBlock}
@@ -370,10 +398,38 @@ function CentreDaySummaryTable({
   );
 }
 
-export function StaffDashboardOverview() {
-  const [exams, setExams] = useState<Examination[]>([]);
-  const [examId, setExamId] = useState<number | null>(null);
-  const [overview, setOverview] = useState<StaffCentreOverviewResponse | null>(null);
+export type StaffDashboardControlledExam = {
+  exams: Examination[];
+  examId: number | null;
+  onExamIdChange: (id: number | null) => void;
+};
+
+export type StaffDashboardOverviewProps = {
+  variant?: "centre" | "depot";
+  /** Parent-owned examination list and selection (e.g. depot dashboard shared picker). */
+  controlledExam?: StaffDashboardControlledExam;
+  /**
+   * Depot dashboard: show only upcoming sessions until the user expands “Learn more”
+   * (candidate/school stats, today’s breakdown, optional footer e.g. scripts summary).
+   */
+  depotFrontPage?: boolean;
+  /** Rendered inside the expanded “Learn more” section (depot + depotFrontPage only). */
+  depotLearnMoreFooter?: ReactNode;
+};
+
+export function StaffDashboardOverview({
+  variant = "centre",
+  controlledExam,
+  depotFrontPage = false,
+  depotLearnMoreFooter,
+}: StaffDashboardOverviewProps = {}) {
+  const [internalExams, setInternalExams] = useState<Examination[]>([]);
+  const [internalExamId, setInternalExamId] = useState<number | null>(null);
+  const exams = controlledExam?.exams ?? internalExams;
+  const examId = controlledExam?.examId ?? internalExamId;
+  const setExamId = controlledExam?.onExamIdChange ?? setInternalExamId;
+
+  const [overview, setOverview] = useState<StaffCentreOverviewResponse | StaffDepotOverviewResponse | null>(null);
   const [overviewLoading, setOverviewLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [expandedDateKey, setExpandedDateKey] = useState<string | null>(null);
@@ -384,33 +440,39 @@ export function StaffDashboardOverview() {
   const [todaySummary, setTodaySummary] = useState<StaffCentreDaySummaryResponse | null>(null);
   const [todaySummaryLoading, setTodaySummaryLoading] = useState(false);
   const [todaySummaryError, setTodaySummaryError] = useState<string | null>(null);
+  const [depotLearnMoreOpen, setDepotLearnMoreOpen] = useState(false);
 
   const loadExams = useCallback(async () => {
+    if (controlledExam) return;
     setError(null);
     try {
       const list = await apiJson<Examination[]>("/examinations/public-list");
-      setExams(list);
-      setExamId((prev) => {
+      setInternalExams(list);
+      setInternalExamId((prev) => {
         if (prev != null && list.some((e) => e.id === prev)) return prev;
         return list.length ? list[0].id : null;
       });
     } catch (e) {
-      setExams([]);
-      setExamId(null);
+      setInternalExams([]);
+      setInternalExamId(null);
       setError(e instanceof Error ? e.message : "Could not load examinations");
     }
-  }, []);
+  }, [controlledExam]);
 
-  const loadOverview = useCallback(async (id: number) => {
-    setError(null);
-    try {
-      const data = await getStaffCentreOverview(id);
-      setOverview(data);
-    } catch (e) {
-      setOverview(null);
-      setError(e instanceof Error ? e.message : "Could not load overview");
-    }
-  }, []);
+  const loadOverview = useCallback(
+    async (id: number) => {
+      setError(null);
+      try {
+        const data =
+          variant === "depot" ? await getStaffDepotOverview(id) : await getStaffCentreOverview(id);
+        setOverview(data);
+      } catch (e) {
+        setOverview(null);
+        setError(e instanceof Error ? e.message : "Could not load overview");
+      }
+    },
+    [variant],
+  );
 
   useEffect(() => {
     void loadExams();
@@ -433,6 +495,7 @@ export function StaffDashboardOverview() {
     setTodaySummary(null);
     setTodaySummaryError(null);
     setShowAllUpcomingDates(false);
+    setDepotLearnMoreOpen(false);
   }, [examId]);
 
   const todayDateKey =
@@ -450,7 +513,11 @@ export function StaffDashboardOverview() {
     let cancelled = false;
     setTodaySummaryLoading(true);
     setTodaySummaryError(null);
-    void getStaffCentreDaySummary(examId, todayDateKey)
+    const fetchSummary =
+      variant === "depot"
+        ? getStaffDepotDaySummary(examId, todayDateKey)
+        : getStaffCentreDaySummary(examId, todayDateKey);
+    void fetchSummary
       .then((data) => {
         if (!cancelled) setTodaySummary(data);
       })
@@ -466,7 +533,7 @@ export function StaffDashboardOverview() {
     return () => {
       cancelled = true;
     };
-  }, [examId, todayDateKey]);
+  }, [examId, todayDateKey, variant]);
 
   useEffect(() => {
     if (examId == null || expandedDateKey == null) {
@@ -478,7 +545,11 @@ export function StaffDashboardOverview() {
     let cancelled = false;
     setDaySummaryLoading(true);
     setDaySummaryError(null);
-    void getStaffCentreDaySummary(examId, expandedDateKey)
+    const fetchExpanded =
+      variant === "depot"
+        ? getStaffDepotDaySummary(examId, expandedDateKey)
+        : getStaffCentreDaySummary(examId, expandedDateKey);
+    void fetchExpanded
       .then((data) => {
         if (!cancelled) setDaySummary(data);
       })
@@ -494,7 +565,7 @@ export function StaffDashboardOverview() {
     return () => {
       cancelled = true;
     };
-  }, [examId, expandedDateKey]);
+  }, [examId, expandedDateKey, variant]);
 
   const upcomingDateGroups =
     overview != null && overview.upcoming.length > 0 ? groupUpcomingByDate(overview.upcoming) : [];
@@ -503,27 +574,158 @@ export function StaffDashboardOverview() {
     : upcomingDateGroups.slice(0, UPCOMING_DATES_PREVIEW);
   const moreUpcomingDatesCount = Math.max(0, upcomingDateGroups.length - UPCOMING_DATES_PREVIEW);
 
-  return (
-    <div className="space-y-8">
+  const sessionScope = variant === "depot" ? "depot" : "centre";
+  const isDepotOverview = overview != null && "depot_code" in overview;
+  const depotCompact = Boolean(isDepotOverview && depotFrontPage);
+
+  const upcomingSection =
+    overview == null ? null : (
       <div>
-        <label htmlFor="overview-exam" className={formLabelClass}>
-          Examination
-        </label>
-        <select
-          id="overview-exam"
-          className={`mt-1 w-full max-w-md ${formInputClass}`}
-          value={examId ?? ""}
-          onChange={(e) => setExamId(e.target.value ? Number(e.target.value) : null)}
-          disabled={exams.length === 0}
-        >
-          {exams.length === 0 ? <option value="">No examinations</option> : null}
-          {exams.map((ex) => (
-            <option key={ex.id} value={ex.id}>
-              {formatExamLabel(ex)}
-            </option>
-          ))}
-        </select>
+        <h2 className="text-sm font-semibold text-card-foreground">Upcoming sessions</h2>
+        {overview.upcoming.length === 0 ? (
+          <div className={`mt-4 ${statCardClass}`}>
+            <p className="text-sm text-muted-foreground">
+              No upcoming sessions found for {sessionScope === "depot" ? "schools in your depot" : "your centre"}
+              —check the timetable or candidate registrations, or all papers may have already started.
+            </p>
+          </div>
+        ) : (
+          <>
+            <div className="mt-4 space-y-4">
+              {visibleUpcomingDateGroups.map((group) => {
+                const cardSlots = mergeUpcomingSlotsForMainCard(group.slots);
+                const sessionLabel = cardSlots.length === 1 ? "session" : "sessions";
+                return (
+                  <article
+                    key={group.dateKey}
+                    className="flex overflow-hidden rounded-2xl border border-border bg-card shadow-sm"
+                  >
+                    <div className="flex w-[min(42%,9.5rem)] shrink-0 flex-col justify-between bg-linear-to-br from-primary via-accent to-success px-4 py-5 text-primary-foreground sm:w-40">
+                      <time dateTime={group.dateKey} className="block">
+                        <span className="block text-3xl font-bold leading-none tracking-tight sm:text-4xl">
+                          {monthDayFormatter.format(group.date)}
+                        </span>
+                        <span className="mt-2 block text-sm font-medium text-primary-foreground/90">
+                          {weekdayFormatter.format(group.date)}
+                        </span>
+                      </time>
+                      <p className="text-xs text-primary-foreground/75">
+                        {cardSlots.length} {sessionLabel}
+                      </p>
+                    </div>
+                    <div className="min-w-0 flex-1 px-4 py-4 sm:px-5">
+                      <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Upcoming</p>
+                      <ul className="mt-3 space-y-3">
+                        {cardSlots.map((row, i) => (
+                          <li
+                            key={`${row.subject_code}-${row.papers.join("-")}-${row.timesLabel}-${i}`}
+                            className={`border-l-[3px] pl-3 ${sessionAccentBar[i % sessionAccentBar.length]}`}
+                          >
+                            <p className="font-medium leading-snug text-foreground">
+                              {row.subject_code} — {row.subject_name}
+                              {row.papersParenLabel != null ? (
+                                <span className="text-muted-foreground"> ({row.papersParenLabel})</span>
+                              ) : null}
+                            </p>
+                            <p className="mt-0.5 text-sm tabular-nums text-muted-foreground">
+                              {row.papersParenLabel != null ? (
+                                row.timesLabel
+                              ) : (
+                                <>
+                                  Paper {row.papers[0]} · {row.timesLabel}
+                                </>
+                              )}
+                            </p>
+                          </li>
+                        ))}
+                      </ul>
+                      <button
+                        type="button"
+                        className={summaryToggleClass}
+                        aria-expanded={expandedDateKey === group.dateKey}
+                        onClick={() =>
+                          setExpandedDateKey((prev) => (prev === group.dateKey ? null : group.dateKey))
+                        }
+                      >
+                        {expandedDateKey === group.dateKey ? "Hide details" : "Details"}
+                      </button>
+                      {expandedDateKey === group.dateKey ? (
+                        <>
+                          {daySummaryLoading ? (
+                            <p className="mt-4 text-sm text-muted-foreground">Loading day summary…</p>
+                          ) : null}
+                          {daySummaryError ? (
+                            <p className="mt-4 text-sm text-destructive" role="alert">
+                              {daySummaryError}
+                            </p>
+                          ) : null}
+                          {!daySummaryLoading &&
+                          !daySummaryError &&
+                          daySummary &&
+                          daySummary.examination_date === group.dateKey ? (
+                            <CentreDaySummaryTable summary={daySummary} />
+                          ) : null}
+                        </>
+                      ) : null}
+                    </div>
+                  </article>
+                );
+              })}
+            </div>
+            {moreUpcomingDatesCount > 0 ? (
+              <div className="mt-3">
+                <button
+                  type="button"
+                  className={`${summaryToggleClass} mt-0`}
+                  onClick={() => {
+                    if (showAllUpcomingDates) {
+                      setShowAllUpcomingDates(false);
+                      setExpandedDateKey((key) => {
+                        if (key == null) return null;
+                        const firstKeys = new Set(
+                          upcomingDateGroups.slice(0, UPCOMING_DATES_PREVIEW).map((g) => g.dateKey),
+                        );
+                        return firstKeys.has(key) ? key : null;
+                      });
+                    } else {
+                      setShowAllUpcomingDates(true);
+                    }
+                  }}
+                >
+                  {showAllUpcomingDates
+                    ? "Show fewer dates"
+                    : `View all · ${moreUpcomingDatesCount} more date${moreUpcomingDatesCount === 1 ? "" : "s"}`}
+                </button>
+              </div>
+            ) : null}
+          </>
+        )}
       </div>
+    );
+
+  return (
+    <div className={`${depotCompact ? "space-y-6" : "space-y-8"}`}>
+      {controlledExam ? null : (
+        <div>
+          <label htmlFor="overview-exam" className={formLabelClass}>
+            Examination
+          </label>
+          <select
+            id="overview-exam"
+            className={`mt-1 w-full max-w-md ${formInputClass}`}
+            value={examId ?? ""}
+            onChange={(e) => setExamId(e.target.value ? Number(e.target.value) : null)}
+            disabled={exams.length === 0}
+          >
+            {exams.length === 0 ? <option value="">No examinations</option> : null}
+            {exams.map((ex) => (
+              <option key={ex.id} value={ex.id}>
+                {formatExamLabel(ex)}
+              </option>
+            ))}
+          </select>
+        </div>
+      )}
 
       {error ? (
         <p className="rounded-lg border border-destructive/40 bg-destructive/10 px-3 py-2 text-sm text-destructive">
@@ -535,159 +737,142 @@ export function StaffDashboardOverview() {
 
       {!overviewLoading && overview ? (
         <>
-          <ul className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-            <li className={statCardClass}>
-              <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
-                Candidates at centre
-              </p>
-              <p className="mt-2 tabular-nums text-3xl font-semibold text-card-foreground">
-                {overview.candidate_count.toLocaleString()}
-              </p>
-              <p className="mt-2 text-sm text-muted-foreground">
-                Registered candidates at this centre.
-              </p>
-            </li>
-            <li className={statCardClass}>
-              <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Schools at centre</p>
-              <p className="mt-2 tabular-nums text-3xl font-semibold text-card-foreground">
-                {overview.school_count.toLocaleString()}
-              </p>
-              <p className="mt-2 text-sm text-muted-foreground">Schools that write at this centre.</p>
-            </li>
-          </ul>
-
-          <TodayAtCentrePanel
-            items={overview.sessions_today ?? []}
-            summary={todaySummary}
-            summaryLoading={todaySummaryLoading}
-            summaryError={todaySummaryError}
-          />
-
-          <div>
-            <h2 className="text-sm font-semibold text-card-foreground">Upcoming sessions</h2>
-            {overview.upcoming.length === 0 ? (
-              <div className={`mt-4 ${statCardClass}`}>
-                <p className="text-sm text-muted-foreground">
-                  No upcoming sessions found—check the timetable or candidate registrations, or all papers may have
-                  already started.
-                </p>
-              </div>
-            ) : (
-              <>
-                <div className="mt-4 space-y-4">
-                  {visibleUpcomingDateGroups.map((group) => {
-                    const cardSlots = mergeUpcomingSlotsForMainCard(group.slots);
-                    const sessionLabel = cardSlots.length === 1 ? "session" : "sessions";
-                    return (
-                      <article
-                        key={group.dateKey}
-                        className="flex overflow-hidden rounded-2xl border border-border bg-card shadow-sm"
-                      >
-                        <div
-                          className="flex w-[min(42%,9.5rem)] shrink-0 flex-col justify-between bg-linear-to-br from-primary via-accent to-success px-4 py-5 text-primary-foreground sm:w-40"
-                        >
-                          <time dateTime={group.dateKey} className="block">
-                            <span className="block text-3xl font-bold leading-none tracking-tight sm:text-4xl">
-                              {monthDayFormatter.format(group.date)}
-                            </span>
-                            <span className="mt-2 block text-sm font-medium text-primary-foreground/90">
-                              {weekdayFormatter.format(group.date)}
-                            </span>
-                          </time>
-                          <p className="text-xs text-primary-foreground/75">
-                            {cardSlots.length} {sessionLabel}
-                          </p>
-                        </div>
-                        <div className="min-w-0 flex-1 px-4 py-4 sm:px-5">
-                          <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
-                            Upcoming
-                          </p>
-                          <ul className="mt-3 space-y-3">
-                            {cardSlots.map((row, i) => (
-                              <li
-                                key={`${row.subject_code}-${row.papers.join("-")}-${row.timesLabel}-${i}`}
-                                className={`border-l-[3px] pl-3 ${sessionAccentBar[i % sessionAccentBar.length]}`}
-                              >
-                                <p className="font-medium leading-snug text-foreground">
-                                  {row.subject_code} — {row.subject_name}
-                                  {row.papersParenLabel != null ? (
-                                    <span className="text-muted-foreground"> ({row.papersParenLabel})</span>
-                                  ) : null}
-                                </p>
-                                <p className="mt-0.5 text-sm tabular-nums text-muted-foreground">
-                                  {row.papersParenLabel != null ? (
-                                    row.timesLabel
-                                  ) : (
-                                    <>
-                                      Paper {row.papers[0]} · {row.timesLabel}
-                                    </>
-                                  )}
-                                </p>
-                              </li>
-                            ))}
-                          </ul>
-                          <button
-                            type="button"
-                            className={summaryToggleClass}
-                            aria-expanded={expandedDateKey === group.dateKey}
-                            onClick={() =>
-                              setExpandedDateKey((prev) => (prev === group.dateKey ? null : group.dateKey))
-                            }
-                          >
-                            {expandedDateKey === group.dateKey ? "Hide details" : "Details"}
-                          </button>
-                          {expandedDateKey === group.dateKey ? (
-                            <>
-                              {daySummaryLoading ? (
-                                <p className="mt-4 text-sm text-muted-foreground">Loading day summary…</p>
-                              ) : null}
-                              {daySummaryError ? (
-                                <p className="mt-4 text-sm text-destructive" role="alert">
-                                  {daySummaryError}
-                                </p>
-                              ) : null}
-                              {!daySummaryLoading &&
-                              !daySummaryError &&
-                              daySummary &&
-                              daySummary.examination_date === group.dateKey ? (
-                                <CentreDaySummaryTable summary={daySummary} />
-                              ) : null}
-                            </>
-                          ) : null}
-                        </div>
-                      </article>
-                    );
-                  })}
-                </div>
-                {moreUpcomingDatesCount > 0 ? (
-                  <div className="mt-3">
-                    <button
-                      type="button"
-                      className={`${summaryToggleClass} mt-0`}
-                      onClick={() => {
-                        if (showAllUpcomingDates) {
-                          setShowAllUpcomingDates(false);
-                          setExpandedDateKey((key) => {
-                            if (key == null) return null;
-                            const firstKeys = new Set(
-                              upcomingDateGroups.slice(0, UPCOMING_DATES_PREVIEW).map((g) => g.dateKey),
-                            );
-                            return firstKeys.has(key) ? key : null;
-                          });
-                        } else {
-                          setShowAllUpcomingDates(true);
-                        }
-                      }}
-                    >
-                      {showAllUpcomingDates
-                        ? "Show fewer dates"
-                        : `View all · ${moreUpcomingDatesCount} more date${moreUpcomingDatesCount === 1 ? "" : "s"}`}
-                    </button>
+          {depotCompact ? (
+            <>
+              <TodayAtCentrePanel
+                items={overview.sessions_today ?? []}
+                summary={todaySummary}
+                summaryLoading={todaySummaryLoading}
+                summaryError={todaySummaryError}
+                sessionScope={sessionScope}
+                hideSchoolNameBadges
+                hideCandidateInvigilatorCards
+              />
+              {upcomingSection}
+              <div>
+                <button
+                  type="button"
+                  className={summaryToggleClass}
+                  aria-expanded={depotLearnMoreOpen}
+                  onClick={() => setDepotLearnMoreOpen((v) => !v)}
+                >
+                  {depotLearnMoreOpen ? "Show less" : "Learn more"}
+                </button>
+                {depotLearnMoreOpen ? (
+                  <div className="mt-6 space-y-8 border-t border-border pt-6">
+                    <p className="text-sm text-muted-foreground">
+                      Registration totals for your depot and script envelope summary.
+                    </p>
+                    <ul className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+                      <li className={statCardClass}>
+                        <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+                          Candidates in depot
+                        </p>
+                        <p className="mt-2 tabular-nums text-3xl font-semibold text-card-foreground">
+                          {overview.candidate_count.toLocaleString()}
+                        </p>
+                        <p className="mt-2 text-sm text-muted-foreground">
+                          Registered candidates at schools in your depot for this examination.
+                        </p>
+                      </li>
+                      <li className={statCardClass}>
+                        <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+                          Schools in depot
+                        </p>
+                        <p className="mt-2 tabular-nums text-3xl font-semibold text-card-foreground">
+                          {overview.school_count.toLocaleString()}
+                        </p>
+                        <p className="mt-2 text-sm text-muted-foreground">
+                          {"depot_name" in overview
+                            ? `Schools assigned to depot ${overview.depot_name} (${overview.depot_code}).`
+                            : "Schools assigned to your depot."}
+                        </p>
+                      </li>
+                    </ul>
+                    {depotLearnMoreFooter != null ? (
+                      <div className="space-y-3">{depotLearnMoreFooter}</div>
+                    ) : null}
                   </div>
                 ) : null}
-              </>
-            )}
-          </div>
+              </div>
+            </>
+          ) : (
+            <>
+              {isDepotOverview ? (
+                <ul className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+                  <li className={statCardClass}>
+                    <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+                      Candidates in depot
+                    </p>
+                    <p className="mt-2 tabular-nums text-3xl font-semibold text-card-foreground">
+                      {overview.candidate_count.toLocaleString()}
+                    </p>
+                    <p className="mt-2 text-sm text-muted-foreground">
+                      Registered candidates at schools in your depot for this examination.
+                    </p>
+                  </li>
+                  <li className={statCardClass}>
+                    <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Schools in depot</p>
+                    <p className="mt-2 tabular-nums text-3xl font-semibold text-card-foreground">
+                      {overview.school_count.toLocaleString()}
+                    </p>
+                    <p className="mt-2 text-sm text-muted-foreground">
+                      Schools assigned to depot {overview.depot_name} ({overview.depot_code}).
+                    </p>
+                  </li>
+                </ul>
+              ) : (
+                <ul className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+                  <li className={statCardClass}>
+                    <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+                      Candidates at centre
+                    </p>
+                    <p className="mt-2 tabular-nums text-3xl font-semibold text-card-foreground">
+                      {overview.candidate_count.toLocaleString()}
+                    </p>
+                    <p className="mt-2 text-sm text-muted-foreground">
+                      Registered candidates at this centre.
+                    </p>
+                  </li>
+                  {overview.supervisor_school_is_centre_host ? (
+                    <li className={statCardClass}>
+                      <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Schools at centre</p>
+                      <p className="mt-2 tabular-nums text-3xl font-semibold text-card-foreground">
+                        {overview.school_count.toLocaleString()}
+                      </p>
+                      <p className="mt-2 text-sm text-muted-foreground">Schools that write at this centre.</p>
+                    </li>
+                  ) : (
+                    <li className={satelliteWritesCardClass}>
+                      <p className="text-xs font-semibold uppercase tracking-wide text-primary">
+                        Where your school writes
+                      </p>
+                      <p className="mt-2 line-clamp-3 text-xl font-bold leading-snug text-foreground">
+                        {overview.examination_centre_host_name}
+                      </p>
+                      <p className="mt-2 text-sm text-foreground/85">
+                        Examination centre code{" "}
+                        <span className="font-mono font-semibold tabular-nums text-primary">
+                          {overview.examination_centre_host_code}
+                        </span>
+                        . Your candidates sit examinations at this centre.
+                      </p>
+                    </li>
+                  )}
+                </ul>
+              )}
+
+              <TodayAtCentrePanel
+                items={overview.sessions_today ?? []}
+                summary={todaySummary}
+                summaryLoading={todaySummaryLoading}
+                summaryError={todaySummaryError}
+                sessionScope={sessionScope}
+              />
+
+              {upcomingSection}
+            </>
+          )}
         </>
       ) : null}
     </div>

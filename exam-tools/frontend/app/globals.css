@@ -241,7 +241,7 @@
 }
 
 @media print {
-  .supervisor-notice-onepage {
+  .examination-notice-onepage {
     max-width: none !important;
     border: 0 !important;
     box-shadow: none !important;
@@ -252,22 +252,22 @@
     break-inside: avoid-page;
   }
 
-  .supervisor-notice-onepage h2 {
+  .examination-notice-onepage h2 {
     font-size: 18px;
     line-height: 1.2;
   }
 
-  .supervisor-notice-onepage h3 {
+  .examination-notice-onepage h3 {
     font-size: 12px;
     line-height: 1.2;
   }
 
-  .supervisor-notice-onepage ul {
+  .examination-notice-onepage ul {
     margin-top: 4px !important;
     margin-bottom: 4px !important;
   }
 
-  .supervisor-notice-onepage li {
+  .examination-notice-onepage li {
     margin-top: 2px !important;
     margin-bottom: 2px !important;
   }

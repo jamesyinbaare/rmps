@@ -73,6 +73,7 @@ class UserRole(enum.IntEnum):
     SUPER_ADMIN = 0
     SUPERVISOR = 10
     INSPECTOR = 20
+    DEPOT_KEEPER = 30
 
     def __lt__(self, other: "UserRole") -> bool:
         return self.value < other.value
@@ -92,6 +93,8 @@ class User(Base):
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     email = Column(String(255), unique=True, nullable=True, index=True)
+    # Login handle for depot keepers (unique when set).
+    username = Column(String(80), unique=True, nullable=True, index=True)
     school_code = Column(String(10), nullable=True, index=True)
     phone_number = Column(String(50), nullable=True, index=True)
     hashed_password = Column(String(255), nullable=True)
@@ -101,9 +104,16 @@ class User(Base):
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
     last_login = Column(DateTime, nullable=True)
+    depot_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("depots.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
 
     refresh_tokens = relationship("RefreshToken", back_populates="user", cascade="all, delete-orphan")
     uploaded_exam_documents = relationship("ExamDocument", back_populates="uploaded_by")
+    depot = relationship("Depot", back_populates="users")
 
 
 class RefreshToken(Base):
@@ -118,6 +128,21 @@ class RefreshToken(Base):
     last_used_at = Column(DateTime, nullable=True)
 
     user = relationship("User", back_populates="refresh_tokens")
+
+
+class Depot(Base):
+    """Physical depot grouping schools; depot keepers confirm script and question-paper control entries."""
+
+    __tablename__ = "depots"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    code = Column(String(32), unique=True, nullable=False, index=True)
+    name = Column(String(255), nullable=False)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+
+    schools = relationship("School", back_populates="depot")
+    users = relationship("User", back_populates="depot")
 
 
 class School(Base):
@@ -135,9 +160,16 @@ class School(Base):
         nullable=True,
         index=True,
     )
+    depot_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("depots.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
 
+    depot = relationship("Depot", back_populates="schools")
     writes_at_center = relationship(
         "School",
         remote_side=[id],
@@ -377,6 +409,8 @@ class ScriptPackingSeries(Base):
     paper_number = Column(SmallInteger, nullable=False)
     series_number = Column(SmallInteger, nullable=False)
     updated_by_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True, index=True)
+    verified_at = Column(DateTime, nullable=True)
+    verified_by_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True, index=True)
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
 
@@ -384,6 +418,7 @@ class ScriptPackingSeries(Base):
     school = relationship("School", backref="script_packing_series")
     subject = relationship("Subject", backref="script_packing_series")
     updated_by = relationship("User", foreign_keys=[updated_by_id])
+    verified_by = relationship("User", foreign_keys=[verified_by_id])
     envelopes = relationship(
         "ScriptEnvelope",
         back_populates="packing_series",
@@ -419,8 +454,11 @@ class ScriptEnvelope(Base):
     )
     envelope_number = Column(Integer, nullable=False)
     booklet_count = Column(Integer, nullable=False)
+    verified_at = Column(DateTime, nullable=True)
+    verified_by_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True, index=True)
 
     packing_series = relationship("ScriptPackingSeries", back_populates="envelopes")
+    verified_by = relationship("User", foreign_keys=[verified_by_id])
 
     __table_args__ = (
         UniqueConstraint("packing_series_id", "envelope_number", name="uq_script_envelope_series_number"),
@@ -451,6 +489,8 @@ class QuestionPaperControl(Base):
     copies_to_library = Column(Integer, nullable=False, default=0)
     copies_remaining = Column(Integer, nullable=False, default=0)
     updated_by_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True, index=True)
+    verified_at = Column(DateTime, nullable=True)
+    verified_by_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True, index=True)
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
 
@@ -458,6 +498,7 @@ class QuestionPaperControl(Base):
     center = relationship("School", foreign_keys=[center_id], backref="question_paper_controls")
     subject = relationship("Subject", backref="question_paper_controls")
     updated_by = relationship("User", foreign_keys=[updated_by_id])
+    verified_by = relationship("User", foreign_keys=[verified_by_id])
 
     __table_args__ = (
         UniqueConstraint(

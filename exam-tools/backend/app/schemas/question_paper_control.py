@@ -13,6 +13,10 @@ class QuestionPaperSeriesSlotResponse(BaseModel):
     copies_used: int = Field(ge=0)
     copies_to_library: int = Field(ge=0)
     copies_remaining: int = Field(ge=0)
+    verified: bool = Field(
+        default=False,
+        description="When true, depot keeper has confirmed this row; inspectors cannot edit it.",
+    )
 
 
 class QuestionPaperPaperSlotResponse(BaseModel):
@@ -46,6 +50,12 @@ class MyCenterQuestionPaperControlResponse(BaseModel):
     subjects: list[QuestionPaperSubjectRowResponse]
 
 
+class QuestionPaperSlotKeyRequest(BaseModel):
+    subject_id: int
+    paper_number: int = Field(ge=1)
+    series_number: int = Field(ge=1, le=32767)
+
+
 class QuestionPaperSlotUpsertRequest(BaseModel):
     subject_id: int
     paper_number: int = Field(ge=1)
@@ -75,6 +85,7 @@ class QuestionPaperSlotUpsertResponse(BaseModel):
     copies_used: int
     copies_to_library: int
     copies_remaining: int
+    verified: bool = False
 
 
 class QuestionPaperControlAdminRow(BaseModel):

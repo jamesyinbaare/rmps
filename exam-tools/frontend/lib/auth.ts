@@ -20,15 +20,22 @@ export function clearAuth(): void {
   localStorage.removeItem(TOKEN_KEY);
 }
 
-export type ApiRole = "SUPER_ADMIN" | "SUPERVISOR" | "INSPECTOR";
+export type ApiRole = "SUPER_ADMIN" | "SUPERVISOR" | "INSPECTOR" | "DEPOT_KEEPER";
 
 export type UserMe = {
   id: string;
   full_name: string;
   email: string | null;
   school_code: string | null;
+  /** Resolved from schools when ``school_code`` is set. */
+  school_name: string | null;
   phone_number: string | null;
+  /** Set for depot keeper accounts (sign-in username). */
+  username?: string | null;
   role: ApiRole;
+  depot_id?: string | null;
+  depot_code?: string | null;
+  depot_name?: string | null;
 };
 
 export type TokenResponse = {
@@ -43,6 +50,7 @@ function dashboardPathForLoginRole(role: TokenResponse["role"]): string {
   if (role === "SUPER_ADMIN" || role === 0) return "/dashboard/admin";
   if (role === "SUPERVISOR" || role === 10) return "/dashboard/supervisor";
   if (role === "INSPECTOR" || role === 20) return "/dashboard/inspector";
+  if (role === "DEPOT_KEEPER" || role === 30) return "/dashboard/depot-keeper";
   return "/";
 }
 
@@ -54,6 +62,8 @@ export function dashboardPathForRole(role: string): string {
       return "/dashboard/supervisor";
     case "INSPECTOR":
       return "/dashboard/inspector";
+    case "DEPOT_KEEPER":
+      return "/dashboard/depot-keeper";
     default:
       return "/";
   }
@@ -103,6 +113,18 @@ export async function loginSupervisor(
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ school_code, password }),
+  });
+  if (!res.ok) throw new Error(await parseErrorMessage(res));
+  const data = (await res.json()) as TokenResponse;
+  setStoredToken(data.access_token);
+  return dashboardPathForLoginRole(data.role);
+}
+
+export async function loginDepotKeeper(username: string, password: string): Promise<string> {
+  const res = await fetch(`${getApiBaseUrl()}/auth/depot-keeper/login`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ username: username.trim(), password }),
   });
   if (!res.ok) throw new Error(await parseErrorMessage(res));
   const data = (await res.json()) as TokenResponse;

@@ -376,6 +376,16 @@ export default function InspectorQuestionPaperControlPage() {
     options: { showCancel?: boolean } = {},
   ) {
     const { showCancel = false } = options;
+    if (ser.verified) {
+      return (
+        <div className="rounded-lg border border-border/80 bg-muted/25 px-3 py-3">
+          <p className="text-sm font-medium text-foreground">Confirmed by depot keeper</p>
+          <p className="mt-1 text-xs text-muted-foreground">
+            This slot can no longer be edited by the inspector.
+          </p>
+        </div>
+      );
+    }
     const key = slotKey(bundle.subjectId, bundle.paperNumber, ser.series_number);
     const d = drafts[key] ?? {
       copies_received: ser.copies_received,
@@ -593,16 +603,20 @@ export default function InspectorQuestionPaperControlPage() {
                               <td className="whitespace-nowrap px-2 py-2.5 align-middle tabular-nums">{d.copies_to_library}</td>
                               <td className="whitespace-nowrap px-2 py-2.5 align-middle tabular-nums">{d.copies_remaining}</td>
                               <td className="sticky right-0 bg-background px-2 py-2 align-middle sm:px-3">
-                                <button
-                                  type="button"
-                                  className={btnGhost}
-                                  onClick={() => {
-                                    setSlotError(null);
-                                    setPastEdit({ bundle, ser });
-                                  }}
-                                >
-                                  Edit
-                                </button>
+                                {ser.verified ? (
+                                  <span className="text-xs text-muted-foreground">Locked</span>
+                                ) : (
+                                  <button
+                                    type="button"
+                                    className={btnGhost}
+                                    onClick={() => {
+                                      setSlotError(null);
+                                      setPastEdit({ bundle, ser });
+                                    }}
+                                  >
+                                    Edit
+                                  </button>
+                                )}
                               </td>
                             </tr>
                           );

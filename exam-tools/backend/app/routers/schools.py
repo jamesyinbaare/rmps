@@ -6,10 +6,11 @@ from uuid import UUID
 from fastapi import APIRouter, File, HTTPException, Query, UploadFile, status
 from sqlalchemy import delete, func, insert, or_, select
 from sqlalchemy.exc import IntegrityError
+from sqlalchemy.orm import selectinload
 
 from app.dependencies.auth import SuperAdminDep
 from app.dependencies.database import DBSessionDep
-from app.models import Programme, Region, School, SchoolType, User, UserRole, Zone, school_programmes
+from app.models import Depot, Programme, Region, School, SchoolType, User, UserRole, Zone, school_programmes
 from app.schemas.inspector import InspectorSchoolRow
 from app.schemas.programme import ProgrammeResponse
 from app.schemas.school import (
@@ -30,6 +31,7 @@ from app.services.school_bulk_upload import (
     find_programmes_column,
     normalize_column_names,
     parse_bool_cell,
+    parse_depot_code,
     parse_programme_codes_cell,
     parse_region,
     parse_school_code,
@@ -47,6 +49,14 @@ router = APIRouter(prefix="/schools", tags=["schools"])
 
 _MAX_PAGE_SIZE = 200
 _DEFAULT_PAGE_SIZE = 20
+
+
+def school_to_response(school: School) -> SchoolResponse:
+    """Build API school row; include ``depot_code`` when ``school.depot`` is loaded."""
+    r = SchoolResponse.model_validate(school)
+    dep = school.depot
+    code = cast(str, dep.code) if dep is not None else None
+    return r.model_copy(update={"depot_code": code})
 
 
 @router.get(
@@ -67,14 +77,14 @@ async def list_schools(
         conditions.append(or_(School.code.ilike(pattern), School.name.ilike(pattern)))
 
     count_stmt = select(func.count()).select_from(School)
-    list_stmt = select(School).order_by(School.code)
+    list_stmt = select(School).options(selectinload(School.depot)).order_by(School.code)
     if conditions:
         count_stmt = count_stmt.where(*conditions)
         list_stmt = list_stmt.where(*conditions)
 
     total = int(await session.scalar(count_stmt) or 0)
     result = await session.execute(list_stmt.offset(skip).limit(limit))
-    items = [SchoolResponse.model_validate(s) for s in result.scalars().all()]
+    items = [school_to_response(s) for s in result.scalars().all()]
     return SchoolListResponse(items=items, total=total)
 
 
@@ -114,6 +124,7 @@ async def list_examination_centers(
         select(School, func.coalesce(hosted_counts.c.cnt, 0).label("hosted_count"))
         .outerjoin(hosted_counts, hosted_counts.c.center_id == School.id)
         .where(*conditions)
+        .options(selectinload(School.depot))
         .order_by(School.code)
         .offset(skip)
         .limit(limit)
@@ -121,7 +132,7 @@ async def list_examination_centers(
     result = await session.execute(list_stmt)
     items = [
         ExaminationCenterSummary(
-            school=SchoolResponse.model_validate(row[0]),
+            school=school_to_response(row[0]),
             hosted_school_count=int(row[1]),
         )
         for row in result.all()
@@ -139,7 +150,11 @@ async def get_examination_center_detail(
     session: DBSessionDep,
     _admin: SuperAdminDep,
 ) -> ExaminationCenterDetailResponse:
-    school = await session.get(School, center_id)
+    center_stmt = (
+        select(School).options(selectinload(School.depot)).where(School.id == center_id)
+    )
+    center_result = await session.execute(center_stmt)
+    school = center_result.scalar_one_or_none()
     if school is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="School not found")
     if school.writes_at_center_id is not None:
@@ -149,12 +164,13 @@ async def get_examination_center_detail(
         )
 
     hosted_stmt = (
-        select(School).where(School.writes_at_center_id == center_id).order_by(School.code)
+        select(School)
+        .options(selectinload(School.depot))
+        .where(School.writes_at_center_id == center_id)
+        .order_by(School.code)
     )
     hosted_result = await session.execute(hosted_stmt)
-    hosted_schools = [
-        SchoolResponse.model_validate(s) for s in hosted_result.scalars().all()
-    ]
+    hosted_schools = [school_to_response(s) for s in hosted_result.scalars().all()]
 
     codes: set[str] = {cast(str, school.code)}
     codes.update(cast(str, s.code) for s in hosted_schools)
@@ -176,7 +192,7 @@ async def get_examination_center_detail(
         for row in insp_result.all()
     ]
     return ExaminationCenterDetailResponse(
-        center=SchoolResponse.model_validate(school),
+        center=school_to_response(school),
         hosted_schools=hosted_schools,
         inspectors=inspectors,
     )
@@ -285,10 +301,12 @@ async def get_school(
     session: DBSessionDep,
     _admin: SuperAdminDep,
 ) -> SchoolResponse:
-    school = await session.get(School, school_id)
+    stmt = select(School).options(selectinload(School.depot)).where(School.id == school_id)
+    result = await session.execute(stmt)
+    school = result.scalar_one_or_none()
     if school is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="School not found")
-    return SchoolResponse.model_validate(school)
+    return school_to_response(school)
 
 
 @router.patch(
@@ -308,7 +326,30 @@ async def update_school(
 
     payload = data.model_dump(exclude_unset=True)
     if not payload:
-        return SchoolResponse.model_validate(school)
+        stmt = select(School).options(selectinload(School.depot)).where(School.id == school_id)
+        fresh = (await session.execute(stmt)).scalar_one()
+        return school_to_response(fresh)
+
+    if "depot_code" in payload and "depot_id" in payload:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Specify only one of depot_code and depot_id",
+        )
+
+    if "depot_code" in payload:
+        dc = payload.pop("depot_code")
+        if dc is not None and str(dc).strip():
+            dcode = str(dc).strip()
+            dep_result = await session.execute(select(Depot).where(Depot.code == dcode))
+            depot = dep_result.scalar_one_or_none()
+            if depot is None:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail=f"No depot with code {dcode!r}",
+                )
+            payload["depot_id"] = cast(UUID, depot.id)
+        else:
+            payload["depot_id"] = None
 
     if "writes_at_center_id" in payload:
         wid = payload["writes_at_center_id"]
@@ -325,12 +366,21 @@ async def update_school(
                     detail="writes_at_center_id does not reference an existing school",
                 )
 
+    if "depot_id" in payload:
+        did = payload["depot_id"]
+        if did is not None:
+            dep = await session.get(Depot, did)
+            if dep is None:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="depot_id does not reference an existing depot",
+                )
+
     for key, value in payload.items():
         setattr(school, key, value)
 
     try:
         await session.commit()
-        await session.refresh(school)
     except IntegrityError:
         await session.rollback()
         raise HTTPException(
@@ -338,7 +388,9 @@ async def update_school(
             detail="Could not update school (constraint violation)",
         ) from None
 
-    return SchoolResponse.model_validate(school)
+    stmt = select(School).options(selectinload(School.depot)).where(School.id == school_id)
+    updated = (await session.execute(stmt)).scalar_one()
+    return school_to_response(updated)
 
 
 @router.delete(
@@ -383,6 +435,7 @@ async def create_school(
     """Create one school and a default supervisor user. Requires super admin JWT.
 
     ``writes_at_center_id`` must reference an existing school if provided.
+    Optional ``depot_code`` assigns the school to an existing depot (matched on ``depots.code``).
 
     The supervisor's display name and password are both the school ``code``; login uses that
     code as username and the same value as password.
@@ -403,6 +456,18 @@ async def create_school(
                 detail="writes_at_center_id does not reference an existing school",
             )
 
+    depot_id: UUID | None = None
+    if data.depot_code is not None and data.depot_code.strip():
+        dcode = data.depot_code.strip()
+        dep_result = await session.execute(select(Depot).where(Depot.code == dcode))
+        depot = dep_result.scalar_one_or_none()
+        if depot is None:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"No depot with code {dcode!r}",
+            )
+        depot_id = cast(UUID, depot.id)
+
     school = School(
         code=data.code,
         name=data.name,
@@ -411,6 +476,7 @@ async def create_school(
         school_type=data.school_type,
         is_private_examination_center=data.is_private_examination_center,
         writes_at_center_id=data.writes_at_center_id,
+        depot_id=depot_id,
     )
     session.add(school)
     try:
@@ -430,8 +496,10 @@ async def create_school(
             detail="Could not create school or supervisor (constraint violation)",
         ) from None
 
+    stmt = select(School).options(selectinload(School.depot)).where(School.id == school.id)
+    school_out = (await session.execute(stmt)).scalar_one()
     return SchoolCreatedResponse(
-        school=SchoolResponse.model_validate(school),
+        school=school_to_response(school_out),
         supervisor_full_name=cast(str, supervisor_user.full_name),
         supervisor_initial_password=plain_password,
     )
@@ -454,6 +522,7 @@ async def bulk_upload_schools(
 
     **Optional columns:** ``school_type`` (private/public), ``is_private_examination_center``,
     ``writes_at_center_code`` (6-char school code of host), ``writes_at_center_id`` (UUID of host),
+    ``depot_code`` (must match an existing depot's ``code``),
     ``programme_codes`` (comma-separated programme codes; aliases: ``programmes``, ``programme_list``,
     ``programme_code``, or any column named ``programme`` / ``programme_*``).
     Unknown programme codes are reported per row but the school is still created; valid codes are linked.
@@ -464,7 +533,7 @@ async def bulk_upload_schools(
 
     **Example CSV header:**
 
-    ``code,name,region,zone,school_type,is_private_examination_center,writes_at_center_code,programme_codes``
+    ``code,name,region,zone,school_type,is_private_examination_center,writes_at_center_code,depot_code,programme_codes``
 
     Region and zone accept enum names (e.g. ``GREATER_ACCRA``, ``A``) or display values (e.g. ``Greater Accra``, ``A``).
     """
@@ -479,7 +548,19 @@ async def bulk_upload_schools(
     programmes_col = find_programmes_column(df)
 
     row_specs: list[
-        tuple[int, str, str, Region, Zone, SchoolType | None, bool, str | None, UUID | None, list[str]]
+        tuple[
+            int,
+            str,
+            str,
+            Region,
+            Zone,
+            SchoolType | None,
+            bool,
+            str | None,
+            UUID | None,
+            str | None,
+            list[str],
+        ]
     ] = []
     errors: list[SchoolBulkUploadError] = []
 
@@ -494,6 +575,7 @@ async def bulk_upload_schools(
             is_pec = parse_bool_cell(row.get("is_private_examination_center"), default=False)
             wcc = parse_writes_at_center_code(row.get("writes_at_center_code"))
             wid = parse_writes_at_center_id(row.get("writes_at_center_id"))
+            dcode = parse_depot_code(row.get("depot_code"))
         except ValueError as exc:
             errors.append(SchoolBulkUploadError(row_number=row_number, error_message=str(exc)))
             continue
@@ -508,7 +590,7 @@ async def bulk_upload_schools(
             continue
 
         prog_codes = parse_programme_codes_cell(row.get(programmes_col)) if programmes_col else []
-        row_specs.append((row_number, code, name, region, zone, st, is_pec, wcc, wid, prog_codes))
+        row_specs.append((row_number, code, name, region, zone, st, is_pec, wcc, wid, dcode, prog_codes))
 
     all_programme_codes: set[str] = set()
     for *_, prog_codes in row_specs:
@@ -524,8 +606,17 @@ async def bulk_upload_schools(
     else:
         programme_by_code = {}
 
+    depot_codes_for_lookup: set[str] = {spec[9] for spec in row_specs if spec[9]}
+    if depot_codes_for_lookup:
+        dep_result = await session.execute(select(Depot).where(Depot.code.in_(depot_codes_for_lookup)))
+        depot_by_code: dict[str, Depot] = {
+            cast(str, d.code): d for d in dep_result.scalars().all()
+        }
+    else:
+        depot_by_code = {}
+
     codes_for_lookup: set[str] = set()
-    for _, code, _, _, _, _, _, wcc, _, _ in row_specs:
+    for _, code, _, _, _, _, _, wcc, _, _, _ in row_specs:
         codes_for_lookup.add(code)
         if wcc:
             codes_for_lookup.add(wcc)
@@ -546,7 +637,7 @@ async def bulk_upload_schools(
 
     provisioned_supervisors: list[ProvisionedSupervisor] = []
 
-    for row_number, code, name, region, zone, st, is_pec, wcc, wid, prog_codes in row_specs:
+    for row_number, code, name, region, zone, st, is_pec, wcc, wid, dcode, prog_codes in row_specs:
         if code in seen_in_file:
             errors.append(
                 SchoolBulkUploadError(
@@ -595,6 +686,20 @@ async def bulk_upload_schools(
                 failed += 1
                 continue
 
+        row_depot_id: UUID | None = None
+        if dcode is not None:
+            depot = depot_by_code.get(dcode)
+            if depot is None:
+                errors.append(
+                    SchoolBulkUploadError(
+                        row_number=row_number,
+                        error_message=f"depot_code {dcode!r}: no depot with that code",
+                    )
+                )
+                failed += 1
+                continue
+            row_depot_id = cast(UUID, depot.id)
+
         invalid_programme_codes = [pc for pc in prog_codes if pc not in programme_by_code]
         if invalid_programme_codes:
             errors.append(
@@ -620,6 +725,7 @@ async def bulk_upload_schools(
             school_type=st,
             is_private_examination_center=is_pec,
             writes_at_center_id=writes_at_center_id,
+            depot_id=row_depot_id,
         )
         session.add(school)
         try:

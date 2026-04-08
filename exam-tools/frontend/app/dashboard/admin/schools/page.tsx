@@ -79,7 +79,11 @@ function SchoolFormFields({
   setPec,
   writesAtId,
   setWritesAtId,
+  depotCode = "",
+  setDepotCode = () => {},
   showCode,
+  showDepotCode = false,
+  depotCodePlaceholder = "Must match an existing depot",
 }: {
   code: string;
   setCode: (v: string) => void;
@@ -95,7 +99,11 @@ function SchoolFormFields({
   setPec: (v: boolean) => void;
   writesAtId: string;
   setWritesAtId: (v: string) => void;
+  depotCode?: string;
+  setDepotCode?: (v: string) => void;
   showCode: boolean;
+  showDepotCode?: boolean;
+  depotCodePlaceholder?: string;
 }) {
   return (
     <div className="space-y-4">
@@ -204,6 +212,22 @@ function SchoolFormFields({
           autoComplete="off"
         />
       </div>
+      {showDepotCode ? (
+        <div>
+          <label htmlFor="school-depot-code" className={formLabelClass}>
+            Depot code (optional)
+          </label>
+          <input
+            id="school-depot-code"
+            className={formInputClass}
+            placeholder={depotCodePlaceholder}
+            value={depotCode}
+            onChange={(e) => setDepotCode(e.target.value.trim())}
+            maxLength={32}
+            autoComplete="off"
+          />
+        </div>
+      ) : null}
     </div>
   );
 }
@@ -231,6 +255,7 @@ export default function AdminSchoolsPage() {
   const [schoolType, setSchoolType] = useState("");
   const [pec, setPec] = useState(false);
   const [writesAtId, setWritesAtId] = useState("");
+  const [depotCode, setDepotCode] = useState("");
 
   const [createdInfo, setCreatedInfo] = useState<SchoolCreatedResponse | null>(null);
 
@@ -281,6 +306,7 @@ export default function AdminSchoolsPage() {
     setSchoolType("");
     setPec(false);
     setWritesAtId("");
+    setDepotCode("");
     setFormError(null);
   }
 
@@ -350,6 +376,7 @@ export default function AdminSchoolsPage() {
     setSchoolType(s.school_type ?? "");
     setPec(s.is_private_examination_center);
     setWritesAtId(s.writes_at_center_id ?? "");
+    setDepotCode(s.depot_code?.trim() ?? "");
     setFormError(null);
   }
 
@@ -370,6 +397,7 @@ export default function AdminSchoolsPage() {
       zone,
       is_private_examination_center: pec,
       writes_at_center_id: writesAtId.trim() ? writesAtId.trim() : null,
+      depot_code: depotCode.trim() ? depotCode.trim() : null,
     };
     if (schoolType) payload.school_type = schoolType;
 
@@ -406,6 +434,7 @@ export default function AdminSchoolsPage() {
     payload.school_type = schoolType ? schoolType : null;
     const w = writesAtId.trim();
     payload.writes_at_center_id = w ? w : null;
+    payload.depot_code = depotCode.trim() ? depotCode.trim() : null;
 
     setSubmitting(true);
     try {
@@ -620,7 +649,10 @@ export default function AdminSchoolsPage() {
             setPec={setPec}
             writesAtId={writesAtId}
             setWritesAtId={setWritesAtId}
+            depotCode={depotCode}
+            setDepotCode={setDepotCode}
             showCode
+            showDepotCode
           />
           {formError ? (
             <p className="mt-3 text-sm text-destructive" role="alert">
@@ -671,7 +703,11 @@ export default function AdminSchoolsPage() {
               setPec={setPec}
               writesAtId={writesAtId}
               setWritesAtId={setWritesAtId}
+              depotCode={depotCode}
+              setDepotCode={setDepotCode}
               showCode={false}
+              showDepotCode
+              depotCodePlaceholder="Must match an existing depot; leave empty to remove depot assignment"
             />
           </div>
           {formError ? (
@@ -753,6 +789,7 @@ export default function AdminSchoolsPage() {
             <code className="rounded bg-muted px-1">is_private_examination_center</code>,{" "}
             <code className="rounded bg-muted px-1">writes_at_center_code</code> or{" "}
             <code className="rounded bg-muted px-1">writes_at_center_id</code>,{" "}
+            <code className="rounded bg-muted px-1">depot_code</code> (existing depot),{" "}
             <code className="rounded bg-muted px-1">programme_codes</code> (comma-separated programme
             codes, same as registration portal). Header aliases:{" "}
             <code className="rounded bg-muted px-1">programmes</code>,{" "}

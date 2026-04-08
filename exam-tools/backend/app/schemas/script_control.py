@@ -9,11 +9,19 @@ from pydantic import BaseModel, Field, field_validator
 class ScriptEnvelopeItem(BaseModel):
     envelope_number: int = Field(ge=1)
     booklet_count: int = Field(ge=0)
+    verified: bool = Field(
+        default=False,
+        description="Depot keeper has verified this envelope.",
+    )
 
 
 class ScriptSeriesPackingResponse(BaseModel):
     id: UUID
     envelopes: list[ScriptEnvelopeItem]
+    verified: bool = Field(
+        default=False,
+        description="True when every envelope in this series has been verified by the depot keeper.",
+    )
 
     model_config = {"from_attributes": False}
 
@@ -21,6 +29,10 @@ class ScriptSeriesPackingResponse(BaseModel):
 class ScriptSeriesSlotResponse(BaseModel):
     series_number: int
     packing: ScriptSeriesPackingResponse | None = None
+    verified: bool = Field(
+        default=False,
+        description="When true, every envelope in this series has been verified; inspectors cannot edit or delete it.",
+    )
 
 
 class ScriptPaperSlotResponse(BaseModel):
@@ -53,6 +65,22 @@ class MySchoolScriptControlResponse(BaseModel):
         description="Configured maximum booklets per envelope; booklet_count must not exceed this on save.",
     )
     subjects: list[ScriptSubjectRowResponse]
+
+
+class ScriptControlSlotKeyRequest(BaseModel):
+    """Subject / paper / series / envelope for depot keeper script verify."""
+
+    subject_id: int
+    paper_number: int = Field(ge=1)
+    series_number: int = Field(ge=1, le=32767)
+    envelope_number: int = Field(ge=1, description="Which envelope within the series to verify.")
+
+
+class ScriptControlEnvelopeVerificationToggleRequest(ScriptControlSlotKeyRequest):
+    verified: bool = Field(
+        ...,
+        description="Set true to verify this envelope; false to unverify.",
+    )
 
 
 class ScriptSeriesUpsertRequest(BaseModel):

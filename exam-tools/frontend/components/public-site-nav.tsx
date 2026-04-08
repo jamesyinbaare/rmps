@@ -10,6 +10,7 @@ const inputFocusRing =
 
 const examinationsLinks = [
   { href: "/login/inspector", label: "Inspector" },
+  { href: "/login/depot-keeper", label: "Depot keeper" },
   { href: "/login/supervisor", label: "Supervisor" },
 ] as const;
 

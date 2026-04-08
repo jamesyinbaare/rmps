@@ -16,6 +16,7 @@ from app.dependencies.database import get_sessionmanager, initialize_db
 from app.initial_data import ensure_super_admin_user
 from app.routers import (
     auth,
+    depots,
     documents,
     examination_candidates,
     examinations,
@@ -169,6 +170,8 @@ app.add_middleware(
 
 # Include routers
 app.include_router(auth.router)
+app.include_router(depots.router_admin)
+app.include_router(depots.router_keeper)
 app.include_router(inspectors.router)
 app.include_router(schools.router)
 app.include_router(programmes.router)

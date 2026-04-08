@@ -222,6 +222,19 @@ def parse_writes_at_center_code(raw: Any) -> str | None:
     return _spreadsheet_school_code_cell(raw)
 
 
+def parse_depot_code(raw: Any) -> str | None:
+    """Optional depot identifier from bulk upload (matches ``depots.code``, max 32 chars).
+
+    Uses the same spreadsheet cell coercion as school codes so Excel does not corrupt numeric codes.
+    """
+    s = _spreadsheet_school_code_cell(raw)
+    if not s:
+        return None
+    if len(s) > 32:
+        raise ValueError("depot_code must be at most 32 characters")
+    return s
+
+
 def parse_school_code(raw: Any) -> str:
     s = _spreadsheet_school_code_cell(raw)
     if not s:

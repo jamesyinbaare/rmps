@@ -15,6 +15,11 @@ class SchoolCreate(BaseModel):
     school_type: SchoolType | None = None
     is_private_examination_center: bool = False
     writes_at_center_id: UUID | None = None
+    depot_code: str | None = Field(
+        None,
+        max_length=32,
+        description="Assign to depot by code when creating (must match an existing depot).",
+    )
 
 
 class SchoolUpdate(BaseModel):
@@ -26,6 +31,12 @@ class SchoolUpdate(BaseModel):
     school_type: SchoolType | None = None
     is_private_examination_center: bool | None = None
     writes_at_center_id: UUID | None = None
+    depot_id: UUID | None = None
+    depot_code: str | None = Field(
+        default=None,
+        max_length=32,
+        description="Assign by depot code; null or empty clears. Omit to leave unchanged.",
+    )
 
 
 class SchoolResponse(BaseModel):
@@ -39,6 +50,8 @@ class SchoolResponse(BaseModel):
     school_type: SchoolType | None
     is_private_examination_center: bool
     writes_at_center_id: UUID | None
+    depot_id: UUID | None = None
+    depot_code: str | None = None
     created_at: datetime
     updated_at: datetime
 

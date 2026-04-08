@@ -246,7 +246,10 @@ export default function InspectorScriptsControlPage() {
         subject_id: editing.subjectId,
         paper_number: editing.paperNumber,
         series_number: editing.seriesNumber,
-        envelopes: draft.envelopes,
+        envelopes: draft.envelopes.map((e) => ({
+          envelope_number: e.envelope_number,
+          booklet_count: e.booklet_count,
+        })),
       });
       await loadData();
       closeEdit();
@@ -326,6 +329,7 @@ export default function InspectorScriptsControlPage() {
     seriesCount: number,
   ) {
     const packing = slot.packing;
+    const anyEnvelopeVerified = Boolean(packing?.envelopes?.some((e) => e.verified));
     const isEditing = isEditingSlot(subjectId, paperNumber, slot.series_number);
     const showSeriesLabel = seriesCount > 1;
     return (
@@ -351,27 +355,36 @@ export default function InspectorScriptsControlPage() {
                 )}
               </p>
             ) : null}
+            {!isEditing && anyEnvelopeVerified ? (
+              <p className="mt-2 text-xs font-medium text-muted-foreground">
+                Verified by depot keeper (at least one envelope) — editing is locked.
+              </p>
+            ) : null}
           </div>
           <div className="flex flex-wrap gap-2">
             {!isEditing ? (
               <>
-                <button
-                  type="button"
-                  className={btnSecondary}
-                  disabled={busy}
-                  onClick={() => openEdit(subjectId, paperNumber, slot.series_number, packing, maxBooklets)}
-                >
-                  {packing ? "Edit" : "Add"}
-                </button>
-                {packing ? (
-                  <button
-                    type="button"
-                    className={btnDanger}
-                    disabled={busy}
-                    onClick={() => onClear(subjectId, paperNumber, slot.series_number)}
-                  >
-                    Clear
-                  </button>
+                {!anyEnvelopeVerified ? (
+                  <>
+                    <button
+                      type="button"
+                      className={btnSecondary}
+                      disabled={busy}
+                      onClick={() => openEdit(subjectId, paperNumber, slot.series_number, packing, maxBooklets)}
+                    >
+                      {packing ? "Edit" : "Add"}
+                    </button>
+                    {packing ? (
+                      <button
+                        type="button"
+                        className={btnDanger}
+                        disabled={busy}
+                        onClick={() => onClear(subjectId, paperNumber, slot.series_number)}
+                      >
+                        Clear
+                      </button>
+                    ) : null}
+                  </>
                 ) : null}
               </>
             ) : null}
@@ -484,7 +497,7 @@ export default function InspectorScriptsControlPage() {
 
   return (
     <RoleGuard expectedRole="INSPECTOR" loginHref="/login/inspector">
-      <DashboardShell title="Scripts control" staffRole="inspector">
+      <DashboardShell title="Worked Scripts Control" staffRole="inspector">
         <div className="space-y-6">
           <p className="text-sm text-muted-foreground">
             Record the number of booklets per envelope for each subject and

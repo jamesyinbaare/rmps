@@ -1,5 +1,6 @@
 """Script packing (answer booklets in envelopes): inspector CRUD per school in centre scope; super admin list."""
 
+from datetime import datetime
 from uuid import UUID
 
 from fastapi import APIRouter, HTTPException, Query, status
@@ -7,10 +8,11 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import selectinload
 
 from app.config import settings
-from app.dependencies.auth import InspectorDep, SuperAdminDep
+from app.dependencies.auth import DepotKeeperDep, InspectorDep, SuperAdminDep
 from app.dependencies.database import DBSessionDep
-from app.models import School, ScriptEnvelope, ScriptPackingSeries, Subject
+from app.models import School, ScriptEnvelope, ScriptPackingSeries, Subject, User, UserRole
 from app.schemas.script_control import (
+    ScriptControlEnvelopeVerificationToggleRequest,
     MySchoolScriptControlResponse,
     ScriptControlAdminListResponse,
     ScriptControlAdminRow,
@@ -20,6 +22,12 @@ from app.schemas.script_control import (
     ScriptSeriesSlotResponse,
     ScriptSeriesUpsertRequest,
     ScriptSubjectRowResponse,
+)
+from app.services.depot_scope import (
+    assert_school_in_depot,
+    depot_school_ids,
+    require_depot_id_for_depot_keeper,
+    script_scope_for_school,
 )
 from app.services.exam_timetable_pdf import load_examination_or_raise
 from app.services.script_control import (
@@ -38,9 +46,11 @@ router = APIRouter(tags=["script-control"])
 
 async def _inspector_scope_and_packing_school(
     session: DBSessionDep,
-    user: InspectorDep,
+    user: User,
     school_id: UUID,
 ) -> tuple[School, set[UUID]]:
+    if user.role != UserRole.INSPECTOR:
+        raise PermissionError("Inspector access only")
     try:
         scope_ids = await inspector_center_scope_school_ids(session, user)
     except PermissionError:
@@ -62,33 +72,30 @@ async def _inspector_scope_and_packing_school(
 
 
 def _packing_to_response(ps: ScriptPackingSeries) -> ScriptSeriesPackingResponse:
+    envs_sorted = sorted(ps.envelopes, key=lambda x: x.envelope_number)
     envs = [
-        ScriptEnvelopeItem(envelope_number=e.envelope_number, booklet_count=e.booklet_count)
-        for e in sorted(ps.envelopes, key=lambda x: x.envelope_number)
+        ScriptEnvelopeItem(
+            envelope_number=e.envelope_number,
+            booklet_count=e.booklet_count,
+            verified=e.verified_at is not None,
+        )
+        for e in envs_sorted
     ]
-    return ScriptSeriesPackingResponse(id=ps.id, envelopes=envs)
+    all_verified = len(envs_sorted) > 0 and all(e.verified_at is not None for e in envs_sorted)
+    return ScriptSeriesPackingResponse(
+        id=ps.id,
+        envelopes=envs,
+        verified=all_verified,
+    )
 
 
-@router.get(
-    "/examinations/{exam_id}/script-control/my-school",
-    response_model=MySchoolScriptControlResponse,
-)
-async def get_my_school_script_control(
-    exam_id: int,
+async def _build_my_school_script_grid(
     session: DBSessionDep,
-    user: InspectorDep,
-    school_id: UUID = Query(
-        ...,
-        description="School whose registered candidates define subjects; read/write packing for this school.",
-    ),
+    exam_id: int,
+    packing_school: School,
+    scope_ids: set[UUID],
 ) -> MySchoolScriptControlResponse:
-    packing_school, scope_ids = await _inspector_scope_and_packing_school(session, user, school_id)
-
-    try:
-        exam = await load_examination_or_raise(session, exam_id)
-    except ValueError:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Examination not found") from None
-
+    exam = await load_examination_or_raise(session, exam_id)
     rows = await load_subject_paper_rows_for_exam_and_school(
         session, exam_id, scope_ids, packing_school.id
     )
@@ -116,7 +123,14 @@ async def get_my_school_script_control(
             for sn in range(1, n_series + 1):
                 ps = key_map.get((sub.id, pn, sn))
                 packing = _packing_to_response(ps) if ps else None
-                series_slots.append(ScriptSeriesSlotResponse(series_number=sn, packing=packing))
+                verified = (
+                    ps is not None
+                    and len(ps.envelopes) > 0
+                    and all(e.verified_at is not None for e in ps.envelopes)
+                )
+                series_slots.append(
+                    ScriptSeriesSlotResponse(series_number=sn, packing=packing, verified=verified)
+                )
             paper_slots.append(
                 ScriptPaperSlotResponse(
                     paper_number=pn,
@@ -143,6 +157,156 @@ async def get_my_school_script_control(
         scripts_per_envelope=settings.scripts_per_envelope,
         subjects=subjects_out,
     )
+
+
+@router.get(
+    "/examinations/{exam_id}/script-control/my-school",
+    response_model=MySchoolScriptControlResponse,
+)
+async def get_my_school_script_control(
+    exam_id: int,
+    session: DBSessionDep,
+    user: InspectorDep,
+    school_id: UUID = Query(
+        ...,
+        description="School whose registered candidates define subjects; read/write packing for this school.",
+    ),
+) -> MySchoolScriptControlResponse:
+    packing_school, scope_ids = await _inspector_scope_and_packing_school(session, user, school_id)
+
+    try:
+        return await _build_my_school_script_grid(session, exam_id, packing_school, scope_ids)
+    except ValueError:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Examination not found") from None
+
+
+@router.get(
+    "/examinations/{exam_id}/script-control/depot/school",
+    response_model=MySchoolScriptControlResponse,
+)
+async def get_depot_school_script_control(
+    exam_id: int,
+    session: DBSessionDep,
+    user: DepotKeeperDep,
+    school_id: UUID = Query(..., description="School in your depot."),
+) -> MySchoolScriptControlResponse:
+    try:
+        depot_id = await require_depot_id_for_depot_keeper(session, user)
+    except PermissionError:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Depot keeper access only") from None
+    except ValueError as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e)) from None
+
+    allowed_schools = await depot_school_ids(session, depot_id)
+    try:
+        await assert_school_in_depot(school_id, allowed_schools)
+    except ValueError as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e)) from None
+
+    packing_school = await session.get(School, school_id)
+    if packing_school is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="School not found")
+
+    scope_ids = await script_scope_for_school(session, packing_school)
+    try:
+        return await _build_my_school_script_grid(session, exam_id, packing_school, scope_ids)
+    except ValueError:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Examination not found") from None
+
+
+@router.post(
+    "/examinations/{exam_id}/script-control/depot/school/series/verification",
+    response_model=ScriptSeriesPackingResponse,
+)
+async def set_depot_school_script_series_envelope_verification(
+    exam_id: int,
+    body: ScriptControlEnvelopeVerificationToggleRequest,
+    session: DBSessionDep,
+    user: DepotKeeperDep,
+    school_id: UUID = Query(..., description="School in your depot."),
+) -> ScriptSeriesPackingResponse:
+    try:
+        depot_id = await require_depot_id_for_depot_keeper(session, user)
+    except PermissionError:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Depot keeper access only") from None
+    except ValueError as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e)) from None
+
+    allowed_schools = await depot_school_ids(session, depot_id)
+    try:
+        await assert_school_in_depot(school_id, allowed_schools)
+    except ValueError as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e)) from None
+
+    packing_school = await session.get(School, school_id)
+    if packing_school is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="School not found")
+
+    try:
+        await load_examination_or_raise(session, exam_id)
+    except ValueError:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Examination not found") from None
+
+    scope_ids = await script_scope_for_school(session, packing_school)
+    allowed = await valid_script_packing_triples(session, exam_id, scope_ids, packing_school.id)
+    if (body.subject_id, body.paper_number, body.series_number) not in allowed:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Subject, paper, or series is not allowed for script packing for this school",
+        )
+
+    stmt = (
+        select(ScriptPackingSeries)
+        .where(
+            ScriptPackingSeries.examination_id == exam_id,
+            ScriptPackingSeries.school_id == packing_school.id,
+            ScriptPackingSeries.subject_id == body.subject_id,
+            ScriptPackingSeries.paper_number == body.paper_number,
+            ScriptPackingSeries.series_number == body.series_number,
+        )
+        .options(selectinload(ScriptPackingSeries.envelopes))
+    )
+    result = await session.execute(stmt)
+    row = result.scalar_one_or_none()
+    if row is None:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="No script packing record to verify; the inspector must enter data first.",
+        )
+    if not row.envelopes:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="This series has no envelopes; the inspector must add envelopes before verification.",
+        )
+    env_row = next((e for e in row.envelopes if e.envelope_number == body.envelope_number), None)
+    if env_row is None:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"No envelope with number {body.envelope_number} in this series.",
+        )
+    if body.verified:
+        if env_row.verified_at is None:
+            env_row.verified_at = datetime.utcnow()
+            env_row.verified_by_id = user.id
+    else:
+        env_row.verified_at = None
+        env_row.verified_by_id = None
+    all_verified = all(e.verified_at is not None for e in row.envelopes)
+    if all_verified:
+        row.verified_at = datetime.utcnow()
+        row.verified_by_id = user.id
+    else:
+        row.verified_at = None
+        row.verified_by_id = None
+    await session.commit()
+    await session.refresh(row, attribute_names=["envelopes"])
+    stmt2 = (
+        select(ScriptPackingSeries)
+        .where(ScriptPackingSeries.id == row.id)
+        .options(selectinload(ScriptPackingSeries.envelopes))
+    )
+    row2 = (await session.execute(stmt2)).scalar_one()
+    return _packing_to_response(row2)
 
 
 @router.put(
@@ -200,6 +364,19 @@ async def upsert_my_school_script_series(
     )
     result = await session.execute(stmt)
     row = result.scalar_one_or_none()
+
+    if row is not None:
+        if row.verified_at is not None:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="This series has been fully verified by the depot keeper and can no longer be edited.",
+            )
+        for e in row.envelopes:
+            if e.verified_at is not None:
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT,
+                    detail="One or more envelopes have been verified by the depot keeper; this series can no longer be edited.",
+                )
 
     if row is None:
         row = ScriptPackingSeries(
@@ -266,17 +443,32 @@ async def delete_my_school_script_series(
     except ValueError as e:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e)) from None
 
-    stmt = select(ScriptPackingSeries).where(
-        ScriptPackingSeries.examination_id == exam_id,
-        ScriptPackingSeries.school_id == packing_school.id,
-        ScriptPackingSeries.subject_id == subject_id,
-        ScriptPackingSeries.paper_number == paper_number,
-        ScriptPackingSeries.series_number == series_number,
+    stmt = (
+        select(ScriptPackingSeries)
+        .where(
+            ScriptPackingSeries.examination_id == exam_id,
+            ScriptPackingSeries.school_id == packing_school.id,
+            ScriptPackingSeries.subject_id == subject_id,
+            ScriptPackingSeries.paper_number == paper_number,
+            ScriptPackingSeries.series_number == series_number,
+        )
+        .options(selectinload(ScriptPackingSeries.envelopes))
     )
     result = await session.execute(stmt)
     row = result.scalar_one_or_none()
     if row is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Packing record not found")
+    if row.verified_at is not None:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="This series has been fully verified by the depot keeper and cannot be deleted.",
+        )
+    for e in row.envelopes:
+        if e.verified_at is not None:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="One or more envelopes have been verified by the depot keeper; this series cannot be deleted.",
+            )
     await session.delete(row)
     await session.commit()
 

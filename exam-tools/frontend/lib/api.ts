@@ -9,6 +9,10 @@ export type School = {
   school_type: string | null;
   is_private_examination_center: boolean;
   writes_at_center_id: string | null;
+  /** Present when school is assigned to a depot. */
+  depot_id?: string | null;
+  /** Depot code when the school has a depot (from API). */
+  depot_code?: string | null;
   created_at: string;
   updated_at: string;
 };
@@ -61,6 +65,8 @@ export type SchoolCreatePayload = {
   school_type?: string | null;
   is_private_examination_center?: boolean;
   writes_at_center_id?: string | null;
+  /** Existing depot code; omit or null for no depot. */
+  depot_code?: string | null;
 };
 
 export type SchoolUpdatePayload = {
@@ -70,6 +76,9 @@ export type SchoolUpdatePayload = {
   school_type?: string | null;
   is_private_examination_center?: boolean;
   writes_at_center_id?: string | null;
+  depot_id?: string | null;
+  /** Set or clear depot by code (null clears). */
+  depot_code?: string | null;
 };
 
 export type SchoolCreatedResponse = {
@@ -418,6 +427,25 @@ export type MyCenterProgrammesResponse = {
   programmes: CentreScopeProgrammeItem[];
 };
 
+export type MyDepotSchoolsResponse = {
+  schools: CenterScopeSchoolItem[];
+};
+
+export async function getMyDepotSchools(): Promise<MyDepotSchoolsResponse> {
+  return apiJson<MyDepotSchoolsResponse>("/examinations/timetable/my-depot-schools");
+}
+
+export async function getMyDepotProgrammes(filterSchoolId?: string | null): Promise<MyCenterProgrammesResponse> {
+  const u = new URLSearchParams();
+  if (filterSchoolId != null && filterSchoolId.trim() !== "") {
+    u.set("school_id", filterSchoolId.trim());
+  }
+  const s = u.toString();
+  return apiJson<MyCenterProgrammesResponse>(
+    `/examinations/timetable/my-depot-programmes${s ? `?${s}` : ""}`,
+  );
+}
+
 export async function getMyCenterProgrammes(filterSchoolId?: string | null): Promise<MyCenterProgrammesResponse> {
   const u = new URLSearchParams();
   if (filterSchoolId != null && filterSchoolId.trim() !== "") {
@@ -442,6 +470,12 @@ export type StaffCentreOverviewResponse = {
   exam_type: string;
   exam_series: string | null;
   year: number;
+  supervisor_school_code: string;
+  supervisor_school_name: string;
+  examination_centre_host_school_id: string;
+  examination_centre_host_code: string;
+  examination_centre_host_name: string;
+  supervisor_school_is_centre_host: boolean;
   candidate_count: number;
   school_count: number;
   upcoming: StaffCentreOverviewUpcomingItem[];
@@ -477,6 +511,33 @@ export async function getStaffCentreDaySummary(
   const q = new URLSearchParams({ examination_date: examinationDateIso });
   return apiJson<StaffCentreDaySummaryResponse>(
     `/examinations/${examId}/my-center-day-summary?${q.toString()}`,
+  );
+}
+
+export type StaffDepotOverviewResponse = {
+  examination_id: number;
+  exam_type: string;
+  exam_series: string | null;
+  year: number;
+  depot_code: string;
+  depot_name: string;
+  candidate_count: number;
+  school_count: number;
+  upcoming: StaffCentreOverviewUpcomingItem[];
+  sessions_today?: StaffCentreOverviewUpcomingItem[];
+};
+
+export async function getStaffDepotOverview(examId: number): Promise<StaffDepotOverviewResponse> {
+  return apiJson<StaffDepotOverviewResponse>(`/examinations/${examId}/my-depot-overview`);
+}
+
+export async function getStaffDepotDaySummary(
+  examId: number,
+  examinationDateIso: string,
+): Promise<StaffCentreDaySummaryResponse> {
+  const q = new URLSearchParams({ examination_date: examinationDateIso });
+  return apiJson<StaffCentreDaySummaryResponse>(
+    `/examinations/${examId}/my-depot-day-summary?${q.toString()}`,
   );
 }
 
@@ -631,16 +692,20 @@ export async function importExaminationCandidates(
 export type ScriptEnvelopeItem = {
   envelope_number: number;
   booklet_count: number;
+  /** Present in API responses after depot keeper verification. */
+  verified?: boolean;
 };
 
 export type ScriptSeriesPackingResponse = {
   id: string;
   envelopes: ScriptEnvelopeItem[];
+  verified?: boolean;
 };
 
 export type ScriptSeriesSlotResponse = {
   series_number: number;
   packing: ScriptSeriesPackingResponse | null;
+  verified?: boolean;
 };
 
 export type ScriptPaperSlotResponse = {
@@ -729,6 +794,7 @@ export type QuestionPaperSeriesSlotResponse = {
   copies_used: number;
   copies_to_library: number;
   copies_remaining: number;
+  verified?: boolean;
 };
 
 export type QuestionPaperPaperSlotResponse = {
@@ -776,6 +842,17 @@ export type QuestionPaperSlotUpsertResponse = {
   copies_used: number;
   copies_to_library: number;
   copies_remaining: number;
+  verified?: boolean;
+};
+
+export type DepotSchoolRow = {
+  id: string;
+  code: string;
+  name: string;
+};
+
+export type DepotSchoolListResponse = {
+  items: DepotSchoolRow[];
 };
 
 export async function getMyCenterQuestionPaperControl(
@@ -798,4 +875,168 @@ export async function upsertQuestionPaperSlot(
       body: JSON.stringify(payload),
     },
   );
+}
+
+export async function getDepotSchools(): Promise<DepotSchoolListResponse> {
+  return apiJson<DepotSchoolListResponse>("/depot-keeper/schools");
+}
+
+export async function getDepotCenters(): Promise<DepotSchoolListResponse> {
+  return apiJson<DepotSchoolListResponse>("/depot-keeper/centers");
+}
+
+export async function getDepotSchoolScriptControl(
+  examId: number,
+  schoolId: string,
+): Promise<MySchoolScriptControlResponse> {
+  const q = new URLSearchParams({ school_id: schoolId.trim() });
+  return apiJson<MySchoolScriptControlResponse>(
+    `/examinations/${examId}/script-control/depot/school?${q}`,
+  );
+}
+
+export type ScriptControlSlotKeyPayload = {
+  subject_id: number;
+  paper_number: number;
+  series_number: number;
+  envelope_number: number;
+};
+
+export type ScriptControlEnvelopeVerificationTogglePayload = ScriptControlSlotKeyPayload & {
+  verified: boolean;
+};
+
+export async function setDepotScriptEnvelopeVerification(
+  examId: number,
+  schoolId: string,
+  payload: ScriptControlEnvelopeVerificationTogglePayload,
+): Promise<ScriptSeriesPackingResponse> {
+  const q = new URLSearchParams({ school_id: schoolId.trim() });
+  return apiJson<ScriptSeriesPackingResponse>(
+    `/examinations/${examId}/script-control/depot/school/series/verification?${q}`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    },
+  );
+}
+
+export async function getDepotCenterQuestionPaperControl(
+  examId: number,
+  centerId: string,
+): Promise<MyCenterQuestionPaperControlResponse> {
+  const q = new URLSearchParams({ center_id: centerId.trim() });
+  return apiJson<MyCenterQuestionPaperControlResponse>(
+    `/examinations/${examId}/question-paper-control/depot/center?${q}`,
+  );
+}
+
+export async function verifyDepotQuestionPaperSlot(
+  examId: number,
+  centerId: string,
+  payload: ScriptControlSlotKeyPayload,
+): Promise<QuestionPaperSlotUpsertResponse> {
+  const q = new URLSearchParams({ center_id: centerId.trim() });
+  return apiJson<QuestionPaperSlotUpsertResponse>(
+    `/examinations/${examId}/question-paper-control/depot/center/slot/verify?${q}`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    },
+  );
+}
+
+/** Super-admin depot registry (`/depots`). */
+export type AdminDepotRow = {
+  id: string;
+  code: string;
+  name: string;
+  created_at: string;
+  updated_at: string;
+};
+
+export type AdminDepotListResponse = {
+  items: AdminDepotRow[];
+  total: number;
+};
+
+export type AdminDepotCreatePayload = {
+  code: string;
+  name: string;
+};
+
+export type AdminDepotUpdatePayload = {
+  name: string;
+};
+
+export type AdminDepotKeeperRow = {
+  id: string;
+  full_name: string;
+  username: string | null;
+  depot_code: string;
+  depot_name: string;
+};
+
+export type AdminDepotKeeperListResponse = {
+  items: AdminDepotKeeperRow[];
+  total: number;
+};
+
+export type AdminDepotKeeperCreatePayload = {
+  depot_code: string;
+  username: string;
+  password: string;
+  full_name: string;
+};
+
+export type AdminDepotKeeperCreatedResponse = {
+  id: string;
+  full_name: string;
+  username: string;
+  depot_code: string;
+};
+
+export async function adminListDepots(
+  skip: number,
+  limit: number,
+): Promise<AdminDepotListResponse> {
+  return apiJson<AdminDepotListResponse>(`/depots?skip=${skip}&limit=${limit}`);
+}
+
+export async function adminCreateDepot(payload: AdminDepotCreatePayload): Promise<AdminDepotRow> {
+  return apiJson<AdminDepotRow>("/depots", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function adminUpdateDepot(
+  depotId: string,
+  payload: AdminDepotUpdatePayload,
+): Promise<AdminDepotRow> {
+  return apiJson<AdminDepotRow>(`/depots/${depotId}`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function adminListDepotKeepers(
+  skip: number,
+  limit: number,
+): Promise<AdminDepotKeeperListResponse> {
+  return apiJson<AdminDepotKeeperListResponse>(`/depots/keepers?skip=${skip}&limit=${limit}`);
+}
+
+export async function adminCreateDepotKeeper(
+  payload: AdminDepotKeeperCreatePayload,
+): Promise<AdminDepotKeeperCreatedResponse> {
+  return apiJson<AdminDepotKeeperCreatedResponse>("/depots/keepers", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
 }

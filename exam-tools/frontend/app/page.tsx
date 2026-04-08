@@ -27,7 +27,7 @@ export default function HomePage() {
           </div>
         </section>
 
-        <section className="mt-6 grid gap-4 sm:mt-8 sm:gap-5 lg:grid-cols-2">
+        <section className="mt-6 grid gap-4 sm:mt-8 sm:gap-5 lg:grid-cols-3">
           <Link
             href="/login/inspector"
             className="group relative flex min-h-[148px] flex-col justify-between overflow-hidden rounded-2xl border border-border/80 bg-card p-5 shadow-sm transition-all duration-200 hover:-translate-y-1 hover:border-primary/40 hover:shadow-lg sm:p-6"
@@ -41,6 +41,29 @@ export default function HomePage() {
               <p className="mt-2 text-sm leading-6 text-muted-foreground">
                 Access all centre resources with additional examination
                 monitoring and reporting tools.
+              </p>
+            </div>
+            <span
+              className="mt-4 text-sm font-medium text-primary transition-transform duration-200 group-hover:translate-x-0.5"
+              aria-hidden
+            >
+              Continue to sign in →
+            </span>
+          </Link>
+
+          <Link
+            href="/login/depot-keeper"
+            className="group relative flex min-h-[148px] flex-col justify-between overflow-hidden rounded-2xl border border-border/80 bg-card p-5 shadow-sm transition-all duration-200 hover:-translate-y-1 hover:border-primary/40 hover:shadow-lg sm:p-6"
+          >
+            <div
+              aria-hidden
+              className="pointer-events-none absolute inset-x-0 top-0 h-20 bg-[linear-gradient(180deg,color-mix(in_oklab,var(--primary)_10%,transparent)_0%,transparent_100%)] opacity-0 transition-opacity duration-200 group-hover:opacity-100"
+            />
+            <div>
+              <p className="text-lg font-semibold text-card-foreground">Depot keeper</p>
+              <p className="mt-2 text-sm leading-6 text-muted-foreground">
+                Sign in with your assigned username and password to confirm script packing and question paper
+                entries for schools in your depot.
               </p>
             </div>
             <span

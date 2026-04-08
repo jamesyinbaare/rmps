@@ -1,7 +1,7 @@
-export const supervisorNoticeTitle = "CERTIFICATE II CORE SUBJECTS EXAMINATIONS";
+export const examinationNoticeTitle = "CERTIFICATE II CORE SUBJECTS EXAMINATIONS";
 
-export const supervisorNoticeIntro =
-  "The Commission for Technical and Vocational Education and Training (CTVET) informs all Principals and Supervisors that the Certificate II Core Subjects Examinations are to be conducted in accordance with approved procedures, timetable, and security requirements at all centres.";
+export const examinationNoticeIntro =
+  "The Commission for Technical and Vocational Education and Training (CTVET) informs all Principals, Supervisors, and examination staff that the Certificate II Core Subjects Examinations are to be conducted in accordance with approved procedures, timetable, and security requirements at all centres.";
 
 export const preExamInstructions: string[] = [
   "Take overall responsibility for the conduct of examinations in your institution where it serves as a centre.",
@@ -34,5 +34,5 @@ export const requiredDocumentsChecklist: string[] = [
   "Examination centre details for your school",
 ];
 
-export const supervisorNoticeClosing =
-  "Please ensure these documents/details are made available to Supervisors, Inspectors, Invigilators, Security Personnel, and candidates to support incident-free and peaceful examinations.";
+export const examinationNoticeClosing =
+  "Please ensure these documents/details are made available to Supervisors, Inspectors, Depot staff, Invigilators, Security Personnel, and candidates to support incident-free and peaceful examinations.";

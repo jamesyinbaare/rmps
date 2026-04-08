@@ -6,7 +6,10 @@ import {
   apiJson,
   downloadApiFile,
   getMyCenterProgrammes,
+  getMyDepotProgrammes,
+  getMyDepotSchools,
   timetableDownloadQuery,
+  type CenterScopeSchoolItem,
   type CentreScopeProgrammeItem,
   type Examination,
   type MyCenterSchoolsResponse,
@@ -20,7 +23,13 @@ import {
   timetableActionRowClass,
 } from "@/lib/form-classes";
 
-export function StaffTimetablePanel() {
+export type StaffTimetableScope = "centre" | "depot";
+
+type StaffTimetablePanelProps = {
+  timetableScope?: StaffTimetableScope;
+};
+
+export function StaffTimetablePanel({ timetableScope = "centre" }: StaffTimetablePanelProps) {
   const [exams, setExams] = useState<Examination[]>([]);
   const [examId, setExamId] = useState("");
   const [subjectFilter, setSubjectFilter] = useState<TimetableDownloadFilter>("ALL");
@@ -28,7 +37,7 @@ export function StaffTimetablePanel() {
   const [orientation, setOrientation] = useState<"portrait" | "landscape">("portrait");
   const [programmeId, setProgrammeId] = useState("");
   const [filterSchoolId, setFilterSchoolId] = useState("");
-  const [centerSchools, setCenterSchools] = useState<MyCenterSchoolsResponse | null>(null);
+  const [scopeSchools, setScopeSchools] = useState<CenterScopeSchoolItem[] | null>(null);
   const [preview, setPreview] = useState<TimetablePreviewResponse | null>(null);
   const [loadingExams, setLoadingExams] = useState(true);
   const [error, setError] = useState("");
@@ -46,19 +55,24 @@ export function StaffTimetablePanel() {
       setExams(examData);
       setExamId((prev) => (prev ? prev : examData.length ? String(examData[0].id) : ""));
       try {
-        const scopeData = await apiJson<MyCenterSchoolsResponse>(
-          "/examinations/timetable/my-center-schools",
-        );
-        setCenterSchools(scopeData);
+        if (timetableScope === "depot") {
+          const d = await getMyDepotSchools();
+          setScopeSchools(d.schools);
+        } else {
+          const scopeData = await apiJson<MyCenterSchoolsResponse>(
+            "/examinations/timetable/my-center-schools",
+          );
+          setScopeSchools(scopeData.schools);
+        }
       } catch {
-        setCenterSchools(null);
+        setScopeSchools(null);
       }
     } catch (e) {
       setError(e instanceof Error ? e.message : "Could not load examinations");
     } finally {
       setLoadingExams(false);
     }
-  }, []);
+  }, [timetableScope]);
 
   useEffect(() => {
     void loadExams();
@@ -67,16 +81,18 @@ export function StaffTimetablePanel() {
   const loadProgrammes = useCallback(async () => {
     setProgrammesLoading(true);
     try {
-      const data = await getMyCenterProgrammes(
-        filterSchoolIdTrimmed !== "" ? filterSchoolIdTrimmed : null,
-      );
+      const schoolArg = filterSchoolIdTrimmed !== "" ? filterSchoolIdTrimmed : null;
+      const data =
+        timetableScope === "depot"
+          ? await getMyDepotProgrammes(schoolArg)
+          : await getMyCenterProgrammes(schoolArg);
       setProgrammes(data.programmes);
     } catch {
       setProgrammes([]);
     } finally {
       setProgrammesLoading(false);
     }
-  }, [filterSchoolIdTrimmed]);
+  }, [filterSchoolIdTrimmed, timetableScope]);
 
   useEffect(() => {
     void loadProgrammes();
@@ -106,10 +122,11 @@ export function StaffTimetablePanel() {
     }
     setError("");
     try {
-      await downloadApiFile(
-        `/examinations/${examId}/timetable/my-school/pdf${qs}`,
-        `timetable_school.pdf`,
-      );
+      const pdfPath =
+        timetableScope === "depot"
+          ? `/examinations/${examId}/timetable/my-depot/pdf${qs}`
+          : `/examinations/${examId}/timetable/my-school/pdf${qs}`;
+      await downloadApiFile(pdfPath, `timetable_school.pdf`);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Download failed");
     }
@@ -123,9 +140,11 @@ export function StaffTimetablePanel() {
     setPreviewLoading(true);
     setError("");
     try {
-      const data = await apiJson<TimetablePreviewResponse>(
-        `/examinations/${examId}/timetable/my-school/preview${qs}`,
-      );
+      const previewPath =
+        timetableScope === "depot"
+          ? `/examinations/${examId}/timetable/my-depot/preview${qs}`
+          : `/examinations/${examId}/timetable/my-school/preview${qs}`;
+      const data = await apiJson<TimetablePreviewResponse>(previewPath);
       setPreview(data);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Preview failed");
@@ -138,8 +157,9 @@ export function StaffTimetablePanel() {
     <div className="rounded-2xl border border-border bg-card p-4 sm:p-6">
       <h2 className="text-lg font-semibold text-card-foreground">Examination timetable</h2>
       <p className="mt-1 text-sm text-muted-foreground">
-        The schedules are generated from registered candidates in your examination centre (the centre host and every school
-        that writes there). Optionally pick a school, programme or subject type (core or elective) to generate the timetable. If there are no candidates registered for the selected options, the timetable is empty.
+        {timetableScope === "depot"
+          ? "The schedules are generated from registered candidates at all schools in your depot. Optionally pick a school, programme or subject type (core or elective) to generate the timetable. If there are no candidates registered for the selected options, the timetable is empty."
+          : "The schedules are generated from registered candidates in your examination centre (the centre host and every school that writes there). Optionally pick a school, programme or subject type (core or elective) to generate the timetable. If there are no candidates registered for the selected options, the timetable is empty."}
       </p>
 
       {error ? (
@@ -177,7 +197,7 @@ export function StaffTimetablePanel() {
               ))}
             </select>
           </div>
-          {centerSchools && centerSchools.schools.length > 0 ? (
+          {scopeSchools && scopeSchools.length > 0 ? (
             <div>
               <label className={formLabelClass} htmlFor="staff-school-filter">
                 School filter (optional)
@@ -191,8 +211,10 @@ export function StaffTimetablePanel() {
                   setPreview(null);
                 }}
               >
-                <option value="">All schools at centre</option>
-                {centerSchools.schools.map((s) => (
+                <option value="">
+                  {timetableScope === "depot" ? "All schools in your depot" : "All schools at centre"}
+                </option>
+                {scopeSchools.map((s) => (
                   <option key={s.id} value={s.id}>
                     {s.code} — {s.name}
                   </option>
@@ -214,7 +236,14 @@ export function StaffTimetablePanel() {
                 setPreview(null);
               }}
             >
-              <option value="">All programmes at {filterSchoolIdTrimmed ? "this school" : "the centre"}</option>
+              <option value="">
+                All programmes at{" "}
+                {filterSchoolIdTrimmed
+                  ? "this school"
+                  : timetableScope === "depot"
+                    ? "your depot"
+                    : "the centre"}
+              </option>
               {programmes.map((p) => (
                 <option key={p.id} value={String(p.id)}>
                   {p.code} — {p.name} ({p.subject_count} subject{p.subject_count === 1 ? "" : "s"})
@@ -225,8 +254,9 @@ export function StaffTimetablePanel() {
               <p className="mt-1 text-xs text-muted-foreground">Loading programmes…</p>
             ) : programmes.length === 0 ? (
               <p className="mt-1 text-xs text-muted-foreground">
-                No programmes linked to schools in your centre scope. Ask an administrator to attach programmes to
-                schools.
+                {timetableScope === "depot"
+                  ? "No programmes linked to schools in your depot. Ask an administrator to attach programmes to schools."
+                  : "No programmes linked to schools in your centre scope. Ask an administrator to attach programmes to schools."}
               </p>
             ) : null}
           </div>
@@ -341,7 +371,9 @@ export function StaffTimetablePanel() {
           ) : null}
           {preview && preview.entries.length === 0 ? (
             <p className="text-sm text-muted-foreground">
-              No timetable for candidates at this centre.
+              {timetableScope === "depot"
+                ? "No timetable for candidates at schools in your depot."
+                : "No timetable for candidates at this centre."}
             </p>
           ) : null}
         </div>

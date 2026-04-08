@@ -17,6 +17,7 @@ const nav = [
   { href: "/dashboard/admin/subjects", label: "Subjects" },
   { href: "/dashboard/admin/examination-centres", label: "Examination centres" },
   { href: "/dashboard/admin/inspectors", label: "Inspectors" },
+  { href: "/dashboard/admin/depots", label: "Depots" },
   { href: "/dashboard/admin/timetable", label: "Examination timetable" },
   { href: "/dashboard/admin/documents", label: "Documents" },
 ];

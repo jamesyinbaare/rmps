@@ -9,14 +9,20 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from fastapi import APIRouter, File, HTTPException, Query, Response, UploadFile, status
 from fastapi.responses import StreamingResponse
-from sqlalchemy import delete, func, or_, select
+from sqlalchemy import asc, delete, func, or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import selectinload
 
 from app.config import settings
-from app.dependencies.auth import SuperAdminDep, SupervisorOrInspectorDep
+from app.dependencies.auth import (
+    DepotKeeperDep,
+    SuperAdminDep,
+    SupervisorInspectorOrDepotKeeperDep,
+    SupervisorOrInspectorDep,
+)
 from app.dependencies.database import DBSessionDep
 from app.models import (
+    Depot,
     Examination,
     ExaminationCandidate,
     ExaminationSchedule,
@@ -46,10 +52,12 @@ from app.schemas.examination import (
     CentreScopeProgrammeItem,
     MyCenterProgrammesResponse,
     MyCenterSchoolsResponse,
+    MyDepotSchoolsResponse,
     StaffCentreDaySummaryResponse,
     StaffCentreDaySummarySlotRow,
     StaffCentreOverviewResponse,
     StaffCentreOverviewUpcomingItem,
+    StaffDepotOverviewResponse,
     TimetableEntry,
     TimetablePreviewResponse,
 )
@@ -80,6 +88,7 @@ from app.services.script_control import (
     subject_series_count_map,
 )
 from app.services.template_generator import generate_schedule_template
+from app.services.depot_scope import depot_school_ids, require_depot_id_for_depot_keeper
 from app.services.timetable_service import (
     center_scope_school_ids,
     get_candidate_schedule_codes_for_exam,
@@ -92,6 +101,47 @@ router = APIRouter(prefix="/examinations", tags=["examinations"])
 
 def _sanitize_filename_part(s: str) -> str:
     return "".join(c for c in s if c.isalnum() or c in ("_", "-"))
+
+
+async def _depot_keeper_depot_id(session: DBSessionDep, user: User) -> UUID:
+    try:
+        return await require_depot_id_for_depot_keeper(session, user)
+    except ValueError as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e)) from None
+    except PermissionError as e:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(e)) from None
+
+
+async def _depot_ordered_schools(session: DBSessionDep, depot_id: UUID) -> list[School]:
+    stmt = select(School).where(School.depot_id == depot_id).order_by(asc(School.code))
+    result = await session.execute(stmt)
+    return list(result.scalars().all())
+
+
+async def _depot_scope_and_display_school(
+    session: DBSessionDep,
+    user: User,
+    filter_school_id: UUID | None,
+) -> tuple[set[UUID], School]:
+    depot_id = await _depot_keeper_depot_id(session, user)
+    ordered = await _depot_ordered_schools(session, depot_id)
+    if not ordered:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="No schools in your depot",
+        )
+    scope_ids = {s.id for s in ordered}
+    if filter_school_id is not None:
+        if filter_school_id not in scope_ids:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="School is not in your depot",
+            )
+        sch = await session.get(School, filter_school_id)
+        if sch is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="School not found")
+        return scope_ids, sch
+    return scope_ids, ordered[0]
 
 
 async def _get_exam_or_404(session: DBSessionDep, exam_id: int) -> Examination:
@@ -138,7 +188,7 @@ async def list_examinations(
 @router.get("/public-list", response_model=list[ExaminationResponse])
 async def list_examinations_for_staff(
     session: DBSessionDep,
-    user: SupervisorOrInspectorDep,
+    user: SupervisorInspectorOrDepotKeeperDep,
 ) -> list[ExaminationResponse]:
     _ = user
     stmt = select(Examination).order_by(Examination.year.desc(), Examination.id.desc())
@@ -185,6 +235,71 @@ async def list_my_center_programmes_for_timetable(
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="School is not in your examination centre scope",
+            )
+
+    if school_id is not None:
+        sp_cond = school_programmes.c.school_id == school_id
+    else:
+        sp_cond = school_programmes.c.school_id.in_(scope_ids)
+
+    prog_ids_subq = select(school_programmes.c.programme_id).where(sp_cond).distinct().subquery()
+
+    stmt = (
+        select(
+            Programme.id,
+            Programme.code,
+            Programme.name,
+            func.count(programme_subjects.c.subject_id).label("subject_count"),
+        )
+        .select_from(Programme)
+        .join(prog_ids_subq, prog_ids_subq.c.programme_id == Programme.id)
+        .outerjoin(programme_subjects, programme_subjects.c.programme_id == Programme.id)
+        .group_by(Programme.id, Programme.code, Programme.name)
+        .order_by(Programme.code)
+    )
+    result = await session.execute(stmt)
+    rows = result.all()
+    return MyCenterProgrammesResponse(
+        programmes=[
+            CentreScopeProgrammeItem(
+                id=r.id,
+                code=r.code,
+                name=r.name,
+                subject_count=int(r.subject_count or 0),
+            )
+            for r in rows
+        ],
+    )
+
+
+@router.get("/timetable/my-depot-schools", response_model=MyDepotSchoolsResponse)
+async def list_my_depot_schools_for_timetable(
+    session: DBSessionDep,
+    user: DepotKeeperDep,
+) -> MyDepotSchoolsResponse:
+    depot_id = await _depot_keeper_depot_id(session, user)
+    ordered = await _depot_ordered_schools(session, depot_id)
+    return MyDepotSchoolsResponse(
+        schools=[CenterScopeSchoolItem(id=s.id, code=s.code, name=s.name) for s in ordered],
+    )
+
+
+@router.get("/timetable/my-depot-programmes", response_model=MyCenterProgrammesResponse)
+async def list_my_depot_programmes_for_timetable(
+    session: DBSessionDep,
+    user: DepotKeeperDep,
+    school_id: UUID | None = Query(
+        default=None,
+        description="If set, only programmes linked to this school (must be in your depot).",
+    ),
+) -> MyCenterProgrammesResponse:
+    depot_id = await _depot_keeper_depot_id(session, user)
+    scope_ids = await depot_school_ids(session, depot_id)
+    if school_id is not None:
+        if school_id not in scope_ids:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="School is not in your depot",
             )
 
     if school_id is not None:
@@ -997,6 +1112,101 @@ async def preview_my_school_timetable(
     )
 
 
+@router.get("/{exam_id}/timetable/my-depot/pdf")
+async def download_my_depot_timetable_pdf(
+    exam_id: int,
+    session: DBSessionDep,
+    user: DepotKeeperDep,
+    subject_filter: TimetableDownloadFilter = Query(default=TimetableDownloadFilter.ALL),
+    programme_id: int | None = Query(default=None),
+    filter_school_id: UUID | None = Query(
+        default=None,
+        description="Limit to candidates from this school (must be in your depot)",
+    ),
+    merge_by_date: bool = Query(default=False, description="Merge subjects written on the same day"),
+    orientation: str = Query(default="portrait", description="Page orientation: portrait or landscape"),
+) -> Response:
+    scope_ids, display_school = await _depot_scope_and_display_school(session, user, filter_school_id)
+    if programme_id is not None:
+        await _validate_programme_in_scope(session, programme_id, scope_ids)
+    explicit_codes = await get_candidate_schedule_codes_for_exam(
+        session,
+        exam_id,
+        scope_ids,
+        programme_id=programme_id,
+        filter_school_id=filter_school_id,
+    )
+    try:
+        pdf = await build_school_timetable_pdf(
+            session,
+            exam_id,
+            display_school.id,
+            programme_id=programme_id,
+            subject_filter=subject_filter,
+            merge_by_date=merge_by_date,
+            orientation=orientation,
+            explicit_schedule_codes=explicit_codes,
+        )
+    except ValueError as e:
+        detail = str(e) if str(e) else "Not found"
+        if "Programme not found" in detail:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=detail) from None
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Examination not found") from None
+    exam = await load_examination_or_raise(session, exam_id)
+    base = _sanitize_filename_part(f"{exam.year}_{exam.exam_series or 'exam'}_{display_school.code}")
+    filename = f"timetable_{base}.pdf"
+    return Response(
+        content=pdf,
+        media_type="application/pdf",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
+@router.get("/{exam_id}/timetable/my-depot/preview", response_model=TimetablePreviewResponse)
+async def preview_my_depot_timetable(
+    exam_id: int,
+    session: DBSessionDep,
+    user: DepotKeeperDep,
+    subject_filter: TimetableDownloadFilter = Query(default=TimetableDownloadFilter.ALL),
+    programme_id: int | None = Query(default=None),
+    filter_school_id: UUID | None = Query(
+        default=None,
+        description="Limit to candidates from this school (must be in your depot)",
+    ),
+) -> TimetablePreviewResponse:
+    try:
+        exam = await load_examination_or_raise(session, exam_id)
+    except ValueError:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Examination not found") from None
+
+    scope_ids, display_school = await _depot_scope_and_display_school(session, user, filter_school_id)
+    if programme_id is not None:
+        await _validate_programme_in_scope(session, programme_id, scope_ids)
+
+    explicit_codes = await get_candidate_schedule_codes_for_exam(
+        session,
+        exam_id,
+        scope_ids,
+        programme_id=programme_id,
+        filter_school_id=filter_school_id,
+    )
+    all_schedules = await load_schedules_for_exam(session, exam_id)
+    schedule_codes = {s.subject_code for s in all_schedules}
+    intersected = explicit_codes & schedule_codes
+    filtered_codes = await filter_schedule_codes_by_subject_type(session, intersected, subject_filter)
+    filtered = [s for s in all_schedules if s.subject_code in filtered_codes]
+    entries = schedules_to_entries(filtered)
+    return TimetablePreviewResponse(
+        examination_id=exam.id,
+        exam_type=exam.exam_type,
+        exam_series=exam.exam_series,
+        year=exam.year,
+        school_id=display_school.id,
+        school_code=display_school.code,
+        entries=entries,
+    )
+
+
 @router.get("/{exam_id}/my-center-overview", response_model=StaffCentreOverviewResponse)
 async def get_my_center_overview(
     exam_id: int,
@@ -1010,7 +1220,11 @@ async def get_my_center_overview(
     except ValueError:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Examination not found") from None
 
-    scope_ids, _center_display = await _staff_scope_and_display_school(session, user_school, None)
+    try:
+        center_host = await resolve_center_host_school(session, user_school)
+    except ValueError as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e)) from None
+    scope_ids = await center_scope_school_ids(session, center_host)
     school_count = len(scope_ids)
 
     cand_stmt = select(func.count()).select_from(ExaminationCandidate).where(
@@ -1047,6 +1261,12 @@ async def get_my_center_overview(
         exam_type=exam.exam_type,
         exam_series=exam.exam_series,
         year=exam.year,
+        supervisor_school_code=user_school.code,
+        supervisor_school_name=user_school.name,
+        examination_centre_host_school_id=center_host.id,
+        examination_centre_host_code=center_host.code,
+        examination_centre_host_name=center_host.name,
+        supervisor_school_is_centre_host=user_school.writes_at_center_id is None,
         candidate_count=candidate_count,
         school_count=school_count,
         upcoming=[
@@ -1091,6 +1311,214 @@ async def get_my_center_day_summary(
     center_host = await resolve_center_host_school(session, user_school)
     ordered_schools = await schools_in_center_scope_ordered(session, center_host)
     school_index = {s.id: i for i, s in enumerate(ordered_schools)}
+
+    entries = await _staff_center_filtered_timetable_entries(session, exam_id, scope_ids)
+    day_entries = [e for e in entries if e.examination_date == examination_date]
+    day_entries.sort(key=lambda x: (x.examination_time, x.subject_code, x.paper))
+
+    by_subject: dict[str, list[TimetableEntry]] = defaultdict(list)
+    for ent in day_entries:
+        by_subject[_subject_day_group_key(ent.subject_code)].append(ent)
+    merged_groups: list[list[TimetableEntry]] = []
+    for _key, group in by_subject.items():
+        group.sort(key=lambda x: (x.examination_time, x.paper))
+        merged_groups.append(group)
+    merged_groups.sort(
+        key=lambda g: (min(e.examination_time for e in g), g[0].subject_code),
+    )
+
+    cand_stmt = (
+        select(ExaminationCandidate)
+        .where(
+            ExaminationCandidate.examination_id == exam_id,
+            ExaminationCandidate.school_id.in_(scope_ids),
+            ExaminationCandidate.school_id.isnot(None),
+        )
+        .options(selectinload(ExaminationCandidate.subject_selections))
+    )
+    cand_result = await session.execute(cand_stmt)
+    candidates = list(cand_result.scalars().unique().all())
+
+    slot_rows: list[StaffCentreDaySummarySlotRow] = []
+    unique_ids: set[int] = set()
+    n_sch = len(ordered_schools)
+
+    for group in merged_groups:
+        first = group[0]
+        papers_sorted = sorted({e.paper for e in group})
+        papers_label = " & ".join(str(p) for p in papers_sorted)
+        times_sorted = sorted({e.examination_time for e in group})
+        times_label = " · ".join(_format_time_hhmm(t) for t in times_sorted)
+
+        counts_by_school = [0] * n_sch
+        row_total = 0
+
+        for cand in candidates:
+            subj_rows = [
+                (s.subject_code, s.series) for s in (cand.subject_selections or []) if s.subject_code
+            ]
+            if not _candidate_matches_any_entry_in_group(subj_rows, group):
+                continue
+            unique_ids.add(cand.id)
+            row_total += 1
+            if cand.school_id is not None:
+                idx = school_index.get(cand.school_id)
+                if idx is not None:
+                    counts_by_school[idx] += 1
+
+        slot_rows.append(
+            StaffCentreDaySummarySlotRow(
+                subject_code=first.subject_code,
+                subject_name=first.subject_name,
+                papers_label=papers_label,
+                times_label=times_label,
+                counts_by_school=counts_by_school,
+                row_total=row_total,
+            )
+        )
+
+    schools_for_response: list[CenterScopeSchoolItem] = []
+    if n_sch and slot_rows:
+        school_day_totals = [0] * n_sch
+        for slot in slot_rows:
+            for i, c in enumerate(slot.counts_by_school):
+                school_day_totals[i] += c
+        keep_idx = [i for i, t in enumerate(school_day_totals) if t > 0]
+        filtered_ordered = [ordered_schools[i] for i in keep_idx]
+        schools_for_response = [
+            CenterScopeSchoolItem(id=s.id, code=s.code, name=s.name) for s in filtered_ordered
+        ]
+        slot_rows = [
+            StaffCentreDaySummarySlotRow(
+                subject_code=s.subject_code,
+                subject_name=s.subject_name,
+                papers_label=s.papers_label,
+                times_label=s.times_label,
+                counts_by_school=[s.counts_by_school[i] for i in keep_idx],
+                row_total=s.row_total,
+            )
+            for s in slot_rows
+        ]
+
+    unique_n = len(unique_ids)
+    invigilators = math.ceil(unique_n / 30) if unique_n else 0
+
+    return StaffCentreDaySummaryResponse(
+        examination_date=examination_date,
+        schools=schools_for_response,
+        slots=slot_rows,
+        unique_candidates=unique_n,
+        invigilators_required=invigilators,
+    )
+
+
+@router.get("/{exam_id}/my-depot-overview", response_model=StaffDepotOverviewResponse)
+async def get_my_depot_overview(
+    exam_id: int,
+    session: DBSessionDep,
+    user: DepotKeeperDep,
+) -> StaffDepotOverviewResponse:
+    depot_id = await _depot_keeper_depot_id(session, user)
+    depot = await session.get(Depot, depot_id)
+    if depot is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Depot not found")
+    try:
+        exam = await load_examination_or_raise(session, exam_id)
+    except ValueError:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Examination not found") from None
+
+    scope_ids = await depot_school_ids(session, depot_id)
+    school_count = len(scope_ids)
+
+    if not scope_ids:
+        candidate_count = 0
+        entries: list[TimetableEntry] = []
+    else:
+        cand_stmt = select(func.count()).select_from(ExaminationCandidate).where(
+            ExaminationCandidate.examination_id == exam_id,
+            ExaminationCandidate.school_id.in_(scope_ids),
+        )
+        candidate_count = int((await session.execute(cand_stmt)).scalar_one())
+        entries = await _staff_center_filtered_timetable_entries(session, exam_id, scope_ids)
+
+    try:
+        tz = ZoneInfo(settings.script_packing_timezone)
+    except ZoneInfoNotFoundError:
+        tz = ZoneInfo("UTC")
+    now = datetime.now(tz)
+
+    upcoming_rows: list[TimetableEntry] = []
+    for ent in entries:
+        start = datetime.combine(ent.examination_date, ent.examination_time).replace(tzinfo=tz)
+        if start >= now:
+            upcoming_rows.append(ent)
+    upcoming_rows.sort(
+        key=lambda x: (x.examination_date, x.examination_time, x.subject_code, x.paper),
+    )
+
+    today_date = now.date()
+    today_rows = [ent for ent in entries if ent.examination_date == today_date]
+    today_rows.sort(
+        key=lambda x: (x.examination_time, x.subject_code, x.paper),
+    )
+
+    return StaffDepotOverviewResponse(
+        examination_id=exam.id,
+        exam_type=exam.exam_type,
+        exam_series=exam.exam_series,
+        year=exam.year,
+        depot_code=depot.code,
+        depot_name=depot.name,
+        candidate_count=candidate_count,
+        school_count=school_count,
+        upcoming=[
+            StaffCentreOverviewUpcomingItem(
+                subject_code=x.subject_code,
+                subject_name=x.subject_name,
+                paper=x.paper,
+                examination_date=x.examination_date,
+                examination_time=x.examination_time,
+            )
+            for x in upcoming_rows
+        ],
+        sessions_today=[
+            StaffCentreOverviewUpcomingItem(
+                subject_code=x.subject_code,
+                subject_name=x.subject_name,
+                paper=x.paper,
+                examination_date=x.examination_date,
+                examination_time=x.examination_time,
+            )
+            for x in today_rows
+        ],
+    )
+
+
+@router.get("/{exam_id}/my-depot-day-summary", response_model=StaffCentreDaySummaryResponse)
+async def get_my_depot_day_summary(
+    exam_id: int,
+    examination_date: date,
+    session: DBSessionDep,
+    user: DepotKeeperDep,
+) -> StaffCentreDaySummaryResponse:
+    depot_id = await _depot_keeper_depot_id(session, user)
+    try:
+        await load_examination_or_raise(session, exam_id)
+    except ValueError:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Examination not found") from None
+
+    ordered_schools = await _depot_ordered_schools(session, depot_id)
+    scope_ids = {s.id for s in ordered_schools}
+    school_index = {s.id: i for i, s in enumerate(ordered_schools)}
+
+    if not scope_ids:
+        return StaffCentreDaySummaryResponse(
+            examination_date=examination_date,
+            schools=[],
+            slots=[],
+            unique_candidates=0,
+            invigilators_required=0,
+        )
 
     entries = await _staff_center_filtered_timetable_entries(session, exam_id, scope_ids)
     day_entries = [e for e in entries if e.examination_date == examination_date]

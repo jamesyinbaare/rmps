@@ -184,6 +184,12 @@ class MyCenterProgrammesResponse(BaseModel):
     programmes: list[CentreScopeProgrammeItem]
 
 
+class MyDepotSchoolsResponse(BaseModel):
+    """Schools assigned to the depot keeper's depot (for timetable filters)."""
+
+    schools: list[CenterScopeSchoolItem]
+
+
 class StaffCentreOverviewUpcomingItem(BaseModel):
     """Single timetable slot (subject + paper) for dashboard preview."""
 
@@ -201,6 +207,14 @@ class StaffCentreOverviewResponse(BaseModel):
     exam_type: str
     exam_series: str | None
     year: int
+    supervisor_school_code: str = Field(description="School code linked to this account.")
+    supervisor_school_name: str = Field(description="Name of the school linked to this account.")
+    examination_centre_host_school_id: UUID = Field(description="Host school id for this examination centre cluster.")
+    examination_centre_host_code: str = Field(description="Host school code (examination centre).")
+    examination_centre_host_name: str = Field(description="Host school name (examination centre).")
+    supervisor_school_is_centre_host: bool = Field(
+        description="True when this account's school is the examination centre host (writes_at_center_id is null).",
+    )
     candidate_count: int = Field(ge=0, description="Candidates registered for this exam at schools in the centre scope.")
     school_count: int = Field(ge=0, description="Schools in the examination centre (host plus schools that write there).")
     upcoming: list[StaffCentreOverviewUpcomingItem] = Field(
@@ -210,6 +224,27 @@ class StaffCentreOverviewResponse(BaseModel):
     sessions_today: list[StaffCentreOverviewUpcomingItem] = Field(
         default_factory=list,
         description="All sessions on today's calendar date in the centre timezone (including papers that already started).",
+    )
+
+
+class StaffDepotOverviewResponse(BaseModel):
+    """Depot keeper: depot-wide candidate/school counts and timetable slots."""
+
+    examination_id: int
+    exam_type: str
+    exam_series: str | None
+    year: int
+    depot_code: str
+    depot_name: str
+    candidate_count: int = Field(ge=0, description="Candidates at depot schools for this examination.")
+    school_count: int = Field(ge=0, description="Schools in the depot.")
+    upcoming: list[StaffCentreOverviewUpcomingItem] = Field(
+        default_factory=list,
+        description="Future sessions from candidate-linked timetable entries, sorted by date and time.",
+    )
+    sessions_today: list[StaffCentreOverviewUpcomingItem] = Field(
+        default_factory=list,
+        description="All sessions on today's date in the configured timezone.",
     )
 
 

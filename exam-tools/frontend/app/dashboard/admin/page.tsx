@@ -5,6 +5,8 @@ import { useEffect, useState } from "react";
 
 import {
   apiJson,
+  type AdminDepotKeeperListResponse,
+  type AdminDepotListResponse,
   type ExaminationCenterListResponse,
   type InspectorListResponse,
   type SchoolListResponse,
@@ -19,6 +21,8 @@ type SummaryState = {
   schools: number | null;
   centres: number | null;
   inspectors: number | null;
+  depots: number | null;
+  depotKeepers: number | null;
 };
 
 export default function AdminDashboardPage() {
@@ -26,6 +30,8 @@ export default function AdminDashboardPage() {
     schools: null,
     centres: null,
     inspectors: null,
+    depots: null,
+    depotKeepers: null,
   });
   const [error, setError] = useState<string | null>(null);
 
@@ -35,21 +41,31 @@ export default function AdminDashboardPage() {
     (async () => {
       setError(null);
       try {
-        const [schoolsRes, centresRes, inspectorsRes] = await Promise.all([
+        const [schoolsRes, centresRes, inspectorsRes, depotsRes, keepersRes] = await Promise.all([
           apiJson<SchoolListResponse>("/schools?skip=0&limit=1"),
           apiJson<ExaminationCenterListResponse>("/schools/examination-centers?skip=0&limit=1"),
           apiJson<InspectorListResponse>("/inspectors?skip=0&limit=1&sort=full_name&order=asc"),
+          apiJson<AdminDepotListResponse>("/depots?skip=0&limit=1"),
+          apiJson<AdminDepotKeeperListResponse>("/depots/keepers?skip=0&limit=1"),
         ]);
         if (cancelled) return;
         setSummary({
           schools: schoolsRes.total,
           centres: centresRes.total,
           inspectors: inspectorsRes.total,
+          depots: depotsRes.total,
+          depotKeepers: keepersRes.total,
         });
       } catch (e) {
         if (cancelled) return;
         setError(e instanceof Error ? e.message : "Could not load summary");
-        setSummary({ schools: null, centres: null, inspectors: null });
+        setSummary({
+          schools: null,
+          centres: null,
+          inspectors: null,
+          depots: null,
+          depotKeepers: null,
+        });
       }
     })();
 
@@ -68,7 +84,7 @@ export default function AdminDashboardPage() {
       <div>
         <h2 className="text-xl font-semibold text-foreground">Overview</h2>
         <p className="mt-1 text-sm text-muted-foreground">
-          Totals across schools, examination centres, and inspectors.
+          Totals across schools, centres, inspectors, and depots.
         </p>
       </div>
 
@@ -78,7 +94,7 @@ export default function AdminDashboardPage() {
         </p>
       ) : null}
 
-      <ul className="grid grid-cols-1 gap-4 md:grid-cols-3">
+      <ul className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
         <li>
           <Link href="/dashboard/admin/schools" className={cardClass}>
             <h3 className="text-sm font-medium uppercase tracking-wide text-muted-foreground">
@@ -110,6 +126,22 @@ export default function AdminDashboardPage() {
               {formatCount(summary.inspectors)}
             </p>
             <span className={linkClass}>Manage inspectors</span>
+          </Link>
+        </li>
+        <li>
+          <Link href="/dashboard/admin/depots" className={cardClass}>
+            <h3 className="text-sm font-medium uppercase tracking-wide text-muted-foreground">
+              Depots & keepers
+            </h3>
+            <p className="mt-2 tabular-nums text-3xl font-semibold text-card-foreground">
+              {formatCount(summary.depots)}
+            </p>
+            <p className="mt-1 text-sm text-muted-foreground">
+              {summary.depotKeepers === null
+                ? "— depot keepers"
+                : `${summary.depotKeepers.toLocaleString()} depot keeper${summary.depotKeepers === 1 ? "" : "s"}`}
+            </p>
+            <span className={linkClass}>Manage depots & keepers</span>
           </Link>
         </li>
       </ul>

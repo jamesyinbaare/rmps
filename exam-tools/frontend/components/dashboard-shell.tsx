@@ -6,11 +6,44 @@ import { useEffect, useState } from "react";
 
 import { clearAuth, getMe, type UserMe } from "@/lib/auth";
 
+/** Subtitle under the page title: full name plus school name and code when present. */
+function staffHeaderSubtitle(me: UserMe): string {
+  if (me.role === "DEPOT_KEEPER") {
+    const dep =
+      me.depot_name != null && me.depot_name.trim() !== ""
+        ? me.depot_code
+          ? `${me.depot_name.trim()} · ${me.depot_code}`
+          : me.depot_name.trim()
+        : (me.depot_code ?? "");
+    const userSeg = me.username?.trim() ?? "";
+    const parts = [me.full_name.trim()];
+    if (userSeg) parts.push(userSeg);
+    if (dep) parts.push(dep);
+    return parts.filter((p) => p !== "").join(" · ");
+  }
+  const schoolSegment =
+    me.school_name != null && me.school_name.trim() !== ""
+      ? me.school_code
+        ? `${me.school_name.trim()} · ${me.school_code}`
+        : me.school_name.trim()
+      : (me.school_code ?? "");
+
+  // Supervisors often have full_name set to the school code at provisioning; avoid "code · name · code".
+  const full = me.full_name.trim();
+  const code = me.school_code?.trim() ?? "";
+  const nameIsOnlySchoolCode = code !== "" && full === code;
+
+  if (nameIsOnlySchoolCode) {
+    return schoolSegment || full;
+  }
+  return schoolSegment ? `${me.full_name} · ${schoolSegment}` : me.full_name;
+}
+
 type Props = {
   title: string;
   children?: React.ReactNode;
   /** When set, shows Overview + Examination timetable sub-nav for staff dashboards */
-  staffRole?: "supervisor" | "inspector";
+  staffRole?: "supervisor" | "inspector" | "depot-keeper";
 };
 
 const inputFocusRing =
@@ -44,10 +77,7 @@ export function DashboardShell({ title, children, staffRole }: Props) {
               </p>
               <h1 className="text-lg font-semibold text-card-foreground sm:text-xl">{title}</h1>
               {me ? (
-                <p className="mt-1 text-sm text-muted-foreground">
-                  {me.full_name}
-                  {me.school_code ? ` · ${me.school_code}` : ""}
-                </p>
+                <p className="mt-1 text-sm text-muted-foreground">{staffHeaderSubtitle(me)}</p>
               ) : null}
             </div>
             <div className="flex flex-wrap gap-2 sm:justify-end">
@@ -72,14 +102,24 @@ export function DashboardShell({ title, children, staffRole }: Props) {
     );
   }
 
-  const staffBase = staffRole === "supervisor" ? "/dashboard/supervisor" : "/dashboard/inspector";
+  const staffBase =
+    staffRole === "supervisor"
+      ? "/dashboard/supervisor"
+      : staffRole === "depot-keeper"
+        ? "/dashboard/depot-keeper"
+        : "/dashboard/inspector";
   const timetableHref = `${staffBase}/timetable`;
   const documentsHref = `${staffBase}/documents`;
-  const roleLabel = staffRole === "supervisor" ? "Supervisor" : "Inspector";
+  const roleLabel =
+    staffRole === "supervisor"
+      ? "Supervisor"
+      : staffRole === "depot-keeper"
+        ? "Depot keeper"
+        : "Inspector";
 
   const scriptsHref = `${staffBase}/scripts-control`;
   const questionPaperHref = `${staffBase}/question-paper-control`;
-  const supervisorNoticeHref = `${staffBase}/supervisor-notice`;
+  const examinationNoticeHref = `${staffBase}/examination-notice`;
 
   const staffNav = [
     { href: staffBase, label: "Overview", active: pathname === staffBase },
@@ -88,11 +128,11 @@ export function DashboardShell({ title, children, staffRole }: Props) {
       label: "Examination timetable",
       active: pathname.startsWith(timetableHref),
     },
-    ...(staffRole === "inspector"
+    ...(staffRole === "inspector" || staffRole === "depot-keeper"
       ? [
           {
             href: scriptsHref,
-            label: "Scripts control",
+            label: "Worked Scripts Control",
             active: pathname.startsWith(scriptsHref),
           },
           {
@@ -102,12 +142,12 @@ export function DashboardShell({ title, children, staffRole }: Props) {
           },
         ]
       : []),
-    ...(staffRole === "supervisor"
+    ...(staffRole === "supervisor" || staffRole === "inspector" || staffRole === "depot-keeper"
       ? [
           {
-            href: supervisorNoticeHref,
-            label: "Supervisor notice",
-            active: pathname.startsWith(supervisorNoticeHref),
+            href: examinationNoticeHref,
+            label: "Examination notice",
+            active: pathname.startsWith(examinationNoticeHref),
           },
         ]
       : []),
@@ -177,10 +217,7 @@ export function DashboardShell({ title, children, staffRole }: Props) {
                 {title}
               </h1>
               {me ? (
-                <p className="truncate text-sm text-muted-foreground">
-                  {me.full_name}
-                  {me.school_code ? ` · ${me.school_code}` : ""}
-                </p>
+                <p className="truncate text-sm text-muted-foreground">{staffHeaderSubtitle(me)}</p>
               ) : null}
             </div>
             <div className="flex shrink-0 flex-wrap items-center gap-2">
