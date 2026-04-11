@@ -1235,6 +1235,15 @@ async def get_my_center_overview(
 
     entries = await _staff_center_filtered_timetable_entries(session, exam_id, scope_ids)
 
+    examination_centre_region = center_host.region.value
+    if entries:
+        entry_dates = [e.examination_date for e in entries]
+        examination_window_start = min(entry_dates)
+        examination_window_end = max(entry_dates)
+    else:
+        examination_window_start = None
+        examination_window_end = None
+
     try:
         tz = ZoneInfo(settings.script_packing_timezone)
     except ZoneInfoNotFoundError:
@@ -1289,6 +1298,9 @@ async def get_my_center_overview(
             )
             for x in today_rows
         ],
+        examination_centre_region=examination_centre_region,
+        examination_window_start=examination_window_start,
+        examination_window_end=examination_window_end,
     )
 
 
@@ -1427,8 +1439,17 @@ async def get_my_depot_overview(
     except ValueError:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Examination not found") from None
 
-    scope_ids = await depot_school_ids(session, depot_id)
+    ordered_schools = await _depot_ordered_schools(session, depot_id)
+    scope_ids = {s.id for s in ordered_schools}
     school_count = len(scope_ids)
+
+    region_summary: str | None = None
+    if ordered_schools:
+        regions = {s.region for s in ordered_schools}
+        if len(regions) == 1:
+            region_summary = next(iter(regions)).value
+        else:
+            region_summary = "Multiple regions"
 
     if not scope_ids:
         candidate_count = 0
@@ -1440,6 +1461,8 @@ async def get_my_depot_overview(
         )
         candidate_count = int((await session.execute(cand_stmt)).scalar_one())
         entries = await _staff_center_filtered_timetable_entries(session, exam_id, scope_ids)
+
+    timetable_distinct_subject_count = len({e.subject_code for e in entries})
 
     try:
         tz = ZoneInfo(settings.script_packing_timezone)
@@ -1491,6 +1514,8 @@ async def get_my_depot_overview(
             )
             for x in today_rows
         ],
+        timetable_distinct_subject_count=timetable_distinct_subject_count,
+        region_summary=region_summary,
     )
 
 

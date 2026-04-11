@@ -7,7 +7,7 @@ from fastapi import APIRouter, HTTPException, Query, status
 from sqlalchemy import func, select
 from sqlalchemy.orm import selectinload
 
-from app.config import settings
+from app.config import resolved_scripts_per_envelope_paper_1, resolved_scripts_per_envelope_paper_2, script_envelope_cap, settings
 from app.dependencies.auth import DepotKeeperDep, InspectorDep, SuperAdminDep
 from app.dependencies.database import DBSessionDep
 from app.models import School, ScriptEnvelope, ScriptPackingSeries, Subject, User, UserRole
@@ -155,6 +155,8 @@ async def _build_my_school_script_grid(
         school_id=packing_school.id,
         school_code=packing_school.code,
         scripts_per_envelope=settings.scripts_per_envelope,
+        scripts_per_envelope_paper_1=resolved_scripts_per_envelope_paper_1(),
+        scripts_per_envelope_paper_2=resolved_scripts_per_envelope_paper_2(),
         subjects=subjects_out,
     )
 
@@ -343,12 +345,14 @@ async def upsert_my_school_script_series(
     except ValueError as e:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e)) from None
 
-    cap = settings.scripts_per_envelope
+    cap = script_envelope_cap(body.paper_number)
     for env in body.envelopes:
         if env.booklet_count > cap:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail=f"Envelope {env.envelope_number}: booklet_count cannot exceed {cap} (scripts_per_envelope)",
+                detail=(
+                    f"Envelope {env.envelope_number}: at most {cap} booklets for paper {body.paper_number}."
+                ),
             )
 
     stmt = (

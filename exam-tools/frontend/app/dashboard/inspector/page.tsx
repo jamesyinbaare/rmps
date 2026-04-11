@@ -6,7 +6,7 @@ export default function InspectorDashboardPage() {
   return (
     <RoleGuard expectedRole="INSPECTOR" loginHref="/login/inspector">
       <DashboardShell title="Inspector dashboard" staffRole="inspector">
-        <StaffDashboardOverview />
+        <StaffDashboardOverview examinationNoticeHref="/dashboard/inspector/examination-notice" />
       </DashboardShell>
     </RoleGuard>
   );

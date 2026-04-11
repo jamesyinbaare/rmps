@@ -241,6 +241,23 @@
 }
 
 @media print {
+  /* When printing from the examination notice page, hide chrome and the exam picker. */
+  body.printing-examination-notice * {
+    visibility: hidden;
+  }
+
+  body.printing-examination-notice .examination-notice-onepage,
+  body.printing-examination-notice .examination-notice-onepage * {
+    visibility: visible;
+  }
+
+  body.printing-examination-notice .examination-notice-onepage {
+    position: absolute;
+    left: 0;
+    top: 0;
+    width: 100%;
+  }
+
   .examination-notice-onepage {
     max-width: none !important;
     border: 0 !important;

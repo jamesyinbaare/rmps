@@ -225,6 +225,17 @@ class StaffCentreOverviewResponse(BaseModel):
         default_factory=list,
         description="All sessions on today's calendar date in the centre timezone (including papers that already started).",
     )
+    examination_centre_region: str = Field(
+        description="Human-readable region of the examination centre host school.",
+    )
+    examination_window_start: date | None = Field(
+        default=None,
+        description="Earliest candidate-linked timetable date for this examination at the centre, if any.",
+    )
+    examination_window_end: date | None = Field(
+        default=None,
+        description="Latest candidate-linked timetable date for this examination at the centre, if any.",
+    )
 
 
 class StaffDepotOverviewResponse(BaseModel):
@@ -245,6 +256,14 @@ class StaffDepotOverviewResponse(BaseModel):
     sessions_today: list[StaffCentreOverviewUpcomingItem] = Field(
         default_factory=list,
         description="All sessions on today's date in the configured timezone.",
+    )
+    timetable_distinct_subject_count: int = Field(
+        ge=0,
+        description="Distinct subject codes on the candidate-linked timetable for this examination and depot.",
+    )
+    region_summary: str | None = Field(
+        default=None,
+        description="Human-readable region label when all depot schools share one region; otherwise a multi-region label.",
     )
 
 

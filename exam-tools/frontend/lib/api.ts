@@ -481,6 +481,10 @@ export type StaffCentreOverviewResponse = {
   upcoming: StaffCentreOverviewUpcomingItem[];
   /** All slots on today's date (centre timezone), including papers that already started. */
   sessions_today?: StaffCentreOverviewUpcomingItem[];
+  examination_centre_region: string;
+  /** ISO date (YYYY-MM-DD) or null when no candidate-linked timetable rows. */
+  examination_window_start: string | null;
+  examination_window_end: string | null;
 };
 
 export type StaffCentreDaySummarySlotRow = {
@@ -525,6 +529,10 @@ export type StaffDepotOverviewResponse = {
   school_count: number;
   upcoming: StaffCentreOverviewUpcomingItem[];
   sessions_today?: StaffCentreOverviewUpcomingItem[];
+  /** Distinct subject codes on the candidate-linked timetable for this examination and depot. */
+  timetable_distinct_subject_count: number;
+  /** When all depot schools share one region; otherwise a multi-region label. */
+  region_summary: string | null;
 };
 
 export async function getStaffDepotOverview(examId: number): Promise<StaffDepotOverviewResponse> {
@@ -729,8 +737,12 @@ export type MySchoolScriptControlResponse = {
   year: number;
   school_id: string;
   school_code: string;
-  /** Maximum booklets allowed per envelope (from server config). */
+  /** Maximum for papers other than 1 and 2; default when paper-specific caps match this. */
   scripts_per_envelope: number;
+  /** Effective max booklets per envelope for paper 1. */
+  scripts_per_envelope_paper_1: number;
+  /** Effective max booklets per envelope for paper 2. */
+  scripts_per_envelope_paper_2: number;
   subjects: ScriptSubjectRowResponse[];
 };
 

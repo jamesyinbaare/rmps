@@ -172,6 +172,7 @@ export default function DepotKeeperDashboardPage() {
               onExamIdChange: setExamId,
             }}
             depotLearnMoreFooter={scriptsSummaryBlock}
+            examinationNoticeHref="/dashboard/depot-keeper/examination-notice"
           />
         </div>
       </DashboardShell>

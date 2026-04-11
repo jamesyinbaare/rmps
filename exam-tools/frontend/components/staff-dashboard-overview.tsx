@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useCallback, useEffect, useState, type ReactNode } from "react";
 
 import {
@@ -415,6 +416,8 @@ export type StaffDashboardOverviewProps = {
   depotFrontPage?: boolean;
   /** Rendered inside the expanded “Learn more” section (depot + depotFrontPage only). */
   depotLearnMoreFooter?: ReactNode;
+  /** When set, shows a short card linking to the full examination notice (staff overview). */
+  examinationNoticeHref?: string;
 };
 
 export function StaffDashboardOverview({
@@ -422,6 +425,7 @@ export function StaffDashboardOverview({
   controlledExam,
   depotFrontPage = false,
   depotLearnMoreFooter,
+  examinationNoticeHref,
 }: StaffDashboardOverviewProps = {}) {
   const [internalExams, setInternalExams] = useState<Examination[]>([]);
   const [internalExamId, setInternalExamId] = useState<number | null>(null);
@@ -586,7 +590,7 @@ export function StaffDashboardOverview({
           <div className={`mt-4 ${statCardClass}`}>
             <p className="text-sm text-muted-foreground">
               No upcoming sessions found for {sessionScope === "depot" ? "schools in your depot" : "your centre"}
-              —check the timetable or candidate registrations, or all papers may have already started.
+              —check the timetable or candidate registrations, or all papers may have already been written.
             </p>
           </div>
         ) : (
@@ -703,6 +707,32 @@ export function StaffDashboardOverview({
       </div>
     );
 
+  const examinationNoticeTeaser =
+    examinationNoticeHref != null && examinationNoticeHref !== "" ? (
+      <aside
+        className="rounded-2xl border border-primary/30 bg-linear-to-br from-primary/10 via-card to-accent/5 p-5 shadow-sm ring-1 ring-primary/15"
+        aria-labelledby="overview-examination-notice-heading"
+      >
+        <p
+          id="overview-examination-notice-heading"
+          className="text-xs font-bold uppercase tracking-wider text-primary"
+        >
+          Examination notice
+        </p>
+        <p className="mt-2 text-sm text-foreground">
+          Summary, responsibilities, and document checklist for this examination.
+        </p>
+        <div className="mt-4">
+          <Link
+            href={examinationNoticeHref}
+            className="inline-flex min-h-11 min-w-[44px] items-center justify-center rounded-lg bg-primary px-4 text-sm font-medium text-primary-foreground transition-colors hover:bg-primary-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
+          >
+            View examination notice
+          </Link>
+        </div>
+      </aside>
+    ) : null;
+
   return (
     <div className={`${depotCompact ? "space-y-6" : "space-y-8"}`}>
       {controlledExam ? null : (
@@ -726,6 +756,8 @@ export function StaffDashboardOverview({
           </select>
         </div>
       )}
+
+      {examinationNoticeTeaser}
 
       {error ? (
         <p className="rounded-lg border border-destructive/40 bg-destructive/10 px-3 py-2 text-sm text-destructive">
@@ -855,7 +887,7 @@ export function StaffDashboardOverview({
                         <span className="font-mono font-semibold tabular-nums text-primary">
                           {overview.examination_centre_host_code}
                         </span>
-                        . Your candidates sit examinations at this centre.
+                        . Your candidates will write their examinations here.
                       </p>
                     </li>
                   )}

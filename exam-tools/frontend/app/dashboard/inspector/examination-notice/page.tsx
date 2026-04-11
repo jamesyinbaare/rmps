@@ -8,7 +8,7 @@ export default function InspectorExaminationNoticePage() {
   return (
     <RoleGuard expectedRole="INSPECTOR" loginHref="/login/inspector">
       <DashboardShell title="Examination notice" staffRole="inspector">
-        <ExaminationNoticeClient dataScope="centre" />
+        <ExaminationNoticeClient dataScope="centre" centreRole="inspector" />
       </DashboardShell>
     </RoleGuard>
   );

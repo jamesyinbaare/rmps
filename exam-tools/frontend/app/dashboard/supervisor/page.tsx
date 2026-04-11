@@ -6,7 +6,7 @@ export default function SupervisorDashboardPage() {
   return (
     <RoleGuard expectedRole="SUPERVISOR" loginHref="/login/supervisor">
       <DashboardShell title="Supervisor dashboard" staffRole="supervisor">
-        <StaffDashboardOverview />
+        <StaffDashboardOverview examinationNoticeHref="/dashboard/supervisor/examination-notice" />
       </DashboardShell>
     </RoleGuard>
   );

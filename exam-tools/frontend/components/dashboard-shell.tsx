@@ -4,6 +4,7 @@ import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 
+import { ExaminationNoticeSessionBanner } from "@/components/examination-notice-session-banner";
 import { clearAuth, getMe, type UserMe } from "@/lib/auth";
 
 /** Subtitle under the page title: full name plus school name and code when present. */
@@ -237,6 +238,11 @@ export function DashboardShell({ title, children, staffRole }: Props) {
             </div>
           </div>
         </header>
+
+        <ExaminationNoticeSessionBanner
+          staffRole={staffRole}
+          examinationNoticeHref={examinationNoticeHref}
+        />
 
         <main className="mx-auto max-w-6xl px-4 py-6 sm:px-6">{children}</main>
       </div>

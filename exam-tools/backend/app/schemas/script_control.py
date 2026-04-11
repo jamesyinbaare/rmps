@@ -62,7 +62,15 @@ class MySchoolScriptControlResponse(BaseModel):
     school_code: str
     scripts_per_envelope: int = Field(
         ge=1,
-        description="Configured maximum booklets per envelope; booklet_count must not exceed this on save.",
+        description="Configured maximum for papers other than 1 and 2, and default when paper-specific caps are unset.",
+    )
+    scripts_per_envelope_paper_1: int = Field(
+        ge=1,
+        description="Effective maximum booklets per envelope for paper 1.",
+    )
+    scripts_per_envelope_paper_2: int = Field(
+        ge=1,
+        description="Effective maximum booklets per envelope for paper 2.",
     )
     subjects: list[ScriptSubjectRowResponse]
 

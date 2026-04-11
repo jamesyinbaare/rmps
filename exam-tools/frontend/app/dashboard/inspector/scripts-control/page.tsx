@@ -55,13 +55,32 @@ function emptyDraft(): Draft {
   return { envelopes: [] };
 }
 
-function draftFromPacking(p: ScriptSeriesPackingResponse, maxBookletsPerEnvelope: number): Draft {
+function draftFromPacking(p: ScriptSeriesPackingResponse): Draft {
   return {
     envelopes: p.envelopes.map((e) => ({
       ...e,
-      booklet_count: Math.min(maxBookletsPerEnvelope, Math.max(0, e.booklet_count)),
+      booklet_count: Math.max(0, e.booklet_count),
     })),
   };
+}
+
+function scriptCapsSummary(d: MySchoolScriptControlResponse): string {
+  const g = d.scripts_per_envelope;
+  const p1 = d.scripts_per_envelope_paper_1;
+  const p2 = d.scripts_per_envelope_paper_2;
+  if (p1 === p2 && p2 === g) {
+    return `Each envelope may hold at most ${g} booklets.`;
+  }
+  if (p1 === p2) {
+    return `Paper 1 and Paper 2: up to ${p1} booklets per envelope. Other papers: up to ${g} booklets per envelope.`;
+  }
+  return `Paper 1: up to ${p1}; Paper 2: up to ${p2}; other papers: up to ${g} booklets per envelope.`;
+}
+
+function maxBookletsForPaper(d: MySchoolScriptControlResponse, paperNumber: number): number {
+  if (paperNumber === 1) return d.scripts_per_envelope_paper_1;
+  if (paperNumber === 2) return d.scripts_per_envelope_paper_2;
+  return d.scripts_per_envelope;
 }
 
 function localTodayIso(): string {
@@ -214,11 +233,10 @@ export default function InspectorScriptsControlPage() {
     paperNumber: number,
     seriesNumber: number,
     packing: ScriptSeriesPackingResponse | null,
-    maxBooklets: number,
   ) {
     setEditing({ subjectId, paperNumber, seriesNumber });
     setFormError(null);
-    setDraft(packing ? draftFromPacking(packing, maxBooklets) : emptyDraft());
+    setDraft(packing ? draftFromPacking(packing) : emptyDraft());
   }
 
   function closeEdit() {
@@ -230,11 +248,11 @@ export default function InspectorScriptsControlPage() {
     if (examId === null || selectedSchoolId.trim() === "" || editing === null || data === null) return;
     setFormError(null);
 
-    const cap = data.scripts_per_envelope;
+    const cap = maxBookletsForPaper(data, editing.paperNumber);
     for (const env of draft.envelopes) {
       if (env.booklet_count > cap) {
         setFormError(
-          `Envelope ${env.envelope_number}: booklets cannot exceed ${cap} (configured scripts per envelope).`,
+          `Envelope ${env.envelope_number}: at most ${cap} booklets for paper ${editing.paperNumber}.`,
         );
         return;
       }
@@ -298,14 +316,14 @@ export default function InspectorScriptsControlPage() {
     }));
   }
 
-  function updateEnvelope(idx: number, patch: Partial<ScriptEnvelopeItem>, maxBooklets: number) {
+  function updateEnvelope(idx: number, patch: Partial<ScriptEnvelopeItem>) {
     setDraft((d) => ({
       ...d,
       envelopes: d.envelopes.map((e, i) => {
         if (i !== idx) return e;
         const next = { ...e, ...patch };
         if ("booklet_count" in patch) {
-          next.booklet_count = Math.min(maxBooklets, Math.max(0, next.booklet_count));
+          next.booklet_count = Math.max(0, next.booklet_count);
         }
         return next;
       }),
@@ -318,7 +336,6 @@ export default function InspectorScriptsControlPage() {
     editing.paperNumber === paperNumber &&
     editing.seriesNumber === seriesNumber;
 
-  const maxBooklets = data?.scripts_per_envelope ?? 50;
   const grouped = data && data.subjects.length > 0 ? partitionPapers(data.subjects, localTodayIso()) : null;
   const groupedHint = grouped ? emptyOutstandingHint(grouped) : null;
 
@@ -332,6 +349,9 @@ export default function InspectorScriptsControlPage() {
     const anyEnvelopeVerified = Boolean(packing?.envelopes?.some((e) => e.verified));
     const isEditing = isEditingSlot(subjectId, paperNumber, slot.series_number);
     const showSeriesLabel = seriesCount > 1;
+    const capForPaper = data ? maxBookletsForPaper(data, paperNumber) : 50;
+    const editingHasOverCap =
+      isEditing && draft.envelopes.some((e) => e.booklet_count > capForPaper);
     return (
       <li
         key={slot.series_number}
@@ -357,7 +377,7 @@ export default function InspectorScriptsControlPage() {
             ) : null}
             {!isEditing && anyEnvelopeVerified ? (
               <p className="mt-2 text-xs font-medium text-muted-foreground">
-                Verified by depot keeper (at least one envelope) — editing is locked.
+                You can't make changes to envelopes that have been verified or partially verified by depot keeper.
               </p>
             ) : null}
           </div>
@@ -370,7 +390,7 @@ export default function InspectorScriptsControlPage() {
                       type="button"
                       className={btnSecondary}
                       disabled={busy}
-                      onClick={() => openEdit(subjectId, paperNumber, slot.series_number, packing, maxBooklets)}
+                      onClick={() => openEdit(subjectId, paperNumber, slot.series_number, packing)}
                     >
                       {packing ? "Edit" : "Add"}
                     </button>
@@ -400,14 +420,20 @@ export default function InspectorScriptsControlPage() {
                   Add envelope
                 </button>
               </div>
-              <p className="mt-1 text-xs text-muted-foreground">Up to {maxBooklets} booklets per envelope.</p>
+              <p className="mt-1 text-xs text-muted-foreground">
+                Up to {capForPaper} booklets per envelope for Paper {paperNumber}.
+                {paperNumber === 1 ? " Counts of 250 or more must be split into multiple envelopes." : ""}
+              </p>
               {draft.envelopes.length === 0 ? (
                 <p className="mt-2 text-xs text-muted-foreground">Add envelopes and booklet counts, then save.</p>
               ) : (
                 <ul className="mt-2 space-y-2">
                   {draft.envelopes.map((env, idx) => (
-                    <li key={`${env.envelope_number}-${idx}`} className="flex flex-wrap items-end gap-2">
-                      <div>
+                    <li
+                      key={`${env.envelope_number}-${idx}`}
+                      className="grid grid-cols-[auto_minmax(8rem,1fr)_auto] items-end gap-x-2 gap-y-1"
+                    >
+                      <div className="flex flex-col">
                         <label className={formLabelClass}>No.</label>
                         <input
                           type="number"
@@ -415,41 +441,48 @@ export default function InspectorScriptsControlPage() {
                           className={`mt-1 w-20 ${formInputClass}`}
                           value={env.envelope_number}
                           onChange={(e) =>
-                            updateEnvelope(
-                              idx,
-                              { envelope_number: Math.max(1, parseInt(e.target.value, 10) || 1) },
-                              maxBooklets,
-                            )
+                            updateEnvelope(idx, {
+                              envelope_number: Math.max(1, parseInt(e.target.value, 10) || 1),
+                            })
                           }
                         />
                       </div>
-                      <div className="min-w-32 flex-1">
+                      <div className="flex min-w-0 flex-col">
                         <label className={formLabelClass}>Booklets</label>
                         <input
                           type="number"
                           min={0}
-                          max={maxBooklets}
-                          className={`mt-1 w-full ${formInputClass}`}
+                          className={`mt-1 w-full min-w-0 ${formInputClass} ${
+                            env.booklet_count > capForPaper ? "border-destructive" : ""
+                          }`}
                           value={env.booklet_count}
                           onChange={(e) =>
-                            updateEnvelope(
-                              idx,
-                              { booklet_count: Math.max(0, parseInt(e.target.value, 10) || 0) },
-                              maxBooklets,
-                            )
+                            updateEnvelope(idx, {
+                              booklet_count: Math.max(0, parseInt(e.target.value, 10) || 0),
+                            })
                           }
                         />
                       </div>
-                      <button type="button" className={`${btnDanger} self-end`} onClick={() => removeEnvelope(idx)}>
+                      <button type="button" className={btnDanger} onClick={() => removeEnvelope(idx)}>
                         Remove
                       </button>
+                      {env.booklet_count > capForPaper ? (
+                        <p className="col-start-2 text-xs leading-snug text-destructive">
+                          At most {capForPaper} for paper {paperNumber} (you entered {env.booklet_count}).
+                        </p>
+                      ) : null}
                     </li>
                   ))}
                 </ul>
               )}
             </div>
             <div className="flex flex-wrap gap-2">
-              <button type="button" className={btnPrimary} disabled={busy} onClick={() => void onSave()}>
+              <button
+                type="button"
+                className={btnPrimary}
+                disabled={busy || editingHasOverCap}
+                onClick={() => void onSave()}
+              >
                 Save
               </button>
               <button type="button" className={btnSecondary} disabled={busy} onClick={closeEdit}>
@@ -506,8 +539,7 @@ export default function InspectorScriptsControlPage() {
             {data ? (
               <>
                 {" "}
-                Each envelope may hold at most <span className="font-medium text-foreground">{maxBooklets}</span>{" "}
-                booklets.
+                <span className="font-medium text-foreground">{scriptCapsSummary(data)}</span>
               </>
             ) : null}
           </p>

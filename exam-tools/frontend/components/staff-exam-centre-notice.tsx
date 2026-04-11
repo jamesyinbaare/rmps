@@ -32,7 +32,7 @@ export function StaffExamCentreNotice({ overview, className = "" }: Props) {
 
   return (
     <p className={`${wrap} border-border/80 bg-muted/30 text-muted-foreground`}>
-      Your school ({overview.supervisor_school_name}) is the examination centre for this cluster (code{" "}
+      Your school ({overview.supervisor_school_name}) is the examination centre for this cluster (
       <span className="font-mono tabular-nums text-foreground">{overview.examination_centre_host_code}</span>).
     </p>
   );
