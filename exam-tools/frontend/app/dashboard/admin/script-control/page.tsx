@@ -3,8 +3,10 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   getCoreRowModel,
+  getSortedRowModel,
   useReactTable,
   type ColumnDef,
+  type SortingState,
 } from "@tanstack/react-table";
 import { Check, ChevronsUpDown } from "lucide-react";
 
@@ -12,7 +14,6 @@ import { DataTable } from "@/components/data-table";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from "@/components/ui/command";
-import { Input } from "@/components/ui/input";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import {
   apiJson,
@@ -91,6 +92,8 @@ type ComboboxProps = {
   searchPlaceholder: string;
   emptyText?: string;
   widthClass?: string;
+  /** When false, the list has no “All” row; the user must pick an option. */
+  showAllOption?: boolean;
 };
 
 function SearchableCombobox({
@@ -101,6 +104,7 @@ function SearchableCombobox({
   searchPlaceholder,
   emptyText = "No match.",
   widthClass = "w-[280px]",
+  showAllOption = true,
 }: ComboboxProps) {
   const [open, setOpen] = useState(false);
   const selected = options.find((o) => o.value === value);
@@ -123,16 +127,18 @@ function SearchableCombobox({
           <CommandList>
             <CommandEmpty>{emptyText}</CommandEmpty>
             <CommandGroup>
-              <CommandItem
-                value="__all__"
-                onSelect={() => {
-                  onChange("");
-                  setOpen(false);
-                }}
-              >
-                <Check className={cn("mr-2 size-4", value === "" ? "opacity-100" : "opacity-0")} />
-                All
-              </CommandItem>
+              {showAllOption ? (
+                <CommandItem
+                  value="__all__"
+                  onSelect={() => {
+                    onChange("");
+                    setOpen(false);
+                  }}
+                >
+                  <Check className={cn("mr-2 size-4", value === "" ? "opacity-100" : "opacity-0")} />
+                  All
+                </CommandItem>
+              ) : null}
               {options.map((opt) => (
                 <CommandItem
                   key={opt.value}
@@ -163,8 +169,6 @@ export default function AdminScriptControlPage() {
   const [loading, setLoading] = useState(false);
 
   const [subjectId, setSubjectId] = useState("");
-  const [subjectQ, setSubjectQ] = useState("");
-  const debouncedSubjectQ = useDebounced(subjectQ, 350);
   const [paperNumber, setPaperNumber] = useState("");
   const [region, setRegion] = useState("");
   const [zone, setZone] = useState("");
@@ -174,6 +178,7 @@ export default function AdminScriptControlPage() {
   const [schoolOptions, setSchoolOptions] = useState<School[]>([]);
   const [schoolSearchLoading, setSchoolSearchLoading] = useState(false);
   const [schoolPickerOpen, setSchoolPickerOpen] = useState(false);
+  const [sorting, setSorting] = useState<SortingState>([]);
 
   useEffect(() => {
     let cancelled = false;
@@ -216,19 +221,19 @@ export default function AdminScriptControlPage() {
 
   const fetchRecords = useCallback(async () => {
     if (examId === null) return;
+    const sid = subjectId.trim() ? parseInt(subjectId, 10) : NaN;
+    const pn = paperNumber.trim() ? parseInt(paperNumber, 10) : NaN;
+    if (!Number.isFinite(sid) || !Number.isFinite(pn)) {
+      setListResponse(null);
+      return;
+    }
     setLoading(true);
     setLoadError(null);
     try {
-      const sid = subjectId.trim() ? parseInt(subjectId, 10) : undefined;
-      const pn = paperNumber.trim() ? parseInt(paperNumber, 10) : undefined;
       const res = await getScriptControlAdminRecords({
         examination_id: examId,
-        subject_id: Number.isFinite(sid) ? sid : undefined,
-        subject_q:
-          subjectId.trim() || debouncedSubjectQ.trim().length < 2
-            ? undefined
-            : debouncedSubjectQ.trim(),
-        paper_number: Number.isFinite(pn) ? pn : undefined,
+        subject_id: sid,
+        paper_number: pn,
         region: region.trim() || undefined,
         zone: zone.trim() || undefined,
         school_id: schoolId.trim() || undefined,
@@ -246,10 +251,13 @@ export default function AdminScriptControlPage() {
     } finally {
       setLoading(false);
     }
-  }, [debouncedSchoolSearch, debouncedSubjectQ, examId, paperNumber, region, schoolId, subjectId, zone]);
+  }, [debouncedSchoolSearch, examId, paperNumber, region, schoolId, subjectId, zone]);
 
   useEffect(() => {
     if (examId === null) return;
+    const sid = subjectId.trim() ? parseInt(subjectId, 10) : NaN;
+    const pn = paperNumber.trim() ? parseInt(paperNumber, 10) : NaN;
+    if (!Number.isFinite(sid) || !Number.isFinite(pn)) return;
     void fetchRecords();
   }, [examId, fetchRecords]);
 
@@ -331,6 +339,7 @@ export default function AdminScriptControlPage() {
       },
       {
         id: "school",
+        accessorFn: (row) => row.school_code,
         header: "School",
         cell: ({ row }) => (
           <div>
@@ -341,6 +350,7 @@ export default function AdminScriptControlPage() {
       },
       {
         id: "subject",
+        accessorFn: (row) => row.subject_code,
         header: "Subject",
         cell: ({ row }) => (
           <div>
@@ -358,6 +368,7 @@ export default function AdminScriptControlPage() {
     for (let sn = 1; sn <= maxSeriesColumns; sn++) {
       base.push({
         id: `series_${sn}`,
+        accessorFn: (row) => row.bySeries[sn]?.total_booklets ?? Number.MAX_SAFE_INTEGER,
         header: `Series ${sn}`,
         cell: ({ row }) => {
           const block = row.original.bySeries[sn];
@@ -389,7 +400,10 @@ export default function AdminScriptControlPage() {
   const table = useReactTable({
     data: mergedRows,
     columns,
+    state: { sorting },
+    onSortingChange: setSorting,
     getCoreRowModel: getCoreRowModel(),
+    getSortedRowModel: getSortedRowModel(),
   });
 
   const selectedSchoolLabel = useMemo(() => {
@@ -405,8 +419,8 @@ export default function AdminScriptControlPage() {
       <div>
         <h2 className="text-xl font-semibold text-foreground">Worked scripts control</h2>
         <p className="mt-1 text-sm text-muted-foreground">
-          Script packing envelopes by school, subject, and paper. Choose an examination, then use filters to narrow
-          results.
+          Script envelopes by school, subject, and paper. Choose an examination, then a subject and paper; other
+          filters are optional.
         </p>
       </div>
 
@@ -423,12 +437,13 @@ export default function AdminScriptControlPage() {
                 const v = e.target.value;
                 setExamId(v ? parseInt(v, 10) : null);
                 setSubjectId("");
-                setSubjectQ("");
                 setPaperNumber("");
                 setRegion("");
                 setZone("");
                 setSchoolId("");
                 setSchoolSearch("");
+                setListResponse(null);
+                setLoadError(null);
               }}
             >
               <option value="">Select examination…</option>
@@ -442,44 +457,32 @@ export default function AdminScriptControlPage() {
 
           <div className="sm:col-span-2 lg:col-span-1">
             <label className="mb-1.5 block text-xs font-medium uppercase tracking-wide text-muted-foreground">
-              Subject
+              Subject <span className="text-destructive">*</span>
             </label>
             <SearchableCombobox
               options={subjectOptions}
               value={subjectId}
-              onChange={(v) => {
-                setSubjectId(v);
-                if (v) setSubjectQ("");
-              }}
-              placeholder="All subjects"
+              onChange={setSubjectId}
+              placeholder="Select subject…"
               searchPlaceholder="Search code or name…"
               emptyText="No subject on timetable."
               widthClass="w-full min-w-0 sm:w-[320px]"
-            />
-            <p className="mt-1.5 text-xs text-muted-foreground">Or narrow by text (min 2 characters):</p>
-            <Input
-              className="mt-1"
-              placeholder="Subject code or name contains…"
-              value={subjectQ}
-              onChange={(e) => {
-                setSubjectQ(e.target.value);
-                if (e.target.value.trim()) setSubjectId("");
-              }}
-              aria-label="Subject text filter"
+              showAllOption={false}
             />
           </div>
 
           <div>
             <label className="mb-1.5 block text-xs font-medium uppercase tracking-wide text-muted-foreground">
-              Paper
+              Paper <span className="text-destructive">*</span>
             </label>
             <SearchableCombobox
               options={paperOptions}
               value={paperNumber}
               onChange={setPaperNumber}
-              placeholder="All papers"
+              placeholder="Select paper…"
               searchPlaceholder="Search paper…"
               widthClass="w-full min-w-0 sm:w-[200px]"
+              showAllOption={false}
             />
           </div>
 
@@ -577,42 +580,36 @@ export default function AdminScriptControlPage() {
         </div>
 
         <div className="flex flex-wrap gap-2">
-          <Button type="button" onClick={() => void fetchRecords()} disabled={examId === null || loading}>
+          <Button
+            type="button"
+            onClick={() => void fetchRecords()}
+            disabled={
+              examId === null ||
+              loading ||
+              !Number.isFinite(parseInt(subjectId.trim(), 10)) ||
+              !Number.isFinite(parseInt(paperNumber.trim(), 10))
+            }
+          >
             Refresh
           </Button>
           <Button
             type="button"
             variant="outline"
             onClick={() => {
-              if (examId === null) return;
-              setSubjectId("");
-              setSubjectQ("");
-              setPaperNumber("");
               setRegion("");
               setZone("");
               setSchoolId("");
               setSchoolSearch("");
-              setLoading(true);
-              setLoadError(null);
-              void (async () => {
-                try {
-                  const res = await getScriptControlAdminRecords({
-                    examination_id: examId,
-                    subject_q: undefined,
-                    skip: 0,
-                    limit: 500,
-                  });
-                  setListResponse(res);
-                } catch (e) {
-                  setLoadError(e instanceof Error ? e.message : "Failed to load records");
-                } finally {
-                  setLoading(false);
-                }
-              })();
+              void fetchRecords();
             }}
-            disabled={examId === null}
+            disabled={
+              examId === null ||
+              loading ||
+              !Number.isFinite(parseInt(subjectId.trim(), 10)) ||
+              !Number.isFinite(parseInt(paperNumber.trim(), 10))
+            }
           >
-            Clear filters
+            Clear optional filters
           </Button>
         </div>
       </div>
@@ -625,25 +622,12 @@ export default function AdminScriptControlPage() {
 
       {examId === null ? (
         <p className="text-sm text-muted-foreground">Select an examination to load script packing records.</p>
+      ) : !Number.isFinite(parseInt(subjectId.trim(), 10)) || !Number.isFinite(parseInt(paperNumber.trim(), 10)) ? (
+        <p className="text-sm text-muted-foreground">Select a subject and paper to load script packing records.</p>
       ) : loading && !listResponse ? (
         <p className="text-sm text-muted-foreground">Loading…</p>
       ) : (
-        <>
-          {listResponse ? (
-            <p className="text-sm text-muted-foreground">
-              Showing <span className="font-medium text-foreground">{mergedRows.length}</span> grouped rows
-              {listResponse.total > mergedRows.length ? (
-                <>
-                  {" "}
-                  (<span className="tabular-nums">{listResponse.total}</span> packing series in filter scope; capped at
-                  500 series per request)
-                </>
-              ) : null}
-              .
-            </p>
-          ) : null}
-          <DataTable table={table} emptyMessage={loading ? "Loading…" : "No packing records for this filter."} />
-        </>
+        <DataTable table={table} emptyMessage={loading ? "Loading…" : "No packing records for this filter."} />
       )}
     </div>
   );

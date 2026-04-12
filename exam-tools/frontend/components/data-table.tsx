@@ -1,8 +1,10 @@
 "use client";
 
 import { flexRender, type Table as TanstackTable } from "@tanstack/react-table";
+import { ArrowDown, ArrowUp, ArrowUpDown } from "lucide-react";
 
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import { cn } from "@/lib/utils";
 
 type DataTableProps<TData> = {
   table: TanstackTable<TData>;
@@ -20,7 +22,32 @@ export function DataTable<TData>({ table, emptyMessage = "No results." }: DataTa
             <TableRow key={headerGroup.id}>
               {headerGroup.headers.map((header) => (
                 <TableHead key={header.id} className="whitespace-nowrap">
-                  {header.isPlaceholder ? null : flexRender(header.column.columnDef.header, header.getContext())}
+                  {header.isPlaceholder ? null : header.column.getCanSort() ? (
+                    <button
+                      type="button"
+                      className={cn(
+                        "-ml-2 inline-flex items-center gap-1 rounded-md px-2 py-1 text-left text-sm font-medium hover:bg-muted/80",
+                        header.column.getIsSorted() && "text-foreground",
+                      )}
+                      aria-label={
+                        typeof header.column.columnDef.header === "string"
+                          ? `Sort by ${header.column.columnDef.header}`
+                          : "Sort column"
+                      }
+                      onClick={header.column.getToggleSortingHandler()}
+                    >
+                      {flexRender(header.column.columnDef.header, header.getContext())}
+                      {header.column.getIsSorted() === "asc" ? (
+                        <ArrowUp className="size-4 shrink-0 opacity-70" aria-hidden />
+                      ) : header.column.getIsSorted() === "desc" ? (
+                        <ArrowDown className="size-4 shrink-0 opacity-70" aria-hidden />
+                      ) : (
+                        <ArrowUpDown className="size-4 shrink-0 opacity-40" aria-hidden />
+                      )}
+                    </button>
+                  ) : (
+                    flexRender(header.column.columnDef.header, header.getContext())
+                  )}
                 </TableHead>
               ))}
             </TableRow>
