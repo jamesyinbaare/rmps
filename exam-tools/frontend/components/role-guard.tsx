@@ -1,7 +1,7 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 
 import {
   clearAuth,
@@ -11,15 +11,35 @@ import {
   type ApiRole,
 } from "@/lib/auth";
 
-type Props = {
-  expectedRole: ApiRole;
+type BaseProps = {
   loginHref: string;
   children: React.ReactNode;
 };
 
-export function RoleGuard({ expectedRole, loginHref, children }: Props) {
+type Props =
+  | (BaseProps & { expectedRole: ApiRole; allowedRoles?: undefined })
+  | (BaseProps & { expectedRole?: undefined; allowedRoles: ApiRole[] });
+
+export function RoleGuard(props: Props) {
+  const { loginHref, children } = props;
   const router = useRouter();
   const [ready, setReady] = useState(false);
+
+  const allowedJoin =
+    "allowedRoles" in props && props.allowedRoles != null
+      ? props.allowedRoles.join("|")
+      : "";
+  const singleExpected = "expectedRole" in props ? props.expectedRole : undefined;
+
+  const allowedList: ApiRole[] = useMemo((): ApiRole[] => {
+    if (allowedJoin.length > 0) {
+      return allowedJoin.split("|") as ApiRole[];
+    }
+    if (singleExpected !== undefined) {
+      return [singleExpected];
+    }
+    return [];
+  }, [allowedJoin, singleExpected]);
 
   useEffect(() => {
     let cancelled = false;
@@ -33,7 +53,7 @@ export function RoleGuard({ expectedRole, loginHref, children }: Props) {
       try {
         const me = await getMe();
         if (cancelled) return;
-        if (me.role !== expectedRole) {
+        if (!allowedList.includes(me.role)) {
           router.replace(dashboardPathForRole(me.role));
           return;
         }
@@ -48,7 +68,7 @@ export function RoleGuard({ expectedRole, loginHref, children }: Props) {
     return () => {
       cancelled = true;
     };
-  }, [expectedRole, loginHref, router]);
+  }, [allowedList, loginHref, router]);
 
   if (!ready) {
     return (

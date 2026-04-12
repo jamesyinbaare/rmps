@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 
 import { clearAuth, getMe, type UserMe } from "@/lib/auth";
 
@@ -16,11 +16,17 @@ const nav = [
   { href: "/dashboard/admin/programmes", label: "Programmes" },
   { href: "/dashboard/admin/subjects", label: "Subjects" },
   { href: "/dashboard/admin/examination-centres", label: "Examination centres" },
-  { href: "/dashboard/admin/inspectors", label: "Inspectors" },
+  { href: "/dashboard/admin/users", label: "Users" },
   { href: "/dashboard/admin/depots", label: "Depots" },
   { href: "/dashboard/admin/timetable", label: "Examination timetable" },
+  { href: "/dashboard/admin/monitoring", label: "Exam overview" },
+  { href: "/dashboard/admin/script-control", label: "Worked scripts control" },
   { href: "/dashboard/admin/documents", label: "Documents" },
 ];
+
+const SCRIPT_CONTROL_HREF = "/dashboard/admin/script-control";
+const MONITORING_HREF = "/dashboard/admin/monitoring";
+const TEST_ADMIN_OFFICER_NAV_HREFS = [MONITORING_HREF, SCRIPT_CONTROL_HREF];
 
 type Props = {
   children: React.ReactNode;
@@ -37,6 +43,16 @@ export function AdminDashboardShell({ children }: Props) {
       .then(setMe)
       .catch(() => setMe(null));
   }, []);
+
+  const visibleNav = useMemo(() => {
+    if (!me) return null;
+    if (me.role === "TEST_ADMIN_OFFICER") {
+      return nav.filter((item) => TEST_ADMIN_OFFICER_NAV_HREFS.includes(item.href));
+    }
+    return nav;
+  }, [me]);
+
+  const isMonitoringOfficer = me?.role === "TEST_ADMIN_OFFICER";
 
   function logout() {
     clearAuth();
@@ -64,29 +80,35 @@ export function AdminDashboardShell({ children }: Props) {
             <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
               Exam tools
             </p>
-            <p className="mt-1 text-sm font-semibold text-card-foreground">Administration</p>
+            <p className="mt-1 text-sm font-semibold text-card-foreground">
+              {isMonitoringOfficer ? "Monitoring" : "Administration"}
+            </p>
           </div>
           <nav className="flex flex-1 flex-col gap-1 p-3">
-            {nav.map((item) => {
-              const active =
-                item.href === "/dashboard/admin"
-                  ? pathname === item.href
-                  : pathname === item.href || pathname.startsWith(`${item.href}/`);
-              return (
-                <Link
-                  key={item.href}
-                  href={item.href}
-                  onClick={() => setSidebarOpen(false)}
-                  className={`rounded-lg px-3 py-2.5 text-sm font-medium transition-colors ${
-                    active
-                      ? "bg-primary text-primary-foreground"
-                      : "text-card-foreground hover:bg-muted"
-                  } ${inputFocusRing}`}
-                >
-                  {item.label}
-                </Link>
-              );
-            })}
+            {visibleNav === null ? (
+              <p className="px-3 text-sm text-muted-foreground">Loading…</p>
+            ) : (
+              visibleNav.map((item) => {
+                const active =
+                  item.href === "/dashboard/admin"
+                    ? pathname === item.href
+                    : pathname === item.href || pathname.startsWith(`${item.href}/`);
+                return (
+                  <Link
+                    key={item.href}
+                    href={item.href}
+                    onClick={() => setSidebarOpen(false)}
+                    className={`rounded-lg px-3 py-2.5 text-sm font-medium transition-colors ${
+                      active
+                        ? "bg-primary text-primary-foreground"
+                        : "text-card-foreground hover:bg-muted"
+                    } ${inputFocusRing}`}
+                  >
+                    {item.label}
+                  </Link>
+                );
+              })
+            )}
           </nav>
         </div>
       </aside>
@@ -105,7 +127,7 @@ export function AdminDashboardShell({ children }: Props) {
             </button>
             <div className="min-w-0 flex-1">
               <h1 className="truncate text-base font-semibold text-card-foreground sm:text-lg">
-                Administrator dashboard
+                {isMonitoringOfficer ? "Exam monitoring" : "Administrator dashboard"}
               </h1>
               {me ? (
                 <p className="truncate text-sm text-muted-foreground">

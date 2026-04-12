@@ -71,6 +71,7 @@ class UserRole(enum.IntEnum):
     """User roles for exam-tools. Lower values have higher privileges."""
 
     SUPER_ADMIN = 0
+    TEST_ADMIN_OFFICER = 5
     SUPERVISOR = 10
     INSPECTOR = 20
     DEPOT_KEEPER = 30
@@ -95,7 +96,7 @@ class User(Base):
     email = Column(String(255), unique=True, nullable=True, index=True)
     # Login handle for depot keepers (unique when set).
     username = Column(String(80), unique=True, nullable=True, index=True)
-    school_code = Column(String(10), nullable=True, index=True)
+    school_code = Column(String(15), nullable=True, index=True)
     phone_number = Column(String(50), nullable=True, index=True)
     hashed_password = Column(String(255), nullable=True)
     full_name = Column(String(255), nullable=False)
@@ -148,7 +149,7 @@ class Depot(Base):
 class School(Base):
     __tablename__ = "schools"
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    code = Column(String(6), unique=True, nullable=False, index=True)
+    code = Column(String(15), unique=True, nullable=False, index=True)
     name = Column(String(255), nullable=False)
     region = Column(Enum(Region), nullable=False)
     zone = Column(Enum(Zone), nullable=False)

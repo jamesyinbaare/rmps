@@ -8,7 +8,7 @@ from app.schemas.inspector import InspectorSchoolRow
 
 
 class SchoolCreate(BaseModel):
-    code: str = Field(..., max_length=6)
+    code: str = Field(..., max_length=15)
     name: str = Field(..., max_length=255)
     region: Region
     zone: Zone

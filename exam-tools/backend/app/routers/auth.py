@@ -112,7 +112,10 @@ async def super_admin_login(
     data: SuperAdminLoginRequest,
     session: DBSessionDep,
 ) -> TokenResponse:
-    stmt = select(User).where(User.role == UserRole.SUPER_ADMIN, User.email == data.email)
+    stmt = select(User).where(
+        User.email == data.email,
+        User.role.in_((UserRole.SUPER_ADMIN, UserRole.TEST_ADMIN_OFFICER)),
+    )
     user = await _get_user_by_stmt(session, stmt)
 
     if not user.hashed_password or not verify_password(data.password, user.hashed_password):

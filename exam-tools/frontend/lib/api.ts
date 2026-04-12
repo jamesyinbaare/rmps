@@ -57,6 +57,27 @@ export type InspectorCreatePayload = {
   full_name: string;
 };
 
+export type TestAdminOfficerCreatePayload = {
+  email: string;
+  password: string;
+  full_name: string;
+};
+
+export type TestAdminOfficerCreatedResponse = {
+  id: string;
+  full_name: string;
+  email: string;
+};
+
+export async function createTestAdminOfficer(
+  payload: TestAdminOfficerCreatePayload,
+): Promise<TestAdminOfficerCreatedResponse> {
+  return apiJson<TestAdminOfficerCreatedResponse>("/test-admin-officers", {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
+
 export type SchoolCreatePayload = {
   code: string;
   name: string;
@@ -518,6 +539,20 @@ export async function getStaffCentreDaySummary(
   );
 }
 
+export async function getStaffNationalOverview(examId: number): Promise<StaffCentreOverviewResponse> {
+  return apiJson<StaffCentreOverviewResponse>(`/examinations/${examId}/national-overview`);
+}
+
+export async function getStaffNationalDaySummary(
+  examId: number,
+  examinationDateIso: string,
+): Promise<StaffCentreDaySummaryResponse> {
+  const q = new URLSearchParams({ examination_date: examinationDateIso });
+  return apiJson<StaffCentreDaySummaryResponse>(
+    `/examinations/${examId}/national-day-summary?${q.toString()}`,
+  );
+}
+
 export type StaffDepotOverviewResponse = {
   examination_id: number;
   exam_type: string;
@@ -746,6 +781,68 @@ export type MySchoolScriptControlResponse = {
   subjects: ScriptSubjectRowResponse[];
 };
 
+/** Super-admin list of script packing rows (one API row per subject/paper/series). */
+export type ScriptControlSubjectSeriesCountRow = {
+  subject_id: number;
+  subject_code: string;
+  subject_name: string;
+  series_count: number;
+};
+
+export type ScriptControlAdminRow = {
+  packing_series_id: string;
+  examination_id: number;
+  school_id: string;
+  school_code: string;
+  school_name: string;
+  region: string;
+  zone: string;
+  subject_id: number;
+  subject_code: string;
+  subject_name: string;
+  paper_number: number;
+  series_number: number;
+  envelope_count: number;
+  total_booklets: number;
+  envelopes: ScriptEnvelopeItem[];
+};
+
+export type ScriptControlAdminListResponse = {
+  items: ScriptControlAdminRow[];
+  total: number;
+  subject_series_counts: ScriptControlSubjectSeriesCountRow[];
+};
+
+export type ScriptControlAdminRecordsParams = {
+  examination_id?: number;
+  school_id?: string;
+  subject_id?: number;
+  paper_number?: number;
+  region?: string;
+  zone?: string;
+  school_q?: string;
+  subject_q?: string;
+  skip?: number;
+  limit?: number;
+};
+
+export async function getScriptControlAdminRecords(
+  params: ScriptControlAdminRecordsParams,
+): Promise<ScriptControlAdminListResponse> {
+  const q = new URLSearchParams();
+  if (params.examination_id != null) q.set("examination_id", String(params.examination_id));
+  if (params.school_id?.trim()) q.set("school_id", params.school_id.trim());
+  if (params.subject_id != null) q.set("subject_id", String(params.subject_id));
+  if (params.paper_number != null) q.set("paper_number", String(params.paper_number));
+  if (params.region?.trim()) q.set("region", params.region.trim());
+  if (params.zone?.trim()) q.set("zone", params.zone.trim());
+  if (params.school_q?.trim()) q.set("school_q", params.school_q.trim());
+  if (params.subject_q?.trim()) q.set("subject_q", params.subject_q.trim());
+  q.set("skip", String(params.skip ?? 0));
+  q.set("limit", String(params.limit ?? 500));
+  return apiJson<ScriptControlAdminListResponse>(`/script-control/records?${q}`);
+}
+
 export type ScriptSeriesUpsertPayload = {
   subject_id: number;
   paper_number: number;
@@ -907,11 +1004,19 @@ export async function getDepotSchoolScriptControl(
   );
 }
 
+/** Script packing: subject / paper / series / envelope. */
 export type ScriptControlSlotKeyPayload = {
   subject_id: number;
   paper_number: number;
   series_number: number;
   envelope_number: number;
+};
+
+/** Question paper control depot verify (no envelope). */
+export type QuestionPaperSlotVerifyPayload = {
+  subject_id: number;
+  paper_number: number;
+  series_number: number;
 };
 
 export type ScriptControlEnvelopeVerificationTogglePayload = ScriptControlSlotKeyPayload & {
@@ -947,7 +1052,7 @@ export async function getDepotCenterQuestionPaperControl(
 export async function verifyDepotQuestionPaperSlot(
   examId: number,
   centerId: string,
-  payload: ScriptControlSlotKeyPayload,
+  payload: QuestionPaperSlotVerifyPayload,
 ): Promise<QuestionPaperSlotUpsertResponse> {
   const q = new URLSearchParams({ center_id: centerId.trim() });
   return apiJson<QuestionPaperSlotUpsertResponse>(

@@ -86,6 +86,9 @@ class RoleChecker:
 
 
 super_admin_only = RoleChecker(allowed_roles={UserRole.SUPER_ADMIN})
+super_admin_or_test_admin_officer = RoleChecker(
+    allowed_roles={UserRole.SUPER_ADMIN, UserRole.TEST_ADMIN_OFFICER},
+)
 supervisor_only = RoleChecker(allowed_roles={UserRole.SUPERVISOR})
 inspector_only = RoleChecker(allowed_roles={UserRole.INSPECTOR})
 depot_keeper_only = RoleChecker(allowed_roles={UserRole.DEPOT_KEEPER})
@@ -100,6 +103,7 @@ exam_document_reader = RoleChecker(
 
 CurrentUserDep = Annotated[User, Depends(get_current_active_user)]
 SuperAdminDep = Annotated[User, Depends(super_admin_only)]
+SuperAdminOrTestAdminOfficerDep = Annotated[User, Depends(super_admin_or_test_admin_officer)]
 SupervisorDep = Annotated[User, Depends(supervisor_only)]
 InspectorDep = Annotated[User, Depends(inspector_only)]
 DepotKeeperDep = Annotated[User, Depends(depot_keeper_only)]

@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useCallback, useEffect, useState } from "react";
 
 import {
@@ -344,6 +345,13 @@ export default function AdminDepotsPage() {
       </section>
 
       <section className="space-y-6 border-t border-border pt-12">
+        <p className="rounded-lg border border-border bg-muted/30 px-3 py-2 text-sm text-muted-foreground">
+          Create depot keeper accounts together with inspectors and test admin officers on the{" "}
+          <Link href="/dashboard/admin/users#depot-keepers" className="font-medium text-primary hover:underline">
+            Users
+          </Link>{" "}
+          page, or use the button below for this list.
+        </p>
         <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
           <div>
             <h2 className="text-xl font-semibold text-foreground">Depot keepers</h2>

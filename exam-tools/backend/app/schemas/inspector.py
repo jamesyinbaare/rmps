@@ -9,7 +9,7 @@ from app.models import UserRole
 class InspectorCreate(BaseModel):
     """Inspector login uses ``school_code`` and ``phone_number`` (no password hash)."""
 
-    school_code: str = Field(..., max_length=10)
+    school_code: str = Field(..., max_length=15)
     phone_number: str = Field(..., max_length=50)
     full_name: str = Field(..., max_length=255, min_length=1)
 

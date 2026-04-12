@@ -112,6 +112,9 @@ class ScriptControlAdminRow(BaseModel):
     examination_id: int
     school_id: UUID
     school_code: str
+    school_name: str = Field(default="", description="School display name.")
+    region: str = Field(default="", description="School region enum value as string.")
+    zone: str = Field(default="", description="School zone enum value as string.")
     subject_id: int
     subject_code: str
     subject_name: str
@@ -119,8 +122,25 @@ class ScriptControlAdminRow(BaseModel):
     series_number: int
     envelope_count: int
     total_booklets: int
+    envelopes: list[ScriptEnvelopeItem] = Field(
+        default_factory=list,
+        description="Per-envelope booklet counts and verification flags.",
+    )
+
+
+class ScriptControlSubjectSeriesCountRow(BaseModel):
+    """Aligned with examination script-series-config rows for the same examination."""
+
+    subject_id: int
+    subject_code: str
+    subject_name: str
+    series_count: int = Field(ge=1, le=32767)
 
 
 class ScriptControlAdminListResponse(BaseModel):
     items: list[ScriptControlAdminRow]
     total: int
+    subject_series_counts: list[ScriptControlSubjectSeriesCountRow] = Field(
+        default_factory=list,
+        description="Populated when examination_id filter is set; timetable subjects with configured series counts.",
+    )

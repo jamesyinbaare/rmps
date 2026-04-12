@@ -8,7 +8,7 @@ from sqlalchemy import delete, func, insert, or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import selectinload
 
-from app.dependencies.auth import SuperAdminDep
+from app.dependencies.auth import SuperAdminDep, SuperAdminOrTestAdminOfficerDep
 from app.dependencies.database import DBSessionDep
 from app.models import Depot, Programme, Region, School, SchoolType, User, UserRole, Zone, school_programmes
 from app.schemas.inspector import InspectorSchoolRow
@@ -66,7 +66,7 @@ def school_to_response(school: School) -> SchoolResponse:
 )
 async def list_schools(
     session: DBSessionDep,
-    _admin: SuperAdminDep,
+    _admin: SuperAdminOrTestAdminOfficerDep,
     skip: int = Query(0, ge=0),
     limit: int = Query(_DEFAULT_PAGE_SIZE, ge=1, le=_MAX_PAGE_SIZE),
     q: str | None = Query(None, description="Search code or name (case-insensitive)"),
@@ -521,7 +521,7 @@ async def bulk_upload_schools(
     **Required columns:** ``code``, ``name``, ``region``, ``zone``
 
     **Optional columns:** ``school_type`` (private/public), ``is_private_examination_center``,
-    ``writes_at_center_code`` (6-char school code of host), ``writes_at_center_id`` (UUID of host),
+    ``writes_at_center_code`` (school code of host, up to 15 characters), ``writes_at_center_id`` (UUID of host),
     ``depot_code`` (must match an existing depot's ``code``),
     ``programme_codes`` (comma-separated programme codes; aliases: ``programmes``, ``programme_list``,
     ``programme_code``, or any column named ``programme`` / ``programme_*``).

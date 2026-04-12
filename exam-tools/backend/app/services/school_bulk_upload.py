@@ -239,8 +239,8 @@ def parse_school_code(raw: Any) -> str:
     s = _spreadsheet_school_code_cell(raw)
     if not s:
         raise ValueError("code is required")
-    if len(s) > 6:
-        raise ValueError(f"code must be at most 6 characters, got {len(s)}")
+    if len(s) > 15:
+        raise ValueError(f"code must be at most 15 characters, got {len(s)}")
     return s
 
 
@@ -257,8 +257,8 @@ def parse_inspector_school_code(raw: Any) -> str:
     s = _spreadsheet_school_code_cell(raw)
     if not s:
         raise ValueError("school_code is required")
-    if len(s) > 10:
-        raise ValueError("school_code must be at most 10 characters")
+    if len(s) > 15:
+        raise ValueError("school_code must be at most 15 characters")
     return s
 
 

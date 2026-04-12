@@ -9,8 +9,11 @@ import {
   getStaffCentreOverview,
   getStaffDepotDaySummary,
   getStaffDepotOverview,
+  getStaffNationalDaySummary,
+  getStaffNationalOverview,
   type Examination,
   type StaffCentreDaySummaryResponse,
+  type StaffCentreDaySummarySlotRow,
   type StaffCentreOverviewResponse,
   type StaffCentreOverviewUpcomingItem,
   type StaffDepotOverviewResponse,
@@ -111,6 +114,112 @@ const summaryToggleClass =
 /** Default number of upcoming calendar dates shown before “View all”. */
 const UPCOMING_DATES_PREVIEW = 3;
 
+function nationalSchoolsWithCandidatesForSlot(slot: StaffCentreDaySummarySlotRow): number {
+  return slot.counts_by_school.filter((c) => c > 0).length;
+}
+
+/** National test-admin upcoming “Details”: one row per subject — candidates and school count only. */
+function NationalUpcomingDayDetailsSummary({ summary }: { summary: StaffCentreDaySummaryResponse }) {
+  const nSchoolsDay = summary.schools.length;
+  return (
+    <div className="mt-4 space-y-3">
+
+      {summary.slots.length === 0 ? (
+        <p className="text-sm text-muted-foreground">No timetable slots on this date.</p>
+      ) : (
+        <div className="overflow-x-auto rounded-xl border border-border">
+          <table className="w-full min-w-[min(100%,18rem)] border-collapse text-sm">
+            <thead>
+              <tr className="border-b border-border bg-muted/40 text-left">
+                <th scope="col" className="px-3 py-2.5 font-semibold text-card-foreground">
+                  Subject
+                </th>
+                <th scope="col" className="px-3 py-2.5 text-right font-semibold tabular-nums text-card-foreground">
+                  Candidates
+                </th>
+                <th scope="col" className="px-3 py-2.5 text-right font-semibold tabular-nums text-card-foreground">
+                  Schools
+                </th>
+              </tr>
+            </thead>
+            <tbody>
+              {summary.slots.map((slot, i) => (
+                <tr
+                  key={`${slot.subject_code}-${i}`}
+                  className="border-b border-border/70 last:border-b-0"
+                >
+                  <td className="px-3 py-2.5 align-top">
+                    <span className="font-semibold text-foreground">{slot.subject_code}</span>
+                    <span className="mt-0.5 block text-xs text-muted-foreground">{slot.subject_name}</span>
+                  </td>
+                  <td className="px-3 py-2.5 text-right align-top font-medium tabular-nums text-foreground">
+                    {slot.row_total.toLocaleString()}
+                  </td>
+                  <td className="px-3 py-2.5 text-right align-top font-medium tabular-nums text-foreground">
+                    {nationalSchoolsWithCandidatesForSlot(slot).toLocaleString()}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </div>
+  );
+}
+
+/** National monitoring: one row per subject/paper slot with total candidates only (no per-school grid). */
+function NationalDaySummaryCompact({ summary }: { summary: StaffCentreDaySummaryResponse }) {
+  const nSchools = summary.schools.length;
+  return (
+    <div className="space-y-4">
+
+      {summary.slots.length === 0 ? (
+        <p className="text-sm text-muted-foreground">No timetable slots on this date.</p>
+      ) : (
+        <div className="overflow-x-auto rounded-xl border border-border">
+          <table className="w-full min-w-[min(100%,20rem)] border-collapse text-sm">
+            <thead>
+              <tr className="border-b border-border bg-muted/40 text-left">
+                <th scope="col" className="px-3 py-2.5 font-semibold text-card-foreground">
+                  Subject
+                </th>
+                <th scope="col" className="px-3 py-2.5 font-semibold text-card-foreground">
+                  Papers
+                </th>
+                <th scope="col" className="px-3 py-2.5 font-semibold text-card-foreground">
+                  Time
+                </th>
+                <th scope="col" className="px-3 py-2.5 text-right font-semibold tabular-nums text-card-foreground">
+                  Candidates
+                </th>
+              </tr>
+            </thead>
+            <tbody>
+              {summary.slots.map((slot, i) => (
+                <tr
+                  key={`${slot.subject_code}-${slot.papers_label}-${slot.times_label}-${i}`}
+                  className="border-b border-border/70 last:border-b-0"
+                >
+                  <td className="px-3 py-2.5 align-top">
+                    <span className="font-semibold text-foreground">{slot.subject_code}</span>
+                    <span className="mt-0.5 block text-xs text-muted-foreground">{slot.subject_name}</span>
+                  </td>
+                  <td className="px-3 py-2.5 align-top tabular-nums text-foreground">{slot.papers_label}</td>
+                  <td className="px-3 py-2.5 align-top tabular-nums text-muted-foreground">{slot.times_label}</td>
+                  <td className="px-3 py-2.5 text-right align-top font-medium tabular-nums text-foreground">
+                    {slot.row_total.toLocaleString()}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </div>
+  );
+}
+
 function TodayAtCentrePanel({
   items,
   summary,
@@ -119,17 +228,20 @@ function TodayAtCentrePanel({
   sessionScope = "centre",
   hideSchoolNameBadges = false,
   hideCandidateInvigilatorCards = false,
+  compactSlotSummary = false,
 }: {
   items: StaffCentreOverviewUpcomingItem[];
   summary: StaffCentreDaySummaryResponse | null;
   summaryLoading: boolean;
   summaryError: string | null;
-  /** Wording for the timetable subtitle (depot = schools in depot). */
-  sessionScope?: "centre" | "depot";
+  /** Wording for the timetable subtitle (depot = schools in depot; national = all candidate schools). */
+  sessionScope?: "centre" | "depot" | "national";
   /** Depot keeper: omit school name chips above the table. */
   hideSchoolNameBadges?: boolean;
   /** Depot keeper: omit candidate / invigilator stat cards above the table. */
   hideCandidateInvigilatorCards?: boolean;
+  /** National: show slot totals only instead of a per-school matrix. */
+  compactSlotSummary?: boolean;
 }) {
   if (items.length === 0) return null;
   const dayDate = parseLocalDateFromIso(items[0].examination_date);
@@ -158,8 +270,17 @@ function TodayAtCentrePanel({
           </p>
           <p className="mt-1 max-w-xl text-sm font-semibold leading-snug text-primary-foreground/90">
             {cardSlots.length} {sessionLabel} on the timetable for{" "}
-            {sessionScope === "depot" ? "schools in your depot" : "your centre"} today —{" "}
-            {hideCandidateInvigilatorCards ? "breakdown below." : "breakdown and staffing below."}
+            {sessionScope === "depot"
+              ? "schools in your depot"
+              : sessionScope === "national"
+                ? "all registered schools"
+                : "your centre"}{" "}
+            today —{" "}
+            {compactSlotSummary
+              ? "aggregated paper totals below."
+              : hideCandidateInvigilatorCards
+                ? "breakdown below."
+                : "breakdown and staffing below."}
           </p>
         </div>
       </div>
@@ -201,16 +322,20 @@ function TodayAtCentrePanel({
               ) : null
             ) : null}
             <div className={hideSchoolNameBadges ? "" : "border-t border-border pt-5"}>
-              <CentreDaySummaryTable
-                summary={summary}
-                embedded
-                statsFirst={!hideCandidateInvigilatorCards}
-                statsProminent={!hideCandidateInvigilatorCards}
-                hideTopStats={hideCandidateInvigilatorCards}
-                sectionTitle={
-                  hideCandidateInvigilatorCards ? "School counts by paper" : "Candidates, invigilators & school counts"
-                }
-              />
+              {compactSlotSummary ? (
+                <NationalDaySummaryCompact summary={summary} />
+              ) : (
+                <CentreDaySummaryTable
+                  summary={summary}
+                  embedded
+                  statsFirst={!hideCandidateInvigilatorCards}
+                  statsProminent={!hideCandidateInvigilatorCards}
+                  hideTopStats={hideCandidateInvigilatorCards}
+                  sectionTitle={
+                    hideCandidateInvigilatorCards ? "School counts by paper" : "Candidates, invigilators & school counts"
+                  }
+                />
+              )}
             </div>
           </>
         ) : null}
@@ -406,7 +531,7 @@ export type StaffDashboardControlledExam = {
 };
 
 export type StaffDashboardOverviewProps = {
-  variant?: "centre" | "depot";
+  variant?: "centre" | "depot" | "national";
   /** Parent-owned examination list and selection (e.g. depot dashboard shared picker). */
   controlledExam?: StaffDashboardControlledExam;
   /**
@@ -450,7 +575,8 @@ export function StaffDashboardOverview({
     if (controlledExam) return;
     setError(null);
     try {
-      const list = await apiJson<Examination[]>("/examinations/public-list");
+      const path = variant === "national" ? "/examinations" : "/examinations/public-list";
+      const list = await apiJson<Examination[]>(path);
       setInternalExams(list);
       setInternalExamId((prev) => {
         if (prev != null && list.some((e) => e.id === prev)) return prev;
@@ -461,14 +587,18 @@ export function StaffDashboardOverview({
       setInternalExamId(null);
       setError(e instanceof Error ? e.message : "Could not load examinations");
     }
-  }, [controlledExam]);
+  }, [controlledExam, variant]);
 
   const loadOverview = useCallback(
     async (id: number) => {
       setError(null);
       try {
         const data =
-          variant === "depot" ? await getStaffDepotOverview(id) : await getStaffCentreOverview(id);
+          variant === "depot"
+            ? await getStaffDepotOverview(id)
+            : variant === "national"
+              ? await getStaffNationalOverview(id)
+              : await getStaffCentreOverview(id);
         setOverview(data);
       } catch (e) {
         setOverview(null);
@@ -520,7 +650,9 @@ export function StaffDashboardOverview({
     const fetchSummary =
       variant === "depot"
         ? getStaffDepotDaySummary(examId, todayDateKey)
-        : getStaffCentreDaySummary(examId, todayDateKey);
+        : variant === "national"
+          ? getStaffNationalDaySummary(examId, todayDateKey)
+          : getStaffCentreDaySummary(examId, todayDateKey);
     void fetchSummary
       .then((data) => {
         if (!cancelled) setTodaySummary(data);
@@ -552,7 +684,9 @@ export function StaffDashboardOverview({
     const fetchExpanded =
       variant === "depot"
         ? getStaffDepotDaySummary(examId, expandedDateKey)
-        : getStaffCentreDaySummary(examId, expandedDateKey);
+        : variant === "national"
+          ? getStaffNationalDaySummary(examId, expandedDateKey)
+          : getStaffCentreDaySummary(examId, expandedDateKey);
     void fetchExpanded
       .then((data) => {
         if (!cancelled) setDaySummary(data);
@@ -578,7 +712,7 @@ export function StaffDashboardOverview({
     : upcomingDateGroups.slice(0, UPCOMING_DATES_PREVIEW);
   const moreUpcomingDatesCount = Math.max(0, upcomingDateGroups.length - UPCOMING_DATES_PREVIEW);
 
-  const sessionScope = variant === "depot" ? "depot" : "centre";
+  const sessionScope = variant === "depot" ? "depot" : variant === "national" ? "national" : "centre";
   const isDepotOverview = overview != null && "depot_code" in overview;
   const depotCompact = Boolean(isDepotOverview && depotFrontPage);
 
@@ -589,7 +723,12 @@ export function StaffDashboardOverview({
         {overview.upcoming.length === 0 ? (
           <div className={`mt-4 ${statCardClass}`}>
             <p className="text-sm text-muted-foreground">
-              No upcoming sessions found for {sessionScope === "depot" ? "schools in your depot" : "your centre"}
+              No upcoming sessions found for{" "}
+              {sessionScope === "depot"
+                ? "schools in your depot"
+                : sessionScope === "national"
+                  ? "all registered schools"
+                  : "your centre"}
               —check the timetable or candidate registrations, or all papers may have already been written.
             </p>
           </div>
@@ -667,7 +806,11 @@ export function StaffDashboardOverview({
                           !daySummaryError &&
                           daySummary &&
                           daySummary.examination_date === group.dateKey ? (
-                            <CentreDaySummaryTable summary={daySummary} />
+                            variant === "national" ? (
+                              <NationalUpcomingDayDetailsSummary summary={daySummary} />
+                            ) : (
+                              <CentreDaySummaryTable summary={daySummary} sectionTitle="Details" />
+                            )
                           ) : null}
                         </>
                       ) : null}
@@ -853,6 +996,31 @@ export function StaffDashboardOverview({
                     </p>
                   </li>
                 </ul>
+              ) : variant === "national" ? (
+                <ul className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+                  <li className={statCardClass}>
+                    <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+                      Candidates (national)
+                    </p>
+                    <p className="mt-2 tabular-nums text-3xl font-semibold text-card-foreground">
+                      {overview.candidate_count.toLocaleString()}
+                    </p>
+                    <p className="mt-2 text-sm text-muted-foreground">
+                      Registered candidates for this examination across all schools.
+                    </p>
+                  </li>
+                  <li className={statCardClass}>
+                    <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+                      Schools with candidates
+                    </p>
+                    <p className="mt-2 tabular-nums text-3xl font-semibold text-card-foreground">
+                      {overview.school_count.toLocaleString()}
+                    </p>
+                    <p className="mt-2 text-sm text-muted-foreground">
+                      Number of schools with registered candidate for this examination.
+                    </p>
+                  </li>
+                </ul>
               ) : (
                 <ul className="grid grid-cols-1 gap-4 sm:grid-cols-2">
                   <li className={statCardClass}>
@@ -900,6 +1068,9 @@ export function StaffDashboardOverview({
                 summaryLoading={todaySummaryLoading}
                 summaryError={todaySummaryError}
                 sessionScope={sessionScope}
+                hideSchoolNameBadges={variant === "national"}
+                hideCandidateInvigilatorCards={variant === "national"}
+                compactSlotSummary={variant === "national"}
               />
 
               {upcomingSection}

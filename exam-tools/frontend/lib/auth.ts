@@ -20,7 +20,15 @@ export function clearAuth(): void {
   localStorage.removeItem(TOKEN_KEY);
 }
 
-export type ApiRole = "SUPER_ADMIN" | "SUPERVISOR" | "INSPECTOR" | "DEPOT_KEEPER";
+export type ApiRole =
+  | "SUPER_ADMIN"
+  | "TEST_ADMIN_OFFICER"
+  | "SUPERVISOR"
+  | "INSPECTOR"
+  | "DEPOT_KEEPER";
+
+/** Roles that may use the admin dashboard layout (super admin + script monitoring officer). */
+export const ADMIN_PORTAL_ROLES: ApiRole[] = ["SUPER_ADMIN", "TEST_ADMIN_OFFICER"];
 
 export type UserMe = {
   id: string;
@@ -48,6 +56,7 @@ export type TokenResponse = {
 
 function dashboardPathForLoginRole(role: TokenResponse["role"]): string {
   if (role === "SUPER_ADMIN" || role === 0) return "/dashboard/admin";
+  if (role === "TEST_ADMIN_OFFICER" || role === 5) return "/dashboard/admin/monitoring";
   if (role === "SUPERVISOR" || role === 10) return "/dashboard/supervisor";
   if (role === "INSPECTOR" || role === 20) return "/dashboard/inspector";
   if (role === "DEPOT_KEEPER" || role === 30) return "/dashboard/depot-keeper";
@@ -58,6 +67,8 @@ export function dashboardPathForRole(role: string): string {
   switch (role) {
     case "SUPER_ADMIN":
       return "/dashboard/admin";
+    case "TEST_ADMIN_OFFICER":
+      return "/dashboard/admin/monitoring";
     case "SUPERVISOR":
       return "/dashboard/supervisor";
     case "INSPECTOR":

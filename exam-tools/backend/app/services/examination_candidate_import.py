@@ -4,9 +4,11 @@ from __future__ import annotations
 import io
 import re
 from datetime import date, datetime
+from uuid import UUID
 
 import pandas as pd
 from sqlalchemy import delete, or_, select
+from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models import (
@@ -15,6 +17,7 @@ from app.models import (
     Programme,
     School,
     Subject,
+    school_programmes,
 )
 from app.schemas.examination_candidates import ExaminationCandidateImportError
 
@@ -122,6 +125,37 @@ async def import_candidates_dataframe(
         prog_res = await session.execute(prog_stmt)
         for p in prog_res.scalars().all():
             programme_by_code[p.code] = p
+
+    # Ensure school_programmes reflects every (school, programme) pair present in the file where
+    # both codes resolve to existing rows. Runs before per-row processing so a single bulk insert
+    # suffices; pairs are linked even if a row later fails (e.g. invalid subjects).
+    candidate_school_programme_pairs: set[tuple[UUID, int]] = set()
+    for _, row in df.iterrows():
+        sc = _get_cell(lookup, row, "school_code")
+        pc = _get_cell(lookup, row, "programme_code")
+        if not sc or not pc:
+            continue
+        sch = school_by_code.get(sc)
+        prog = programme_by_code.get(pc)
+        if sch is not None and prog is not None:
+            candidate_school_programme_pairs.add((sch.id, prog.id))
+
+    if candidate_school_programme_pairs:
+        school_ids = {sid for sid, _pid in candidate_school_programme_pairs}
+        programme_ids = {_pid for _sid, _pid in candidate_school_programme_pairs}
+        existing_stmt = select(school_programmes.c.school_id, school_programmes.c.programme_id).where(
+            school_programmes.c.school_id.in_(school_ids),
+            school_programmes.c.programme_id.in_(programme_ids),
+        )
+        existing_res = await session.execute(existing_stmt)
+        existing_pairs = {(row[0], row[1]) for row in existing_res.all()}
+        missing_pairs = candidate_school_programme_pairs - existing_pairs
+        if missing_pairs:
+            await session.execute(
+                pg_insert(school_programmes)
+                .values([{"school_id": sid, "programme_id": pid} for sid, pid in missing_pairs])
+                .on_conflict_do_nothing(constraint="uq_school_programme")
+            )
 
     for row_offset, (_, row) in enumerate(df.iterrows()):
         row_number = row_offset + 2  # sheet row (header + 1-based data)

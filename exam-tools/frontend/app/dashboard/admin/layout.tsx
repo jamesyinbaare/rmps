@@ -1,5 +1,6 @@
 import { AdminDashboardShell } from "@/components/admin-dashboard-shell";
 import { RoleGuard } from "@/components/role-guard";
+import { ADMIN_PORTAL_ROLES } from "@/lib/auth";
 
 export default function AdminLayout({
   children,
@@ -7,7 +8,7 @@ export default function AdminLayout({
   children: React.ReactNode;
 }>) {
   return (
-    <RoleGuard expectedRole="SUPER_ADMIN" loginHref="/login/admin">
+    <RoleGuard allowedRoles={ADMIN_PORTAL_ROLES} loginHref="/login/admin">
       <AdminDashboardShell>{children}</AdminDashboardShell>
     </RoleGuard>
   );

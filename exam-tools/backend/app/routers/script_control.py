@@ -4,18 +4,19 @@ from datetime import datetime
 from uuid import UUID
 
 from fastapi import APIRouter, HTTPException, Query, status
-from sqlalchemy import func, select
-from sqlalchemy.orm import selectinload
+from sqlalchemy import func, or_, select
+from sqlalchemy.orm import contains_eager, selectinload
 
 from app.config import resolved_scripts_per_envelope_paper_1, resolved_scripts_per_envelope_paper_2, script_envelope_cap, settings
-from app.dependencies.auth import DepotKeeperDep, InspectorDep, SuperAdminDep
+from app.dependencies.auth import DepotKeeperDep, InspectorDep, SuperAdminOrTestAdminOfficerDep
 from app.dependencies.database import DBSessionDep
-from app.models import School, ScriptEnvelope, ScriptPackingSeries, Subject, User, UserRole
+from app.models import Region, School, ScriptEnvelope, ScriptPackingSeries, Subject, User, UserRole, Zone
 from app.schemas.script_control import (
     ScriptControlEnvelopeVerificationToggleRequest,
     MySchoolScriptControlResponse,
     ScriptControlAdminListResponse,
     ScriptControlAdminRow,
+    ScriptControlSubjectSeriesCountRow,
     ScriptEnvelopeItem,
     ScriptPaperSlotResponse,
     ScriptSeriesPackingResponse,
@@ -35,6 +36,7 @@ from app.services.script_control import (
     assert_script_packing_calendar_allowed,
     inspector_center_scope_school_ids,
     load_subject_paper_rows_for_exam_and_school,
+    ordered_subjects_on_examination_timetable,
     paper_examination_date_for_triple,
     script_packing_today_in_configured_zone,
     subject_series_count_map,
@@ -477,18 +479,98 @@ async def delete_my_school_script_series(
     await session.commit()
 
 
+def _script_control_admin_filters(
+    *,
+    examination_id: int | None,
+    school_id: UUID | None,
+    subject_id: int | None,
+    paper_number: int | None,
+    region: Region | None,
+    zone: Zone | None,
+    school_q: str | None,
+    subject_q: str | None,
+) -> list:
+    conditions: list = []
+    if examination_id is not None:
+        conditions.append(ScriptPackingSeries.examination_id == examination_id)
+    if school_id is not None:
+        conditions.append(ScriptPackingSeries.school_id == school_id)
+    if subject_id is not None:
+        conditions.append(ScriptPackingSeries.subject_id == subject_id)
+    if paper_number is not None:
+        conditions.append(ScriptPackingSeries.paper_number == paper_number)
+    if region is not None:
+        conditions.append(School.region == region)
+    if zone is not None:
+        conditions.append(School.zone == zone)
+    if school_q and school_q.strip():
+        pattern = f"%{school_q.strip()}%"
+        conditions.append(or_(School.code.ilike(pattern), School.name.ilike(pattern)))
+    if subject_q and subject_q.strip():
+        pattern = f"%{subject_q.strip()}%"
+        conditions.append(or_(Subject.code.ilike(pattern), Subject.name.ilike(pattern)))
+    return conditions
+
+
 @router.get("/script-control/records", response_model=ScriptControlAdminListResponse)
 async def list_script_control_records(
     session: DBSessionDep,
-    _: SuperAdminDep,
+    _: SuperAdminOrTestAdminOfficerDep,
     examination_id: int | None = Query(default=None),
     school_id: UUID | None = Query(default=None),
+    subject_id: int | None = Query(default=None),
+    paper_number: int | None = Query(default=None),
+    region: Region | None = Query(default=None),
+    zone: Zone | None = Query(default=None),
+    school_q: str | None = Query(default=None, description="Case-insensitive search on school code or name."),
+    subject_q: str | None = Query(default=None, description="Case-insensitive search on subject code or name."),
     skip: int = Query(default=0, ge=0),
     limit: int = Query(default=100, ge=1, le=500),
 ) -> ScriptControlAdminListResponse:
+    subject_series_counts: list[ScriptControlSubjectSeriesCountRow] = []
+    if examination_id is not None:
+        subjects_ordered = await ordered_subjects_on_examination_timetable(session, examination_id)
+        cmap = await subject_series_count_map(session, examination_id)
+        subject_series_counts = [
+            ScriptControlSubjectSeriesCountRow(
+                subject_id=s.id,
+                subject_code=s.code,
+                subject_name=s.name,
+                series_count=cmap.get(s.id, 1),
+            )
+            for s in subjects_ordered
+        ]
+
+    filters = _script_control_admin_filters(
+        examination_id=examination_id,
+        school_id=school_id,
+        subject_id=subject_id,
+        paper_number=paper_number,
+        region=region,
+        zone=zone,
+        school_q=school_q,
+        subject_q=subject_q,
+    )
+
+    count_stmt = (
+        select(func.count(ScriptPackingSeries.id))
+        .select_from(ScriptPackingSeries)
+        .join(School, School.id == ScriptPackingSeries.school_id)
+        .join(Subject, Subject.id == ScriptPackingSeries.subject_id)
+    )
+    if filters:
+        count_stmt = count_stmt.where(*filters)
+    total = int((await session.execute(count_stmt)).scalar_one())
+
     stmt = (
         select(ScriptPackingSeries)
-        .options(selectinload(ScriptPackingSeries.envelopes))
+        .join(School, School.id == ScriptPackingSeries.school_id)
+        .join(Subject, Subject.id == ScriptPackingSeries.subject_id)
+        .options(
+            contains_eager(ScriptPackingSeries.school),
+            contains_eager(ScriptPackingSeries.subject),
+            selectinload(ScriptPackingSeries.envelopes),
+        )
         .order_by(
             ScriptPackingSeries.examination_id.desc(),
             ScriptPackingSeries.school_id,
@@ -497,42 +579,37 @@ async def list_script_control_records(
             ScriptPackingSeries.series_number,
         )
     )
-    if examination_id is not None:
-        stmt = stmt.where(ScriptPackingSeries.examination_id == examination_id)
-    if school_id is not None:
-        stmt = stmt.where(ScriptPackingSeries.school_id == school_id)
-
-    count_stmt = select(func.count()).select_from(ScriptPackingSeries)
-    if examination_id is not None:
-        count_stmt = count_stmt.where(ScriptPackingSeries.examination_id == examination_id)
-    if school_id is not None:
-        count_stmt = count_stmt.where(ScriptPackingSeries.school_id == school_id)
-    total = int((await session.execute(count_stmt)).scalar_one())
-
+    if filters:
+        stmt = stmt.where(*filters)
     stmt = stmt.offset(skip).limit(limit)
+
     pack_result = await session.execute(stmt)
     packings = list(pack_result.scalars().unique().all())
     if not packings:
-        return ScriptControlAdminListResponse(items=[], total=total)
-
-    school_ids = {p.school_id for p in packings}
-    subject_ids = {p.subject_id for p in packings}
-    sch_stmt = select(School).where(School.id.in_(school_ids))
-    sub_stmt = select(Subject).where(Subject.id.in_(subject_ids))
-    schools = {s.id: s for s in (await session.execute(sch_stmt)).scalars().all()}
-    subjects = {s.id: s for s in (await session.execute(sub_stmt)).scalars().all()}
+        return ScriptControlAdminListResponse(items=[], total=total, subject_series_counts=subject_series_counts)
 
     items: list[ScriptControlAdminRow] = []
     for ps in packings:
-        sch = schools.get(ps.school_id)
-        sub = subjects.get(ps.subject_id)
-        envs = ps.envelopes
+        sch = ps.school
+        sub = ps.subject
+        envs = sorted(ps.envelopes, key=lambda x: x.envelope_number)
+        envelope_items = [
+            ScriptEnvelopeItem(
+                envelope_number=e.envelope_number,
+                booklet_count=e.booklet_count,
+                verified=e.verified_at is not None,
+            )
+            for e in envs
+        ]
         items.append(
             ScriptControlAdminRow(
                 packing_series_id=ps.id,
                 examination_id=ps.examination_id,
                 school_id=ps.school_id,
                 school_code=sch.code if sch else "",
+                school_name=sch.name if sch else "",
+                region=sch.region.value if sch and sch.region is not None else "",
+                zone=sch.zone.value if sch and sch.zone is not None else "",
                 subject_id=ps.subject_id,
                 subject_code=sub.code if sub else "",
                 subject_name=sub.name if sub else "",
@@ -540,7 +617,12 @@ async def list_script_control_records(
                 series_number=ps.series_number,
                 envelope_count=len(envs),
                 total_booklets=sum(e.booklet_count for e in envs),
+                envelopes=envelope_items,
             )
         )
 
-    return ScriptControlAdminListResponse(items=items, total=total)
+    return ScriptControlAdminListResponse(
+        items=items,
+        total=total,
+        subject_series_counts=subject_series_counts,
+    )

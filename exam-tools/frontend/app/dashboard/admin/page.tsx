@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 
 import {
@@ -11,6 +12,7 @@ import {
   type InspectorListResponse,
   type SchoolListResponse,
 } from "@/lib/api";
+import { getMe, type UserMe } from "@/lib/auth";
 
 const cardClass =
   "block rounded-2xl border border-border bg-card p-5 transition-colors hover:border-primary/30 hover:bg-muted/30";
@@ -26,6 +28,8 @@ type SummaryState = {
 };
 
 export default function AdminDashboardPage() {
+  const router = useRouter();
+  const [me, setMe] = useState<UserMe | null>(null);
   const [summary, setSummary] = useState<SummaryState>({
     schools: null,
     centres: null,
@@ -39,6 +43,19 @@ export default function AdminDashboardPage() {
     let cancelled = false;
 
     (async () => {
+      try {
+        const user = await getMe();
+        if (cancelled) return;
+        setMe(user);
+        if (user.role === "TEST_ADMIN_OFFICER") {
+          router.replace("/dashboard/admin/monitoring");
+          return;
+        }
+      } catch {
+        if (cancelled) return;
+        setMe(null);
+      }
+
       setError(null);
       try {
         const [schoolsRes, centresRes, inspectorsRes, depotsRes, keepersRes] = await Promise.all([
@@ -72,11 +89,19 @@ export default function AdminDashboardPage() {
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [router]);
 
   function formatCount(n: number | null): string {
     if (n === null) return "—";
     return n.toLocaleString();
+  }
+
+  if (me?.role === "TEST_ADMIN_OFFICER") {
+    return (
+      <div className="flex min-h-[40vh] items-center justify-center">
+        <p className="text-sm text-muted-foreground">Redirecting…</p>
+      </div>
+    );
   }
 
   return (
@@ -118,14 +143,17 @@ export default function AdminDashboardPage() {
           </Link>
         </li>
         <li>
-          <Link href="/dashboard/admin/inspectors" className={cardClass}>
+          <Link href="/dashboard/admin/users" className={cardClass}>
             <h3 className="text-sm font-medium uppercase tracking-wide text-muted-foreground">
-              Inspectors
+              Users
             </h3>
             <p className="mt-2 tabular-nums text-3xl font-semibold text-card-foreground">
               {formatCount(summary.inspectors)}
             </p>
-            <span className={linkClass}>Manage inspectors</span>
+            <p className="mt-1 text-sm text-muted-foreground">
+              Inspectors shown; create inspectors, depot keepers, and test admin officers.
+            </p>
+            <span className={linkClass}>Manage users</span>
           </Link>
         </li>
         <li>

@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useCallback, useEffect, useState } from "react";
 
 import {
@@ -237,6 +238,13 @@ export default function AdminInspectorsPage() {
 
   return (
     <div className="space-y-8">
+      <p className="rounded-lg border border-border bg-muted/30 px-3 py-2 text-sm text-muted-foreground">
+        Create inspectors together with depot keepers and test admin officers on the{" "}
+        <Link href="/dashboard/admin/users#inspectors" className="font-medium text-primary hover:underline">
+          Users
+        </Link>{" "}
+        page, or use the buttons below for this list and bulk upload.
+      </p>
       <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
         <div>
           <h2 className="text-xl font-semibold text-foreground">Inspectors</h2>

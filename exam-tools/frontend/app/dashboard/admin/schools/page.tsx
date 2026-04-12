@@ -110,12 +110,12 @@ function SchoolFormFields({
       {showCode ? (
         <div>
           <label htmlFor="school-code" className={formLabelClass}>
-            School code (6 characters)
+            School code (up to 15 characters)
           </label>
           <input
             id="school-code"
             className={formInputClass}
-            maxLength={6}
+            maxLength={15}
             value={code}
             onChange={(e) => setCode(e.target.value.toUpperCase())}
             autoComplete="off"
@@ -382,8 +382,8 @@ export default function AdminSchoolsPage() {
 
   async function submitCreate() {
     setFormError(null);
-    if (!code.trim() || code.trim().length > 6) {
-      setFormError("School code is required (max 6 characters).");
+    if (!code.trim() || code.trim().length > 15) {
+      setFormError("School code is required (max 15 characters).");
       return;
     }
     if (!name.trim() || !region || !zone) {
