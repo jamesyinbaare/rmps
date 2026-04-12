@@ -8,7 +8,7 @@ import {
   type ColumnDef,
   type SortingState,
 } from "@tanstack/react-table";
-import { Check, ChevronsUpDown } from "lucide-react";
+import { Check, ChevronsUpDown, Minus, Plus } from "lucide-react";
 
 import { DataTable } from "@/components/data-table";
 import { Badge } from "@/components/ui/badge";
@@ -73,6 +73,17 @@ function mergeRows(items: ScriptControlAdminRow[]): MergedRow[] {
     if (a.subject_code !== b.subject_code) return a.subject_code.localeCompare(b.subject_code);
     return a.paper_number - b.paper_number;
   });
+}
+
+function mergedRowKey(row: MergedRow): string {
+  return `${row.school_id}:${row.subject_id}:${row.paper_number}`;
+}
+
+function mergedRowHasEnvelopes(row: MergedRow, maxSeries: number): boolean {
+  for (let s = 1; s <= maxSeries; s++) {
+    if (row.bySeries[s]?.envelopes?.length) return true;
+  }
+  return false;
 }
 
 function useDebounced<T>(value: T, ms: number): T {
@@ -160,6 +171,45 @@ function SearchableCombobox({
   );
 }
 
+function SeriesEnvelopeCell({
+  row,
+  seriesNumber,
+  expanded,
+}: {
+  row: MergedRow;
+  seriesNumber: number;
+  expanded: boolean;
+}) {
+  const block = row.bySeries[seriesNumber];
+  if (!block?.envelopes?.length) {
+    return <span className="text-muted-foreground">—</span>;
+  }
+  const envs = block.envelopes;
+  const total = block.total_booklets ?? envs.reduce((acc, e) => acc + e.booklet_count, 0);
+
+  if (!expanded) {
+    return <span className="tabular-nums text-xs font-medium text-foreground">{total}</span>;
+  }
+  return (
+    <div className="text-xs">
+      <ul className="space-y-1 border-l border-border pl-2">
+        {envs.map((e) => (
+          <li key={e.envelope_number} className="flex flex-wrap items-center gap-1 text-[11px]">
+            <span className="tabular-nums text-muted-foreground">
+              Env {e.envelope_number}: {e.booklet_count}
+            </span>
+            {e.verified ? (
+              <Badge variant="secondary" className="text-[10px]">
+                OK
+              </Badge>
+            ) : null}
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
+}
+
 export default function AdminScriptControlPage() {
   const [exams, setExams] = useState<Examination[]>([]);
   const [examId, setExamId] = useState<number | null>(null);
@@ -179,6 +229,11 @@ export default function AdminScriptControlPage() {
   const [schoolSearchLoading, setSchoolSearchLoading] = useState(false);
   const [schoolPickerOpen, setSchoolPickerOpen] = useState(false);
   const [sorting, setSorting] = useState<SortingState>([]);
+  const [expandedEnvelopeRows, setExpandedEnvelopeRows] = useState<Set<string>>(() => new Set());
+
+  useEffect(() => {
+    setExpandedEnvelopeRows(new Set());
+  }, [listResponse]);
 
   useEffect(() => {
     let cancelled = false;
@@ -325,44 +380,108 @@ export default function AdminScriptControlPage() {
     [],
   );
 
+  const seriesGrandTotals = useMemo(() => {
+    const totals: Record<number, number> = {};
+    for (let s = 1; s <= maxSeriesColumns; s++) {
+      totals[s] = 0;
+    }
+    for (const row of mergedRows) {
+      for (let s = 1; s <= maxSeriesColumns; s++) {
+        const b = row.bySeries[s];
+        if (b?.total_booklets != null) {
+          totals[s] += b.total_booklets;
+        }
+      }
+    }
+    return totals;
+  }, [mergedRows, maxSeriesColumns]);
+
   const columns = useMemo<ColumnDef<MergedRow>[]>(() => {
     const base: ColumnDef<MergedRow>[] = [
+      {
+        id: "expandEnvelopes",
+        enableSorting: false,
+        header: () => <span className="sr-only">Envelope details</span>,
+        cell: ({ row }) => {
+          const r = row.original;
+          if (!mergedRowHasEnvelopes(r, maxSeriesColumns)) {
+            return <span className="inline-block w-8 shrink-0" aria-hidden />;
+          }
+          const key = mergedRowKey(r);
+          const isOpen = expandedEnvelopeRows.has(key);
+          return (
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon"
+              className="size-8 shrink-0 text-primary/85 hover:bg-primary/10 hover:text-primary"
+              aria-expanded={isOpen}
+              aria-label={
+                isOpen
+                  ? "Collapse envelope details for this school"
+                  : "Expand envelope details for this school"
+              }
+              onClick={() => {
+                setExpandedEnvelopeRows((prev) => {
+                  const next = new Set(prev);
+                  if (next.has(key)) next.delete(key);
+                  else next.add(key);
+                  return next;
+                });
+              }}
+            >
+              {isOpen ? <Minus className="size-4" aria-hidden /> : <Plus className="size-4" aria-hidden />}
+            </Button>
+          );
+        },
+        footer: () => null,
+      },
       {
         accessorKey: "region",
         header: "Region",
         cell: ({ row }) => <span className="whitespace-nowrap">{row.original.region}</span>,
+        footer: () => (
+          <span className="text-xs font-normal text-muted-foreground">Totals (booklets)</span>
+        ),
       },
       {
         accessorKey: "zone",
         header: "Zone",
         cell: ({ row }) => <span className="whitespace-nowrap">{row.original.zone}</span>,
+        footer: () => null,
       },
       {
         id: "school",
         accessorFn: (row) => row.school_code,
         header: "School",
-        cell: ({ row }) => (
-          <div>
-            <div className="font-medium tabular-nums">{row.original.school_code}</div>
-            <div className="max-w-[14rem] text-muted-foreground">{row.original.school_name}</div>
-          </div>
-        ),
+        cell: ({ row }) => {
+          const { school_code: code, school_name: name } = row.original;
+          return (
+            <span
+              className="font-medium tabular-nums whitespace-nowrap"
+              title={name.trim() ? name : undefined}
+              aria-label={name.trim() ? `${code}, ${name}` : code}
+            >
+              {code}
+            </span>
+          );
+        },
+        footer: () => null,
       },
       {
         id: "subject",
         accessorFn: (row) => row.subject_code,
         header: "Subject",
         cell: ({ row }) => (
-          <div>
-            <div className="font-medium">{row.original.subject_code}</div>
-            <div className="max-w-[12rem] text-muted-foreground">{row.original.subject_name}</div>
-          </div>
+          <span className="font-medium whitespace-nowrap">{row.original.subject_code}</span>
         ),
+        footer: () => null,
       },
       {
         accessorKey: "paper_number",
         header: "Paper",
         cell: ({ row }) => <span className="tabular-nums">{row.original.paper_number}</span>,
+        footer: () => null,
       },
     ];
     for (let sn = 1; sn <= maxSeriesColumns; sn++) {
@@ -370,32 +489,20 @@ export default function AdminScriptControlPage() {
         id: `series_${sn}`,
         accessorFn: (row) => row.bySeries[sn]?.total_booklets ?? Number.MAX_SAFE_INTEGER,
         header: `Series ${sn}`,
-        cell: ({ row }) => {
-          const block = row.original.bySeries[sn];
-          if (!block?.envelopes?.length) {
-            return <span className="text-muted-foreground">—</span>;
-          }
-          return (
-            <ul className="max-w-[12rem] space-y-1 text-xs">
-              {block.envelopes.map((e) => (
-                <li key={e.envelope_number} className="flex flex-wrap items-center gap-1">
-                  <span className="tabular-nums">
-                    Env {e.envelope_number}: {e.booklet_count}
-                  </span>
-                  {e.verified ? (
-                    <Badge variant="secondary" className="text-[10px]">
-                      OK
-                    </Badge>
-                  ) : null}
-                </li>
-              ))}
-            </ul>
-          );
-        },
+        cell: ({ row }) => (
+          <SeriesEnvelopeCell
+            row={row.original}
+            seriesNumber={sn}
+            expanded={expandedEnvelopeRows.has(mergedRowKey(row.original))}
+          />
+        ),
+        footer: () => (
+          <span className="tabular-nums text-foreground">{seriesGrandTotals[sn] ?? 0}</span>
+        ),
       });
     }
     return base;
-  }, [maxSeriesColumns]);
+  }, [maxSeriesColumns, seriesGrandTotals, expandedEnvelopeRows]);
 
   const table = useReactTable({
     data: mergedRows,
@@ -627,7 +734,11 @@ export default function AdminScriptControlPage() {
       ) : loading && !listResponse ? (
         <p className="text-sm text-muted-foreground">Loading…</p>
       ) : (
-        <DataTable table={table} emptyMessage={loading ? "Loading…" : "No packing records for this filter."} />
+        <DataTable
+          table={table}
+          emptyMessage={loading ? "Loading…" : "No packing records for this filter."}
+          showFooter={mergedRows.length > 0}
+        />
       )}
     </div>
   );

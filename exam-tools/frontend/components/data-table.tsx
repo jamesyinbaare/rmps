@@ -3,16 +3,31 @@
 import { flexRender, type Table as TanstackTable } from "@tanstack/react-table";
 import { ArrowDown, ArrowUp, ArrowUpDown } from "lucide-react";
 
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableFooter,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/ui/table";
 import { cn } from "@/lib/utils";
 
 type DataTableProps<TData> = {
   table: TanstackTable<TData>;
   emptyMessage?: string;
+  /** When false, no footer row is rendered even if columns define `footer`. */
+  showFooter?: boolean;
 };
 
-export function DataTable<TData>({ table, emptyMessage = "No results." }: DataTableProps<TData>) {
+export function DataTable<TData>({
+  table,
+  emptyMessage = "No results.",
+  showFooter = true,
+}: DataTableProps<TData>) {
   const colCount = table.getAllColumns().length;
+  const hasFooter = showFooter && table.getAllColumns().some((c) => c.columnDef.footer != null);
 
   return (
     <div className="rounded-md border border-border">
@@ -72,6 +87,19 @@ export function DataTable<TData>({ table, emptyMessage = "No results." }: DataTa
             </TableRow>
           )}
         </TableBody>
+        {hasFooter ? (
+          <TableFooter>
+            {table.getFooterGroups().map((footerGroup) => (
+              <TableRow key={footerGroup.id}>
+                {footerGroup.headers.map((header) => (
+                  <TableCell key={header.id} colSpan={header.colSpan} className="align-top text-sm">
+                    {header.isPlaceholder ? null : flexRender(header.column.columnDef.footer, header.getContext())}
+                  </TableCell>
+                ))}
+              </TableRow>
+            ))}
+          </TableFooter>
+        ) : null}
       </Table>
     </div>
   );
