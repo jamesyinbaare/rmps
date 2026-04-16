@@ -218,7 +218,12 @@ export default function SchoolDetailPage() {
             <Building2 className="h-5 w-5 text-muted-foreground" />
             <div>
               <h1 className="text-lg font-semibold">{school.name}</h1>
-              <p className="text-sm text-muted-foreground">Code: {school.code}</p>
+              <p className="text-sm text-muted-foreground">
+                Code: {school.code}
+                {school.s_code != null && school.s_code !== "" && (
+                  <span className="ml-2">· Numeric (sheet IDs): {school.s_code}</span>
+                )}
+              </p>
             </div>
           </div>
         </div>
@@ -347,6 +352,10 @@ export default function SchoolDetailPage() {
                   <div>
                     <p className="text-sm text-muted-foreground">School Code</p>
                     <p className="font-medium">{school.code}</p>
+                  </div>
+                  <div>
+                    <p className="text-sm text-muted-foreground">Numeric code (sheet IDs)</p>
+                    <p className="font-medium font-mono">{school.s_code}</p>
                   </div>
                   <div>
                     <p className="text-sm text-muted-foreground">School Name</p>

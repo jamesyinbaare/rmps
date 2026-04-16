@@ -246,7 +246,7 @@ export default function UploadCandidatesPage() {
                     <div className="text-sm text-muted-foreground space-y-2">
                       <p>Your file must contain the following columns (in any order):</p>
                       <ul className="list-disc list-inside space-y-1 ml-4">
-                        <li><strong>School Code</strong> (required) - The 6-character school code</li>
+                        <li><strong>School Code</strong> (required) - Must match an existing school code (6–15 characters)</li>
                         <li><strong>Programme Code</strong> (optional) - The programme code for the candidate</li>
                         <li><strong>Name</strong> (required) - Full name of the candidate</li>
                         <li><strong>Index Number</strong> (required) - Unique index number for the candidate</li>
@@ -291,7 +291,7 @@ export default function UploadCandidatesPage() {
                   <div>
                     <h4 className="text-sm font-semibold mb-2">Validation Rules</h4>
                     <ul className="text-sm text-muted-foreground space-y-1 list-disc list-inside">
-                      <li>School code must be exactly 6 characters and must exist in the system</li>
+                      <li>School code must match a school in the system (6–15 characters)</li>
                       <li>Programme code must exist in the system (if provided)</li>
                       <li>Index number must be unique for each candidate</li>
                       <li>Subject codes must be valid 3-character codes that exist in the system</li>

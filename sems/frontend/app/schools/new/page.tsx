@@ -101,11 +101,14 @@ export default function NewSchoolPage() {
                 value={formData.code}
                 onChange={handleChange}
                 required
-                maxLength={6}
-                placeholder="Enter 6-character school code"
+                maxLength={15}
+                minLength={6}
+                placeholder="Enter school code (6–15 characters)"
                 disabled={loading}
               />
-              <p className="text-xs text-muted-foreground">School code must be exactly 6 characters</p>
+              <p className="text-xs text-muted-foreground">
+                6–15 characters. A trailing letter is stored as a numeric code for sheet IDs (see school details after creation).
+              </p>
             </div>
 
             <div className="space-y-2">

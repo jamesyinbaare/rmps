@@ -173,7 +173,8 @@ class RefreshToken(Base):
 class School(Base):
     __tablename__ = "schools"
     id = Column(Integer, primary_key=True)
-    code = Column(String(6), unique=True, nullable=False, index=True)
+    code = Column(String(15), unique=True, nullable=False, index=True)
+    s_code = Column(String(20), unique=True, nullable=False, index=True)
     name = Column(String(255), nullable=False)
     region = Column(Enum(SchoolRegion), nullable=False)
     zone = Column(Enum(SchoolZone), nullable=False)

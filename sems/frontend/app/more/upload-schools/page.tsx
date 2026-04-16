@@ -176,7 +176,7 @@ export default function UploadSchoolsPage() {
                     <div className="text-sm text-muted-foreground space-y-2">
                       <p>Your file must contain the following columns (in any order):</p>
                       <ul className="list-disc list-inside space-y-1 ml-4">
-                        <li><strong>Code</strong> (required) - Unique 6-character school code</li>
+                        <li><strong>Code</strong> (required) - Unique school code, 6–15 characters</li>
                         <li><strong>Name</strong> (required) - School name</li>
                         <li><strong>Region</strong> (required) - School region (e.g., "Greater Accra Region", "Ashanti Region")</li>
                         <li><strong>Zone</strong> (required) - Single letter zone (A-Z)</li>
@@ -225,7 +225,7 @@ export default function UploadSchoolsPage() {
                   <div>
                     <h4 className="text-sm font-semibold mb-2">Validation Rules</h4>
                     <ul className="text-sm text-muted-foreground space-y-1 list-disc list-inside">
-                      <li>Code must be unique and exactly 6 characters</li>
+                      <li>Code must be unique, 6–15 characters; a trailing A–Z becomes a digit for the stored numeric code used in sheet IDs</li>
                       <li>Name is required</li>
                       <li>Region must be a valid region name (e.g., "Greater Accra Region", "Ashanti Region")</li>
                       <li>Zone must be a single letter from A to Z</li>

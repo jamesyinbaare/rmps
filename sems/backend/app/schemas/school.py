@@ -8,7 +8,7 @@ from app.models import SchoolRegion, SchoolType, SchoolZone
 class SchoolBase(BaseModel):
     """Base school schema."""
 
-    code: str = Field(..., min_length=6, max_length=6)
+    code: str = Field(..., min_length=6, max_length=15)
     name: str = Field(..., min_length=1, max_length=255)
 
 
@@ -33,6 +33,7 @@ class SchoolResponse(SchoolBase):
     """Schema for school response."""
 
     id: int
+    s_code: str
     region: SchoolRegion
     zone: SchoolZone
     school_type: SchoolType | None = None

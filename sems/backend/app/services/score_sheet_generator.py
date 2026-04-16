@@ -31,7 +31,7 @@ def generate_sheet_id(school_code: str, subject_code: str, series: int, test_typ
     Format: SCHOOL_CODE(6) + SUBJECT_CODE(3) + SERIES(1) + TEST_TYPE(1) + SHEET_NUMBER(2)
 
     Args:
-        school_code: School code (will be padded/truncated to 6 chars)
+        school_code: School numeric segment (typically `School.s_code`; padded/truncated to 6 chars)
         subject_code: Subject code (will be padded/truncated to 3 chars)
         series: Series number (1-9)
         test_type: Test type (1 or 2)
@@ -323,7 +323,7 @@ async def generate_score_sheets(
                         # Generate sheet ID
                         try:
                             sheet_id = generate_sheet_id(
-                                school_code=school.code,
+                                school_code=school.s_code,
                                 subject_code=subject.code,
                                 series=effective_series,
                                 test_type=test_type,

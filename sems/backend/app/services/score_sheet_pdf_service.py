@@ -386,7 +386,7 @@ async def generate_pdfs_for_exam(
                         sheet_number = page_index + 1
                         try:
                             sheet_id = generate_sheet_id(
-                                school_code=school.code,
+                                school_code=school.s_code,
                                 subject_code=subject.code,
                                 series=effective_series,
                                 test_type=test_type,

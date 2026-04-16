@@ -110,6 +110,8 @@ export type SchoolZone =
 export interface School {
   id: number;
   code: string;
+  /** Numeric form of `code` for sheet IDs (derived on the server). */
+  s_code: string;
   name: string;
   region: SchoolRegion;
   zone: SchoolZone;

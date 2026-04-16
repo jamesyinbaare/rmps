@@ -8,6 +8,17 @@ import pandas as pd
 from app.models import ExamType, ProgrammeType, SubjectType
 
 
+def core_programme_link_flags(parsed_choice_group_id: int | None) -> tuple[bool, int | None]:
+    """
+    For CORE subject bulk upload: compulsory vs optional core (registration-portal parity).
+
+    Returns (is_compulsory, choice_group_id) for programme_subjects rows.
+    """
+    if isinstance(parsed_choice_group_id, int) and parsed_choice_group_id > 0:
+        return False, parsed_choice_group_id
+    return True, None
+
+
 class SubjectUploadParseError(Exception):
     """Raised when file parsing fails."""
 
@@ -98,6 +109,7 @@ def parse_subject_row(row: pd.Series) -> dict[str, Any]:
         - exam_type: ExamType
         - programme_type: ProgrammeType | None
         - programme_code: str | None (optional)
+        - choice_group_id: int | None (optional; positive int for optional core when subject_type is CORE)
     """
     # Normalize column names (case-insensitive, strip whitespace)
     row_dict = {col.lower().strip(): val for col, val in row.items()}
@@ -147,9 +159,25 @@ def parse_subject_row(row: pd.Series) -> dict[str, Any]:
     # Extract optional programme_code
     programme_code = row_dict.get("programme_code")
     if programme_code is not None:
-        programme_code = str(programme_code).strip()
-        if not programme_code or programme_code.lower() == "nan":
+        if pd.isna(programme_code):
             programme_code = None
+        else:
+            programme_code = str(programme_code).strip()
+            if not programme_code or programme_code.lower() in ("nan", "none", ""):
+                programme_code = None
+
+    # Optional choice_group_id (optional core when subject_type is CORE); same rules as registration portal
+    choice_group_id: int | None = None
+    choice_group_raw = row_dict.get("choice_group_id")
+    if choice_group_raw is not None and not pd.isna(choice_group_raw):
+        try:
+            choice_group_str = str(choice_group_raw).strip()
+            if choice_group_str and choice_group_str.lower() not in ("nan", "none", ""):
+                choice_group_id = int(float(choice_group_str))
+                if choice_group_id <= 0:
+                    choice_group_id = None
+        except (ValueError, TypeError, OverflowError):
+            choice_group_id = None
 
     return {
         "code": code,
@@ -159,4 +187,5 @@ def parse_subject_row(row: pd.Series) -> dict[str, Any]:
         "exam_type": exam_type,
         "programme_type": programme_type,
         "programme_code": programme_code,
+        "choice_group_id": choice_group_id,
     }
