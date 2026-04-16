@@ -3,8 +3,9 @@
 from fastapi import APIRouter, File, HTTPException, Query, UploadFile, status
 from fastapi.responses import StreamingResponse
 from sqlalchemy import func, insert, select
+from sqlalchemy.exc import IntegrityError
 
-from app.dependencies.auth import SuperAdminDep
+from app.dependencies.auth import SuperAdminDep, SuperAdminOrTestAdminOfficerDep
 from app.dependencies.database import DBSessionDep
 from app.models import Programme, Subject, SubjectType, programme_subjects
 from app.schemas.subject import (
@@ -71,7 +72,7 @@ async def create_subject(
 @router.get("", response_model=SubjectListResponse)
 async def list_subjects(
     session: DBSessionDep,
-    _admin: SuperAdminDep,
+    _: SuperAdminOrTestAdminOfficerDep,
     page: int = Query(1, ge=1),
     page_size: int = Query(20, ge=1, le=_MAX_PAGE_SIZE),
 ) -> SubjectListResponse:
@@ -131,6 +132,7 @@ async def bulk_upload_subjects(
     failed = 0
     errors: list[SubjectBulkUploadError] = []
     batch_codes: set[str] = set()
+    batch_original_codes: set[str] = set()
 
     for idx, row in df.iterrows():
         row_number = int(idx) + 2
@@ -190,6 +192,35 @@ async def bulk_upload_subjects(
                 failed += 1
                 continue
 
+            original_code_val = subject_data.get("original_code")
+            if original_code_val:
+                if original_code_val in batch_original_codes:
+                    errors.append(
+                        SubjectBulkUploadError(
+                            row_number=row_number,
+                            error_message=(
+                                f"Duplicate original_code '{original_code_val}' found in upload file"
+                            ),
+                            field="original_code",
+                        )
+                    )
+                    failed += 1
+                    continue
+                existing_oc_stmt = select(Subject).where(Subject.original_code == original_code_val)
+                existing_oc_result = await session.execute(existing_oc_stmt)
+                if existing_oc_result.scalar_one_or_none() is not None:
+                    errors.append(
+                        SubjectBulkUploadError(
+                            row_number=row_number,
+                            error_message=(
+                                f"Subject with original_code '{original_code_val}' already exists"
+                            ),
+                            field="original_code",
+                        )
+                    )
+                    failed += 1
+                    continue
+
             programme = None
             programme_code = subject_data.get("programme_code")
             if programme_code and isinstance(programme_code, str) and programme_code.strip():
@@ -207,18 +238,8 @@ async def bulk_upload_subjects(
                     failed += 1
                     continue
 
-            db_subject = Subject(
-                code=subject_data["code"],
-                original_code=subject_data.get("original_code"),
-                name=subject_data["name"],
-                subject_type=subject_data["subject_type"],
-            )
-            session.add(db_subject)
-            await session.flush()
-
             is_compulsory = None
             choice_group_id = None
-
             if subject_data["subject_type"] == SubjectType.CORE:
                 parsed_choice_group_id = subject_data.get("choice_group_id")
                 if parsed_choice_group_id is not None:
@@ -241,43 +262,66 @@ async def bulk_upload_subjects(
                 else:
                     is_compulsory = True
 
-            if subject_data["subject_type"] == SubjectType.CORE:
-                all_programmes_stmt = select(Programme)
-                all_programmes_result = await session.execute(all_programmes_stmt)
-                all_programmes = all_programmes_result.scalars().all()
+            try:
+                async with session.begin_nested():
+                    db_subject = Subject(
+                        code=subject_data["code"],
+                        original_code=subject_data.get("original_code"),
+                        name=subject_data["name"],
+                        subject_type=subject_data["subject_type"],
+                    )
+                    session.add(db_subject)
+                    await session.flush()
 
-                for prog in all_programmes:
-                    assoc_stmt = select(programme_subjects).where(
-                        programme_subjects.c.programme_id == prog.id,
-                        programme_subjects.c.subject_id == db_subject.id,
-                    )
-                    assoc_result = await session.execute(assoc_stmt)
-                    if assoc_result.first() is None:
-                        await session.execute(
-                            insert(programme_subjects).values(
-                                programme_id=prog.id,
-                                subject_id=db_subject.id,
-                                is_compulsory=is_compulsory,
-                                choice_group_id=choice_group_id,
+                    if subject_data["subject_type"] == SubjectType.CORE:
+                        all_programmes_stmt = select(Programme)
+                        all_programmes_result = await session.execute(all_programmes_stmt)
+                        all_programmes = all_programmes_result.scalars().all()
+
+                        for prog in all_programmes:
+                            assoc_stmt = select(programme_subjects).where(
+                                programme_subjects.c.programme_id == prog.id,
+                                programme_subjects.c.subject_id == db_subject.id,
                             )
+                            assoc_result = await session.execute(assoc_stmt)
+                            if assoc_result.first() is None:
+                                await session.execute(
+                                    insert(programme_subjects).values(
+                                        programme_id=prog.id,
+                                        subject_id=db_subject.id,
+                                        is_compulsory=is_compulsory,
+                                        choice_group_id=choice_group_id,
+                                    )
+                                )
+                    elif programme:
+                        assoc_stmt = select(programme_subjects).where(
+                            programme_subjects.c.programme_id == programme.id,
+                            programme_subjects.c.subject_id == db_subject.id,
                         )
-            elif programme:
-                assoc_stmt = select(programme_subjects).where(
-                    programme_subjects.c.programme_id == programme.id,
-                    programme_subjects.c.subject_id == db_subject.id,
-                )
-                assoc_result = await session.execute(assoc_stmt)
-                if assoc_result.first() is None:
-                    await session.execute(
-                        insert(programme_subjects).values(
-                            programme_id=programme.id,
-                            subject_id=db_subject.id,
-                            is_compulsory=None,
-                            choice_group_id=None,
-                        )
+                        assoc_result = await session.execute(assoc_stmt)
+                        if assoc_result.first() is None:
+                            await session.execute(
+                                insert(programme_subjects).values(
+                                    programme_id=programme.id,
+                                    subject_id=db_subject.id,
+                                    is_compulsory=None,
+                                    choice_group_id=None,
+                                )
+                            )
+            except IntegrityError as e:
+                errors.append(
+                    SubjectBulkUploadError(
+                        row_number=row_number,
+                        error_message=f"Database constraint failed: {e.orig!s}",
+                        field=None,
                     )
+                )
+                failed += 1
+                continue
 
             batch_codes.add(subject_data["code"])
+            if original_code_val:
+                batch_original_codes.add(original_code_val)
             successful += 1
 
         except Exception as e:
@@ -309,7 +353,7 @@ async def bulk_upload_subjects(
 async def get_subject(
     subject_id: int,
     session: DBSessionDep,
-    _admin: SuperAdminDep,
+    _: SuperAdminOrTestAdminOfficerDep,
 ) -> SubjectResponse:
     stmt = select(Subject).where(Subject.id == subject_id)
     result = await session.execute(stmt)

@@ -21,12 +21,21 @@ const nav = [
   { href: "/dashboard/admin/timetable", label: "Examination timetable" },
   { href: "/dashboard/admin/monitoring", label: "Exam overview" },
   { href: "/dashboard/admin/script-control", label: "Worked scripts control" },
+  { href: "/dashboard/admin/allocation-examiners", label: "Examiners" },
+  { href: "/dashboard/admin/scripts-allocation", label: "Scripts allocation" },
   { href: "/dashboard/admin/documents", label: "Documents" },
 ];
 
 const SCRIPT_CONTROL_HREF = "/dashboard/admin/script-control";
+const SCRIPTS_ALLOCATION_HREF = "/dashboard/admin/scripts-allocation";
+const EXAMINERS_HREF = "/dashboard/admin/allocation-examiners";
 const MONITORING_HREF = "/dashboard/admin/monitoring";
-const TEST_ADMIN_OFFICER_NAV_HREFS = [MONITORING_HREF, SCRIPT_CONTROL_HREF];
+const TEST_ADMIN_OFFICER_NAV_HREFS = [
+  MONITORING_HREF,
+  SCRIPT_CONTROL_HREF,
+  EXAMINERS_HREF,
+  SCRIPTS_ALLOCATION_HREF,
+];
 
 type Props = {
   children: React.ReactNode;

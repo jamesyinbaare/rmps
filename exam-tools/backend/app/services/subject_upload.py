@@ -20,9 +20,15 @@ def parse_upload_file(file_content: bytes, filename: str) -> pd.DataFrame:
     try:
         file_lower = filename.lower()
         if file_lower.endswith((".xlsx", ".xls")):
-            df = pd.read_excel(io.BytesIO(file_content), engine="openpyxl")
+            df = pd.read_excel(
+                io.BytesIO(file_content), engine="openpyxl", dtype=str
+            ).fillna("")
         elif file_lower.endswith(".csv"):
-            df = pd.read_csv(io.BytesIO(file_content))
+            try:
+                text = file_content.decode("utf-8")
+            except UnicodeDecodeError:
+                text = file_content.decode("latin-1")
+            df = pd.read_csv(io.StringIO(text), dtype=str).fillna("")
         else:
             raise SubjectUploadParseError(
                 f"Unsupported file type. Expected .xlsx, .xls, or .csv, got {filename}"

@@ -4,13 +4,23 @@ from datetime import datetime
 from uuid import UUID
 
 from fastapi import APIRouter, HTTPException, Query, status
-from sqlalchemy import func, or_, select
+from sqlalchemy import delete, func, or_, select
 from sqlalchemy.orm import contains_eager, selectinload
 
 from app.config import resolved_scripts_per_envelope_paper_1, resolved_scripts_per_envelope_paper_2, script_envelope_cap, settings
 from app.dependencies.auth import DepotKeeperDep, InspectorDep, SuperAdminOrTestAdminOfficerDep
 from app.dependencies.database import DBSessionDep
-from app.models import Region, School, ScriptEnvelope, ScriptPackingSeries, Subject, User, UserRole, Zone
+from app.models import (
+    AllocationAssignment,
+    Region,
+    School,
+    ScriptEnvelope,
+    ScriptPackingSeries,
+    Subject,
+    User,
+    UserRole,
+    Zone,
+)
 from app.schemas.script_control import (
     ScriptControlEnvelopeVerificationToggleRequest,
     MySchoolScriptControlResponse,
@@ -395,20 +405,42 @@ async def upsert_my_school_script_series(
         )
         session.add(row)
         await session.flush()
+        for item in body.envelopes:
+            session.add(
+                ScriptEnvelope(
+                    packing_series_id=row.id,
+                    envelope_number=item.envelope_number,
+                    booklet_count=item.booklet_count,
+                )
+            )
+        await session.flush()
     else:
         row.updated_by_id = user.id
+        by_number = {e.envelope_number: e for e in row.envelopes}
+        wanted_numbers = {item.envelope_number for item in body.envelopes}
+        for item in body.envelopes:
+            existing = by_number.get(item.envelope_number)
+            if existing is not None:
+                if existing.booklet_count != item.booklet_count:
+                    await session.execute(
+                        delete(AllocationAssignment).where(
+                            AllocationAssignment.script_envelope_id == existing.id,
+                        )
+                    )
+                    existing.booklet_count = item.booklet_count
+            else:
+                session.add(
+                    ScriptEnvelope(
+                        packing_series_id=row.id,
+                        envelope_number=item.envelope_number,
+                        booklet_count=item.booklet_count,
+                    )
+                )
         for env in list(row.envelopes):
-            await session.delete(env)
+            if env.envelope_number not in wanted_numbers:
+                await session.delete(env)
         await session.flush()
 
-    for item in body.envelopes:
-        session.add(
-            ScriptEnvelope(
-                packing_series_id=row.id,
-                envelope_number=item.envelope_number,
-                booklet_count=item.booklet_count,
-            )
-        )
     await session.commit()
     await session.refresh(row, attribute_names=["envelopes"])
     stmt2 = (

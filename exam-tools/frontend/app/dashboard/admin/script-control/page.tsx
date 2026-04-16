@@ -8,9 +8,10 @@ import {
   type ColumnDef,
   type SortingState,
 } from "@tanstack/react-table";
-import { Check, ChevronsUpDown, Minus, Plus } from "lucide-react";
+import { ChevronsUpDown, Minus, Plus } from "lucide-react";
 
 import { DataTable } from "@/components/data-table";
+import { SearchableCombobox } from "@/components/searchable-combobox";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from "@/components/ui/command";
@@ -93,82 +94,6 @@ function useDebounced<T>(value: T, ms: number): T {
     return () => clearTimeout(t);
   }, [value, ms]);
   return v;
-}
-
-type ComboboxProps = {
-  options: { value: string; label: string }[];
-  value: string;
-  onChange: (value: string) => void;
-  placeholder: string;
-  searchPlaceholder: string;
-  emptyText?: string;
-  widthClass?: string;
-  /** When false, the list has no “All” row; the user must pick an option. */
-  showAllOption?: boolean;
-};
-
-function SearchableCombobox({
-  options,
-  value,
-  onChange,
-  placeholder,
-  searchPlaceholder,
-  emptyText = "No match.",
-  widthClass = "w-[280px]",
-  showAllOption = true,
-}: ComboboxProps) {
-  const [open, setOpen] = useState(false);
-  const selected = options.find((o) => o.value === value);
-  return (
-    <Popover open={open} onOpenChange={setOpen}>
-      <PopoverTrigger asChild>
-        <Button
-          variant="outline"
-          role="combobox"
-          aria-expanded={open}
-          className={cn("justify-between font-normal", widthClass)}
-        >
-          <span className="truncate">{selected ? selected.label : placeholder}</span>
-          <ChevronsUpDown className="ml-2 size-4 shrink-0 opacity-50" />
-        </Button>
-      </PopoverTrigger>
-      <PopoverContent className={cn("p-0", widthClass)} align="start">
-        <Command>
-          <CommandInput placeholder={searchPlaceholder} className="h-9" />
-          <CommandList>
-            <CommandEmpty>{emptyText}</CommandEmpty>
-            <CommandGroup>
-              {showAllOption ? (
-                <CommandItem
-                  value="__all__"
-                  onSelect={() => {
-                    onChange("");
-                    setOpen(false);
-                  }}
-                >
-                  <Check className={cn("mr-2 size-4", value === "" ? "opacity-100" : "opacity-0")} />
-                  All
-                </CommandItem>
-              ) : null}
-              {options.map((opt) => (
-                <CommandItem
-                  key={opt.value}
-                  value={`${opt.label} ${opt.value}`}
-                  onSelect={() => {
-                    onChange(opt.value);
-                    setOpen(false);
-                  }}
-                >
-                  <Check className={cn("mr-2 size-4", value === opt.value ? "opacity-100" : "opacity-0")} />
-                  <span className="truncate">{opt.label}</span>
-                </CommandItem>
-              ))}
-            </CommandGroup>
-          </CommandList>
-        </Command>
-      </PopoverContent>
-    </Popover>
-  );
 }
 
 function SeriesEnvelopeCell({

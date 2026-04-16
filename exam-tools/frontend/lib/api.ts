@@ -184,6 +184,19 @@ export type SubjectListResponse = {
   total_pages: number;
 };
 
+/** Fetches every subject page until the list is exhausted. Page size must not exceed the API max (100). */
+export async function listAllSubjects(pageSize = 100): Promise<Subject[]> {
+  const all: Subject[] = [];
+  let page = 1;
+  while (page <= 1000) {
+    const res = await apiJson<SubjectListResponse>(`/subjects?page=${page}&page_size=${pageSize}`);
+    all.push(...res.items);
+    if (res.items.length < pageSize) break;
+    page += 1;
+  }
+  return all;
+}
+
 export type ProgrammeBulkUploadError = {
   row_number: number;
   error_message: string;
@@ -1156,4 +1169,368 @@ export async function adminCreateDepotKeeper(
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(payload),
   });
+}
+
+export type ExaminerTypeApi = "chief_examiner" | "assistant_examiner" | "team_leader";
+
+export type AllocationRunStatusApi = "draft" | "optimal" | "infeasible" | "timeout" | "error";
+
+export type Allocation = {
+  id: string;
+  examination_id: number;
+  name: string;
+  subject_id: number;
+  paper_number: number;
+  notes: string | null;
+  allocation_scope: "zone" | "region";
+  cross_marking_rules: Record<string, string[]>;
+  fairness_weight: number;
+  enforce_single_series_per_examiner: boolean;
+  exclude_home_zone_or_region: boolean;
+  created_at: string;
+  updated_at: string;
+};
+
+export type ExaminerRow = {
+  id: string;
+  examination_id: number;
+  name: string;
+  examiner_type: ExaminerTypeApi;
+  region: string | null;
+  zone: string | null;
+  subject_ids: number[];
+  allowed_zones: string[];
+  deviation_weight: number | null;
+  created_at: string;
+  updated_at: string;
+  /** When allowed zones match a full region (API-derived). */
+  prefill_region?: string | null;
+  /** Single-zone scope or zone-within-region letter when inferrable. */
+  prefill_zone?: string | null;
+};
+
+export type ScriptsAllocationQuotaRow = {
+  allocation_id: string;
+  examiner_type: ExaminerTypeApi;
+  subject_id: number;
+  quota_booklets: number;
+  created_at: string;
+  updated_at: string;
+};
+
+export type ScriptsAllocationQuotaItem = {
+  examiner_type: ExaminerTypeApi;
+  subject_id: number;
+  quota_booklets: number;
+};
+
+export type AllocationRunListItem = {
+  id: string;
+  allocation_id: string;
+  status: AllocationRunStatusApi;
+  objective_value: number | null;
+  solver_message: string | null;
+  created_at: string;
+};
+
+export type ExaminerSubjectRunSummary = {
+  examiner_id: string;
+  examiner_name: string;
+  examiner_type: ExaminerTypeApi;
+  subject_id: number;
+  subject_code: string;
+  subject_name: string;
+  quota_booklets: number | null;
+  assigned_booklets: number;
+  deviation: number | null;
+};
+
+export type AllocationAssignmentItem = {
+  script_envelope_id: string;
+  examiner_id: string;
+  booklet_count: number;
+  school_code: string;
+  school_name: string;
+  zone: string;
+  subject_id: number;
+  subject_code: string;
+  subject_name: string;
+  paper_number: number;
+  series_number: number;
+  envelope_number: number;
+};
+
+export type UnassignedEnvelopeItem = Omit<AllocationAssignmentItem, "examiner_id"> & {
+  /** School region (added for filtering; may be absent on stale clients). */
+  region?: string;
+};
+
+export type AllocationRunDetail = {
+  id: string;
+  allocation_id: string;
+  status: AllocationRunStatusApi;
+  objective_value: number | null;
+  solver_message: string | null;
+  created_at: string;
+  examiner_subject_summaries: ExaminerSubjectRunSummary[];
+  assignments: AllocationAssignmentItem[];
+  unassigned_envelope_ids: string[];
+  unassigned_envelopes: UnassignedEnvelopeItem[];
+};
+
+export type AllocationRunAssignmentUpsertPayload = {
+  script_envelope_id: string;
+  examiner_id: string;
+};
+
+export type AllocationCreatePayload = {
+  examination_id: number;
+  name?: string | null;
+  subject_id: number;
+  paper_number: number;
+  notes?: string | null;
+};
+
+export type AllocationUpdatePayload = {
+  name?: string;
+  subject_id?: number;
+  paper_number?: number;
+  notes?: string | null;
+  allocation_scope?: "zone" | "region";
+  cross_marking_rules?: Record<string, string[]>;
+  fairness_weight?: number;
+  enforce_single_series_per_examiner?: boolean;
+  exclude_home_zone_or_region?: boolean;
+};
+
+export type ExaminerCreatePayload = {
+  name: string;
+  examiner_type: ExaminerTypeApi;
+  region?: string | null;
+  zone?: string | null;
+  subject_ids: number[];
+  allowed_zones: string[];
+  deviation_weight?: number | null;
+  /** Required. Allowed zones are derived from schools in this region unless restrict_zone narrows to one. */
+  allowed_region?: string | null;
+  /** Optional zone letter within allowed_region. */
+  restrict_zone?: string | null;
+};
+
+export type ExaminerUpdatePayload = {
+  name?: string;
+  examiner_type?: ExaminerTypeApi;
+  region?: string | null;
+  zone?: string | null;
+  subject_ids?: number[];
+  allowed_zones?: string[];
+  deviation_weight?: number | null;
+  allowed_region?: string | null;
+  restrict_zone?: string | null;
+};
+
+export type ScriptsAllocationQuotaReplacePayload = {
+  items: ScriptsAllocationQuotaItem[];
+};
+
+export type AllocationSolvePayload = {
+  unassigned_penalty?: number;
+  time_limit_sec?: number;
+  allocation_scope?: "zone" | "region";
+  fairness_weight?: number;
+  enforce_single_series_per_examiner?: boolean;
+  cross_marking_rules?: Record<string, string[]>;
+  exclude_home_zone_or_region?: boolean;
+};
+
+export type AllocationExaminerRow = {
+  allocation_id: string;
+  examiner_id: string;
+  examiner_name: string;
+  examiner_type: ExaminerTypeApi;
+  subject_ids: number[];
+  region?: string | null;
+  zone?: string | null;
+  allowed_zones: string[];
+  created_at: string;
+};
+
+export async function listAllocations(
+  examinationId?: number,
+  subjectId?: number,
+  paperNumber?: number,
+): Promise<Allocation[]> {
+  const params = new URLSearchParams();
+  if (examinationId != null) params.set("examination_id", String(examinationId));
+  if (subjectId != null) params.set("subject_id", String(subjectId));
+  if (paperNumber != null) params.set("paper_number", String(paperNumber));
+  const q = params.toString();
+  return apiJson<Allocation[]>(q ? `/allocations?${q}` : "/allocations");
+}
+
+export async function getAllocation(allocationId: string): Promise<Allocation> {
+  return apiJson<Allocation>(`/allocations/${allocationId}`);
+}
+
+export async function ensureAllocation(payload: AllocationCreatePayload): Promise<Allocation> {
+  return apiJson<Allocation>("/allocations", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+}
+
+/** @deprecated Use ensureAllocation — POST is upsert (200). */
+export async function createAllocation(payload: AllocationCreatePayload): Promise<Allocation> {
+  return ensureAllocation(payload);
+}
+
+export async function updateAllocation(
+  allocationId: string,
+  payload: AllocationUpdatePayload,
+): Promise<Allocation> {
+  return apiJson<Allocation>(`/allocations/${allocationId}`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function deleteAllocation(allocationId: string): Promise<void> {
+  await apiJson(`/allocations/${allocationId}`, { method: "DELETE" });
+}
+
+export async function listExaminationExaminers(examinationId: number): Promise<ExaminerRow[]> {
+  return apiJson<ExaminerRow[]>(`/examinations/${examinationId}/examiners`);
+}
+
+export async function listScriptsAllocationQuotas(
+  allocationId: string,
+): Promise<ScriptsAllocationQuotaRow[]> {
+  return apiJson<ScriptsAllocationQuotaRow[]>(`/allocations/${allocationId}/scripts-allocation-quotas`);
+}
+
+export async function replaceScriptsAllocationQuotas(
+  allocationId: string,
+  payload: ScriptsAllocationQuotaReplacePayload,
+): Promise<ScriptsAllocationQuotaRow[]> {
+  return apiJson<ScriptsAllocationQuotaRow[]>(`/allocations/${allocationId}/scripts-allocation-quotas`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function createExaminationExaminer(
+  examinationId: number,
+  payload: ExaminerCreatePayload,
+): Promise<ExaminerRow> {
+  return apiJson<ExaminerRow>(`/examinations/${examinationId}/examiners`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function updateExaminationExaminer(
+  examinationId: number,
+  examinerId: string,
+  payload: ExaminerUpdatePayload,
+): Promise<ExaminerRow> {
+  return apiJson<ExaminerRow>(`/examinations/${examinationId}/examiners/${examinerId}`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function deleteExaminationExaminer(examinationId: number, examinerId: string): Promise<void> {
+  await apiJson(`/examinations/${examinationId}/examiners/${examinerId}`, { method: "DELETE" });
+}
+
+export async function listAllocationRuns(allocationId: string): Promise<AllocationRunListItem[]> {
+  return apiJson<AllocationRunListItem[]>(`/allocations/${allocationId}/runs`);
+}
+
+export async function solveAllocation(
+  allocationId: string,
+  payload?: AllocationSolvePayload,
+): Promise<AllocationRunDetail> {
+  return apiJson<AllocationRunDetail>(`/allocations/${allocationId}/solve`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload ?? {}),
+  });
+}
+
+export async function listAllocationExaminers(allocationId: string): Promise<AllocationExaminerRow[]> {
+  return apiJson<AllocationExaminerRow[]>(`/allocations/${allocationId}/examiners`);
+}
+
+export async function listAllocationExaminerImportCandidates(
+  allocationId: string,
+): Promise<AllocationExaminerRow[]> {
+  return apiJson<AllocationExaminerRow[]>(`/allocations/${allocationId}/examiner-import-candidates`);
+}
+
+export async function importAllocationExaminers(
+  allocationId: string,
+  examinerIds: string[],
+): Promise<AllocationExaminerRow[]> {
+  return apiJson<AllocationExaminerRow[]>(`/allocations/${allocationId}/examiners/import`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ examiner_ids: examinerIds }),
+  });
+}
+
+export async function removeAllocationExaminer(allocationId: string, examinerId: string): Promise<void> {
+  await apiJson(`/allocations/${allocationId}/examiners/${examinerId}`, { method: "DELETE" });
+}
+
+export async function getAllocationRun(runId: string): Promise<AllocationRunDetail> {
+  return apiJson<AllocationRunDetail>(`/allocation-runs/${runId}`);
+}
+
+export async function upsertAllocationRunAssignment(
+  runId: string,
+  payload: AllocationRunAssignmentUpsertPayload,
+): Promise<AllocationRunDetail> {
+  return apiJson<AllocationRunDetail>(`/allocation-runs/${runId}/assignments`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      script_envelope_id: payload.script_envelope_id,
+      examiner_id: payload.examiner_id,
+    }),
+  });
+}
+
+export async function deleteAllocationRunAssignment(
+  runId: string,
+  scriptEnvelopeId: string,
+): Promise<AllocationRunDetail> {
+  return apiJson<AllocationRunDetail>(`/allocation-runs/${runId}/assignments/${scriptEnvelopeId}`, {
+    method: "DELETE",
+  });
+}
+
+/** Max copies per examiner for scripts allocation form PDF (must match backend `MAX_COPIES`). */
+export const SCRIPTS_ALLOCATION_FORM_MAX_COPIES = 20;
+
+export async function downloadScriptsAllocationFormPdf(
+  runId: string,
+  options: { examinerId: string | null; copies: number },
+  filename: string,
+): Promise<void> {
+  const params = new URLSearchParams();
+  if (options.examinerId) {
+    params.set("examiner_id", options.examinerId);
+  }
+  if (options.copies !== 1) {
+    params.set("copies", String(options.copies));
+  }
+  const qs = params.toString();
+  const path = `/allocation-runs/${encodeURIComponent(runId)}/scripts-allocation-form.pdf${qs ? `?${qs}` : ""}`;
+  await downloadApiFile(path, filename);
 }

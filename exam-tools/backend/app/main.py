@@ -19,11 +19,13 @@ from app.routers import (
     depots,
     documents,
     examination_candidates,
+    examiners,
     examinations,
     inspectors,
     programmes,
     question_paper_control,
     schools,
+    script_allocation,
     script_control,
     subjects,
     test_admin_officers,
@@ -179,8 +181,10 @@ app.include_router(schools.router)
 app.include_router(programmes.router)
 app.include_router(subjects.router)
 app.include_router(examinations.router)
+app.include_router(examiners.router)
 app.include_router(examination_candidates.router)
 app.include_router(script_control.router)
+app.include_router(script_allocation.router)
 app.include_router(question_paper_control.router)
 app.include_router(documents.router)
 

@@ -2,7 +2,7 @@ import enum
 import uuid
 from datetime import datetime
 
-from sqlalchemy import JSON, Boolean, CheckConstraint, Column, Date, DateTime, Enum, ForeignKey, Index, Integer, SmallInteger, String, Table, Text, UniqueConstraint
+from sqlalchemy import JSON, Boolean, CheckConstraint, Column, Date, DateTime, Enum, Float, ForeignKey, Index, Integer, SmallInteger, String, Table, Text, UniqueConstraint
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import relationship
 
@@ -65,6 +65,20 @@ class SchoolType(enum.Enum):
 class SubjectType(enum.Enum):
     CORE = "CORE"
     ELECTIVE = "ELECTIVE"
+
+
+class ExaminerType(enum.Enum):
+    CHIEF = "chief_examiner"
+    ASSISTANT = "assistant_examiner"
+    TEAM_LEADER = "team_leader"
+
+
+class AllocationRunStatus(enum.Enum):
+    DRAFT = "draft"
+    OPTIMAL = "optimal"
+    INFEASIBLE = "infeasible"
+    TIMEOUT = "timeout"
+    ERROR = "error"
 
 
 class UserRole(enum.IntEnum):
@@ -266,6 +280,12 @@ class Examination(Base):
         back_populates="examination",
         cascade="all, delete-orphan",
     )
+    examiners = relationship(
+        "Examiner",
+        back_populates="examination",
+        cascade="all, delete-orphan",
+        order_by="Examiner.name",
+    )
 
 
 class ExaminationSubjectScriptSeries(Base):
@@ -460,11 +480,236 @@ class ScriptEnvelope(Base):
 
     packing_series = relationship("ScriptPackingSeries", back_populates="envelopes")
     verified_by = relationship("User", foreign_keys=[verified_by_id])
+    allocation_assignments = relationship(
+        "AllocationAssignment",
+        back_populates="script_envelope",
+        passive_deletes=True,
+    )
 
     __table_args__ = (
         UniqueConstraint("packing_series_id", "envelope_number", name="uq_script_envelope_series_number"),
         CheckConstraint("envelope_number >= 1", name="ck_script_envelope_number"),
         CheckConstraint("booklet_count >= 0", name="ck_script_envelope_booklet_count"),
+    )
+
+
+class Allocation(Base):
+    """One script-allocation exercise (quotas, zone rules, runs) for an examination."""
+
+    __tablename__ = "allocation_campaigns"
+
+    __table_args__ = (
+        UniqueConstraint(
+            "examination_id",
+            "subject_id",
+            "paper_number",
+            name="uq_allocation_exam_subject_paper",
+        ),
+    )
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    examination_id = Column(Integer, ForeignKey("examinations.id", ondelete="CASCADE"), nullable=False, index=True)
+    name = Column(String(255), nullable=False)
+    subject_id = Column(Integer, ForeignKey("subjects.id", ondelete="SET NULL"), nullable=False, index=True)
+    paper_number = Column(SmallInteger, nullable=False)
+    notes = Column(Text, nullable=True)
+    allocation_scope = Column(String(16), nullable=False, default="zone")
+    cross_marking_rules = Column(JSON, nullable=False, default=lambda: {})
+    fairness_weight = Column(Float, nullable=False, default=0.25)
+    enforce_single_series_per_examiner = Column(Boolean, nullable=False, default=True)
+    exclude_home_zone_or_region = Column(Boolean, nullable=False, default=True)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+
+    examination = relationship("Examination", backref="allocation_campaigns")
+    subject = relationship("Subject", foreign_keys=[subject_id])
+    allocation_runs = relationship(
+        "AllocationRun",
+        back_populates="allocation",
+        cascade="all, delete-orphan",
+        order_by="AllocationRun.created_at.desc()",
+    )
+    scripts_allocation_quotas = relationship(
+        "ScriptsAllocationQuota",
+        back_populates="allocation",
+        cascade="all, delete-orphan",
+    )
+    selected_examiners = relationship(
+        "AllocationExaminer",
+        back_populates="allocation",
+        cascade="all, delete-orphan",
+    )
+
+
+class AllocationExaminer(Base):
+    """Examiner membership for a specific allocation."""
+
+    __tablename__ = "allocation_examiners"
+
+    allocation_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("allocation_campaigns.id", ondelete="CASCADE"),
+        primary_key=True,
+    )
+    examiner_id = Column(UUID(as_uuid=True), ForeignKey("examiners.id", ondelete="CASCADE"), primary_key=True)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+
+    allocation = relationship("Allocation", back_populates="selected_examiners")
+    examiner = relationship("Examiner", backref="allocation_memberships")
+
+
+class ScriptsAllocationQuota(Base):
+    """Per campaign: target booklet quota for an examiner role and subject (MILP deviation per examiner–subject)."""
+
+    __tablename__ = "scripts_allocation_quotas"
+
+    allocation_id = Column(
+        "campaign_id",
+        UUID(as_uuid=True),
+        ForeignKey("allocation_campaigns.id", ondelete="CASCADE"),
+        primary_key=True,
+    )
+    examiner_type = Column(Enum(ExaminerType, create_constraint=False), primary_key=True)
+    subject_id = Column(Integer, ForeignKey("subjects.id", ondelete="CASCADE"), primary_key=True)
+    quota_booklets = Column(Integer, nullable=False)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+
+    allocation = relationship("Allocation", back_populates="scripts_allocation_quotas")
+    subject = relationship("Subject", backref="scripts_allocation_quotas")
+
+    __table_args__ = (
+        CheckConstraint("quota_booklets >= 0", name="ck_scripts_allocation_quota_nonneg"),
+    )
+
+
+class Examiner(Base):
+    """Examiner roster for an examination; eligible for script allocation for any campaign on that exam."""
+
+    __tablename__ = "examiners"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    examination_id = Column(
+        Integer,
+        ForeignKey("examinations.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    name = Column(String(255), nullable=False)
+    examiner_type = Column(Enum(ExaminerType, create_constraint=False), nullable=False)
+    region = Column(Enum(Region, create_constraint=False), nullable=True)
+    zone = Column(Enum(Zone, create_constraint=False), nullable=True)
+    deviation_weight = Column(
+        Float,
+        nullable=True,
+        doc="Optional MILP weight for L1 deviation; if null, a default by examiner_type is used.",
+    )
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+
+    examination = relationship("Examination", back_populates="examiners")
+    subjects = relationship(
+        "ExaminerSubject",
+        back_populates="examiner",
+        cascade="all, delete-orphan",
+    )
+    allowed_zones = relationship(
+        "ExaminerAllowedZone",
+        back_populates="examiner",
+        cascade="all, delete-orphan",
+    )
+    allocation_assignments = relationship(
+        "AllocationAssignment",
+        back_populates="examiner",
+        passive_deletes=True,
+    )
+
+    __table_args__ = (
+        CheckConstraint(
+            "deviation_weight IS NULL OR deviation_weight > 0",
+            name="ck_examiner_deviation_weight_positive",
+        ),
+    )
+
+
+class ExaminerSubject(Base):
+    __tablename__ = "examiner_subjects"
+
+    examiner_id = Column(UUID(as_uuid=True), ForeignKey("examiners.id", ondelete="CASCADE"), primary_key=True)
+    subject_id = Column(Integer, ForeignKey("subjects.id", ondelete="CASCADE"), primary_key=True)
+
+    examiner = relationship("Examiner", back_populates="subjects")
+    subject = relationship("Subject", backref="examiner_subject_links")
+
+
+class ExaminerAllowedZone(Base):
+    """Source school zones from which this examiner may receive scripts."""
+
+    __tablename__ = "examiner_allowed_zones"
+
+    examiner_id = Column(UUID(as_uuid=True), ForeignKey("examiners.id", ondelete="CASCADE"), primary_key=True)
+    zone = Column(Enum(Zone, create_constraint=False), primary_key=True)
+
+    examiner = relationship("Examiner", back_populates="allowed_zones")
+
+
+class AllocationRun(Base):
+    """One MILP solve attempt for a campaign."""
+
+    __tablename__ = "allocation_runs"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    allocation_id = Column(
+        "campaign_id",
+        UUID(as_uuid=True),
+        ForeignKey("allocation_campaigns.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    status = Column(Enum(AllocationRunStatus, create_constraint=False), nullable=False)
+    objective_value = Column(Float, nullable=True)
+    solver_message = Column(Text, nullable=True)
+    created_by_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True, index=True)
+    solver_stats = Column(JSON, nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+
+    allocation = relationship("Allocation", back_populates="allocation_runs")
+    created_by = relationship("User", foreign_keys=[created_by_id])
+    assignments = relationship(
+        "AllocationAssignment",
+        back_populates="allocation_run",
+        cascade="all, delete-orphan",
+    )
+
+
+class AllocationAssignment(Base):
+    """Assignment of one physical script envelope to an examiner for a given run."""
+
+    __tablename__ = "allocation_assignments"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    allocation_run_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("allocation_runs.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    script_envelope_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("script_envelopes.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    examiner_id = Column(UUID(as_uuid=True), ForeignKey("examiners.id", ondelete="CASCADE"), nullable=False, index=True)
+    booklet_count = Column(Integer, nullable=False)
+
+    allocation_run = relationship("AllocationRun", back_populates="assignments")
+    script_envelope = relationship("ScriptEnvelope", back_populates="allocation_assignments")
+    examiner = relationship("Examiner", back_populates="allocation_assignments")
+
+    __table_args__ = (
+        UniqueConstraint("allocation_run_id", "script_envelope_id", name="uq_allocation_assignment_run_envelope"),
+        CheckConstraint("booklet_count >= 0", name="ck_allocation_assignment_booklet_count"),
     )
 
 
