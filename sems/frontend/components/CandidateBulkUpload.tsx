@@ -19,7 +19,12 @@ import {
 } from "@/components/ui/select";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { uploadCandidatesBulk, getAllExams } from "@/lib/api";
-import type { Exam, CandidateBulkUploadResponse, CandidateBulkUploadError } from "@/types/document";
+import type {
+  Exam,
+  CandidateBulkUploadResponse,
+  CandidateBulkUploadError,
+  SubjectRequirementsValidationMode,
+} from "@/types/document";
 import { Upload, FileX, CheckCircle2, XCircle, AlertCircle } from "lucide-react";
 import { toast } from "sonner";
 
@@ -36,6 +41,8 @@ export function CandidateBulkUpload({ open, onOpenChange, onUploadSuccess }: Can
   const [uploading, setUploading] = useState(false);
   const [result, setResult] = useState<CandidateBulkUploadResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [subjectRequirementsValidation, setSubjectRequirementsValidation] =
+    useState<SubjectRequirementsValidationMode>("auto");
 
   // Load exams on mount
   useEffect(() => {
@@ -62,6 +69,7 @@ export function CandidateBulkUpload({ open, onOpenChange, onUploadSuccess }: Can
       setResult(null);
       setError(null);
       setUploading(false);
+      setSubjectRequirementsValidation("auto");
     }
   }, [open]);
 
@@ -99,7 +107,11 @@ export function CandidateBulkUpload({ open, onOpenChange, onUploadSuccess }: Can
     setResult(null);
 
     try {
-      const response = await uploadCandidatesBulk(file, parseInt(selectedExamId));
+      const response = await uploadCandidatesBulk(
+        file,
+        parseInt(selectedExamId),
+        subjectRequirementsValidation
+      );
       setResult(response);
 
       if (response.successful > 0) {
@@ -155,6 +167,31 @@ export function CandidateBulkUpload({ open, onOpenChange, onUploadSuccess }: Can
                 ))}
               </SelectContent>
             </Select>
+          </div>
+
+          <div className="space-y-2">
+            <label htmlFor="subject-req-validation" className="text-sm font-medium">
+              Programme subject requirements
+            </label>
+            <Select
+              value={subjectRequirementsValidation}
+              onValueChange={(value) =>
+                setSubjectRequirementsValidation(value as SubjectRequirementsValidationMode)
+              }
+              disabled={uploading}
+            >
+              <SelectTrigger id="subject-req-validation">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="auto">Match exam (default)</SelectItem>
+                <SelectItem value="may_june">Enforce May/June rules</SelectItem>
+                <SelectItem value="nov_dec">Skip validation (Nov/Dec style)</SelectItem>
+              </SelectContent>
+            </Select>
+            <p className="text-xs text-muted-foreground">
+              Applies to compulsory, optional core, and elective checks for this upload only.
+            </p>
           </div>
 
           {/* File Selection */}

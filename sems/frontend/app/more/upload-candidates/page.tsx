@@ -16,7 +16,14 @@ import {
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { uploadCandidatesBulk, getAllExams } from "@/lib/api";
-import type { Exam, CandidateBulkUploadResponse, CandidateBulkUploadError, ExamType, ExamSeries } from "@/types/document";
+import type {
+  Exam,
+  CandidateBulkUploadResponse,
+  CandidateBulkUploadError,
+  ExamType,
+  ExamSeries,
+  SubjectRequirementsValidationMode,
+} from "@/types/document";
 import { Upload, FileX, CheckCircle2, XCircle, AlertCircle, ArrowLeft, FileText, X } from "lucide-react";
 import { toast } from "sonner";
 
@@ -33,6 +40,8 @@ export default function UploadCandidatesPage() {
   const [error, setError] = useState<string | null>(null);
   const [loadingExams, setLoadingExams] = useState(true);
   const [isDragging, setIsDragging] = useState(false);
+  const [subjectRequirementsValidation, setSubjectRequirementsValidation] =
+    useState<SubjectRequirementsValidationMode>("auto");
 
   // Load exams on mount
   useEffect(() => {
@@ -129,7 +138,11 @@ export default function UploadCandidatesPage() {
     setResult(null);
 
     try {
-      const response = await uploadCandidatesBulk(file, parseInt(selectedExamId));
+      const response = await uploadCandidatesBulk(
+        file,
+        parseInt(selectedExamId),
+        subjectRequirementsValidation
+      );
       setResult(response);
 
       if (response.successful > 0) {
@@ -196,6 +209,7 @@ export default function UploadCandidatesPage() {
     setExamYear(undefined);
     setResult(null);
     setError(null);
+    setSubjectRequirementsValidation("auto");
     // Reset file input
     const fileInput = document.getElementById("file-input") as HTMLInputElement;
     if (fileInput) {
@@ -411,6 +425,35 @@ export default function UploadCandidatesPage() {
                       )}
                     </>
                   )}
+                </div>
+
+                <div className="flex flex-col items-center space-y-2 max-w-2xl mx-auto pt-2">
+                  <div className="flex items-start gap-4 w-full">
+                    <label className="text-sm font-medium w-32 text-right shrink-0 pt-2">
+                      Programme subjects
+                    </label>
+                    <div className="flex-1 space-y-1 min-w-0">
+                      <Select
+                        value={subjectRequirementsValidation}
+                        onValueChange={(value) =>
+                          setSubjectRequirementsValidation(value as SubjectRequirementsValidationMode)
+                        }
+                        disabled={uploading}
+                      >
+                        <SelectTrigger className="max-w-xs w-full">
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="auto">Match exam (default)</SelectItem>
+                          <SelectItem value="may_june">Enforce May/June rules</SelectItem>
+                          <SelectItem value="nov_dec">Skip validation (Nov/Dec style)</SelectItem>
+                        </SelectContent>
+                      </Select>
+                      <p className="text-xs text-muted-foreground">
+                        Controls compulsory, optional core, and elective programme checks for this upload only.
+                      </p>
+                    </div>
+                  </div>
                 </div>
 
                 {/* File Selection */}

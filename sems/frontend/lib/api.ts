@@ -16,6 +16,7 @@ import type {
   ProgrammeBulkUploadResponse,
   Candidate,
   CandidateBulkUploadResponse,
+  SubjectRequirementsValidationMode,
   CandidateListResponse,
   CandidatePhoto,
   CandidatePhotoListResponse,
@@ -968,10 +969,15 @@ export async function deleteCandidate(id: number): Promise<void> {
   }
 }
 
-export async function uploadCandidatesBulk(file: File, examId: number): Promise<CandidateBulkUploadResponse> {
+export async function uploadCandidatesBulk(
+  file: File,
+  examId: number,
+  subjectRequirementsValidation: SubjectRequirementsValidationMode = "auto"
+): Promise<CandidateBulkUploadResponse> {
   const formData = new FormData();
   formData.append("file", file);
   formData.append("exam_id", examId.toString());
+  formData.append("subject_requirements_validation", subjectRequirementsValidation);
 
   const response = await fetch(`${API_BASE_URL}/api/v1/candidates/bulk-upload`, {
     method: "POST",
