@@ -1741,19 +1741,16 @@ async def generate_exam_pdf_score_sheets(
     """
     Generate PDF score sheets for an exam and assign sheet IDs to candidates.
 
-    For every school and subject combination:
-    - For every series group, candidates are sorted by index number
-    - Generate ONE multi-page PDF with all candidates (template auto-paginates, max 25 per page)
-    - Count pages in the generated PDF
-    - Split candidates into batches of 25 (matching pages)
-    - Generate sheet IDs based on page count: SCHOOL_CODE(6) + SUBJECT_CODE(3) + SERIES(1) + TEST_TYPE(1) + SHEET_NUMBER(2)
-    - Annotate each page of PDF with its sheet ID (barcode + text)
-    - Assign sheet IDs to SubjectScore records (obj_document_id for test_type=1, essay_document_id for test_type=2)
+    For each school and subject, writes one file ``{school_code}_{subject_code}.pdf`` containing:
+    - All score-sheet segments in order (series ascending, then test type), each paginated (max 25
+      candidates per page), annotated with sheet IDs, with IDs assigned to SubjectScore records.
+    - A master distribution list (all candidates for that subject at that school, with assigned
+      series) appended after the last score-sheet page.
 
-    Example: If a school has 200 candidates and mathematics has been serialized into 4 series,
-    there will be 50 candidates per series, meaning each series will generate a 2-page PDF.
+    Sheet ID format: SCHOOL_CODE(6) + SUBJECT_CODE(3) + SERIES(1) + TEST_TYPE(1) + SHEET_NUMBER(2).
 
-    This operation will overwrite existing sheet ID assignments.
+    This operation will overwrite existing sheet ID assignments and replaces prior per-segment
+    filenames ``{school_code}_{subject_code}_{series}_{test_type}.pdf``.
     """
     try:
         output_root = Path(settings.pdf_output_path) / "runs" / f"run_{uuid4().hex}"
@@ -1916,11 +1913,11 @@ async def generate_exam_pdf_score_sheets_combined(
 
     This endpoint:
     1. Generates PDFs for the specified school (and optionally subject/test types)
-    2. Combines all generated PDFs for that school into a single PDF
+    2. Combines all per-subject PDFs for that school into a single download
     3. Returns the combined PDF as a downloadable file
 
-    The combined PDF includes all subjects, series, and test types for the school,
-    sorted by: subject_code, series, test_type.
+    Each subject file is already a merged document (score sheets plus master list). The school
+    download concatenates those files (sorted by filename / subject code).
     """
     try:
         # Validate school exists

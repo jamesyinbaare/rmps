@@ -34,6 +34,7 @@ class PdfGeneratorOld:
         base_url: str | None = None,
         side_margin: int = 2,
         extra_vertical_margin: int = 30,
+        extra_vertical_margin_bottom: int | None = None,
         external_stylesheets: list | None = None,
     ):
         self.main_html = main_html
@@ -42,6 +43,11 @@ class PdfGeneratorOld:
         self.base_url = base_url
         self.side_margin = side_margin
         self.extra_vertical_margin = extra_vertical_margin
+        self.extra_vertical_margin_bottom = (
+            extra_vertical_margin_bottom
+            if extra_vertical_margin_bottom is not None
+            else extra_vertical_margin
+        )
         self.external_stylesheets = external_stylesheets or []
 
     def _compute_overlay_element(self, element: str):
@@ -98,7 +104,7 @@ class PdfGeneratorOld:
 
         margins = "{header_size}px {side_margin} {footer_size}px {side_margin}".format(
             header_size=header_height + self.extra_vertical_margin,
-            footer_size=footer_height + self.extra_vertical_margin,
+            footer_size=footer_height + self.extra_vertical_margin_bottom,
             side_margin=f"{self.side_margin}cm",
         )
         content_print_layout = f"@page {{ margin: {margins};}} "
@@ -144,6 +150,9 @@ def generate_score_sheet_pdf_old(
     series: int,
     test_type: int,
     candidates: list[dict[str, Any]],
+    exam_year: int,
+    exam_series: str,
+    exam_type: str,
 ) -> tuple[bytes, int]:
     """
     Generate PDF score sheets using the *old* layout (f2bf6d5).
@@ -151,6 +160,8 @@ def generate_score_sheet_pdf_old(
     - Single table, {% for student in students %}, WeasyPrint flows rows across pages.
     - Old header (logo.jpg, centre/subject/paper/series), old footer (footer.jpg).
     - Old PdfGenerator: single extra_vertical_margin, base_url as path string.
+
+    exam_year, exam_series, and exam_type populate the header title line.
     """
     context = {
         "center_no": school_code,
@@ -158,6 +169,9 @@ def generate_score_sheet_pdf_old(
         "subject": f"{subject_code} - {subject_name}",
         "paper": str(test_type),
         "series": str(series),
+        "exam_year": exam_year,
+        "exam_series": exam_series,
+        "exam_type": exam_type,
         "students": candidates,
     }
 

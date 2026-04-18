@@ -19,6 +19,9 @@ for n, expected_pages in [(25, 1), (30, 2)]:
         series=1,
         test_type=1,
         candidates=candidates,
+        exam_year=2025,
+        exam_series="NOV/DEC",
+        exam_type="Certificate II Examinations",
     )
     assert page_count == expected_pages, f"candidates={n}: expected {expected_pages} pages, got {page_count}"
     print(f"candidates={n}: {page_count} page(s) ok")
@@ -36,6 +39,9 @@ pdf_bytes, page_count = generate_score_sheet_pdf(
     series=1,
     test_type=1,
     candidates=candidates,
+    exam_year=2025,
+    exam_series="NOV/DEC",
+    exam_type="Certificate II Examinations",
 )
 sheet_ids = ["123456MTH1101", "123456MTH1102"]
 annotated = annotate_pdf_with_sheet_ids(pdf_bytes, sheet_ids)
@@ -58,6 +64,9 @@ pdf_old, n_old = generate_score_sheet_pdf_old(
     series=1,
     test_type=1,
     candidates=candidates_25,
+    exam_year=2025,
+    exam_series="NOV/DEC",
+    exam_type="Certificate II Examinations",
 )
 assert n_old == 1, f"template=old: expected 1 page, got {n_old}"
 sheet_ids_old = ["123456MTH1101"]
