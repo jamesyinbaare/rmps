@@ -11,6 +11,7 @@ import {
 } from "./ui/dialog";
 import type { Document, Exam, School, Subject } from "@/types/document";
 import { formatFileSize } from "@/lib/utils";
+import { schoolPrefixForSheetId } from "@/lib/schoolCode";
 import { API_BASE_URL, downloadDocument, getExam, listSchools, listSubjects, updateDocumentId } from "@/lib/api";
 import { toast } from "sonner";
 
@@ -289,7 +290,7 @@ export function DocumentViewer({
       return { error: "ID must contain only digits" };
     }
 
-    // Parse ID components: SCHOOL_CODE(6) + SUBJECT_CODE(3) + SUBJECT_SERIES(1) + TEST_TYPE(1) + SHEET_NUMBER(2)
+    // Parse ID components: SCHOOL_NUMERIC_PREFIX(6) + SUBJECT_CODE(3) + SUBJECT_SERIES(1) + TEST_TYPE(1) + SHEET_NUMBER(2)
     const schoolCode = trimmedId.substring(0, 6);
     const subjectCode = trimmedId.substring(6, 9);
     const subjectSeries = trimmedId.substring(9, 10);
@@ -313,10 +314,10 @@ export function DocumentViewer({
       return { error: "Sheet number must be between 01 and 99" };
     }
 
-    // Validate school code exists and get school ID
-    const school = schools.find((s) => s.code === schoolCode);
+    // Match sheet ID school segment to `School.s_code` (same padding as backend `generate_sheet_id`)
+    const school = schools.find((s) => schoolPrefixForSheetId(s.s_code) === schoolCode);
     if (!school) {
-      return { error: `School code ${schoolCode} not found` };
+      return { error: `School numeric prefix ${schoolCode} not found` };
     }
 
     // Validate subject code exists and get subject ID

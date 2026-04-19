@@ -1,108 +1,132 @@
 <!DOCTYPE html>
 <html>
   <head>
-    <title>Cert II ICM Template with Python and WeasyPrint</title>
+    <title>Master distribution list</title>
     <link href="sample.css" rel="stylesheet" />
     <style>
-      img{
-  width: 100%;
-  height: 100px;
-}
+      body {
+        margin: 0;
+        font-family: "Source Sans Pro", "DejaVu Sans", sans-serif;
+        font-size: 9pt;
+      }
 
-p {
-  margin: 0;
-  text-align: center;
-  font-weight: bold;
-}
+      .master-page-block {
+        margin-top: 8px;
+      }
 
-table {
-  width: 100%;
-  border-collapse: collapse;
-}
-table, th, td {
-  border: 1px solid;
-  text-align: left;
-  padding-top: .5cm ;
-  padding-bottom: .5cm;
-}
-th, {
-  color: #a9a;
-  font-size: 10pt;
-  font-weight: 400;
-  padding-bottom: .25cm;
-  text-transform: uppercase;
-}
+      .page-break {
+        page-break-after: always;
+        break-after: page;
+      }
 
-td {
-  padding: 0px;
-  padding-left: 2px;
-  padding-top: 2px ;
-  padding-bottom: 2px;
-}
-.series-1{
-     background-color:#90cbf9;
-}
-.series-2{
-     background-color:#64b7f6;
-}
-.series-3{
-     background-color:#41a7f5;
-}
-.series-4{
-     background-color:#1e97f3;
-}
-.series-5{
-     background-color:#1a8ae5;
-}
-.series-6{
-     background-color: #1477d2;
-}
+      .master-page-label {
+        font-size: 8pt;
+        color: #444;
+        text-align: right;
+        margin: 0 0 6px 0;
+        font-weight: normal;
+      }
 
-.series-7{
-     background-color:#1065c0;
-}
+      /* Same border weight as score sheets; header is light (no black fill) */
+      .master-table {
+        width: 100%;
+        border-collapse: collapse;
+        table-layout: fixed;
+        margin-bottom: 2px;
+      }
 
-.series-8{
-    background-color: #0747a1;
-}
+      .master-table thead {
+        display: table-header-group;
+      }
 
-@page {
-  @bottom-left {
-    content: "Page " counter(page) " of " counter(pages);
-    text-align: center;
-    font-weight: bold;
-    vertical-align: bottom;
-    margin-bottom: 45px;
+      .master-table th,
+      .master-table td {
+        border: 1.5px solid #000;
+        text-align: left;
+        vertical-align: top;
+      }
 
-  }
-}
+      .master-table th {
+        background: #f0f0f0;
+        color: #000;
+        font-size: 10pt;
+        font-weight: 700;
+        text-transform: uppercase;
+        padding: 4px 6px;
+        text-align: center;
+      }
+
+      .master-table th {
+        border-top: 1.5px solid #000;
+      }
+
+      .master-table th:first-child {
+        border-left: 1.5px solid #000;
+      }
+
+      .master-table th:last-child {
+        border-right: 1.5px solid #000;
+      }
+
+      .master-table td {
+        padding: 4px 6px;
+        font-size: 9pt;
+      }
+
+      .col-sn {
+        width: 7%;
+        text-align: center;
+      }
+
+      .col-index {
+        width: 22%;
+      }
+
+      .col-name {
+        width: 56%;
+      }
+
+      .col-series {
+        width: 15%;
+        text-align: center;
+      }
+
+      .master-body--new .col-sn,
+      .master-body--new .col-index,
+      .master-body--new .col-series {
+        font-variant-numeric: tabular-nums;
+      }
     </style>
   </head>
-  <body>
-
-    <table style="margin-top: 10px;">
-      <thead style="display: table-header-group;">
-        <tr>
-          <th style="width:8%;">SN</th>
-
-          <th style="width:20%;">CANDIDATE #</th>
-          <th style="width:55%;">CANDIDATE NAME</th>
-          <th style="">SERIES</th>
-
-        </tr>
-      </thead>
-
-      <tbody>
-        {% for student in students %}
-        <tr style="padding-bottom: 0.5cm; padding-top: 5cm;">
-          <td>{{loop.index}}</td>
-          <td>{{student.index}}</td>
-          <td>{{student.name}}</td>
-          <td>{{student.s_number}}</td>
-
-        </tr>
-        {%endfor%}
-      </tbody>
-    </table>
+  <body class="master-body master-body--{{ layout_variant }}">
+    {% for page_rows in student_pages %}
+    <div class="master-page-block">
+      <p class="master-page-label">Page {{ loop.index }} of {{ master_page_total }}</p>
+      <table class="master-table">
+        <thead>
+          <tr>
+            <th class="col-sn">SN</th>
+            <th class="col-index">Index number</th>
+            <th class="col-name">Candidate name</th>
+            <th class="col-series">Series</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% set page_idx = loop.index0 %}
+          {% for student in page_rows %}
+          <tr>
+            <td class="col-sn">{{ page_idx * master_rows_per_page + loop.index }}</td>
+            <td class="col-index">{{ student.index }}</td>
+            <td class="col-name">{{ student.name }}</td>
+            <td class="col-series">{{ student.series }}</td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    {% if not loop.last %}
+    <div class="page-break"></div>
+    {% endif %}
+    {% endfor %}
   </body>
 </html>

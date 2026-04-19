@@ -3,6 +3,7 @@
 import logging
 import shutil
 from datetime import datetime
+from io import BytesIO
 from pathlib import Path
 from typing import Any
 
@@ -26,6 +27,7 @@ from app.models import (
     SubjectRegistration,
     SubjectScore,
 )
+from app.services.master_sheet_pdf import generate_master_sheet_pdf_new, generate_master_sheet_pdf_old
 from app.services.pdf_annotator import annotate_pdf_with_sheet_ids
 from app.services.pdf_generator import generate_score_sheet_pdf
 from app.services.pdf_generator_old import generate_score_sheet_pdf_old
@@ -46,6 +48,25 @@ def split_into_batches(lst: list, batch_size: int = 25) -> list[list]:
     return [lst[i : i + batch_size] for i in range(0, len(lst), batch_size)]
 
 
+def _merge_pdf_bytes_list(segments: list[bytes]) -> bytes:
+    writer = PdfWriter()
+    for segment in segments:
+        writer.append(PdfReader(BytesIO(segment)))
+    buf = BytesIO()
+    writer.write(buf)
+    return buf.getvalue()
+
+
+def _master_student_dict(subject_reg: SubjectRegistration, candidate: Candidate) -> dict[str, Any]:
+    raw = subject_reg.series
+    display = "—" if raw is None else str(raw)
+    return {
+        "index": candidate.index_number,
+        "name": candidate.name,
+        "series": display,
+    }
+
+
 async def generate_pdfs_for_exam(
     session: AsyncSession,
     exam_id: int,
@@ -61,11 +82,18 @@ async def generate_pdfs_for_exam(
     """
     Generate PDF score sheets for an exam and assign sheet IDs to candidates.
 
-    For each (school, subject, series, test_type) combination:
-    - Generate ONE multi-page PDF with all candidates (template handles pagination)
-    - Count pages in the PDF
-    - Split candidates into batches of 25 (matching pages)
-    - Generate sheet IDs based on page count
+    For each (school, subject), produces **one** merged PDF file named
+    ``{school.code}_{subject.code}.pdf`` containing, in order:
+    - Every score-sheet segment for that school and subject (series ascending,
+      then test_type ascending), each annotated with sheet IDs; then
+    - A master distribution list (all candidates for that subject at that school,
+      sorted by index number, with assigned series per registration).
+
+    Master pages are not recorded in ProcessTracking metadata beyond the single
+    combined file path.
+
+    For each (school, subject, series, test_type) segment before merging:
+    - Generate ONE multi-page PDF with all candidates in that series group
     - Annotate each page with its sheet ID
     - Assign sheet IDs to candidates based on their batch/page
 
@@ -258,6 +286,8 @@ async def generate_pdfs_for_exam(
             # Get subject info from first entry
             first_row = list(nested_data[school_id_key][subject_id_key].values())[0][0]
             _, _, candidate, school, exam_subject, subject = first_row
+            # Printed subject label on score sheets and master plan (sheet IDs still use subject.code)
+            subject_display_code = subject.original_code
 
             # Initialize statistics for this subject if not seen before
             if subject_id_key not in subjects_processed:
@@ -269,6 +299,9 @@ async def generate_pdfs_for_exam(
                     "sheets_count": 0,
                     "candidates_count": 0,
                 }
+
+            tracking_key = (school_id_key, subject_id_key)
+            merged_score_segments: list[bytes] = []
 
             # Process all series for this school+subject
             series_list = sorted(
@@ -328,21 +361,27 @@ async def generate_pdfs_for_exam(
                             pdf_bytes, page_count = generate_score_sheet_pdf_old(
                                 school_code=school.code,
                                 school_name=school.name,
-                                subject_code=subject.code,
+                                subject_code=subject_display_code,
                                 subject_name=subject.name,
                                 series=effective_series,
                                 test_type=test_type,
                                 candidates=candidates_data,
+                                exam_year=exam.year,
+                                exam_series=exam.series.value,
+                                exam_type=exam.exam_type.value,
                             )
                         else:
                             pdf_bytes, page_count = generate_score_sheet_pdf(
                                 school_code=school.code,
                                 school_name=school.name,
-                                subject_code=subject.code,
+                                subject_code=subject_display_code,
                                 subject_name=subject.name,
                                 series=effective_series,
                                 test_type=test_type,
                                 candidates=candidates_data,
+                                exam_year=exam.year,
+                                exam_series=exam.series.value,
+                                exam_type=exam.exam_type.value,
                             )
                     except Exception as e:
                         logger.error(
@@ -386,7 +425,7 @@ async def generate_pdfs_for_exam(
                         sheet_number = page_index + 1
                         try:
                             sheet_id = generate_sheet_id(
-                                school_code=school.code,
+                                school_code=school.s_code,
                                 subject_code=subject.code,
                                 series=effective_series,
                                 test_type=test_type,
@@ -451,51 +490,6 @@ async def generate_pdfs_for_exam(
                         )
                         continue
 
-                    # Save PDF to filesystem
-                    pdf_file_path = None
-                    try:
-                        # Create directory structure: pdf_output_path/{school_name}/
-                        output_dir = output_root_path / school_name_safe
-                        output_dir.mkdir(parents=True, exist_ok=True)
-
-                        # Generate filename: {school_code}_{subject_code}_{series}_{test_type}.pdf
-                        filename = f"{school.code}_{subject.code}_{effective_series}_{test_type}.pdf"
-                        output_path = output_dir / filename
-
-                        # Save unannotated PDF to temp directory only
-                        temp_unannotated_path = temp_school_dir / filename
-                        temp_unannotated_path.write_bytes(pdf_bytes)
-
-                        # Write annotated PDF to temp file and atomically replace the output file
-                        # This ensures annotated files replace any existing unannotated files
-                        temp_annotated_path = temp_school_dir / f".annotated.{filename}.tmp"
-                        temp_annotated_path.write_bytes(annotated_pdf)
-
-                        # Remove existing file if it exists (shouldn't happen, but ensure clean replacement)
-                        if output_path.exists():
-                            output_path.unlink()
-
-                        # Atomically move annotated file to final location
-                        temp_annotated_path.replace(output_path)
-                        pdf_file_path = str(output_path)
-                        school_pdf_paths[school_id_key].append(pdf_file_path)
-                    except Exception as e:
-                        logger.error(
-                            "Failed to save annotated PDF; skipping group",
-                            extra={
-                                "school_id": school_id_key,
-                                "subject_id": subject_id_key,
-                                "school_code": school.code,
-                                "subject_code": subject.code,
-                                "series": effective_series,
-                                "test_type": test_type,
-                                "error": str(e),
-                            },
-                        )
-                        continue
-
-                    # Track PDF file path for this (school_id, subject_id) combination
-                    tracking_key = (school_id_key, subject_id_key)
                     if tracking_key not in pdf_tracking_data:
                         pdf_tracking_data[tracking_key] = {
                             "school_id": school_id_key,
@@ -505,10 +499,11 @@ async def generate_pdfs_for_exam(
                             "sheets_count": 0,
                             "candidates_count": 0,
                         }
+
+                    merged_score_segments.append(annotated_pdf)
+
                     if test_type not in pdf_tracking_data[tracking_key]["test_types"]:
                         pdf_tracking_data[tracking_key]["test_types"].append(test_type)
-                    if pdf_file_path:
-                        pdf_tracking_data[tracking_key]["pdf_file_paths"].append(pdf_file_path)
                     pdf_tracking_data[tracking_key]["sheets_count"] += page_count
                     pdf_tracking_data[tracking_key]["candidates_count"] += len(rows_group)
 
@@ -552,17 +547,101 @@ async def generate_pdfs_for_exam(
 
                             total_candidates_assigned += 1
 
-                    total_pdfs_generated += 1
                     total_sheets_generated += page_count
-                    schools_processed[school_id_key]["pdfs_count"] += 1
                     schools_processed[school_id_key]["sheets_count"] += page_count
                     schools_processed[school_id_key]["candidates_count"] += len(rows_group)
-                    subjects_processed[subject_id_key]["pdfs_count"] += 1
                     subjects_processed[subject_id_key]["sheets_count"] += page_count
                     subjects_processed[subject_id_key]["candidates_count"] += len(rows_group)
 
                     if series is not None:
                         sheets_by_series[series] = sheets_by_series.get(series, 0) + page_count
+
+            if merged_score_segments:
+                master_rows: list[tuple] = []
+                for ser in series_list:
+                    if ser not in nested_data[school_id_key][subject_id_key]:
+                        continue
+                    master_rows.extend(nested_data[school_id_key][subject_id_key][ser])
+                master_rows.sort(key=lambda row: sort_key_index_number(row[2]))
+                master_students = [
+                    _master_student_dict(sr, cand)
+                    for sr, _er, cand, _sc, _es, _subj in master_rows
+                ]
+                master_pdf = b""
+                try:
+                    if template == "old":
+                        master_pdf, _ = generate_master_sheet_pdf_old(
+                            school_code=school.code,
+                            school_name=school.name,
+                            subject_code=subject_display_code,
+                            subject_name=subject.name,
+                            exam_year=exam.year,
+                            exam_series=exam.series.value,
+                            exam_type=exam.exam_type.value,
+                            students=master_students,
+                        )
+                    else:
+                        master_pdf, _ = generate_master_sheet_pdf_new(
+                            school_code=school.code,
+                            school_name=school.name,
+                            subject_code=subject_display_code,
+                            subject_name=subject.name,
+                            exam_year=exam.year,
+                            exam_series=exam.series.value,
+                            exam_type=exam.exam_type.value,
+                            students=master_students,
+                        )
+                except Exception as e:
+                    logger.error(
+                        "Master sheet PDF generation failed",
+                        extra={
+                            "school_id": school_id_key,
+                            "subject_id": subject_id_key,
+                            "error": str(e),
+                        },
+                    )
+
+                merge_parts = list(merged_score_segments)
+                if master_pdf:
+                    merge_parts.append(master_pdf)
+                else:
+                    logger.warning(
+                        "Master sheet missing; merged PDF will contain score sheets only",
+                        extra={
+                            "school_id": school_id_key,
+                            "subject_id": subject_id_key,
+                            "school_code": school.code,
+                            "subject_code": subject.code,
+                        },
+                    )
+                try:
+                    merged_bytes = _merge_pdf_bytes_list(merge_parts)
+                    output_dir = output_root_path / school_name_safe
+                    output_dir.mkdir(parents=True, exist_ok=True)
+                    filename = f"{school.code}_{subject.code}.pdf"
+                    output_path = output_dir / filename
+                    temp_merged_path = temp_school_dir / f".merged.{filename}.tmp"
+                    if output_path.exists():
+                        output_path.unlink()
+                    temp_merged_path.write_bytes(merged_bytes)
+                    temp_merged_path.replace(output_path)
+                    pdf_file_path_merged = str(output_path)
+                    school_pdf_paths[school_id_key].append(pdf_file_path_merged)
+                    pdf_tracking_data[tracking_key]["pdf_file_paths"] = [pdf_file_path_merged]
+                    total_pdfs_generated += 1
+                    schools_processed[school_id_key]["pdfs_count"] += 1
+                    subjects_processed[subject_id_key]["pdfs_count"] += 1
+                except Exception as e:
+                    logger.error(
+                        "Failed to write merged PDF for school/subject",
+                        extra={
+                            "school_id": school_id_key,
+                            "subject_id": subject_id_key,
+                            "school_code": school.code,
+                            "subject_code": subject.code,
+                            "error": str(e),
+                        },
+                    )
 
         # Cleanup temp files for this school (best-effort)
         try:
@@ -655,13 +734,18 @@ def combine_pdfs_for_school(school_dir: Path, file_paths: list[str] | None = Non
         pdf_files = list(school_dir.glob("*.pdf"))
 
     def is_valid_score_sheet_pdf(pdf_path: Path) -> bool:
-        """Check if PDF is a valid score sheet (not a combined file)."""
+        """Check if PDF is a per-subject merged score sheet (not a school-level combined download)."""
         stem = pdf_path.stem
         if stem.endswith("_combined_score_sheets"):
             return False
-        # Check if it matches the pattern: {school_code}_{subject_code}_{series}_{test_type}.pdf
         parts = stem.split("_")
-        return len(parts) == 4
+        # Legacy: {school_code}_{subject_code}_{series}_{test_type}
+        if len(parts) == 4 and parts[-1] in ("1", "2") and parts[-2].isdigit():
+            return True
+        # Current: {school_code}_{subject_code}.pdf (includes score sheets + master appendix)
+        if len(parts) == 2:
+            return True
+        return False
 
     # Filter valid score sheet PDFs and sort by filename
     valid_pdf_files = [pdf_path for pdf_path in pdf_files if is_valid_score_sheet_pdf(pdf_path)]

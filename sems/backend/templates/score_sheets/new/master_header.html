@@ -22,29 +22,29 @@
   }
 
   .master-header-logo {
-    width: 92px;
-    padding-right: 12px;
-    padding-left: 4px;
+    width: 88px;
+    padding-right: 10px;
+    padding-left: 2px;
   }
 
   .master-header-logo img {
-    width: 76px;
+    width: 72px;
     height: auto;
-    max-height: 88px;
+    max-height: 72px;
     display: block;
     object-fit: contain;
   }
 
   .master-header-center {
     text-align: center;
-    padding-left: 16px;
-    padding-right: 16px;
+    padding-left: 12px;
+    padding-right: 12px;
   }
 
   .master-header-center .centre-headline {
     margin: 0 0 6px 0;
     font-weight: bold;
-    font-size: 12pt;
+    font-size: 11pt;
     line-height: 1.25;
     color: #000;
   }
@@ -52,9 +52,9 @@
   .master-header-center .doc-subtitle {
     margin: 0 0 4px 0;
     font-weight: bold;
-    font-size: 9.5pt;
+    font-size: 8.5pt;
     line-height: 1.2;
-    letter-spacing: 0.03em;
+    letter-spacing: 0.04em;
     text-transform: uppercase;
     color: #222;
   }
@@ -62,7 +62,7 @@
   .master-header-center .subject-line {
     margin: 0 0 6px 0;
     font-weight: bold;
-    font-size: 10.5pt;
+    font-size: 10pt;
     line-height: 1.2;
     color: #000;
   }
@@ -70,7 +70,7 @@
   .master-header-center .meta-strip {
     margin: 0;
     font-weight: normal;
-    font-size: 8.5pt;
+    font-size: 7.5pt;
     line-height: 1.35;
     color: #333;
     text-align: center;
@@ -85,10 +85,10 @@
   <table class="master-header-table">
     <tr>
       <td class="master-header-logo">
-        <img src="logo.jpg" alt="" />
+        <img src="logo-crest-only.png" alt="" />
       </td>
       <td class="master-header-center">
-        <p class="centre-headline">{{ center }}</p>
+        <p class="centre-headline">{{ (center[:72] + "…") if center|length > 75 else center }}</p>
         <p class="doc-subtitle">Master plan — distribution of questions</p>
         <p class="subject-line">{{ subject }}</p>
         <p class="meta-strip">

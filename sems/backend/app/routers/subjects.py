@@ -18,6 +18,7 @@ from app.schemas.subject import (
 from app.services.subject_upload import (
     SubjectUploadParseError,
     SubjectUploadValidationError,
+    core_programme_link_flags,
     parse_subject_row,
     parse_upload_file,
     validate_required_columns,
@@ -497,26 +498,23 @@ async def bulk_upload_subjects(
             session.add(db_subject)
             await session.flush()  # Flush to get ID but don't commit yet
 
-            # Track codes and original_codes in batch for duplicate detection
-            batch_codes.add(subject_data["code"])
-            batch_original_codes.add(subject_data["original_code"])
-
             # Handle subject-programme associations based on subject type
             if subject_data["subject_type"] == SubjectType.CORE:
-                # For CORE subjects: auto-associate with all existing programmes
-                # (ignore programme_code if provided, but it was already validated)
+                # CORE: link to all programmes (registration-portal parity).
+                is_compulsory_core, core_choice_group_id = core_programme_link_flags(
+                    subject_data.get("choice_group_id")
+                )
+
                 all_programmes_stmt = select(Programme)
                 all_programmes_result = await session.execute(all_programmes_stmt)
                 all_programmes = all_programmes_result.scalars().all()
 
-                # Get existing associations for this subject to avoid duplicates
                 existing_assoc_stmt = select(programme_subjects.c.programme_id).where(
                     programme_subjects.c.subject_id == db_subject.id
                 )
                 existing_assoc_result = await session.execute(existing_assoc_stmt)
                 existing_programme_ids = {row[0] for row in existing_assoc_result.all()}
 
-                # Create associations with all programmes, setting is_compulsory=True
                 associations_to_create = []
                 for prog in all_programmes:
                     if prog.id not in existing_programme_ids:
@@ -524,12 +522,11 @@ async def bulk_upload_subjects(
                             {
                                 "programme_id": prog.id,
                                 "subject_id": db_subject.id,
-                                "is_compulsory": True,  # Core subjects are compulsory by default
-                                "choice_group_id": None,
+                                "is_compulsory": is_compulsory_core,
+                                "choice_group_id": core_choice_group_id,
                             }
                         )
 
-                # Batch insert associations
                 if associations_to_create:
                     await session.execute(insert(programme_subjects).values(associations_to_create))
             else:
@@ -553,6 +550,8 @@ async def bulk_upload_subjects(
                             )
                         )
 
+            batch_codes.add(subject_data["code"])
+            batch_original_codes.add(subject_data["original_code"])
             successful += 1
 
         except Exception as e:

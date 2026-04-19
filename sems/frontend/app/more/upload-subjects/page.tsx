@@ -176,11 +176,14 @@ export default function UploadSubjectsPage() {
                     <div className="text-sm text-muted-foreground space-y-2">
                       <p>Your file must contain the following columns (in any order):</p>
                       <ul className="list-disc list-inside space-y-1 ml-4">
-                        <li><strong>Code</strong> (required) - Unique 3-character normalized subject code</li>
+                        <li><strong>Code</strong> (required) - Unique subject code (3 characters for CERT2; 1–10 for NVTI)</li>
                         <li><strong>Original Code</strong> (required) - Original subject code format (e.g., C30-1-01, C701)</li>
                         <li><strong>Name</strong> (required) - Subject name</li>
                         <li><strong>Subject Type</strong> (required) - "CORE" or "ELECTIVE"</li>
-                        <li><strong>Programme Code</strong> (optional) - Programme code to automatically associate this subject with</li>
+                        <li><strong>Exam Type</strong> (required) - e.g. Certificate II Examinations, Advance, Diploma</li>
+                        <li><strong>Programme Type</strong> (required) - "CERT2" or "NVTI"</li>
+                        <li><strong>Programme Code</strong> (optional) - For electives, associate with this programme; for core, validated if set but does not limit which programmes get the link</li>
+                        <li><strong>Choice Group ID</strong> (optional) - For <strong>CORE</strong> only: a positive number marks optional core (pick one subject per group). The subject is linked to <strong>all</strong> programmes with this group id. Leave blank for compulsory core. Ignored for electives.</li>
                       </ul>
                     </div>
                   </div>
@@ -195,7 +198,10 @@ export default function UploadSubjectsPage() {
                             <th className="px-3 py-2 text-left border-r">Original Code</th>
                             <th className="px-3 py-2 text-left border-r">Name</th>
                             <th className="px-3 py-2 text-left border-r">Subject Type</th>
-                            <th className="px-3 py-2 text-left">Programme Code</th>
+                            <th className="px-3 py-2 text-left border-r">Exam Type</th>
+                            <th className="px-3 py-2 text-left border-r">Prog. Type</th>
+                            <th className="px-3 py-2 text-left border-r">Prog. Code</th>
+                            <th className="px-3 py-2 text-left">Choice Group</th>
                           </tr>
                         </thead>
                         <tbody>
@@ -204,21 +210,30 @@ export default function UploadSubjectsPage() {
                             <td className="px-3 py-2 border-r font-mono">C30-1-01</td>
                             <td className="px-3 py-2 border-r">Mathematics</td>
                             <td className="px-3 py-2 border-r">CORE</td>
-                            <td className="px-3 py-2 font-mono">PROG01</td>
+                            <td className="px-3 py-2 border-r">Cert. II</td>
+                            <td className="px-3 py-2 border-r">CERT2</td>
+                            <td className="px-3 py-2 border-r font-mono">PROG01</td>
+                            <td className="px-3 py-2 text-muted-foreground">—</td>
                           </tr>
                           <tr>
-                            <td className="px-3 py-2 border-r font-mono">701</td>
-                            <td className="px-3 py-2 border-r font-mono">C701</td>
-                            <td className="px-3 py-2 border-r">English</td>
+                            <td className="px-3 py-2 border-r font-mono">303</td>
+                            <td className="px-3 py-2 border-r font-mono">C30-1-03</td>
+                            <td className="px-3 py-2 border-r">French</td>
                             <td className="px-3 py-2 border-r">CORE</td>
-                            <td className="px-3 py-2 font-mono">PROG01</td>
+                            <td className="px-3 py-2 border-r">Cert. II</td>
+                            <td className="px-3 py-2 border-r">CERT2</td>
+                            <td className="px-3 py-2 border-r"></td>
+                            <td className="px-3 py-2 font-mono">1</td>
                           </tr>
                           <tr>
                             <td className="px-3 py-2 border-r font-mono">702</td>
                             <td className="px-3 py-2 border-r font-mono">C702</td>
                             <td className="px-3 py-2 border-r">Science</td>
                             <td className="px-3 py-2 border-r">ELECTIVE</td>
+                            <td className="px-3 py-2 border-r">Advance</td>
+                            <td className="px-3 py-2 border-r">CERT2</td>
                             <td className="px-3 py-2"></td>
+                            <td className="px-3 py-2 text-muted-foreground">—</td>
                           </tr>
                         </tbody>
                       </table>
@@ -228,12 +243,12 @@ export default function UploadSubjectsPage() {
                   <div>
                     <h4 className="text-sm font-semibold mb-2">Validation Rules</h4>
                     <ul className="text-sm text-muted-foreground space-y-1 list-disc list-inside">
-                      <li>Code must be exactly 3 characters and unique (not already exist in the system)</li>
+                      <li>Code must meet length rules for the programme type (CERT2: 3 characters; NVTI: 1–10) and be unique</li>
                       <li>Original code is required and must be unique (e.g., C30-1-01, C701)</li>
-                      <li>Name is required</li>
-                      <li>Subject type must be either "CORE" or "ELECTIVE"</li>
-                      <li>Programme code (if provided) must exist in the system - the subject will be automatically associated with that programme</li>
-                      <li>All required fields must be filled in</li>
+                      <li>Name, subject type, exam type, and programme type are required</li>
+                      <li>Core subjects are linked to every programme: compulsory core by default, or optional core when <strong>Choice Group ID</strong> is a positive number (same behaviour as the registration portal)</li>
+                      <li>Elective subjects: programme code (if provided) must exist; choice group column is ignored</li>
+                      <li>Programme code (if provided) must exist in the system</li>
                     </ul>
                   </div>
                 </div>

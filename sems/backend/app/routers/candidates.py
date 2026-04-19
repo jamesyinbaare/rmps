@@ -1,4 +1,5 @@
 import logging
+from typing import Literal, cast
 
 from fastapi import APIRouter, File, Form, HTTPException, Query, UploadFile, status
 from fastapi.responses import Response, StreamingResponse
@@ -55,6 +56,9 @@ from app.services.candidate_upload import (
 
 router = APIRouter(prefix="/api/v1/candidates", tags=["candidates"])
 
+SubjectRequirementsValidationMode = Literal["auto", "may_june", "nov_dec"]
+SUBJECT_REQUIREMENTS_VALIDATION_VALUES: frozenset[str] = frozenset({"auto", "may_june", "nov_dec"})
+
 
 # Helper function to build CandidateResponse with active photo
 async def build_candidate_response(candidate: Candidate, session: DBSessionDep) -> CandidateResponse:
@@ -90,17 +94,20 @@ async def validate_subject_registration_requirements(
     session: DBSessionDep,
     exam_registration: ExamRegistration,
     registered_subject_ids: set[int],
+    validation_mode: SubjectRequirementsValidationMode = "auto",
 ) -> tuple[bool, list[str]]:
     """
     Validate that candidate's subject registrations meet programme requirements.
 
-    For MAY/JUNE exams:
+    When validation runs (MAY/JUNE rules):
     - All compulsory core subjects must be registered
     - Exactly one subject from each optional core choice group must be registered
     - ALL elective subjects under the programme must be registered
 
-    For NOV/DEC exams:
-    - No validation (returns success)
+    validation_mode:
+    - auto: use the exam's series (skip for NOV/DEC; same as legacy behavior)
+    - may_june: always apply the rules above, regardless of exam series
+    - nov_dec: never validate programme requirements, regardless of exam series
 
     Returns:
         tuple[bool, list[str]]: (is_valid, list of error messages)
@@ -113,13 +120,17 @@ async def validate_subject_registration_requirements(
     if not exam:
         return False, ["Exam not found"]
 
-    # For NOV/DEC, skip validation
-    if exam.series == ExamSeries.NOV_DEC:
+    if validation_mode == "nov_dec":
         return True, []
 
-    # Only validate MAY/JUNE exams
-    if exam.series != ExamSeries.MAY_JUNE:
-        return True, []  # Unknown series, skip validation
+    should_apply_may_june_rules: bool
+    if validation_mode == "may_june":
+        should_apply_may_june_rules = True
+    else:
+        should_apply_may_june_rules = exam.series == ExamSeries.MAY_JUNE
+
+    if not should_apply_may_june_rules:
+        return True, []
 
     # Get candidate's programme
     candidate_stmt = select(Candidate).where(Candidate.id == exam_registration.candidate_id)
@@ -247,7 +258,10 @@ async def create_candidate(candidate: CandidateCreate, session: DBSessionDep) ->
 
 @router.post("/bulk-upload", response_model=CandidateBulkUploadResponse, status_code=status.HTTP_200_OK)
 async def bulk_upload_candidates(
-    session: DBSessionDep, file: UploadFile = File(...), exam_id: int = Form(...)
+    session: DBSessionDep,
+    file: UploadFile = File(...),
+    exam_id: int = Form(...),
+    subject_requirements_validation: str = Form("auto"),
 ) -> CandidateBulkUploadResponse:
     """Bulk upload candidates from Excel or CSV file."""
     # Validate exam exists
@@ -256,6 +270,13 @@ async def bulk_upload_candidates(
     exam = exam_result.scalar_one_or_none()
     if not exam:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Exam not found")
+
+    if subject_requirements_validation not in SUBJECT_REQUIREMENTS_VALIDATION_VALUES:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="subject_requirements_validation must be one of: auto, may_june, nov_dec",
+        )
+    subject_requirements_mode = cast(SubjectRequirementsValidationMode, subject_requirements_validation)
 
     # Read file content
     file_content = await file.read()
@@ -445,7 +466,7 @@ async def bulk_upload_candidates(
                 registered_subject_ids = {exam_subj.subject_id for _, exam_subj in registered_subject_regs_result.all()}
 
                 is_valid, validation_errors = await validate_subject_registration_requirements(
-                    session, exam_registration, registered_subject_ids
+                    session, exam_registration, registered_subject_ids, validation_mode=subject_requirements_mode
                 )
 
                 if not is_valid:

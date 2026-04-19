@@ -77,8 +77,8 @@ export function AddSchoolDialog({
         return;
       }
 
-      if (formData.code.length !== 6) {
-        toast.error("School code must be exactly 6 characters");
+      if (formData.code.length < 6 || formData.code.length > 15) {
+        toast.error("School code must be between 6 and 15 characters");
         setLoading(false);
         return;
       }
@@ -135,14 +135,14 @@ export function AddSchoolDialog({
                 value={formData.code}
                 onChange={handleChange}
                 required
-                maxLength={6}
+                maxLength={15}
                 minLength={6}
-                placeholder="Enter 6-character school code"
+                placeholder="Enter school code (6–15 characters)"
                 disabled={loading}
                 className="font-mono"
               />
               <p className="text-xs text-muted-foreground">
-                School code must be exactly 6 characters
+                6–15 characters. A trailing letter (A–Z) is converted to a number for barcodes (shown as numeric code after save).
               </p>
             </div>
 

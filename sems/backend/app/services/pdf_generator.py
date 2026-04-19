@@ -213,7 +213,10 @@ class PdfGenerator:
         for box in boxes:
             if box.element_tag == element:
                 return box
-            return PdfGenerator.get_element(box.all_children(), element)
+            found = PdfGenerator.get_element(box.all_children(), element)
+            if found is not None:
+                return found
+        return None
 
 
 def render_html(context: dict[str, Any], template_path: str) -> str:
@@ -261,6 +264,9 @@ def generate_score_sheet_pdf(
     series: int,
     test_type: int,
     candidates: list[dict[str, Any]],
+    exam_year: int,
+    exam_series: str,
+    exam_type: str,
     main_template: str = "score_sheets/new/main_2_columns.html",
     header_template: str = "score_sheets/new/header.html",
     footer_template: str = "score_sheets/new/footer_series.html",
@@ -275,11 +281,14 @@ def generate_score_sheet_pdf(
     Args:
         school_code: School code (6 characters)
         school_name: School name
-        subject_code: Subject code (3 characters)
+        subject_code: Subject code as printed on the sheet (often ``original_code``; may exceed 3 chars)
         subject_name: Subject name
         series: Series number (1-9)
         test_type: Test type (1 = Objectives, 2 = Essay)
         candidates: List of candidate dictionaries with index_number, name, etc.
+        exam_year: Exam calendar year
+        exam_series: Exam series label (e.g. MAY/JUNE, NOV/DEC)
+        exam_type: Exam type label (e.g. Certificate II Examinations)
         main_template: Path to main template
         header_template: Path to header template
         footer_template: Path to footer template
@@ -305,6 +314,9 @@ def generate_score_sheet_pdf(
         "subject": f"{subject_code} - {subject_name}",
         "paper": str(test_type),
         "series": str(series),
+        "exam_year": exam_year,
+        "exam_series": exam_series,
+        "exam_type": exam_type,
         "students": candidates,
         "students_by_page": students_by_page,
     }

@@ -24,6 +24,7 @@ from app.services.school_upload import (
     validate_required_columns,
 )
 from app.services.template_generator import generate_school_template
+from app.utils.school_code import derive_s_code
 
 router = APIRouter(prefix="/api/v1/schools", tags=["schools"])
 
@@ -40,8 +41,21 @@ async def create_school(school: SchoolCreate, session: DBSessionDep) -> SchoolRe
             status_code=status.HTTP_400_BAD_REQUEST, detail=f"School with code {school.code} already exists"
         )
 
+    derived_s_code = derive_s_code(school.code)
+    stmt_s = select(School).where(School.s_code == derived_s_code)
+    result_s = await session.execute(stmt_s)
+    if result_s.scalar_one_or_none():
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=(
+                f"Derived numeric school code '{derived_s_code}' is already in use by another school. "
+                "Choose a different code."
+            ),
+        )
+
     db_school = School(
         code=school.code,
+        s_code=derived_s_code,
         name=school.name,
         region=school.region,
         zone=school.zone,
@@ -455,6 +469,23 @@ async def bulk_upload_schools(session: DBSessionDep, file: UploadFile = File(...
                 failed += 1
                 continue
 
+            derived_s_code = derive_s_code(school_data["code"])
+            existing_s_stmt = select(School).where(School.s_code == derived_s_code)
+            existing_s_result = await session.execute(existing_s_stmt)
+            if existing_s_result.scalar_one_or_none():
+                errors.append(
+                    SchoolBulkUploadError(
+                        row_number=row_number,
+                        error_message=(
+                            f"Derived numeric code '{derived_s_code}' already in use by another school "
+                            f"(from code '{school_data['code']}')"
+                        ),
+                        field="code",
+                    )
+                )
+                failed += 1
+                continue
+
             # Validate and collect programme codes
             valid_programme_ids: list[int] = []
             invalid_programme_codes: list[str] = []
@@ -483,6 +514,7 @@ async def bulk_upload_schools(session: DBSessionDep, file: UploadFile = File(...
             # Create school
             db_school = School(
                 code=school_data["code"],
+                s_code=derived_s_code,
                 name=school_data["name"],
                 region=school_data["region"],
                 zone=school_data["zone"],
