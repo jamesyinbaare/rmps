@@ -144,3 +144,10 @@ class ScriptControlAdminListResponse(BaseModel):
         default_factory=list,
         description="Populated when examination_id filter is set; timetable subjects with configured series counts.",
     )
+    registered_candidates_by_school_subject: dict[str, int] = Field(
+        default_factory=dict,
+        description=(
+            "Distinct registered candidate counts per examination, school, and subject. "
+            "Keys are `{examination_id}:{school_uuid}:{subject_id}` (UUID as string)."
+        ),
+    )

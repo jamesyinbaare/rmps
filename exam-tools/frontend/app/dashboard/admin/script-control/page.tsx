@@ -10,7 +10,7 @@ import {
 } from "@tanstack/react-table";
 import { ChevronsUpDown, Minus, Plus } from "lucide-react";
 
-import { DataTable } from "@/components/data-table";
+import { DataTable, type DataTableColumnMeta } from "@/components/data-table";
 import { SearchableCombobox } from "@/components/searchable-combobox";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -18,6 +18,7 @@ import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, Command
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import {
   apiJson,
+  downloadScriptControlExport,
   getExaminationScriptSeriesConfig,
   getScriptControlAdminRecords,
   type Examination,
@@ -28,7 +29,6 @@ import {
   type ScriptControlAdminRow,
 } from "@/lib/api";
 import { REGION_OPTIONS, ZONE_OPTIONS } from "@/lib/school-enums";
-import { cn } from "@/lib/utils";
 
 type MergedRow = {
   examination_id: number;
@@ -68,12 +68,30 @@ function mergeRows(items: ScriptControlAdminRow[]): MergedRow[] {
     row.bySeries[it.series_number] = it;
   }
   return Array.from(map.values()).sort((a, b) => {
-    if (a.region !== b.region) return a.region.localeCompare(b.region);
-    if (a.zone !== b.zone) return a.zone.localeCompare(b.zone);
     if (a.school_code !== b.school_code) return a.school_code.localeCompare(b.school_code);
     if (a.subject_code !== b.subject_code) return a.subject_code.localeCompare(b.subject_code);
     return a.paper_number - b.paper_number;
   });
+}
+
+/** Aligns with SeriesEnvelopeCell / API total_booklets vs envelope sums. */
+function seriesBlockBookletTotal(block: ScriptControlAdminRow | undefined): number {
+  if (!block) return 0;
+  const envs = block.envelopes ?? [];
+  if (envs.length === 0) return 0;
+  return block.total_booklets ?? envs.reduce((acc, e) => acc + e.booklet_count, 0);
+}
+
+function mergedRowTotalBooklets(row: MergedRow, maxSeries: number): number {
+  let sum = 0;
+  for (let s = 1; s <= maxSeries; s++) {
+    sum += seriesBlockBookletTotal(row.bySeries[s]);
+  }
+  return sum;
+}
+
+function registeredCandidatesLookupKey(row: MergedRow): string {
+  return `${row.examination_id}:${row.school_id}:${row.subject_id}`;
 }
 
 function mergedRowKey(row: MergedRow): string {
@@ -96,6 +114,62 @@ function useDebounced<T>(value: T, ms: number): T {
   return v;
 }
 
+/** Full-column fills: school / subject–paper / alternating series / totals / registered. */
+const SCRIPT_TABLE_META = {
+  expand: {
+    headerClassName: "border-border w-10 border-r bg-background px-1 py-3",
+    cellClassName: "border-border w-10 border-r bg-background px-1 py-2 align-middle",
+    footerClassName: "border-border w-10 border-r bg-background px-1 py-3",
+  },
+  school: {
+    headerClassName:
+      "border-border bg-muted/80 text-left font-semibold dark:bg-muted/50 border-r px-3 py-3",
+    cellClassName: "border-border bg-muted/60 dark:bg-muted/40 border-r px-3 py-2",
+    footerClassName:
+      "border-border bg-muted/80 text-muted-foreground dark:bg-muted/50 border-r px-3 py-3 text-xs",
+  },
+  subjectPaper: {
+    headerClassName:
+      "border-border bg-muted/50 text-left text-xs font-semibold dark:bg-muted/35 border-r px-3 py-3",
+    cellClassName: "border-border bg-muted/40 dark:bg-muted/30 border-r px-3 py-2",
+    footerClassName: "border-border bg-muted/50 dark:bg-muted/35 border-r px-3 py-3",
+  },
+  /** Alternating stripes for S1 / S2 / S3… — low-chroma neutrals (easier on long sessions than saturated hues). */
+  seriesA: {
+    headerClassName:
+      "border-border border-r bg-muted/70 px-2 py-3 text-right text-xs font-semibold dark:bg-muted/45",
+    cellClassName:
+      "border-border border-r bg-muted/60 min-w-0 max-w-[7.5rem] align-top px-2 py-2 text-right dark:bg-muted/38",
+    footerClassName:
+      "border-border border-r bg-muted/70 px-2 py-3 text-right text-sm font-medium tabular-nums dark:bg-muted/45",
+  },
+  seriesB: {
+    headerClassName:
+      "border-border border-r bg-muted/50 px-2 py-3 text-right text-xs font-semibold dark:bg-muted/32",
+    cellClassName:
+      "border-border border-r bg-muted/40 min-w-0 max-w-[7.5rem] align-top px-2 py-2 text-right dark:bg-muted/28",
+    footerClassName:
+      "border-border border-r bg-muted/50 px-2 py-3 text-right text-sm font-medium tabular-nums dark:bg-muted/32",
+  },
+  total: {
+    headerClassName:
+      "border-border border-r bg-slate-100/95 px-3 py-3 text-right font-semibold dark:bg-slate-900/55",
+    cellClassName: "border-border border-r bg-slate-50/90 px-3 py-2 text-right dark:bg-slate-950/40",
+    footerClassName:
+      "border-border border-r bg-slate-100/95 px-3 py-3 text-right font-semibold tabular-nums dark:bg-slate-900/55",
+  },
+  registered: {
+    headerClassName:
+      "bg-emerald-50/85 px-3 py-3 text-right font-semibold dark:bg-emerald-950/35",
+    cellClassName: "bg-emerald-50/55 px-3 py-2 text-right dark:bg-emerald-950/28",
+    footerClassName: "bg-emerald-50/85 px-3 py-3 dark:bg-emerald-950/35",
+  },
+} satisfies Record<string, DataTableColumnMeta>;
+
+function seriesColumnMeta(sn: number): DataTableColumnMeta {
+  return sn % 2 === 1 ? SCRIPT_TABLE_META.seriesA : SCRIPT_TABLE_META.seriesB;
+}
+
 function SeriesEnvelopeCell({
   row,
   seriesNumber,
@@ -110,21 +184,23 @@ function SeriesEnvelopeCell({
     return <span className="text-muted-foreground">—</span>;
   }
   const envs = block.envelopes;
-  const total = block.total_booklets ?? envs.reduce((acc, e) => acc + e.booklet_count, 0);
+  const total = seriesBlockBookletTotal(block);
 
   if (!expanded) {
-    return <span className="tabular-nums text-xs font-medium text-foreground">{total}</span>;
+    return (
+      <span className="inline-block min-w-0 max-w-full tabular-nums text-sm font-medium text-foreground">{total}</span>
+    );
   }
   return (
-    <div className="text-xs">
-      <ul className="space-y-1 border-l border-border pl-2">
+    <div className="w-full min-w-0 max-w-[7.5rem] text-left text-xs">
+      <ul className="max-h-52 space-y-2 overflow-y-auto overflow-x-hidden border-l border-border/80 pl-2">
         {envs.map((e) => (
-          <li key={e.envelope_number} className="flex flex-wrap items-center gap-1 text-[11px]">
-            <span className="tabular-nums text-muted-foreground">
+          <li key={e.envelope_number} className="flex flex-col items-start gap-1 text-[11px] leading-snug">
+            <span className="w-full break-words tabular-nums text-muted-foreground">
               Env {e.envelope_number}: {e.booklet_count}
             </span>
             {e.verified ? (
-              <Badge variant="secondary" className="text-[10px]">
+              <Badge variant="secondary" className="w-fit shrink-0 text-[10px]">
                 OK
               </Badge>
             ) : null}
@@ -155,6 +231,7 @@ export default function AdminScriptControlPage() {
   const [schoolPickerOpen, setSchoolPickerOpen] = useState(false);
   const [sorting, setSorting] = useState<SortingState>([]);
   const [expandedEnvelopeRows, setExpandedEnvelopeRows] = useState<Set<string>>(() => new Set());
+  const [exporting, setExporting] = useState(false);
 
   useEffect(() => {
     setExpandedEnvelopeRows(new Set());
@@ -199,11 +276,27 @@ export default function AdminScriptControlPage() {
     };
   }, [examId, loadSeriesConfig]);
 
-  const fetchRecords = useCallback(async () => {
-    if (examId === null) return;
+  const scriptControlListParams = useMemo(() => {
+    if (examId === null) return null;
     const sid = subjectId.trim() ? parseInt(subjectId, 10) : NaN;
     const pn = paperNumber.trim() ? parseInt(paperNumber, 10) : NaN;
-    if (!Number.isFinite(sid) || !Number.isFinite(pn)) {
+    if (!Number.isFinite(sid) || !Number.isFinite(pn)) return null;
+    return {
+      examination_id: examId,
+      subject_id: sid,
+      paper_number: pn,
+      region: region.trim() || undefined,
+      zone: zone.trim() || undefined,
+      school_id: schoolId.trim() || undefined,
+      school_q:
+        schoolId.trim() || debouncedSchoolSearch.trim().length < 2
+          ? undefined
+          : debouncedSchoolSearch.trim(),
+    };
+  }, [debouncedSchoolSearch, examId, paperNumber, region, schoolId, subjectId, zone]);
+
+  const fetchRecords = useCallback(async () => {
+    if (!scriptControlListParams) {
       setListResponse(null);
       return;
     }
@@ -211,16 +304,7 @@ export default function AdminScriptControlPage() {
     setLoadError(null);
     try {
       const res = await getScriptControlAdminRecords({
-        examination_id: examId,
-        subject_id: sid,
-        paper_number: pn,
-        region: region.trim() || undefined,
-        zone: zone.trim() || undefined,
-        school_id: schoolId.trim() || undefined,
-        school_q:
-          schoolId.trim() || debouncedSchoolSearch.trim().length < 2
-            ? undefined
-            : debouncedSchoolSearch.trim(),
+        ...scriptControlListParams,
         skip: 0,
         limit: 500,
       });
@@ -231,15 +315,51 @@ export default function AdminScriptControlPage() {
     } finally {
       setLoading(false);
     }
-  }, [debouncedSchoolSearch, examId, paperNumber, region, schoolId, subjectId, zone]);
+  }, [scriptControlListParams]);
+
+  const handleExport = useCallback(
+    async (mode: "summary" | "detail") => {
+      if (!scriptControlListParams || examId === null) return;
+      const sid = scriptControlListParams.subject_id;
+      const pn = scriptControlListParams.paper_number;
+      const subRow = seriesConfig.find((c) => c.subject_id === sid);
+      const subCode =
+        subRow?.subject_code ?? listResponse?.items?.[0]?.subject_code ?? `subject_${sid}`;
+      const ex = exams.find((e) => e.id === examId);
+      const examPart =
+        ex != null
+          ? `${ex.year}_${ex.exam_type}`.replace(/[^A-Za-z0-9._-]+/g, "_")
+          : `exam_${examId}`;
+      const safeSub = subCode.replace(/[^A-Za-z0-9._-]+/g, "_");
+      const filename = `worked_scripts_${examPart}_${safeSub}_P${pn}_${mode}.xlsx`;
+      setExporting(true);
+      setLoadError(null);
+      try {
+        await downloadScriptControlExport(
+          {
+            mode,
+            examination_id: scriptControlListParams.examination_id,
+            subject_id: sid,
+            paper_number: pn,
+            school_id: scriptControlListParams.school_id,
+            region: scriptControlListParams.region,
+            zone: scriptControlListParams.zone,
+            school_q: scriptControlListParams.school_q,
+          },
+          filename,
+        );
+      } catch (e) {
+        setLoadError(e instanceof Error ? e.message : "Export failed");
+      } finally {
+        setExporting(false);
+      }
+    },
+    [examId, exams, listResponse?.items, scriptControlListParams, seriesConfig],
+  );
 
   useEffect(() => {
-    if (examId === null) return;
-    const sid = subjectId.trim() ? parseInt(subjectId, 10) : NaN;
-    const pn = paperNumber.trim() ? parseInt(paperNumber, 10) : NaN;
-    if (!Number.isFinite(sid) || !Number.isFinite(pn)) return;
     void fetchRecords();
-  }, [examId, fetchRecords]);
+  }, [fetchRecords]);
 
   useEffect(() => {
     if (!schoolPickerOpen || debouncedSchoolSearch.trim().length < 2) {
@@ -305,6 +425,14 @@ export default function AdminScriptControlPage() {
     [],
   );
 
+  const totalBookletsFooter = useMemo(() => {
+    let sum = 0;
+    for (const row of mergedRows) {
+      sum += mergedRowTotalBooklets(row, maxSeriesColumns);
+    }
+    return sum;
+  }, [mergedRows, maxSeriesColumns]);
+
   const seriesGrandTotals = useMemo(() => {
     const totals: Record<number, number> = {};
     for (let s = 1; s <= maxSeriesColumns; s++) {
@@ -312,21 +440,20 @@ export default function AdminScriptControlPage() {
     }
     for (const row of mergedRows) {
       for (let s = 1; s <= maxSeriesColumns; s++) {
-        const b = row.bySeries[s];
-        if (b?.total_booklets != null) {
-          totals[s] += b.total_booklets;
-        }
+        totals[s] += seriesBlockBookletTotal(row.bySeries[s]);
       }
     }
     return totals;
   }, [mergedRows, maxSeriesColumns]);
 
   const columns = useMemo<ColumnDef<MergedRow>[]>(() => {
+    const regByKey = listResponse?.registered_candidates_by_school_subject;
     const base: ColumnDef<MergedRow>[] = [
       {
         id: "expandEnvelopes",
         enableSorting: false,
         header: () => <span className="sr-only">Envelope details</span>,
+        meta: SCRIPT_TABLE_META.expand,
         cell: ({ row }) => {
           const r = row.original;
           if (!mergedRowHasEnvelopes(r, maxSeriesColumns)) {
@@ -362,58 +489,57 @@ export default function AdminScriptControlPage() {
         footer: () => null,
       },
       {
-        accessorKey: "region",
-        header: "Region",
-        cell: ({ row }) => <span className="whitespace-nowrap">{row.original.region}</span>,
-        footer: () => (
-          <span className="text-xs font-normal text-muted-foreground">Totals (booklets)</span>
-        ),
-      },
-      {
-        accessorKey: "zone",
-        header: "Zone",
-        cell: ({ row }) => <span className="whitespace-nowrap">{row.original.zone}</span>,
-        footer: () => null,
-      },
-      {
-        id: "school",
+        id: "school_code",
         accessorFn: (row) => row.school_code,
-        header: "School",
+        header: "School code",
+        meta: SCRIPT_TABLE_META.school,
         cell: ({ row }) => {
-          const { school_code: code, school_name: name } = row.original;
+          const r = row.original;
+          const name = r.school_name.trim();
           return (
             <span
-              className="font-medium tabular-nums whitespace-nowrap"
-              title={name.trim() ? name : undefined}
-              aria-label={name.trim() ? `${code}, ${name}` : code}
+              className="font-mono text-sm font-medium tracking-tight text-foreground"
+              title={name ? name : undefined}
+              aria-label={name ? `${r.school_code}, ${name}` : r.school_code}
             >
-              {code}
+              {r.school_code}
             </span>
           );
         },
-        footer: () => null,
+        footer: () => <span className="font-medium">Totals</span>,
       },
       {
         id: "subject",
         accessorFn: (row) => row.subject_code,
         header: "Subject",
+        meta: SCRIPT_TABLE_META.subjectPaper,
         cell: ({ row }) => (
-          <span className="font-medium whitespace-nowrap">{row.original.subject_code}</span>
+          <span className="whitespace-nowrap font-medium text-foreground">{row.original.subject_code}</span>
         ),
         footer: () => null,
       },
       {
         accessorKey: "paper_number",
         header: "Paper",
-        cell: ({ row }) => <span className="tabular-nums">{row.original.paper_number}</span>,
+        meta: SCRIPT_TABLE_META.subjectPaper,
+        cell: ({ row }) => <span className="tabular-nums font-medium">{row.original.paper_number}</span>,
         footer: () => null,
       },
     ];
+
     for (let sn = 1; sn <= maxSeriesColumns; sn++) {
       base.push({
         id: `series_${sn}`,
-        accessorFn: (row) => row.bySeries[sn]?.total_booklets ?? Number.MAX_SAFE_INTEGER,
-        header: `Series ${sn}`,
+        accessorFn: (row) => seriesBlockBookletTotal(row.bySeries[sn]),
+        header: () => (
+          <abbr
+            title={`Series ${sn} — booklets packed in this script batch`}
+            className="cursor-help whitespace-nowrap font-semibold no-underline tabular-nums tracking-tight"
+          >
+            S{sn}
+          </abbr>
+        ),
+        meta: seriesColumnMeta(sn),
         cell: ({ row }) => (
           <SeriesEnvelopeCell
             row={row.original}
@@ -426,8 +552,46 @@ export default function AdminScriptControlPage() {
         ),
       });
     }
+
+    base.push(
+      {
+        id: "series_total_booklets",
+        accessorFn: (row) => mergedRowTotalBooklets(row, maxSeriesColumns),
+        header: "Total booklets",
+        meta: SCRIPT_TABLE_META.total,
+        cell: ({ row }) => (
+          <span className="tabular-nums text-base font-semibold text-foreground">
+            {mergedRowTotalBooklets(row.original, maxSeriesColumns)}
+          </span>
+        ),
+        footer: () => <span>{totalBookletsFooter}</span>,
+      },
+      {
+        id: "registered_candidates",
+        enableSorting: false,
+        header: "Registered",
+        meta: SCRIPT_TABLE_META.registered,
+        cell: ({ row }) => {
+          const r = row.original;
+          const n = regByKey?.[registeredCandidatesLookupKey(r)];
+          return n != null ? (
+            <span className="tabular-nums text-base font-semibold text-foreground">{n}</span>
+          ) : (
+            <span className="text-muted-foreground">—</span>
+          );
+        },
+        footer: () => null,
+      },
+    );
+
     return base;
-  }, [maxSeriesColumns, seriesGrandTotals, expandedEnvelopeRows]);
+  }, [
+    listResponse?.registered_candidates_by_school_subject,
+    maxSeriesColumns,
+    seriesGrandTotals,
+    expandedEnvelopeRows,
+    totalBookletsFooter,
+  ]);
 
   const table = useReactTable({
     data: mergedRows,
@@ -446,12 +610,31 @@ export default function AdminScriptControlPage() {
     return fromOpts ? `${fromOpts.code} — ${fromOpts.name}` : schoolId;
   }, [listResponse, schoolId, schoolOptions]);
 
+  /** Shown above the grid when filters are complete so the table is self-explanatory. */
+  const activeViewSummary = useMemo(() => {
+    if (examId === null) return null;
+    const ex = exams.find((e) => e.id === examId);
+    if (!ex) return null;
+    const sid = subjectId.trim();
+    const pn = paperNumber.trim();
+    if (!sid || !pn) return null;
+    const subj = subjectOptions.find((o) => o.value === sid);
+    const examLabel = `${ex.exam_type}${ex.exam_series ? ` (${ex.exam_series})` : ""} — ${ex.year}`;
+    const paperLabel = pn === "1" ? "Paper 1" : pn === "2" ? "Paper 2" : `Paper ${pn}`;
+    return {
+      examLabel,
+      subjectLabel: subj?.label ?? `Subject ${sid}`,
+      paperLabel,
+    };
+  }, [examId, exams, subjectId, subjectOptions, paperNumber]);
+
   return (
     <div className="mx-auto max-w-[1600px] space-y-6">
       <div>
         <h2 className="text-xl font-semibold text-foreground">Worked scripts control</h2>
-        <p className="mt-1 text-sm text-muted-foreground">
-          Script envelopes by school, subject, and paper. Choose an examination, then a subject and paper; other
+        <p className="mt-1 max-w-3xl text-sm leading-relaxed text-muted-foreground">
+
+          <span className="font-medium text-foreground">+</span> to open envelope detail. Region, zone, and school
           filters are optional.
         </p>
       </div>
@@ -627,6 +810,32 @@ export default function AdminScriptControlPage() {
           <Button
             type="button"
             variant="outline"
+            onClick={() => void handleExport("summary")}
+            disabled={
+              examId === null ||
+              loading ||
+              exporting ||
+              !scriptControlListParams
+            }
+          >
+            Export summary (Excel)
+          </Button>
+          <Button
+            type="button"
+            variant="outline"
+            onClick={() => void handleExport("detail")}
+            disabled={
+              examId === null ||
+              loading ||
+              exporting ||
+              !scriptControlListParams
+            }
+          >
+            Export detail (Excel)
+          </Button>
+          <Button
+            type="button"
+            variant="outline"
             onClick={() => {
               setRegion("");
               setZone("");
@@ -659,11 +868,63 @@ export default function AdminScriptControlPage() {
       ) : loading && !listResponse ? (
         <p className="text-sm text-muted-foreground">Loading…</p>
       ) : (
-        <DataTable
-          table={table}
-          emptyMessage={loading ? "Loading…" : "No packing records for this filter."}
-          showFooter={mergedRows.length > 0}
-        />
+        <div className="space-y-3">
+          {listResponse && activeViewSummary ? (
+            <div className="flex flex-wrap items-center gap-x-2 gap-y-1.5 text-sm">
+              <span className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">View</span>
+              <span className="rounded-full bg-primary/10 px-3 py-1 font-medium text-foreground">
+                {activeViewSummary.examLabel}
+              </span>
+              <span className="text-muted-foreground">·</span>
+              <span
+                className="max-w-[min(100%,28rem)] truncate font-medium text-foreground"
+                title={activeViewSummary.subjectLabel}
+              >
+                {activeViewSummary.subjectLabel}
+              </span>
+              <span className="text-muted-foreground">·</span>
+              <span className="font-medium text-foreground">{activeViewSummary.paperLabel}</span>
+              <span className="ml-auto tabular-nums text-muted-foreground">
+                {mergedRows.length} school{mergedRows.length === 1 ? "" : "s"}
+              </span>
+            </div>
+          ) : null}
+          {mergedRows.length > 0 ? (
+            <div
+              className="flex flex-wrap items-center gap-x-4 gap-y-2 rounded-lg border border-border/60 bg-muted/25 px-3 py-2.5 text-xs text-muted-foreground"
+              role="note"
+              aria-label="Column colour key"
+            >
+              <span className="font-semibold text-foreground">Colours</span>
+              <span className="inline-flex items-center gap-1.5">
+                <span className="inline-block h-3.5 w-3.5 shrink-0 rounded-sm bg-muted/80 ring-1 ring-border/60" />
+                School / subject
+              </span>
+              <span className="inline-flex items-center gap-1.5">
+                <span className="inline-flex h-3.5 w-8 shrink-0 overflow-hidden rounded-sm ring-1 ring-border/50">
+                  <span className="h-full flex-1 bg-muted/70 dark:bg-muted/45" />
+                  <span className="h-full flex-1 bg-muted/45 dark:bg-muted/30" />
+                </span>
+                S1–S{maxSeriesColumns}
+              </span>
+              <span className="inline-flex items-center gap-1.5">
+                <span className="inline-block h-3.5 w-3.5 shrink-0 rounded-sm bg-slate-100 ring-1 ring-border/40 dark:bg-slate-900/55" />
+                Total booklets
+              </span>
+              <span className="inline-flex items-center gap-1.5">
+                <span className="inline-block h-3.5 w-3.5 shrink-0 rounded-sm bg-emerald-50/90 ring-1 ring-border/40 dark:bg-emerald-950/40" />
+                Registered
+              </span>
+            </div>
+          ) : null}
+          <div className="overflow-x-auto [-webkit-overflow-scrolling:touch]">
+            <DataTable
+              table={table}
+              emptyMessage={loading ? "Loading…" : "No packing records for this filter."}
+              showFooter={mergedRows.length > 0}
+            />
+          </div>
+        </div>
       )}
     </div>
   );

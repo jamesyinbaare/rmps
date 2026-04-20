@@ -824,6 +824,8 @@ export type ScriptControlAdminListResponse = {
   items: ScriptControlAdminRow[];
   total: number;
   subject_series_counts: ScriptControlSubjectSeriesCountRow[];
+  /** Keys `{examination_id}:{school_uuid}:{subject_id}` → distinct registered candidate count. */
+  registered_candidates_by_school_subject?: Record<string, number>;
 };
 
 export type ScriptControlAdminRecordsParams = {
@@ -854,6 +856,36 @@ export async function getScriptControlAdminRecords(
   q.set("skip", String(params.skip ?? 0));
   q.set("limit", String(params.limit ?? 500));
   return apiJson<ScriptControlAdminListResponse>(`/script-control/records?${q}`);
+}
+
+export type ScriptControlExportParams = {
+  mode: "summary" | "detail";
+  examination_id: number;
+  subject_id: number;
+  paper_number: number;
+  school_id?: string;
+  region?: string;
+  zone?: string;
+  school_q?: string;
+  subject_q?: string;
+};
+
+/** Excel export for admin worked-scripts view (same filters as getScriptControlAdminRecords, without pagination). */
+export async function downloadScriptControlExport(
+  params: ScriptControlExportParams,
+  filename: string,
+): Promise<void> {
+  const q = new URLSearchParams();
+  q.set("mode", params.mode);
+  q.set("examination_id", String(params.examination_id));
+  q.set("subject_id", String(params.subject_id));
+  q.set("paper_number", String(params.paper_number));
+  if (params.school_id?.trim()) q.set("school_id", params.school_id.trim());
+  if (params.region?.trim()) q.set("region", params.region.trim());
+  if (params.zone?.trim()) q.set("zone", params.zone.trim());
+  if (params.school_q?.trim()) q.set("school_q", params.school_q.trim());
+  if (params.subject_q?.trim()) q.set("subject_q", params.subject_q.trim());
+  await downloadApiFile(`/script-control/export?${q}`, filename);
 }
 
 export type ScriptSeriesUpsertPayload = {

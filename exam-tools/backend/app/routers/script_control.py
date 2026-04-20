@@ -1,10 +1,12 @@
 """Script packing (answer booklets in envelopes): inspector CRUD per school in centre scope; super admin list."""
 
 from datetime import datetime
+from typing import Literal
 from uuid import UUID
 
 from fastapi import APIRouter, HTTPException, Query, status
-from sqlalchemy import delete, func, or_, select
+from fastapi.responses import StreamingResponse
+from sqlalchemy import delete, distinct, func, or_, select, tuple_
 from sqlalchemy.orm import contains_eager, selectinload
 
 from app.config import resolved_scripts_per_envelope_paper_1, resolved_scripts_per_envelope_paper_2, script_envelope_cap, settings
@@ -12,6 +14,8 @@ from app.dependencies.auth import DepotKeeperDep, InspectorDep, SuperAdminOrTest
 from app.dependencies.database import DBSessionDep
 from app.models import (
     AllocationAssignment,
+    ExaminationCandidate,
+    ExaminationCandidateSubject,
     Region,
     School,
     ScriptEnvelope,
@@ -41,6 +45,12 @@ from app.services.depot_scope import (
     script_scope_for_school,
 )
 from app.services.exam_timetable_pdf import load_examination_or_raise
+from app.services.script_control_export import (
+    build_script_control_export_dataframe,
+    compute_max_series,
+    sanitize_export_filename_part,
+    script_control_export_excel_bytes,
+)
 from app.services.script_control import (
     assert_packing_school_in_scope,
     assert_script_packing_calendar_allowed,
@@ -544,6 +554,137 @@ def _script_control_admin_filters(
     return conditions
 
 
+async def _registered_candidates_by_exam_school_subject(
+    session: DBSessionDep,
+    packings: list[ScriptPackingSeries],
+) -> dict[str, int]:
+    """Distinct examination candidate counts per (examination, school, subject) for packing rows."""
+    if not packings:
+        return {}
+    triples = list({(ps.examination_id, ps.school_id, ps.subject_id) for ps in packings})
+    if not triples:
+        return {}
+    reg_stmt = (
+        select(
+            ExaminationCandidate.examination_id,
+            ExaminationCandidate.school_id,
+            ExaminationCandidateSubject.subject_id,
+            func.count(distinct(ExaminationCandidate.id)),
+        )
+        .select_from(ExaminationCandidate)
+        .join(
+            ExaminationCandidateSubject,
+            ExaminationCandidateSubject.examination_candidate_id == ExaminationCandidate.id,
+        )
+        .where(
+            ExaminationCandidate.school_id.isnot(None),
+            ExaminationCandidateSubject.subject_id.isnot(None),
+            tuple_(
+                ExaminationCandidate.examination_id,
+                ExaminationCandidate.school_id,
+                ExaminationCandidateSubject.subject_id,
+            ).in_(triples),
+        )
+        .group_by(
+            ExaminationCandidate.examination_id,
+            ExaminationCandidate.school_id,
+            ExaminationCandidateSubject.subject_id,
+        )
+    )
+    reg_result = await session.execute(reg_stmt)
+    out: dict[str, int] = {}
+    for exam_id, sch_id, sub_id, cnt in reg_result.all():
+        key = f"{exam_id}:{sch_id}:{sub_id}"
+        out[key] = int(cnt)
+    return out
+
+
+@router.get("/script-control/export")
+async def export_script_control_records_excel(
+    session: DBSessionDep,
+    _: SuperAdminOrTestAdminOfficerDep,
+    mode: Literal["summary", "detail"] = Query(
+        ...,
+        description="summary: numeric booklet totals per series; detail: comma-separated booklet counts per envelope.",
+    ),
+    examination_id: int = Query(...),
+    subject_id: int = Query(...),
+    paper_number: int = Query(..., ge=1),
+    school_id: UUID | None = Query(default=None),
+    region: Region | None = Query(default=None),
+    zone: Zone | None = Query(default=None),
+    school_q: str | None = Query(default=None, description="Case-insensitive search on school code or name."),
+    subject_q: str | None = Query(default=None, description="Case-insensitive search on subject code or name."),
+) -> StreamingResponse:
+    try:
+        exam = await load_examination_or_raise(session, examination_id)
+    except ValueError:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Examination not found") from None
+
+    sub = await session.get(Subject, subject_id)
+    if sub is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Subject not found")
+
+    filters = _script_control_admin_filters(
+        examination_id=examination_id,
+        school_id=school_id,
+        subject_id=subject_id,
+        paper_number=paper_number,
+        region=region,
+        zone=zone,
+        school_q=school_q,
+        subject_q=subject_q,
+    )
+
+    stmt = (
+        select(ScriptPackingSeries)
+        .join(School, School.id == ScriptPackingSeries.school_id)
+        .join(Subject, Subject.id == ScriptPackingSeries.subject_id)
+        .options(
+            contains_eager(ScriptPackingSeries.school),
+            contains_eager(ScriptPackingSeries.subject),
+            selectinload(ScriptPackingSeries.envelopes),
+        )
+        .order_by(
+            ScriptPackingSeries.examination_id.desc(),
+            ScriptPackingSeries.school_id,
+            ScriptPackingSeries.subject_id,
+            ScriptPackingSeries.paper_number,
+            ScriptPackingSeries.series_number,
+        )
+    )
+    if filters:
+        stmt = stmt.where(*filters)
+    pack_result = await session.execute(stmt)
+    packings = list(pack_result.scalars().unique().all())
+
+    cmap = await subject_series_count_map(session, examination_id)
+    max_series = compute_max_series(subject_id, cmap, packings)
+
+    registered = await _registered_candidates_by_exam_school_subject(session, packings)
+
+    df = build_script_control_export_dataframe(
+        examination_id=examination_id,
+        subject_id=subject_id,
+        mode=mode,
+        max_series=max_series,
+        packings=packings,
+        registered_by_key=registered,
+    )
+    body = script_control_export_excel_bytes(df)
+
+    exam_type = sanitize_export_filename_part(str(exam.exam_type))
+    sub_code = sanitize_export_filename_part(sub.code)
+    safe = f"worked_scripts_{exam.year}_{exam_type}_{sub_code}_P{paper_number}_{mode}"
+    filename = f"{sanitize_export_filename_part(safe)}.xlsx"
+
+    return StreamingResponse(
+        iter([body]),
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
 @router.get("/script-control/records", response_model=ScriptControlAdminListResponse)
 async def list_script_control_records(
     session: DBSessionDep,
@@ -618,7 +759,14 @@ async def list_script_control_records(
     pack_result = await session.execute(stmt)
     packings = list(pack_result.scalars().unique().all())
     if not packings:
-        return ScriptControlAdminListResponse(items=[], total=total, subject_series_counts=subject_series_counts)
+        return ScriptControlAdminListResponse(
+            items=[],
+            total=total,
+            subject_series_counts=subject_series_counts,
+            registered_candidates_by_school_subject={},
+        )
+
+    registered_candidates_by_school_subject = await _registered_candidates_by_exam_school_subject(session, packings)
 
     items: list[ScriptControlAdminRow] = []
     for ps in packings:
@@ -657,4 +805,5 @@ async def list_script_control_records(
         items=items,
         total=total,
         subject_series_counts=subject_series_counts,
+        registered_candidates_by_school_subject=registered_candidates_by_school_subject,
     )

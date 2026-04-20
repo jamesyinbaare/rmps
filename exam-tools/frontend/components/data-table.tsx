@@ -14,12 +14,27 @@ import {
 } from "@/components/ui/table";
 import { cn } from "@/lib/utils";
 
+/** Optional per-column backgrounds / borders (e.g. banded script-control columns). */
+export type DataTableColumnMeta = {
+  headerClassName?: string;
+  cellClassName?: string;
+  footerClassName?: string;
+};
+
 type DataTableProps<TData> = {
   table: TanstackTable<TData>;
   emptyMessage?: string;
   /** When false, no footer row is rendered even if columns define `footer`. */
   showFooter?: boolean;
 };
+
+function metaClasses(
+  columnMeta: unknown,
+  key: keyof DataTableColumnMeta,
+): string | undefined {
+  if (!columnMeta || typeof columnMeta !== "object") return undefined;
+  return (columnMeta as DataTableColumnMeta)[key];
+}
 
 export function DataTable<TData>({
   table,
@@ -36,12 +51,18 @@ export function DataTable<TData>({
           {table.getHeaderGroups().map((headerGroup) => (
             <TableRow key={headerGroup.id}>
               {headerGroup.headers.map((header) => (
-                <TableHead key={header.id} className="whitespace-nowrap">
+                <TableHead
+                  key={header.id}
+                  className={cn(
+                    "align-top leading-tight whitespace-normal",
+                    metaClasses(header.column.columnDef.meta, "headerClassName"),
+                  )}
+                >
                   {header.isPlaceholder ? null : header.column.getCanSort() ? (
                     <button
                       type="button"
                       className={cn(
-                        "-ml-2 inline-flex items-center gap-1 rounded-md px-2 py-1 text-left text-sm font-medium hover:bg-muted/80",
+                        "-ml-2 inline-flex items-start gap-1 rounded-md px-2 py-1 text-left text-sm font-medium hover:bg-muted/80",
                         header.column.getIsSorted() && "text-foreground",
                       )}
                       aria-label={
@@ -73,7 +94,13 @@ export function DataTable<TData>({
             table.getRowModel().rows.map((row) => (
               <TableRow key={row.id} data-state={row.getIsSelected() && "selected"}>
                 {row.getVisibleCells().map((cell) => (
-                  <TableCell key={cell.id} className="align-top text-sm">
+                  <TableCell
+                    key={cell.id}
+                    className={cn(
+                      "align-top text-sm",
+                      metaClasses(cell.column.columnDef.meta, "cellClassName"),
+                    )}
+                  >
                     {flexRender(cell.column.columnDef.cell, cell.getContext())}
                   </TableCell>
                 ))}
@@ -92,7 +119,14 @@ export function DataTable<TData>({
             {table.getFooterGroups().map((footerGroup) => (
               <TableRow key={footerGroup.id}>
                 {footerGroup.headers.map((header) => (
-                  <TableCell key={header.id} colSpan={header.colSpan} className="align-top text-sm">
+                  <TableCell
+                    key={header.id}
+                    colSpan={header.colSpan}
+                    className={cn(
+                      "align-top text-sm",
+                      metaClasses(header.column.columnDef.meta, "footerClassName"),
+                    )}
+                  >
                     {header.isPlaceholder ? null : flexRender(header.column.columnDef.footer, header.getContext())}
                   </TableCell>
                 ))}
