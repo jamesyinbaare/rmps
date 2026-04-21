@@ -8,6 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.config import settings
 from app.core.security import get_password_hash
 from app.models import User, UserRole
+from app.services.simulation_seed import ensure_mathematics_paper2_simulation_seed
 
 logger = logging.getLogger(__name__)
 
@@ -27,30 +28,36 @@ async def ensure_super_admin_user(session: AsyncSession) -> None:
 
         if existing_user:
             logger.info(f"SUPER_ADMIN user with email {settings.super_admin_email} already exists")
-            return
-
-        # Validate that required settings are configured
-        if not settings.super_admin_email or not settings.super_admin_password or not settings.super_admin_full_name:
+        elif not settings.super_admin_email or not settings.super_admin_password or not settings.super_admin_full_name:
+            # Validate that required settings are configured
             logger.warning(
                 "SUPER_ADMIN initialization skipped: Required environment variables "
                 "(SUPER_ADMIN_EMAIL, SUPER_ADMIN_PASSWORD, SUPER_ADMIN_FULL_NAME) are not set"
             )
-            return
+        else:
+            # Create new SUPER_ADMIN user
+            hashed_password = get_password_hash(settings.super_admin_password)
+            new_user = User(
+                email=settings.super_admin_email,
+                hashed_password=hashed_password,
+                full_name=settings.super_admin_full_name,
+                role=UserRole.SUPER_ADMIN,
+                is_active=True,
+            )
 
-        # Create new SUPER_ADMIN user
-        hashed_password = get_password_hash(settings.super_admin_password)
-        new_user = User(
-            email=settings.super_admin_email,
-            hashed_password=hashed_password,
-            full_name=settings.super_admin_full_name,
-            role=UserRole.SUPER_ADMIN,
-            is_active=True,
-        )
-
-        session.add(new_user)
-        await session.commit()
-        logger.info(f"Created SUPER_ADMIN user with email {settings.super_admin_email}")
+            session.add(new_user)
+            await session.commit()
+            logger.info(f"Created SUPER_ADMIN user with email {settings.super_admin_email}")
     except Exception as e:
         logger.error(f"Error ensuring SUPER_ADMIN user exists: {e}", exc_info=True)
         # Don't raise - allow app to start even if user creation fails
         await session.rollback()
+
+    # Seed deterministic simulation data for allocation algorithm testing.
+    # This routine is idempotent and safely no-ops on already-seeded entities.
+    # try:
+    #     await ensure_mathematics_paper2_simulation_seed(session)
+    #     logger.info("Mathematics Paper 2 simulation seed ensured")
+    # except Exception as e:
+    #     logger.error(f"Error ensuring simulation seed data exists: {e}", exc_info=True)
+    #     await session.rollback()
