@@ -1,6 +1,8 @@
 """MILP-based assignment of script envelopes to examiners (whole envelopes, quota deviation)."""
 from __future__ import annotations
 
+import math
+import time
 from uuid import UUID
 
 from sqlalchemy import delete, select
@@ -8,13 +10,15 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.models import (
-    AllocationAssignment,
     Allocation,
+    AllocationAssignment,
     AllocationExaminer,
     AllocationRun,
     AllocationRunStatus,
     Examiner,
-    ExaminerAllowedZone,
+    ExaminerGroup,
+    ExaminerGroupMember,
+    ExaminerGroupSourceRegion,
     ExaminerSubject,
     ExaminerType,
     Region,
@@ -28,6 +32,9 @@ from app.schemas.script_allocation import (
     AllocationAssignmentItem,
     AllocationRunResponse,
     AllocationRunStatusSchema,
+    AllocationSolveModeSchema,
+    AllocationSubgroupItem,
+    AllocationSubgroupStatusSchema,
     ExaminerSubjectRunSummary,
     ExaminerTypeSchema,
     UnassignedEnvelopeItem,
@@ -78,53 +85,49 @@ def parse_region(value: str | None) -> Region | None:
     raise ValueError(f"Unknown region: {value!r}")
 
 
-def _normalized_cross_rules(scope: str, rules: dict[str, list[str]] | None) -> dict[str, set[str]]:
-    out: dict[str, set[str]] = {}
+def parse_group_cross_marking_rules(rules: dict[str, list[str]] | None) -> dict[UUID, set[UUID]]:
+    """Keys: marking group id (examiners). Values: source script cohort group ids allowed for that marking group."""
+    out: dict[UUID, set[UUID]] = {}
     if not rules:
         return out
     for key, values in rules.items():
-        if not str(key).strip():
+        try:
+            mk = UUID(str(key).strip())
+        except ValueError:
             continue
-        if scope == "region":
-            src_region = parse_region(key)
-            if src_region is None:
+        targets: set[UUID] = set()
+        for raw in values or []:
+            try:
+                targets.add(UUID(str(raw).strip()))
+            except ValueError:
                 continue
-            targets: set[str] = set()
-            for raw in values or []:
-                region = parse_region(raw)
-                if region is not None:
-                    targets.add(region.value)
-            out[src_region.value] = targets
-        else:
-            src_zone = parse_zone(key)
-            if src_zone is None:
-                continue
-            targets = set()
-            for raw in values or []:
-                zone = parse_zone(raw)
-                if zone is not None:
-                    targets.add(zone.value)
-            out[src_zone.value] = targets
+        out[mk] = targets
     return out
 
 
-def _region_containing_zone(zone: Zone | None, region_to_zones: dict[Region, set[Zone]]) -> Region | None:
-    if zone is None:
-        return None
-    for region, zones in region_to_zones.items():
-        if zone in zones:
-            return region
-    return None
+async def load_examiner_group_marking_maps(
+    session: AsyncSession,
+    examination_id: int,
+) -> tuple[dict[Region, UUID], dict[UUID, UUID]]:
+    stmt_sr = (
+        select(ExaminerGroupSourceRegion)
+        .join(ExaminerGroup, ExaminerGroupSourceRegion.group_id == ExaminerGroup.id)
+        .where(ExaminerGroup.examination_id == examination_id)
+    )
+    region_to_source: dict[Region, UUID] = {}
+    for row in (await session.execute(stmt_sr)).scalars().all():
+        region_to_source[row.region] = row.group_id
 
+    stmt_m = (
+        select(ExaminerGroupMember)
+        .join(ExaminerGroup, ExaminerGroupMember.group_id == ExaminerGroup.id)
+        .where(ExaminerGroup.examination_id == examination_id)
+    )
+    examiner_to_marking: dict[UUID, UUID] = {}
+    for row in (await session.execute(stmt_m)).scalars().all():
+        examiner_to_marking[row.examiner_id] = row.group_id
 
-def _examiner_home_region(
-    ex: Examiner,
-    region_to_zones: dict[Region, set[Zone]],
-) -> Region | None:
-    er: Region | None = getattr(ex, "region", None)
-    if er is not None:
-        return er
-    return _region_containing_zone(getattr(ex, "zone", None), region_to_zones)
+    return region_to_source, examiner_to_marking
 
 
 async def load_allocation_or_none(session: AsyncSession, allocation_id: UUID) -> Allocation | None:
@@ -144,7 +147,7 @@ async def load_examiners_for_examination(session: AsyncSession, examination_id: 
         .where(Examiner.examination_id == examination_id)
         .options(
             selectinload(Examiner.subjects),
-            selectinload(Examiner.allowed_zones),
+            selectinload(Examiner.group_membership),
         )
         .order_by(Examiner.name)
     )
@@ -179,58 +182,44 @@ def build_eligible_pairs(
     envelopes: list[tuple[ScriptEnvelope, ScriptPackingSeries, School]],
     examiners: list[Examiner],
     *,
-    allocation_scope: str = "zone",
-    cross_marking_rules: dict[str, list[str]] | None = None,
+    region_to_source_group: dict[Region, UUID],
+    examiner_to_marking_group: dict[UUID, UUID],
+    cross_marking_rules: dict[UUID, set[UUID]],
     exclude_home_zone_or_region: bool = True,
 ) -> tuple[list[EligiblePair], dict[UUID, int]]:
-    """Returns pairs and mapping envelope_id -> contiguous index 0..E-1."""
+    """Returns pairs and mapping envelope_id -> contiguous index 0..E-1.
+
+    Examiners never receive envelopes whose script cohort equals their marking group (no marking own cohort),
+    even if cross_marking_rules incorrectly lists that mapping.
+    """
     env_ids = [row[0].id for row in envelopes]
     env_id_to_ix = {eid: i for i, eid in enumerate(env_ids)}
     examiners_list = list(examiners)
-    region_to_zones: dict[Region, set[Zone]] = {}
-    for _env, _series, school in envelopes:
-        region_to_zones.setdefault(school.region, set()).add(school.zone)
-    cross_rules = _normalized_cross_rules(allocation_scope, cross_marking_rules)
-    use_cross_rules_for_geography = bool(cross_rules)
     pairs: list[EligiblePair] = []
+    if not cross_marking_rules:
+        return pairs, env_id_to_ix
+
     for env, series, school in envelopes:
         if env.booklet_count <= 0:
+            continue
+        source_group = region_to_source_group.get(school.region)
+        if source_group is None:
             continue
         eix = env_id_to_ix[env.id]
         for j, ex in enumerate(examiners_list):
             sub_ids = {s.subject_id for s in ex.subjects}
             if series.subject_id not in sub_ids:
                 continue
-            examiner_zone: Zone | None = getattr(ex, "zone", None)
-
-            if use_cross_rules_for_geography:
-                # Examiner home region/zone is the rule source; allowed targets come from cross_marking_rules only.
-                if allocation_scope == "region":
-                    src_region = _examiner_home_region(ex, region_to_zones)
-                    source_key = src_region.value if src_region is not None else None
-                    target_key = school.region.value
-                else:
-                    source_key = examiner_zone.value if examiner_zone is not None else None
-                    target_key = school.zone.value
-                if source_key is None or source_key not in cross_rules:
-                    continue
-                if target_key not in cross_rules[source_key]:
-                    continue
-            else:
-                allowed = {z.zone for z in ex.allowed_zones}
-                if school.zone not in allowed:
-                    continue
-                if allocation_scope == "region":
-                    allowed_regions = {region for region, zones in region_to_zones.items() if zones & allowed}
-                    if school.region not in allowed_regions:
-                        continue
-
-            if exclude_home_zone_or_region and examiner_zone is not None and school.zone == examiner_zone:
+            marking_group = examiner_to_marking_group.get(ex.id)
+            if marking_group is None:
                 continue
-            if exclude_home_zone_or_region and allocation_scope == "region":
-                examiner_region = _examiner_home_region(ex, region_to_zones)
-                if examiner_region is not None and school.region == examiner_region:
-                    continue
+            allowed_sources = cross_marking_rules.get(marking_group)
+            if not allowed_sources or source_group not in allowed_sources:
+                continue
+            if marking_group == source_group:
+                continue
+            if exclude_home_zone_or_region and ex.region == school.region:
+                continue
             pairs.append(
                 EligiblePair(
                     envelope_id=env.id,
@@ -245,12 +234,421 @@ def build_eligible_pairs(
     return pairs, env_id_to_ix
 
 
+def ordered_marking_group_ids(
+    campaign_groups: set[UUID],
+    preferred_order: list[UUID] | None,
+) -> list[UUID]:
+    """Sequential cross-marking: process marking groups in `preferred_order` first; append remaining in UUID sort."""
+    seen: set[UUID] = set()
+    out: list[UUID] = []
+    for g in preferred_order or []:
+        if g in campaign_groups and g not in seen:
+            out.append(g)
+            seen.add(g)
+    rest = sorted(campaign_groups - seen, key=lambda u: str(u))
+    out.extend(rest)
+    return out
+
+
+def booklet_totals_by_series_from_pairs(pairs: list[EligiblePair]) -> dict[int, int]:
+    """Sum booklet counts per series for distinct envelopes appearing in pairs."""
+    seen_env: set[UUID] = set()
+    totals: dict[int, int] = {}
+    for p in pairs:
+        if p.envelope_id in seen_env:
+            continue
+        seen_env.add(p.envelope_id)
+        s = int(p.series_number)
+        totals[s] = totals.get(s, 0) + int(p.booklet_count)
+    return totals
+
+
+def assign_examiners_to_series_by_booklet_ratio(
+    examiners: list[Examiner],
+    series_booklets: dict[int, int],
+) -> dict[UUID, int]:
+    """Map examiner_id -> series_number using largest-remainder on booklet shares (plan: ratio bucketing)."""
+    positive = sorted((s, b) for s, b in series_booklets.items() if b > 0)
+    if not examiners:
+        return {}
+    if not positive:
+        return {}
+    total_b = sum(b for _s, b in positive)
+    if total_b <= 0:
+        return {}
+    series_ids = [s for s, _b in positive]
+    weights = [b / total_b for _s, b in positive]
+    n = len(examiners)
+    raw = [n * w for w in weights]
+    floors = [int(math.floor(x)) for x in raw]
+    rem = n - sum(floors)
+    order = sorted(
+        range(len(weights)),
+        key=lambda i: (-(raw[i] - floors[i]), -series_ids[i]),
+    )
+    counts = list(floors)
+    for k in range(min(rem, len(order))):
+        counts[order[k]] += 1
+    sorted_ex = sorted(examiners, key=lambda e: str(e.id))
+    out: dict[UUID, int] = {}
+    cursor = 0
+    for i, s in enumerate(series_ids):
+        c = counts[i]
+        for ex in sorted_ex[cursor : cursor + c]:
+            out[ex.id] = s
+        cursor += c
+    if cursor < n:
+        s_fallback = series_ids[int(max(range(len(series_ids)), key=lambda j: (weights[j], -series_ids[j])))]
+        for ex in sorted_ex[cursor:]:
+            out[ex.id] = s_fallback
+    return out
+
+
+def remap_pairs_for_subproblem(
+    pairs: list[EligiblePair],
+    sub_examiners: list[Examiner],
+) -> tuple[list[EligiblePair], int]:
+    """Local examiner indices 0..J-1 and envelope indices 0..E-1 for a subset MILP."""
+    ex_id_to_local = {e.id: i for i, e in enumerate(sub_examiners)}
+    env_ids = sorted({p.envelope_id for p in pairs}, key=lambda u: str(u))
+    env_id_to_local = {eid: i for i, eid in enumerate(env_ids)}
+    new_pairs: list[EligiblePair] = []
+    for p in pairs:
+        li = ex_id_to_local.get(p.examiner_id)
+        ei = env_id_to_local.get(p.envelope_id)
+        if li is None or ei is None:
+            continue
+        new_pairs.append(
+            EligiblePair(
+                envelope_id=p.envelope_id,
+                envelope_index=ei,
+                examiner_index=li,
+                examiner_id=p.examiner_id,
+                subject_id=p.subject_id,
+                series_number=p.series_number,
+                booklet_count=p.booklet_count,
+            )
+        )
+    return new_pairs, len(env_ids)
+
+
+def slack_targets_for_examiner_list(
+    examiners: list[Examiner],
+    quota_by_type_subject: dict[tuple[ExaminerType, int], int],
+) -> list[SlackTarget]:
+    slack_targets: list[SlackTarget] = []
+    for j, ex in enumerate(examiners):
+        w = deviation_weight_for_examiner(ex)
+        sub_ids = {int(s.subject_id) for s in ex.subjects}
+        for sid in sorted(sub_ids):
+            key = (ex.examiner_type, sid)
+            if key not in quota_by_type_subject:
+                continue
+            slack_targets.append(
+                SlackTarget(
+                    examiner_index=j,
+                    subject_id=sid,
+                    quota=int(quota_by_type_subject[key]),
+                    weight=w,
+                )
+            )
+    return slack_targets
+
+
+def _decomposed_subgroup_time_limit_sec(
+    *,
+    pair_count: int,
+    time_budget_remaining: float,
+    subgroups_finished_before: int,
+    n_planned: int,
+) -> float:
+    """Seconds to pass to HiGHS for one subgroup MILP.
+
+    Large subproblems (many binary pair variables) need more than an even split of the total wall budget.
+    """
+    k_rem = max(1, n_planned - subgroups_finished_before)
+    share = float(time_budget_remaining) / k_rem
+    # Heuristic: ~0.022 s per pair row (tunable); cap so one stage cannot claim unbounded wall time.
+    size_floor = max(25.0, min(900.0, float(pair_count) * 0.022))
+    per = min(float(time_budget_remaining), max(15.0, size_floor, share))
+    return max(5.0, per)
+
+
+def _estimate_decomposed_subgroup_count(
+    rows: list[tuple[ScriptEnvelope, ScriptPackingSeries, School]],
+    examiners: list[Examiner],
+    *,
+    region_to_source: dict[Region, UUID],
+    examiner_to_marking: dict[UUID, UUID],
+    cross_parsed: dict[UUID, set[UUID]],
+    ordered_groups: list[UUID],
+    exclude_home_zone_or_region: bool,
+) -> int:
+    """Upper-bound count of non-empty (marking group, series) MILPs using full pool (ignores sequential removal)."""
+    n = 0
+    for gid in ordered_groups:
+        ex_g = [e for e in examiners if examiner_to_marking.get(e.id) == gid]
+        if not ex_g:
+            continue
+        pairs, _ = build_eligible_pairs(
+            rows,
+            ex_g,
+            region_to_source_group=region_to_source,
+            examiner_to_marking_group=examiner_to_marking,
+            cross_marking_rules=cross_parsed,
+            exclude_home_zone_or_region=exclude_home_zone_or_region,
+        )
+        if not pairs:
+            continue
+        by_ser = booklet_totals_by_series_from_pairs(pairs)
+        buckets = assign_examiners_to_series_by_booklet_ratio(ex_g, by_ser)
+        for s in sorted(set(buckets.values())):
+            sub_ex = [e for e in ex_g if buckets.get(e.id) == s]
+            sub_ids = {e.id for e in sub_ex}
+            pp = [p for p in pairs if int(p.series_number) == s and p.examiner_id in sub_ids]
+            if pp:
+                n += 1
+    return max(1, n)
+
+
+def _subgroup_status_from_milp(
+    milp_ok: bool,
+    message: str | None,
+    status_code: int,
+    *,
+    proven_optimal: bool = True,
+) -> AllocationSubgroupStatusSchema:
+    if milp_ok:
+        if not proven_optimal:
+            return AllocationSubgroupStatusSchema.stopped_feasible
+        return AllocationSubgroupStatusSchema.optimal
+    if message and "time" in message.lower():
+        return AllocationSubgroupStatusSchema.timeout
+    if status_code == -1:
+        return AllocationSubgroupStatusSchema.error
+    return AllocationSubgroupStatusSchema.infeasible
+
+
 def _run_status_for_failure(message: str | None, status_code: int) -> AllocationRunStatus:
     if status_code == -1:
         return AllocationRunStatus.ERROR
     if message and "time" in message.lower():
         return AllocationRunStatus.TIMEOUT
     return AllocationRunStatus.INFEASIBLE
+
+
+def parse_marking_group_solve_order(raw: list[str] | None) -> list[UUID]:
+    out: list[UUID] = []
+    for s in raw or []:
+        try:
+            out.append(UUID(str(s).strip()))
+        except ValueError:
+            continue
+    return out
+
+
+async def run_decomposed_allocation_solve(
+    session: AsyncSession,
+    allocation: Allocation,
+    *,
+    created_by_id: UUID | None,
+    rows: list[tuple[ScriptEnvelope, ScriptPackingSeries, School]],
+    examiners: list[Examiner],
+    region_to_source: dict[Region, UUID],
+    examiner_to_marking: dict[UUID, UUID],
+    cross_parsed: dict[UUID, set[UUID]],
+    quota_by_type_subject: dict[tuple[ExaminerType, int], int],
+    unassigned_penalty: float,
+    time_limit_sec: float,
+    fairness_weight: float,
+    exclude_home_zone_or_region: bool,
+    marking_group_solve_order: list[str] | None,
+) -> AllocationRun:
+    """Decomposed allocation (see plan).
+
+    **Cross-marking policy:** Marking groups run **sequentially** in `marking_group_solve_order` (then sorted UUID).
+    After each group finishes all its series MILPs, assigned envelopes are removed from the pool so later groups
+    cannot claim the same physical envelope (avoids double assignment when multiple groups share cohort rules).
+    Within a group, examiners are split into **series buckets** by largest-remainder on booklet counts in the
+    current pool; each (group, series) runs an independent MILP on reindexed examiners and envelopes.
+    """
+    campaign_groups = {examiner_to_marking[e.id] for e in examiners}
+    preferred = parse_marking_group_solve_order(marking_group_solve_order)
+    ordered_groups = ordered_marking_group_ids(campaign_groups, preferred)
+
+    n_est = _estimate_decomposed_subgroup_count(
+        rows,
+        examiners,
+        region_to_source=region_to_source,
+        examiner_to_marking=examiner_to_marking,
+        cross_parsed=cross_parsed,
+        ordered_groups=ordered_groups,
+        exclude_home_zone_or_region=exclude_home_zone_or_region,
+    )
+
+    time_budget = float(time_limit_sec)
+    subgroups_milp_finished = 0
+
+    assigned_global: set[UUID] = set()
+    subgroup_stats: list[dict[str, object]] = []
+    pair_assignments_all: list[EligiblePair] = []
+    objective_sum = 0.0
+
+    for gid in ordered_groups:
+        rem_rows = [row for row in rows if row[0].id not in assigned_global]
+        ex_g = [e for e in examiners if examiner_to_marking.get(e.id) == gid]
+        if not ex_g:
+            continue
+        pairs_g, _ = build_eligible_pairs(
+            rem_rows,
+            ex_g,
+            region_to_source_group=region_to_source,
+            examiner_to_marking_group=examiner_to_marking,
+            cross_marking_rules=cross_parsed,
+            exclude_home_zone_or_region=exclude_home_zone_or_region,
+        )
+        if not pairs_g:
+            subgroup_stats.append(
+                {
+                    "marking_group_id": str(gid),
+                    "series_number": 0,
+                    "status": AllocationSubgroupStatusSchema.skipped_empty.value,
+                    "examiner_count": len(ex_g),
+                    "envelope_count": 0,
+                    "eligible_pair_count": 0,
+                    "objective_value": None,
+                    "message": "No eligible pairs for this marking group at this stage",
+                }
+            )
+            continue
+
+        by_ser = booklet_totals_by_series_from_pairs(pairs_g)
+        buckets = assign_examiners_to_series_by_booklet_ratio(ex_g, by_ser)
+        series_order = sorted(set(buckets.values()))
+
+        for s in series_order:
+            sub_ex = [e for e in ex_g if buckets.get(e.id) == s]
+            if not sub_ex:
+                continue
+            sub_ids = {e.id for e in sub_ex}
+            pp = [p for p in pairs_g if int(p.series_number) == s and p.examiner_id in sub_ids]
+            if not pp:
+                subgroup_stats.append(
+                    {
+                        "marking_group_id": str(gid),
+                        "series_number": int(s),
+                        "status": AllocationSubgroupStatusSchema.skipped_empty.value,
+                        "examiner_count": len(sub_ex),
+                        "envelope_count": 0,
+                        "eligible_pair_count": 0,
+                        "objective_value": None,
+                        "message": "No eligible pairs for this series bucket",
+                    }
+                )
+                continue
+
+            remapped, num_env = remap_pairs_for_subproblem(pp, sub_ex)
+            slack = slack_targets_for_examiner_list(sub_ex, quota_by_type_subject)
+            per_this = _decomposed_subgroup_time_limit_sec(
+                pair_count=len(remapped),
+                time_budget_remaining=time_budget,
+                subgroups_finished_before=subgroups_milp_finished,
+                n_planned=n_est,
+            )
+            t_solve_start = time.perf_counter()
+            milp_out = solve_script_allocation_milp(
+                pairs=remapped,
+                slack_targets=slack,
+                num_envelopes=num_env,
+                num_examiners=len(sub_ex),
+                unassigned_penalty=unassigned_penalty,
+                time_limit_sec=per_this,
+                fairness_weight=fairness_weight,
+                enforce_single_series_per_examiner=False,
+            )
+            time_budget -= time.perf_counter() - t_solve_start
+            if time_budget < 0.0:
+                time_budget = 0.0
+            subgroups_milp_finished += 1
+
+            st = _subgroup_status_from_milp(
+                milp_out.success,
+                milp_out.message,
+                milp_out.status_code,
+                proven_optimal=milp_out.proven_optimal,
+            )
+            subgroup_stats.append(
+                {
+                    "marking_group_id": str(gid),
+                    "series_number": int(s),
+                    "status": st.value,
+                    "examiner_count": len(sub_ex),
+                    "envelope_count": num_env,
+                    "eligible_pair_count": len(remapped),
+                    "objective_value": milp_out.objective,
+                    "message": (milp_out.message or "")[:2000] or None,
+                    "time_limit_allocated_sec": round(per_this, 3),
+                }
+            )
+
+            if not milp_out.success:
+                run = AllocationRun(
+                    allocation_id=allocation.id,
+                    status=_run_status_for_failure(milp_out.message, milp_out.status_code),
+                    objective_value=milp_out.objective,
+                    solver_message=(milp_out.message or "")[:4000] or None,
+                    created_by_id=created_by_id,
+                    solver_stats={
+                        "solve_mode": AllocationSolveModeSchema.decomposed.value,
+                        "subgroups": subgroup_stats,
+                        "milp_status": milp_out.status_code,
+                    },
+                )
+                session.add(run)
+                await session.flush()
+                return run
+
+            for p in milp_out.pair_assignments:
+                assigned_global.add(p.envelope_id)
+                pair_assignments_all.append(p)
+            if milp_out.objective is not None:
+                objective_sum += float(milp_out.objective)
+
+    unassigned = [env.id for env, _s, _sch in rows if env.id not in assigned_global and env.booklet_count > 0]
+
+    run = AllocationRun(
+        allocation_id=allocation.id,
+        status=AllocationRunStatus.OPTIMAL,
+        objective_value=objective_sum,
+        solver_message=None,
+        created_by_id=created_by_id,
+        solver_stats={
+            "solve_mode": AllocationSolveModeSchema.decomposed.value,
+            "subgroups": subgroup_stats,
+            "eligible_pairs": sum(int(sg.get("eligible_pair_count") or 0) for sg in subgroup_stats),
+            "envelopes": len(rows),
+            "examiners": len(examiners),
+            "unassigned_count": len(unassigned),
+            "decomposed_planned_subgroups": n_est,
+            "decomposed_wall_budget_sec": float(time_limit_sec),
+        },
+    )
+    session.add(run)
+    await session.flush()
+
+    env_by_id = {env.id: env for env, _s, _sch in rows}
+    for p in pair_assignments_all:
+        env = env_by_id[p.envelope_id]
+        session.add(
+            AllocationAssignment(
+                allocation_run_id=run.id,
+                script_envelope_id=p.envelope_id,
+                examiner_id=p.examiner_id,
+                booklet_count=int(env.booklet_count),
+            )
+        )
+    await session.flush()
+    return run
 
 
 async def run_allocation_solve(
@@ -265,7 +663,10 @@ async def run_allocation_solve(
     enforce_single_series_per_examiner: bool = True,
     cross_marking_rules: dict[str, list[str]] | None = None,
     exclude_home_zone_or_region: bool = True,
+    solve_mode: str = "monolithic",
+    marking_group_solve_order: list[str] | None = None,
 ) -> AllocationRun:
+    _ = allocation_scope  # deprecated; kept for API compatibility with AllocationSolveOptions.
     await session.execute(delete(AllocationRun).where(AllocationRun.allocation_id == allocation.id))
     await session.flush()
 
@@ -313,11 +714,59 @@ async def run_allocation_solve(
         await session.flush()
         return run
 
+    rules_raw: dict[str, list[str]] = dict(getattr(allocation, "cross_marking_rules", None) or {})
+    if cross_marking_rules is not None:
+        rules_raw = dict(cross_marking_rules)
+    cross_parsed = parse_group_cross_marking_rules(rules_raw)
+    if not cross_parsed:
+        if not rules_raw:
+            msg = (
+                "cross_marking_rules is empty. Open Configure allocation, add at least one row mapping a marking group "
+                "to allowed script cohort groups, click Save solver settings, then run the solve again."
+            )
+        else:
+            msg = (
+                "cross_marking_rules could not be read: each key must be a marking group UUID and each value must list "
+                "script cohort group UUIDs (legacy region/zone keys are not supported). Re-save rules from the admin UI."
+            )
+        run = AllocationRun(
+            allocation_id=allocation.id,
+            status=AllocationRunStatus.ERROR,
+            objective_value=None,
+            solver_message=msg,
+            created_by_id=created_by_id,
+            solver_stats=None,
+        )
+        session.add(run)
+        await session.flush()
+        return run
+
+    region_to_source, examiner_to_marking = await load_examiner_group_marking_maps(
+        session,
+        allocation.examination_id,
+    )
+    ungrouped = [ex for ex in examiners if ex.id not in examiner_to_marking]
+    if ungrouped:
+        names = ", ".join(ex.name for ex in ungrouped[:10])
+        suffix = "…" if len(ungrouped) > 10 else ""
+        run = AllocationRun(
+            allocation_id=allocation.id,
+            status=AllocationRunStatus.ERROR,
+            objective_value=None,
+            solver_message=f"Every selected examiner must belong to an examiner group (not in a group: {names}{suffix})",
+            created_by_id=created_by_id,
+            solver_stats={"ungrouped_count": len(ungrouped)},
+        )
+        session.add(run)
+        await session.flush()
+        return run
+
     pairs, _env_map = build_eligible_pairs(
         rows,
         examiners,
-        allocation_scope=allocation_scope,
-        cross_marking_rules=cross_marking_rules,
+        region_to_source_group=region_to_source,
+        examiner_to_marking_group=examiner_to_marking,
+        cross_marking_rules=cross_parsed,
         exclude_home_zone_or_region=exclude_home_zone_or_region,
     )
     if not pairs:
@@ -325,7 +774,10 @@ async def run_allocation_solve(
             allocation_id=allocation.id,
             status=AllocationRunStatus.ERROR,
             objective_value=None,
-            solver_message="No eligible examiner–envelope pairs (check subjects, cross-marking rules vs home region/zone, and allowed zones if no rules are set)",
+            solver_message=(
+                "No eligible examiner–envelope pairs (check subjects, cross_marking_rules, and that rules map cohorts to "
+                "*other* cohorts—examiners never mark their own cohort's scripts; optional exclude-home-region also applies)"
+            ),
             created_by_id=created_by_id,
             solver_stats={"envelopes": len(rows), "examiners": len(examiners)},
         )
@@ -336,6 +788,25 @@ async def run_allocation_solve(
     quota_by_type_subject: dict[tuple[ExaminerType, int], int] = {}
     for row in allocation.scripts_allocation_quotas:
         quota_by_type_subject[(row.examiner_type, int(row.subject_id))] = int(row.quota_booklets)
+
+    mode = str(solve_mode).strip().lower()
+    if mode == AllocationSolveModeSchema.decomposed.value:
+        return await run_decomposed_allocation_solve(
+            session,
+            allocation,
+            created_by_id=created_by_id,
+            rows=rows,
+            examiners=examiners,
+            region_to_source=region_to_source,
+            examiner_to_marking=examiner_to_marking,
+            cross_parsed=cross_parsed,
+            quota_by_type_subject=quota_by_type_subject,
+            unassigned_penalty=unassigned_penalty,
+            time_limit_sec=time_limit_sec,
+            fairness_weight=fairness_weight,
+            exclude_home_zone_or_region=exclude_home_zone_or_region,
+            marking_group_solve_order=marking_group_solve_order,
+        )
 
     slack_targets: list[SlackTarget] = []
     for j, ex in enumerate(examiners):
@@ -374,7 +845,10 @@ async def run_allocation_solve(
             objective_value=milp_out.objective,
             solver_message=(milp_out.message or "")[:4000] or None,
             created_by_id=created_by_id,
-            solver_stats={"milp_status": milp_out.status_code},
+            solver_stats={
+                "solve_mode": AllocationSolveModeSchema.monolithic.value,
+                "milp_status": milp_out.status_code,
+            },
         )
         session.add(run)
         await session.flush()
@@ -390,6 +864,7 @@ async def run_allocation_solve(
         solver_message=(milp_out.message or "")[:4000] or None,
         created_by_id=created_by_id,
         solver_stats={
+            "solve_mode": AllocationSolveModeSchema.monolithic.value,
             "milp_status": milp_out.status_code,
             "eligible_pairs": len(pairs),
             "envelopes": num_envelopes,
@@ -428,12 +903,8 @@ async def sync_examiner_subjects(
 
 
 async def sync_examiner_zones(session: AsyncSession, examiner: Examiner, zones: list[Zone]) -> None:
-    await session.execute(
-        delete(ExaminerAllowedZone).where(ExaminerAllowedZone.examiner_id == examiner.id)
-    )
-    await session.flush()
-    for z in zones:
-        session.add(ExaminerAllowedZone(examiner_id=examiner.id, zone=z))
+    """No-op: per-examiner allowed zones were removed; use examiner groups + cross_marking_rules."""
+    del session, examiner, zones
 
 
 async def load_run_with_assignments(session: AsyncSession, run_id: UUID) -> AllocationRun | None:
@@ -469,9 +940,11 @@ async def upsert_manual_assignment(
         raise ManualAssignmentError(404, "Allocation not found")
 
     env_row: ScriptEnvelope | None = None
-    for env, _series, _school in await load_envelopes_for_allocation(session, allocation):
+    school_row: School | None = None
+    for env, _series, school in await load_envelopes_for_allocation(session, allocation):
         if env.id == script_envelope_id:
             env_row = env
+            school_row = school
             break
     if env_row is None:
         raise ManualAssignmentError(404, "Script envelope not in this allocation pool")
@@ -493,6 +966,23 @@ async def upsert_manual_assignment(
     subject_ids = {int(s.subject_id) for s in examiner.subjects}
     if int(allocation.subject_id) not in subject_ids:
         raise ManualAssignmentError(400, "Examiner is not eligible for this allocation subject")
+
+    region_to_source, examiner_to_marking = await load_examiner_group_marking_maps(
+        session,
+        int(allocation.examination_id),
+    )
+    if school_row is not None:
+        source_group = region_to_source.get(school_row.region)
+        marking_group = examiner_to_marking.get(examiner_id)
+        if (
+            source_group is not None
+            and marking_group is not None
+            and source_group == marking_group
+        ):
+            raise ManualAssignmentError(
+                400,
+                "Cannot assign scripts from an examiner's own cohort (marking group equals script source group).",
+            )
 
     stmt_a = select(AllocationAssignment).where(
         AllocationAssignment.allocation_run_id == run_id,
@@ -679,6 +1169,40 @@ async def build_run_response(session: AsyncSession, run: AllocationRun) -> dict:
         AllocationRunStatus.ERROR: AllocationRunStatusSchema.error,
     }
 
+    stats_raw = run.solver_stats if isinstance(run.solver_stats, dict) else {}
+    solve_mode_resp: AllocationSolveModeSchema | None = None
+    sm = stats_raw.get("solve_mode")
+    if sm == AllocationSolveModeSchema.monolithic.value:
+        solve_mode_resp = AllocationSolveModeSchema.monolithic
+    elif sm == AllocationSolveModeSchema.decomposed.value:
+        solve_mode_resp = AllocationSolveModeSchema.decomposed
+
+    subgroups_out: list[AllocationSubgroupItem] = []
+    for raw in stats_raw.get("subgroups") or []:
+        if not isinstance(raw, dict):
+            continue
+        try:
+            mg_id = UUID(str(raw["marking_group_id"]))
+            sn = int(raw.get("series_number", 0))
+            st = AllocationSubgroupStatusSchema(str(raw["status"]))
+            ov = raw.get("objective_value")
+            tlim = raw.get("time_limit_allocated_sec")
+            subgroups_out.append(
+                AllocationSubgroupItem(
+                    marking_group_id=mg_id,
+                    series_number=sn,
+                    status=st,
+                    examiner_count=int(raw.get("examiner_count", 0)),
+                    envelope_count=int(raw.get("envelope_count", 0)),
+                    eligible_pair_count=int(raw.get("eligible_pair_count", 0)),
+                    objective_value=float(ov) if ov is not None else None,
+                    message=raw.get("message") if isinstance(raw.get("message"), str) else None,
+                    time_limit_allocated_sec=float(tlim) if tlim is not None else None,
+                )
+            )
+        except (ValueError, TypeError, KeyError):
+            continue
+
     resp = AllocationRunResponse(
         id=run.id,
         allocation_id=run.allocation_id,
@@ -690,5 +1214,7 @@ async def build_run_response(session: AsyncSession, run: AllocationRun) -> dict:
         assignments=assignment_items,
         unassigned_envelope_ids=unassigned_ids,
         unassigned_envelopes=unassigned_items,
+        solve_mode=solve_mode_resp,
+        subgroups=subgroups_out,
     )
     return resp.model_dump(mode="json")

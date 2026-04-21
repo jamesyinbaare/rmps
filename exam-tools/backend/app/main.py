@@ -20,6 +20,7 @@ from app.routers import (
     documents,
     examination_candidates,
     examiners,
+    examiner_groups,
     examinations,
     inspectors,
     programmes,
@@ -182,6 +183,7 @@ app.include_router(programmes.router)
 app.include_router(subjects.router)
 app.include_router(examinations.router)
 app.include_router(examiners.router)
+app.include_router(examiner_groups.router)
 app.include_router(examination_candidates.router)
 app.include_router(script_control.router)
 app.include_router(script_allocation.router)

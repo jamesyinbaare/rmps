@@ -17,7 +17,6 @@ from app.models import (
     ExaminationSchedule,
     ExaminationSubjectScriptSeries,
     Examiner,
-    ExaminerAllowedZone,
     ExaminerSubject,
     ExaminerType,
     Region,
@@ -415,20 +414,16 @@ async def _seed_examiners(
     needed = SIM_EXAMINER_COUNT - start
     for i in range(needed):
         region = rng.choice(eligible_regions)
-        zone = rng.choice(sorted(region_to_zones[region], key=lambda z: z.value))
         examiner_type = rng.choices(types, weights=weights, k=1)[0]
         examiner = Examiner(
             examination_id=examination_id,
             name=f"Core Math Examiner {start + i + 1:03d}",
             examiner_type=examiner_type,
             region=region,
-            zone=zone,
         )
         session.add(examiner)
         await session.flush()
         session.add(ExaminerSubject(examiner_id=examiner.id, subject_id=subject_id))
-        for allowed_zone in sorted(region_to_zones[region], key=lambda z: z.value):
-            session.add(ExaminerAllowedZone(examiner_id=examiner.id, zone=allowed_zone))
 
 
 async def _validate_seed(

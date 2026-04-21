@@ -30,6 +30,7 @@ from app.schemas.script_allocation import (
     AllocationRunResponse,
     AllocationRunStatusSchema,
     AllocationScopeSchema,
+    AllocationSolveModeSchema,
     AllocationSolveOptions,
     AllocationUpdate,
     ExaminerTypeSchema,
@@ -238,6 +239,9 @@ async def update_allocation(
         row.enforce_single_series_per_examiner = bool(patch["enforce_single_series_per_examiner"])
     if "exclude_home_zone_or_region" in patch and patch["exclude_home_zone_or_region"] is not None:
         row.exclude_home_zone_or_region = bool(patch["exclude_home_zone_or_region"])
+    if "solve_mode" in patch and patch["solve_mode"] is not None:
+        sm = patch["solve_mode"]
+        row.solve_mode = sm.value if isinstance(sm, AllocationSolveModeSchema) else str(sm)
     try:
         await session.commit()
     except IntegrityError:
@@ -363,6 +367,9 @@ async def solve_allocation(
     allocation = await load_allocation_or_none(session, allocation_id)
     if allocation is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Allocation not found")
+    solve_mode_val = (
+        opts.solve_mode.value if isinstance(opts.solve_mode, AllocationSolveModeSchema) else str(opts.solve_mode)
+    )
     run = await run_allocation_solve(
         session,
         allocation,
@@ -374,6 +381,8 @@ async def solve_allocation(
         enforce_single_series_per_examiner=opts.enforce_single_series_per_examiner,
         cross_marking_rules=opts.cross_marking_rules,
         exclude_home_zone_or_region=opts.exclude_home_zone_or_region,
+        solve_mode=solve_mode_val,
+        marking_group_solve_order=opts.marking_group_solve_order,
     )
     await session.commit()
     run2 = await load_run_with_assignments(session, run.id)
@@ -383,6 +392,7 @@ async def solve_allocation(
 
 
 def _allocation_examiner_row(member: AllocationExaminer, examiner: Examiner) -> AllocationExaminerResponse:
+    gid = examiner.group_membership.group_id if examiner.group_membership is not None else None
     return AllocationExaminerResponse(
         allocation_id=member.allocation_id,
         examiner_id=member.examiner_id,
@@ -390,8 +400,9 @@ def _allocation_examiner_row(member: AllocationExaminer, examiner: Examiner) -> 
         examiner_type=_examiner_type_to_schema(examiner.examiner_type),
         subject_ids=[s.subject_id for s in examiner.subjects],
         region=examiner.region.value if examiner.region is not None else None,
-        zone=examiner.zone.value if examiner.zone is not None else None,
-        allowed_zones=[z.zone.value for z in examiner.allowed_zones],
+        zone=None,
+        allowed_zones=[],
+        examiner_group_id=gid,
         created_at=member.created_at,
     )
 
@@ -409,7 +420,7 @@ async def list_allocation_examiners(
         select(AllocationExaminer, Examiner)
         .join(Examiner, Examiner.id == AllocationExaminer.examiner_id)
         .where(AllocationExaminer.allocation_id == allocation_id)
-        .options(selectinload(Examiner.subjects), selectinload(Examiner.allowed_zones))
+        .options(selectinload(Examiner.subjects), selectinload(Examiner.group_membership))
         .order_by(Examiner.name)
     )
     rows = (await session.execute(stmt)).all()
@@ -430,7 +441,7 @@ async def list_allocation_examiner_import_candidates(
     stmt = (
         select(Examiner)
         .where(Examiner.examination_id == allocation.examination_id)
-        .options(selectinload(Examiner.subjects), selectinload(Examiner.allowed_zones))
+        .options(selectinload(Examiner.subjects), selectinload(Examiner.group_membership))
         .order_by(Examiner.name)
     )
     rows = list((await session.execute(stmt)).scalars().all())
@@ -439,6 +450,7 @@ async def list_allocation_examiner_import_candidates(
         subject_ids = {s.subject_id for s in examiner.subjects}
         if allocation.subject_id not in subject_ids or examiner.id in member_ids:
             continue
+        gid = examiner.group_membership.group_id if examiner.group_membership is not None else None
         out.append(
             AllocationExaminerResponse(
                 allocation_id=allocation_id,
@@ -447,8 +459,9 @@ async def list_allocation_examiner_import_candidates(
                 examiner_type=_examiner_type_to_schema(examiner.examiner_type),
                 subject_ids=sorted(subject_ids),
                 region=examiner.region.value if examiner.region is not None else None,
-                zone=examiner.zone.value if examiner.zone is not None else None,
-                allowed_zones=[z.zone.value for z in examiner.allowed_zones],
+                zone=None,
+                allowed_zones=[],
+                examiner_group_id=gid,
                 created_at=allocation.created_at,
             )
         )
@@ -470,7 +483,7 @@ async def import_allocation_examiners(
     stmt = (
         select(Examiner)
         .where(Examiner.id.in_(body.examiner_ids))
-        .options(selectinload(Examiner.subjects), selectinload(Examiner.allowed_zones))
+        .options(selectinload(Examiner.subjects), selectinload(Examiner.group_membership))
     )
     examiners = list((await session.execute(stmt)).scalars().all())
     examiners_by_id = {e.id: e for e in examiners}

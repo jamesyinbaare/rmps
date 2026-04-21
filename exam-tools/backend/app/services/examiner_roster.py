@@ -199,5 +199,4 @@ async def dataframe_row_to_examiner_fields(
         "subject_ids": [sid],
         "allowed_region": allowed_region,
         "restrict_zone": restrict,
-        "allowed_zones": [],
     }

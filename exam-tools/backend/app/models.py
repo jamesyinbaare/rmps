@@ -286,6 +286,12 @@ class Examination(Base):
         cascade="all, delete-orphan",
         order_by="Examiner.name",
     )
+    examiner_groups = relationship(
+        "ExaminerGroup",
+        back_populates="examination",
+        cascade="all, delete-orphan",
+        order_by="ExaminerGroup.name",
+    )
 
 
 class ExaminationSubjectScriptSeries(Base):
@@ -518,6 +524,7 @@ class Allocation(Base):
     fairness_weight = Column(Float, nullable=False, default=0.25)
     enforce_single_series_per_examiner = Column(Boolean, nullable=False, default=True)
     exclude_home_zone_or_region = Column(Boolean, nullable=False, default=True)
+    solve_mode = Column(String(16), nullable=False, default="monolithic")
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
 
@@ -583,6 +590,63 @@ class ScriptsAllocationQuota(Base):
     )
 
 
+class ExaminerGroup(Base):
+    """Per examination: cohort regions (examiner home regions) drive membership and envelope bucketing by school.region."""
+
+    __tablename__ = "examiner_groups"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    examination_id = Column(Integer, ForeignKey("examinations.id", ondelete="CASCADE"), nullable=False, index=True)
+    name = Column(String(255), nullable=False)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+
+    examination = relationship("Examination", back_populates="examiner_groups")
+    members = relationship(
+        "ExaminerGroupMember",
+        back_populates="group",
+        cascade="all, delete-orphan",
+    )
+    source_regions = relationship(
+        "ExaminerGroupSourceRegion",
+        back_populates="group",
+        cascade="all, delete-orphan",
+    )
+
+
+class ExaminerGroupMember(Base):
+    __tablename__ = "examiner_group_members"
+
+    group_id = Column(UUID(as_uuid=True), ForeignKey("examiner_groups.id", ondelete="CASCADE"), primary_key=True)
+    examiner_id = Column(UUID(as_uuid=True), ForeignKey("examiners.id", ondelete="CASCADE"), primary_key=True)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+
+    group = relationship("ExaminerGroup", back_populates="members")
+    examiner = relationship("Examiner", back_populates="group_membership")
+
+    __table_args__ = (UniqueConstraint("examiner_id", name="uq_examiner_group_member_examiner"),)
+
+
+class ExaminerGroupSourceRegion(Base):
+    """Cohort region: examiners with this home region belong to the group; schools in this region map to its script bucket."""
+
+    __tablename__ = "examiner_group_source_regions"
+
+    group_id = Column(UUID(as_uuid=True), ForeignKey("examiner_groups.id", ondelete="CASCADE"), primary_key=True)
+    examination_id = Column(Integer, ForeignKey("examinations.id", ondelete="CASCADE"), nullable=False, index=True)
+    region = Column(Enum(Region, create_constraint=False), primary_key=True)
+
+    group = relationship("ExaminerGroup", back_populates="source_regions")
+
+    __table_args__ = (
+        UniqueConstraint(
+            "examination_id",
+            "region",
+            name="uq_examiner_group_source_region_per_exam",
+        ),
+    )
+
+
 class Examiner(Base):
     """Examiner roster for an examination; eligible for script allocation for any campaign on that exam."""
 
@@ -597,8 +661,7 @@ class Examiner(Base):
     )
     name = Column(String(255), nullable=False)
     examiner_type = Column(Enum(ExaminerType, create_constraint=False), nullable=False)
-    region = Column(Enum(Region, create_constraint=False), nullable=True)
-    zone = Column(Enum(Zone, create_constraint=False), nullable=True)
+    region = Column(Enum(Region, create_constraint=False), nullable=False)
     deviation_weight = Column(
         Float,
         nullable=True,
@@ -613,10 +676,11 @@ class Examiner(Base):
         back_populates="examiner",
         cascade="all, delete-orphan",
     )
-    allowed_zones = relationship(
-        "ExaminerAllowedZone",
+    group_membership = relationship(
+        "ExaminerGroupMember",
         back_populates="examiner",
         cascade="all, delete-orphan",
+        uselist=False,
     )
     allocation_assignments = relationship(
         "AllocationAssignment",
@@ -640,17 +704,6 @@ class ExaminerSubject(Base):
 
     examiner = relationship("Examiner", back_populates="subjects")
     subject = relationship("Subject", backref="examiner_subject_links")
-
-
-class ExaminerAllowedZone(Base):
-    """Source school zones from which this examiner may receive scripts."""
-
-    __tablename__ = "examiner_allowed_zones"
-
-    examiner_id = Column(UUID(as_uuid=True), ForeignKey("examiners.id", ondelete="CASCADE"), primary_key=True)
-    zone = Column(Enum(Zone, create_constraint=False), primary_key=True)
-
-    examiner = relationship("Examiner", back_populates="allowed_zones")
 
 
 class AllocationRun(Base):

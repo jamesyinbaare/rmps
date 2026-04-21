@@ -4,7 +4,7 @@ from datetime import datetime
 from enum import Enum
 from uuid import UUID
 
-from pydantic import BaseModel, Field, field_validator, model_validator
+from pydantic import BaseModel, Field, field_validator
 
 
 class ExaminerTypeSchema(str, Enum):
@@ -26,6 +26,22 @@ class AllocationScopeSchema(str, Enum):
     region = "region"
 
 
+class AllocationSolveModeSchema(str, Enum):
+    """monolithic: one MILP over all examiners and envelopes. decomposed: by marking group then series."""
+
+    monolithic = "monolithic"
+    decomposed = "decomposed"
+
+
+class AllocationSubgroupStatusSchema(str, Enum):
+    optimal = "optimal"
+    stopped_feasible = "stopped_feasible"
+    skipped_empty = "skipped_empty"
+    infeasible = "infeasible"
+    timeout = "timeout"
+    error = "error"
+
+
 class AllocationCreate(BaseModel):
     examination_id: int
     name: str | None = Field(default=None, min_length=1, max_length=255)
@@ -44,6 +60,7 @@ class AllocationUpdate(BaseModel):
     fairness_weight: float | None = Field(default=None, ge=0)
     enforce_single_series_per_examiner: bool | None = None
     exclude_home_zone_or_region: bool | None = None
+    solve_mode: AllocationSolveModeSchema | None = None
 
 
 class AllocationResponse(BaseModel):
@@ -58,10 +75,18 @@ class AllocationResponse(BaseModel):
     fairness_weight: float
     enforce_single_series_per_examiner: bool
     exclude_home_zone_or_region: bool
+    solve_mode: AllocationSolveModeSchema
     created_at: datetime
     updated_at: datetime
 
     model_config = {"from_attributes": True}
+
+    @field_validator("solve_mode", mode="before")
+    @classmethod
+    def _coerce_solve_mode(cls, v: object) -> object:
+        if v is None or v == "":
+            return AllocationSolveModeSchema.monolithic
+        return v
 
     @field_validator("allocation_scope", mode="before")
     @classmethod
@@ -90,57 +115,17 @@ class AllocationResponse(BaseModel):
 class ExaminerCreate(BaseModel):
     name: str = Field(min_length=1, max_length=255)
     examiner_type: ExaminerTypeSchema
-    region: str | None = None
-    zone: str | None = None
+    region: str = Field(min_length=1, description="Examiner home region (Enum Region value).")
     subject_ids: list[int] = Field(default_factory=list)
-    allowed_zones: list[str] = Field(default_factory=list, description="Source school zones this examiner may mark.")
     deviation_weight: float | None = Field(default=None, gt=0)
-    allowed_region: str | None = Field(
-        default=None,
-        description="Examiner's region; all school zones in this region unless restrict_zone narrows to one.",
-    )
-    restrict_zone: str | None = Field(
-        default=None,
-        description="Optional zone letter within allowed_region (single zone within that region).",
-    )
-
-    @model_validator(mode="after")
-    def _zones_source(self) -> ExaminerCreate:
-        if self.allowed_zones:
-            raise ValueError("Use allowed_region and optional restrict_zone instead of allowed_zones")
-        if not self.allowed_region or not str(self.allowed_region).strip():
-            raise ValueError("allowed_region is required")
-        return self
 
 
 class ExaminerUpdate(BaseModel):
     name: str | None = Field(default=None, min_length=1, max_length=255)
     examiner_type: ExaminerTypeSchema | None = None
     region: str | None = None
-    zone: str | None = None
     subject_ids: list[int] | None = None
-    allowed_zones: list[str] | None = None
     deviation_weight: float | None = Field(default=None, gt=0)
-    allowed_region: str | None = None
-    restrict_zone: str | None = None
-
-    @model_validator(mode="after")
-    def _zones_source_update(self) -> ExaminerUpdate:
-        if self.allowed_zones is not None and (self.allowed_region is not None or self.restrict_zone is not None):
-            raise ValueError("Use either allowed_zones or allowed_region/restrict_zone, not both")
-        if self.allowed_zones is not None:
-            if len(self.allowed_zones) == 0:
-                raise ValueError("Use allowed_region and optional restrict_zone to set marking scope")
-            if len(self.allowed_zones) > 1:
-                raise ValueError(
-                    "allowed_zones may list at most one zone; use allowed_region to cover a whole region"
-                )
-        rz = self.restrict_zone
-        ar = self.allowed_region
-        if rz is not None and str(rz).strip():
-            if ar is None or not str(ar).strip():
-                raise ValueError("allowed_region is required when restrict_zone is set")
-        return self
 
 
 class ExaminerResponse(BaseModel):
@@ -148,21 +133,12 @@ class ExaminerResponse(BaseModel):
     examination_id: int
     name: str
     examiner_type: ExaminerTypeSchema
-    region: str | None
-    zone: str | None
+    region: str
     subject_ids: list[int]
-    allowed_zones: list[str]
     deviation_weight: float | None
+    examiner_group_id: UUID | None = None
     created_at: datetime
     updated_at: datetime
-    prefill_region: str | None = Field(
-        default=None,
-        description="When this examiner’s allowed zones match a full region, that region name for form prefill.",
-    )
-    prefill_zone: str | None = Field(
-        default=None,
-        description="When scope is a single zone, or a zone within a region, the zone letter for form prefill.",
-    )
 
     model_config = {"from_attributes": True}
 
@@ -174,8 +150,9 @@ class AllocationExaminerResponse(BaseModel):
     examiner_type: ExaminerTypeSchema
     subject_ids: list[int]
     region: str | None = None
-    zone: str | None = None
-    allowed_zones: list[str]
+    zone: str | None = Field(default=None, description="Deprecated; always null.")
+    allowed_zones: list[str] = Field(default_factory=list, description="Deprecated; always empty.")
+    examiner_group_id: UUID | None = None
     created_at: datetime
 
 
@@ -219,7 +196,7 @@ class AllocationSolveOptions(BaseModel):
     time_limit_sec: float = Field(default=120.0, ge=1, le=3600)
     allocation_scope: AllocationScopeSchema = Field(
         default=AllocationScopeSchema.zone,
-        description="Whether cross-marking and eligibility checks are evaluated by zone or by region.",
+        description="Deprecated; eligibility uses examiner group UUID cross_marking_rules only.",
     )
     fairness_weight: float = Field(
         default=0.25,
@@ -230,13 +207,21 @@ class AllocationSolveOptions(BaseModel):
         default=True,
         description="When true, each examiner receives scripts from at most one series number in a solve run.",
     )
-    cross_marking_rules: dict[str, list[str]] = Field(
-        default_factory=dict,
-        description="Mapping of examiner source zone/region to allowed script source zones/regions.",
+    cross_marking_rules: dict[str, list[str]] | None = Field(
+        default=None,
+        description="Marking group UUID -> allowed script cohort group UUIDs. Omit to use rules saved on the allocation.",
     )
     exclude_home_zone_or_region: bool = Field(
         default=True,
         description="Exclude scripts from an examiner home zone (and mapped home region when resolvable).",
+    )
+    solve_mode: AllocationSolveModeSchema = Field(
+        default=AllocationSolveModeSchema.monolithic,
+        description="monolithic: single MILP. decomposed: sequential marking groups, series-bucketed examiners, one MILP per subgroup.",
+    )
+    marking_group_solve_order: list[str] | None = Field(
+        default=None,
+        description="Marking group UUIDs first—later groups see only envelopes still unassigned. Omitted IDs append in sorted order.",
     )
 
 
@@ -270,6 +255,21 @@ class UnassignedEnvelopeItem(BaseModel):
     envelope_number: int
 
 
+class AllocationSubgroupItem(BaseModel):
+    marking_group_id: UUID
+    series_number: int
+    status: AllocationSubgroupStatusSchema
+    examiner_count: int = Field(ge=0)
+    envelope_count: int = Field(ge=0, description="Envelopes in this subproblem (reindexed pool size).")
+    eligible_pair_count: int = Field(ge=0)
+    objective_value: float | None = None
+    message: str | None = Field(default=None, description="Solver or skip reason.")
+    time_limit_allocated_sec: float | None = Field(
+        default=None,
+        description="HiGHS time limit passed for this subgroup MILP (decomposed runs).",
+    )
+
+
 class ExaminerSubjectRunSummary(BaseModel):
     examiner_id: UUID
     examiner_name: str
@@ -299,6 +299,14 @@ class AllocationRunResponse(BaseModel):
     assignments: list[AllocationAssignmentItem]
     unassigned_envelope_ids: list[UUID]
     unassigned_envelopes: list[UnassignedEnvelopeItem]
+    solve_mode: AllocationSolveModeSchema | None = Field(
+        default=None,
+        description="Echo of request mode when available (decomposed runs set this).",
+    )
+    subgroups: list[AllocationSubgroupItem] = Field(
+        default_factory=list,
+        description="Per marking group × series MILP when solve_mode is decomposed.",
+    )
 
     model_config = {"from_attributes": True}
 

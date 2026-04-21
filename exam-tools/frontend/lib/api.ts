@@ -1207,6 +1207,29 @@ export type ExaminerTypeApi = "chief_examiner" | "assistant_examiner" | "team_le
 
 export type AllocationRunStatusApi = "draft" | "optimal" | "infeasible" | "timeout" | "error";
 
+export type AllocationSolveModeApi = "monolithic" | "decomposed";
+
+export type AllocationSubgroupStatusApi =
+  | "optimal"
+  | "stopped_feasible"
+  | "skipped_empty"
+  | "infeasible"
+  | "timeout"
+  | "error";
+
+export type AllocationSubgroupItemApi = {
+  marking_group_id: string;
+  series_number: number;
+  status: AllocationSubgroupStatusApi;
+  examiner_count: number;
+  envelope_count: number;
+  eligible_pair_count: number;
+  objective_value: number | null;
+  message: string | null;
+  /** HiGHS time limit (seconds) for this subgroup when present. */
+  time_limit_allocated_sec?: number | null;
+};
+
 export type Allocation = {
   id: string;
   examination_id: number;
@@ -1219,6 +1242,8 @@ export type Allocation = {
   fairness_weight: number;
   enforce_single_series_per_examiner: boolean;
   exclude_home_zone_or_region: boolean;
+  /** Persisted solver strategy; default monolithic when absent (legacy API). */
+  solve_mode?: AllocationSolveModeApi | null;
   created_at: string;
   updated_at: string;
 };
@@ -1228,17 +1253,22 @@ export type ExaminerRow = {
   examination_id: number;
   name: string;
   examiner_type: ExaminerTypeApi;
-  region: string | null;
-  zone: string | null;
+  region: string;
   subject_ids: number[];
-  allowed_zones: string[];
   deviation_weight: number | null;
+  examiner_group_id: string | null;
   created_at: string;
   updated_at: string;
-  /** When allowed zones match a full region (API-derived). */
-  prefill_region?: string | null;
-  /** Single-zone scope or zone-within-region letter when inferrable. */
-  prefill_zone?: string | null;
+};
+
+export type ExaminerGroupRow = {
+  id: string;
+  examination_id: number;
+  name: string;
+  examiner_ids: string[];
+  source_regions: string[];
+  created_at: string;
+  updated_at: string;
 };
 
 export type ScriptsAllocationQuotaRow = {
@@ -1308,6 +1338,8 @@ export type AllocationRunDetail = {
   assignments: AllocationAssignmentItem[];
   unassigned_envelope_ids: string[];
   unassigned_envelopes: UnassignedEnvelopeItem[];
+  solve_mode?: AllocationSolveModeApi | null;
+  subgroups?: AllocationSubgroupItemApi[];
 };
 
 export type AllocationRunAssignmentUpsertPayload = {
@@ -1333,37 +1365,31 @@ export type AllocationUpdatePayload = {
   fairness_weight?: number;
   enforce_single_series_per_examiner?: boolean;
   exclude_home_zone_or_region?: boolean;
+  solve_mode?: AllocationSolveModeApi;
 };
 
 export type ExaminerCreatePayload = {
   name: string;
   examiner_type: ExaminerTypeApi;
-  region?: string | null;
-  zone?: string | null;
+  region: string;
   subject_ids: number[];
-  allowed_zones: string[];
   deviation_weight?: number | null;
-  /** Required. Allowed zones are derived from schools in this region unless restrict_zone narrows to one. */
-  allowed_region?: string | null;
-  /** Optional zone letter within allowed_region. */
-  restrict_zone?: string | null;
 };
 
 export type ExaminerUpdatePayload = {
   name?: string;
   examiner_type?: ExaminerTypeApi;
-  region?: string | null;
-  zone?: string | null;
+  region?: string;
   subject_ids?: number[];
-  allowed_zones?: string[];
   deviation_weight?: number | null;
-  allowed_region?: string | null;
-  restrict_zone?: string | null;
 };
 
 export type ScriptsAllocationQuotaReplacePayload = {
   items: ScriptsAllocationQuotaItem[];
 };
+
+/** @deprecated Legacy UI mode; use `solve_mode` on the API instead. */
+export type SourcePartitioningMode = "auto" | "monolithic" | "sequential";
 
 export type AllocationSolvePayload = {
   unassigned_penalty?: number;
@@ -1371,8 +1397,16 @@ export type AllocationSolvePayload = {
   allocation_scope?: "zone" | "region";
   fairness_weight?: number;
   enforce_single_series_per_examiner?: boolean;
-  cross_marking_rules?: Record<string, string[]>;
+  /** Omit to use rules already saved on the allocation (recommended after Save solver settings). */
+  cross_marking_rules?: Record<string, string[]> | null;
   exclude_home_zone_or_region?: boolean;
+  /** Default monolithic (single MILP). Decomposed: sequential marking groups + series buckets (see marking_group_solve_order). */
+  solve_mode?: AllocationSolveModeApi;
+  /**
+   * Marking group UUID order for decomposed solves (early groups claim envelopes first).
+   * Omitted groups append in sorted UUID order. Use mapping table top-to-bottom order from the UI.
+   */
+  marking_group_solve_order?: string[] | null;
 };
 
 export type AllocationExaminerRow = {
@@ -1381,9 +1415,8 @@ export type AllocationExaminerRow = {
   examiner_name: string;
   examiner_type: ExaminerTypeApi;
   subject_ids: number[];
-  region?: string | null;
-  zone?: string | null;
-  allowed_zones: string[];
+  region: string;
+  examiner_group_id: string | null;
   created_at: string;
 };
 
@@ -1478,6 +1511,70 @@ export async function updateExaminationExaminer(
 
 export async function deleteExaminationExaminer(examinationId: number, examinerId: string): Promise<void> {
   await apiJson(`/examinations/${examinationId}/examiners/${examinerId}`, { method: "DELETE" });
+}
+
+export async function listExaminerGroups(examinationId: number): Promise<ExaminerGroupRow[]> {
+  return apiJson<ExaminerGroupRow[]>(`/examinations/${examinationId}/examiner-groups`);
+}
+
+export async function createExaminerGroup(
+  examinationId: number,
+  payload: { name: string; source_regions?: string[] },
+): Promise<ExaminerGroupRow> {
+  return apiJson<ExaminerGroupRow>(`/examinations/${examinationId}/examiner-groups`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      name: payload.name,
+      source_regions: payload.source_regions ?? [],
+    }),
+  });
+}
+
+export async function updateExaminerGroup(
+  examinationId: number,
+  groupId: string,
+  payload: { name: string },
+): Promise<ExaminerGroupRow> {
+  return apiJson<ExaminerGroupRow>(`/examinations/${examinationId}/examiner-groups/${groupId}`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function deleteExaminerGroup(examinationId: number, groupId: string): Promise<void> {
+  await apiJson(`/examinations/${examinationId}/examiner-groups/${groupId}`, { method: "DELETE" });
+}
+
+export async function replaceExaminerGroupMembers(
+  examinationId: number,
+  groupId: string,
+  examinerIds: string[],
+): Promise<ExaminerGroupRow> {
+  return apiJson<ExaminerGroupRow>(
+    `/examinations/${examinationId}/examiner-groups/${groupId}/members`,
+    {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ examiner_ids: examinerIds }),
+    },
+  );
+}
+
+export async function replaceExaminerGroupSourceRegions(
+  examinationId: number,
+  groupId: string,
+  regions: string[],
+): Promise<ExaminerGroupRow> {
+  return apiJson<ExaminerGroupRow>(
+    `/examinations/${examinationId}/examiner-groups/${groupId}/source-regions`,
+    {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ regions }),
+    },
+  );
 }
 
 export async function listAllocationRuns(allocationId: string): Promise<AllocationRunListItem[]> {

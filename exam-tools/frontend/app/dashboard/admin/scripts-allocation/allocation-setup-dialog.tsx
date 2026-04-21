@@ -1,12 +1,15 @@
 "use client";
 
 import type { Dispatch, SetStateAction } from "react";
+import { useState } from "react";
 
+import { ExaminerGroupCreateModal } from "@/components/examiner-group-create-modal";
 import { SearchableCombobox } from "@/components/searchable-combobox";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import type { ExaminerTypeApi, Subject } from "@/lib/api";
+import type { ExaminerGroupRow, ExaminerTypeApi, Subject } from "@/lib/api";
 import { formInputClass } from "@/lib/form-classes";
+import { REGION_OPTIONS } from "@/lib/school-enums";
 
 const EXAMINER_TYPE_OPTIONS: { value: ExaminerTypeApi; label: string }[] = [
   { value: "chief_examiner", label: "Chief examiner" },
@@ -21,7 +24,7 @@ export type QuotaRowState = {
   quota_booklets: string;
 };
 
-export type RuleRowState = { rowKey: string; source: string; targets: string[] };
+export type RuleRowState = { rowKey: string; markingGroupId: string; targetGroupIds: string[] };
 
 const inputFocusRing = "focus:border-primary focus:outline-none focus:ring-2 focus:ring-ring/30";
 
@@ -40,24 +43,28 @@ type Props = {
   quotaError: string | null;
   onSaveQuotas: () => void;
   onAddQuotaRow: () => void;
-  solveScope: "zone" | "region";
-  onSolveScopeUserChange: (next: "zone" | "region") => void;
+  examinerGroups: ExaminerGroupRow[];
   fairnessWeight: string;
   setFairnessWeight: (v: string) => void;
   enforceSingleSeries: boolean;
   setEnforceSingleSeries: (v: boolean) => void;
   excludeHomeScope: boolean;
   setExcludeHomeScope: (v: boolean) => void;
+  solveMode: "monolithic" | "decomposed";
+  setSolveMode: (v: "monolithic" | "decomposed") => void;
   solveOptionsError: string | null;
   solveRuleRows: RuleRowState[];
   setSolveRuleRows: Dispatch<SetStateAction<RuleRowState[]>>;
-  scopeValuesForRules: string[];
-  ruleSourcesFullyAllocated: boolean;
+  ruleMarkingGroupsFullyAllocated: boolean;
   onAddRuleRow: () => void;
   onRemoveRuleRow: (rowKey: string) => void;
-  onRemoveRuleTarget: (rowKey: string, target: string) => void;
-  onToggleRuleTarget: (rowKey: string, value: string, checked: boolean) => void;
+  onRemoveRuleTarget: (rowKey: string, targetGroupId: string) => void;
+  onToggleRuleTarget: (rowKey: string, targetGroupId: string, checked: boolean) => void;
   onSaveSolverSettings: () => void;
+  solverSettingsSavedMessage: string | null;
+  examinationId: number | null;
+  onCreateExaminerGroup: (name: string, sourceRegions: string[]) => Promise<string | null>;
+  onRefreshExaminerGroups: () => Promise<void>;
 };
 
 export function AllocationSetupDialog({
@@ -75,28 +82,38 @@ export function AllocationSetupDialog({
   quotaError,
   onSaveQuotas,
   onAddQuotaRow,
-  solveScope,
-  onSolveScopeUserChange,
+  examinerGroups,
   fairnessWeight,
   setFairnessWeight,
   enforceSingleSeries,
   setEnforceSingleSeries,
   excludeHomeScope,
   setExcludeHomeScope,
+  solveMode,
+  setSolveMode,
   solveOptionsError,
   solveRuleRows,
   setSolveRuleRows,
-  scopeValuesForRules,
-  ruleSourcesFullyAllocated,
+  ruleMarkingGroupsFullyAllocated,
   onAddRuleRow,
   onRemoveRuleRow,
   onRemoveRuleTarget,
   onToggleRuleTarget,
   onSaveSolverSettings,
+  solverSettingsSavedMessage,
+  examinationId,
+  onCreateExaminerGroup,
+  onRefreshExaminerGroups,
 }: Props) {
+  const [createGroupModalOpen, setCreateGroupModalOpen] = useState(false);
+  const [groupPanelBusy, setGroupPanelBusy] = useState(false);
+  const [groupPanelError, setGroupPanelError] = useState<string | null>(null);
+
   if (!open) return null;
 
   const subjectEmptyText = subjects.length ? "No match." : "No subjects loaded.";
+  const groupOptions = examinerGroups.map((g) => ({ value: g.id, label: g.name }));
+  const regionOptionsForCreate = REGION_OPTIONS.map((r) => ({ value: r.value, label: r.label }));
 
   return (
     <div
@@ -119,12 +136,13 @@ export function AllocationSetupDialog({
             Configure allocation
           </h2>
           <p id="allocation-setup-desc" className="mt-1 text-xs text-muted-foreground">
-            Manage the examiner pool for this campaign, set booklet quotas, and configure solver scope, fairness, and
-            cross-marking rules. Saving quotas and saving solver settings use separate actions.
+            Manage the examiner pool for this campaign, set booklet quotas, and configure solver options and cross-marking
+            between examiner groups. Define groups on the examiner roster page. Each marking group may appear only once as
+            a row source.
           </p>
         </div>
 
-        <div className="min-h-0 flex-1 overflow-y-auto p-4 space-y-8">
+        <div className="min-h-0 flex-1 space-y-8 overflow-y-auto p-4">
           <section className="space-y-3" aria-labelledby="setup-pool-heading">
             <h3 id="setup-pool-heading" className="text-sm font-semibold text-card-foreground">
               Allocation pool
@@ -259,30 +277,78 @@ export function AllocationSetupDialog({
 
           <section className="space-y-3 border-t border-border pt-6" aria-labelledby="setup-solver-heading">
             <h3 id="setup-solver-heading" className="text-sm font-semibold text-card-foreground">
-              Solver and cross-marking
+              Solver and cross-marking (examiner groups)
             </h3>
             <p className="text-xs text-muted-foreground">
-              Allocation scope controls whether rules use zones or regions. Each source may appear only once. Saving
-              stores settings for this allocation (also persisted when you run solve from the main page).
+              Each row: marking group (whose examiners receive scripts) may mark script cohorts from the listed groups.
+              Create groups here (name + script regions) or on the examiner roster page; assign members on the roster.
             </p>
+            <div className="flex flex-wrap gap-2">
+              <Button
+                type="button"
+                size="sm"
+                variant="outline"
+                disabled={busy || groupPanelBusy || examinationId == null}
+                onClick={() => {
+                  setGroupPanelError(null);
+                  setCreateGroupModalOpen(true);
+                }}
+              >
+                New examiner group…
+              </Button>
+              <Button
+                type="button"
+                size="sm"
+                variant="outline"
+                disabled={busy || groupPanelBusy || examinationId == null}
+                onClick={() => {
+                  void (async () => {
+                    setGroupPanelError(null);
+                    setGroupPanelBusy(true);
+                    try {
+                      await onRefreshExaminerGroups();
+                    } catch (e) {
+                      setGroupPanelError(e instanceof Error ? e.message : "Refresh failed");
+                    } finally {
+                      setGroupPanelBusy(false);
+                    }
+                  })();
+                }}
+              >
+                Refresh list
+              </Button>
+            </div>
+            <ExaminerGroupCreateModal
+              open={createGroupModalOpen}
+              onClose={() => {
+                setCreateGroupModalOpen(false);
+                setGroupPanelError(null);
+              }}
+              busy={busy || groupPanelBusy}
+              error={groupPanelError}
+              regionOptions={regionOptionsForCreate}
+              zIndexClass="z-[100]"
+              onCreate={async (name, sourceRegions) => {
+                setGroupPanelError(null);
+                return onCreateExaminerGroup(name, sourceRegions);
+              }}
+            />
+            {groupPanelError ? (
+              <p className="rounded-md border border-destructive/40 bg-destructive/10 px-3 py-2 text-xs text-destructive">
+                {groupPanelError}
+              </p>
+            ) : null}
+            {examinerGroups.length < 2 ? (
+              <p className="rounded-md border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-xs text-amber-900 dark:text-amber-100">
+                Create at least two examiner groups with script regions and members before cross-marking rules are useful.
+              </p>
+            ) : null}
             {solveOptionsError ? (
               <p className="rounded-md border border-destructive/40 bg-destructive/10 px-3 py-2 text-xs text-destructive">
                 {solveOptionsError}
               </p>
             ) : null}
             <div className="grid gap-3 text-xs sm:grid-cols-2">
-              <label className="space-y-1">
-                <span className="font-medium text-foreground">Allocation scope</span>
-                <select
-                  className={`${formInputClass} h-9 min-w-40 w-full`}
-                  value={solveScope}
-                  onChange={(e) => onSolveScopeUserChange(e.target.value as "zone" | "region")}
-                  disabled={busy}
-                >
-                  <option value="zone">Zone</option>
-                  <option value="region">Region</option>
-                </select>
-              </label>
               <label className="space-y-1">
                 <span className="font-medium text-foreground">Fairness weight</span>
                 <input
@@ -311,7 +377,36 @@ export function AllocationSetupDialog({
                   onChange={(e) => setExcludeHomeScope(e.target.checked)}
                   disabled={busy}
                 />
-                Exclude examiner home zone/region
+                Also exclude examiner home region (stricter than cohort rule)
+              </label>
+              <label className="space-y-1 sm:col-span-2">
+                <span className="font-medium text-foreground">Solve strategy</span>
+                <select
+                  className={`${formInputClass} h-9 w-full max-w-xl`}
+                  value={solveMode}
+                  onChange={(e) => setSolveMode(e.target.value as "monolithic" | "decomposed")}
+                  disabled={busy}
+                  aria-describedby="solve-strategy-hint"
+                >
+                  <option value="monolithic">Single MILP — one combined solve over all examiners and envelopes</option>
+                  <option value="decomposed">
+                    Decomposed — sequential marking groups (table order, top first), series buckets by booklet ratio;
+                    smaller MILPs with per-stage progress
+                  </option>
+                </select>
+                <span id="solve-strategy-hint" className="block text-muted-foreground">
+                  {solveMode === "decomposed" ? (
+                    <>
+                      Later marking groups only see envelopes still unassigned. Order follows the cross-marking table top
+                      to bottom; put the most important marking group first.
+                    </>
+                  ) : (
+                    <>
+                      Best global fit to quotas in one pass. Use <strong>Decomposed</strong> for traceability or when the
+                      single solve is too large or hard to interpret.
+                    </>
+                  )}
+                </span>
               </label>
             </div>
 
@@ -322,9 +417,13 @@ export function AllocationSetupDialog({
                   size="sm"
                   variant="outline"
                   onClick={onAddRuleRow}
-                  disabled={busy || ruleSourcesFullyAllocated}
+                  disabled={busy || ruleMarkingGroupsFullyAllocated || examinerGroups.length === 0}
                   title={
-                    ruleSourcesFullyAllocated ? `Every ${solveScope} is already used as a source` : undefined
+                    ruleMarkingGroupsFullyAllocated
+                      ? "Each marking group is already a row source"
+                      : examinerGroups.length === 0
+                        ? "Create examiner groups first"
+                        : undefined
                   }
                 >
                   Add mapping row
@@ -333,8 +432,8 @@ export function AllocationSetupDialog({
               <table className="w-full min-w-[560px] border-collapse text-sm">
                 <thead>
                   <tr className="border-b border-border bg-muted/80 text-left text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-                    <th className="px-3 py-2.5">Source {solveScope}</th>
-                    <th className="px-3 py-2.5">Allowed target {solveScope}s</th>
+                    <th className="px-3 py-2.5">Marking group (examiners)</th>
+                    <th className="px-3 py-2.5">Allowed script cohort groups</th>
                     <th className="px-3 py-2.5 text-right"> </th>
                   </tr>
                 </thead>
@@ -342,39 +441,41 @@ export function AllocationSetupDialog({
                   {solveRuleRows.length === 0 ? (
                     <tr>
                       <td colSpan={3} className="px-3 py-8 text-center text-muted-foreground">
-                        No mapping rules configured. Eligibility falls back to examiner scope.
+                        No mapping rules. The solver requires at least one marking group → script cohort mapping.
                       </td>
                     </tr>
                   ) : (
                     solveRuleRows.map((row) => {
                       const takenElsewhere = new Set(
                         solveRuleRows
-                          .filter((x) => x.rowKey !== row.rowKey && x.source.trim() !== "")
-                          .map((x) => x.source.trim()),
+                          .filter((x) => x.rowKey !== row.rowKey && x.markingGroupId.trim() !== "")
+                          .map((x) => x.markingGroupId.trim()),
                       );
-                      const sourceOptions = scopeValuesForRules.filter(
-                        (v) => !takenElsewhere.has(v) || v === row.source,
+                      const sourceOptions = groupOptions.filter(
+                        (o) => !takenElsewhere.has(o.value) || o.value === row.markingGroupId,
                       );
-                      const sortedTargets = [...row.targets].sort((a, b) =>
-                        a.localeCompare(b, undefined, { sensitivity: "base" }),
-                      );
+                      const sortedTargets = [...row.targetGroupIds].sort((a, b) => {
+                        const na = groupOptions.find((g) => g.value === a)?.label ?? a;
+                        const nb = groupOptions.find((g) => g.value === b)?.label ?? b;
+                        return na.localeCompare(nb, undefined, { sensitivity: "base" });
+                      });
                       return (
                         <tr key={row.rowKey} className="border-b border-border/80">
                           <td className="px-3 py-2.5 align-top">
                             <select
                               className={`${formInputClass} w-full min-w-[180px]`}
-                              value={row.source}
+                              value={row.markingGroupId}
                               onChange={(e) => {
                                 const value = e.target.value;
                                 setSolveRuleRows((prev) =>
-                                  prev.map((x) => (x.rowKey === row.rowKey ? { ...x, source: value } : x)),
+                                  prev.map((x) => (x.rowKey === row.rowKey ? { ...x, markingGroupId: value } : x)),
                                 );
                               }}
                             >
-                              <option value="">Select source…</option>
-                              {sourceOptions.map((value) => (
-                                <option key={value} value={value}>
-                                  {value}
+                              <option value="">Select marking group…</option>
+                              {sourceOptions.map((o) => (
+                                <option key={o.value} value={o.value}>
+                                  {o.label}
                                 </option>
                               ))}
                             </select>
@@ -382,19 +483,19 @@ export function AllocationSetupDialog({
                           <td className="px-3 py-2.5 align-top">
                             <div className="space-y-2">
                               <div className="max-h-44 overflow-y-auto rounded-md border border-border bg-muted/20 p-2">
-                                <div className="grid grid-cols-2 gap-x-2 gap-y-1.5 sm:grid-cols-3">
-                                  {scopeValuesForRules.map((value) => (
+                                <div className="grid grid-cols-1 gap-x-2 gap-y-1.5 sm:grid-cols-2">
+                                  {groupOptions.map((o) => (
                                     <label
-                                      key={value}
+                                      key={o.value}
                                       className="flex cursor-pointer items-center gap-2 text-xs text-foreground"
                                     >
                                       <input
                                         type="checkbox"
                                         className="shrink-0 rounded border-border"
-                                        checked={row.targets.includes(value)}
-                                        onChange={(e) => onToggleRuleTarget(row.rowKey, value, e.target.checked)}
+                                        checked={row.targetGroupIds.includes(o.value)}
+                                        onChange={(e) => onToggleRuleTarget(row.rowKey, o.value, e.target.checked)}
                                       />
-                                      <span className="min-w-0 truncate">{value}</span>
+                                      <span className="min-w-0 truncate">{o.label}</span>
                                     </label>
                                   ))}
                                 </div>
@@ -403,12 +504,12 @@ export function AllocationSetupDialog({
                                 <div className="flex flex-wrap gap-2">
                                   {sortedTargets.map((target) => (
                                     <Badge key={target} variant="secondary" className="gap-1 pr-1">
-                                      <span>{target}</span>
+                                      <span>{groupOptions.find((g) => g.value === target)?.label ?? target}</span>
                                       <button
                                         type="button"
                                         className="rounded px-1 text-xs hover:bg-muted"
                                         onClick={() => onRemoveRuleTarget(row.rowKey, target)}
-                                        aria-label={`Remove ${target}`}
+                                        aria-label="Remove target"
                                       >
                                         ×
                                       </button>
@@ -416,7 +517,7 @@ export function AllocationSetupDialog({
                                   ))}
                                 </div>
                               ) : (
-                                <p className="text-xs text-muted-foreground">No targets selected.</p>
+                                <p className="text-xs text-muted-foreground">No cohort groups selected.</p>
                               )}
                             </div>
                           </td>
@@ -437,6 +538,11 @@ export function AllocationSetupDialog({
                 </tbody>
               </table>
             </div>
+            {solverSettingsSavedMessage ? (
+              <p className="rounded-md border border-emerald-500/40 bg-emerald-500/10 px-3 py-2 text-xs text-emerald-900 dark:text-emerald-100">
+                {solverSettingsSavedMessage}
+              </p>
+            ) : null}
             <Button type="button" disabled={busy} onClick={onSaveSolverSettings}>
               Save solver settings
             </Button>

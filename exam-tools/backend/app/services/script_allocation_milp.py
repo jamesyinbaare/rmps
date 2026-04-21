@@ -36,6 +36,27 @@ class MilpSolveResult:
     message: str
     success: bool
     status_code: int
+    proven_optimal: bool = True
+
+
+def _incumbent_assignments_from_x(
+    x_prefix: np.ndarray,
+    pairs: list[EligiblePair],
+    p_count: int,
+) -> list[EligiblePair] | None:
+    """Extract 0/1 assignment from solution; None if infeasible (e.g. two picks for same envelope)."""
+    chosen: list[EligiblePair] = []
+    env_seen: set[int] = set()
+    for k in range(p_count):
+        if float(x_prefix[k]) <= 0.5:
+            continue
+        p = pairs[k]
+        ei = int(p.envelope_index)
+        if ei in env_seen:
+            return None
+        env_seen.add(ei)
+        chosen.append(p)
+    return chosen
 
 
 def solve_script_allocation_milp(
@@ -59,6 +80,7 @@ def solve_script_allocation_milp(
             message="No eligible examiner–envelope pairs",
             success=False,
             status_code=-1,
+            proven_optimal=False,
         )
     p_count = len(pairs)
     m_count = len(slack_targets)
@@ -221,13 +243,32 @@ def solve_script_allocation_milp(
         options=options,
     )
 
+    st = int(res.status)
+    # SciPy: status 0 = optimal; 1 = time/iteration limit (HiGHS may still return a feasible MIP incumbent).
+    if res.x is not None and not res.success and st == 1:
+        x = res.x[:p_count]
+        inc = _incumbent_assignments_from_x(x, pairs, p_count)
+        if inc is not None and len(inc) > 0:
+            return MilpSolveResult(
+                pair_assignments=inc,
+                objective=float(res.fun) if res.fun is not None else None,
+                message=(
+                    "Time or iteration limit reached; using best feasible solution found "
+                    "(not proven optimal)."
+                ),
+                success=True,
+                status_code=st,
+                proven_optimal=False,
+            )
+
     if res.x is None or not res.success:
         return MilpSolveResult(
             pair_assignments=[],
             objective=float(res.fun) if res.fun is not None else None,
             message=res.message or "Solver did not return a feasible solution",
             success=False,
-            status_code=int(res.status),
+            status_code=st,
+            proven_optimal=False,
         )
 
     x = res.x[:p_count]
@@ -240,5 +281,5 @@ def solve_script_allocation_milp(
         objective=float(res.fun),
         message=res.message or "ok",
         success=True,
-        status_code=int(res.status),
+        status_code=st,
     )

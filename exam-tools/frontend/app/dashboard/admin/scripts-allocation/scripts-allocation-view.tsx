@@ -10,6 +10,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
   apiJson,
+  createExaminerGroup,
   SCRIPTS_ALLOCATION_FORM_MAX_COPIES,
   deleteAllocationRunAssignment,
   downloadScriptsAllocationFormPdf,
@@ -21,6 +22,7 @@ import {
   listAllocationExaminers,
   listAllocationRuns,
   listAllSubjects,
+  listExaminerGroups,
   listScriptsAllocationQuotas,
   removeAllocationExaminer,
   replaceScriptsAllocationQuotas,
@@ -33,6 +35,7 @@ import {
   type AllocationRunListItem,
   type AllocationRunStatusApi,
   type AllocationSolvePayload,
+  type ExaminerGroupRow,
   type ExaminerTypeApi,
   type Examination,
   type ExaminerSubjectRunSummary,
@@ -44,26 +47,21 @@ import { formInputClass, formLabelClass } from "@/lib/form-classes";
 import { AllocationSetupDialog } from "./allocation-setup-dialog";
 import { scriptsAllocationHref } from "./scripts-allocation-href";
 
-const REGION_OPTIONS = [
-  "Ashanti",
-  "Bono",
-  "Bono East",
-  "Ahafo",
-  "Central",
-  "Eastern",
-  "Greater Accra",
-  "Northern",
-  "North East",
-  "Savannah",
-  "Upper East",
-  "Upper West",
-  "Volta",
-  "Oti",
-  "Western",
-  "Western North",
-] as const;
+const UUID_RE =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
-const ZONE_OPTIONS = "ABCDEFGHIJKLMNOPQRSTUVWXYZ".split("");
+function isUuidString(s: string): boolean {
+  return UUID_RE.test(s.trim());
+}
+
+function summarizeSolveMode(m: "monolithic" | "decomposed"): string {
+  if (m === "monolithic") return "single MILP";
+  return "decomposed (groups + series)";
+}
+
+function coerceSolveModeFromAllocation(v: string | null | undefined): "monolithic" | "decomposed" {
+  return v === "decomposed" ? "decomposed" : "monolithic";
+}
 
 /** Per-examiner allocation form PDF copies (row actions); backend allows up to 20 for bulk only. */
 const SCRIPTS_ALLOCATION_ROW_PDF_MAX_COPIES = 3;
@@ -91,6 +89,10 @@ function runStatusLabel(status: AllocationRunStatusApi): string {
   return status.replace(/_/g, " ");
 }
 
+function subgroupStatusLabel(status: string): string {
+  return status.replace(/_/g, " ");
+}
+
 function RunStatusBadge({ status }: { status: AllocationRunStatusApi }) {
   const isError = status === "infeasible" || status === "timeout" || status === "error";
   if (status === "optimal") {
@@ -115,14 +117,10 @@ function examinerTypeLabel(t: ExaminerTypeApi): string {
   return "Assistant";
 }
 
-/** Examiner home region and optional zone letter (not marking-scope source zones). */
-function examinerHomeCell(region: string | null | undefined, zone: string | null | undefined): string {
+/** Examiner home (recruitment) region. */
+function examinerHomeCell(region: string | null | undefined): string {
   const r = region?.trim() ?? "";
-  const z = zone?.trim() ?? "";
-  if (r && z) return `${r} / ${z}`;
-  if (r) return r;
-  if (z) return z;
-  return "—";
+  return r || "—";
 }
 
 export type ScriptsAllocationViewProps = {
@@ -168,11 +166,13 @@ export function ScriptsAllocationView({
   const [setupModalOpen, setSetupModalOpen] = useState(false);
   const [quotaSaveError, setQuotaSaveError] = useState<string | null>(null);
   const [poolModalOpen, setPoolModalOpen] = useState(false);
-  const [solveScope, setSolveScope] = useState<"zone" | "region">("zone");
+  const [examinerGroups, setExaminerGroups] = useState<ExaminerGroupRow[]>([]);
   const [fairnessWeight, setFairnessWeight] = useState("0.25");
   const [enforceSingleSeries, setEnforceSingleSeries] = useState(true);
   const [excludeHomeScope, setExcludeHomeScope] = useState(true);
-  const [solveRuleRows, setSolveRuleRows] = useState<Array<{ rowKey: string; source: string; targets: string[] }>>([]);
+  const [solveRuleRows, setSolveRuleRows] = useState<
+    Array<{ rowKey: string; markingGroupId: string; targetGroupIds: string[] }>
+  >([]);
   const [solveOptionsError, setSolveOptionsError] = useState<string | null>(null);
   const [poolModalFilter, setPoolModalFilter] = useState("");
   const [importModalFilter, setImportModalFilter] = useState("");
@@ -189,6 +189,8 @@ export function ScriptsAllocationView({
   const [allocationFormPdfCopies, setAllocationFormPdfCopies] = useState(1);
   const [allocationFormRowPdfCopies, setAllocationFormRowPdfCopies] = useState<Record<string, number>>({});
   const [allocationFormPdfBusy, setAllocationFormPdfBusy] = useState(false);
+  const [solverSettingsSavedMessage, setSolverSettingsSavedMessage] = useState<string | null>(null);
+  const [solveMode, setSolveMode] = useState<"monolithic" | "decomposed">("monolithic");
 
   const draftSid = Number(draftSubjectId);
   const draftPap = Number(draftPaper);
@@ -244,22 +246,35 @@ export function ScriptsAllocationView({
     return modalCandidates.filter((c) => c.examiner_name.toLowerCase().includes(q));
   }, [modalCandidates, importModalFilter]);
 
-  const scopeValuesForRules = useMemo(
-    () => (solveScope === "zone" ? [...ZONE_OPTIONS] : [...REGION_OPTIONS]),
-    [solveScope],
-  );
-
-  const ruleSourcesFullyAllocated = useMemo(() => {
+  const ruleMarkingGroupsFullyAllocated = useMemo(() => {
     const taken = new Set(
-      solveRuleRows.map((r) => r.source.trim()).filter((s) => s.length > 0),
+      solveRuleRows.map((r) => r.markingGroupId.trim()).filter((s) => s.length > 0),
     );
-    return taken.size >= scopeValuesForRules.length;
-  }, [solveRuleRows, scopeValuesForRules.length]);
+    return examinerGroups.length > 0 && taken.size >= examinerGroups.length;
+  }, [solveRuleRows, examinerGroups.length]);
 
   const crossMarkingSourceCount = useMemo(
-    () => solveRuleRows.filter((r) => r.source.trim() !== "").length,
+    () => solveRuleRows.filter((r) => r.markingGroupId.trim() !== "").length,
     [solveRuleRows],
   );
+
+  const crossMarkingSummaryText = useMemo(() => {
+    const nameById = new Map(examinerGroups.map((g) => [g.id, g.name]));
+    const parts = solveRuleRows
+      .filter((r) => r.markingGroupId.trim() !== "" && r.targetGroupIds.length > 0)
+      .map((r) => {
+        const mid = r.markingGroupId.trim();
+        const src = nameById.get(mid) ?? `${mid.slice(0, 8)}…`;
+        const tgts = r.targetGroupIds
+          .map((id) => id.trim())
+          .filter(Boolean)
+          .map((id) => nameById.get(id) ?? `${id.slice(0, 8)}…`)
+          .join(", ");
+        return `${src} → ${tgts}`;
+      });
+    if (parts.length === 0) return "no group rules configured yet";
+    return parts.join("; ");
+  }, [examinerGroups, solveRuleRows]);
 
   const runSummariesForSubject = useMemo((): ExaminerSubjectRunSummary[] => {
     if (!lastRun || !selectedAllocation) return [];
@@ -409,43 +424,25 @@ export function ScriptsAllocationView({
     if (rawPaper != null && rawPaper !== "") setDraftPaper(rawPaper);
   }, [searchParams]);
 
-  function normalizeAllocationScope(raw: Allocation["allocation_scope"] | string | undefined): "zone" | "region" {
-    const s = typeof raw === "string" ? raw.toLowerCase().trim() : String(raw ?? "").toLowerCase().trim();
-    return s === "region" ? "region" : "zone";
-  }
-
   function hydrateSolverStateFromAllocation(row: Allocation) {
-    const scope = normalizeAllocationScope(row.allocation_scope);
     const rules = row.cross_marking_rules ?? {};
-    const rows = Object.entries(rules).map(([source, targets]) => {
-      const src = String(source).trim();
-      const tgt = Array.isArray(targets)
-        ? targets.map((t) => String(t).trim()).filter(Boolean)
-        : [];
-      return {
-        rowKey: `saved-${src}-${Math.random().toString(36).slice(2)}`,
-        source: src,
-        targets: tgt,
-      };
-    });
-    setSolveScope(scope);
+    const rows = Object.entries(rules)
+      .filter(([k]) => isUuidString(String(k)))
+      .map(([markingGroupId, targets]) => {
+        const tgt = Array.isArray(targets)
+          ? targets.map((t) => String(t).trim()).filter((x) => isUuidString(x))
+          : [];
+        return {
+          rowKey: `saved-${String(markingGroupId).trim()}-${Math.random().toString(36).slice(2)}`,
+          markingGroupId: String(markingGroupId).trim(),
+          targetGroupIds: tgt,
+        };
+      });
     setFairnessWeight(String(row.fairness_weight ?? 0.25));
     setEnforceSingleSeries(row.enforce_single_series_per_examiner ?? true);
     setExcludeHomeScope(row.exclude_home_zone_or_region ?? true);
+    setSolveMode(coerceSolveModeFromAllocation(row.solve_mode ?? undefined));
     setSolveRuleRows(rows);
-  }
-
-  function onSolveScopeUserChange(next: "zone" | "region") {
-    if (next === solveScope) return;
-    const validValues = new Set(next === "zone" ? ZONE_OPTIONS : REGION_OPTIONS);
-    setSolveScope(next);
-    setSolveRuleRows((prev) =>
-      prev.map((row) => ({
-        ...row,
-        source: validValues.has(row.source) ? row.source : "",
-        targets: row.targets.filter((target) => validValues.has(target)),
-      })),
-    );
   }
 
   const loadAllocationDetail = useCallback(async (id: string) => {
@@ -453,6 +450,11 @@ export function ScriptsAllocationView({
     try {
       const alloc = await getAllocation(id);
       hydrateSolverStateFromAllocation(alloc);
+      try {
+        setExaminerGroups(await listExaminerGroups(alloc.examination_id));
+      } catch {
+        setExaminerGroups([]);
+      }
       const [runList, qList, selected] = await Promise.all([
         listAllocationRuns(id),
         listScriptsAllocationQuotas(id),
@@ -485,6 +487,52 @@ export function ScriptsAllocationView({
     }
   }, []);
 
+  const refreshExaminerGroups = useCallback(async (eid: number) => {
+    try {
+      setExaminerGroups(await listExaminerGroups(eid));
+    } catch {
+      setExaminerGroups([]);
+    }
+  }, []);
+
+  const examinationIdForSetup = selectedAllocation?.examination_id ?? examId;
+
+  const handleCreateExaminerGroupInSetup = useCallback(
+    async (name: string, sourceRegions: string[]): Promise<string | null> => {
+      const eid = examinationIdForSetup;
+      if (eid == null) return "No examination selected.";
+      try {
+        await createExaminerGroup(eid, { name, source_regions: sourceRegions });
+        await refreshExaminerGroups(eid);
+        return null;
+      } catch (e) {
+        return e instanceof Error ? e.message : "Failed to create group";
+      }
+    },
+    [examinationIdForSetup, refreshExaminerGroups],
+  );
+
+  const handleRefreshExaminerGroupsForSetup = useCallback(async () => {
+    const eid = examinationIdForSetup;
+    if (eid == null) throw new Error("No examination selected.");
+    await refreshExaminerGroups(eid);
+  }, [examinationIdForSetup, refreshExaminerGroups]);
+
+  useEffect(() => {
+    if (examId == null) {
+      setExaminerGroups([]);
+      return;
+    }
+    void refreshExaminerGroups(examId);
+  }, [examId, refreshExaminerGroups]);
+
+  useEffect(() => {
+    if (!setupModalOpen || !sessionReady) return;
+    const eid = examinationIdForSetup;
+    if (eid == null) return;
+    void refreshExaminerGroups(eid);
+  }, [setupModalOpen, sessionReady, examinationIdForSetup, refreshExaminerGroups]);
+
   /** Hydrate session from `allocation` query (must match `exam`). */
   useEffect(() => {
     const rawAlloc = searchParams.get("allocation");
@@ -507,6 +555,7 @@ export function ScriptsAllocationView({
         setDraftSubjectId(String(row.subject_id));
         setDraftPaper(String(row.paper_number));
         hydrateSolverStateFromAllocation(row);
+        void refreshExaminerGroups(eid);
       } catch {
         if (!cancelled) router.replace(scriptsAllocationHref({ exam: eid, allocationId: null }, linkOpts), { scroll: false });
       }
@@ -514,7 +563,7 @@ export function ScriptsAllocationView({
     return () => {
       cancelled = true;
     };
-  }, [searchParams, router, linkOpts]);
+  }, [searchParams, router, linkOpts, refreshExaminerGroups]);
 
   useEffect(() => {
     if (sessionReady && allocationId) {
@@ -533,6 +582,7 @@ export function ScriptsAllocationView({
       setUnassignedListModalOpen(false);
       setExaminerLoadsSearch("");
       setExaminerLoadsTypeFilter("");
+      setExaminerGroups([]);
       hadSessionReadyRef.current = false;
     }
   }, [sessionReady, allocationId, loadAllocationDetail]);
@@ -876,7 +926,7 @@ export function ScriptsAllocationView({
   function addRuleRow() {
     setSolveRuleRows((prev) => [
       ...prev,
-      { rowKey: `rule-${Date.now()}-${Math.random().toString(36).slice(2)}`, source: "", targets: [] },
+      { rowKey: `rule-${Date.now()}-${Math.random().toString(36).slice(2)}`, markingGroupId: "", targetGroupIds: [] },
     ]);
   }
 
@@ -884,22 +934,26 @@ export function ScriptsAllocationView({
     setSolveRuleRows((prev) => prev.filter((row) => row.rowKey !== rowKey));
   }
 
-  function removeRuleTarget(rowKey: string, target: string) {
+  function removeRuleTarget(rowKey: string, targetGroupId: string) {
     setSolveRuleRows((prev) =>
       prev.map((row) =>
-        row.rowKey === rowKey ? { ...row, targets: row.targets.filter((x) => x !== target) } : row,
+        row.rowKey === rowKey
+          ? { ...row, targetGroupIds: row.targetGroupIds.filter((x) => x !== targetGroupId) }
+          : row,
       ),
     );
   }
 
-  function toggleRuleTarget(rowKey: string, value: string, checked: boolean) {
+  function toggleRuleTarget(rowKey: string, targetGroupId: string, checked: boolean) {
     setSolveRuleRows((prev) =>
       prev.map((row) => {
         if (row.rowKey !== rowKey) return row;
         if (checked) {
-          return row.targets.includes(value) ? row : { ...row, targets: [...row.targets, value] };
+          return row.targetGroupIds.includes(targetGroupId)
+            ? row
+            : { ...row, targetGroupIds: [...row.targetGroupIds, targetGroupId] };
         }
-        return { ...row, targets: row.targets.filter((t) => t !== value) };
+        return { ...row, targetGroupIds: row.targetGroupIds.filter((t) => t !== targetGroupId) };
       }),
     );
   }
@@ -916,11 +970,12 @@ export function ScriptsAllocationView({
     setSolveOptionsError(null);
     try {
       const updated = await updateAllocation(allocationId, {
-        allocation_scope: solveScope,
+        allocation_scope: "region",
         cross_marking_rules: crossRules,
         fairness_weight: fair,
         enforce_single_series_per_examiner: enforceSingleSeries,
         exclude_home_zone_or_region: excludeHomeScope,
+        solve_mode: solveMode,
       });
       setLockedCampaign(updated);
       return true;
@@ -934,43 +989,60 @@ export function ScriptsAllocationView({
     if (!allocationId || !sessionReady) return;
     setBusy(true);
     setLoadError(null);
+    setSolverSettingsSavedMessage(null);
     try {
-      await persistAllocationSettingsToServer();
+      const ok = await persistAllocationSettingsToServer();
+      if (ok) {
+        setSolverSettingsSavedMessage("Solver settings and cross-marking rules are saved on this allocation.");
+        window.setTimeout(() => setSolverSettingsSavedMessage(null), 6000);
+      }
     } finally {
       setBusy(false);
     }
   }
 
   function buildCrossMarkingRules(): Record<string, string[]> | null {
-    const validValues = new Set(solveScope === "zone" ? ZONE_OPTIONS : REGION_OPTIONS);
+    const gid = new Set(examinerGroups.map((g) => g.id));
     const out: Record<string, string[]> = {};
-    const seenSources = new Set<string>();
+    const seenMarking = new Set<string>();
     for (const row of solveRuleRows) {
-      const source = row.source.trim();
-      const targets = row.targets.map((token) => token.trim()).filter(Boolean);
-      if (!source && targets.length === 0) continue;
-      if (!source || targets.length === 0) {
-        setSolveOptionsError("Each mapping row must have both source and at least one target.");
+      const marking = row.markingGroupId.trim();
+      const targets = row.targetGroupIds.map((t) => t.trim()).filter(Boolean);
+      if (!marking && targets.length === 0) continue;
+      if (!marking || targets.length === 0) {
+        setSolveOptionsError("Each mapping row must have a marking group and at least one script cohort group.");
         return null;
       }
-      if (seenSources.has(source)) {
-        setSolveOptionsError(
-          `Duplicate source ${solveScope} "${source}". Each zone or region can only be a source once.`,
-        );
+      if (!isUuidString(marking)) {
+        setSolveOptionsError(`Invalid marking group id: ${marking}`);
         return null;
       }
-      seenSources.add(source);
-      if (!validValues.has(source)) {
-        setSolveOptionsError(`Unknown source ${solveScope}: ${source}`);
+      if (seenMarking.has(marking)) {
+        setSolveOptionsError("Duplicate marking group in rules; each marking group may only appear once.");
         return null;
       }
-      for (const target of targets) {
-        if (!validValues.has(target)) {
-          setSolveOptionsError(`Unknown target ${solveScope}: ${target}`);
+      seenMarking.add(marking);
+      if (!gid.has(marking)) {
+        setSolveOptionsError(`Unknown marking group (refresh groups from roster): ${marking}`);
+        return null;
+      }
+      for (const t of targets) {
+        if (!isUuidString(t)) {
+          setSolveOptionsError(`Invalid target group id: ${t}`);
+          return null;
+        }
+        if (!gid.has(t)) {
+          setSolveOptionsError(`Unknown script cohort group: ${t}`);
           return null;
         }
       }
-      out[source] = targets;
+      out[marking] = targets;
+    }
+    if (Object.keys(out).length === 0) {
+      setSolveOptionsError(
+        "Add at least one cross-marking row: pick a marking group and one or more allowed script cohort groups (then Save solver settings or run solve).",
+      );
+      return null;
     }
     return out;
   }
@@ -980,19 +1052,20 @@ export function ScriptsAllocationView({
     const saved = await persistAllocationSettingsToServer();
     if (!saved) return;
     const fair = Number(fairnessWeight);
-    const crossRules = buildCrossMarkingRules();
-    if (crossRules == null) return;
     setBusy(true);
     setLoadError(null);
     try {
+      const rowOrder = solveRuleRows.map((r) => r.markingGroupId.trim()).filter((s) => s.length > 0);
       const payload: AllocationSolvePayload = {
         unassigned_penalty: 1.0,
         time_limit_sec: 120,
-        allocation_scope: solveScope,
+        allocation_scope: "region",
         fairness_weight: fair,
         enforce_single_series_per_examiner: enforceSingleSeries,
         exclude_home_zone_or_region: excludeHomeScope,
-        cross_marking_rules: crossRules,
+        cross_marking_rules: null,
+        solve_mode: solveMode,
+        ...(solveMode === "decomposed" && rowOrder.length > 0 ? { marking_group_solve_order: rowOrder } : {}),
       };
       const detail = await solveAllocation(allocationId, payload);
       setLastRun(detail);
@@ -1020,12 +1093,13 @@ export function ScriptsAllocationView({
     setExaminerLoadsTypeFilter("");
     setUnassignedListModalOpen(false);
     setStartError(null);
-    setSolveScope("zone");
     setFairnessWeight("0.25");
     setEnforceSingleSeries(true);
     setExcludeHomeScope(true);
     setSolveRuleRows([]);
     setSolveOptionsError(null);
+    setSolveMode("monolithic");
+    setExaminerGroups([]);
     if (!next) {
       setExamId(null);
       router.replace(scriptsAllocationHref({ exam: null, allocationId: null }, linkOpts), { scroll: false });
@@ -1316,7 +1390,8 @@ export function ScriptsAllocationView({
               <span className="font-medium text-foreground">Pool:</span>{" "}
               {poolRows.length === 0 ? "none yet" : `${poolRows.length} examiner${poolRows.length === 1 ? "" : "s"}`}
               {" · "}
-              <span className="font-medium text-foreground">Scope:</span> {solveScope}
+              <span className="font-medium text-foreground">Cross-marking:</span>{" "}
+              <span className="wrap-break-word">{crossMarkingSummaryText}</span>
               {" · "}
               <span className="font-medium text-foreground">Fairness:</span> {fairnessWeight}
               {" · "}
@@ -1329,10 +1404,13 @@ export function ScriptsAllocationView({
               <span className="font-medium text-foreground">Single series:</span> {enforceSingleSeries ? "on" : "off"}
               {" · "}
               <span className="font-medium text-foreground">Exclude home:</span> {excludeHomeScope ? "on" : "off"}
+              {" · "}
+              <span className="font-medium text-foreground">Solve:</span> {summarizeSolveMode(solveMode)}
             </p>
             <p className="max-w-3xl text-xs text-muted-foreground">
-              Use <strong>Configure allocation</strong> to import examiners, edit quotas, and set cross-marking rules.{" "}
-              <strong>Run MILP solve</strong> assigns whole envelopes (often under two minutes).
+              Use <strong>Configure allocation</strong> to import examiners, edit quotas, cross-marking rules, and{" "}
+              <strong>solve strategy</strong>. <strong>Run MILP solve</strong> assigns whole envelopes (often under two
+              minutes).
             </p>
             {solveOptionsError ? (
               <p className="rounded-md border border-destructive/40 bg-destructive/10 px-3 py-2 text-xs text-destructive">
@@ -1439,7 +1517,7 @@ export function ScriptsAllocationView({
                               <td className="px-3 py-2.5 font-medium text-foreground">{c.examiner_name}</td>
                               <td className="px-3 py-2.5 text-muted-foreground">{examinerTypeLabel(c.examiner_type)}</td>
                               <td className="max-w-xs px-3 py-2.5 text-muted-foreground">
-                                {examinerHomeCell(c.region, c.zone)}
+                                {examinerHomeCell(c.region)}
                               </td>
                             </tr>
                           ))}
@@ -1555,7 +1633,7 @@ export function ScriptsAllocationView({
                               <td className="px-3 py-2.5 font-medium text-foreground">{p.examiner_name}</td>
                               <td className="px-3 py-2.5 text-muted-foreground">{examinerTypeLabel(p.examiner_type)}</td>
                               <td className="max-w-[240px] px-3 py-2.5 text-muted-foreground">
-                                {examinerHomeCell(p.region, p.zone)}
+                                {examinerHomeCell(p.region)}
                               </td>
                               <td className="px-3 py-2.5 text-right">
                                 <button
@@ -1598,24 +1676,28 @@ export function ScriptsAllocationView({
             quotaError={quotaSaveError}
             onSaveQuotas={() => void handleSaveQuotas()}
             onAddQuotaRow={addQuotaRow}
-            solveScope={solveScope}
-            onSolveScopeUserChange={onSolveScopeUserChange}
+            examinerGroups={examinerGroups}
             fairnessWeight={fairnessWeight}
             setFairnessWeight={setFairnessWeight}
             enforceSingleSeries={enforceSingleSeries}
             setEnforceSingleSeries={setEnforceSingleSeries}
             excludeHomeScope={excludeHomeScope}
             setExcludeHomeScope={setExcludeHomeScope}
+            solveMode={solveMode}
+            setSolveMode={setSolveMode}
             solveOptionsError={solveOptionsError}
             solveRuleRows={solveRuleRows}
             setSolveRuleRows={setSolveRuleRows}
-            scopeValuesForRules={scopeValuesForRules}
-            ruleSourcesFullyAllocated={ruleSourcesFullyAllocated}
+            ruleMarkingGroupsFullyAllocated={ruleMarkingGroupsFullyAllocated}
             onAddRuleRow={addRuleRow}
             onRemoveRuleRow={removeRuleRow}
             onRemoveRuleTarget={removeRuleTarget}
             onToggleRuleTarget={toggleRuleTarget}
             onSaveSolverSettings={() => void saveSolverSettings()}
+            solverSettingsSavedMessage={solverSettingsSavedMessage}
+            examinationId={examinationIdForSetup}
+            onCreateExaminerGroup={handleCreateExaminerGroupInSetup}
+            onRefreshExaminerGroups={handleRefreshExaminerGroupsForSetup}
           />
 
           {!detailLoading ? (
@@ -1658,6 +1740,49 @@ export function ScriptsAllocationView({
                         </p>
                       </div>
                     </div>
+                    {lastRun.solve_mode === "decomposed" && lastRun.subgroups && lastRun.subgroups.length > 0 ? (
+                      <div className="mt-4 rounded-lg border border-border bg-muted/20 px-3 py-3">
+                        <p className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
+                          Decomposed sub-solves
+                        </p>
+                        <p className="mt-1 text-xs text-muted-foreground">
+                          {lastRun.subgroups.filter((s) => s.status === "optimal").length} optimal ·{" "}
+                          {lastRun.subgroups.filter((s) => s.status === "stopped_feasible").length} feasible
+                          (time limit) · {lastRun.subgroups.filter((s) => s.status === "skipped_empty").length}{" "}
+                          skipped · {lastRun.subgroups.length} total stages
+                        </p>
+                        <div className="mt-2 max-h-52 overflow-auto rounded-md border border-border/80 bg-card text-xs">
+                          <table className="w-full border-collapse">
+                            <thead>
+                              <tr className="border-b border-border bg-muted/50 text-left text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
+                                <th className="px-2 py-1.5">Marking group</th>
+                                <th className="px-2 py-1.5">Series</th>
+                                <th className="px-2 py-1.5">Status</th>
+                                <th className="px-2 py-1.5 text-right">Limit s</th>
+                                <th className="px-2 py-1.5 text-right">Obj.</th>
+                              </tr>
+                            </thead>
+                            <tbody>
+                              {lastRun.subgroups.map((sg, idx) => (
+                                <tr key={`${sg.marking_group_id}-${sg.series_number}-${idx}`} className="border-b border-border/60">
+                                  <td className="max-w-[140px] truncate px-2 py-1.5 font-mono text-[10px]" title={sg.marking_group_id}>
+                                    {sg.marking_group_id.slice(0, 8)}…
+                                  </td>
+                                  <td className="px-2 py-1.5 tabular-nums">{sg.series_number}</td>
+                                  <td className="px-2 py-1.5">{subgroupStatusLabel(sg.status)}</td>
+                                  <td className="px-2 py-1.5 text-right tabular-nums">
+                                    {sg.time_limit_allocated_sec != null ? sg.time_limit_allocated_sec.toFixed(1) : "—"}
+                                  </td>
+                                  <td className="px-2 py-1.5 text-right tabular-nums">
+                                    {sg.objective_value != null ? sg.objective_value.toFixed(2) : "—"}
+                                  </td>
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                        </div>
+                      </div>
+                    ) : null}
                     {lastRun.solver_message ? (
                       <p className="mt-4 rounded-lg bg-muted/50 px-3 py-2 text-xs leading-relaxed text-muted-foreground">
                         {lastRun.solver_message}
