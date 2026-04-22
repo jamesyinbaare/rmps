@@ -689,6 +689,8 @@ export type ExaminationCandidate = {
   school_id: string | null;
   school_code: string | null;
   school_name: string | null;
+  school_region: string | null;
+  school_zone: string | null;
   programme_id: number | null;
   programme_code: string | null;
   registration_number: string;
@@ -715,8 +717,34 @@ export type ExaminationCandidateImportResponse = {
   errors: ExaminationCandidateImportError[];
 };
 
-export async function listExaminationCandidates(examId: number): Promise<ExaminationCandidate[]> {
-  return apiJson<ExaminationCandidate[]>(`/examinations/${examId}/candidates`);
+export type ExaminationCandidateListResponse = {
+  items: ExaminationCandidate[];
+  total: number;
+  skip: number;
+  limit: number;
+};
+
+export type ListExaminationCandidatesParams = {
+  skip?: number;
+  limit?: number;
+  school_id?: string | null;
+  school_q?: string | null;
+  region?: string | null;
+  zone?: string | null;
+};
+
+export async function listExaminationCandidates(
+  examId: number,
+  params: ListExaminationCandidatesParams = {},
+): Promise<ExaminationCandidateListResponse> {
+  const q = new URLSearchParams();
+  q.set("skip", String(params.skip ?? 0));
+  q.set("limit", String(params.limit ?? 50));
+  if (params.school_id?.trim()) q.set("school_id", params.school_id.trim());
+  if (params.school_q?.trim()) q.set("school_q", params.school_q.trim());
+  if (params.region?.trim()) q.set("region", params.region.trim());
+  if (params.zone?.trim()) q.set("zone", params.zone.trim());
+  return apiJson<ExaminationCandidateListResponse>(`/examinations/${examId}/candidates?${q.toString()}`);
 }
 
 export async function downloadExaminationCandidatesTemplate(

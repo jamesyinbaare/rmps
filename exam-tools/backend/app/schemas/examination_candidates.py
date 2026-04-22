@@ -25,6 +25,8 @@ class ExaminationCandidateResponse(BaseModel):
     school_id: UUID | None
     school_code: str | None = None
     school_name: str | None = None
+    school_region: str | None = None
+    school_zone: str | None = None
     programme_id: int | None
     programme_code: str | None = None
     registration_number: str
@@ -43,6 +45,8 @@ class ExaminationCandidateResponse(BaseModel):
     def from_orm_candidate(cls, c: Any) -> ExaminationCandidateResponse:
         school_code = c.school.code if getattr(c, "school", None) else None
         school_name = c.school.name if getattr(c, "school", None) else None
+        school_region = c.school.region.value if getattr(c, "school", None) and getattr(c.school, "region", None) else None
+        school_zone = c.school.zone.value if getattr(c, "school", None) and getattr(c.school, "zone", None) else None
         programme_code = c.programme.code if getattr(c, "programme", None) else None
         return cls(
             id=c.id,
@@ -50,6 +54,8 @@ class ExaminationCandidateResponse(BaseModel):
             school_id=c.school_id,
             school_code=school_code,
             school_name=school_name,
+            school_region=school_region,
+            school_zone=school_zone,
             programme_id=c.programme_id,
             programme_code=programme_code,
             registration_number=c.registration_number,
@@ -77,3 +83,10 @@ class ExaminationCandidateImportResponse(BaseModel):
     successful: int
     failed: int
     errors: list[ExaminationCandidateImportError]
+
+
+class ExaminationCandidateListResponse(BaseModel):
+    items: list[ExaminationCandidateResponse]
+    total: int
+    skip: int
+    limit: int

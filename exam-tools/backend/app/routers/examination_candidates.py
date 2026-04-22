@@ -6,14 +6,15 @@ from uuid import UUID
 import pandas as pd
 from fastapi import APIRouter, File, HTTPException, Query, UploadFile, status
 from fastapi.responses import StreamingResponse
-from sqlalchemy import select
+from sqlalchemy import func, or_, select
 from sqlalchemy.orm import selectinload
 
 from app.dependencies.auth import SuperAdminDep
 from app.dependencies.database import DBSessionDep
-from app.models import Examination, ExaminationCandidate
+from app.models import Examination, ExaminationCandidate, Region, School, Zone
 from app.routers.examinations import _get_exam_or_404
 from app.schemas.examination_candidates import (
+    ExaminationCandidateListResponse,
     ExaminationCandidateImportResponse,
     ExaminationCandidateResponse,
 )
@@ -22,29 +23,82 @@ from app.services.examination_candidate_import import import_candidates_datafram
 router = APIRouter(prefix="/examinations", tags=["examinations"])
 
 
-@router.get("/{exam_id}/candidates", response_model=list[ExaminationCandidateResponse])
+def _parse_region_filter(raw: str) -> Region:
+    value = raw.strip()
+    if not value:
+        raise ValueError("Region cannot be empty.")
+    for region in Region:
+        if value.lower() in (region.name.lower(), region.value.lower()):
+            return region
+    raise ValueError(f"Invalid region: {raw!r}")
+
+
+def _parse_zone_filter(raw: str) -> Zone:
+    value = raw.strip()
+    if not value:
+        raise ValueError("Zone cannot be empty.")
+    for zone in Zone:
+        if value.lower() in (zone.name.lower(), zone.value.lower()):
+            return zone
+    raise ValueError(f"Invalid zone: {raw!r}")
+
+
+@router.get("/{exam_id}/candidates", response_model=ExaminationCandidateListResponse)
 async def list_examination_candidates(
     exam_id: int,
     session: DBSessionDep,
     _: SuperAdminDep,
+    skip: int = Query(default=0, ge=0, description="Pagination offset"),
+    limit: int = Query(default=50, ge=1, le=500, description="Page size"),
     school_id: UUID | None = Query(default=None, description="Filter by school UUID"),
-) -> list[ExaminationCandidateResponse]:
+    school_q: str | None = Query(default=None, description="Filter by school code/name"),
+    region: str | None = Query(default=None, description="Filter by school region"),
+    zone: str | None = Query(default=None, description="Filter by school zone"),
+) -> ExaminationCandidateListResponse:
     await _get_exam_or_404(session, exam_id)
+    base_stmt = select(ExaminationCandidate).where(ExaminationCandidate.examination_id == exam_id)
+    needs_school_join = region is not None or zone is not None or school_q is not None
+    if needs_school_join:
+        base_stmt = base_stmt.join(School, ExaminationCandidate.school_id == School.id)
+    if school_id is not None:
+        base_stmt = base_stmt.where(ExaminationCandidate.school_id == school_id)
+    if school_q is not None and school_q.strip():
+        q = f"%{school_q.strip()}%"
+        base_stmt = base_stmt.where(or_(School.code.ilike(q), School.name.ilike(q)))
+    if region is not None and region.strip():
+        try:
+            region_filter = _parse_region_filter(region)
+        except ValueError as exc:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+        base_stmt = base_stmt.where(School.region == region_filter)
+    if zone is not None and zone.strip():
+        try:
+            zone_filter = _parse_zone_filter(zone)
+        except ValueError as exc:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+        base_stmt = base_stmt.where(School.zone == zone_filter)
+
+    count_stmt = select(func.count()).select_from(base_stmt.order_by(None).subquery())
+    total = (await session.execute(count_stmt)).scalar_one()
+
     stmt = (
-        select(ExaminationCandidate)
-        .where(ExaminationCandidate.examination_id == exam_id)
-        .options(
+        base_stmt.options(
             selectinload(ExaminationCandidate.subject_selections),
             selectinload(ExaminationCandidate.school),
             selectinload(ExaminationCandidate.programme),
         )
         .order_by(ExaminationCandidate.registration_number)
+        .offset(skip)
+        .limit(limit)
     )
-    if school_id is not None:
-        stmt = stmt.where(ExaminationCandidate.school_id == school_id)
     result = await session.execute(stmt)
     candidates = result.scalars().all()
-    return [ExaminationCandidateResponse.from_orm_candidate(c) for c in candidates]
+    return ExaminationCandidateListResponse(
+        items=[ExaminationCandidateResponse.from_orm_candidate(c) for c in candidates],
+        total=total,
+        skip=skip,
+        limit=limit,
+    )
 
 
 @router.get("/{exam_id}/candidates/import-template")

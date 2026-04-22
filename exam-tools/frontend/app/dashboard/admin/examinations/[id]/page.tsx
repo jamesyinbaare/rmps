@@ -2,9 +2,12 @@
 
 import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import { getCoreRowModel, useReactTable, type ColumnDef } from "@tanstack/react-table";
 
 import { AdminTimetableDownloadsPanel } from "@/components/admin-timetable-downloads-panel";
+import { DataTable } from "@/components/data-table";
+import { Button } from "@/components/ui/button";
 import {
   apiFetch,
   apiJson,
@@ -14,6 +17,7 @@ import {
   getExaminationScriptSeriesConfig,
   importExaminationCandidates,
   listExaminationCandidates,
+  type ExaminationCandidateListResponse,
   putExaminationScriptSeriesConfig,
   type Examination,
   type ExaminationCandidate,
@@ -23,6 +27,7 @@ import {
   type ExaminationScriptSeriesConfigRow,
 } from "@/lib/api";
 import { formInputClass, formLabelClass, primaryButtonClass } from "@/lib/form-classes";
+import { REGION_OPTIONS, ZONE_OPTIONS } from "@/lib/school-enums";
 
 const inputFocusRing =
   "focus:border-primary focus:outline-none focus:ring-2 focus:ring-ring/30";
@@ -33,6 +38,8 @@ const outlineBtn =
 const DEFAULT_PAPERS_JSON = `[
   {"paper": 1, "date": "2026-06-01", "start_time": "09:00", "end_time": "11:00"}
 ]`;
+
+const CANDIDATE_PAGE_SIZE_OPTIONS = [25, 50, 100] as const;
 
 function Modal({
   title,
@@ -110,6 +117,14 @@ export default function ExaminationDetailPage() {
 
   const [candidates, setCandidates] = useState<ExaminationCandidate[]>([]);
   const [candidatesError, setCandidatesError] = useState("");
+  const [candidatesLoading, setCandidatesLoading] = useState(false);
+  const [hasLoadedCandidates, setHasLoadedCandidates] = useState(false);
+  const [candidatesTotal, setCandidatesTotal] = useState(0);
+  const [candidatePage, setCandidatePage] = useState(0);
+  const [candidatePageSize, setCandidatePageSize] = useState<number>(50);
+  const [candidateSchoolQuery, setCandidateSchoolQuery] = useState("");
+  const [candidateRegion, setCandidateRegion] = useState("");
+  const [candidateZone, setCandidateZone] = useState("");
   const [candFile, setCandFile] = useState<File | null>(null);
   const [candUploading, setCandUploading] = useState(false);
   const [candResult, setCandResult] = useState<ExaminationCandidateImportResponse | null>(null);
@@ -117,7 +132,10 @@ export default function ExaminationDetailPage() {
 
   const [scriptSeriesRows, setScriptSeriesRows] = useState<ExaminationScriptSeriesConfigRow[]>([]);
   const [scriptSeriesError, setScriptSeriesError] = useState("");
+  const [scriptSeriesLoading, setScriptSeriesLoading] = useState(false);
   const [scriptSeriesSaving, setScriptSeriesSaving] = useState(false);
+  const [scriptSeriesModalOpen, setScriptSeriesModalOpen] = useState(false);
+  const [hasLoadedScriptSeries, setHasLoadedScriptSeries] = useState(false);
 
   const load = useCallback(async () => {
     if (!Number.isFinite(examId)) return;
@@ -134,22 +152,6 @@ export default function ExaminationDetailPage() {
       setYear(String(ex.year));
       setDescription(ex.description ?? "");
       setSchedules(sch);
-      try {
-        const sc = await getExaminationScriptSeriesConfig(examId);
-        setScriptSeriesRows(sc.items);
-        setScriptSeriesError("");
-      } catch {
-        setScriptSeriesRows([]);
-        setScriptSeriesError("Could not load script packing series configuration.");
-      }
-      try {
-        const c = await listExaminationCandidates(examId);
-        setCandidates(c);
-        setCandidatesError("");
-      } catch (ce) {
-        setCandidates([]);
-        setCandidatesError(ce instanceof Error ? ce.message : "Failed to load registered candidates");
-      }
     } catch (e) {
       setError(e instanceof Error ? e.message : "Failed to load");
     } finally {
@@ -160,6 +162,54 @@ export default function ExaminationDetailPage() {
   useEffect(() => {
     void load();
   }, [load]);
+
+  const fetchCandidates = useCallback(
+    async (page: number, pageSize: number) => {
+      if (!Number.isFinite(examId)) return;
+      setCandidatesLoading(true);
+      setCandidatesError("");
+      try {
+        const response: ExaminationCandidateListResponse = await listExaminationCandidates(examId, {
+          skip: page * pageSize,
+          limit: pageSize,
+          school_q: candidateSchoolQuery || null,
+          region: candidateRegion || null,
+          zone: candidateZone || null,
+        });
+        setCandidates(response.items);
+        setCandidatesTotal(response.total);
+        setHasLoadedCandidates(true);
+      } catch (ce) {
+        setCandidates([]);
+        setCandidatesTotal(0);
+        setCandidatesError(ce instanceof Error ? ce.message : "Failed to load registered candidates");
+      } finally {
+        setCandidatesLoading(false);
+      }
+    },
+    [candidateRegion, candidateSchoolQuery, candidateZone, examId],
+  );
+
+  const loadScriptSeriesConfig = useCallback(async () => {
+    if (!Number.isFinite(examId)) return;
+    setScriptSeriesLoading(true);
+    setScriptSeriesError("");
+    try {
+      const sc = await getExaminationScriptSeriesConfig(examId);
+      setScriptSeriesRows(sc.items);
+      setHasLoadedScriptSeries(true);
+    } catch {
+      setScriptSeriesRows([]);
+      setScriptSeriesError("Could not load script packing series configuration.");
+    } finally {
+      setScriptSeriesLoading(false);
+    }
+  }, [examId]);
+
+  useEffect(() => {
+    if (!hasLoadedCandidates) return;
+    void fetchCandidates(candidatePage, candidatePageSize);
+  }, [candidatePage, candidatePageSize, fetchCandidates, hasLoadedCandidates]);
 
   async function saveExam(e: React.FormEvent) {
     e.preventDefault();
@@ -201,6 +251,13 @@ export default function ExaminationDetailPage() {
       setScriptSeriesError(err instanceof Error ? err.message : "Save failed");
     } finally {
       setScriptSeriesSaving(false);
+    }
+  }
+
+  function openScriptSeriesModal() {
+    setScriptSeriesModalOpen(true);
+    if (!hasLoadedScriptSeries) {
+      void loadScriptSeriesConfig();
     }
   }
 
@@ -292,6 +349,64 @@ export default function ExaminationDetailPage() {
       setError(err instanceof Error ? err.message : "Delete failed");
     }
   }
+
+  const candidateColumns = useMemo<ColumnDef<ExaminationCandidate>[]>(
+    () => [
+      {
+        accessorKey: "full_name",
+        header: "Name",
+        cell: ({ row }) => (
+          <span className="block w-[30ch] truncate" title={row.original.full_name}>
+            {row.original.full_name}
+          </span>
+        ),
+      },
+      { accessorKey: "registration_number", header: "Reg. #" },
+      {
+        accessorKey: "index_number",
+        header: "Index",
+        cell: ({ row }) => row.original.index_number ?? "—",
+      },
+      {
+        id: "school",
+        header: "School",
+        cell: ({ row }) => (
+          <div>
+            <div className="text-muted-foreground">{row.original.school_code ?? "—"}</div>
+            {row.original.school_name ? (
+              <div className="text-xs text-card-foreground">
+                {row.original.school_name.length > 30
+                  ? `${row.original.school_name.slice(0, 30)}…`
+                  : row.original.school_name}
+              </div>
+            ) : null}
+          </div>
+        ),
+      },
+      {
+        id: "actions",
+        header: "Actions",
+        cell: ({ row }) => (
+          <button
+            type="button"
+            className={`text-primary hover:underline ${inputFocusRing}`}
+            onClick={() => setSubjectsModalCandidate(row.original)}
+          >
+            View subjects
+          </button>
+        ),
+      },
+    ],
+    [],
+  );
+
+  const candidateTable = useReactTable({
+    data: candidates,
+    columns: candidateColumns,
+    getCoreRowModel: getCoreRowModel(),
+  });
+
+  const candidatePageCount = Math.max(1, Math.ceil(candidatesTotal / candidatePageSize));
 
   if (!Number.isFinite(examId)) {
     return <p className="text-sm text-destructive">Invalid examination id</p>;
@@ -539,57 +654,11 @@ export default function ExaminationDetailPage() {
           count applies to every paper for that subject. Inspectors cannot add series themselves. You cannot reduce a
           count below a series that already has packing data recorded.
         </p>
-        {scriptSeriesError ? (
-          <p className="mt-3 text-sm text-destructive" role="alert">
-            {scriptSeriesError}
-          </p>
-        ) : null}
-        {scriptSeriesRows.length === 0 && !scriptSeriesError ? (
-          <p className="mt-4 text-sm text-muted-foreground">
-            Add subject schedules above to configure series counts.
-          </p>
-        ) : null}
-        {scriptSeriesRows.length > 0 ? (
-          <div className="mt-4 space-y-4">
-            <div className="overflow-x-auto">
-              <table className="w-full min-w-[480px] border-collapse text-left text-sm">
-                <thead>
-                  <tr className="border-b border-border text-muted-foreground">
-                    <th className="py-2 pr-3 font-medium">Code</th>
-                    <th className="py-2 pr-3 font-medium">Subject</th>
-                    <th className="py-2 font-medium">Number of series</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {scriptSeriesRows.map((row) => (
-                    <tr key={row.subject_id} className="border-b border-border/80">
-                      <td className="py-2 pr-3 font-mono text-xs">{row.subject_code}</td>
-                      <td className="py-2 pr-3">{row.subject_name}</td>
-                      <td className="py-2">
-                        <input
-                          type="number"
-                          min={1}
-                          max={32767}
-                          className={`w-24 ${formInputClass}`}
-                          value={row.series_count}
-                          onChange={(e) => setScriptSeriesCount(row.subject_id, parseInt(e.target.value, 10) || 1)}
-                        />
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-            <button
-              type="button"
-              className={primaryButtonClass}
-              disabled={scriptSeriesSaving}
-              onClick={() => void saveScriptSeriesConfig()}
-            >
-              {scriptSeriesSaving ? "Saving…" : "Save series configuration"}
-            </button>
-          </div>
-        ) : null}
+        <div className="mt-4">
+          <button type="button" className={outlineBtn} onClick={openScriptSeriesModal}>
+            Open script packing
+          </button>
+        </div>
       </section>
 
       <section className="rounded-2xl border border-border bg-card p-4 sm:p-6">
@@ -634,7 +703,11 @@ export default function ExaminationDetailPage() {
                 void importExaminationCandidates(examId, candFile)
                   .then((r) => {
                     setCandResult(r);
-                    return load();
+                    if (hasLoadedCandidates) {
+                      setCandidatePage(0);
+                      return fetchCandidates(0, candidatePageSize);
+                    }
+                    return Promise.resolve();
                   })
                   .catch((e: unknown) => {
                     setCandResult({
@@ -683,52 +756,128 @@ export default function ExaminationDetailPage() {
             {candidatesError}
           </p>
         ) : null}
-        {candidates.length === 0 && !candidatesError ? (
-          <p className="mt-4 text-sm text-muted-foreground">No registered candidates yet.</p>
-        ) : null}
-        {candidates.length > 0 ? (
-          <div className="mt-4 overflow-x-auto">
-            <table className="w-full min-w-[720px] border-collapse text-left text-sm">
-              <thead>
-                <tr className="border-b border-border text-muted-foreground">
-                  <th className="py-2 pr-3 font-medium">Name</th>
-                  <th className="py-2 pr-3 font-medium">Reg. #</th>
-                  <th className="py-2 pr-3 font-medium">Index</th>
-                  <th className="py-2 pr-3 font-medium">School</th>
-                  <th className="py-2 pr-3 font-medium">Programme</th>
-                  <th className="py-2 pr-3 font-medium">Subjects</th>
-                  <th className="py-2 font-medium">Actions</th>
-                </tr>
-              </thead>
-              <tbody>
-                {candidates.map((c) => (
-                  <tr key={c.id} className="border-b border-border/80">
-                    <td className="py-2 pr-3">{c.full_name}</td>
-                    <td className="py-2 pr-3 font-mono text-xs">{c.registration_number}</td>
-                    <td className="py-2 pr-3 font-mono text-xs">{c.index_number ?? "—"}</td>
-                    <td className="py-2 pr-3 text-muted-foreground">
-                      {c.school_code ?? "—"}
-                      {c.school_name ? (
-                        <span className="block text-xs text-card-foreground">{c.school_name}</span>
-                      ) : null}
-                    </td>
-                    <td className="py-2 pr-3 font-mono text-xs">{c.programme_code ?? "—"}</td>
-                    <td className="py-2 pr-3">{c.subject_selections.length}</td>
-                    <td className="py-2">
-                      <button
-                        type="button"
-                        className={`text-primary hover:underline ${inputFocusRing}`}
-                        onClick={() => setSubjectsModalCandidate(c)}
-                      >
-                        View subjects
-                      </button>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
+        {!hasLoadedCandidates ? (
+          <div className="mt-4">
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => {
+                setCandidatePage(0);
+                void fetchCandidates(0, candidatePageSize);
+              }}
+            >
+              Load candidates
+            </Button>
           </div>
-        ) : null}
+        ) : (
+          <div className="mt-4 space-y-4">
+            <div className="grid gap-3 md:grid-cols-3">
+              <div>
+                <label className={formLabelClass} htmlFor="candidate-school-filter">
+                  School
+                </label>
+                <input
+                  id="candidate-school-filter"
+                  className={formInputClass}
+                  value={candidateSchoolQuery}
+                  onChange={(e) => {
+                    setCandidateSchoolQuery(e.target.value);
+                    setCandidatePage(0);
+                  }}
+                  placeholder="Search school code/name"
+                />
+              </div>
+              <div>
+                <label className={formLabelClass} htmlFor="candidate-region-filter">
+                  Region
+                </label>
+                <select
+                  id="candidate-region-filter"
+                  className={formInputClass}
+                  value={candidateRegion}
+                  onChange={(e) => {
+                    setCandidateRegion(e.target.value);
+                    setCandidatePage(0);
+                  }}
+                >
+                  <option value="">All regions</option>
+                  {REGION_OPTIONS.map((r) => (
+                    <option key={r.value} value={r.value}>
+                      {r.label}
+                    </option>
+                  ))}
+                </select>
+              </div>
+              <div>
+                <label className={formLabelClass} htmlFor="candidate-zone-filter">
+                  Zone
+                </label>
+                <select
+                  id="candidate-zone-filter"
+                  className={formInputClass}
+                  value={candidateZone}
+                  onChange={(e) => {
+                    setCandidateZone(e.target.value);
+                    setCandidatePage(0);
+                  }}
+                >
+                  <option value="">All zones</option>
+                  {ZONE_OPTIONS.map((z) => (
+                    <option key={z.value} value={z.value}>
+                      {z.label}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            </div>
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <p className="text-sm text-muted-foreground">
+                Showing {candidates.length} of {candidatesTotal} candidates
+              </p>
+              <label className="flex items-center gap-2 text-sm text-muted-foreground">
+                Page size
+                <select
+                  className={`${formInputClass} w-24`}
+                  value={candidatePageSize}
+                  onChange={(e) => {
+                    const size = parseInt(e.target.value, 10) || 50;
+                    setCandidatePageSize(size);
+                    setCandidatePage(0);
+                  }}
+                >
+                  {CANDIDATE_PAGE_SIZE_OPTIONS.map((size) => (
+                    <option key={size} value={size}>
+                      {size}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            </div>
+            {candidatesLoading ? <p className="text-sm text-muted-foreground">Loading candidates…</p> : null}
+            <DataTable table={candidateTable} emptyMessage="No registered candidates yet." showFooter={false} />
+            <div className="flex items-center justify-end gap-2">
+              <button
+                type="button"
+                className={outlineBtn}
+                disabled={candidatePage <= 0 || candidatesLoading}
+                onClick={() => setCandidatePage((p) => Math.max(0, p - 1))}
+              >
+                Previous
+              </button>
+              <p className="text-sm text-muted-foreground">
+                Page {candidatePage + 1} of {candidatePageCount}
+              </p>
+              <button
+                type="button"
+                className={outlineBtn}
+                disabled={candidatePage + 1 >= candidatePageCount || candidatesLoading}
+                onClick={() => setCandidatePage((p) => p + 1)}
+              >
+                Next
+              </button>
+            </div>
+          </div>
+        )}
       </section>
 
       <AdminTimetableDownloadsPanel examId={examId} schoolFirst />
@@ -755,6 +904,80 @@ export default function ExaminationDetailPage() {
               ))}
             </ul>
           )}
+        </Modal>
+      ) : null}
+
+      {scriptSeriesModalOpen ? (
+        <Modal
+          title="Script packing — series per subject"
+          titleId="script-series-modal"
+          onClose={() => setScriptSeriesModalOpen(false)}
+          wide
+        >
+          <p className="text-sm text-muted-foreground">
+            Set how many packing series appear for each subject on this examination&apos;s timetable (default 1). The same
+            count applies to every paper for that subject.
+          </p>
+          <div className="mt-4 flex justify-end">
+            <button
+              type="button"
+              className={outlineBtn}
+              onClick={() => void loadScriptSeriesConfig()}
+              disabled={scriptSeriesLoading}
+            >
+              {scriptSeriesLoading ? "Refreshing…" : "Refresh"}
+            </button>
+          </div>
+          {scriptSeriesError ? (
+            <p className="mt-3 text-sm text-destructive" role="alert">
+              {scriptSeriesError}
+            </p>
+          ) : null}
+          {scriptSeriesLoading ? <p className="mt-4 text-sm text-muted-foreground">Loading…</p> : null}
+          {scriptSeriesRows.length === 0 && !scriptSeriesError && !scriptSeriesLoading ? (
+            <p className="mt-4 text-sm text-muted-foreground">Add subject schedules first to configure series counts.</p>
+          ) : null}
+          {scriptSeriesRows.length > 0 ? (
+            <div className="mt-4 space-y-4">
+              <div className="overflow-x-auto">
+                <table className="w-full min-w-[480px] border-collapse text-left text-sm">
+                  <thead>
+                    <tr className="border-b border-border text-muted-foreground">
+                      <th className="py-2 pr-3 font-medium">Code</th>
+                      <th className="py-2 pr-3 font-medium">Subject</th>
+                      <th className="py-2 font-medium">Number of series</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {scriptSeriesRows.map((row) => (
+                      <tr key={row.subject_id} className="border-b border-border/80">
+                        <td className="py-2 pr-3 font-mono text-xs">{row.subject_code}</td>
+                        <td className="py-2 pr-3">{row.subject_name}</td>
+                        <td className="py-2">
+                          <input
+                            type="number"
+                            min={1}
+                            max={32767}
+                            className={`w-24 ${formInputClass}`}
+                            value={row.series_count}
+                            onChange={(e) => setScriptSeriesCount(row.subject_id, parseInt(e.target.value, 10) || 1)}
+                          />
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+              <button
+                type="button"
+                className={primaryButtonClass}
+                disabled={scriptSeriesSaving}
+                onClick={() => void saveScriptSeriesConfig()}
+              >
+                {scriptSeriesSaving ? "Saving…" : "Save series configuration"}
+              </button>
+            </div>
+          ) : null}
         </Modal>
       ) : null}
 
