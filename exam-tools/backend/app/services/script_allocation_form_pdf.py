@@ -29,6 +29,7 @@ from app.services.pdf_generator import PdfGenerator, render_html
 
 MAX_COPIES = 20
 TEMPLATE_REL = "script-allocation/scripts-allocation-form.html"
+MAX_SCHOOL_DISPLAY_LEN = 40
 
 
 def examination_label(exam: Examination) -> str:
@@ -42,6 +43,15 @@ def _sanitize_filename_part(s: str) -> str:
     return "".join(c for c in s if c.isalnum() or c in ("_", "-"))
 
 
+def _format_school_display(code: str, name: str, max_len: int = MAX_SCHOOL_DISPLAY_LEN) -> str:
+    display = f"{code} - {name}"
+    if len(display) <= max_len:
+        return display
+    if max_len <= 3:
+        return "." * max_len
+    return f"{display[: max_len - 3]}..."
+
+
 def _render_one_examiner_pdf_sync(
     *,
     examination_label_str: str,
@@ -49,6 +59,7 @@ def _render_one_examiner_pdf_sync(
     subject_label: str,
     paper_number: int,
     examiner_name: str,
+    examiner_region: str,
     rows: list[dict[str, int | str]],
     total_count: int,
 ) -> bytes:
@@ -62,6 +73,7 @@ def _render_one_examiner_pdf_sync(
             "subject_label": subject_label,
             "paper_number": paper_number,
             "examiner_name": examiner_name,
+            "examiner_region": examiner_region,
             "rows": rows,
             "total_count": total_count,
             "generated_at": generated_at,
@@ -159,6 +171,7 @@ async def build_scripts_allocation_form_pdf(
             raise ValueError("No assignments for this examiner in this run")
         examiner = await session.get(Examiner, examiner_id)
         name = examiner.name if examiner else str(examiner_id)
+        region = examiner.region.value if examiner and examiner.region else "-"
         ordered = _sorted_assignment_rows(rows_raw)
         total = sum(int(r["booklet_count"]) for r in ordered)
         pdf_bytes = await asyncio.to_thread(
@@ -168,6 +181,7 @@ async def build_scripts_allocation_form_pdf(
             subject_label=subject_label,
             paper_number=paper_number,
             examiner_name=name,
+            examiner_region=region,
             rows=ordered,
             total_count=total,
         )
@@ -197,6 +211,7 @@ async def build_scripts_allocation_form_pdf(
                 subject_label=subject_label,
                 paper_number=paper_number,
                 examiner_name=ex.name,
+                examiner_region=ex.region.value if ex.region else "-",
                 rows=ordered,
                 total_count=total,
             )
@@ -218,6 +233,7 @@ def _sorted_assignment_rows(
         rows.append(
             {
                 "school_name": school.name,
+                "school_display": _format_school_display(school.code, school.name),
                 "envelope_number": int(env.envelope_number),
                 "series_number": int(series.series_number),
                 "booklet_count": int(aa.booklet_count),

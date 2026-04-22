@@ -5,7 +5,13 @@ from io import BytesIO
 import pytest
 from PyPDF2 import PdfReader
 
-from app.services.script_allocation_form_pdf import MAX_COPIES, _merge_pdf_copies, _render_one_examiner_pdf_sync
+from app.services.script_allocation_form_pdf import (
+    MAX_COPIES,
+    MAX_SCHOOL_DISPLAY_LEN,
+    _format_school_display,
+    _merge_pdf_copies,
+    _render_one_examiner_pdf_sync,
+)
 
 pytest.importorskip("weasyprint", reason="WeasyPrint required for HTML→PDF in this test")
 
@@ -17,6 +23,7 @@ def test_merge_pdf_copies_doubles_page_count() -> None:
         subject_label="Mathematics (MATH)",
         paper_number=2,
         examiner_name="A. Examiner",
+        examiner_region="Greater Accra",
         rows=[
             {
                 "school_name": "Sample SHS",
@@ -44,6 +51,7 @@ def test_merge_pdf_copies_one_is_unchanged() -> None:
         subject_label="English (ENG)",
         paper_number=1,
         examiner_name="B. Name",
+        examiner_region="Ashanti",
         rows=[
             {
                 "school_name": "X",
@@ -59,3 +67,14 @@ def test_merge_pdf_copies_one_is_unchanged() -> None:
 
 def test_max_copies_constant() -> None:
     assert MAX_COPIES == 20
+
+
+def test_format_school_display_combines_code_and_name() -> None:
+    formatted = _format_school_display("A123", "Example Secondary School")
+    assert formatted == "A123 - Example Secondary School"
+
+
+def test_format_school_display_truncates_to_max_length() -> None:
+    formatted = _format_school_display("LONGCODE", "A Very Long School Name For Allocation")
+    assert len(formatted) == MAX_SCHOOL_DISPLAY_LEN
+    assert formatted == "LONGCODE - A Very Long School Name For A..."

@@ -19,6 +19,11 @@
         @page {
             size: A4;
             margin: 1.35cm 1.35cm;
+            @bottom-right {
+                content: "Page " counter(page) " of " counter(pages);
+                font-size: 8pt;
+                color: #4a4a4a;
+            }
         }
 
         * { box-sizing: border-box; }
@@ -53,6 +58,7 @@
         .content-wrapper {
             position: relative;
             z-index: 1;
+            padding-bottom: 7.2cm;
         }
 
         .doc-header {
@@ -108,26 +114,31 @@
         .meta-panel {
             background: var(--theme-surface);
             border: 1px solid var(--theme-border);
-            padding: 14px 16px;
-            margin-bottom: 18px;
+            padding: 10px 12px;
+            margin-bottom: 12px;
+            position: relative;
+            padding-top: 14px;
         }
 
-        .meta-panel-title {
-            font-size: 8.5pt;
+        .section-legend {
+            position: absolute;
+            top: 0;
+            left: 10px;
+            transform: translateY(-50%);
+            background: #ffffff;
+            padding: 0 6px;
+            font-size: 8pt;
             font-weight: 700;
             text-transform: uppercase;
-            letter-spacing: 0.08em;
+            letter-spacing: 0.06em;
             color: var(--theme-primary-dark);
-            margin: 0 0 12px;
-            padding-bottom: 8px;
-            border-bottom: 1px solid var(--theme-border-light);
         }
 
         .meta-grid {
             display: table;
             width: 100%;
             border-collapse: separate;
-            border-spacing: 0 10px;
+            border-spacing: 0 6px;
         }
 
         .meta-grid-row {
@@ -138,13 +149,13 @@
             display: table-cell;
             width: 50%;
             vertical-align: top;
-            padding-right: 16px;
-            padding-bottom: 4px;
+            padding-right: 12px;
+            padding-bottom: 2px;
         }
 
         .meta-grid-cell:nth-child(even) {
             padding-right: 0;
-            padding-left: 16px;
+            padding-left: 12px;
         }
 
         .meta-k {
@@ -154,7 +165,7 @@
             text-transform: uppercase;
             letter-spacing: 0.07em;
             color: var(--theme-muted);
-            margin-bottom: 3px;
+            margin-bottom: 2px;
         }
 
         .meta-v {
@@ -168,8 +179,8 @@
         }
 
         .meta-examiner-block {
-            margin-top: 12px;
-            padding-top: 12px;
+            margin-top: 8px;
+            padding-top: 8px;
             border-top: 1px dashed var(--theme-border-light);
         }
 
@@ -186,17 +197,23 @@
             width: 100%;
             border-collapse: collapse;
             margin: 0 0 6px;
-            font-size: 9.25pt;
-            line-height: 1.35;
+            font-size: 8.25pt;
+            line-height: 1.2;
             border: 1px solid var(--theme-border);
         }
 
         table.alloc th,
         table.alloc td {
             border: 1px solid var(--theme-border);
-            padding: 5px 7px;
+            padding: 3px 5px;
             text-align: left;
             vertical-align: top;
+        }
+
+        table.alloc tbody td,
+        table.alloc tfoot td {
+            padding-top: 6px;
+            padding-bottom: 6px;
         }
 
         /* Dark header reads as solid grey in B&W; primary accent on bottom edge */
@@ -204,10 +221,12 @@
             background: #2b2b2b;
             color: #ffffff;
             font-weight: 700;
-            font-size: 8pt;
+            font-size: 7pt;
             text-transform: uppercase;
             letter-spacing: 0.04em;
             border-bottom: 2px solid var(--theme-primary);
+            padding-top: 6px;
+            padding-bottom: 6px;
         }
 
         table.alloc tbody tr:nth-child(even) {
@@ -223,6 +242,13 @@
             text-align: right;
             font-variant-numeric: tabular-nums;
             width: 4.25em;
+        }
+
+        table.alloc td.idx,
+        table.alloc th.idx {
+            text-align: center;
+            width: 2.75em;
+            font-variant-numeric: tabular-nums;
         }
 
         table.alloc th.correction,
@@ -262,27 +288,38 @@
         }
 
         .signature-panel {
-            margin-top: 20px;
-            padding: 16px 18px;
+            margin-top: 0;
+            padding: 10px 12px;
             border: 1px solid var(--theme-border);
             border-top: 2px solid var(--theme-primary);
             background: var(--theme-surface);
-        }
-
-        .signature-panel h2 {
-            margin: 0 0 14px;
-            font-size: 9.5pt;
-            font-weight: 700;
-            text-transform: uppercase;
-            letter-spacing: 0.06em;
-            color: var(--theme-primary-dark);
+            position: fixed;
+            left: 0;
+            right: 0;
+            bottom: 0.2cm;
+            padding-top: 14px;
+            z-index: 2;
         }
 
         .field {
-            margin-bottom: 14px;
+            margin-bottom: 8px;
         }
 
         .field:last-child {
+            margin-bottom: 0;
+        }
+
+        .field-row {
+            display: table;
+            width: 100%;
+            border-collapse: separate;
+            border-spacing: 10px 0;
+            margin-top: 0;
+        }
+
+        .field-row .field {
+            display: table-cell;
+            width: 50%;
             margin-bottom: 0;
         }
 
@@ -290,23 +327,15 @@
             font-size: 8.5pt;
             font-weight: 600;
             color: var(--theme-muted);
-            margin-bottom: 4px;
+            margin-bottom: 2px;
         }
 
         .field-line {
             border-bottom: 1px solid #1a1a1a;
-            min-height: 1.4em;
-            margin-top: 2px;
+            min-height: 1.1em;
+            margin-top: 0;
         }
 
-        .footer-note {
-            margin-top: 16px;
-            padding-top: 12px;
-            border-top: 1px solid var(--theme-border-light);
-            font-size: 8pt;
-            text-align: center;
-            color: var(--theme-muted);
-        }
     </style>
 </head>
 <body>
@@ -323,7 +352,7 @@
         </header>
 
         <section class="meta-panel" aria-label="Examination and examiner details">
-            <p class="meta-panel-title">Details</p>
+            <span class="section-legend">Details</span>
             <div class="meta-grid">
                 <div class="meta-grid-row">
                     <div class="meta-grid-cell">
@@ -348,7 +377,7 @@
             </div>
             <div class="meta-examiner-block">
                 <span class="meta-k">Examiner</span>
-                <span class="meta-v examiner">{{ examiner_name }}</span>
+                <span class="meta-v examiner">{{ examiner_name }} ({{ examiner_region }})</span>
             </div>
         </section>
 
@@ -356,6 +385,7 @@
         <table class="alloc">
             <thead>
                 <tr>
+                    <th scope="col" class="idx">#</th>
                     <th scope="col">School name</th>
                     <th scope="col" class="num">Env #</th>
                     <th scope="col" class="num">Series</th>
@@ -366,7 +396,8 @@
             <tbody>
                 {% for row in rows %}
                 <tr>
-                    <td>{{ row.school_name }}</td>
+                    <td class="idx">{{ loop.index }}</td>
+                    <td>{{ row.school_display }}</td>
                     <td class="num">{{ row.envelope_number }}</td>
                     <td class="num">{{ row.series_number }}</td>
                     <td class="num">{{ row.booklet_count }}</td>
@@ -376,7 +407,7 @@
             </tbody>
             <tfoot>
                 <tr>
-                    <td colspan="3">Total booklets</td>
+                    <td colspan="4">Total booklets</td>
                     <td class="num">{{ total_count }}</td>
                     <td class="correction"></td>
                 </tr>
@@ -384,7 +415,7 @@
         </table>
 
         <section class="signature-panel" aria-label="Examiner contact and declaration">
-            <h2>Receiving officer / examiner</h2>
+            <span class="section-legend">Receiving officer / examiner</span>
             <div class="field">
                 <div class="field-label">Phone number</div>
                 <div class="field-line"></div>
@@ -392,19 +423,18 @@
             <div class="field">
                 <div class="field-label">Address</div>
                 <div class="field-line"></div>
-                <div class="field-line" style="margin-top: 10px;"></div>
             </div>
-            <div class="field">
-                <div class="field-label">Signature</div>
-                <div class="field-line"></div>
-            </div>
-            <div class="field">
-                <div class="field-label">Date</div>
-                <div class="field-line"></div>
+            <div class="field-row">
+                <div class="field">
+                    <div class="field-label">Signature</div>
+                    <div class="field-line"></div>
+                </div>
+                <div class="field">
+                    <div class="field-label">Date</div>
+                    <div class="field-line"></div>
+                </div>
             </div>
         </section>
-
-        <p class="footer-note">Generated {{ generated_at }}</p>
     </div>
 </body>
 </html>
