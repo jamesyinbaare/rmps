@@ -167,6 +167,7 @@ async def load_envelopes_for_allocation(
             ScriptPackingSeries.subject_id,
             ScriptPackingSeries.paper_number,
             ScriptPackingSeries.series_number,
+            ScriptEnvelope.booklet_count.desc(),
             School.code,
             ScriptEnvelope.envelope_number,
         )
@@ -229,6 +230,7 @@ def build_eligible_pairs(
                     subject_id=int(series.subject_id),
                     series_number=int(series.series_number),
                     booklet_count=int(env.booklet_count),
+                    school_id=school.id,
                 )
             )
     return pairs, env_id_to_ix
@@ -310,7 +312,10 @@ def remap_pairs_for_subproblem(
 ) -> tuple[list[EligiblePair], int]:
     """Local examiner indices 0..J-1 and envelope indices 0..E-1 for a subset MILP."""
     ex_id_to_local = {e.id: i for i, e in enumerate(sub_examiners)}
-    env_ids = sorted({p.envelope_id for p in pairs}, key=lambda u: str(u))
+    env_booklets: dict[UUID, int] = {}
+    for p in pairs:
+        env_booklets[p.envelope_id] = max(env_booklets.get(p.envelope_id, 0), int(p.booklet_count))
+    env_ids = sorted(env_booklets, key=lambda u: (-env_booklets[u], str(u)))
     env_id_to_local = {eid: i for i, eid in enumerate(env_ids)}
     new_pairs: list[EligiblePair] = []
     for p in pairs:
@@ -327,6 +332,7 @@ def remap_pairs_for_subproblem(
                 subject_id=p.subject_id,
                 series_number=p.series_number,
                 booklet_count=p.booklet_count,
+                school_id=p.school_id,
             )
         )
     return new_pairs, len(env_ids)
@@ -437,6 +443,181 @@ def _run_status_for_failure(message: str | None, status_code: int) -> Allocation
     return AllocationRunStatus.INFEASIBLE
 
 
+def _rebalance_envelope_meta(
+    rows: list[tuple[ScriptEnvelope, ScriptPackingSeries, School]],
+) -> dict[UUID, dict[str, object]]:
+    meta: dict[UUID, dict[str, object]] = {}
+    for env, series, school in rows:
+        meta[env.id] = {
+            "booklet_count": int(env.booklet_count),
+            "subject_id": int(series.subject_id),
+            "series_number": int(series.series_number),
+            "school_id": school.id,
+            "school_code": school.code,
+            "envelope_number": int(env.envelope_number),
+        }
+    return meta
+
+
+def apply_post_solve_rebalance(
+    *,
+    pair_assignments: list[EligiblePair],
+    all_eligible_pairs: list[EligiblePair],
+    envelope_meta: dict[UUID, dict[str, object]],
+    examiner_type_by_id: dict[UUID, ExaminerType],
+    quota_by_type_subject: dict[tuple[ExaminerType, int], int],
+    tolerance_booklets: int,
+) -> tuple[list[EligiblePair], dict[str, object]]:
+    """Greedy post-pass: trim over-quota assignments and reassign to eligible under-quota examiners."""
+    tolerance = max(0, int(tolerance_booklets))
+    if not pair_assignments:
+        return pair_assignments, {
+            "post_rebalance_enabled": True,
+            "post_rebalance_tolerance_booklets": tolerance,
+            "post_rebalance_removed_count": 0,
+            "post_rebalance_reassigned_count": 0,
+            "post_rebalance_removed_booklets": 0,
+            "post_rebalance_examiner_adjustments": {},
+        }
+
+    assignments_by_env: dict[UUID, EligiblePair] = {p.envelope_id: p for p in pair_assignments}
+    eligible_by_env: dict[UUID, set[UUID]] = {}
+    examiner_index_by_id: dict[UUID, int] = {}
+    for p in all_eligible_pairs:
+        eligible_by_env.setdefault(p.envelope_id, set()).add(p.examiner_id)
+        examiner_index_by_id[p.examiner_id] = int(p.examiner_index)
+
+    assigned_booklets: dict[tuple[UUID, int], int] = {}
+    assigned_envs_by_examiner: dict[UUID, set[UUID]] = {}
+    for p in assignments_by_env.values():
+        key = (p.examiner_id, int(p.subject_id))
+        assigned_booklets[key] = assigned_booklets.get(key, 0) + int(p.booklet_count)
+        assigned_envs_by_examiner.setdefault(p.examiner_id, set()).add(p.envelope_id)
+
+    def _quota(examiner_id: UUID, subject_id: int) -> int | None:
+        ex_type = examiner_type_by_id.get(examiner_id)
+        if ex_type is None:
+            return None
+        return quota_by_type_subject.get((ex_type, int(subject_id)))
+
+    adjustments: dict[UUID, dict[str, int]] = {}
+    removed_count = 0
+    reassigned_count = 0
+    removed_booklets = 0
+
+    def _adj(eid: UUID) -> dict[str, int]:
+        return adjustments.setdefault(eid, {"removed_booklets": 0, "reassigned_in_booklets": 0})
+
+    over_keys: list[tuple[UUID, int, int]] = []
+    for (eid, sid), assigned in assigned_booklets.items():
+        q = _quota(eid, sid)
+        if q is None:
+            continue
+        excess = int(assigned) - int(q)
+        if excess > tolerance:
+            over_keys.append((eid, sid, excess))
+    over_keys.sort(key=lambda x: (-x[2], str(x[0]), x[1]))
+
+    for examiner_id, subject_id, _ in over_keys:
+        while True:
+            key = (examiner_id, int(subject_id))
+            assigned = int(assigned_booklets.get(key, 0))
+            q = _quota(examiner_id, int(subject_id))
+            if q is None or assigned <= int(q) + tolerance:
+                break
+
+            env_candidates = [
+                env_id
+                for env_id in sorted(assigned_envs_by_examiner.get(examiner_id, set()), key=lambda u: str(u))
+                if int(assignments_by_env[env_id].subject_id) == int(subject_id)
+            ]
+            if not env_candidates:
+                break
+
+            ranked_removals: list[tuple[int, int, str, int, str, UUID]] = []
+            envs_for_examiner = assigned_envs_by_examiner.get(examiner_id, set())
+            for env_id in env_candidates:
+                p = assignments_by_env[env_id]
+                m = envelope_meta.get(env_id, {})
+                remaining_schools = {
+                    envelope_meta[eid]["school_id"]
+                    for eid in envs_for_examiner
+                    if eid != env_id and eid in envelope_meta
+                }
+                ranked_removals.append(
+                    (
+                        int(p.booklet_count),
+                        int(len(remaining_schools)),
+                        str(m.get("school_code", "")),
+                        int(m.get("envelope_number", 0)),
+                        str(env_id),
+                        env_id,
+                    )
+                )
+            ranked_removals.sort()
+            env_to_remove = ranked_removals[0][-1]
+            removed_pair = assignments_by_env.pop(env_to_remove)
+            assigned_envs_by_examiner.setdefault(examiner_id, set()).discard(env_to_remove)
+            assigned_booklets[key] = int(assigned_booklets.get(key, 0)) - int(removed_pair.booklet_count)
+
+            removed_count += 1
+            removed_booklets += int(removed_pair.booklet_count)
+            _adj(examiner_id)["removed_booklets"] += int(removed_pair.booklet_count)
+
+            m = envelope_meta.get(env_to_remove, {})
+            school_id = m.get("school_id")
+            recipient_candidates: list[tuple[int, int, str, UUID]] = []
+            for cand in sorted(eligible_by_env.get(env_to_remove, set()), key=lambda u: str(u)):
+                if cand == examiner_id:
+                    continue
+                cand_quota = _quota(cand, int(subject_id))
+                if cand_quota is None:
+                    continue
+                cand_key = (cand, int(subject_id))
+                cand_assigned = int(assigned_booklets.get(cand_key, 0))
+                if cand_assigned >= int(cand_quota) - tolerance:
+                    continue
+                if cand_assigned + int(removed_pair.booklet_count) > int(cand_quota) + tolerance:
+                    continue
+                cand_envs = assigned_envs_by_examiner.get(cand, set())
+                same_school = 0
+                if school_id is not None and any(envelope_meta.get(eid, {}).get("school_id") == school_id for eid in cand_envs):
+                    same_school = 1
+                gap = int(cand_quota) - cand_assigned
+                recipient_candidates.append((-gap, -same_school, str(cand), cand))
+            recipient_candidates.sort()
+            if recipient_candidates:
+                new_examiner_id = recipient_candidates[0][-1]
+                new_pair = EligiblePair(
+                    envelope_id=removed_pair.envelope_id,
+                    envelope_index=removed_pair.envelope_index,
+                    examiner_index=examiner_index_by_id.get(new_examiner_id, removed_pair.examiner_index),
+                    examiner_id=new_examiner_id,
+                    subject_id=removed_pair.subject_id,
+                    series_number=removed_pair.series_number,
+                    booklet_count=removed_pair.booklet_count,
+                    school_id=removed_pair.school_id,
+                )
+                assignments_by_env[env_to_remove] = new_pair
+                assigned_envs_by_examiner.setdefault(new_examiner_id, set()).add(env_to_remove)
+                new_key = (new_examiner_id, int(subject_id))
+                assigned_booklets[new_key] = int(assigned_booklets.get(new_key, 0)) + int(removed_pair.booklet_count)
+                reassigned_count += 1
+                _adj(new_examiner_id)["reassigned_in_booklets"] += int(removed_pair.booklet_count)
+
+    final_assignments = sorted(assignments_by_env.values(), key=lambda p: str(p.envelope_id))
+    clean_adjustments = {str(k): v for k, v in adjustments.items() if any(int(x) != 0 for x in v.values())}
+    stats = {
+        "post_rebalance_enabled": True,
+        "post_rebalance_tolerance_booklets": tolerance,
+        "post_rebalance_removed_count": removed_count,
+        "post_rebalance_reassigned_count": reassigned_count,
+        "post_rebalance_removed_booklets": removed_booklets,
+        "post_rebalance_examiner_adjustments": clean_adjustments,
+    }
+    return final_assignments, stats
+
+
 def parse_marking_group_solve_order(raw: list[str] | None) -> list[UUID]:
     out: list[UUID] = []
     for s in raw or []:
@@ -461,6 +642,10 @@ async def run_decomposed_allocation_solve(
     unassigned_penalty: float,
     time_limit_sec: float,
     fairness_weight: float,
+    school_cohesion_weight: float,
+    prefer_larger_booklets_epsilon: float,
+    enable_post_rebalance: bool,
+    rebalance_tolerance_booklets: int,
     exclude_home_zone_or_region: bool,
     marking_group_solve_order: list[str] | None,
 ) -> AllocationRun:
@@ -493,6 +678,8 @@ async def run_decomposed_allocation_solve(
     subgroup_stats: list[dict[str, object]] = []
     pair_assignments_all: list[EligiblePair] = []
     objective_sum = 0.0
+    pair_assignments_rebalanced: list[EligiblePair] = []
+    rebalance_stats: dict[str, object] | None = None
 
     for gid in ordered_groups:
         rem_rows = [row for row in rows if row[0].id not in assigned_global]
@@ -565,6 +752,8 @@ async def run_decomposed_allocation_solve(
                 time_limit_sec=per_this,
                 fairness_weight=fairness_weight,
                 enforce_single_series_per_examiner=False,
+                school_cohesion_weight=school_cohesion_weight,
+                prefer_larger_booklets_epsilon=prefer_larger_booklets_epsilon,
             )
             time_budget -= time.perf_counter() - t_solve_start
             if time_budget < 0.0:
@@ -614,6 +803,26 @@ async def run_decomposed_allocation_solve(
             if milp_out.objective is not None:
                 objective_sum += float(milp_out.objective)
 
+    if enable_post_rebalance:
+        all_eligible_pairs, _ = build_eligible_pairs(
+            rows,
+            examiners,
+            region_to_source_group=region_to_source,
+            examiner_to_marking_group=examiner_to_marking,
+            cross_marking_rules=cross_parsed,
+            exclude_home_zone_or_region=exclude_home_zone_or_region,
+        )
+        examiner_type_by_id = {ex.id: ex.examiner_type for ex in examiners}
+        pair_assignments_rebalanced, rebalance_stats = apply_post_solve_rebalance(
+            pair_assignments=pair_assignments_all,
+            all_eligible_pairs=all_eligible_pairs,
+            envelope_meta=_rebalance_envelope_meta(rows),
+            examiner_type_by_id=examiner_type_by_id,
+            quota_by_type_subject=quota_by_type_subject,
+            tolerance_booklets=rebalance_tolerance_booklets,
+        )
+        pair_assignments_all = pair_assignments_rebalanced
+        assigned_global = {p.envelope_id for p in pair_assignments_all}
     unassigned = [env.id for env, _s, _sch in rows if env.id not in assigned_global and env.booklet_count > 0]
 
     run = AllocationRun(
@@ -631,6 +840,7 @@ async def run_decomposed_allocation_solve(
             "unassigned_count": len(unassigned),
             "decomposed_planned_subgroups": n_est,
             "decomposed_wall_budget_sec": float(time_limit_sec),
+            **(rebalance_stats or {"post_rebalance_enabled": False}),
         },
     )
     session.add(run)
@@ -660,6 +870,10 @@ async def run_allocation_solve(
     time_limit_sec: float,
     allocation_scope: str = "zone",
     fairness_weight: float = 0.25,
+    school_cohesion_weight: float = 0.0,
+    prefer_larger_booklets_epsilon: float = 0.0,
+    enable_post_rebalance: bool = False,
+    rebalance_tolerance_booklets: int = 20,
     enforce_single_series_per_examiner: bool = True,
     cross_marking_rules: dict[str, list[str]] | None = None,
     exclude_home_zone_or_region: bool = True,
@@ -804,6 +1018,10 @@ async def run_allocation_solve(
             unassigned_penalty=unassigned_penalty,
             time_limit_sec=time_limit_sec,
             fairness_weight=fairness_weight,
+            school_cohesion_weight=school_cohesion_weight,
+            prefer_larger_booklets_epsilon=prefer_larger_booklets_epsilon,
+            enable_post_rebalance=enable_post_rebalance,
+            rebalance_tolerance_booklets=rebalance_tolerance_booklets,
             exclude_home_zone_or_region=exclude_home_zone_or_region,
             marking_group_solve_order=marking_group_solve_order,
         )
@@ -836,6 +1054,8 @@ async def run_allocation_solve(
         time_limit_sec=time_limit_sec,
         fairness_weight=fairness_weight,
         enforce_single_series_per_examiner=enforce_single_series_per_examiner,
+        school_cohesion_weight=school_cohesion_weight,
+        prefer_larger_booklets_epsilon=prefer_larger_booklets_epsilon,
     )
 
     if not milp_out.success:
@@ -854,7 +1074,19 @@ async def run_allocation_solve(
         await session.flush()
         return run
 
-    assigned_env: set[UUID] = {p.envelope_id for p in milp_out.pair_assignments}
+    final_pair_assignments = milp_out.pair_assignments
+    rebalance_stats: dict[str, object] | None = None
+    if enable_post_rebalance:
+        examiner_type_by_id = {ex.id: ex.examiner_type for ex in examiners}
+        final_pair_assignments, rebalance_stats = apply_post_solve_rebalance(
+            pair_assignments=milp_out.pair_assignments,
+            all_eligible_pairs=pairs,
+            envelope_meta=_rebalance_envelope_meta(rows),
+            examiner_type_by_id=examiner_type_by_id,
+            quota_by_type_subject=quota_by_type_subject,
+            tolerance_booklets=rebalance_tolerance_booklets,
+        )
+    assigned_env: set[UUID] = {p.envelope_id for p in final_pair_assignments}
     unassigned = [env.id for env, _s, _sch in rows if env.id not in assigned_env and env.booklet_count > 0]
 
     run = AllocationRun(
@@ -870,13 +1102,14 @@ async def run_allocation_solve(
             "envelopes": num_envelopes,
             "examiners": len(examiners),
             "unassigned_count": len(unassigned),
+            **(rebalance_stats or {"post_rebalance_enabled": False}),
         },
     )
     session.add(run)
     await session.flush()
 
     env_by_id = {env.id: env for env, _s, _sch in rows}
-    for p in milp_out.pair_assignments:
+    for p in final_pair_assignments:
         env = env_by_id[p.envelope_id]
         session.add(
             AllocationAssignment(

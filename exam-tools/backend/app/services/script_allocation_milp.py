@@ -17,6 +17,7 @@ class EligiblePair:
     subject_id: int
     series_number: int
     booklet_count: int
+    school_id: UUID | None = None
 
 
 @dataclass(frozen=True)
@@ -68,10 +69,19 @@ def solve_script_allocation_milp(
     time_limit_sec: float,
     fairness_weight: float = 0.0,
     enforce_single_series_per_examiner: bool = False,
+    school_cohesion_weight: float = 0.0,
+    prefer_larger_booklets_epsilon: float = 0.0,
 ) -> MilpSolveResult:
     """
     Minimize sum_m w_m(p_m+n_m) + λ sum_e u_e with whole-envelope assignment,
     at most one examiner per envelope, and L1 deviation per (examiner, subject) quota.
+
+    When school_cohesion_weight > 0, add a term minimizing distinct (examiner, school)
+    indicators z_{j,s} within this MILP so assigning another envelope from a school the
+    examiner already uses does not increase the objective.
+
+    When prefer_larger_booklets_epsilon > 0, add a tiny negative coefficient on assignment
+    variables proportional to booklet_count so larger envelopes are preferred in ties.
     """
     if not pairs:
         return MilpSolveResult(
@@ -82,6 +92,18 @@ def solve_script_allocation_milp(
             status_code=-1,
             proven_optimal=False,
         )
+    w_school = float(school_cohesion_weight)
+    w_large = float(prefer_larger_booklets_epsilon)
+    if w_school > 0.0 and any(p.school_id is None for p in pairs):
+        return MilpSolveResult(
+            pair_assignments=[],
+            objective=None,
+            message="school_cohesion_weight > 0 requires school_id on every eligible pair",
+            success=False,
+            status_code=-1,
+            proven_optimal=False,
+        )
+
     p_count = len(pairs)
     m_count = len(slack_targets)
     e_count = num_envelopes
@@ -101,29 +123,51 @@ def solve_script_allocation_milp(
             series_keys.append(key)
     series_count = len(series_keys)
 
-    n_vars = p_count + 2 * m_count + e_count + series_count + fair_count
+    school_var_index: dict[tuple[int, UUID], int] = {}
+    school_keys: list[tuple[int, UUID]] = []
+    if w_school > 0.0:
+        for pair in pairs:
+            sid = pair.school_id  # validated non-None above when w_school > 0
+            key = (pair.examiner_index, sid)
+            if key not in school_var_index:
+                school_var_index[key] = len(school_keys)
+                school_keys.append(key)
+    z_count = len(school_keys)
+
+    series_start = p_count + 2 * m_count + e_count
+    z_start = series_start + series_count
+    fair_start = z_start + z_count
+    n_vars = fair_start + fair_count
+
     c = np.zeros(n_vars, dtype=np.float64)
+    if w_large > 0.0:
+        for k, pair in enumerate(pairs):
+            c[k] = -w_large * float(pair.booklet_count)
     for m in range(m_count):
         w = float(slack_targets[m].weight)
         c[p_count + m] = w
         c[p_count + m_count + m] = w
     c[p_count + 2 * m_count : p_count + 2 * m_count + e_count] = float(unassigned_penalty)
+    if z_count > 0:
+        c[z_start : z_start + z_count] = w_school
     if fair_count == 2:
-        c[-2] = float(fairness_weight)
-        c[-1] = -float(fairness_weight)
+        c[fair_start] = float(fairness_weight)
+        c[fair_start + 1] = -float(fairness_weight)
 
     lb = np.zeros(n_vars, dtype=np.float64)
     ub = np.full(n_vars, np.inf, dtype=np.float64)
     ub[:p_count] = 1.0
     if series_count > 0:
-        series_start = p_count + 2 * m_count + e_count
         ub[series_start : series_start + series_count] = 1.0
+    if z_count > 0:
+        ub[z_start : z_start + z_count] = 1.0
 
     integrality = np.zeros(n_vars, dtype=np.int32)
     integrality[:p_count] = 1
     if series_count > 0:
-        series_start = p_count + 2 * m_count + e_count
         integrality[series_start : series_start + series_count] = 1
+    if z_count > 0:
+        integrality[z_start : z_start + z_count] = 1
 
     env_idx = np.array([p.envelope_index for p in pairs], dtype=np.int32)
     ex_idx = np.array([p.examiner_index for p in pairs], dtype=np.int32)
@@ -176,7 +220,6 @@ def solve_script_allocation_milp(
         row_ub.append(float(-q))
 
     if series_count > 0:
-        series_start = p_count + 2 * m_count + e_count
         for j in range(j_count):
             row = np.zeros(n_vars, dtype=np.float64)
             has_any = False
@@ -205,9 +248,20 @@ def solve_script_allocation_milp(
             row_lb.append(-np.inf)
             row_ub.append(0.0)
 
+    if z_count > 0:
+        for k, pair in enumerate(pairs):
+            sid = pair.school_id
+            zi = school_var_index[(pair.examiner_index, sid)]
+            row = np.zeros(n_vars, dtype=np.float64)
+            row[k] = 1.0
+            row[z_start + zi] = -1.0
+            rows.append(row)
+            row_lb.append(-np.inf)
+            row_ub.append(0.0)
+
     if fair_count == 2:
-        load_max_ix = n_vars - 2
-        load_min_ix = n_vars - 1
+        load_max_ix = fair_start
+        load_min_ix = fair_start + 1
         for j in range(j_count):
             row = np.zeros(n_vars, dtype=np.float64)
             mask = ex_idx == j

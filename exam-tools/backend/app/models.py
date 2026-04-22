@@ -525,6 +525,8 @@ class Allocation(Base):
     enforce_single_series_per_examiner = Column(Boolean, nullable=False, default=True)
     exclude_home_zone_or_region = Column(Boolean, nullable=False, default=True)
     solve_mode = Column(String(16), nullable=False, default="monolithic")
+    enable_post_rebalance = Column(Boolean, nullable=False, default=False)
+    rebalance_tolerance_booklets = Column(Integer, nullable=False, default=20)
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
 

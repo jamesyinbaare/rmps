@@ -242,6 +242,10 @@ async def update_allocation(
     if "solve_mode" in patch and patch["solve_mode"] is not None:
         sm = patch["solve_mode"]
         row.solve_mode = sm.value if isinstance(sm, AllocationSolveModeSchema) else str(sm)
+    if "enable_post_rebalance" in patch and patch["enable_post_rebalance"] is not None:
+        row.enable_post_rebalance = bool(patch["enable_post_rebalance"])
+    if "rebalance_tolerance_booklets" in patch and patch["rebalance_tolerance_booklets"] is not None:
+        row.rebalance_tolerance_booklets = int(patch["rebalance_tolerance_booklets"])
     try:
         await session.commit()
     except IntegrityError:
@@ -378,6 +382,10 @@ async def solve_allocation(
         time_limit_sec=opts.time_limit_sec,
         allocation_scope=opts.allocation_scope.value if isinstance(opts.allocation_scope, AllocationScopeSchema) else "zone",
         fairness_weight=opts.fairness_weight,
+        school_cohesion_weight=opts.school_cohesion_weight,
+        prefer_larger_booklets_epsilon=opts.prefer_larger_booklets_epsilon,
+        enable_post_rebalance=opts.enable_post_rebalance,
+        rebalance_tolerance_booklets=opts.rebalance_tolerance_booklets,
         enforce_single_series_per_examiner=opts.enforce_single_series_per_examiner,
         cross_marking_rules=opts.cross_marking_rules,
         exclude_home_zone_or_region=opts.exclude_home_zone_or_region,

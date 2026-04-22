@@ -1244,6 +1244,8 @@ export type Allocation = {
   exclude_home_zone_or_region: boolean;
   /** Persisted solver strategy; default monolithic when absent (legacy API). */
   solve_mode?: AllocationSolveModeApi | null;
+  enable_post_rebalance?: boolean;
+  rebalance_tolerance_booklets?: number;
   created_at: string;
   updated_at: string;
 };
@@ -1366,6 +1368,8 @@ export type AllocationUpdatePayload = {
   enforce_single_series_per_examiner?: boolean;
   exclude_home_zone_or_region?: boolean;
   solve_mode?: AllocationSolveModeApi;
+  enable_post_rebalance?: boolean;
+  rebalance_tolerance_booklets?: number;
 };
 
 export type ExaminerCreatePayload = {
@@ -1396,6 +1400,14 @@ export type AllocationSolvePayload = {
   time_limit_sec?: number;
   allocation_scope?: "zone" | "region";
   fairness_weight?: number;
+  /** Secondary term to reduce distinct schools per examiner per MILP (e.g. 1e-3–1e-2). Default 0. */
+  school_cohesion_weight?: number;
+  /** Tiny tie-break to prefer larger booklet envelopes when main objective is tied (e.g. 1e-6). */
+  prefer_larger_booklets_epsilon?: number;
+  /** Optional second pass to rebalance over-quota allocations after MILP solve. */
+  enable_post_rebalance?: boolean;
+  /** Quota tolerance band for post-rebalance targeting (quota ± tolerance). Default 20. */
+  rebalance_tolerance_booklets?: number;
   enforce_single_series_per_examiner?: boolean;
   /** Omit to use rules already saved on the allocation (recommended after Save solver settings). */
   cross_marking_rules?: Record<string, string[]> | null;

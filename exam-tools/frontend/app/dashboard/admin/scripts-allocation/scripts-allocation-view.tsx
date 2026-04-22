@@ -168,6 +168,8 @@ export function ScriptsAllocationView({
   const [poolModalOpen, setPoolModalOpen] = useState(false);
   const [examinerGroups, setExaminerGroups] = useState<ExaminerGroupRow[]>([]);
   const [fairnessWeight, setFairnessWeight] = useState("0.25");
+  const [enablePostRebalance, setEnablePostRebalance] = useState(false);
+  const [rebalanceToleranceBooklets, setRebalanceToleranceBooklets] = useState("20");
   const [enforceSingleSeries, setEnforceSingleSeries] = useState(true);
   const [excludeHomeScope, setExcludeHomeScope] = useState(true);
   const [solveRuleRows, setSolveRuleRows] = useState<
@@ -439,6 +441,8 @@ export function ScriptsAllocationView({
         };
       });
     setFairnessWeight(String(row.fairness_weight ?? 0.25));
+    setEnablePostRebalance(Boolean(row.enable_post_rebalance ?? false));
+    setRebalanceToleranceBooklets(String(row.rebalance_tolerance_booklets ?? 20));
     setEnforceSingleSeries(row.enforce_single_series_per_examiner ?? true);
     setExcludeHomeScope(row.exclude_home_zone_or_region ?? true);
     setSolveMode(coerceSolveModeFromAllocation(row.solve_mode ?? undefined));
@@ -973,6 +977,11 @@ export function ScriptsAllocationView({
         allocation_scope: "region",
         cross_marking_rules: crossRules,
         fairness_weight: fair,
+        enable_post_rebalance: enablePostRebalance,
+        rebalance_tolerance_booklets:
+          Number.isFinite(Number(rebalanceToleranceBooklets))
+            ? Math.max(0, Math.floor(Number(rebalanceToleranceBooklets)))
+            : 20,
         enforce_single_series_per_examiner: enforceSingleSeries,
         exclude_home_zone_or_region: excludeHomeScope,
         solve_mode: solveMode,
@@ -1056,11 +1065,14 @@ export function ScriptsAllocationView({
     setLoadError(null);
     try {
       const rowOrder = solveRuleRows.map((r) => r.markingGroupId.trim()).filter((s) => s.length > 0);
+      const rebalanceTolerance = Number(rebalanceToleranceBooklets);
       const payload: AllocationSolvePayload = {
         unassigned_penalty: 1.0,
         time_limit_sec: 120,
         allocation_scope: "region",
         fairness_weight: fair,
+        enable_post_rebalance: enablePostRebalance,
+        rebalance_tolerance_booklets: Number.isFinite(rebalanceTolerance) ? Math.max(0, Math.floor(rebalanceTolerance)) : 20,
         enforce_single_series_per_examiner: enforceSingleSeries,
         exclude_home_zone_or_region: excludeHomeScope,
         cross_marking_rules: null,
@@ -1094,6 +1106,8 @@ export function ScriptsAllocationView({
     setUnassignedListModalOpen(false);
     setStartError(null);
     setFairnessWeight("0.25");
+    setEnablePostRebalance(false);
+    setRebalanceToleranceBooklets("20");
     setEnforceSingleSeries(true);
     setExcludeHomeScope(true);
     setSolveRuleRows([]);
@@ -1395,6 +1409,9 @@ export function ScriptsAllocationView({
               {" · "}
               <span className="font-medium text-foreground">Fairness:</span> {fairnessWeight}
               {" · "}
+              <span className="font-medium text-foreground">Rebalance:</span>{" "}
+              {enablePostRebalance ? `on (±${rebalanceToleranceBooklets || "20"})` : "off"}
+              {" · "}
               <span className="font-medium text-foreground">Quotas:</span>{" "}
               {quotaRows.length === 0 ? "none" : `${quotaRows.length} row${quotaRows.length === 1 ? "" : "s"}`}
               {" · "}
@@ -1679,6 +1696,10 @@ export function ScriptsAllocationView({
             examinerGroups={examinerGroups}
             fairnessWeight={fairnessWeight}
             setFairnessWeight={setFairnessWeight}
+            enablePostRebalance={enablePostRebalance}
+            setEnablePostRebalance={setEnablePostRebalance}
+            rebalanceToleranceBooklets={rebalanceToleranceBooklets}
+            setRebalanceToleranceBooklets={setRebalanceToleranceBooklets}
             enforceSingleSeries={enforceSingleSeries}
             setEnforceSingleSeries={setEnforceSingleSeries}
             excludeHomeScope={excludeHomeScope}

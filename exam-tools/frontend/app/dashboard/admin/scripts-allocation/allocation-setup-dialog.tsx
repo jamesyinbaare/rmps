@@ -46,6 +46,10 @@ type Props = {
   examinerGroups: ExaminerGroupRow[];
   fairnessWeight: string;
   setFairnessWeight: (v: string) => void;
+  enablePostRebalance: boolean;
+  setEnablePostRebalance: (v: boolean) => void;
+  rebalanceToleranceBooklets: string;
+  setRebalanceToleranceBooklets: (v: string) => void;
   enforceSingleSeries: boolean;
   setEnforceSingleSeries: (v: boolean) => void;
   excludeHomeScope: boolean;
@@ -85,6 +89,10 @@ export function AllocationSetupDialog({
   examinerGroups,
   fairnessWeight,
   setFairnessWeight,
+  enablePostRebalance,
+  setEnablePostRebalance,
+  rebalanceToleranceBooklets,
+  setRebalanceToleranceBooklets,
   enforceSingleSeries,
   setEnforceSingleSeries,
   excludeHomeScope,
@@ -359,6 +367,27 @@ export function AllocationSetupDialog({
                   value={fairnessWeight}
                   onChange={(e) => setFairnessWeight(e.target.value)}
                   disabled={busy}
+                />
+              </label>
+              <label className="flex items-center gap-2 text-foreground">
+                <input
+                  type="checkbox"
+                  checked={enablePostRebalance}
+                  onChange={(e) => setEnablePostRebalance(e.target.checked)}
+                  disabled={busy}
+                />
+                Enable post-solve rebalance
+              </label>
+              <label className="space-y-1">
+                <span className="font-medium text-foreground">Rebalance tolerance (booklets)</span>
+                <input
+                  className={`${formInputClass} h-9 min-w-32 w-full`}
+                  type="number"
+                  min="0"
+                  step="1"
+                  value={rebalanceToleranceBooklets}
+                  onChange={(e) => setRebalanceToleranceBooklets(e.target.value)}
+                  disabled={busy || !enablePostRebalance}
                 />
               </label>
               <label className="flex items-center gap-2 text-foreground">

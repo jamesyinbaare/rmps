@@ -61,6 +61,8 @@ class AllocationUpdate(BaseModel):
     enforce_single_series_per_examiner: bool | None = None
     exclude_home_zone_or_region: bool | None = None
     solve_mode: AllocationSolveModeSchema | None = None
+    enable_post_rebalance: bool | None = None
+    rebalance_tolerance_booklets: int | None = Field(default=None, ge=0)
 
 
 class AllocationResponse(BaseModel):
@@ -76,6 +78,8 @@ class AllocationResponse(BaseModel):
     enforce_single_series_per_examiner: bool
     exclude_home_zone_or_region: bool
     solve_mode: AllocationSolveModeSchema
+    enable_post_rebalance: bool
+    rebalance_tolerance_booklets: int = Field(ge=0)
     created_at: datetime
     updated_at: datetime
 
@@ -202,6 +206,34 @@ class AllocationSolveOptions(BaseModel):
         default=0.25,
         ge=0,
         description="Weight for balancing examiner total assigned booklets to avoid concentration.",
+    )
+    school_cohesion_weight: float = Field(
+        default=0.0,
+        ge=0,
+        description=(
+            "Secondary weight penalizing distinct schools per examiner within each MILP subproblem. "
+            "Try 1e-3–1e-2 so quota and unassigned costs still dominate."
+        ),
+    )
+    prefer_larger_booklets_epsilon: float = Field(
+        default=0.0,
+        ge=0,
+        description=(
+            "Tiny tie-break weight to prefer assigning larger booklet envelopes first when primary "
+            "MILP costs are equal (e.g. 1e-6)."
+        ),
+    )
+    enable_post_rebalance: bool = Field(
+        default=False,
+        description=(
+            "Run an optional second pass after solve to reduce over-quota allocations by removing and "
+            "reassigning envelopes where possible."
+        ),
+    )
+    rebalance_tolerance_booklets: int = Field(
+        default=20,
+        ge=0,
+        description="Quota tolerance band for post-rebalance targets (quota ± tolerance).",
     )
     enforce_single_series_per_examiner: bool = Field(
         default=True,
