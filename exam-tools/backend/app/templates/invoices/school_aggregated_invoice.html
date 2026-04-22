@@ -1,0 +1,314 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Registration Invoice - {{ school.name }}</title>
+    <style>
+        @page {
+            size: A4;
+            margin: 1.5cm 1.5cm;
+        }
+
+        body {
+            font-family: 'Helvetica', Arial, sans-serif;
+            font-size: 9.5pt;
+            color: #000;
+            line-height: 1.3;
+            margin: 0;
+            padding: 0;
+            position: relative;
+        }
+
+        .watermark {
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            width: 100%;
+            height: 100%;
+            background-image: url('img/logo-crest-only.png');
+            background-size: contain;
+            background-repeat: no-repeat;
+            background-position: center;
+            opacity: 0.03;
+            z-index: 0;
+            pointer-events: none;
+        }
+
+        .content-wrapper {
+            position: relative;
+            z-index: 1;
+        }
+
+        .header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            margin-bottom: 20px;
+            padding-bottom: 15px;
+            border-bottom: 2px solid #16a34a;
+        }
+
+        .logo-container {
+            display: flex;
+            align-items: center;
+        }
+
+        .logo {
+            height: 50px;
+            width: auto;
+        }
+
+        .title {
+            font-size: 24pt;
+            font-weight: bold;
+            color: #16a34a;
+            margin: 0;
+        }
+
+        .section-title {
+            font-size: 12pt;
+            font-weight: bold;
+            color: #16a34a;
+            margin: 15px 0 8px 0;
+            padding-bottom: 4px;
+            border-bottom: 1px solid #cbd5e1;
+        }
+
+        .info-table {
+            display: table;
+            width: 100%;
+            margin-bottom: 15px;
+        }
+
+        .info-row {
+            display: table-row;
+        }
+
+        .info-label {
+            display: table-cell;
+            font-weight: bold;
+            color: #4b5563;
+            padding: 4px 10px 4px 0;
+            width: 30%;
+        }
+
+        .info-value {
+            display: table-cell;
+            padding: 4px 0;
+        }
+
+        .items-table {
+            width: 100%;
+            border-collapse: collapse;
+            margin: 15px 0;
+        }
+
+        .items-table th {
+            background-color: #16a34a;
+            color: white;
+            padding: 10px 8px;
+            text-align: left;
+            font-weight: bold;
+            font-size: 10pt;
+        }
+
+        .items-table th.text-right {
+            text-align: right;
+        }
+
+        .items-table th.text-center {
+            text-align: center;
+        }
+
+        .items-table td {
+            padding: 10px 8px;
+            border-bottom: 1px solid #e5e7eb;
+            font-size: 9.5pt;
+            text-align: left;
+            vertical-align: top;
+        }
+
+        .items-table tbody tr:last-child:not(.total-row) td {
+            border-bottom: 1px solid #e5e7eb;
+        }
+
+        .text-right {
+            text-align: right !important;
+        }
+
+        .text-center {
+            text-align: center;
+        }
+
+        .text-bold {
+            font-weight: bold;
+        }
+
+        .subtotal-separator {
+            border-top: 2px solid #cbd5e1;
+        }
+
+        .total-row {
+            background-color: #f0fdf4;
+            border-top: 2px solid #16a34a;
+        }
+
+        .total-row td {
+            font-weight: bold;
+            font-size: 11pt;
+            padding: 12px 8px;
+            border-bottom: 2px solid #16a34a;
+        }
+
+        .total-label {
+            text-align: right;
+            padding-right: 20px;
+        }
+
+        .amount-column {
+            text-align: right;
+            font-variant-numeric: tabular-nums;
+            white-space: nowrap;
+        }
+
+        .footer {
+            margin-top: 20px;
+            padding-top: 15px;
+            border-top: 1px solid #e5e7eb;
+            text-align: center;
+            font-size: 8.5pt;
+            color: #6b7280;
+        }
+
+        .footer-note {
+            margin-top: 8px;
+            font-weight: bold;
+            color: #15803d;
+        }
+    </style>
+</head>
+<body>
+    <div class="watermark"></div>
+    <div class="content-wrapper">
+    <div class="header">
+        <div class="logo-container">
+            <img src="img/logo-crest-only.png" alt="CTVET Logo" class="logo" />
+        </div>
+        <div class="title">REGISTRATION INVOICE</div>
+    </div>
+
+    <!-- School Information -->
+    <div class="section-title">School Information</div>
+    <div class="info-table">
+        <div class="info-row">
+            <div class="info-label">School Code:</div>
+            <div class="info-value">{{ school.code }}</div>
+        </div>
+        <div class="info-row">
+            <div class="info-label">School Name:</div>
+            <div class="info-value">{{ school.name }}</div>
+        </div>
+    </div>
+
+    <!-- Examination Information -->
+    <div class="section-title">Examination Information</div>
+    <div class="info-table">
+        <div class="info-row">
+            <div class="info-label">Examination Type:</div>
+            <div class="info-value">{{ exam.type }}</div>
+        </div>
+        {% if exam.series %}
+        <div class="info-row">
+            <div class="info-label">Examination Series:</div>
+            <div class="info-value">{{ exam.series }}</div>
+        </div>
+        {% endif %}
+        <div class="info-row">
+            <div class="info-label">Year:</div>
+            <div class="info-value">{{ exam.year }}</div>
+        </div>
+        <div class="info-row">
+            <div class="info-label">Registration Type:</div>
+            <div class="info-value">
+                {% if registration_type == 'free_tvet' %}
+                    Free TVET
+                {% elif registration_type == 'referral' %}
+                    Referral
+                {% else %}
+                    {{ registration_type }}
+                {% endif %}
+            </div>
+        </div>
+    </div>
+
+    <!-- Summary -->
+    <div class="section-title">Summary</div>
+    {% if group_by_programme and programmes %}
+    <table class="items-table">
+        <thead>
+            <tr>
+                <th>Programme Code</th>
+                <th>Programme Name</th>
+                <th class="text-center">Number of Candidates</th>
+                <th class="text-right">Amount (GHS)</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for programme in programmes %}
+            <tr>
+                <td>{{ programme.programme_code }}</td>
+                <td>{{ programme.programme_name }}</td>
+                <td class="text-center">{{ programme.candidate_count }}</td>
+                <td class="amount-column">{{ "%.2f"|format(programme.total_amount) }}</td>
+            </tr>
+            {% endfor %}
+            <tr class="subtotal-separator">
+                <td colspan="4"></td>
+            </tr>
+            <tr class="total-row">
+                <td colspan="2" class="total-label text-bold">TOTAL</td>
+                <td class="text-center text-bold">{{ candidate_count }}</td>
+                <td class="amount-column text-bold">{{ "%.2f"|format(total_amount) }}</td>
+            </tr>
+        </tbody>
+    </table>
+    {% else %}
+    <table class="items-table">
+        <thead>
+            <tr>
+                <th>Description</th>
+                <th class="text-center">Number of Candidates</th>
+                <th class="text-right">Total Amount (GHS)</th>
+            </tr>
+        </thead>
+        <tbody>
+            <tr>
+                <td>Registration Fees</td>
+                <td class="text-center">{{ candidate_count }}</td>
+                <td class="amount-column">{{ "%.2f"|format(total_amount) }}</td>
+            </tr>
+            <tr class="subtotal-separator">
+                <td colspan="3"></td>
+            </tr>
+            <tr class="total-row">
+                <td class="total-label text-bold">TOTAL</td>
+                <td class="text-center text-bold">{{ candidate_count }}</td>
+                <td class="amount-column text-bold">{{ "%.2f"|format(total_amount) }}</td>
+            </tr>
+        </tbody>
+    </table>
+    {% endif %}
+
+    <div class="footer">
+        <div>This is a computer-generated invoice. No signature is required.</div>
+        <div class="footer-note">
+            Generated on: {{ generated_at.strftime('%B %d, %Y at %I:%M %p UTC') }}<br/>
+            This invoice is generated on-demand and does not represent a formal billing document.
+        </div>
+    </div>
+    </div>
+</body>
+</html>

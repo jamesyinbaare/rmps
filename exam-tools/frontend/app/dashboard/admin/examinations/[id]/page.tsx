@@ -1,0 +1,1068 @@
+"use client";
+
+import Link from "next/link";
+import { useParams, useRouter } from "next/navigation";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import { getCoreRowModel, useReactTable, type ColumnDef } from "@tanstack/react-table";
+
+import { AdminTimetableDownloadsPanel } from "@/components/admin-timetable-downloads-panel";
+import { DataTable } from "@/components/data-table";
+import { Button } from "@/components/ui/button";
+import {
+  apiFetch,
+  apiJson,
+  bulkUploadExaminationSchedules,
+  downloadExaminationCandidatesTemplate,
+  downloadScheduleTemplate,
+  getExaminationScriptSeriesConfig,
+  importExaminationCandidates,
+  listExaminationCandidates,
+  type ExaminationCandidateListResponse,
+  putExaminationScriptSeriesConfig,
+  type Examination,
+  type ExaminationCandidate,
+  type ExaminationCandidateImportResponse,
+  type ExaminationSchedule,
+  type ExaminationScheduleBulkUploadResponse,
+  type ExaminationScriptSeriesConfigRow,
+} from "@/lib/api";
+import { formInputClass, formLabelClass, primaryButtonClass } from "@/lib/form-classes";
+import { REGION_OPTIONS, ZONE_OPTIONS } from "@/lib/school-enums";
+
+const inputFocusRing =
+  "focus:border-primary focus:outline-none focus:ring-2 focus:ring-ring/30";
+
+const outlineBtn =
+  "inline-flex min-h-11 items-center justify-center rounded-lg border border-input-border bg-background px-4 text-sm font-medium text-foreground transition-colors hover:bg-muted disabled:opacity-50";
+
+const DEFAULT_PAPERS_JSON = `[
+  {"paper": 1, "date": "2026-06-01", "start_time": "09:00", "end_time": "11:00"}
+]`;
+
+const CANDIDATE_PAGE_SIZE_OPTIONS = [25, 50, 100] as const;
+
+function Modal({
+  title,
+  titleId,
+  children,
+  onClose,
+  wide,
+}: {
+  title: string;
+  titleId: string;
+  children: React.ReactNode;
+  onClose: () => void;
+  wide?: boolean;
+}) {
+  return (
+    <div className="fixed inset-0 z-50 flex items-end justify-center p-4 sm:items-center">
+      <button
+        type="button"
+        aria-label="Close dialog"
+        className="absolute inset-0 bg-foreground/40"
+        onClick={onClose}
+      />
+      <div
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby={titleId}
+        className={`relative z-10 max-h-[90vh] w-full overflow-y-auto rounded-2xl border border-border bg-card p-5 shadow-lg ${wide ? "max-w-3xl" : "max-w-lg"}`}
+      >
+        <div className="flex items-start justify-between gap-4">
+          <h2 id={titleId} className="text-lg font-semibold text-card-foreground">
+            {title}
+          </h2>
+          <button
+            type="button"
+            onClick={onClose}
+            className={`rounded-lg px-2 py-1 text-sm text-muted-foreground hover:bg-muted ${inputFocusRing}`}
+          >
+            Close
+          </button>
+        </div>
+        <div className="mt-4">{children}</div>
+      </div>
+    </div>
+  );
+}
+
+export default function ExaminationDetailPage() {
+  const params = useParams();
+  const router = useRouter();
+  const examId = Number(params.id);
+  const [exam, setExam] = useState<Examination | null>(null);
+  const [schedules, setSchedules] = useState<ExaminationSchedule[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
+
+  const [examType, setExamType] = useState("");
+  const [examSeries, setExamSeries] = useState("");
+  const [year, setYear] = useState("");
+  const [description, setDescription] = useState("");
+  const [savingExam, setSavingExam] = useState(false);
+
+  const [scheduleModal, setScheduleModal] = useState(false);
+  const [editingSchedule, setEditingSchedule] = useState<ExaminationSchedule | null>(null);
+  const [originalCode, setOriginalCode] = useState("");
+  const [papersJson, setPapersJson] = useState(DEFAULT_PAPERS_JSON);
+  const [venue, setVenue] = useState("");
+  const [durationMin, setDurationMin] = useState("");
+  const [instructions, setInstructions] = useState("");
+  const [savingSchedule, setSavingSchedule] = useState(false);
+
+  const [bulkFile, setBulkFile] = useState<File | null>(null);
+  const [bulkOverride, setBulkOverride] = useState(false);
+  const [bulkUploading, setBulkUploading] = useState(false);
+  const [bulkResult, setBulkResult] = useState<ExaminationScheduleBulkUploadResponse | null>(null);
+
+  const [candidates, setCandidates] = useState<ExaminationCandidate[]>([]);
+  const [candidatesError, setCandidatesError] = useState("");
+  const [candidatesLoading, setCandidatesLoading] = useState(false);
+  const [hasLoadedCandidates, setHasLoadedCandidates] = useState(false);
+  const [candidatesTotal, setCandidatesTotal] = useState(0);
+  const [candidatePage, setCandidatePage] = useState(0);
+  const [candidatePageSize, setCandidatePageSize] = useState<number>(50);
+  const [candidateSchoolQuery, setCandidateSchoolQuery] = useState("");
+  const [candidateRegion, setCandidateRegion] = useState("");
+  const [candidateZone, setCandidateZone] = useState("");
+  const [candFile, setCandFile] = useState<File | null>(null);
+  const [candUploading, setCandUploading] = useState(false);
+  const [candResult, setCandResult] = useState<ExaminationCandidateImportResponse | null>(null);
+  const [subjectsModalCandidate, setSubjectsModalCandidate] = useState<ExaminationCandidate | null>(null);
+
+  const [scriptSeriesRows, setScriptSeriesRows] = useState<ExaminationScriptSeriesConfigRow[]>([]);
+  const [scriptSeriesError, setScriptSeriesError] = useState("");
+  const [scriptSeriesLoading, setScriptSeriesLoading] = useState(false);
+  const [scriptSeriesSaving, setScriptSeriesSaving] = useState(false);
+  const [scriptSeriesModalOpen, setScriptSeriesModalOpen] = useState(false);
+  const [hasLoadedScriptSeries, setHasLoadedScriptSeries] = useState(false);
+
+  const load = useCallback(async () => {
+    if (!Number.isFinite(examId)) return;
+    setError("");
+    setLoading(true);
+    try {
+      const [ex, sch] = await Promise.all([
+        apiJson<Examination>(`/examinations/${examId}`),
+        apiJson<ExaminationSchedule[]>(`/examinations/${examId}/schedules`),
+      ]);
+      setExam(ex);
+      setExamType(ex.exam_type);
+      setExamSeries(ex.exam_series ?? "");
+      setYear(String(ex.year));
+      setDescription(ex.description ?? "");
+      setSchedules(sch);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Failed to load");
+    } finally {
+      setLoading(false);
+    }
+  }, [examId]);
+
+  useEffect(() => {
+    void load();
+  }, [load]);
+
+  const fetchCandidates = useCallback(
+    async (page: number, pageSize: number) => {
+      if (!Number.isFinite(examId)) return;
+      setCandidatesLoading(true);
+      setCandidatesError("");
+      try {
+        const response: ExaminationCandidateListResponse = await listExaminationCandidates(examId, {
+          skip: page * pageSize,
+          limit: pageSize,
+          school_q: candidateSchoolQuery || null,
+          region: candidateRegion || null,
+          zone: candidateZone || null,
+        });
+        setCandidates(response.items);
+        setCandidatesTotal(response.total);
+        setHasLoadedCandidates(true);
+      } catch (ce) {
+        setCandidates([]);
+        setCandidatesTotal(0);
+        setCandidatesError(ce instanceof Error ? ce.message : "Failed to load registered candidates");
+      } finally {
+        setCandidatesLoading(false);
+      }
+    },
+    [candidateRegion, candidateSchoolQuery, candidateZone, examId],
+  );
+
+  const loadScriptSeriesConfig = useCallback(async () => {
+    if (!Number.isFinite(examId)) return;
+    setScriptSeriesLoading(true);
+    setScriptSeriesError("");
+    try {
+      const sc = await getExaminationScriptSeriesConfig(examId);
+      setScriptSeriesRows(sc.items);
+      setHasLoadedScriptSeries(true);
+    } catch {
+      setScriptSeriesRows([]);
+      setScriptSeriesError("Could not load script packing series configuration.");
+    } finally {
+      setScriptSeriesLoading(false);
+    }
+  }, [examId]);
+
+  useEffect(() => {
+    if (!hasLoadedCandidates) return;
+    void fetchCandidates(candidatePage, candidatePageSize);
+  }, [candidatePage, candidatePageSize, fetchCandidates, hasLoadedCandidates]);
+
+  async function saveExam(e: React.FormEvent) {
+    e.preventDefault();
+    setSavingExam(true);
+    setError("");
+    try {
+      const y = parseInt(year, 10);
+      if (Number.isNaN(y)) throw new Error("Invalid year");
+      const updated = await apiJson<Examination>(`/examinations/${examId}`, {
+        method: "PUT",
+        body: JSON.stringify({
+          exam_type: examType.trim(),
+          exam_series: examSeries.trim() || null,
+          year: y,
+          description: description.trim() || null,
+        }),
+      });
+      setExam(updated);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Save failed");
+    } finally {
+      setSavingExam(false);
+    }
+  }
+
+  function setScriptSeriesCount(subjectId: number, raw: number) {
+    const n = Math.max(1, Math.min(32767, Math.floor(Number.isFinite(raw) ? raw : 1)));
+    setScriptSeriesRows((rows) => rows.map((r) => (r.subject_id === subjectId ? { ...r, series_count: n } : r)));
+  }
+
+  async function saveScriptSeriesConfig() {
+    if (!Number.isFinite(examId)) return;
+    setScriptSeriesSaving(true);
+    setScriptSeriesError("");
+    try {
+      const res = await putExaminationScriptSeriesConfig(examId, { items: scriptSeriesRows });
+      setScriptSeriesRows(res.items);
+    } catch (err) {
+      setScriptSeriesError(err instanceof Error ? err.message : "Save failed");
+    } finally {
+      setScriptSeriesSaving(false);
+    }
+  }
+
+  function openScriptSeriesModal() {
+    setScriptSeriesModalOpen(true);
+    if (!hasLoadedScriptSeries) {
+      void loadScriptSeriesConfig();
+    }
+  }
+
+  function openNewSchedule() {
+    setEditingSchedule(null);
+    setOriginalCode("");
+    setPapersJson(DEFAULT_PAPERS_JSON);
+    setVenue("");
+    setDurationMin("");
+    setInstructions("");
+    setScheduleModal(true);
+  }
+
+  function openEditSchedule(s: ExaminationSchedule) {
+    setEditingSchedule(s);
+    setOriginalCode(s.subject_code);
+    setPapersJson(JSON.stringify(s.papers, null, 2));
+    setVenue(s.venue ?? "");
+    setDurationMin(s.duration_minutes != null ? String(s.duration_minutes) : "");
+    setInstructions(s.instructions ?? "");
+    setScheduleModal(true);
+  }
+
+  async function saveSchedule(e: React.FormEvent) {
+    e.preventDefault();
+    setSavingSchedule(true);
+    setError("");
+    try {
+      let papers: Record<string, unknown>[];
+      try {
+        papers = JSON.parse(papersJson) as Record<string, unknown>[];
+        if (!Array.isArray(papers)) throw new Error("papers must be a JSON array");
+      } catch {
+        throw new Error("Invalid papers JSON");
+      }
+      const dur =
+        durationMin.trim() === "" ? null : parseInt(durationMin, 10);
+      if (dur != null && Number.isNaN(dur)) throw new Error("Invalid duration");
+
+      if (editingSchedule) {
+        await apiFetch(`/examinations/${examId}/schedules/${editingSchedule.id}`, {
+          method: "PUT",
+          body: JSON.stringify({
+            papers,
+            venue: venue.trim() || null,
+            duration_minutes: dur,
+            instructions: instructions.trim() || null,
+          }),
+        });
+      } else {
+        if (!originalCode.trim()) throw new Error("Subject code / original code required");
+        await apiFetch(`/examinations/${examId}/schedules`, {
+          method: "POST",
+          body: JSON.stringify({
+            original_code: originalCode.trim(),
+            papers,
+            venue: venue.trim() || null,
+            duration_minutes: dur,
+            instructions: instructions.trim() || null,
+          }),
+        });
+      }
+      setScheduleModal(false);
+      await load();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Save failed");
+    } finally {
+      setSavingSchedule(false);
+    }
+  }
+
+  async function deleteSchedule(id: number) {
+    if (!confirm("Delete this schedule?")) return;
+    setError("");
+    try {
+      await apiFetch(`/examinations/${examId}/schedules/${id}`, { method: "DELETE" });
+      await load();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Delete failed");
+    }
+  }
+
+  async function deleteExam() {
+    if (!confirm("Delete this examination and all schedules?")) return;
+    try {
+      await apiFetch(`/examinations/${examId}`, { method: "DELETE" });
+      router.replace("/dashboard/admin/examinations");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Delete failed");
+    }
+  }
+
+  const candidateColumns = useMemo<ColumnDef<ExaminationCandidate>[]>(
+    () => [
+      {
+        accessorKey: "full_name",
+        header: "Name",
+        cell: ({ row }) => (
+          <span className="block w-[30ch] truncate" title={row.original.full_name}>
+            {row.original.full_name}
+          </span>
+        ),
+      },
+      { accessorKey: "registration_number", header: "Reg. #" },
+      {
+        accessorKey: "index_number",
+        header: "Index",
+        cell: ({ row }) => row.original.index_number ?? "—",
+      },
+      {
+        id: "school",
+        header: "School",
+        cell: ({ row }) => (
+          <div>
+            <div className="text-muted-foreground">{row.original.school_code ?? "—"}</div>
+            {row.original.school_name ? (
+              <div className="text-xs text-card-foreground">
+                {row.original.school_name.length > 30
+                  ? `${row.original.school_name.slice(0, 30)}…`
+                  : row.original.school_name}
+              </div>
+            ) : null}
+          </div>
+        ),
+      },
+      {
+        id: "actions",
+        header: "Actions",
+        cell: ({ row }) => (
+          <button
+            type="button"
+            className={`text-primary hover:underline ${inputFocusRing}`}
+            onClick={() => setSubjectsModalCandidate(row.original)}
+          >
+            View subjects
+          </button>
+        ),
+      },
+    ],
+    [],
+  );
+
+  const candidateTable = useReactTable({
+    data: candidates,
+    columns: candidateColumns,
+    getCoreRowModel: getCoreRowModel(),
+  });
+
+  const candidatePageCount = Math.max(1, Math.ceil(candidatesTotal / candidatePageSize));
+
+  if (!Number.isFinite(examId)) {
+    return <p className="text-sm text-destructive">Invalid examination id</p>;
+  }
+
+  if (loading && !exam) {
+    return <p className="text-sm text-muted-foreground">Loading…</p>;
+  }
+
+  if (!exam) {
+    return <p className="text-sm text-destructive">{error || "Not found"}</p>;
+  }
+
+  return (
+    <div className="space-y-8">
+      <div>
+        <Link
+          href="/dashboard/admin/examinations"
+          className={`text-sm font-medium text-primary hover:underline ${inputFocusRing} rounded-md`}
+        >
+          ← All examinations
+        </Link>
+        <h2 className="mt-3 text-xl font-semibold text-card-foreground">
+          {exam.year}
+          {exam.exam_series ? ` ${exam.exam_series}` : ""} — {exam.exam_type}
+        </h2>
+        <p className="mt-2 text-sm text-muted-foreground">
+          Generate a national or school PDF below (school optional), or open the{" "}
+          <Link
+            href={`/dashboard/admin/timetable?examId=${examId}`}
+            className={`font-medium text-primary hover:underline ${inputFocusRing} rounded-md`}
+          >
+            Examination timetable
+          </Link>{" "}
+          screen to work across examinations.
+        </p>
+      </div>
+
+      {error ? (
+        <p className="text-sm text-destructive" role="alert">
+          {error}
+        </p>
+      ) : null}
+
+      <section className="rounded-2xl border border-border bg-card p-4 sm:p-6">
+        <h3 className="text-lg font-semibold text-card-foreground">Examination details</h3>
+        <form className="mt-4 grid gap-4 sm:grid-cols-2" onSubmit={saveExam}>
+          <div>
+            <label className={formLabelClass} htmlFor="et">
+              Exam type
+            </label>
+            <input
+              id="et"
+              className={formInputClass}
+              value={examType}
+              onChange={(e) => setExamType(e.target.value)}
+              required
+            />
+          </div>
+          <div>
+            <label className={formLabelClass} htmlFor="es">
+              Series
+            </label>
+            <input
+              id="es"
+              className={formInputClass}
+              value={examSeries}
+              onChange={(e) => setExamSeries(e.target.value)}
+            />
+          </div>
+          <div>
+            <label className={formLabelClass} htmlFor="ey">
+              Year
+            </label>
+            <input
+              id="ey"
+              type="number"
+              className={formInputClass}
+              value={year}
+              onChange={(e) => setYear(e.target.value)}
+              required
+            />
+          </div>
+          <div className="sm:col-span-2">
+            <label className={formLabelClass} htmlFor="ed">
+              Description
+            </label>
+            <textarea
+              id="ed"
+              rows={2}
+              className={formInputClass}
+              value={description}
+              onChange={(e) => setDescription(e.target.value)}
+            />
+          </div>
+          <div className="flex flex-wrap gap-2 sm:col-span-2">
+            <button type="submit" disabled={savingExam} className={outlineBtn}>
+              {savingExam ? "Saving…" : "Save details"}
+            </button>
+            <button type="button" className={`${outlineBtn} text-destructive`} onClick={() => void deleteExam()}>
+              Delete examination
+            </button>
+          </div>
+        </form>
+      </section>
+
+      <section className="rounded-2xl border border-border bg-card p-4 sm:p-6">
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+          <h3 className="text-lg font-semibold text-card-foreground">Schedules</h3>
+          <button type="button" className={outlineBtn} onClick={openNewSchedule}>
+            Add schedule
+          </button>
+        </div>
+
+        <div className="mt-6 rounded-xl border border-border bg-muted/20 p-4">
+          <h4 className="text-sm font-semibold text-card-foreground">Timetable upload (Excel / CSV)</h4>
+          <p className="mt-1 text-sm text-muted-foreground">
+            Download the template (all subjects on the &quot;Schedules&quot; sheet; see &quot;Sample Data&quot;
+            for examples). Fill dates and times, then upload. Same column layout as the registration portal.
+          </p>
+          <div className="mt-3 flex flex-wrap items-center gap-3">
+            <button
+              type="button"
+              className={outlineBtn}
+              onClick={() =>
+                void downloadScheduleTemplate(examId, `exam_${examId}_timetable_template.xlsx`)
+              }
+            >
+              Download template
+            </button>
+            <label className="text-sm text-muted-foreground">
+              <span className="sr-only">Upload file</span>
+              <input
+                type="file"
+                accept=".xlsx,.xls,.csv"
+                className="block max-w-xs text-sm file:mr-2 file:rounded-lg file:border file:border-input-border file:bg-background file:px-3 file:py-2"
+                onChange={(e) => setBulkFile(e.target.files?.[0] ?? null)}
+              />
+            </label>
+            <label className="flex cursor-pointer items-center gap-2 text-sm text-card-foreground">
+              <input
+                type="checkbox"
+                checked={bulkOverride}
+                onChange={(e) => setBulkOverride(e.target.checked)}
+              />
+              Replace existing schedules for the same subject
+            </label>
+            <button
+              type="button"
+              className={outlineBtn}
+              disabled={!bulkFile || bulkUploading}
+              onClick={() => {
+                if (!bulkFile) return;
+                setBulkUploading(true);
+                setError("");
+                setBulkResult(null);
+                void bulkUploadExaminationSchedules(examId, bulkFile, bulkOverride)
+                  .then((r) => {
+                    setBulkResult(r);
+                    return load();
+                  })
+                  .catch((e: unknown) => {
+                    setError(e instanceof Error ? e.message : "Upload failed");
+                  })
+                  .finally(() => setBulkUploading(false));
+              }}
+            >
+              {bulkUploading ? "Uploading…" : "Upload"}
+            </button>
+          </div>
+          {bulkResult ? (
+            <div className="mt-3 text-sm">
+              <p className="text-card-foreground">
+                Processed {bulkResult.total_rows} rows:{" "}
+                <span className="text-primary">{bulkResult.successful} saved</span>
+                {bulkResult.failed > 0 ? (
+                  <span className="text-destructive"> · {bulkResult.failed} failed</span>
+                ) : null}
+              </p>
+              {bulkResult.errors.length > 0 ? (
+                <ul className="mt-2 max-h-40 list-inside list-disc overflow-y-auto text-muted-foreground">
+                  {bulkResult.errors.slice(0, 50).map((err, i) => (
+                    <li key={`${err.row_number}-${i}`}>
+                      Row {err.row_number}
+                      {err.field ? ` (${err.field})` : ""}: {err.error_message}
+                    </li>
+                  ))}
+                  {bulkResult.errors.length > 50 ? (
+                    <li>… and {bulkResult.errors.length - 50} more</li>
+                  ) : null}
+                </ul>
+              ) : null}
+            </div>
+          ) : null}
+        </div>
+        {schedules.length === 0 ? (
+          <p className="mt-4 text-sm text-muted-foreground">No subject schedules yet.</p>
+        ) : (
+          <div className="mt-4 overflow-x-auto">
+            <table className="w-full min-w-[640px] border-collapse text-left text-sm">
+              <thead>
+                <tr className="border-b border-border text-muted-foreground">
+                  <th className="py-2 pr-3 font-medium">Code</th>
+                  <th className="py-2 pr-3 font-medium">Subject</th>
+                  <th className="py-2 pr-3 font-medium">Papers</th>
+                  <th className="py-2 pr-3 font-medium">Venue</th>
+                  <th className="py-2 font-medium">Actions</th>
+                </tr>
+              </thead>
+              <tbody>
+                {schedules.map((s) => (
+                  <tr key={s.id} className="border-b border-border/80">
+                    <td className="py-2 pr-3 font-mono text-xs">{s.subject_code}</td>
+                    <td className="py-2 pr-3">{s.subject_name}</td>
+                    <td className="py-2 pr-3">{Array.isArray(s.papers) ? s.papers.length : 0}</td>
+                    <td className="py-2 pr-3 text-muted-foreground">{s.venue ?? "—"}</td>
+                    <td className="py-2">
+                      <button
+                        type="button"
+                        className={`mr-2 text-primary hover:underline ${inputFocusRing}`}
+                        onClick={() => openEditSchedule(s)}
+                      >
+                        Edit
+                      </button>
+                      <button
+                        type="button"
+                        className={`text-destructive hover:underline ${inputFocusRing}`}
+                        onClick={() => void deleteSchedule(s.id)}
+                      >
+                        Delete
+                      </button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </section>
+
+      <section className="rounded-2xl border border-border bg-card p-4 sm:p-6">
+        <h3 className="text-lg font-semibold text-card-foreground">Script packing — series per subject</h3>
+        <p className="mt-2 text-sm text-muted-foreground">
+          Set how many packing series appear for each subject on this examination&apos;s timetable (default 1). The same
+          count applies to every paper for that subject. Inspectors cannot add series themselves. You cannot reduce a
+          count below a series that already has packing data recorded.
+        </p>
+        <div className="mt-4">
+          <button type="button" className={outlineBtn} onClick={openScriptSeriesModal}>
+            Open script packing
+          </button>
+        </div>
+      </section>
+
+      <section className="rounded-2xl border border-border bg-card p-4 sm:p-6">
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+          <h3 className="text-lg font-semibold text-card-foreground">Registered candidates</h3>
+          <p className="text-sm text-muted-foreground sm:text-right">
+            Import the Excel file exported from the registration portal for the exam linked to this examination (
+            <code className="rounded bg-muted px-1 text-xs">exam_id_main_system</code>).
+          </p>
+        </div>
+        <div className="mt-4 rounded-xl border border-border bg-muted/20 p-4">
+          <div className="flex flex-wrap items-center gap-3">
+            <button
+              type="button"
+              className={outlineBtn}
+              onClick={() =>
+                void downloadExaminationCandidatesTemplate(
+                  examId,
+                  `exam_${examId}_candidates_template.xlsx`,
+                )
+              }
+            >
+              Download import template
+            </button>
+            <label className="text-sm text-muted-foreground">
+              <span className="sr-only">Candidate file</span>
+              <input
+                type="file"
+                accept=".xlsx,.xls,.csv"
+                className="block max-w-xs text-sm file:mr-2 file:rounded-lg file:border file:border-input-border file:bg-background file:px-3 file:py-2"
+                onChange={(e) => setCandFile(e.target.files?.[0] ?? null)}
+              />
+            </label>
+            <button
+              type="button"
+              className={outlineBtn}
+              disabled={!candFile || candUploading}
+              onClick={() => {
+                if (!candFile) return;
+                setCandUploading(true);
+                setCandResult(null);
+                void importExaminationCandidates(examId, candFile)
+                  .then((r) => {
+                    setCandResult(r);
+                    if (hasLoadedCandidates) {
+                      setCandidatePage(0);
+                      return fetchCandidates(0, candidatePageSize);
+                    }
+                    return Promise.resolve();
+                  })
+                  .catch((e: unknown) => {
+                    setCandResult({
+                      total_rows: 0,
+                      successful: 0,
+                      failed: 0,
+                      errors: [
+                        {
+                          row_number: 0,
+                          error_message: e instanceof Error ? e.message : "Import failed",
+                          field: null,
+                        },
+                      ],
+                    });
+                  })
+                  .finally(() => setCandUploading(false));
+              }}
+            >
+              {candUploading ? "Importing…" : "Import candidates"}
+            </button>
+          </div>
+          {candResult ? (
+            <div className="mt-3 text-sm">
+              <p className="text-card-foreground">
+                Processed {candResult.total_rows} rows:{" "}
+                <span className="text-primary">{candResult.successful} saved</span>
+                {candResult.failed > 0 ? (
+                  <span className="text-destructive"> · {candResult.failed} failed</span>
+                ) : null}
+              </p>
+              {candResult.errors.length > 0 ? (
+                <ul className="mt-2 max-h-40 list-inside list-disc overflow-y-auto text-muted-foreground">
+                  {candResult.errors.slice(0, 50).map((err, i) => (
+                    <li key={`${err.row_number}-${i}`}>
+                      Row {err.row_number}
+                      {err.field ? ` (${err.field})` : ""}: {err.error_message}
+                    </li>
+                  ))}
+                </ul>
+              ) : null}
+            </div>
+          ) : null}
+        </div>
+        {candidatesError ? (
+          <p className="mt-3 text-sm text-destructive" role="alert">
+            {candidatesError}
+          </p>
+        ) : null}
+        {!hasLoadedCandidates ? (
+          <div className="mt-4">
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => {
+                setCandidatePage(0);
+                void fetchCandidates(0, candidatePageSize);
+              }}
+            >
+              Load candidates
+            </Button>
+          </div>
+        ) : (
+          <div className="mt-4 space-y-4">
+            <div className="grid gap-3 md:grid-cols-3">
+              <div>
+                <label className={formLabelClass} htmlFor="candidate-school-filter">
+                  School
+                </label>
+                <input
+                  id="candidate-school-filter"
+                  className={formInputClass}
+                  value={candidateSchoolQuery}
+                  onChange={(e) => {
+                    setCandidateSchoolQuery(e.target.value);
+                    setCandidatePage(0);
+                  }}
+                  placeholder="Search school code/name"
+                />
+              </div>
+              <div>
+                <label className={formLabelClass} htmlFor="candidate-region-filter">
+                  Region
+                </label>
+                <select
+                  id="candidate-region-filter"
+                  className={formInputClass}
+                  value={candidateRegion}
+                  onChange={(e) => {
+                    setCandidateRegion(e.target.value);
+                    setCandidatePage(0);
+                  }}
+                >
+                  <option value="">All regions</option>
+                  {REGION_OPTIONS.map((r) => (
+                    <option key={r.value} value={r.value}>
+                      {r.label}
+                    </option>
+                  ))}
+                </select>
+              </div>
+              <div>
+                <label className={formLabelClass} htmlFor="candidate-zone-filter">
+                  Zone
+                </label>
+                <select
+                  id="candidate-zone-filter"
+                  className={formInputClass}
+                  value={candidateZone}
+                  onChange={(e) => {
+                    setCandidateZone(e.target.value);
+                    setCandidatePage(0);
+                  }}
+                >
+                  <option value="">All zones</option>
+                  {ZONE_OPTIONS.map((z) => (
+                    <option key={z.value} value={z.value}>
+                      {z.label}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            </div>
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <p className="text-sm text-muted-foreground">
+                Showing {candidates.length} of {candidatesTotal} candidates
+              </p>
+              <label className="flex items-center gap-2 text-sm text-muted-foreground">
+                Page size
+                <select
+                  className={`${formInputClass} w-24`}
+                  value={candidatePageSize}
+                  onChange={(e) => {
+                    const size = parseInt(e.target.value, 10) || 50;
+                    setCandidatePageSize(size);
+                    setCandidatePage(0);
+                  }}
+                >
+                  {CANDIDATE_PAGE_SIZE_OPTIONS.map((size) => (
+                    <option key={size} value={size}>
+                      {size}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            </div>
+            {candidatesLoading ? <p className="text-sm text-muted-foreground">Loading candidates…</p> : null}
+            <DataTable table={candidateTable} emptyMessage="No registered candidates yet." showFooter={false} />
+            <div className="flex items-center justify-end gap-2">
+              <button
+                type="button"
+                className={outlineBtn}
+                disabled={candidatePage <= 0 || candidatesLoading}
+                onClick={() => setCandidatePage((p) => Math.max(0, p - 1))}
+              >
+                Previous
+              </button>
+              <p className="text-sm text-muted-foreground">
+                Page {candidatePage + 1} of {candidatePageCount}
+              </p>
+              <button
+                type="button"
+                className={outlineBtn}
+                disabled={candidatePage + 1 >= candidatePageCount || candidatesLoading}
+                onClick={() => setCandidatePage((p) => p + 1)}
+              >
+                Next
+              </button>
+            </div>
+          </div>
+        )}
+      </section>
+
+      <AdminTimetableDownloadsPanel examId={examId} schoolFirst />
+
+      {subjectsModalCandidate ? (
+        <Modal
+          title={`Subjects — ${subjectsModalCandidate.full_name}`}
+          titleId="subjects-modal"
+          onClose={() => setSubjectsModalCandidate(null)}
+          wide
+        >
+          {subjectsModalCandidate.subject_selections.length === 0 ? (
+            <p className="text-sm text-muted-foreground">No subjects recorded.</p>
+          ) : (
+            <ul className="divide-y divide-border text-sm">
+              {subjectsModalCandidate.subject_selections.map((s) => (
+                <li key={s.id} className="flex flex-wrap gap-2 py-2">
+                  <span className="font-mono text-xs">{s.subject_code}</span>
+                  <span>{s.subject_name}</span>
+                  {s.series != null ? (
+                    <span className="text-muted-foreground">(series {s.series})</span>
+                  ) : null}
+                </li>
+              ))}
+            </ul>
+          )}
+        </Modal>
+      ) : null}
+
+      {scriptSeriesModalOpen ? (
+        <Modal
+          title="Script packing — series per subject"
+          titleId="script-series-modal"
+          onClose={() => setScriptSeriesModalOpen(false)}
+          wide
+        >
+          <p className="text-sm text-muted-foreground">
+            Set how many packing series appear for each subject on this examination&apos;s timetable (default 1). The same
+            count applies to every paper for that subject.
+          </p>
+          <div className="mt-4 flex justify-end">
+            <button
+              type="button"
+              className={outlineBtn}
+              onClick={() => void loadScriptSeriesConfig()}
+              disabled={scriptSeriesLoading}
+            >
+              {scriptSeriesLoading ? "Refreshing…" : "Refresh"}
+            </button>
+          </div>
+          {scriptSeriesError ? (
+            <p className="mt-3 text-sm text-destructive" role="alert">
+              {scriptSeriesError}
+            </p>
+          ) : null}
+          {scriptSeriesLoading ? <p className="mt-4 text-sm text-muted-foreground">Loading…</p> : null}
+          {scriptSeriesRows.length === 0 && !scriptSeriesError && !scriptSeriesLoading ? (
+            <p className="mt-4 text-sm text-muted-foreground">Add subject schedules first to configure series counts.</p>
+          ) : null}
+          {scriptSeriesRows.length > 0 ? (
+            <div className="mt-4 space-y-4">
+              <div className="overflow-x-auto">
+                <table className="w-full min-w-[480px] border-collapse text-left text-sm">
+                  <thead>
+                    <tr className="border-b border-border text-muted-foreground">
+                      <th className="py-2 pr-3 font-medium">Code</th>
+                      <th className="py-2 pr-3 font-medium">Subject</th>
+                      <th className="py-2 font-medium">Number of series</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {scriptSeriesRows.map((row) => (
+                      <tr key={row.subject_id} className="border-b border-border/80">
+                        <td className="py-2 pr-3 font-mono text-xs">{row.subject_code}</td>
+                        <td className="py-2 pr-3">{row.subject_name}</td>
+                        <td className="py-2">
+                          <input
+                            type="number"
+                            min={1}
+                            max={32767}
+                            className={`w-24 ${formInputClass}`}
+                            value={row.series_count}
+                            onChange={(e) => setScriptSeriesCount(row.subject_id, parseInt(e.target.value, 10) || 1)}
+                          />
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+              <button
+                type="button"
+                className={primaryButtonClass}
+                disabled={scriptSeriesSaving}
+                onClick={() => void saveScriptSeriesConfig()}
+              >
+                {scriptSeriesSaving ? "Saving…" : "Save series configuration"}
+              </button>
+            </div>
+          ) : null}
+        </Modal>
+      ) : null}
+
+      {scheduleModal ? (
+        <Modal
+          title={editingSchedule ? "Edit schedule" : "Add schedule"}
+          titleId="sch-modal"
+          onClose={() => setScheduleModal(false)}
+          wide
+        >
+          {error ? (
+            <p className="mb-3 text-sm text-destructive" role="alert">
+              {error}
+            </p>
+          ) : null}
+          <form className="flex flex-col gap-4" onSubmit={saveSchedule}>
+            {!editingSchedule ? (
+              <div>
+                <label className={formLabelClass} htmlFor="oc">
+                  Subject original code or code
+                </label>
+                <input
+                  id="oc"
+                  className={formInputClass}
+                  value={originalCode}
+                  onChange={(e) => setOriginalCode(e.target.value)}
+                  required={!editingSchedule}
+                  placeholder="Must match a subject in the catalogue"
+                />
+              </div>
+            ) : (
+              <p className="text-sm text-muted-foreground">
+                Subject: <span className="font-medium text-foreground">{editingSchedule.subject_name}</span> (
+                {editingSchedule.subject_code})
+              </p>
+            )}
+            <div>
+              <label className={formLabelClass} htmlFor="pj">
+                Papers (JSON array)
+              </label>
+              <textarea
+                id="pj"
+                required
+                rows={8}
+                className={`${formInputClass} font-mono text-sm`}
+                value={papersJson}
+                onChange={(e) => setPapersJson(e.target.value)}
+              />
+            </div>
+            <div>
+              <label className={formLabelClass} htmlFor="ven">
+                Venue (optional)
+              </label>
+              <input id="ven" className={formInputClass} value={venue} onChange={(e) => setVenue(e.target.value)} />
+            </div>
+            <div>
+              <label className={formLabelClass} htmlFor="dur">
+                Duration (minutes, optional)
+              </label>
+              <input
+                id="dur"
+                type="number"
+                className={formInputClass}
+                value={durationMin}
+                onChange={(e) => setDurationMin(e.target.value)}
+              />
+            </div>
+            <div>
+              <label className={formLabelClass} htmlFor="ins">
+                Instructions (optional)
+              </label>
+              <textarea
+                id="ins"
+                rows={2}
+                className={formInputClass}
+                value={instructions}
+                onChange={(e) => setInstructions(e.target.value)}
+              />
+            </div>
+            <button type="submit" disabled={savingSchedule} className={primaryButtonClass}>
+              {savingSchedule ? "Saving…" : "Save schedule"}
+            </button>
+          </form>
+        </Modal>
+      ) : null}
+    </div>
+  );
+}

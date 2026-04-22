@@ -1,0 +1,291 @@
+@import "tailwindcss";
+@import "tw-animate-css";
+
+@custom-variant dark (&:is(.dark *));
+
+/* ============================================
+   GHANA PAY - GHANA FLAG COLOR PALETTE
+   ============================================ */
+
+@theme inline {
+  /* Primary Ghana Flag Colors */
+  --ghana-red: #ce1126;
+  --ghana-gold: #fcd116;
+  --ghana-green: #006b3f;
+  --ghana-black: #000000;
+
+  /* Extended Palette */
+  --ghana-deep-red: #a50e1e;
+  --ghana-rich-gold: #e6b80a;
+  --ghana-forest-green: #005530;
+  --ghana-volta-blue: #0047ab;
+
+  /* Neutrals */
+  --ghana-charcoal: #2c3e50;
+  --ghana-slate: #5d6d7e;
+  --ghana-light-gray: #ecf0f1;
+  --ghana-off-white: #f8f9fa;
+  --ghana-white: #ffffff;
+
+  /* Semantic Colors - Light Mode - Mapped to Tailwind */
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-primary: var(--primary);
+  --color-primary-hover: var(--primary-hover);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-hover: var(--secondary-hover);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-success: var(--success);
+  --color-success-foreground: var(--success-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-input-border: var(--input-border);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-destructive: var(--destructive);
+  --color-destructive-foreground: var(--destructive-foreground);
+  --color-warning: var(--warning);
+  --color-warning-foreground: var(--warning-foreground);
+  --color-ring: var(--ring);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+
+  --font-sans: var(--font-geist-sans);
+  --font-mono: var(--font-geist-mono);
+
+  /* Border Radius */
+  --radius-sm: 4px;
+  --radius-md: 6px;
+  --radius-lg: 8px;
+  --radius-xl: 12px;
+  --radius-2xl: 16px;
+}
+
+/* Light Mode */
+:root {
+  --background: var(--ghana-off-white);
+  --foreground: var(--ghana-black);
+  --primary: var(--ghana-red);
+  --primary-hover: var(--ghana-deep-red);
+  --primary-foreground: var(--ghana-white);
+  --secondary: var(--ghana-gold);
+  --secondary-hover: var(--ghana-rich-gold);
+  --secondary-foreground: var(--ghana-black);
+  --success: var(--ghana-green);
+  --success-hover: var(--ghana-forest-green);
+  --success-foreground: var(--ghana-white);
+  --accent: var(--ghana-volta-blue);
+  --accent-foreground: var(--ghana-white);
+  --card: var(--ghana-white);
+  --card-foreground: var(--ghana-black);
+  --border: var(--ghana-light-gray);
+  --input: var(--ghana-white);
+  --input-border: var(--ghana-slate);
+  --muted: var(--ghana-light-gray);
+  --muted-foreground: var(--ghana-slate);
+  --destructive: var(--ghana-red);
+  --destructive-foreground: var(--ghana-white);
+  --warning: var(--ghana-gold);
+  --warning-foreground: var(--ghana-black);
+  --ring: var(--ghana-red);
+  --radius: 8px;
+
+  --popover: var(--ghana-white);
+  --popover-foreground: var(--ghana-black);
+}
+
+/* Dark Mode */
+.dark {
+  --background: #0f1419;
+  --foreground: #f8f9fa;
+  --primary: #e63946;
+  --primary-hover: #ce1126;
+  --primary-foreground: #ffffff;
+  --secondary: #fcd116;
+  --secondary-hover: #e6b80a;
+  --secondary-foreground: #000000;
+  --success: #2ecc71;
+  --success-hover: #006b3f;
+  --success-foreground: #ffffff;
+  --accent: #3498db;
+  --accent-foreground: #ffffff;
+  --card: #1a1f2e;
+  --card-foreground: #f8f9fa;
+  --border: #2c3e50;
+  --input: #1a1f2e;
+  --input-border: #5d6d7e;
+  --muted: #2c3e50;
+  --muted-foreground: #95a5a6;
+  --destructive: #e63946;
+  --destructive-foreground: #ffffff;
+  --warning: #fcd116;
+  --warning-foreground: #000000;
+  --ring: #e63946;
+
+  --popover: #1a1f2e;
+  --popover-foreground: #f8f9fa;
+}
+
+/* CTVET Theme - Light Mode with Green Primary */
+.ctvet {
+  --background: var(--ghana-off-white);
+  --foreground: var(--ghana-black);
+  --primary: #0f8a4b;
+  --primary-hover: #0b6d3a;
+  --primary-foreground: var(--ghana-white);
+  --secondary: var(--ghana-gold);
+  --secondary-hover: var(--ghana-rich-gold);
+  --secondary-foreground: var(--ghana-black);
+  --success: var(--ghana-green);
+  --success-hover: var(--ghana-forest-green);
+  --success-foreground: var(--ghana-white);
+  --accent: var(--ghana-volta-blue);
+  --accent-foreground: var(--ghana-white);
+  --card: var(--ghana-white);
+  --card-foreground: var(--ghana-black);
+  --border: #d8dee4;
+  --input: var(--ghana-white);
+  --input-border: #74808c;
+  --muted: #edf1f4;
+  --muted-foreground: #536270;
+  --destructive: var(--ghana-red);
+  --destructive-foreground: var(--ghana-white);
+  --warning: var(--ghana-gold);
+  --warning-foreground: var(--ghana-black);
+  --ring: #0f8a4b;
+  --radius: 8px;
+
+  --popover: var(--ghana-white);
+  --popover-foreground: var(--ghana-black);
+}
+
+/* CTVET Theme - Dark Mode with Green Primary */
+.ctvet.dark {
+  --background: #0f1419;
+  --foreground: #f8f9fa;
+  --primary: #22c06a;
+  --primary-hover: #17a45a;
+  --primary-foreground: #ffffff;
+  --secondary: #fcd116;
+  --secondary-hover: #e6b80a;
+  --secondary-foreground: #000000;
+  --success: #2ecc71;
+  --success-hover: #006b3f;
+  --success-foreground: #ffffff;
+  --accent: #3498db;
+  --accent-foreground: #ffffff;
+  --card: #1a1f2e;
+  --card-foreground: #f8f9fa;
+  --border: #2c3e50;
+  --input: #1a1f2e;
+  --input-border: #5d6d7e;
+  --muted: #2c3e50;
+  --muted-foreground: #95a5a6;
+  --destructive: #e63946;
+  --destructive-foreground: #ffffff;
+  --warning: #fcd116;
+  --warning-foreground: #000000;
+  --ring: #22c06a;
+
+  --popover: #1a1f2e;
+  --popover-foreground: #f8f9fa;
+}
+
+@layer base {
+  * {
+    @apply border-border;
+  }
+
+  body {
+    @apply bg-background text-foreground antialiased;
+    font-feature-settings:
+      "rlig" 1,
+      "calt" 1;
+    font-family: var(--font-sans), system-ui, sans-serif;
+  }
+
+  h1,
+  h2,
+  h3,
+  h4,
+  h5,
+  h6 {
+    @apply font-semibold text-foreground;
+  }
+
+  *:focus-visible {
+    @apply outline-2 outline-offset-2 outline-ring;
+  }
+}
+
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+::-webkit-scrollbar-track {
+  @apply bg-muted;
+}
+
+::-webkit-scrollbar-thumb {
+  @apply rounded-lg bg-muted-foreground/30;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  @apply bg-muted-foreground/50;
+}
+
+@media print {
+  /* When printing from the examination notice page, hide chrome and the exam picker. */
+  body.printing-examination-notice * {
+    visibility: hidden;
+  }
+
+  body.printing-examination-notice .examination-notice-onepage,
+  body.printing-examination-notice .examination-notice-onepage * {
+    visibility: visible;
+  }
+
+  body.printing-examination-notice .examination-notice-onepage {
+    position: absolute;
+    left: 0;
+    top: 0;
+    width: 100%;
+  }
+
+  .examination-notice-onepage {
+    max-width: none !important;
+    border: 0 !important;
+    box-shadow: none !important;
+    margin: 0 !important;
+    padding: 0.4in !important;
+    font-size: 11px;
+    line-height: 1.25;
+    break-inside: avoid-page;
+  }
+
+  .examination-notice-onepage h2 {
+    font-size: 18px;
+    line-height: 1.2;
+  }
+
+  .examination-notice-onepage h3 {
+    font-size: 12px;
+    line-height: 1.2;
+  }
+
+  .examination-notice-onepage ul {
+    margin-top: 4px !important;
+    margin-bottom: 4px !important;
+  }
+
+  .examination-notice-onepage li {
+    margin-top: 2px !important;
+    margin-bottom: 2px !important;
+  }
+}

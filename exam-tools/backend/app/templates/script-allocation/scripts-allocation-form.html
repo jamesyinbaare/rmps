@@ -1,0 +1,440 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Scripts allocation form — {{ examiner_name }}</title>
+    <style>
+        /* Theme (matches app :root Ghana palette); use sparingly for print / B&W. */
+        :root {
+            --theme-primary: #ce1126;
+            --theme-primary-dark: #a50e1e;
+            --theme-ink: #1a1a1a;
+            --theme-muted: #4a4a4a;
+            --theme-border: #737373;
+            --theme-border-light: #b0b0b0;
+            --theme-surface: #f2f2f2;
+            --theme-surface-alt: #e8e8e8;
+        }
+
+        @page {
+            size: A4;
+            margin: 1.35cm 1.35cm;
+            @bottom-right {
+                content: "Page " counter(page) " of " counter(pages);
+                font-size: 8pt;
+                color: #4a4a4a;
+            }
+        }
+
+        * { box-sizing: border-box; }
+
+        body {
+            font-family: Helvetica, Arial, sans-serif;
+            font-size: 10pt;
+            color: var(--theme-ink);
+            line-height: 1.45;
+            margin: 0;
+            padding: 0;
+            position: relative;
+        }
+
+        .watermark {
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            width: 100%;
+            height: 100%;
+            background-image: url('img/logo-crest-only.png');
+            background-size: contain;
+            background-repeat: no-repeat;
+            background-position: center;
+            opacity: 0.04;
+            z-index: 0;
+            pointer-events: none;
+        }
+
+        .content-wrapper {
+            position: relative;
+            z-index: 1;
+            padding-bottom: 7.2cm;
+        }
+
+        .doc-header {
+            display: flex;
+            align-items: center;
+            gap: 16px;
+            margin-bottom: 18px;
+            padding-bottom: 14px;
+            border-bottom: 3px solid var(--theme-primary);
+        }
+
+        .header-logo-container {
+            flex-shrink: 0;
+            display: flex;
+            align-items: center;
+        }
+
+        .header-logo {
+            height: 64px;
+            width: auto;
+            display: block;
+        }
+
+        .header-title-block {
+            flex: 1;
+            text-align: center;
+            padding: 0 8px;
+        }
+
+        .doc-header h1 {
+            margin: 0;
+            font-size: 16pt;
+            font-weight: 700;
+            color: var(--theme-ink);
+            letter-spacing: 0.06em;
+            text-transform: uppercase;
+        }
+
+        .doc-header .tagline {
+            margin: 6px 0 0;
+            font-size: 9.5pt;
+            font-weight: 600;
+            color: var(--theme-muted);
+            letter-spacing: 0.02em;
+        }
+
+        .doc-header .exam-context {
+            margin: 4px 0 0;
+            font-size: 9pt;
+            color: var(--theme-muted);
+        }
+
+        .meta-panel {
+            background: var(--theme-surface);
+            border: 1px solid var(--theme-border);
+            padding: 10px 12px;
+            margin-bottom: 12px;
+            position: relative;
+            padding-top: 14px;
+        }
+
+        .section-legend {
+            position: absolute;
+            top: 0;
+            left: 10px;
+            transform: translateY(-50%);
+            background: #ffffff;
+            padding: 0 6px;
+            font-size: 8pt;
+            font-weight: 700;
+            text-transform: uppercase;
+            letter-spacing: 0.06em;
+            color: var(--theme-primary-dark);
+        }
+
+        .meta-grid {
+            display: table;
+            width: 100%;
+            border-collapse: separate;
+            border-spacing: 0 6px;
+        }
+
+        .meta-grid-row {
+            display: table-row;
+        }
+
+        .meta-grid-cell {
+            display: table-cell;
+            width: 50%;
+            vertical-align: top;
+            padding-right: 12px;
+            padding-bottom: 2px;
+        }
+
+        .meta-grid-cell:nth-child(even) {
+            padding-right: 0;
+            padding-left: 12px;
+        }
+
+        .meta-k {
+            display: block;
+            font-size: 7.5pt;
+            font-weight: 700;
+            text-transform: uppercase;
+            letter-spacing: 0.07em;
+            color: var(--theme-muted);
+            margin-bottom: 2px;
+        }
+
+        .meta-v {
+            font-size: 10.5pt;
+            font-weight: 600;
+            color: var(--theme-ink);
+        }
+
+        .meta-v.examiner {
+            font-size: 11pt;
+        }
+
+        .meta-examiner-block {
+            margin-top: 8px;
+            padding-top: 8px;
+            border-top: 1px dashed var(--theme-border-light);
+        }
+
+        .section-heading {
+            font-size: 10pt;
+            font-weight: 700;
+            color: var(--theme-ink);
+            margin: 0 0 8px;
+            padding-left: 10px;
+            border-left: 4px solid var(--theme-primary);
+        }
+
+        table.alloc {
+            width: 100%;
+            border-collapse: collapse;
+            margin: 0 0 6px;
+            font-size: 8.25pt;
+            line-height: 1.2;
+            border: 1px solid var(--theme-border);
+        }
+
+        table.alloc th,
+        table.alloc td {
+            border: 1px solid var(--theme-border);
+            padding: 3px 5px;
+            text-align: left;
+            vertical-align: top;
+        }
+
+        table.alloc tbody td,
+        table.alloc tfoot td {
+            padding-top: 6px;
+            padding-bottom: 6px;
+        }
+
+        /* Dark header reads as solid grey in B&W; primary accent on bottom edge */
+        table.alloc th {
+            background: #2b2b2b;
+            color: #ffffff;
+            font-weight: 700;
+            font-size: 7pt;
+            text-transform: uppercase;
+            letter-spacing: 0.04em;
+            border-bottom: 2px solid var(--theme-primary);
+            padding-top: 6px;
+            padding-bottom: 6px;
+        }
+
+        table.alloc tbody tr:nth-child(even) {
+            background: var(--theme-surface);
+        }
+
+        table.alloc tbody tr:nth-child(odd) {
+            background: #ffffff;
+        }
+
+        table.alloc td.num,
+        table.alloc th.num {
+            text-align: right;
+            font-variant-numeric: tabular-nums;
+            width: 4.25em;
+        }
+
+        table.alloc td.idx,
+        table.alloc th.idx {
+            text-align: center;
+            width: 2.75em;
+            font-variant-numeric: tabular-nums;
+        }
+
+        table.alloc th.correction,
+        table.alloc td.correction {
+            text-align: center;
+            width: 6em;
+            min-width: 5em;
+            background: #fafafa;
+        }
+
+        table.alloc thead th.correction {
+            background: #2b2b2b;
+            color: #ffffff;
+        }
+
+        table.alloc td.correction {
+            min-height: 1.35em;
+        }
+
+        table.alloc tfoot td {
+            font-weight: 700;
+            background: var(--theme-surface-alt);
+            color: var(--theme-ink);
+            border-top: 2px solid var(--theme-border);
+            padding-top: 6px;
+            padding-bottom: 6px;
+        }
+
+        table.alloc tfoot td:first-child {
+            text-transform: uppercase;
+            font-size: 8pt;
+            letter-spacing: 0.04em;
+        }
+
+        table.alloc tfoot td.correction {
+            background: var(--theme-surface-alt);
+        }
+
+        .signature-panel {
+            margin-top: 0;
+            padding: 10px 12px;
+            border: 1px solid var(--theme-border);
+            border-top: 2px solid var(--theme-primary);
+            background: var(--theme-surface);
+            position: fixed;
+            left: 0;
+            right: 0;
+            bottom: 0.2cm;
+            padding-top: 14px;
+            z-index: 2;
+        }
+
+        .field {
+            margin-bottom: 8px;
+        }
+
+        .field:last-child {
+            margin-bottom: 0;
+        }
+
+        .field-row {
+            display: table;
+            width: 100%;
+            border-collapse: separate;
+            border-spacing: 10px 0;
+            margin-top: 0;
+        }
+
+        .field-row .field {
+            display: table-cell;
+            width: 50%;
+            margin-bottom: 0;
+        }
+
+        .field-label {
+            font-size: 8.5pt;
+            font-weight: 600;
+            color: var(--theme-muted);
+            margin-bottom: 2px;
+        }
+
+        .field-line {
+            border-bottom: 1px solid #1a1a1a;
+            min-height: 1.1em;
+            margin-top: 0;
+        }
+
+    </style>
+</head>
+<body>
+    <div class="watermark" aria-hidden="true"></div>
+    <div class="content-wrapper">
+        <header class="doc-header">
+            <div class="header-logo-container">
+                <img src="img/logo-crest-only.png" alt="" class="header-logo" />
+            </div>
+            <div class="header-title-block">
+                <h1>Scripts allocation form</h1>
+                <p class="exam-context">{{ examination_label }} · {{ year }}</p>
+            </div>
+        </header>
+
+        <section class="meta-panel" aria-label="Examination and examiner details">
+            <span class="section-legend">Details</span>
+            <div class="meta-grid">
+                <div class="meta-grid-row">
+                    <div class="meta-grid-cell">
+                        <span class="meta-k">Examination</span>
+                        <span class="meta-v">{{ examination_label }}</span>
+                    </div>
+                    <div class="meta-grid-cell">
+                        <span class="meta-k">Year</span>
+                        <span class="meta-v">{{ year }}</span>
+                    </div>
+                </div>
+                <div class="meta-grid-row">
+                    <div class="meta-grid-cell">
+                        <span class="meta-k">Subject</span>
+                        <span class="meta-v">{{ subject_label }}</span>
+                    </div>
+                    <div class="meta-grid-cell">
+                        <span class="meta-k">Paper</span>
+                        <span class="meta-v">{{ paper_number }}</span>
+                    </div>
+                </div>
+            </div>
+            <div class="meta-examiner-block">
+                <span class="meta-k">Examiner</span>
+                <span class="meta-v examiner">{{ examiner_name }} ({{ examiner_region }})</span>
+            </div>
+        </section>
+
+        <h2 class="section-heading">Assigned envelopes</h2>
+        <table class="alloc">
+            <thead>
+                <tr>
+                    <th scope="col" class="idx">#</th>
+                    <th scope="col">School name</th>
+                    <th scope="col" class="num">Env #</th>
+                    <th scope="col" class="num">Series</th>
+                    <th scope="col" class="num">Total</th>
+                    <th scope="col" class="correction">Correction</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for row in rows %}
+                <tr>
+                    <td class="idx">{{ loop.index }}</td>
+                    <td>{{ row.school_display }}</td>
+                    <td class="num">{{ row.envelope_number }}</td>
+                    <td class="num">{{ row.series_number }}</td>
+                    <td class="num">{{ row.booklet_count }}</td>
+                    <td class="correction"></td>
+                </tr>
+                {% endfor %}
+            </tbody>
+            <tfoot>
+                <tr>
+                    <td colspan="4">Total booklets</td>
+                    <td class="num">{{ total_count }}</td>
+                    <td class="correction"></td>
+                </tr>
+            </tfoot>
+        </table>
+
+        <section class="signature-panel" aria-label="Examiner contact and declaration">
+            <span class="section-legend">Receiving officer / examiner</span>
+            <div class="field">
+                <div class="field-label">Phone number</div>
+                <div class="field-line"></div>
+            </div>
+            <div class="field">
+                <div class="field-label">Address</div>
+                <div class="field-line"></div>
+            </div>
+            <div class="field-row">
+                <div class="field">
+                    <div class="field-label">Signature</div>
+                    <div class="field-line"></div>
+                </div>
+                <div class="field">
+                    <div class="field-label">Date</div>
+                    <div class="field-line"></div>
+                </div>
+            </div>
+        </section>
+    </div>
+</body>
+</html>

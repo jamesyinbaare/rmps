@@ -1,0 +1,84 @@
+services:
+  fastapi-app:
+    build:
+      context: backend
+    container_name: exam-tools-fastapi-app
+    ports:
+      - "8000:80"
+    env_file:
+      - .env
+    volumes:
+      - exam_tools_storage_data:/app/storage/documents
+    develop:
+      watch:
+        - action: sync+restart
+          path: ./backend
+          target: /app
+          ignore:
+            - .venv/
+            - __pycache__/
+            - "*.pyc"
+            - .pytest_cache/
+            - .mypy_cache/
+            - .coverage
+            - htmlcov/
+            - storage/
+        - action: rebuild
+          path: ./backend/pyproject.toml
+        - action: rebuild
+          path: ./backend/uv.lock
+    command: >
+      sh -c "
+        if [ -f app/scripts/prestart.sh ]; then
+          bash app/scripts/prestart.sh
+        fi &&
+        uv run fastapi dev app/main.py --host 0.0.0.0 --port 80
+      "
+    restart: unless-stopped
+
+  frontend:
+    build:
+      context: frontend
+      dockerfile: Dockerfile
+    container_name: exam-tools-frontend-app
+    ports:
+      - "3000:3000"
+    environment:
+      - NEXT_PUBLIC_API_BASE_URL=http://localhost:8000
+    develop:
+      watch:
+        - action: sync
+          path: ./frontend
+          target: /app
+          ignore:
+            - ./frontend/.next/
+            - ./frontend/node_modules/
+        - action: rebuild
+          path: ./frontend/package.json
+    depends_on:
+      - fastapi-app
+    restart: always
+  tools_postgres:
+    image: postgres:18
+    restart: always
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 10s
+      retries: 5
+      start_period: 30s
+      timeout: 10s
+    volumes:
+      - exam_tools_db_data:/var/lib/postgresql/data/pgdata
+    env_file:
+      - .env
+    environment:
+      - PGDATA=/var/lib/postgresql/data/pgdata
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD?Variable not set}
+      - POSTGRES_USER=${POSTGRES_USER?Variable not set}
+      - POSTGRES_DB=${POSTGRES_DB:-exam_tools_db}
+    ports:
+      - "5432:5432"
+
+volumes:
+  exam_tools_db_data:
+  exam_tools_storage_data:
