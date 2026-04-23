@@ -1,14 +1,15 @@
-from typing import Any
+import json
+from typing import Annotated, Any
 
 from pydantic import Field, field_validator
-from pydantic_settings import BaseSettings
+from pydantic_settings import BaseSettings, NoDecode
 
 
 class Settings(BaseSettings):
     database_url: str = ""
     environment: str = "dev"
     # Comma-separated in env (CORS_ORIGINS); browser origins allowed for credentialed API calls
-    cors_origins: list[str] = Field(
+    cors_origins: Annotated[list[str], NoDecode] = Field(
         default_factory=lambda: ["http://localhost:3000", "http://127.0.0.1:3000"],
     )
 
@@ -18,6 +19,14 @@ class Settings(BaseSettings):
         if v is None or v == "":
             return ["http://localhost:3000", "http://127.0.0.1:3000"]
         if isinstance(v, str):
+            raw = v.strip()
+            if raw.startswith("["):
+                try:
+                    parsed = json.loads(raw)
+                except json.JSONDecodeError:
+                    parsed = None
+                if isinstance(parsed, list):
+                    return [str(x).strip() for x in parsed if str(x).strip()]
             return [x.strip() for x in v.split(",") if x.strip()]
         return v
     # Script packing: max answer booklets allowed per physical envelope (env: SCRIPTS_PER_ENVELOPE).
