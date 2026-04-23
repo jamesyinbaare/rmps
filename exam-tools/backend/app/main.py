@@ -11,7 +11,7 @@ from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.middleware.cors import CORSMiddleware
 from starlette.types import ASGIApp
 
-from app.config import logging_settings
+from app.config import logging_settings, settings
 from app.dependencies.database import get_sessionmanager, initialize_db
 from app.initial_data import ensure_super_admin_user
 from app.routers import (
@@ -165,7 +165,7 @@ app.add_middleware(RequestLoggingMiddleware)
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000", "http://127.0.0.1:3000"],
+    allow_origins=settings.cors_origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -194,6 +194,11 @@ app.include_router(documents.router)
 @app.get("/", status_code=status.HTTP_200_OK)
 def test() -> dict[str, Any]:
     return {"success": True}
+
+
+@app.get("/health", status_code=status.HTTP_200_OK)
+def health() -> dict[str, str]:
+    return {"status": "ok"}
 
 
 if __name__ == "__main__":

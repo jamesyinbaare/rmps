@@ -1,10 +1,25 @@
-from pydantic import Field
+from typing import Any
+
+from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings
 
 
 class Settings(BaseSettings):
     database_url: str = ""
     environment: str = "dev"
+    # Comma-separated in env (CORS_ORIGINS); browser origins allowed for credentialed API calls
+    cors_origins: list[str] = Field(
+        default_factory=lambda: ["http://localhost:3000", "http://127.0.0.1:3000"],
+    )
+
+    @field_validator("cors_origins", mode="before")
+    @classmethod
+    def parse_cors_origins(cls, v: Any) -> Any:
+        if v is None or v == "":
+            return ["http://localhost:3000", "http://127.0.0.1:3000"]
+        if isinstance(v, str):
+            return [x.strip() for x in v.split(",") if x.strip()]
+        return v
     # Script packing: max answer booklets allowed per physical envelope (env: SCRIPTS_PER_ENVELOPE).
     # Used for paper numbers other than 1 and 2, and as the default when paper-specific overrides are unset.
     scripts_per_envelope: int = Field(default=50, ge=1)
@@ -14,10 +29,15 @@ class Settings(BaseSettings):
     scripts_per_envelope_paper_2: int = Field(default=50, ge=1)
     # IANA timezone for "today" when enforcing packing on/after timetable date (env: SCRIPT_PACKING_TIMEZONE)
     script_packing_timezone: str = Field(default="UTC")
-    # Storage settings
-    storage_backend: str = "local"  # local, s3, azure
+    # Storage settings (exam documents: local dir or GCS)
+    storage_backend: str = "local"  # local, gcs
     storage_path: str = "storage/documents"
     storage_max_size: int = 50 * 1024 * 1024  # 50MB default
+    gcs_bucket_name: str = ""
+    gcs_project_id: str = ""
+    gcs_credentials_path: str = ""
+    # Object prefix inside the bucket for exam document blobs (no leading slash)
+    gcs_documents_prefix: str = "exam-tools/documents"
 
 
 
