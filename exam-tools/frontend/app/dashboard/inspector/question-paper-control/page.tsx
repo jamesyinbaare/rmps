@@ -640,7 +640,7 @@ export default function InspectorQuestionPaperControlPage() {
           <div className="rounded-xl border border-border/80 bg-muted/20 px-4 py-3 sm:px-5">
             <p className="text-sm font-medium text-foreground">How this page works</p>
             <p className="text-sm text-muted-foreground">
-              This page allows you to record the number of question paper copies received, used, and given to the school's library for each subject, paper, and series.
+              This page allows you to record the number of question paper copies received, used, and given to the school&apos;s library for each subject, paper, and series.
             </p>
 
             <p className="text-sm text-muted-foreground">

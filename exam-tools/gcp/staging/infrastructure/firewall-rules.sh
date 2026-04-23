@@ -5,7 +5,7 @@ set -e
 
 PROJECT_ID="${GCP_PROJECT_ID:-your-project-id}"
 NETWORK="${GCP_NETWORK:-default}"
-TAGS="${VM_NETWORK_TAGS:-exam-tools-staging}"
+TAGS="${VM_NETWORK_TAGS:-exam-portal-staging}"
 
 echo "Creating firewall rules for exam-tools staging..."
 echo "Project: $PROJECT_ID"
