@@ -11,6 +11,7 @@ wheels/
 .env
 env/
 .env*
+!.env*.example
 .mypy_cache
 .coverage
 htmlcov

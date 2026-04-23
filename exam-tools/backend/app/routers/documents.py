@@ -13,9 +13,9 @@ from app.models import ExamDocument
 from app.schemas.exam_document import ExamDocumentListResponse, ExamDocumentResponse
 from app.services.exam_documents import (
     ExamDocumentUploadError,
-    absolute_stored_path,
     ensure_storage_dir,
     normalized_extension,
+    read_stored_bytes,
     remove_stored_file,
     write_stored_file,
 )
@@ -58,15 +58,15 @@ async def download_exam_document(
     if row is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Document not found")
 
-    path = absolute_stored_path(row.stored_path)
-    if not path.is_file():
+    try:
+        data = read_stored_bytes(row.stored_path)
+    except FileNotFoundError:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="File missing on server",
-        )
+        ) from None
 
     media_type = row.content_type or "application/octet-stream"
-    data = path.read_bytes()
 
     return StreamingResponse(
         iter([data]),

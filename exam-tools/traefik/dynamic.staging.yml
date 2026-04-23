@@ -1,0 +1,76 @@
+# File-provider routes for exam-tools (avoids duplicate routers vs compose labels).
+# Update Host() values to your real domains before going live.
+http:
+  routers:
+    exam-frontend-staging:
+      rule: "Host(`exam.jamesyin.com`)"
+      entryPoints:
+        - websecure
+      service: exam-frontend-staging
+      tls:
+        certResolver: letsencrypt
+      middlewares:
+        - exam-security-headers
+
+    exam-frontend-staging-http:
+      rule: "Host(`exam.jamesyin.com`)"
+      entryPoints:
+        - web
+      service: exam-frontend-staging
+      middlewares:
+        - exam-security-headers
+
+    exam-backend-staging:
+      rule: "Host(`exam-api.jamesyin.com`)"
+      entryPoints:
+        - websecure
+      service: exam-backend-staging
+      tls:
+        certResolver: letsencrypt
+      middlewares:
+        - exam-security-headers
+
+    exam-backend-staging-http:
+      rule: "Host(`exam-api.jamesyin.com`)"
+      entryPoints:
+        - web
+      service: exam-backend-staging
+      middlewares:
+        - exam-security-headers
+
+  services:
+    exam-frontend-staging:
+      loadBalancer:
+        servers:
+          - url: "http://exam-tools-frontend-staging:3001"
+
+    exam-backend-staging:
+      loadBalancer:
+        servers:
+          - url: "http://exam-tools-backend-staging:80"
+
+  middlewares:
+    exam-security-headers:
+      headers:
+        frameDeny: true
+        sslRedirect: true
+        browserXssFilter: true
+        contentTypeNosniff: true
+        forceSTSHeader: true
+        stsIncludeSubdomains: true
+        stsPreload: true
+        stsSeconds: 31536000
+
+tls:
+  options:
+    default:
+      minVersion: "VersionTLS12"
+      sslProtocols:
+        - "TLSv1.2"
+        - "TLSv1.3"
+      cipherSuites:
+        - "TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384"
+        - "TLS_ECDHE_RSA_WITH_CHACHA20_POLY1305"
+        - "TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA384"
+        - "TLS_RSA_WITH_AES_256_GCM_SHA384"
+        - "TLS_RSA_WITH_AES_128_GCM_SHA256"
