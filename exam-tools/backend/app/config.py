@@ -1,5 +1,6 @@
 import json
 from typing import Annotated, Any
+from urllib.parse import urlparse
 
 from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, NoDecode
@@ -29,6 +30,39 @@ class Settings(BaseSettings):
                     return [str(x).strip() for x in parsed if str(x).strip()]
             return [x.strip() for x in v.split(",") if x.strip()]
         return v
+
+    @field_validator("database_url")
+    @classmethod
+    def validate_database_url_host(cls, v: str) -> str:
+        """Reject malformed DB hosts that cause IDNA errors at connect time (e.g. empty DNS labels)."""
+        if v is None or not str(v).strip():
+            return v
+        raw = str(v).strip()
+        parsed = urlparse(raw)
+        scheme = (parsed.scheme or "").lower()
+        if not scheme.startswith("postgresql"):
+            return v
+        host = parsed.hostname
+        if host is None or host == "":
+            raise ValueError(
+                "DATABASE_URL has no hostname. For Docker Compose staging use host `cloud-sql-proxy` "
+                "(see .env.staging.gcp.example). Example: "
+                "postgresql+asyncpg://USER:PASSWORD@cloud-sql-proxy:5432/DBNAME"
+            )
+        if host.startswith(".") or host.endswith(".") or ".." in host:
+            raise ValueError(
+                f"DATABASE_URL hostname {host!r} is invalid (leading/trailing dot or empty label). "
+                "This triggers IDNA errors at connection time. Use a plain hostname such as "
+                "`cloud-sql-proxy` with no dots at the ends or doubled dots."
+            )
+        labels = host.split(".")
+        if any(label == "" for label in labels):
+            raise ValueError(
+                f"DATABASE_URL hostname {host!r} contains an empty DNS label. "
+                "Fix the host in DATABASE_URL (staging: `cloud-sql-proxy`)."
+            )
+        return v
+
     # Script packing: max answer booklets allowed per physical envelope (env: SCRIPTS_PER_ENVELOPE).
     # Used for paper numbers other than 1 and 2, and as the default when paper-specific overrides are unset.
     scripts_per_envelope: int = Field(default=50, ge=1)
