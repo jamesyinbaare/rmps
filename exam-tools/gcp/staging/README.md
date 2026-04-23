@@ -63,6 +63,11 @@ Root files:
 
 `prestart.sh` runs **Alembic migrations** and **initial super admin** when the backend container starts.
 
+## Frontend build note
+
+- If frontend Docker builds log `[baseline-browser-mapping] The data in this module is over two months old`, prefer upgrading `next` and `eslint-config-next` to the latest stable minor first.
+- Running `npm i baseline-browser-mapping@latest -D` alone may not clear the warning on some `16.0.x` Next.js builds.
+
 ## Related documentation
 
 - [registration-portal GCP staging deployment](../../../registration-portal/docs/gcp-staging-deployment.md) — project setup, APIs, service accounts

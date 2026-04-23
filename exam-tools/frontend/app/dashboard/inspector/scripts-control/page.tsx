@@ -377,7 +377,7 @@ export default function InspectorScriptsControlPage() {
             ) : null}
             {!isEditing && anyEnvelopeVerified ? (
               <p className="mt-2 text-xs font-medium text-muted-foreground">
-                You can't make changes to envelopes that have been verified or partially verified by depot keeper.
+                You can&apos;t make changes to envelopes that have been verified or partially verified by depot keeper.
               </p>
             ) : null}
           </div>
