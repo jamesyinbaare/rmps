@@ -1,7 +1,7 @@
 services:
   traefik:
     image: traefik:v3.6
-    container_name: exam-tools-traefik-staging
+    container_name: monitoring-tools-traefik-staging
     command:
       - "--configfile=/etc/traefik/traefik.staging.yml"
     ports:
@@ -16,15 +16,15 @@ services:
       - traefik_logs:/var/log/traefik
     labels:
       - "traefik.enable=true"
-      - "traefik.http.routers.dashboard-exam-staging.rule=Host(`traefik-exam-staging.jamesyin.com`)"
-      - "traefik.http.routers.dashboard-exam-staging.entrypoints=web"
-      - "traefik.http.routers.dashboard-exam-staging.service=api@internal"
+      - "traefik.http.routers.dashboard-monitoring-staging.rule=Host(`traefik-monitoring-staging.jamesyin.com`)"
+      - "traefik.http.routers.dashboard-monitoring-staging.entrypoints=web"
+      - "traefik.http.routers.dashboard-monitoring-staging.service=api@internal"
     restart: unless-stopped
     networks:
-      - exam-tools-network
+      - monitoring-tools-network
     depends_on:
-      - exam-tools-backend
-      - exam-tools-frontend
+      - monitoring-tools-backend
+      - monitoring-tools-frontend
     deploy:
       resources:
         limits:
@@ -34,11 +34,11 @@ services:
           cpus: "0.5"
           memory: 256M
 
-  exam-tools-backend:
+  monitoring-tools-backend:
     build:
       context: backend
       dockerfile: Dockerfile
-    container_name: exam-tools-backend-staging
+    container_name: monitoring-tools-backend-staging
     env_file:
       - .env.staging.gcp
     environment:
@@ -62,21 +62,21 @@ services:
       retries: 3
       start_period: 60s
     networks:
-      - exam-tools-network
+      - monitoring-tools-network
 
-  exam-tools-frontend:
+  monitoring-tools-frontend:
     build:
       context: frontend
       dockerfile: Dockerfile.prod
       args:
-        - NEXT_PUBLIC_API_BASE_URL=${FRONTEND_API_BASE_URL:-https://exam-api.jamesyin.com}
-    container_name: exam-tools-frontend-staging
+        - NEXT_PUBLIC_API_BASE_URL=${FRONTEND_API_BASE_URL:-https://monitoring-api.jamesyin.com}
+    container_name: monitoring-tools-frontend-staging
     environment:
       - NODE_ENV=production
-      - NEXT_PUBLIC_API_BASE_URL=${FRONTEND_API_BASE_URL:-https://exam-api.jamesyin.com}
+      - NEXT_PUBLIC_API_BASE_URL=${FRONTEND_API_BASE_URL:-https://monitoring-api.jamesyin.com}
     restart: unless-stopped
     depends_on:
-      exam-tools-backend:
+      monitoring-tools-backend:
         condition: service_healthy
     healthcheck:
       test: ["CMD-SHELL", "wget --spider --no-verbose --tries=1 http://127.0.0.1:3001/ || exit 1"]
@@ -85,11 +85,11 @@ services:
       retries: 3
       start_period: 40s
     networks:
-      - exam-tools-network
+      - monitoring-tools-network
 
   cloud-sql-proxy:
     image: gcr.io/cloud-sql-connectors/cloud-sql-proxy:latest
-    container_name: exam-tools-cloud-sql-proxy-staging
+    container_name: monitoring-tools-cloud-sql-proxy-staging
     env_file:
       - .env.staging.gcp
     command:
@@ -97,7 +97,7 @@ services:
       - --port=5432
       - ${CLOUD_SQL_CONNECTION_NAME}
     networks:
-      - exam-tools-network
+      - monitoring-tools-network
     restart: unless-stopped
 
 volumes:
@@ -107,6 +107,6 @@ volumes:
     driver: local
 
 networks:
-  exam-tools-network:
+  monitoring-tools-network:
     driver: bridge
-    name: exam-tools-network-staging
+    name: monitoring-tools-network-staging
