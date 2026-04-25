@@ -43,7 +43,7 @@ Root files:
 
 6. **Cloud SQL**: Create a PostgreSQL instance and database/user for exam-tools. Note the **connection name** `project:region:instance`.
 
-7. **DNS**: Point `A`/`AAAA` records for your frontend and API hostnames at the VM’s external IP. Defaults in [`traefik/dynamic.staging.yml`](../traefik/dynamic.staging.yml) use `exam.jamesyin.com` and `exam-api.jamesyin.com`—update those hosts and Traefik dashboard host in the same file and in [`compose.staging.gcp.yaml`](../compose.staging.gcp.yaml) Traefik labels if needed.
+7. **DNS**: Point `A`/`AAAA` records for your frontend and API hostnames at the VM’s external IP. Defaults in [`traefik/dynamic.staging.yml`](../traefik/dynamic.staging.yml) use `monitoring.jamesyin.com` and `monitoring-api.jamesyin.com`—update those hosts and Traefik dashboard host in the same file and in [`compose.staging.gcp.yaml`](../compose.staging.gcp.yaml) Traefik labels if needed.
 
 8. **Secrets** (optional): `./gcp/staging/scripts/setup-secrets.sh` — or place values only in `.env.staging.gcp`.
 

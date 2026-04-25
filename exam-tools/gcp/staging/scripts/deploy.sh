@@ -52,8 +52,8 @@ dc ps
 echo "Verifying backend health..."
 MAX_RETRIES=30
 RETRY_COUNT=0
-API_DOMAIN="${STAGING_API_DOMAIN:-exam-api.jamesyin.com}"
-FRONTEND_DOMAIN="${STAGING_FRONTEND_DOMAIN:-exam.jamesyin.com}"
+API_DOMAIN="${STAGING_API_DOMAIN:-monitoring-api.jamesyin.com}"
+FRONTEND_DOMAIN="${STAGING_FRONTEND_DOMAIN:-monitoring.jamesyin.com}"
 
 while [ $RETRY_COUNT -lt $MAX_RETRIES ]; do
     if curl -fsS "https://${API_DOMAIN}/health" > /dev/null 2>&1; then

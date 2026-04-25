@@ -2,55 +2,55 @@
 # Update Host() values to your real domains before going live.
 http:
   routers:
-    exam-frontend-staging:
-      rule: "Host(`exam.jamesyin.com`)"
+    monitoring-frontend-staging:
+      rule: "Host(`monitoring.jamesyin.com`)"
       entryPoints:
         - websecure
-      service: exam-frontend-staging
+      service: monitoring-frontend-staging
       tls:
         certResolver: letsencrypt
       middlewares:
-        - exam-security-headers
+        - monitoring-security-headers
 
-    exam-frontend-staging-http:
-      rule: "Host(`exam.jamesyin.com`)"
+    monitoring-frontend-staging-http:
+      rule: "Host(`monitoring.jamesyin.com`)"
       entryPoints:
         - web
-      service: exam-frontend-staging
+      service: monitoring-frontend-staging
       middlewares:
-        - exam-security-headers
+        - monitoring-security-headers
 
-    exam-backend-staging:
-      rule: "Host(`exam-api.jamesyin.com`)"
+    monitoring-backend-staging:
+      rule: "Host(`monitoring-api.jamesyin.com`)"
       entryPoints:
         - websecure
-      service: exam-backend-staging
+      service: monitoring-backend-staging
       tls:
         certResolver: letsencrypt
       middlewares:
-        - exam-security-headers
+        - monitoring-security-headers
 
-    exam-backend-staging-http:
-      rule: "Host(`exam-api.jamesyin.com`)"
+    monitoring-backend-staging-http:
+      rule: "Host(`monitoring-api.jamesyin.com`)"
       entryPoints:
         - web
-      service: exam-backend-staging
+      service: monitoring-backend-staging
       middlewares:
-        - exam-security-headers
+        - monitoring-security-headers
 
   services:
-    exam-frontend-staging:
+    monitoring-frontend-staging:
       loadBalancer:
         servers:
-          - url: "http://exam-tools-frontend-staging:3001"
+          - url: "http://monitoring-tools-frontend-staging:3001"
 
-    exam-backend-staging:
+    monitoring-backend-staging:
       loadBalancer:
         servers:
-          - url: "http://exam-tools-backend-staging:80"
+          - url: "http://monitoring-tools-backend-staging:80"
 
   middlewares:
-    exam-security-headers:
+    monitoring-security-headers:
       headers:
         frameDeny: true
         sslRedirect: true
