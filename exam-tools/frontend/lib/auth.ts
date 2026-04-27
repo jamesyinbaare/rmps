@@ -1,10 +1,27 @@
 const TOKEN_KEY = "exam_tools_access_token";
 
 export function getApiBaseUrl(): string {
-  return (
-    (typeof process !== "undefined" && process.env.NEXT_PUBLIC_API_BASE_URL) ||
-    "http://localhost:8000"
-  );
+  const envBase =
+    typeof process !== "undefined" ? process.env.NEXT_PUBLIC_API_BASE_URL : undefined;
+  if (envBase) return envBase;
+
+  if (typeof window !== "undefined") {
+    const { protocol, hostname } = window.location;
+    if (hostname === "localhost" || hostname === "127.0.0.1") return "http://localhost:8000";
+
+    const parts = hostname.split(".");
+    if (parts.length >= 3) {
+      const [subdomain, ...rest] = parts;
+      // Convert <subdomain>.<domain> into <subdomain>-api.<domain> (e.g. reg -> reg-api).
+      const apiSubdomain = subdomain.endsWith("-api") ? subdomain : `${subdomain}-api`;
+      return `${protocol}//${apiSubdomain}.${rest.join(".")}`;
+    }
+
+    return `${protocol}//${hostname}`;
+  }
+
+  // SSR fallback; should normally be overridden by NEXT_PUBLIC_API_BASE_URL.
+  return "http://localhost:8000";
 }
 
 export function getStoredToken(): string | null {
