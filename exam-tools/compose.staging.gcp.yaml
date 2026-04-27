@@ -17,7 +17,9 @@ services:
     labels:
       - "traefik.enable=true"
       - "traefik.http.routers.dashboard-monitoring-staging.rule=Host(`traefik-monitoring-staging.jamesyin.com`)"
-      - "traefik.http.routers.dashboard-monitoring-staging.entrypoints=web"
+      - "traefik.http.routers.dashboard-monitoring-staging.entrypoints=websecure"
+      - "traefik.http.routers.dashboard-monitoring-staging.tls=true"
+      - "traefik.http.routers.dashboard-monitoring-staging.tls.certresolver=letsencrypt"
       - "traefik.http.routers.dashboard-monitoring-staging.service=api@internal"
     restart: unless-stopped
     networks:
