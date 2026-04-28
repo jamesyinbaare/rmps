@@ -57,6 +57,7 @@ from app.schemas.examination import (
     StaffCentreDaySummaryResponse,
     StaffCentreDaySummarySlotRow,
     StaffCentreOverviewResponse,
+    StaffCentreSchoolCandidateItem,
     StaffCentreOverviewUpcomingItem,
     StaffDepotOverviewResponse,
     TimetableEntry,
@@ -1367,12 +1368,23 @@ async def get_my_center_overview(
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e)) from None
     scope_ids = await center_scope_school_ids(session, center_host)
     school_count = len(scope_ids)
+    ordered_scope_schools = await schools_in_center_scope_ordered(session, center_host)
 
     cand_stmt = select(func.count()).select_from(ExaminationCandidate).where(
         ExaminationCandidate.examination_id == exam_id,
         ExaminationCandidate.school_id.in_(scope_ids),
     )
     candidate_count = int((await session.execute(cand_stmt)).scalar_one())
+    cand_by_school_stmt = (
+        select(ExaminationCandidate.school_id, func.count().label("candidate_count"))
+        .where(
+            ExaminationCandidate.examination_id == exam_id,
+            ExaminationCandidate.school_id.in_(scope_ids),
+        )
+        .group_by(ExaminationCandidate.school_id)
+    )
+    cand_by_school_rows = await session.execute(cand_by_school_stmt)
+    cand_by_school = {row[0]: int(row[1]) for row in cand_by_school_rows.all()}
 
     entries = await _staff_center_filtered_timetable_entries(session, exam_id, scope_ids)
 
@@ -1442,6 +1454,15 @@ async def get_my_center_overview(
         examination_centre_region=examination_centre_region,
         examination_window_start=examination_window_start,
         examination_window_end=examination_window_end,
+        schools_with_candidate_counts=[
+            StaffCentreSchoolCandidateItem(
+                school_id=s.id,
+                school_code=s.code,
+                school_name=s.name,
+                candidate_count=cand_by_school.get(s.id, 0),
+            )
+            for s in ordered_scope_schools
+        ],
     )
 
 

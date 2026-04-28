@@ -16,8 +16,7 @@ export function StaffInspectorNoticeBanner({ overview, className = "" }: Props) 
     <div className={`${wrap} border-border/80 bg-muted/30 text-muted-foreground`} role="note">
       <p className="text-foreground/90">
         This page is for your inspection assignment for{" "}
-        <span className="font-medium text-foreground">{examLabel}</span>. The centre named in the next section matches
-        your account on this portal; the summary panel shows registered candidates, schools, and programmes for that
+        <span className="font-medium text-foreground">{examLabel}</span>. The summary panel shows registered candidates, schools, and programmes for that
         centre’s scope.
       </p>
     </div>
