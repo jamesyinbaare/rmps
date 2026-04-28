@@ -40,6 +40,21 @@ function formatTimeShort(isoTime: string): string {
   return isoTime.length >= 5 ? isoTime.slice(0, 5) : isoTime;
 }
 
+/** Portrait mobile: shorten school names in tables/chips (full string in title). */
+const MOBILE_SCHOOL_NAME_MAX_CHARS = 26;
+
+function truncateSchoolNameEnd(name: string, maxChars = MOBILE_SCHOOL_NAME_MAX_CHARS): string {
+  const t = name.trim();
+  if (t.length <= maxChars) return t;
+  if (maxChars <= 1) return "…";
+  return `${t.slice(0, maxChars - 1)}…`;
+}
+
+function schoolListTitle(name: string, code: string): string {
+  const c = code.trim();
+  return c !== "" ? `${name} (${c})` : name;
+}
+
 const monthDayFormatter = new Intl.DateTimeFormat(undefined, { month: "short", day: "numeric" });
 const weekdayFormatter = new Intl.DateTimeFormat(undefined, { weekday: "long" });
 
@@ -109,7 +124,7 @@ function mergeUpcomingSlotsForMainCard(slots: StaffCentreOverviewUpcomingItem[])
 const sessionAccentBar = ["border-l-primary", "border-l-accent", "border-l-success"] as const;
 
 const summaryToggleClass =
-  "mt-3 inline-flex min-h-11 items-center justify-center rounded-lg border border-input-border bg-background px-3 text-sm font-medium text-foreground transition-colors hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2";
+  "mt-3 inline-flex min-h-11 w-full items-center justify-center rounded-lg border border-input-border bg-background px-3 text-sm font-medium text-foreground transition-colors hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 sm:w-auto";
 
 /** Default number of upcoming calendar dates shown before “View all”. */
 const UPCOMING_DATES_PREVIEW = 3;
@@ -148,9 +163,11 @@ function NationalUpcomingDayDetailsSummary({ summary }: { summary: StaffCentreDa
                   key={`${slot.subject_code}-${i}`}
                   className="border-b border-border/70 last:border-b-0"
                 >
-                  <td className="px-3 py-2.5 align-top">
+                  <td className="px-3 py-2.5 align-top" title={slot.subject_name}>
                     <span className="font-semibold text-foreground">{slot.subject_code}</span>
-                    <span className="mt-0.5 block text-xs text-muted-foreground">{slot.subject_name}</span>
+                    <span className="mt-0.5 hidden text-xs text-muted-foreground sm:block">
+                      {slot.subject_name}
+                    </span>
                   </td>
                   <td className="px-3 py-2.5 text-right align-top font-medium tabular-nums text-foreground">
                     {slot.row_total.toLocaleString()}
@@ -201,9 +218,11 @@ function NationalDaySummaryCompact({ summary }: { summary: StaffCentreDaySummary
                   key={`${slot.subject_code}-${slot.papers_label}-${slot.times_label}-${i}`}
                   className="border-b border-border/70 last:border-b-0"
                 >
-                  <td className="px-3 py-2.5 align-top">
+                  <td className="px-3 py-2.5 align-top" title={slot.subject_name}>
                     <span className="font-semibold text-foreground">{slot.subject_code}</span>
-                    <span className="mt-0.5 block text-xs text-muted-foreground">{slot.subject_name}</span>
+                    <span className="mt-0.5 hidden text-xs text-muted-foreground sm:block">
+                      {slot.subject_name}
+                    </span>
                   </td>
                   <td className="px-3 py-2.5 align-top tabular-nums text-foreground">{slot.papers_label}</td>
                   <td className="px-3 py-2.5 align-top tabular-nums text-muted-foreground">{slot.times_label}</td>
@@ -253,22 +272,22 @@ function TodayAtCentrePanel({
       className="overflow-hidden rounded-2xl border-2 border-primary/50 bg-card shadow-xl ring-2 ring-primary/15"
       aria-labelledby="today-at-centre-heading"
     >
-      <div className="relative bg-linear-to-br from-primary via-accent to-success px-5 py-7 sm:px-8 sm:py-9">
+      <div className="relative bg-linear-to-br from-primary via-accent to-success px-4 py-5 sm:px-8 sm:py-9">
         <div className="absolute inset-0 bg-[radial-gradient(ellipse_at_top_right,rgba(255,255,255,0.12),transparent_55%)]" aria-hidden />
         <div className="relative">
-          <p className="text-[11px] font-bold uppercase tracking-[0.28em] text-primary-foreground/85">
+          <p className="text-[10px] font-bold uppercase tracking-[0.28em] text-primary-foreground/85 sm:text-[11px]">
             Examination day
           </p>
           <h2
             id="today-at-centre-heading"
-            className="mt-2 font-black tracking-tight text-primary-foreground text-4xl leading-none sm:text-5xl"
+            className="mt-1.5 font-black tracking-tight text-primary-foreground text-3xl leading-none sm:mt-2 sm:text-5xl"
           >
             TODAY
           </h2>
-          <p className="mt-3 text-base font-bold text-primary-foreground sm:text-lg">
+          <p className="mt-2 text-sm font-bold text-primary-foreground sm:mt-3 sm:text-lg">
             {weekdayFormatter.format(dayDate)} · {monthDayFormatter.format(dayDate)}
           </p>
-          <p className="mt-1 max-w-xl text-sm font-semibold leading-snug text-primary-foreground/90">
+          <p className="mt-1 max-w-xl text-xs font-semibold leading-snug text-primary-foreground/90 sm:text-sm">
             {cardSlots.length} {sessionLabel} on the timetable for{" "}
             {sessionScope === "depot"
               ? "schools in your depot"
@@ -285,7 +304,7 @@ function TodayAtCentrePanel({
         </div>
       </div>
 
-      <div className="border-t border-border bg-card px-4 py-5 sm:px-6 sm:py-6">
+      <div className="border-t border-border bg-card px-4 py-4 sm:px-6 sm:py-6">
         {summaryLoading ? (
           <p className="text-sm font-medium text-muted-foreground">Loading today&apos;s candidate breakdown…</p>
         ) : null}
@@ -308,8 +327,9 @@ function TodayAtCentrePanel({
                         key={s.id}
                         className="inline-flex max-w-full rounded-full border border-primary/25 bg-primary/10 px-3 py-1.5 text-sm font-bold text-foreground"
                       >
-                        <span className="truncate" title={`${s.name} (${s.code})`}>
-                          {s.name}
+                        <span className="truncate" title={schoolListTitle(s.name, s.code)}>
+                          <span className="sm:hidden">{truncateSchoolNameEnd(s.name)}</span>
+                          <span className="hidden sm:inline">{s.name}</span>
                         </span>
                       </li>
                     ))}
@@ -380,7 +400,7 @@ function CentreDaySummaryTable({
   const statNumClass = statsProminent
     ? "mt-2 tabular-nums text-3xl font-black tracking-tight text-card-foreground sm:text-4xl"
     : "mt-1 tabular-nums text-xl font-semibold text-card-foreground";
-  const statPad = statsProminent ? "p-5 sm:p-6" : "p-4";
+  const statPad = statsProminent ? "p-4 sm:p-6" : "p-4";
   const statLabelClass = statsProminent
     ? "text-xs font-bold uppercase tracking-wide text-muted-foreground"
     : "text-xs font-medium uppercase tracking-wide text-muted-foreground";
@@ -406,89 +426,109 @@ function CentreDaySummaryTable({
     </div>
   );
 
-  const tableBlock = (
-    <div className="overflow-x-auto rounded-xl border border-border">
-        {slotCount === 0 ? (
-          <table className="w-full border-collapse text-sm">
-            <tbody>
-              <tr>
-                <td className="px-3 py-4 text-muted-foreground">
-                  No timetable slots on this date for your centre scope.
-                </td>
-              </tr>
-            </tbody>
-          </table>
-        ) : (
-          <table className="w-full min-w-[min(100%,36rem)] border-collapse text-sm">
-            <thead>
-              <tr className="border-b border-border bg-muted/40 text-left">
-                <th scope="col" className={stickyCornerTh}>
-                  School
-                </th>
-                {slots.map((slot, j) => (
-                  <th
-                    key={`${slot.subject_code}-${slot.papers_label}-${slot.times_label}-${j}`}
-                    scope="col"
-                    className="min-w-30 max-w-44 px-3 py-2.5 align-bottom font-semibold text-card-foreground"
-                  >
-                    <span className="block leading-tight">
-                      <span className="font-semibold">{slot.subject_code}</span>
-                      <span className="block font-normal text-muted-foreground">{slot.subject_name}</span>
-                    </span>
-                    <span className="mt-1 block tabular-nums text-xs font-medium text-card-foreground">
-                      {slot.papers_label}
-                    </span>
-                    <span className="block tabular-nums text-xs font-normal text-muted-foreground">
-                      {slot.times_label}
-                    </span>
+  const tableBlock =
+    slotCount === 0 ? (
+      <div className="overflow-x-auto rounded-xl border border-border">
+        <table className="w-full border-collapse text-sm">
+          <tbody>
+            <tr>
+              <td className="px-3 py-4 text-muted-foreground">
+                No timetable slots on this date for your centre scope.
+              </td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    ) : (
+      <div className="space-y-1">
+        <div className="relative rounded-xl border border-border">
+          <div className="overflow-x-auto">
+            <table className="w-full min-w-[min(100%,36rem)] border-collapse text-sm">
+              <thead>
+                <tr className="border-b border-border bg-muted/40 text-left">
+                  <th scope="col" className={stickyCornerTh}>
+                    School
                   </th>
-                ))}
-              </tr>
-            </thead>
-            <tbody>
-              {schoolCount === 0 ? (
-                <tr>
-                  <td
-                    className="bg-background px-3 py-4 text-muted-foreground"
-                    colSpan={slotCount + 1}
-                  >
-                    No registered candidates at this centre.
-                  </td>
-                </tr>
-              ) : (
-                schools.map((school, i) => (
-                  <tr key={school.id} className="border-b border-border/70 last:border-b-0">
-                    <th scope="row" className={stickyRowHeader}>
-                      {school.name}
+                  {slots.map((slot, j) => (
+                    <th
+                      key={`${slot.subject_code}-${slot.papers_label}-${slot.times_label}-${j}`}
+                      scope="col"
+                      title={`${slot.subject_code} — ${slot.subject_name}`}
+                      className="min-w-30 max-w-44 px-3 py-2.5 align-bottom font-semibold text-card-foreground"
+                    >
+                      <span className="block leading-tight">
+                        <span className="font-semibold">{slot.subject_code}</span>
+                        <span className="hidden font-normal text-muted-foreground sm:block">
+                          {slot.subject_name}
+                        </span>
+                      </span>
+                      <span className="mt-1 block tabular-nums text-xs font-medium text-card-foreground">
+                        {slot.papers_label}
+                      </span>
+                      <span className="block tabular-nums text-xs font-normal text-muted-foreground">
+                        {slot.times_label}
+                      </span>
                     </th>
-                    {slots.map((slot, j) => (
-                      <td
-                        key={`${school.id}-${slot.subject_code}-${j}`}
-                        className="px-3 py-2.5 text-center tabular-nums text-card-foreground sm:text-left"
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {schoolCount === 0 ? (
+                  <tr>
+                    <td
+                      className="bg-background px-3 py-4 text-muted-foreground"
+                      colSpan={slotCount + 1}
+                    >
+                      No registered candidates at this centre.
+                    </td>
+                  </tr>
+                ) : (
+                  schools.map((school, i) => (
+                    <tr key={school.id} className="border-b border-border/70 last:border-b-0">
+                      <th
+                        scope="row"
+                        className={stickyRowHeader}
+                        title={schoolListTitle(school.name, school.code)}
                       >
-                        {(slot.counts_by_school[i] ?? 0).toLocaleString()}
+                        <span className="block sm:hidden">{truncateSchoolNameEnd(school.name)}</span>
+                        <span className="hidden sm:block">{school.name}</span>
+                      </th>
+                      {slots.map((slot, j) => (
+                        <td
+                          key={`${school.id}-${slot.subject_code}-${j}`}
+                          className="px-3 py-2.5 text-center tabular-nums text-card-foreground sm:text-left"
+                        >
+                          {(slot.counts_by_school[i] ?? 0).toLocaleString()}
+                        </td>
+                      ))}
+                    </tr>
+                  ))
+                )}
+              </tbody>
+              {schoolCount > 0 ? (
+                <tfoot>
+                  <tr className="border-t border-border bg-muted/30 font-semibold">
+                    <td className={stickyFooterSchool}>Total</td>
+                    {slots.map((slot, j) => (
+                      <td key={`total-${j}`} className="px-3 py-2.5 tabular-nums text-card-foreground">
+                        {slot.row_total.toLocaleString()}
                       </td>
                     ))}
                   </tr>
-                ))
-              )}
-            </tbody>
-            {schoolCount > 0 ? (
-              <tfoot>
-                <tr className="border-t border-border bg-muted/30 font-semibold">
-                  <td className={stickyFooterSchool}>Total</td>
-                  {slots.map((slot, j) => (
-                    <td key={`total-${j}`} className="px-3 py-2.5 tabular-nums text-card-foreground">
-                      {slot.row_total.toLocaleString()}
-                    </td>
-                  ))}
-                </tr>
-              </tfoot>
-            ) : null}
-          </table>
-        )}
-    </div>
-  );
+                </tfoot>
+              ) : null}
+            </table>
+          </div>
+          <div
+            className="pointer-events-none absolute inset-y-px right-px z-5 hidden w-10 rounded-r-xl bg-linear-to-l from-card from-35% to-transparent sm:hidden"
+            aria-hidden
+          />
+        </div>
+        <p className="px-0.5 text-[11px] leading-tight text-muted-foreground sm:hidden">
+          Swipe sideways to see all papers.
+        </p>
+      </div>
+    );
 
   return (
     <div
@@ -743,12 +783,18 @@ export function StaffDashboardOverview({
               {visibleUpcomingDateGroups.map((group) => {
                 const cardSlots = mergeUpcomingSlotsForMainCard(group.slots);
                 const sessionLabel = cardSlots.length === 1 ? "session" : "sessions";
+                const mobileDetailsReady =
+                  expandedDateKey === group.dateKey &&
+                  !daySummaryLoading &&
+                  !daySummaryError &&
+                  daySummary != null &&
+                  daySummary.examination_date === group.dateKey;
                 return (
                   <article
                     key={group.dateKey}
-                    className="flex overflow-hidden rounded-2xl border border-border bg-card shadow-sm"
+                    className="flex flex-col overflow-hidden rounded-2xl border border-border bg-card shadow-sm sm:flex-row"
                   >
-                    <div className="flex w-[min(42%,9.5rem)] shrink-0 flex-col justify-between bg-linear-to-br from-primary via-accent to-success px-4 py-5 text-primary-foreground sm:w-40">
+                    <div className="hidden shrink-0 flex-col justify-between bg-linear-to-br from-primary via-accent to-success px-4 py-5 text-primary-foreground sm:flex sm:w-40">
                       <time dateTime={group.dateKey} className="block">
                         <span className="block text-3xl font-bold leading-none tracking-tight sm:text-4xl">
                           {monthDayFormatter.format(group.date)}
@@ -762,6 +808,23 @@ export function StaffDashboardOverview({
                       </p>
                     </div>
                     <div className="min-w-0 flex-1 px-4 py-4 sm:px-5">
+                      <div
+                        className={
+                          mobileDetailsReady
+                            ? "hidden"
+                            : "mb-2 flex min-w-0 items-baseline justify-between gap-2 sm:hidden"
+                        }
+                      >
+                        <time
+                          dateTime={group.dateKey}
+                          className="min-w-0 text-xs font-semibold leading-snug text-foreground"
+                        >
+                          {weekdayFormatter.format(group.date)} · {monthDayFormatter.format(group.date)}
+                        </time>
+                        <span className="shrink-0 tabular-nums text-[11px] text-muted-foreground">
+                          {cardSlots.length} {sessionLabel}
+                        </span>
+                      </div>
                       <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Upcoming</p>
                       <ul className="mt-3 space-y-3">
                         {cardSlots.map((row, i) => (
@@ -769,13 +832,29 @@ export function StaffDashboardOverview({
                             key={`${row.subject_code}-${row.papers.join("-")}-${row.timesLabel}-${i}`}
                             className={`border-l-[3px] pl-3 ${sessionAccentBar[i % sessionAccentBar.length]}`}
                           >
-                            <p className="font-medium leading-snug text-foreground">
+                            <p className="font-medium leading-snug text-foreground sm:hidden">
+                              <span className="font-semibold">{row.subject_code}</span>
+                              {row.papersParenLabel != null ? (
+                                <span className="text-muted-foreground"> ({row.papersParenLabel})</span>
+                              ) : (
+                                <span className="text-muted-foreground"> · Paper {row.papers[0]}</span>
+                              )}
+                              <span className="font-normal text-muted-foreground"> · </span>
+                              <span className="tabular-nums">{row.timesLabel}</span>
+                            </p>
+                            <p
+                              className="mt-0.5 truncate text-xs text-muted-foreground sm:hidden"
+                              title={row.subject_name}
+                            >
+                              {truncateSchoolNameEnd(row.subject_name, 36)}
+                            </p>
+                            <p className="hidden font-medium leading-snug text-foreground sm:block">
                               {row.subject_code} — {row.subject_name}
                               {row.papersParenLabel != null ? (
                                 <span className="text-muted-foreground"> ({row.papersParenLabel})</span>
                               ) : null}
                             </p>
-                            <p className="mt-0.5 text-sm tabular-nums text-muted-foreground">
+                            <p className="mt-0.5 hidden text-sm tabular-nums text-muted-foreground sm:block">
                               {row.papersParenLabel != null ? (
                                 row.timesLabel
                               ) : (
@@ -811,11 +890,25 @@ export function StaffDashboardOverview({
                           !daySummaryError &&
                           daySummary &&
                           daySummary.examination_date === group.dateKey ? (
-                            variant === "national" ? (
-                              <NationalUpcomingDayDetailsSummary summary={daySummary} />
-                            ) : (
-                              <CentreDaySummaryTable summary={daySummary} sectionTitle="Details" />
-                            )
+                            <>
+                              <div className="mb-3 flex min-w-0 items-baseline justify-between gap-2 border-b border-border/60 pb-2 sm:hidden">
+                                <time
+                                  dateTime={group.dateKey}
+                                  className="min-w-0 text-[11px] font-medium leading-snug text-muted-foreground"
+                                >
+                                  {weekdayFormatter.format(group.date)} ·{" "}
+                                  {monthDayFormatter.format(group.date)}
+                                </time>
+                                <span className="shrink-0 tabular-nums text-[11px] text-muted-foreground">
+                                  {cardSlots.length} {sessionLabel}
+                                </span>
+                              </div>
+                              {variant === "national" ? (
+                                <NationalUpcomingDayDetailsSummary summary={daySummary} />
+                              ) : (
+                                <CentreDaySummaryTable summary={daySummary} sectionTitle="Details" />
+                              )}
+                            </>
                           ) : null}
                         </>
                       ) : null}

@@ -38,7 +38,6 @@ import {
 } from "@/lib/examination-notice-depot-content";
 import {
   formatOrdinalLongDate,
-  inspectorAppointmentIntro,
   inspectorExaminationAppointmentHeading,
   inspectorExaminationClosing,
   inspectorExaminationSignOff,
@@ -95,6 +94,12 @@ function printExaminationNotice() {
 
 function sortedProgrammes(items: CentreScopeProgrammeItem[]): CentreScopeProgrammeItem[] {
   return [...items].sort((a, b) => a.code.localeCompare(b.code) || a.name.localeCompare(b.name));
+}
+
+function truncateForMobile(value: string, maxChars: number): string {
+  if (value.length <= maxChars) return value;
+  if (maxChars <= 3) return ".".repeat(Math.max(0, maxChars));
+  return `${value.slice(0, maxChars - 3)}...`;
 }
 
 export function ExaminationNoticeClient({ dataScope, centreRole = "supervisor" }: Props) {
@@ -215,6 +220,8 @@ export function ExaminationNoticeClient({ dataScope, centreRole = "supervisor" }
     () => inspectorNumberedNotifications(inspectorWindowSentence),
     [inspectorWindowSentence],
   );
+  const centreSchoolsWithCounts =
+    dataScope === "centre" ? (overviewCentre?.schools_with_candidate_counts ?? []) : [];
 
   return (
     <div className="space-y-5">
@@ -247,7 +254,7 @@ export function ExaminationNoticeClient({ dataScope, centreRole = "supervisor" }
       {busy && !hasOverview ? <p className="text-sm text-muted-foreground">Loading notice…</p> : null}
 
       {activeExam && hasOverview ? (
-        <article className="examination-notice-onepage mx-auto rounded-2xl border border-border bg-card p-4 shadow-sm sm:p-6">
+        <article className="examination-notice-onepage mx-auto max-w-full overflow-x-hidden rounded-2xl border border-border bg-card p-4 shadow-sm sm:p-6">
           <header className="mb-4 border-b border-border pb-3">
             <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
               <div className="min-w-0">
@@ -308,12 +315,56 @@ export function ExaminationNoticeClient({ dataScope, centreRole = "supervisor" }
             )}
           </header>
 
+          {dataScope === "centre" && overviewCentre ? (
+            <section className="mb-4 rounded-xl border border-border bg-muted/10 p-3 sm:p-4">
+              <div className="flex items-start justify-between gap-3">
+                <div className="min-w-0">
+                  <h3 className="text-sm font-semibold text-foreground">Schools in this centre</h3>
+                  <p className="mt-1 text-xs text-muted-foreground">
+                    Candidate totals by school for the selected examination.
+                  </p>
+                </div>
+                <span className="shrink-0 rounded-full bg-muted px-2 py-1 text-xs font-medium text-muted-foreground">
+                  {centreSchoolsWithCounts.length.toLocaleString()} schools
+                </span>
+              </div>
+              {centreSchoolsWithCounts.length > 0 ? (
+                <ul className="mt-3 divide-y divide-border/70 rounded-lg border border-border/80 bg-background/70">
+                  {centreSchoolsWithCounts.map((school) => (
+                    <li key={school.school_id} className="flex items-start justify-between gap-3 p-2.5">
+                      <div className="min-w-0">
+                        <p className="text-sm font-medium text-foreground wrap-anywhere">
+                          <span className="sm:hidden" title={school.school_name}>
+                            {truncateForMobile(school.school_name, 20)}
+                          </span>
+                          <span className="hidden sm:inline">{school.school_name}</span>
+                        </p>
+                        <p className="mt-0.5 text-xs text-muted-foreground">{school.school_code}</p>
+                      </div>
+                      <span className="shrink-0 rounded-md bg-muted px-2 py-1 text-xs font-semibold tabular-nums text-foreground">
+                        {school.candidate_count.toLocaleString()}
+                      </span>
+                    </li>
+                  ))}
+                </ul>
+              ) : (
+                <p className="mt-3 text-sm text-muted-foreground">No centre schools found for this examination.</p>
+              )}
+              <div className="mt-3 flex items-center justify-between gap-3 rounded-md border border-border/80 bg-background p-2.5">
+                <p className="text-sm font-medium text-foreground">Total candidates at centre</p>
+                <p className="text-base font-semibold tabular-nums text-foreground">
+                  {candidateCount.toLocaleString()}
+                </p>
+              </div>
+            </section>
+          ) : null}
+
           <div className="grid gap-4 lg:grid-cols-[1.35fr_1fr]">
             {dataScope === "depot" && overviewDepot ? (
               <section className="space-y-4">
                 <div className="rounded-xl border border-border/80 bg-muted/20 p-3">
                   <h3 className="text-sm font-semibold text-foreground">{depotExaminationSummaryHeading}</h3>
-                  <div className="mt-2 space-y-2 text-sm text-foreground">
+                  <div className="mt-2 space-y-2 text-sm text-foreground [overflow-wrap:anywhere]">
                     {depotExaminationSummaryParagraphs.map((para, i) => (
                       <p key={i}>{para}</p>
                     ))}
@@ -322,8 +373,8 @@ export function ExaminationNoticeClient({ dataScope, centreRole = "supervisor" }
 
                 <div className="rounded-xl border border-border/80 bg-muted/20 p-3">
                   <h3 className="text-sm font-semibold text-foreground">{depotExaminationSecurityHeading}</h3>
-                  <p className="mt-2 text-sm text-foreground">{depotExaminationSecurityIntro}</p>
-                  <ol className="mt-2 list-decimal space-y-1.5 pl-5 text-sm text-foreground">
+                  <p className="mt-2 text-sm text-foreground [overflow-wrap:anywhere]">{depotExaminationSecurityIntro}</p>
+                  <ol className="mt-2 list-decimal space-y-1.5 pl-5 text-sm text-foreground [overflow-wrap:anywhere]">
                     {depotExaminationSecurityItems.map((item) => (
                       <li key={item}>{item}</li>
                     ))}
@@ -332,8 +383,8 @@ export function ExaminationNoticeClient({ dataScope, centreRole = "supervisor" }
 
                 <div className="rounded-xl border border-border/80 bg-muted/20 p-3">
                   <h3 className="text-sm font-semibold text-foreground">{depotExaminationJobDescriptionHeading}</h3>
-                  <p className="mt-2 text-sm text-foreground">{depotExaminationJobDescriptionIntro}</p>
-                  <ol className="mt-2 list-decimal space-y-1.5 pl-5 text-sm text-foreground">
+                  <p className="mt-2 text-sm text-foreground [overflow-wrap:anywhere]">{depotExaminationJobDescriptionIntro}</p>
+                  <ol className="mt-2 list-decimal space-y-1.5 pl-5 text-sm text-foreground [overflow-wrap:anywhere]">
                     {depotExaminationJobDescriptionItems.map((item, idx) => (
                       <li key={idx}>{item}</li>
                     ))}
@@ -342,13 +393,13 @@ export function ExaminationNoticeClient({ dataScope, centreRole = "supervisor" }
 
                 <div className="rounded-xl border border-border/80 bg-muted/20 p-3">
                   <h3 className="text-sm font-semibold text-foreground">{depotExaminationContactsHeading}</h3>
-                  <p className="mt-2 text-sm text-foreground">{depotExaminationContactsIntro}</p>
-                  <ul className="mt-2 list-disc space-y-1 pl-5 text-sm text-foreground">
+                  <p className="mt-2 text-sm text-foreground [overflow-wrap:anywhere]">{depotExaminationContactsIntro}</p>
+                  <ul className="mt-2 list-disc space-y-1 pl-5 text-sm text-foreground [overflow-wrap:anywhere]">
                     {depotExaminationContactLines.map((line) => (
                       <li key={line}>{line}</li>
                     ))}
                   </ul>
-                  <p className="mt-3 text-sm text-foreground">{depotExaminationClosing}</p>
+                  <p className="mt-3 text-sm text-foreground [overflow-wrap:anywhere]">{depotExaminationClosing}</p>
                   <p className="mt-4 text-sm font-semibold text-foreground">{depotExaminationSignOff}</p>
                   {depotExaminationSignatoryLines.map((line, idx) =>
                     line === "" ? (
@@ -363,7 +414,7 @@ export function ExaminationNoticeClient({ dataScope, centreRole = "supervisor" }
 
                 <div className="rounded-xl border border-border/80 bg-muted/20 p-3">
                   <h3 className="text-sm font-semibold text-foreground">Documents for your attention</h3>
-                  <ul className="mt-2 list-disc space-y-1 pl-5 text-sm text-foreground">
+                  <ul className="mt-2 list-disc space-y-1 pl-5 text-sm text-foreground [overflow-wrap:anywhere]">
                     {depotExaminationDocumentsChecklist.map((item) => (
                       <li key={item}>{item}</li>
                     ))}
@@ -374,7 +425,7 @@ export function ExaminationNoticeClient({ dataScope, centreRole = "supervisor" }
               <section className="space-y-4">
                 <div className="rounded-xl border border-border/80 bg-muted/20 p-3">
                   <h3 className="text-sm font-semibold text-foreground">{inspectorExaminationSummaryHeading}</h3>
-                  <div className="mt-2 space-y-2 text-sm text-foreground">
+                  <div className="mt-2 space-y-2 text-sm text-foreground [overflow-wrap:anywhere]">
                     {inspectorExaminationSummaryParagraphs.map((para, i) => (
                       <p key={i}>{para}</p>
                     ))}
@@ -382,23 +433,13 @@ export function ExaminationNoticeClient({ dataScope, centreRole = "supervisor" }
                 </div>
 
                 <div className="rounded-xl border border-border/80 bg-muted/20 p-3">
-                  <p className="text-sm text-foreground">
-                    {inspectorAppointmentIntro({
-                      year: activeExam.year,
-                      examType: activeExam.exam_type,
-                      examSeries: activeExam.exam_series,
-                      centreName: overviewCentre.examination_centre_host_name,
-                      centreCode: overviewCentre.examination_centre_host_code,
-                      region: overviewCentre.examination_centre_region,
-                    })}
-                  </p>
                   <p className="mt-3 text-sm font-semibold text-foreground">{inspectorPleaseNoteLead}</p>
-                  <ol className="mt-2 list-decimal space-y-1.5 pl-5 text-sm text-foreground">
+                  <ol className="mt-2 list-decimal space-y-1.5 pl-5 text-sm text-foreground [overflow-wrap:anywhere]">
                     {inspectorNotificationList.map((item, idx) => (
                       <li key={idx}>{item}</li>
                     ))}
                   </ol>
-                  <p className="mt-4 text-sm text-foreground">{inspectorExaminationClosing}</p>
+                  <p className="mt-4 text-sm text-foreground [overflow-wrap:anywhere]">{inspectorExaminationClosing}</p>
                   <p className="mt-4 text-sm font-semibold text-foreground">{inspectorExaminationSignOff}</p>
                   {inspectorExaminationSignatoryLines.map((line, idx) =>
                     line === "" ? (
@@ -413,8 +454,8 @@ export function ExaminationNoticeClient({ dataScope, centreRole = "supervisor" }
 
                 <div className="rounded-xl border border-border/80 bg-muted/20 p-3">
                   <h3 className="text-sm font-semibold text-foreground">{inspectorJobDescriptionHeading}</h3>
-                  <p className="mt-2 text-sm text-foreground">{inspectorJobDescriptionIntro}</p>
-                  <ol className="mt-2 list-decimal space-y-1.5 pl-5 text-sm text-foreground">
+                  <p className="mt-2 text-sm text-foreground [overflow-wrap:anywhere]">{inspectorJobDescriptionIntro}</p>
+                  <ol className="mt-2 list-decimal space-y-1.5 pl-5 text-sm text-foreground [overflow-wrap:anywhere]">
                     {inspectorJobDescriptionItems.map((item, idx) => (
                       <li key={idx}>{item}</li>
                     ))}
@@ -427,7 +468,7 @@ export function ExaminationNoticeClient({ dataScope, centreRole = "supervisor" }
                   <h3 className="text-sm font-semibold text-foreground">
                     As a Principal and Supervisor, you are responsible for
                   </h3>
-                  <ul className="mt-2 list-disc space-y-1 pl-5 text-sm text-foreground">
+                  <ul className="mt-2 list-disc space-y-1 pl-5 text-sm text-foreground [overflow-wrap:anywhere]">
                     {preExamInstructions.map((item) => (
                       <li key={item}>{item}</li>
                     ))}
@@ -436,7 +477,7 @@ export function ExaminationNoticeClient({ dataScope, centreRole = "supervisor" }
 
                 <div className="rounded-xl border border-border/80 bg-muted/20 p-3">
                   <h3 className="text-sm font-semibold text-foreground">During the examination period</h3>
-                  <ul className="mt-2 list-disc space-y-1 pl-5 text-sm text-foreground">
+                  <ul className="mt-2 list-disc space-y-1 pl-5 text-sm text-foreground [overflow-wrap:anywhere]">
                     {examDayInstructions.map((item) => (
                       <li key={item}>{item}</li>
                     ))}
@@ -445,7 +486,7 @@ export function ExaminationNoticeClient({ dataScope, centreRole = "supervisor" }
 
                 <div className="rounded-xl border border-border/80 bg-muted/20 p-3">
                   <h3 className="text-sm font-semibold text-foreground">After the examinations</h3>
-                  <ul className="mt-2 list-disc space-y-1 pl-5 text-sm text-foreground">
+                  <ul className="mt-2 list-disc space-y-1 pl-5 text-sm text-foreground [overflow-wrap:anywhere]">
                     {postExamInstructions.map((item) => (
                       <li key={item}>{item}</li>
                     ))}
@@ -454,7 +495,7 @@ export function ExaminationNoticeClient({ dataScope, centreRole = "supervisor" }
 
                 <div className="rounded-xl border border-border/80 bg-muted/20 p-3">
                   <h3 className="text-sm font-semibold text-foreground">Documents/details for your attention</h3>
-                  <ul className="mt-2 list-disc space-y-1 pl-5 text-sm text-foreground">
+                  <ul className="mt-2 list-disc space-y-1 pl-5 text-sm text-foreground [overflow-wrap:anywhere]">
                     {requiredDocumentsChecklist.map((item) => (
                       <li key={item}>{item}</li>
                     ))}
@@ -472,8 +513,11 @@ export function ExaminationNoticeClient({ dataScope, centreRole = "supervisor" }
                   {dataScope === "depot" && overviewDepot ? (
                     <>
                       <dt className="text-muted-foreground">Depot</dt>
-                      <dd className="text-right font-semibold text-foreground">
-                        <span className="block truncate" title={`${overviewDepot.depot_name} (${overviewDepot.depot_code})`}>
+                      <dd className="text-left font-semibold text-foreground sm:text-right">
+                        <span
+                          className="block break-words sm:truncate"
+                          title={`${overviewDepot.depot_name} (${overviewDepot.depot_code})`}
+                        >
                           {overviewDepot.depot_name}{" "}
                           <span className="font-mono text-xs font-normal text-muted-foreground">
                             ({overviewDepot.depot_code})
@@ -483,7 +527,9 @@ export function ExaminationNoticeClient({ dataScope, centreRole = "supervisor" }
                       {overviewDepot.region_summary ? (
                         <>
                           <dt className="text-muted-foreground">Region</dt>
-                          <dd className="text-right text-sm font-medium text-foreground">{overviewDepot.region_summary}</dd>
+                          <dd className="text-left text-sm font-medium text-foreground break-words sm:text-right">
+                            {overviewDepot.region_summary}
+                          </dd>
                         </>
                       ) : null}
                     </>
@@ -491,9 +537,9 @@ export function ExaminationNoticeClient({ dataScope, centreRole = "supervisor" }
                   {dataScope === "centre" && overviewCentre && isInspectorCentre ? (
                     <>
                       <dt className="text-muted-foreground">Examination centre</dt>
-                      <dd className="text-right font-semibold text-foreground">
+                      <dd className="text-left font-semibold text-foreground sm:text-right">
                         <span
-                          className="block truncate"
+                          className="block break-words sm:truncate"
                           title={`${overviewCentre.examination_centre_host_name} (${overviewCentre.examination_centre_host_code})`}
                         >
                           {overviewCentre.examination_centre_host_name}{" "}
@@ -503,11 +549,11 @@ export function ExaminationNoticeClient({ dataScope, centreRole = "supervisor" }
                         </span>
                       </dd>
                       <dt className="text-muted-foreground">Region</dt>
-                      <dd className="text-right text-sm font-medium text-foreground">
+                      <dd className="text-left text-sm font-medium text-foreground break-words sm:text-right">
                         {overviewCentre.examination_centre_region}
                       </dd>
                       <dt className="text-muted-foreground">Examination period</dt>
-                      <dd className="text-right text-sm text-foreground">
+                      <dd className="text-left text-sm text-foreground break-words sm:text-right">
                         {overviewCentre.examination_window_start && overviewCentre.examination_window_end
                           ? overviewCentre.examination_window_start === overviewCentre.examination_window_end
                             ? formatOrdinalLongDate(overviewCentre.examination_window_start)
@@ -516,24 +562,32 @@ export function ExaminationNoticeClient({ dataScope, centreRole = "supervisor" }
                       </dd>
                     </>
                   ) : null}
-                  <dt className="text-muted-foreground">Candidates</dt>
-                  <dd className="text-right font-semibold text-foreground">{candidateCount.toLocaleString()}</dd>
-                  <dt className="text-muted-foreground">Schools</dt>
-                  <dd className="text-right font-semibold text-foreground">{schoolCount.toLocaleString()}</dd>
+                  {dataScope === "depot" ? (
+                    <>
+                      <dt className="text-muted-foreground">Candidates</dt>
+                      <dd className="text-left font-semibold text-foreground sm:text-right">
+                        {candidateCount.toLocaleString()}
+                      </dd>
+                      <dt className="text-muted-foreground">Schools</dt>
+                      <dd className="text-left font-semibold text-foreground sm:text-right">
+                        {schoolCount.toLocaleString()}
+                      </dd>
+                    </>
+                  ) : null}
                   {dataScope === "depot" && overviewDepot ? (
                     <>
                       <dt className="text-muted-foreground">Subjects (timetable)</dt>
-                      <dd className="text-right font-semibold text-foreground">
+                      <dd className="text-left font-semibold text-foreground sm:text-right">
                         {overviewDepot.timetable_distinct_subject_count.toLocaleString()}
                       </dd>
                       <dt className="text-muted-foreground">Subject links (programmes)</dt>
-                      <dd className="text-right font-semibold text-foreground">
+                      <dd className="text-left font-semibold text-foreground sm:text-right">
                         {programmeCatalogueSubjectLinks.toLocaleString()}
                       </dd>
                     </>
                   ) : null}
                   <dt className="text-muted-foreground">Programmes</dt>
-                  <dd className="text-right font-semibold text-foreground">{programmes.length.toLocaleString()}</dd>
+                  <dd className="text-left font-semibold text-foreground sm:text-right">{programmes.length.toLocaleString()}</dd>
                 </dl>
               </div>
 
@@ -542,7 +596,7 @@ export function ExaminationNoticeClient({ dataScope, centreRole = "supervisor" }
                   <h3 className="text-sm font-semibold text-foreground">Schools in this depot</h3>
                   <ul className="mt-2 space-y-1 text-sm">
                     {depotSchoolsShown.map((s) => (
-                      <li key={s.id} className="text-foreground">
+                      <li key={s.id} className="text-foreground break-words [overflow-wrap:anywhere]">
                         <span className="font-mono tabular-nums text-muted-foreground">{s.code}</span> — {s.name}
                       </li>
                     ))}
@@ -563,8 +617,8 @@ export function ExaminationNoticeClient({ dataScope, centreRole = "supervisor" }
                   <ul className="mt-2 space-y-1 text-sm">
                     {(dataScope === "depot" ? programmes.slice(0, DEPOT_PROGRAMMES_SHOW) : programmes.slice(0, 8)).map(
                       (p) => (
-                        <li key={p.id} className="flex justify-between gap-2">
-                          <span className="truncate text-foreground" title={`${p.code} — ${p.name}`}>
+                        <li key={p.id} className="flex items-start justify-between gap-2">
+                          <span className="min-w-0 break-words text-foreground sm:truncate" title={`${p.code} — ${p.name}`}>
                             {p.code} — {p.name}
                           </span>
                           <span className="shrink-0 tabular-nums text-muted-foreground">{p.subject_count}</span>

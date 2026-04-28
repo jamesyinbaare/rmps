@@ -519,6 +519,12 @@ export type StaffCentreOverviewResponse = {
   /** ISO date (YYYY-MM-DD) or null when no candidate-linked timetable rows. */
   examination_window_start: string | null;
   examination_window_end: string | null;
+  schools_with_candidate_counts: {
+    school_id: string;
+    school_code: string;
+    school_name: string;
+    candidate_count: number;
+  }[];
 };
 
 export type StaffCentreDaySummarySlotRow = {

@@ -200,6 +200,15 @@ class StaffCentreOverviewUpcomingItem(BaseModel):
     examination_time: time
 
 
+class StaffCentreSchoolCandidateItem(BaseModel):
+    """Per-school candidate totals within a centre scope."""
+
+    school_id: UUID
+    school_code: str
+    school_name: str
+    candidate_count: int = Field(ge=0)
+
+
 class StaffCentreOverviewResponse(BaseModel):
     """Supervisor/inspector dashboard: centre scope stats and next timetable slots."""
 
@@ -235,6 +244,10 @@ class StaffCentreOverviewResponse(BaseModel):
     examination_window_end: date | None = Field(
         default=None,
         description="Latest candidate-linked timetable date for this examination at the centre, if any.",
+    )
+    schools_with_candidate_counts: list[StaffCentreSchoolCandidateItem] = Field(
+        default_factory=list,
+        description="Ordered schools in the centre scope with total candidates per school for this examination.",
     )
 
 
