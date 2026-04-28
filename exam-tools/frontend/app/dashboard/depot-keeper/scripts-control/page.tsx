@@ -49,7 +49,7 @@ type SubjectCompletion = {
 };
 
 type StatusSeriesItem = {
-  subject: Pick<ScriptSubjectRowResponse, "subject_id" | "subject_code" | "subject_name"> & {
+  subject: Pick<ScriptSubjectRowResponse, "subject_id" | "subject_code" | "subject_original_code" | "subject_name"> & {
     completion: SubjectCompletion;
   };
   paper: Pick<ScriptPaperSlotResponse, "paper_number" | "examination_date">;
@@ -59,6 +59,7 @@ type StatusSeriesItem = {
 type SubjectGroup = {
   subject_id: number;
   subject_code: string;
+  subject_original_code: string | null;
   subject_name: string;
   completion: SubjectCompletion;
   papers: PaperGroup[];
@@ -128,6 +129,7 @@ function buildStatusGroups(
           subject: {
             subject_id: subject.subject_id,
             subject_code: subject.subject_code,
+            subject_original_code: subject.subject_original_code ?? null,
             subject_name: subject.subject_name,
             completion,
           },
@@ -154,6 +156,7 @@ function nestBySubjectPaper(items: StatusSeriesItem[]): SubjectGroup[] {
       ({
         subject_id: item.subject.subject_id,
         subject_code: item.subject.subject_code,
+        subject_original_code: item.subject.subject_original_code ?? null,
         subject_name: item.subject.subject_name,
         completion: item.subject.completion,
         papers: [],
@@ -534,7 +537,7 @@ export default function DepotKeeperScriptsControlPage() {
                                   <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
                                     <div className="min-w-0 flex-1">
                                       <p className="text-sm font-semibold text-foreground">
-                                        {subject.subject_code} — {subject.subject_name}
+                                        {subject.subject_original_code ?? subject.subject_code} — {subject.subject_name}
                                       </p>
                                       <p className="mt-0.5 text-xs text-muted-foreground">
                                         {subject.papers.length} paper{subject.papers.length === 1 ? "" : "s"} ·{" "}

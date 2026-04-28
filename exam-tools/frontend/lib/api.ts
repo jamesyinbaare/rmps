@@ -808,6 +808,7 @@ export type ScriptPaperSlotResponse = {
 export type ScriptSubjectRowResponse = {
   subject_id: number;
   subject_code: string;
+  subject_original_code?: string | null;
   subject_name: string;
   papers: ScriptPaperSlotResponse[];
 };
@@ -846,6 +847,7 @@ export type ScriptControlAdminRow = {
   zone: string;
   subject_id: number;
   subject_code: string;
+  subject_original_code?: string | null;
   subject_name: string;
   paper_number: number;
   series_number: number;
@@ -892,6 +894,23 @@ export async function getScriptControlAdminRecords(
   return apiJson<ScriptControlAdminListResponse>(`/script-control/records?${q}`);
 }
 
+export async function getIrregularScriptControlAdminRecords(
+  params: ScriptControlAdminRecordsParams,
+): Promise<ScriptControlAdminListResponse> {
+  const q = new URLSearchParams();
+  if (params.examination_id != null) q.set("examination_id", String(params.examination_id));
+  if (params.school_id?.trim()) q.set("school_id", params.school_id.trim());
+  if (params.subject_id != null) q.set("subject_id", String(params.subject_id));
+  if (params.paper_number != null) q.set("paper_number", String(params.paper_number));
+  if (params.region?.trim()) q.set("region", params.region.trim());
+  if (params.zone?.trim()) q.set("zone", params.zone.trim());
+  if (params.school_q?.trim()) q.set("school_q", params.school_q.trim());
+  if (params.subject_q?.trim()) q.set("subject_q", params.subject_q.trim());
+  q.set("skip", String(params.skip ?? 0));
+  q.set("limit", String(params.limit ?? 500));
+  return apiJson<ScriptControlAdminListResponse>(`/irregular-script-control/records?${q}`);
+}
+
 export type ScriptControlExportParams = {
   mode: "summary" | "detail";
   examination_id: number;
@@ -922,6 +941,23 @@ export async function downloadScriptControlExport(
   await downloadApiFile(`/script-control/export?${q}`, filename);
 }
 
+export async function downloadIrregularScriptControlExport(
+  params: ScriptControlExportParams,
+  filename: string,
+): Promise<void> {
+  const q = new URLSearchParams();
+  q.set("mode", params.mode);
+  q.set("examination_id", String(params.examination_id));
+  q.set("subject_id", String(params.subject_id));
+  q.set("paper_number", String(params.paper_number));
+  if (params.school_id?.trim()) q.set("school_id", params.school_id.trim());
+  if (params.region?.trim()) q.set("region", params.region.trim());
+  if (params.zone?.trim()) q.set("zone", params.zone.trim());
+  if (params.school_q?.trim()) q.set("school_q", params.school_q.trim());
+  if (params.subject_q?.trim()) q.set("subject_q", params.subject_q.trim());
+  await downloadApiFile(`/irregular-script-control/export?${q}`, filename);
+}
+
 export type ScriptSeriesUpsertPayload = {
   subject_id: number;
   paper_number: number;
@@ -940,6 +976,17 @@ export async function getMySchoolScriptControl(
   );
 }
 
+/** Inspector irregular worked scripts for one school in centre scope. */
+export async function getMySchoolIrregularScriptControl(
+  examId: number,
+  schoolId: string,
+): Promise<MySchoolScriptControlResponse> {
+  const q = new URLSearchParams({ school_id: schoolId.trim() });
+  return apiJson<MySchoolScriptControlResponse>(
+    `/examinations/${examId}/irregular-script-control/my-school?${q}`,
+  );
+}
+
 export async function upsertScriptSeries(
   examId: number,
   schoolId: string,
@@ -948,6 +995,22 @@ export async function upsertScriptSeries(
   const q = new URLSearchParams({ school_id: schoolId.trim() });
   return apiJson<ScriptSeriesPackingResponse>(
     `/examinations/${examId}/script-control/my-school/series?${q}`,
+    {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    },
+  );
+}
+
+export async function upsertIrregularScriptSeries(
+  examId: number,
+  schoolId: string,
+  payload: ScriptSeriesUpsertPayload,
+): Promise<ScriptSeriesPackingResponse> {
+  const q = new URLSearchParams({ school_id: schoolId.trim() });
+  return apiJson<ScriptSeriesPackingResponse>(
+    `/examinations/${examId}/irregular-script-control/my-school/series?${q}`,
     {
       method: "PUT",
       headers: { "Content-Type": "application/json" },
@@ -972,6 +1035,26 @@ export async function deleteScriptSeries(
     series_number: String(params.series_number),
   });
   await apiJson(`/examinations/${examId}/script-control/my-school/series?${q}`, {
+    method: "DELETE",
+  });
+}
+
+export async function deleteIrregularScriptSeries(
+  examId: number,
+  params: {
+    school_id: string;
+    subject_id: number;
+    paper_number: number;
+    series_number: number;
+  },
+): Promise<void> {
+  const q = new URLSearchParams({
+    school_id: params.school_id.trim(),
+    subject_id: String(params.subject_id),
+    paper_number: String(params.paper_number),
+    series_number: String(params.series_number),
+  });
+  await apiJson(`/examinations/${examId}/irregular-script-control/my-school/series?${q}`, {
     method: "DELETE",
   });
 }
@@ -1083,6 +1166,16 @@ export async function getDepotSchoolScriptControl(
   );
 }
 
+export async function getDepotSchoolIrregularScriptControl(
+  examId: number,
+  schoolId: string,
+): Promise<MySchoolScriptControlResponse> {
+  const q = new URLSearchParams({ school_id: schoolId.trim() });
+  return apiJson<MySchoolScriptControlResponse>(
+    `/examinations/${examId}/irregular-script-control/depot/school?${q}`,
+  );
+}
+
 /** Script packing: subject / paper / series / envelope. */
 export type ScriptControlSlotKeyPayload = {
   subject_id: number;
@@ -1110,6 +1203,22 @@ export async function setDepotScriptEnvelopeVerification(
   const q = new URLSearchParams({ school_id: schoolId.trim() });
   return apiJson<ScriptSeriesPackingResponse>(
     `/examinations/${examId}/script-control/depot/school/series/verification?${q}`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    },
+  );
+}
+
+export async function setDepotIrregularScriptEnvelopeVerification(
+  examId: number,
+  schoolId: string,
+  payload: ScriptControlEnvelopeVerificationTogglePayload,
+): Promise<ScriptSeriesPackingResponse> {
+  const q = new URLSearchParams({ school_id: schoolId.trim() });
+  return apiJson<ScriptSeriesPackingResponse>(
+    `/examinations/${examId}/irregular-script-control/depot/school/series/verification?${q}`,
     {
       method: "POST",
       headers: { "Content-Type": "application/json" },

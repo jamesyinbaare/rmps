@@ -47,6 +47,7 @@ class ScriptPaperSlotResponse(BaseModel):
 class ScriptSubjectRowResponse(BaseModel):
     subject_id: int
     subject_code: str
+    subject_original_code: str | None = None
     subject_name: str
     papers: list[ScriptPaperSlotResponse]
 
@@ -117,6 +118,7 @@ class ScriptControlAdminRow(BaseModel):
     zone: str = Field(default="", description="School zone enum value as string.")
     subject_id: int
     subject_code: str
+    subject_original_code: str | None = None
     subject_name: str
     paper_number: int
     series_number: int
