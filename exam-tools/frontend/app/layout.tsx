@@ -16,8 +16,8 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "CTVET Examination Portal",
-  description: "Certificate examination resource management for CTVET teams.",
+  title: "CTVET Certificate II Examinations Operations Portal",
+  description: "Coordinate centre-level examination activities through one secure platform built for smooth delivery, oversight, and reporting.",
 };
 
 export default function RootLayout({

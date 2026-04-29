@@ -3,8 +3,9 @@
 
 set -euo pipefail
 
-FRONTEND_HOST="${FRONTEND_HOST:-monitoring.jamesyin.com}"
-API_HOST="${API_HOST:-monitoring-api.jamesyin.com}"
+# Space-separated lists; override to test a subset.
+FRONTEND_HOSTS="${FRONTEND_HOSTS:-monitoring.jamesyin.com monitoring.ctvet.gov.gh}"
+API_HOSTS="${API_HOSTS:-monitoring-api.jamesyin.com monitoring-api.ctvet.gov.gh}"
 DASHBOARD_HOST="${DASHBOARD_HOST:-traefik-monitoring-staging.jamesyin.com}"
 
 check_host() {
@@ -21,19 +22,24 @@ check_host() {
 echo "Verifying HTTPS security headers and redirect behavior..."
 echo ""
 
-check_host "$FRONTEND_HOST" "/"
-check_host "$API_HOST" "/health"
+for host in $FRONTEND_HOSTS; do
+  check_host "$host" "/"
+done
+for host in $API_HOSTS; do
+  check_host "$host" "/health"
+done
 check_host "$DASHBOARD_HOST" "/"
 
 echo "== HTTP -> HTTPS redirect checks =="
-for host in "$FRONTEND_HOST" "$API_HOST" "$DASHBOARD_HOST"; do
+for host in $FRONTEND_HOSTS $API_HOSTS "$DASHBOARD_HOST"; do
   echo "-- http://${host}/"
   curl -sSI "http://${host}/" | awk 'BEGIN{IGNORECASE=1} /HTTP\// || /location:/'
 done
 echo ""
 
-echo "== Certificate subject/issuer (frontend) =="
-echo | openssl s_client -servername "$FRONTEND_HOST" -connect "${FRONTEND_HOST}:443" 2>/dev/null \
+first_frontend="${FRONTEND_HOSTS%% *}"
+echo "== Certificate subject/issuer (first frontend host: ${first_frontend}) =="
+echo | openssl s_client -servername "$first_frontend" -connect "${first_frontend}:443" 2>/dev/null \
   | openssl x509 -noout -subject -issuer -dates
 echo ""
 
