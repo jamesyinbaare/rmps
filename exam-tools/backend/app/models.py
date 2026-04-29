@@ -499,6 +499,76 @@ class ScriptEnvelope(Base):
     )
 
 
+class IrregularScriptPackingSeries(Base):
+    """Per examination, school, subject, paper, and series: irregular worked script envelope counts only."""
+
+    __tablename__ = "irregular_script_packing_series"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    examination_id = Column(Integer, ForeignKey("examinations.id", ondelete="CASCADE"), nullable=False, index=True)
+    school_id = Column(UUID(as_uuid=True), ForeignKey("schools.id", ondelete="CASCADE"), nullable=False, index=True)
+    subject_id = Column(Integer, ForeignKey("subjects.id", ondelete="RESTRICT"), nullable=False, index=True)
+    paper_number = Column(SmallInteger, nullable=False)
+    series_number = Column(SmallInteger, nullable=False)
+    updated_by_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True, index=True)
+    verified_at = Column(DateTime, nullable=True)
+    verified_by_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True, index=True)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+
+    examination = relationship("Examination", backref="irregular_script_packing_series")
+    school = relationship("School", backref="irregular_script_packing_series")
+    subject = relationship("Subject", backref="irregular_script_packing_series")
+    updated_by = relationship("User", foreign_keys=[updated_by_id])
+    verified_by = relationship("User", foreign_keys=[verified_by_id])
+    envelopes = relationship(
+        "IrregularScriptEnvelope",
+        back_populates="packing_series",
+        cascade="all, delete-orphan",
+        order_by="IrregularScriptEnvelope.envelope_number",
+    )
+
+    __table_args__ = (
+        UniqueConstraint(
+            "examination_id",
+            "school_id",
+            "subject_id",
+            "paper_number",
+            "series_number",
+            name="uq_irreg_pack_series_exam_school_sub_paper_ser",
+        ),
+        CheckConstraint("series_number >= 1 AND series_number <= 32767", name="ck_irregular_script_packing_series_number"),
+        CheckConstraint("paper_number >= 1", name="ck_irregular_script_packing_paper_number"),
+    )
+
+
+class IrregularScriptEnvelope(Base):
+    """One physical irregular-script envelope within an irregular script packing series."""
+
+    __tablename__ = "irregular_script_envelopes"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    packing_series_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("irregular_script_packing_series.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    envelope_number = Column(Integer, nullable=False)
+    booklet_count = Column(Integer, nullable=False)
+    verified_at = Column(DateTime, nullable=True)
+    verified_by_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True, index=True)
+
+    packing_series = relationship("IrregularScriptPackingSeries", back_populates="envelopes")
+    verified_by = relationship("User", foreign_keys=[verified_by_id])
+
+    __table_args__ = (
+        UniqueConstraint("packing_series_id", "envelope_number", name="uq_irregular_script_envelope_series_number"),
+        CheckConstraint("envelope_number >= 1", name="ck_irregular_script_envelope_number"),
+        CheckConstraint("booklet_count >= 0", name="ck_irregular_script_envelope_booklet_count"),
+    )
+
+
 class Allocation(Base):
     """One script-allocation exercise (quotas, zone rules, runs) for an examination."""
 

@@ -18,8 +18,10 @@ import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, Command
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import {
   apiJson,
+  downloadIrregularScriptControlExport,
   downloadScriptControlExport,
   getExaminationScriptSeriesConfig,
+  getIrregularScriptControlAdminRecords,
   getScriptControlAdminRecords,
   type Examination,
   type ExaminationScriptSeriesConfigRow,
@@ -39,6 +41,7 @@ type MergedRow = {
   zone: string;
   subject_id: number;
   subject_code: string;
+  subject_original_code: string | null;
   subject_name: string;
   paper_number: number;
   bySeries: Record<number, ScriptControlAdminRow>;
@@ -59,6 +62,7 @@ function mergeRows(items: ScriptControlAdminRow[]): MergedRow[] {
         zone: it.zone,
         subject_id: it.subject_id,
         subject_code: it.subject_code,
+        subject_original_code: it.subject_original_code ?? null,
         subject_name: it.subject_name,
         paper_number: it.paper_number,
         bySeries: {},
@@ -69,7 +73,9 @@ function mergeRows(items: ScriptControlAdminRow[]): MergedRow[] {
   }
   return Array.from(map.values()).sort((a, b) => {
     if (a.school_code !== b.school_code) return a.school_code.localeCompare(b.school_code);
-    if (a.subject_code !== b.subject_code) return a.subject_code.localeCompare(b.subject_code);
+    if ((a.subject_original_code ?? a.subject_code) !== (b.subject_original_code ?? b.subject_code)) {
+      return (a.subject_original_code ?? a.subject_code).localeCompare(b.subject_original_code ?? b.subject_code);
+    }
     return a.paper_number - b.paper_number;
   });
 }
@@ -212,6 +218,7 @@ function SeriesEnvelopeCell({
 }
 
 export default function AdminScriptControlPage() {
+  const [recordType, setRecordType] = useState<"regular" | "irregular">("regular");
   const [exams, setExams] = useState<Examination[]>([]);
   const [examId, setExamId] = useState<number | null>(null);
   const [seriesConfig, setSeriesConfig] = useState<ExaminationScriptSeriesConfigRow[]>([]);
@@ -303,11 +310,11 @@ export default function AdminScriptControlPage() {
     setLoading(true);
     setLoadError(null);
     try {
-      const res = await getScriptControlAdminRecords({
-        ...scriptControlListParams,
-        skip: 0,
-        limit: 500,
-      });
+      const params = { ...scriptControlListParams, skip: 0, limit: 500 };
+      const res =
+        recordType === "regular"
+          ? await getScriptControlAdminRecords(params)
+          : await getIrregularScriptControlAdminRecords(params);
       setListResponse(res);
     } catch (e) {
       setLoadError(e instanceof Error ? e.message : "Failed to load records");
@@ -315,7 +322,7 @@ export default function AdminScriptControlPage() {
     } finally {
       setLoading(false);
     }
-  }, [scriptControlListParams]);
+  }, [recordType, scriptControlListParams]);
 
   const handleExport = useCallback(
     async (mode: "summary" | "detail") => {
@@ -324,37 +331,37 @@ export default function AdminScriptControlPage() {
       const pn = scriptControlListParams.paper_number;
       const subRow = seriesConfig.find((c) => c.subject_id === sid);
       const subCode =
-        subRow?.subject_code ?? listResponse?.items?.[0]?.subject_code ?? `subject_${sid}`;
+        subRow?.subject_code ?? listResponse?.items?.[0]?.subject_original_code ?? listResponse?.items?.[0]?.subject_code ?? `subject_${sid}`;
       const ex = exams.find((e) => e.id === examId);
       const examPart =
         ex != null
           ? `${ex.year}_${ex.exam_type}`.replace(/[^A-Za-z0-9._-]+/g, "_")
           : `exam_${examId}`;
       const safeSub = subCode.replace(/[^A-Za-z0-9._-]+/g, "_");
-      const filename = `worked_scripts_${examPart}_${safeSub}_P${pn}_${mode}.xlsx`;
+      const prefix = recordType === "regular" ? "worked_scripts" : "irregular_worked_scripts";
+      const filename = `${prefix}_${examPart}_${safeSub}_P${pn}_${mode}.xlsx`;
       setExporting(true);
       setLoadError(null);
       try {
-        await downloadScriptControlExport(
-          {
-            mode,
-            examination_id: scriptControlListParams.examination_id,
-            subject_id: sid,
-            paper_number: pn,
-            school_id: scriptControlListParams.school_id,
-            region: scriptControlListParams.region,
-            zone: scriptControlListParams.zone,
-            school_q: scriptControlListParams.school_q,
-          },
-          filename,
-        );
+        const payload = {
+          mode,
+          examination_id: scriptControlListParams.examination_id,
+          subject_id: sid,
+          paper_number: pn,
+          school_id: scriptControlListParams.school_id,
+          region: scriptControlListParams.region,
+          zone: scriptControlListParams.zone,
+          school_q: scriptControlListParams.school_q,
+        };
+        if (recordType === "regular") await downloadScriptControlExport(payload, filename);
+        else await downloadIrregularScriptControlExport(payload, filename);
       } catch (e) {
         setLoadError(e instanceof Error ? e.message : "Export failed");
       } finally {
         setExporting(false);
       }
     },
-    [examId, exams, listResponse?.items, scriptControlListParams, seriesConfig],
+    [examId, exams, listResponse?.items, recordType, scriptControlListParams, seriesConfig],
   );
 
   useEffect(() => {
@@ -514,7 +521,7 @@ export default function AdminScriptControlPage() {
         header: "Subject",
         meta: SCRIPT_TABLE_META.subjectPaper,
         cell: ({ row }) => (
-          <span className="whitespace-nowrap font-medium text-foreground">{row.original.subject_code}</span>
+          <span className="whitespace-nowrap font-medium text-foreground">{row.original.subject_original_code ?? row.original.subject_code}</span>
         ),
         footer: () => null,
       },
@@ -631,7 +638,9 @@ export default function AdminScriptControlPage() {
   return (
     <div className="mx-auto max-w-[1600px] space-y-6">
       <div>
-        <h2 className="text-xl font-semibold text-foreground">Worked scripts control</h2>
+        <h2 className="text-xl font-semibold text-foreground">
+          {recordType === "regular" ? "Worked scripts control" : "Irregular worked scripts control"}
+        </h2>
         <p className="mt-1 max-w-3xl text-sm leading-relaxed text-muted-foreground">
 
           <span className="font-medium text-foreground">+</span> to open envelope detail. Region, zone, and school
@@ -640,6 +649,22 @@ export default function AdminScriptControlPage() {
       </div>
 
       <div className="flex flex-col gap-4 rounded-xl border border-border bg-card p-4">
+        <div className="flex flex-wrap gap-2">
+          <Button
+            type="button"
+            variant={recordType === "regular" ? "default" : "outline"}
+            onClick={() => setRecordType("regular")}
+          >
+            Regular records
+          </Button>
+          <Button
+            type="button"
+            variant={recordType === "irregular" ? "default" : "outline"}
+            onClick={() => setRecordType("irregular")}
+          >
+            Irregular records
+          </Button>
+        </div>
         <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
           <div>
             <label className="mb-1.5 block text-xs font-medium uppercase tracking-wide text-muted-foreground">

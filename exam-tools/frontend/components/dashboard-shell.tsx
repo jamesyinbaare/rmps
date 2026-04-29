@@ -119,6 +119,7 @@ export function DashboardShell({ title, children, staffRole }: Props) {
         : "Inspector";
 
   const scriptsHref = `${staffBase}/scripts-control`;
+  const irregularScriptsHref = `${staffBase}/irregular-scripts-control`;
   const questionPaperHref = `${staffBase}/question-paper-control`;
   const examinationNoticeHref = `${staffBase}/examination-notice`;
 
@@ -135,6 +136,11 @@ export function DashboardShell({ title, children, staffRole }: Props) {
             href: scriptsHref,
             label: "Worked Scripts Control",
             active: pathname.startsWith(scriptsHref),
+          },
+          {
+            href: irregularScriptsHref,
+            label: "Irregular Scripts Control",
+            active: pathname.startsWith(irregularScriptsHref),
           },
           {
             href: questionPaperHref,
@@ -160,7 +166,9 @@ export function DashboardShell({ title, children, staffRole }: Props) {
   ];
 
   return (
-    <div className="min-h-screen bg-background">
+    <div
+      className="min-h-screen bg-background [--staff-sticky-header-offset:4.5rem] [scroll-padding-top:var(--staff-sticky-header-offset)]"
+    >
       {sidebarOpen ? (
         <button
           type="button"
