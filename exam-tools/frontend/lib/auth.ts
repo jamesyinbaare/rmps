@@ -20,7 +20,10 @@ export function getApiBaseUrl(): string {
     return `${protocol}//${hostname}`;
   }
 
-  // SSR fallback; should normally be overridden by NEXT_PUBLIC_API_BASE_URL.
+  const internal =
+    typeof process !== "undefined" ? process.env.INTERNAL_API_BASE_URL?.trim() : undefined;
+  if (internal) return internal.replace(/\/$/, "");
+
   return "http://localhost:8000";
 }
 

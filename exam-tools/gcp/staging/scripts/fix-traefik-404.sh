@@ -10,6 +10,8 @@ COMPOSE_FILE="${COMPOSE_FILE:-compose.staging.gcp.yaml}"
 TRAEFIK_CONTAINER="${TRAEFIK_CONTAINER:-monitoring-tools-traefik-staging}"
 FRONTEND_HOST="${FRONTEND_HOST:-monitoring.jamesyin.com}"
 API_HOST="${API_HOST:-monitoring-api.jamesyin.com}"
+FRONTEND_HOST_ALT="${FRONTEND_HOST_ALT:-monitoring.ctvet.gov.gh}"
+API_HOST_ALT="${API_HOST_ALT:-monitoring-api.ctvet.gov.gh}"
 
 cd "$PROJECT_ROOT"
 
@@ -38,7 +40,7 @@ fi
 echo ""
 echo "== 5) Validate mounted Traefik config inside container =="
 docker exec "$TRAEFIK_CONTAINER" sh -c "ls -l /etc/traefik/traefik.staging.yml /etc/traefik/dynamic.staging.yml"
-docker exec "$TRAEFIK_CONTAINER" sh -c "grep -n 'monitoring.jamesyin.com\\|monitoring-api.jamesyin.com' /etc/traefik/dynamic.staging.yml || true"
+docker exec "$TRAEFIK_CONTAINER" sh -c "grep -nE 'jamesyin\\.com|ctvet\\.gov\\.gh' /etc/traefik/dynamic.staging.yml || true"
 
 echo ""
 echo "== 6) Verify live routers from Traefik API =="
@@ -52,12 +54,16 @@ fi
 echo ""
 echo "== 7) Local host-header tests against loopback HTTPS =="
 curl -k -I -H "Host: ${FRONTEND_HOST}" https://127.0.0.1 || true
+curl -k -I -H "Host: ${FRONTEND_HOST_ALT}" https://127.0.0.1 || true
 curl -k -I -H "Host: ${API_HOST}" https://127.0.0.1/health || true
+curl -k -I -H "Host: ${API_HOST_ALT}" https://127.0.0.1/health || true
 
 echo ""
 echo "== 8) Public URL tests =="
 curl -k -I "https://${FRONTEND_HOST}" || true
+curl -k -I "https://${FRONTEND_HOST_ALT}" || true
 curl -k -I "https://${API_HOST}/health" || true
+curl -k -I "https://${API_HOST_ALT}/health" || true
 
 echo ""
 echo "Done. If 404 persists:"

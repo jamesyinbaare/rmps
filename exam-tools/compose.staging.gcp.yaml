@@ -70,12 +70,11 @@ services:
     build:
       context: frontend
       dockerfile: Dockerfile.prod
-      args:
-        - NEXT_PUBLIC_API_BASE_URL=${FRONTEND_API_BASE_URL:-https://monitoring-api.jamesyin.com}
     container_name: monitoring-tools-frontend-staging
     environment:
       - NODE_ENV=production
-      - NEXT_PUBLIC_API_BASE_URL=${FRONTEND_API_BASE_URL:-https://monitoring-api.jamesyin.com}
+      # Server-side fetches inside the frontend container (no NEXT_PUBLIC_API_BASE_URL).
+      - INTERNAL_API_BASE_URL=http://monitoring-tools-backend:80
     restart: unless-stopped
     depends_on:
       monitoring-tools-backend:

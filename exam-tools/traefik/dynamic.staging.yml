@@ -1,9 +1,9 @@
 # File-provider routes for exam-tools (avoids duplicate routers vs compose labels).
-# Update Host() values to your real domains before going live.
+# Dual hostnames: jamesyin.com + ctvet.gov.gh (same services; ACME SAN on each router).
 http:
   routers:
     monitoring-frontend-staging:
-      rule: "Host(`monitoring.jamesyin.com`)"
+      rule: "Host(`monitoring.jamesyin.com`) || Host(`monitoring.ctvet.gov.gh`)"
       entryPoints:
         - websecure
       service: monitoring-frontend-staging
@@ -13,7 +13,7 @@ http:
         - monitoring-security-headers
 
     monitoring-frontend-staging-http:
-      rule: "Host(`monitoring.jamesyin.com`)"
+      rule: "Host(`monitoring.jamesyin.com`) || Host(`monitoring.ctvet.gov.gh`)"
       entryPoints:
         - web
       service: monitoring-frontend-staging
@@ -21,7 +21,7 @@ http:
         - monitoring-security-headers
 
     monitoring-backend-staging:
-      rule: "Host(`monitoring-api.jamesyin.com`)"
+      rule: "Host(`monitoring-api.jamesyin.com`) || Host(`monitoring-api.ctvet.gov.gh`)"
       entryPoints:
         - websecure
       service: monitoring-backend-staging
@@ -31,7 +31,7 @@ http:
         - monitoring-security-headers
 
     monitoring-backend-staging-http:
-      rule: "Host(`monitoring-api.jamesyin.com`)"
+      rule: "Host(`monitoring-api.jamesyin.com`) || Host(`monitoring-api.ctvet.gov.gh`)"
       entryPoints:
         - web
       service: monitoring-backend-staging
