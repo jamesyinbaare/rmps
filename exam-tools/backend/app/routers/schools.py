@@ -50,13 +50,31 @@ router = APIRouter(prefix="/schools", tags=["schools"])
 _MAX_PAGE_SIZE = 200
 _DEFAULT_PAGE_SIZE = 20
 
+_SCHOOL_RESPONSE_OPTIONS = (selectinload(School.depot), selectinload(School.writes_at_center))
+
+
+def _require_centre_host_school(host: School) -> None:
+    """Host must be an examination centre (not a satellite that writes elsewhere)."""
+    if host.writes_at_center_id is not None:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=(
+                "writes_at_center must reference an examination centre host "
+                "(that school must not write at another centre)"
+            ),
+        )
+
 
 def school_to_response(school: School) -> SchoolResponse:
-    """Build API school row; include ``depot_code`` when ``school.depot`` is loaded."""
+    """Build API school row; include ``depot_code`` and ``writes_at_center_code`` when relationships are loaded."""
     r = SchoolResponse.model_validate(school)
     dep = school.depot
-    code = cast(str, dep.code) if dep is not None else None
-    return r.model_copy(update={"depot_code": code})
+    depot_code = cast(str, dep.code) if dep is not None else None
+    wh = school.writes_at_center
+    writes_at_center_code = cast(str, wh.code) if wh is not None else None
+    return r.model_copy(
+        update={"depot_code": depot_code, "writes_at_center_code": writes_at_center_code}
+    )
 
 
 @router.get(
@@ -77,7 +95,7 @@ async def list_schools(
         conditions.append(or_(School.code.ilike(pattern), School.name.ilike(pattern)))
 
     count_stmt = select(func.count()).select_from(School)
-    list_stmt = select(School).options(selectinload(School.depot)).order_by(School.code)
+    list_stmt = select(School).options(*_SCHOOL_RESPONSE_OPTIONS).order_by(School.code)
     if conditions:
         count_stmt = count_stmt.where(*conditions)
         list_stmt = list_stmt.where(*conditions)
@@ -124,7 +142,7 @@ async def list_examination_centers(
         select(School, func.coalesce(hosted_counts.c.cnt, 0).label("hosted_count"))
         .outerjoin(hosted_counts, hosted_counts.c.center_id == School.id)
         .where(*conditions)
-        .options(selectinload(School.depot))
+        .options(*_SCHOOL_RESPONSE_OPTIONS)
         .order_by(School.code)
         .offset(skip)
         .limit(limit)
@@ -151,7 +169,7 @@ async def get_examination_center_detail(
     _admin: SuperAdminDep,
 ) -> ExaminationCenterDetailResponse:
     center_stmt = (
-        select(School).options(selectinload(School.depot)).where(School.id == center_id)
+        select(School).options(*_SCHOOL_RESPONSE_OPTIONS).where(School.id == center_id)
     )
     center_result = await session.execute(center_stmt)
     school = center_result.scalar_one_or_none()
@@ -165,7 +183,7 @@ async def get_examination_center_detail(
 
     hosted_stmt = (
         select(School)
-        .options(selectinload(School.depot))
+        .options(*_SCHOOL_RESPONSE_OPTIONS)
         .where(School.writes_at_center_id == center_id)
         .order_by(School.code)
     )
@@ -301,7 +319,7 @@ async def get_school(
     session: DBSessionDep,
     _admin: SuperAdminDep,
 ) -> SchoolResponse:
-    stmt = select(School).options(selectinload(School.depot)).where(School.id == school_id)
+    stmt = select(School).options(*_SCHOOL_RESPONSE_OPTIONS).where(School.id == school_id)
     result = await session.execute(stmt)
     school = result.scalar_one_or_none()
     if school is None:
@@ -326,7 +344,7 @@ async def update_school(
 
     payload = data.model_dump(exclude_unset=True)
     if not payload:
-        stmt = select(School).options(selectinload(School.depot)).where(School.id == school_id)
+        stmt = select(School).options(*_SCHOOL_RESPONSE_OPTIONS).where(School.id == school_id)
         fresh = (await session.execute(stmt)).scalar_one()
         return school_to_response(fresh)
 
@@ -351,6 +369,33 @@ async def update_school(
         else:
             payload["depot_id"] = None
 
+    if "writes_at_center_code" in payload and "writes_at_center_id" in payload:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Specify only one of writes_at_center_code and writes_at_center_id",
+        )
+
+    if "writes_at_center_code" in payload:
+        wcc = payload.pop("writes_at_center_code")
+        if wcc is not None and str(wcc).strip():
+            hcode = str(wcc).strip()
+            host_result = await session.execute(select(School).where(School.code == hcode))
+            host_row = host_result.scalar_one_or_none()
+            if host_row is None:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail=f"No school with code {hcode!r}",
+                )
+            if cast(UUID, host_row.id) == school_id:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="writes_at_center_code cannot reference this school",
+                )
+            _require_centre_host_school(host_row)
+            payload["writes_at_center_id"] = cast(UUID, host_row.id)
+        else:
+            payload["writes_at_center_id"] = None
+
     if "writes_at_center_id" in payload:
         wid = payload["writes_at_center_id"]
         if wid is not None:
@@ -365,6 +410,7 @@ async def update_school(
                     status_code=status.HTTP_400_BAD_REQUEST,
                     detail="writes_at_center_id does not reference an existing school",
                 )
+            _require_centre_host_school(host)
 
     if "depot_id" in payload:
         did = payload["depot_id"]
@@ -388,7 +434,7 @@ async def update_school(
             detail="Could not update school (constraint violation)",
         ) from None
 
-    stmt = select(School).options(selectinload(School.depot)).where(School.id == school_id)
+    stmt = select(School).options(*_SCHOOL_RESPONSE_OPTIONS).where(School.id == school_id)
     updated = (await session.execute(stmt)).scalar_one()
     return school_to_response(updated)
 
@@ -434,8 +480,9 @@ async def create_school(
 ) -> SchoolCreatedResponse:
     """Create one school and a default supervisor user. Requires super admin JWT.
 
-    ``writes_at_center_id`` must reference an existing school if provided.
-    Optional ``depot_code`` assigns the school to an existing depot (matched on ``depots.code``).
+    Set the examination centre host via ``writes_at_center_code`` (host school code) or
+    ``writes_at_center_id`` (UUID), not both. Optional ``depot_code`` assigns the school to an
+    existing depot (matched on ``depots.code``).
 
     The supervisor's display name and password are both the school ``code``; login uses that
     code as username and the same value as password.
@@ -448,13 +495,38 @@ async def create_school(
             detail=f"School with code {data.code!r} already exists",
         )
 
-    if data.writes_at_center_id is not None:
+    wcc = data.writes_at_center_code.strip() if data.writes_at_center_code else ""
+    if wcc and data.writes_at_center_id is not None:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Specify only one of writes_at_center_code and writes_at_center_id",
+        )
+
+    writes_at_center_id: UUID | None = None
+    if wcc:
+        if wcc == data.code:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="writes_at_center_code cannot be the same as this school's code",
+            )
+        host_result = await session.execute(select(School).where(School.code == wcc))
+        host = host_result.scalar_one_or_none()
+        if host is None:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"No school with code {wcc!r}",
+            )
+        _require_centre_host_school(host)
+        writes_at_center_id = cast(UUID, host.id)
+    elif data.writes_at_center_id is not None:
         host = await session.get(School, data.writes_at_center_id)
         if host is None:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="writes_at_center_id does not reference an existing school",
             )
+        _require_centre_host_school(host)
+        writes_at_center_id = data.writes_at_center_id
 
     depot_id: UUID | None = None
     if data.depot_code is not None and data.depot_code.strip():
@@ -475,7 +547,7 @@ async def create_school(
         zone=data.zone,
         school_type=data.school_type,
         is_private_examination_center=data.is_private_examination_center,
-        writes_at_center_id=data.writes_at_center_id,
+        writes_at_center_id=writes_at_center_id,
         depot_id=depot_id,
     )
     session.add(school)
@@ -496,7 +568,7 @@ async def create_school(
             detail="Could not create school or supervisor (constraint violation)",
         ) from None
 
-    stmt = select(School).options(selectinload(School.depot)).where(School.id == school.id)
+    stmt = select(School).options(*_SCHOOL_RESPONSE_OPTIONS).where(School.id == school.id)
     school_out = (await session.execute(stmt)).scalar_one()
     return SchoolCreatedResponse(
         school=school_to_response(school_out),
@@ -521,7 +593,8 @@ async def bulk_upload_schools(
     **Required columns:** ``code``, ``name``, ``region``, ``zone``
 
     **Optional columns:** ``school_type`` (private/public), ``is_private_examination_center``,
-    ``writes_at_center_code`` (school code of host, up to 15 characters), ``writes_at_center_id`` (UUID of host),
+    ``writes_at_center_code`` (school code of host, up to 15 characters), ``writes_at_center_id`` (UUID of host;
+    host must be an examination centre, i.e. not a satellite school),
     ``depot_code`` (must match an existing depot's ``code``),
     ``programme_codes`` (comma-separated programme codes; aliases: ``programmes``, ``programme_list``,
     ``programme_code``, or any column named ``programme`` / ``programme_*``).
@@ -681,6 +754,18 @@ async def bulk_upload_schools(
                     SchoolBulkUploadError(
                         row_number=row_number,
                         error_message="writes_at_center_id does not reference an existing school",
+                    )
+                )
+                failed += 1
+                continue
+            if host.writes_at_center_id is not None:
+                errors.append(
+                    SchoolBulkUploadError(
+                        row_number=row_number,
+                        error_message=(
+                            "writes_at_center must reference an examination centre host "
+                            "(that school must not write at another centre)"
+                        ),
                     )
                 )
                 failed += 1

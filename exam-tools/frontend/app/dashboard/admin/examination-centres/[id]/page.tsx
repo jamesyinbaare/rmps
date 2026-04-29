@@ -43,9 +43,9 @@ function SchoolDetailCard({ title, school }: { title: string; school: School }) 
           </dd>
         </div>
         <div className="sm:col-span-2">
-          <dt className="text-muted-foreground">Writes at centre (UUID)</dt>
-          <dd className="mt-0.5 break-all font-mono text-xs text-foreground">
-            {school.writes_at_center_id ?? "—"}
+          <dt className="text-muted-foreground">Writes at centre (host code)</dt>
+          <dd className="mt-0.5 font-mono text-xs text-foreground">
+            {school.writes_at_center_code ?? "—"}
           </dd>
         </div>
       </dl>
