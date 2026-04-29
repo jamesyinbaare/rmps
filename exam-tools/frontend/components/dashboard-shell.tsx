@@ -166,7 +166,9 @@ export function DashboardShell({ title, children, staffRole }: Props) {
   ];
 
   return (
-    <div className="min-h-screen bg-background">
+    <div
+      className="min-h-screen bg-background [--staff-sticky-header-offset:4.5rem] [scroll-padding-top:var(--staff-sticky-header-offset)]"
+    >
       {sidebarOpen ? (
         <button
           type="button"

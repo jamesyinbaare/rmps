@@ -5,6 +5,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { DashboardShell } from "@/components/dashboard-shell";
 import { RoleGuard } from "@/components/role-guard";
 import { formInputClass, formLabelClass } from "@/lib/form-classes";
+import { depotPaperBadgeClass, depotPaperCardAccentClass } from "@/lib/depot-script-paper-visual";
 import {
   apiJson,
   getDepotSchoolScriptControl,
@@ -18,7 +19,9 @@ import {
 } from "@/lib/api";
 
 const btnPrimary =
-  "inline-flex min-h-10 items-center justify-center rounded-lg bg-primary px-3 text-sm font-medium text-primary-foreground transition-colors hover:bg-primary-hover focus:outline-none focus:ring-2 focus:ring-ring/30 disabled:pointer-events-none disabled:opacity-50";
+  "inline-flex min-h-11 items-center justify-center rounded-lg bg-primary px-3 text-sm font-medium text-primary-foreground transition-colors hover:bg-primary-hover focus:outline-none focus:ring-2 focus:ring-ring/30 disabled:pointer-events-none disabled:opacity-50 sm:min-h-10";
+
+const EXPANDED_STORAGE_PREFIX = "depot-keeper-worked-expanded";
 
 function localTodayIso(): string {
   const d = new Date();
@@ -243,6 +246,30 @@ function paperPackingTotals(paper: PaperGroup): { envelopeCount: number; totalBo
   return { envelopeCount, totalBooklets };
 }
 
+/** Per-paper series counts, e.g. "P1: 2 · P2: 1" — avoids a single pooled total that looks like one paper. */
+function subjectSeriesPerPaperSummary(subject: SubjectGroup): string {
+  return [...subject.papers]
+    .sort((a, b) => a.paper_number - b.paper_number)
+    .map((p) => `P${p.paper_number}: ${p.series.length}`)
+    .join(" · ");
+}
+
+function countUnverifiedEnvelopes(subjects: SubjectGroup[]): number {
+  let n = 0;
+  for (const subject of subjects) {
+    for (const paper of subject.papers) {
+      for (const ser of paper.series) {
+        const envs = ser.packing?.envelopes;
+        if (!envs?.length) continue;
+        for (const e of envs) {
+          if (e.verified !== true) n += 1;
+        }
+      }
+    }
+  }
+  return n;
+}
+
 export default function DepotKeeperScriptsControlPage() {
   const [exams, setExams] = useState<Examination[]>([]);
   const [examId, setExamId] = useState<number | null>(null);
@@ -301,7 +328,13 @@ export default function DepotKeeperScriptsControlPage() {
 
   useEffect(() => {
     setActiveStatus("unverified");
-    setExpandedSubjects({});
+    const storageKey = `${EXPANDED_STORAGE_PREFIX}:${examId ?? "none"}:${selectedSchoolId || "none"}`;
+    try {
+      const raw = sessionStorage.getItem(storageKey);
+      setExpandedSubjects(raw ? (JSON.parse(raw) as Record<string, boolean>) : {});
+    } catch {
+      setExpandedSubjects({});
+    }
   }, [examId, selectedSchoolId]);
 
   const statusGroups = useMemo<StatusGroup[]>(() => {
@@ -311,25 +344,23 @@ export default function DepotKeeperScriptsControlPage() {
       {
         key: "unverified",
         title: "Unverified",
-        description:
-          "Exam written and recorded by inspector, but envelope verification is pending at depot.",
-        emptyLabel: "No unverified series for this selection.",
+        description: "Inspector has entered packing; depot has not confirmed every envelope yet.",
+        emptyLabel: "No envelopes in this category for this exam and school.",
         subjects: nestBySubjectPaper(grouped.unverified),
       },
       {
         key: "notRecorded",
         title: "Not recorded",
         description:
-          "Written papers where inspector packing is incomplete for this subject. Either no packing has been entered for one or more series yet, or some series are recorded while others are still missing. You can verify at the depot only after every series for the subject has been recorded.",
-        emptyLabel:
-          "No subjects with missing or partial inspector recordings for this selection.",
+          "Inspector packing is missing or only partly entered for this subject. Depot verification is available once every series is recorded.",
+        emptyLabel: "No subjects in this category for this exam and school.",
         subjects: nestBySubjectPaper(grouped.notRecorded),
       },
       {
         key: "verified",
         title: "Verified",
-        description: "Recorded by inspector and fully verified by depot keeper.",
-        emptyLabel: "No fully verified series yet for this selection.",
+        description: "Depot has confirmed all envelopes in this group.",
+        emptyLabel: "No envelopes in this category for this exam and school.",
         subjects: nestBySubjectPaper(grouped.verified),
       },
     ];
@@ -372,7 +403,7 @@ export default function DepotKeeperScriptsControlPage() {
       <DashboardShell title="Worked Scripts Control (Verify)" staffRole="depot-keeper">
         <div className="space-y-6">
           <p className="text-sm text-muted-foreground">
-            Select a school in your depot and an examination. Verify the number of worked scripts(answer booklets) recorded on each envelope by the inspector.
+            Choose an exam and school, check each envelope’s booklet count against what the inspector recorded, then tap Verify or Unverify.
           </p>
 
           {loadError ? (
@@ -431,51 +462,57 @@ export default function DepotKeeperScriptsControlPage() {
           ) : null}
 
           {data && data.subjects.length === 0 ? (
-            <p className="text-sm text-muted-foreground">No script control rows for this selection.</p>
+            <p className="text-sm text-muted-foreground">No script data for this exam and school.</p>
           ) : null}
 
           {data && data.subjects.length > 0 ? (
             <div className="space-y-6">
               {statusGroups.every((group) => group.subjects.length === 0) ? (
-                <p className="text-sm text-muted-foreground">No written papers yet for this selection.</p>
+                <p className="text-sm text-muted-foreground">No papers in this view for this exam and school yet.</p>
               ) : (
                 <>
-                  <div className="sticky top-0 z-10 -mx-1 overflow-x-auto rounded-xl border border-border bg-background/95 px-1 py-1 backdrop-blur supports-backdrop-filter:bg-background/80">
-                    <div className="flex min-w-max gap-1">
-                      {statusGroups.map((group) => {
-                        const paperCount = group.subjects.reduce((acc, subject) => acc + subject.papers.length, 0);
-                        const isActive = activeStatus === group.key;
-                        return (
-                          <button
-                            key={group.key}
-                            type="button"
-                            className={`rounded-lg border px-3 py-2 text-left text-sm transition-colors focus:outline-none focus:ring-2 focus:ring-ring/30 ${
-                              isActive
-                                ? statusToneClass[group.key]
-                                : "border-input-border bg-background hover:bg-muted"
-                            }`}
-                            onClick={() => setActiveStatus(group.key)}
-                          >
-                            <span className="block font-medium">{group.title}</span>
-                            <span className="block text-xs opacity-80">
-                              {group.subjects.length} subject{group.subjects.length === 1 ? "" : "s"} · {paperCount}{" "}
-                              paper{paperCount === 1 ? "" : "s"}
-                            </span>
-                          </button>
-                        );
-                      })}
+                  <div className="relative">
+                    <p className="mb-1 text-xs text-muted-foreground md:hidden">
+                      Swipe sideways to see all statuses
+                    </p>
+                    <div className="sticky top-[var(--staff-sticky-header-offset,4.5rem)] z-20 -mx-1 overflow-x-auto rounded-xl border border-border bg-background/95 px-1 py-1 backdrop-blur supports-backdrop-filter:bg-background/80 md:overflow-visible">
+                      <div
+                        className="pointer-events-none absolute right-0 top-0 z-[1] h-full w-9 bg-gradient-to-l from-background/95 to-transparent md:hidden"
+                        aria-hidden
+                      />
+                      <div className="relative flex min-w-max gap-1 md:grid md:min-w-0 md:grid-cols-3">
+                        {statusGroups.map((group) => {
+                          const paperCount = group.subjects.reduce((acc, subject) => acc + subject.papers.length, 0);
+                          const isActive = activeStatus === group.key;
+                          return (
+                            <button
+                              key={group.key}
+                              type="button"
+                              className={`min-w-[9.5rem] shrink-0 rounded-lg border px-3 py-2 text-left text-sm transition-colors focus:outline-none focus:ring-2 focus:ring-ring/30 md:min-w-0 ${
+                                isActive
+                                  ? statusToneClass[group.key]
+                                  : "border-input-border bg-background hover:bg-muted"
+                              }`}
+                              onClick={() => setActiveStatus(group.key)}
+                            >
+                              <span className="block font-medium">{group.title}</span>
+                              <span className="block text-xs opacity-80">
+                                {group.subjects.length} subject{group.subjects.length === 1 ? "" : "s"} · {paperCount}{" "}
+                                paper{paperCount === 1 ? "" : "s"}
+                              </span>
+                            </button>
+                          );
+                        })}
+                      </div>
                     </div>
                   </div>
 
                   {activeGroup ? (() => {
                     const group = activeGroup;
                     const paperCount = group.subjects.reduce((acc, subject) => acc + subject.papers.length, 0);
-                    const seriesCount = group.subjects.reduce(
-                      (acc, subject) =>
-                        acc + subject.papers.reduce((paperAcc, paper) => paperAcc + paper.series.length, 0),
-                      0,
-                    );
                     const envelopeCount = countEnvelopes(group.subjects);
+                    const unverifiedEnvelopeCount =
+                      group.key === "unverified" ? countUnverifiedEnvelopes(group.subjects) : 0;
                     return (
                       <section key={group.key} className="rounded-2xl border border-border bg-card p-4 sm:p-5">
                         <div className="flex flex-col gap-2">
@@ -501,16 +538,22 @@ export default function DepotKeeperScriptsControlPage() {
                               </span>
                               <span className="text-border">·</span>
                               <span>
-                                Series:{" "}
-                                <span className="font-semibold tabular-nums text-foreground">{seriesCount}</span>
-                              </span>
-                              <span className="text-border">·</span>
-                              <span>
                                 Envelopes:{" "}
                                 <span className="text-base font-bold tabular-nums text-foreground">
                                   {envelopeCount}
                                 </span>
                               </span>
+                              {unverifiedEnvelopeCount > 0 ? (
+                                <>
+                                  <span className="text-border">·</span>
+                                  <span>
+                                    Left to verify:{" "}
+                                    <span className="font-semibold tabular-nums text-foreground">
+                                      {unverifiedEnvelopeCount}
+                                    </span>
+                                  </span>
+                                </>
+                              ) : null}
                             </p>
                           </div>
                         </div>
@@ -524,10 +567,6 @@ export default function DepotKeeperScriptsControlPage() {
                             {group.subjects.map((subject) => {
                               const subjectKey = `${group.key}-${subject.subject_id}`;
                               const subjectOpen = expandedSubjects[subjectKey] ?? false;
-                              const subjectSeriesCount = subject.papers.reduce(
-                                (acc, paper) => acc + paper.series.length,
-                                0,
-                              );
                               const packingTotals = subjectPackingTotals(subject);
                               return (
                                 <div
@@ -540,19 +579,25 @@ export default function DepotKeeperScriptsControlPage() {
                                         {subject.subject_original_code ?? subject.subject_code} — {subject.subject_name}
                                       </p>
                                       <p className="mt-0.5 text-xs text-muted-foreground">
-                                        {subject.papers.length} paper{subject.papers.length === 1 ? "" : "s"} ·{" "}
-                                        {subjectSeriesCount} series
+                                        {subject.papers.length} paper{subject.papers.length === 1 ? "" : "s"} · series
+                                        per paper: {subjectSeriesPerPaperSummary(subject)}
                                       </p>
                                     </div>
                                     <button
                                       type="button"
                                       className="shrink-0 rounded-lg border border-input-border bg-background px-2.5 py-1.5 text-sm hover:bg-muted focus:outline-none focus:ring-2 focus:ring-ring/30"
-                                      onClick={() =>
-                                        setExpandedSubjects((prev) => ({
-                                          ...prev,
-                                          [subjectKey]: !subjectOpen,
-                                        }))
-                                      }
+                                      onClick={() => {
+                                        const storageKey = `${EXPANDED_STORAGE_PREFIX}:${examId ?? "none"}:${selectedSchoolId || "none"}`;
+                                        setExpandedSubjects((prev) => {
+                                          const next = { ...prev, [subjectKey]: !subjectOpen };
+                                          try {
+                                            sessionStorage.setItem(storageKey, JSON.stringify(next));
+                                          } catch {
+                                            /* ignore */
+                                          }
+                                          return next;
+                                        });
+                                      }}
                                       aria-expanded={subjectOpen}
                                       aria-label={subjectOpen ? "Collapse subject" : "Expand subject"}
                                     >
@@ -579,7 +624,7 @@ export default function DepotKeeperScriptsControlPage() {
                                         <span className="tabular-nums font-semibold text-foreground">
                                           {subject.completion.completedSeries}/{subject.completion.totalSeries}
                                         </span>
-                                        <span className="text-muted-foreground">series verified</span>
+                                        <span className="text-muted-foreground">verified (all papers)</span>
                                         <span className="text-border">·</span>
                                         <span className="tabular-nums font-medium text-foreground">
                                           {subject.completion.totalSeries === 0
@@ -592,7 +637,7 @@ export default function DepotKeeperScriptsControlPage() {
                                           %
                                         </span>
                                       </p>
-                                      <div className="mt-1.5 hidden h-1 overflow-hidden rounded-full bg-muted md:block">
+                                      <div className="mt-1.5 h-1 overflow-hidden rounded-full bg-muted">
                                         <div
                                           className="h-full rounded-full bg-primary transition-all"
                                           style={{
@@ -632,7 +677,7 @@ export default function DepotKeeperScriptsControlPage() {
                                       <div className="mt-3 border-t border-border/70 pt-3">
                                         <div className="flex items-center justify-between text-xs text-muted-foreground">
                                           <span>
-                                            Verification: {subject.completion.completedSeries}/
+                                            Verification (all papers): {subject.completion.completedSeries}/
                                             {subject.completion.totalSeries} series
                                           </span>
                                           <span className="tabular-nums font-medium text-foreground">
@@ -673,18 +718,25 @@ export default function DepotKeeperScriptsControlPage() {
                                         return (
                                           <div
                                             key={`${subjectKey}-p${paper.paper_number}`}
-                                            className="rounded-lg border border-border/70 bg-background/70 p-3"
+                                            className={`rounded-lg border border-border/70 bg-background/70 p-3 ${depotPaperCardAccentClass(paper.paper_number)}`}
                                           >
                                             <div className="flex flex-col gap-1 sm:flex-row sm:flex-wrap sm:items-baseline sm:justify-between">
-                                              <p className="text-sm font-semibold text-foreground">
-                                                Paper {paper.paper_number}
+                                              <p className="flex flex-wrap items-center gap-2 text-sm font-semibold text-foreground">
+                                                <span
+                                                  className={`inline-flex rounded-md border px-1.5 py-0.5 text-xs font-bold tabular-nums ${depotPaperBadgeClass(paper.paper_number)}`}
+                                                >
+                                                  P{paper.paper_number}
+                                                </span>
+                                                <span>
+                                                  Paper {paper.paper_number}
+                                                </span>
                                                 {paper.examination_date ? (
                                                   <span className="ml-2 text-xs font-normal text-muted-foreground">
                                                     {paper.examination_date}
                                                   </span>
                                                 ) : null}
                                                 <span className="ml-2 text-xs font-normal text-muted-foreground">
-                                                  {paper.series.length} series
+                                                  {paper.series.length} series (this paper)
                                                 </span>
                                               </p>
                                               {(paperTotals.envelopeCount > 0 || paperTotals.totalBooklets > 0) && (
@@ -804,7 +856,7 @@ export default function DepotKeeperScriptsControlPage() {
                                                                   type="button"
                                                                   className={
                                                                     done
-                                                                      ? "inline-flex min-h-10 w-full items-center justify-center rounded-lg border border-input-border bg-background px-3 text-sm font-medium text-foreground transition-colors hover:bg-muted focus:outline-none focus:ring-2 focus:ring-ring/30 sm:w-auto"
+                                                                      ? "inline-flex min-h-11 w-full items-center justify-center rounded-lg border border-input-border bg-background px-3 text-sm font-medium text-foreground transition-colors hover:bg-muted focus:outline-none focus:ring-2 focus:ring-ring/30 sm:min-h-10 sm:w-auto"
                                                                       : `${btnPrimary} w-full sm:w-auto`
                                                                   }
                                                                   disabled={busy || verifying}

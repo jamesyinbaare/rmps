@@ -5,6 +5,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { DashboardShell } from "@/components/dashboard-shell";
 import { RoleGuard } from "@/components/role-guard";
 import { formInputClass, formLabelClass } from "@/lib/form-classes";
+import { depotPaperBadgeClass, depotPaperCardAccentClass } from "@/lib/depot-script-paper-visual";
 import {
   apiJson,
   getDepotSchoolIrregularScriptControl,
@@ -18,7 +19,9 @@ import {
 } from "@/lib/api";
 
 const btnPrimary =
-  "inline-flex min-h-10 items-center justify-center rounded-lg bg-primary px-3 text-sm font-medium text-primary-foreground transition-colors hover:bg-primary-hover focus:outline-none focus:ring-2 focus:ring-ring/30 disabled:pointer-events-none disabled:opacity-50";
+  "inline-flex min-h-11 items-center justify-center rounded-lg bg-primary px-3 text-sm font-medium text-primary-foreground transition-colors hover:bg-primary-hover focus:outline-none focus:ring-2 focus:ring-ring/30 disabled:pointer-events-none disabled:opacity-50 sm:min-h-10";
+
+const EXPANDED_STORAGE_PREFIX = "depot-keeper-irregular-expanded";
 
 type SubjectPaperBuckets = {
   unverified: ScriptPaperSlotResponse[];
@@ -120,9 +123,32 @@ function subjectPackingTotals(subject: SubjectGroup): { envelopeCount: number; t
   }
   return { envelopeCount, totalBooklets };
 }
+
+function subjectSeriesPerPaperSummary(subject: SubjectGroup): string {
+  return [...subject.papers]
+    .sort((a, b) => a.paper_number - b.paper_number)
+    .map((p) => `P${p.paper_number}: ${p.series.length}`)
+    .join(" · ");
+}
 function seriesPackingTotals(packing: NonNullable<SeriesRow["packing"]>): { envelopeCount: number; totalBooklets: number } {
   const envs = packing.envelopes;
   return { envelopeCount: envs.length, totalBooklets: envs.reduce((s, e) => s + e.booklet_count, 0) };
+}
+
+function countUnverifiedEnvelopes(subjects: SubjectGroup[]): number {
+  let n = 0;
+  for (const subject of subjects) {
+    for (const paper of subject.papers) {
+      for (const ser of paper.series) {
+        const envs = ser.packing?.envelopes;
+        if (!envs?.length) continue;
+        for (const e of envs) {
+          if (e.verified !== true) n += 1;
+        }
+      }
+    }
+  }
+  return n;
 }
 
 export default function DepotKeeperIrregularScriptsControlPage() {
@@ -183,15 +209,33 @@ export default function DepotKeeperIrregularScriptsControlPage() {
 
   useEffect(() => {
     setActiveStatus("unverified");
-    setExpandedSubjects({});
+    const storageKey = `${EXPANDED_STORAGE_PREFIX}:${examId ?? "none"}:${selectedSchoolId || "none"}`;
+    try {
+      const raw = sessionStorage.getItem(storageKey);
+      setExpandedSubjects(raw ? (JSON.parse(raw) as Record<string, boolean>) : {});
+    } catch {
+      setExpandedSubjects({});
+    }
   }, [examId, selectedSchoolId]);
 
   const statusGroups = useMemo<StatusGroup[]>(() => {
     if (!data) return [];
     const grouped = buildStatusGroups(data.subjects, localTodayIso());
     return [
-      { key: "unverified", title: "Unverified", description: "Irregular worked scripts were recorded by inspector, but depot verification is pending.", emptyLabel: "No unverified irregular series for this selection.", subjects: nestBySubjectPaper(grouped.unverified) },
-      { key: "verified", title: "Verified", description: "Irregular scripts recorded by inspector and fully verified by depot keeper.", emptyLabel: "No verified irregular series yet for this selection.", subjects: nestBySubjectPaper(grouped.verified) },
+      {
+        key: "unverified",
+        title: "Unverified",
+        description: "Inspector has entered packing; depot has not confirmed every envelope yet.",
+        emptyLabel: "No envelopes in this category for this exam and school.",
+        subjects: nestBySubjectPaper(grouped.unverified),
+      },
+      {
+        key: "verified",
+        title: "Verified",
+        description: "Depot has confirmed all envelopes in this group.",
+        emptyLabel: "No envelopes in this category for this exam and school.",
+        subjects: nestBySubjectPaper(grouped.verified),
+      },
     ];
   }, [data]);
   const activeGroup = useMemo(() => statusGroups.find((group) => group.key === activeStatus) ?? null, [statusGroups, activeStatus]);
@@ -221,7 +265,9 @@ export default function DepotKeeperIrregularScriptsControlPage() {
     <RoleGuard expectedRole="DEPOT_KEEPER" loginHref="/login/depot-keeper">
       <DashboardShell title="Irregular Worked Scripts Control (Verify)" staffRole="depot-keeper">
         <div className="space-y-6">
-          <p className="text-sm text-muted-foreground">Select a school in your depot and an examination. Verify irregular worked scripts recorded by the inspector per subject/paper/series/envelope.</p>
+          <p className="text-sm text-muted-foreground">
+            Choose an exam and school. This page lists only irregular script packing—check booklet counts, then tap Verify or Unverify.
+          </p>
           {loadError ? <p className="rounded-lg border border-destructive/40 bg-destructive/10 px-3 py-2 text-sm text-destructive">{loadError}</p> : null}
           {actionError ? <p className="rounded-lg border border-destructive/40 bg-destructive/10 px-3 py-2 text-sm text-destructive">{actionError}</p> : null}
 
@@ -243,22 +289,39 @@ export default function DepotKeeperIrregularScriptsControlPage() {
           </div>
 
           {busy && data === null ? <p className="text-sm text-muted-foreground">Loading…</p> : null}
-          {data && data.subjects.length === 0 ? <p className="text-sm text-muted-foreground">No irregular script control rows for this selection.</p> : null}
+          {data && data.subjects.length === 0 ? (
+            <p className="text-sm text-muted-foreground">No irregular script data for this exam and school.</p>
+          ) : null}
 
           {data && data.subjects.length > 0 ? (
             <div className="space-y-6">
-              <div className="sticky top-0 z-10 -mx-1 overflow-x-auto rounded-xl border border-border bg-background/95 px-1 py-1 backdrop-blur supports-backdrop-filter:bg-background/80">
-                <div className="flex min-w-max gap-1">
-                  {statusGroups.map((group) => {
-                    const paperCount = group.subjects.reduce((acc, subject) => acc + subject.papers.length, 0);
-                    const isActive = activeStatus === group.key;
-                    return (
-                      <button key={group.key} type="button" className={`rounded-lg border px-3 py-2 text-left text-sm transition-colors focus:outline-none focus:ring-2 focus:ring-ring/30 ${isActive ? statusToneClass[group.key] : "border-input-border bg-background hover:bg-muted"}`} onClick={() => setActiveStatus(group.key)}>
-                        <span className="block font-medium">{group.title}</span>
-                        <span className="block text-xs opacity-80">{group.subjects.length} subject{group.subjects.length === 1 ? "" : "s"} · {paperCount} paper{paperCount === 1 ? "" : "s"}</span>
-                      </button>
-                    );
-                  })}
+              <div className="relative">
+                <p className="mb-1 text-xs text-muted-foreground md:hidden">Swipe sideways to see all statuses</p>
+                <div className="sticky top-[var(--staff-sticky-header-offset,4.5rem)] z-20 -mx-1 overflow-x-auto rounded-xl border border-border bg-background/95 px-1 py-1 backdrop-blur supports-backdrop-filter:bg-background/80 md:overflow-visible">
+                  <div
+                    className="pointer-events-none absolute right-0 top-0 z-[1] h-full w-9 bg-gradient-to-l from-background/95 to-transparent md:hidden"
+                    aria-hidden
+                  />
+                  <div className="relative flex min-w-max gap-1 md:grid md:min-w-0 md:grid-cols-2">
+                    {statusGroups.map((group) => {
+                      const paperCount = group.subjects.reduce((acc, subject) => acc + subject.papers.length, 0);
+                      const isActive = activeStatus === group.key;
+                      return (
+                        <button
+                          key={group.key}
+                          type="button"
+                          className={`min-w-[9.5rem] shrink-0 rounded-lg border px-3 py-2 text-left text-sm transition-colors focus:outline-none focus:ring-2 focus:ring-ring/30 md:min-w-0 ${isActive ? statusToneClass[group.key] : "border-input-border bg-background hover:bg-muted"}`}
+                          onClick={() => setActiveStatus(group.key)}
+                        >
+                          <span className="block font-medium">{group.title}</span>
+                          <span className="block text-xs opacity-80">
+                            {group.subjects.length} subject{group.subjects.length === 1 ? "" : "s"} · {paperCount} paper
+                            {paperCount === 1 ? "" : "s"}
+                          </span>
+                        </button>
+                      );
+                    })}
+                  </div>
                 </div>
               </div>
 
@@ -266,6 +329,27 @@ export default function DepotKeeperIrregularScriptsControlPage() {
                 <section className="rounded-2xl border border-border bg-card p-4 sm:p-5">
                   <h2 className="text-lg font-semibold text-foreground">{activeGroup.title}</h2>
                   <p className="text-sm text-muted-foreground">{activeGroup.description}</p>
+                  {activeGroup.subjects.length > 0 ? (
+                    <p className="mt-2 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-muted-foreground">
+                      <span>
+                        Envelopes:{" "}
+                        <span className="font-semibold tabular-nums text-foreground">
+                          {countEnvelopes(activeGroup.subjects)}
+                        </span>
+                      </span>
+                      {activeGroup.key === "unverified" && countUnverifiedEnvelopes(activeGroup.subjects) > 0 ? (
+                        <>
+                          <span className="text-border">·</span>
+                          <span>
+                            Left to verify:{" "}
+                            <span className="font-semibold tabular-nums text-foreground">
+                              {countUnverifiedEnvelopes(activeGroup.subjects)}
+                            </span>
+                          </span>
+                        </>
+                      ) : null}
+                    </p>
+                  ) : null}
                   {activeGroup.subjects.length === 0 ? (
                     <p className="mt-4 rounded-lg border border-border/70 bg-background/60 px-3 py-2 text-sm text-muted-foreground">{activeGroup.emptyLabel}</p>
                   ) : (
@@ -279,17 +363,85 @@ export default function DepotKeeperIrregularScriptsControlPage() {
                             <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
                               <div className="min-w-0 flex-1">
                                 <p className="text-sm font-semibold text-foreground">{subject.subject_original_code ?? subject.subject_code} — {subject.subject_name}</p>
-                                <p className="mt-0.5 text-xs text-muted-foreground">{subject.papers.length} papers · {packingTotals.envelopeCount} envelopes · {packingTotals.totalBooklets} irregular booklets</p>
+                                <p className="mt-0.5 text-xs text-muted-foreground">
+                                  {subject.papers.length} papers · series per paper: {subjectSeriesPerPaperSummary(subject)} ·{" "}
+                                  {packingTotals.envelopeCount} envelopes · {packingTotals.totalBooklets} irregular booklets
+                                </p>
                               </div>
-                              <button type="button" className="shrink-0 rounded-lg border border-input-border bg-background px-2.5 py-1.5 text-sm hover:bg-muted focus:outline-none focus:ring-2 focus:ring-ring/30" onClick={() => setExpandedSubjects((prev) => ({ ...prev, [subjectKey]: !subjectOpen }))}>
+                              <button
+                                type="button"
+                                className="shrink-0 rounded-lg border border-input-border bg-background px-2.5 py-1.5 text-sm hover:bg-muted focus:outline-none focus:ring-2 focus:ring-ring/30"
+                                onClick={() => {
+                                  const storageKey = `${EXPANDED_STORAGE_PREFIX}:${examId ?? "none"}:${selectedSchoolId || "none"}`;
+                                  setExpandedSubjects((prev) => {
+                                    const next = { ...prev, [subjectKey]: !subjectOpen };
+                                    try {
+                                      sessionStorage.setItem(storageKey, JSON.stringify(next));
+                                    } catch {
+                                      /* ignore */
+                                    }
+                                    return next;
+                                  });
+                                }}
+                              >
                                 {subjectOpen ? "Hide" : "Show"}
                               </button>
                             </div>
+                            {!subjectOpen ? (
+                              <div className="mt-2">
+                                <p className="flex flex-wrap items-baseline gap-x-1.5 gap-y-0.5 text-sm leading-snug text-muted-foreground md:text-xs md:leading-tight">
+                                  <span className="tabular-nums font-semibold text-foreground">
+                                    {subject.completion.completedSeries}/{subject.completion.totalSeries}
+                                  </span>
+                                  <span>verified (all papers)</span>
+                                  <span className="text-border">·</span>
+                                  <span className="tabular-nums font-medium text-foreground">
+                                    {subject.completion.totalSeries === 0
+                                      ? 0
+                                      : Math.round(
+                                          (subject.completion.completedSeries / subject.completion.totalSeries) * 100,
+                                        )}
+                                    %
+                                  </span>
+                                </p>
+                                <div className="mt-1.5 h-1 overflow-hidden rounded-full bg-muted">
+                                  <div
+                                    className="h-full rounded-full bg-primary transition-all"
+                                    style={{
+                                      width: `${
+                                        subject.completion.totalSeries === 0
+                                          ? 0
+                                          : Math.round(
+                                              (subject.completion.completedSeries / subject.completion.totalSeries) *
+                                                100,
+                                            )
+                                      }%`,
+                                    }}
+                                  />
+                                </div>
+                              </div>
+                            ) : null}
                             {subjectOpen ? (
                               <div className="mt-3 grid gap-3 lg:grid-cols-2">
                                 {subject.papers.map((paper) => (
-                                  <div key={`${subjectKey}-p${paper.paper_number}`} className="rounded-lg border border-border/70 bg-background/70 p-3">
-                                    <p className="text-sm font-semibold text-foreground">Paper {paper.paper_number}{paper.examination_date ? <span className="ml-2 text-xs font-normal text-muted-foreground">{paper.examination_date}</span> : null}</p>
+                                  <div
+                                    key={`${subjectKey}-p${paper.paper_number}`}
+                                    className={`rounded-lg border border-border/70 bg-background/70 p-3 ${depotPaperCardAccentClass(paper.paper_number)}`}
+                                  >
+                                    <p className="flex flex-wrap items-center gap-2 text-sm font-semibold text-foreground">
+                                      <span
+                                        className={`inline-flex rounded-md border px-1.5 py-0.5 text-xs font-bold tabular-nums ${depotPaperBadgeClass(paper.paper_number)}`}
+                                      >
+                                        P{paper.paper_number}
+                                      </span>
+                                      <span>Paper {paper.paper_number}</span>
+                                      {paper.examination_date ? (
+                                        <span className="text-xs font-normal text-muted-foreground">{paper.examination_date}</span>
+                                      ) : null}
+                                      <span className="text-xs font-normal text-muted-foreground">
+                                        {paper.series.length} series (this paper)
+                                      </span>
+                                    </p>
                                     <div className="mt-3 space-y-2">
                                       {paper.series.map((ser) => {
                                         const packing = ser.packing;
@@ -306,12 +458,15 @@ export default function DepotKeeperIrregularScriptsControlPage() {
                                                     const verifying = verifyingKey === vkey;
                                                     const done = env.verified === true;
                                                     return (
-                                                      <li key={env.envelope_number} className="flex flex-col gap-2 rounded-md bg-background/50 px-2 py-2 sm:flex-row sm:items-center sm:justify-between">
+                                                      <li
+                                                        key={env.envelope_number}
+                                                        className="flex flex-col gap-2 rounded-md bg-background/50 px-2 py-2 sm:flex-row sm:items-center sm:justify-between"
+                                                      >
                                                         <div className="min-w-0">
                                                           <span className="text-sm font-medium text-foreground">Envelope {env.envelope_number} · {env.booklet_count} irregular booklets</span>
                                                           <p className="mt-1 text-xs text-muted-foreground">{done ? "Verified" : "Not verified"}</p>
                                                         </div>
-                                                        <button type="button" className={done ? "inline-flex min-h-10 w-full items-center justify-center rounded-lg border border-input-border bg-background px-3 text-sm font-medium text-foreground transition-colors hover:bg-muted focus:outline-none focus:ring-2 focus:ring-ring/30 sm:w-auto" : `${btnPrimary} w-full sm:w-auto`} disabled={busy || verifying} onClick={() => void onToggleVerify(subject.subject_id, paper.paper_number, ser.series_number, env.envelope_number, !done)}>
+                                                        <button type="button" className={done ? "inline-flex min-h-11 w-full items-center justify-center rounded-lg border border-input-border bg-background px-3 text-sm font-medium text-foreground transition-colors hover:bg-muted focus:outline-none focus:ring-2 focus:ring-ring/30 sm:min-h-10 sm:w-auto" : `${btnPrimary} w-full sm:w-auto`} disabled={busy || verifying} onClick={() => void onToggleVerify(subject.subject_id, paper.paper_number, ser.series_number, env.envelope_number, !done)}>
                                                           {verifying ? (done ? "Unverifying…" : "Verifying…") : (done ? "Unverify" : "Verify")}
                                                         </button>
                                                       </li>
