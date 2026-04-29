@@ -9,6 +9,8 @@ export type School = {
   school_type: string | null;
   is_private_examination_center: boolean;
   writes_at_center_id: string | null;
+  /** Host examination centre school code when this school writes elsewhere. */
+  writes_at_center_code?: string | null;
   /** Present when school is assigned to a depot. */
   depot_id?: string | null;
   /** Depot code when the school has a depot (from API). */
@@ -86,6 +88,8 @@ export type SchoolCreatePayload = {
   school_type?: string | null;
   is_private_examination_center?: boolean;
   writes_at_center_id?: string | null;
+  /** Host examination centre school code; do not send together with writes_at_center_id. */
+  writes_at_center_code?: string | null;
   /** Existing depot code; omit or null for no depot. */
   depot_code?: string | null;
 };
@@ -97,6 +101,8 @@ export type SchoolUpdatePayload = {
   school_type?: string | null;
   is_private_examination_center?: boolean;
   writes_at_center_id?: string | null;
+  /** Host examination centre by school code; empty clears. Do not send together with writes_at_center_id. */
+  writes_at_center_code?: string | null;
   depot_id?: string | null;
   /** Set or clear depot by code (null clears). */
   depot_code?: string | null;

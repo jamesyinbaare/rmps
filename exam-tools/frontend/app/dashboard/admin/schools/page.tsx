@@ -77,8 +77,8 @@ function SchoolFormFields({
   setSchoolType,
   pec,
   setPec,
-  writesAtId,
-  setWritesAtId,
+  writesAtCenterCode,
+  setWritesAtCenterCode,
   depotCode = "",
   setDepotCode = () => {},
   showCode,
@@ -97,8 +97,8 @@ function SchoolFormFields({
   setSchoolType: (v: string) => void;
   pec: boolean;
   setPec: (v: boolean) => void;
-  writesAtId: string;
-  setWritesAtId: (v: string) => void;
+  writesAtCenterCode: string;
+  setWritesAtCenterCode: (v: string) => void;
   depotCode?: string;
   setDepotCode?: (v: string) => void;
   showCode: boolean;
@@ -201,14 +201,15 @@ function SchoolFormFields({
       </div>
       <div>
         <label htmlFor="writes-at" className={formLabelClass}>
-          Writes at center (host school UUID, optional)
+          Examination centre host school code (optional)
         </label>
         <input
           id="writes-at"
           className={formInputClass}
-          placeholder="Leave empty if none"
-          value={writesAtId}
-          onChange={(e) => setWritesAtId(e.target.value.trim())}
+          placeholder="If this school writes at another centre, enter the host school code"
+          maxLength={15}
+          value={writesAtCenterCode}
+          onChange={(e) => setWritesAtCenterCode(e.target.value.toUpperCase())}
           autoComplete="off"
         />
       </div>
@@ -254,7 +255,7 @@ export default function AdminSchoolsPage() {
   const [zone, setZone] = useState("");
   const [schoolType, setSchoolType] = useState("");
   const [pec, setPec] = useState(false);
-  const [writesAtId, setWritesAtId] = useState("");
+  const [writesAtCenterCode, setWritesAtCenterCode] = useState("");
   const [depotCode, setDepotCode] = useState("");
 
   const [createdInfo, setCreatedInfo] = useState<SchoolCreatedResponse | null>(null);
@@ -305,7 +306,7 @@ export default function AdminSchoolsPage() {
     setZone("");
     setSchoolType("");
     setPec(false);
-    setWritesAtId("");
+    setWritesAtCenterCode("");
     setDepotCode("");
     setFormError(null);
   }
@@ -375,7 +376,7 @@ export default function AdminSchoolsPage() {
     setZone(s.zone);
     setSchoolType(s.school_type ?? "");
     setPec(s.is_private_examination_center);
-    setWritesAtId(s.writes_at_center_id ?? "");
+    setWritesAtCenterCode(s.writes_at_center_code ?? "");
     setDepotCode(s.depot_code?.trim() ?? "");
     setFormError(null);
   }
@@ -396,7 +397,7 @@ export default function AdminSchoolsPage() {
       region,
       zone,
       is_private_examination_center: pec,
-      writes_at_center_id: writesAtId.trim() ? writesAtId.trim() : null,
+      writes_at_center_code: writesAtCenterCode.trim() ? writesAtCenterCode.trim() : null,
       depot_code: depotCode.trim() ? depotCode.trim() : null,
     };
     if (schoolType) payload.school_type = schoolType;
@@ -432,8 +433,8 @@ export default function AdminSchoolsPage() {
       is_private_examination_center: pec,
     };
     payload.school_type = schoolType ? schoolType : null;
-    const w = writesAtId.trim();
-    payload.writes_at_center_id = w ? w : null;
+    const w = writesAtCenterCode.trim();
+    payload.writes_at_center_code = w ? w : null;
     payload.depot_code = depotCode.trim() ? depotCode.trim() : null;
 
     setSubmitting(true);
@@ -647,8 +648,8 @@ export default function AdminSchoolsPage() {
             setSchoolType={setSchoolType}
             pec={pec}
             setPec={setPec}
-            writesAtId={writesAtId}
-            setWritesAtId={setWritesAtId}
+            writesAtCenterCode={writesAtCenterCode}
+            setWritesAtCenterCode={setWritesAtCenterCode}
             depotCode={depotCode}
             setDepotCode={setDepotCode}
             showCode
@@ -701,8 +702,8 @@ export default function AdminSchoolsPage() {
               setSchoolType={setSchoolType}
               pec={pec}
               setPec={setPec}
-              writesAtId={writesAtId}
-              setWritesAtId={setWritesAtId}
+              writesAtCenterCode={writesAtCenterCode}
+              setWritesAtCenterCode={setWritesAtCenterCode}
               depotCode={depotCode}
               setDepotCode={setDepotCode}
               showCode={false}

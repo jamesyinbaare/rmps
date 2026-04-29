@@ -15,6 +15,11 @@ class SchoolCreate(BaseModel):
     school_type: SchoolType | None = None
     is_private_examination_center: bool = False
     writes_at_center_id: UUID | None = None
+    writes_at_center_code: str | None = Field(
+        None,
+        max_length=15,
+        description="Host examination centre school code; do not set together with writes_at_center_id.",
+    )
     depot_code: str | None = Field(
         None,
         max_length=32,
@@ -31,6 +36,11 @@ class SchoolUpdate(BaseModel):
     school_type: SchoolType | None = None
     is_private_examination_center: bool | None = None
     writes_at_center_id: UUID | None = None
+    writes_at_center_code: str | None = Field(
+        default=None,
+        max_length=15,
+        description="Host examination centre by school code; empty clears. Do not set together with writes_at_center_id.",
+    )
     depot_id: UUID | None = None
     depot_code: str | None = Field(
         default=None,
@@ -50,6 +60,7 @@ class SchoolResponse(BaseModel):
     school_type: SchoolType | None
     is_private_examination_center: bool
     writes_at_center_id: UUID | None
+    writes_at_center_code: str | None = None
     depot_id: UUID | None = None
     depot_code: str | None = None
     created_at: datetime
