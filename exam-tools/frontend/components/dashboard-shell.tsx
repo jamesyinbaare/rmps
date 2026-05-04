@@ -2,8 +2,9 @@
 
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
-import { useEffect, useState } from "react";
+import { useEffect, useId, useState } from "react";
 
+import { DashboardSimpleHeader, DashboardStickyHeader } from "@/components/dashboard-sticky-header";
 import { ExaminationNoticeSessionBanner } from "@/components/examination-notice-session-banner";
 import { clearAuth, getMe, type UserMe } from "@/lib/auth";
 
@@ -53,6 +54,7 @@ const inputFocusRing =
 export function DashboardShell({ title, children, staffRole }: Props) {
   const router = useRouter();
   const pathname = usePathname();
+  const sidebarNavId = useId();
   const [me, setMe] = useState<UserMe | null>(null);
   const [sidebarOpen, setSidebarOpen] = useState(false);
 
@@ -70,34 +72,11 @@ export function DashboardShell({ title, children, staffRole }: Props) {
   if (!staffRole) {
     return (
       <div className="min-h-screen bg-background">
-        <header className="border-b border-border bg-card">
-          <div className="mx-auto flex max-w-3xl flex-col gap-3 p-4 sm:flex-row sm:items-center sm:justify-between sm:p-6">
-            <div>
-              <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
-                Exam tools
-              </p>
-              <h1 className="text-lg font-semibold text-card-foreground sm:text-xl">{title}</h1>
-              {me ? (
-                <p className="mt-1 text-sm text-muted-foreground">{staffHeaderSubtitle(me)}</p>
-              ) : null}
-            </div>
-            <div className="flex flex-wrap gap-2 sm:justify-end">
-              <Link
-                href="/"
-                className={`inline-flex min-h-11 min-w-[44px] items-center justify-center rounded-lg border border-input-border bg-background px-4 text-sm font-medium text-foreground transition-colors hover:bg-muted ${inputFocusRing}`}
-              >
-                Home
-              </Link>
-              <button
-                type="button"
-                onClick={logout}
-                className="inline-flex min-h-11 min-w-[44px] items-center justify-center rounded-lg bg-primary px-4 text-sm font-medium text-primary-foreground transition-colors hover:bg-primary-hover"
-              >
-                Log out
-              </button>
-            </div>
-          </div>
-        </header>
+        <DashboardSimpleHeader
+          title={title}
+          subtitle={me ? staffHeaderSubtitle(me) : null}
+          onLogout={logout}
+        />
         <main className="mx-auto max-w-3xl p-4 sm:p-6">{children}</main>
       </div>
     );
@@ -179,7 +158,8 @@ export function DashboardShell({ title, children, staffRole }: Props) {
       ) : null}
 
       <aside
-        className={`fixed inset-y-0 left-0 z-50 w-64 border-r border-border bg-card transition-transform duration-200 ease-out lg:translate-x-0 ${
+        id={sidebarNavId}
+        className={`fixed inset-y-0 left-0 z-50 w-64 border-r border-border bg-card transition-transform duration-200 ease-out motion-reduce:transition-none lg:translate-x-0 ${
           sidebarOpen ? "translate-x-0" : "-translate-x-full"
         }`}
       >
@@ -210,42 +190,16 @@ export function DashboardShell({ title, children, staffRole }: Props) {
       </aside>
 
       <div className="lg:pl-64">
-        <header className="sticky top-0 z-30 border-b border-border bg-card/95 backdrop-blur">
-          <div className="flex items-center gap-3 px-4 py-3 sm:px-6">
-            <button
-              type="button"
-              className={`inline-flex min-h-11 min-w-11 items-center justify-center rounded-lg border border-input-border bg-background lg:hidden ${inputFocusRing}`}
-              aria-expanded={sidebarOpen}
-              aria-label="Open menu"
-              onClick={() => setSidebarOpen(true)}
-            >
-              <span className="text-lg leading-none">☰</span>
-            </button>
-            <div className="min-w-0 flex-1">
-              <h1 className="truncate text-base font-semibold text-card-foreground sm:text-lg">
-                {title}
-              </h1>
-              {me ? (
-                <p className="truncate text-sm text-muted-foreground">{staffHeaderSubtitle(me)}</p>
-              ) : null}
-            </div>
-            <div className="flex shrink-0 flex-wrap items-center gap-2">
-              <Link
-                href="/"
-                className={`inline-flex min-h-11 min-w-[44px] items-center justify-center rounded-lg border border-input-border bg-background px-3 text-sm font-medium text-foreground transition-colors hover:bg-muted sm:px-4 ${inputFocusRing}`}
-              >
-                Home
-              </Link>
-              <button
-                type="button"
-                onClick={logout}
-                className="inline-flex min-h-11 min-w-[44px] items-center justify-center rounded-lg bg-primary px-3 text-sm font-medium text-primary-foreground transition-colors hover:bg-primary-hover sm:px-4"
-              >
-                Log out
-              </button>
-            </div>
-          </div>
-        </header>
+        <DashboardStickyHeader
+          title={title}
+          subtitle={me ? staffHeaderSubtitle(me) : null}
+          onLogout={logout}
+          sidebar={{
+            id: sidebarNavId,
+            open: sidebarOpen,
+            onOpenChange: setSidebarOpen,
+          }}
+        />
 
         <ExaminationNoticeSessionBanner
           staffRole={staffRole}

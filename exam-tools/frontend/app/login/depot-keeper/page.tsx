@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { useState } from "react";
 
 import { AuthCard } from "@/components/auth-card";
+import { PasswordInput } from "@/components/password-input";
 import { PublicSiteNav } from "@/components/public-site-nav";
 import { useRedirectIfAuthenticated } from "@/hooks/use-redirect-if-authed";
 import { loginDepotKeeper } from "@/lib/auth";
@@ -63,15 +64,13 @@ export default function DepotKeeperLoginPage() {
               <label htmlFor="dk_password" className={formLabelClass}>
                 Password
               </label>
-              <input
+              <PasswordInput
                 id="dk_password"
                 name="password"
-                type="password"
                 autoComplete="current-password"
                 required
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
-                className={formInputClass}
               />
             </div>
             {error ? (

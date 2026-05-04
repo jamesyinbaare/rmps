@@ -5,14 +5,11 @@ import { useRouter } from "next/navigation";
 import { useState } from "react";
 
 import { AuthCard } from "@/components/auth-card";
+import { PasswordInput } from "@/components/password-input";
 import { PublicSiteNav } from "@/components/public-site-nav";
 import { useRedirectIfAuthenticated } from "@/hooks/use-redirect-if-authed";
 import { loginSupervisor } from "@/lib/auth";
-import {
-  formInputClass,
-  formLabelClass,
-  primaryButtonClass,
-} from "@/lib/form-classes";
+import { formInputClass, formLabelClass, primaryButtonClass } from "@/lib/form-classes";
 
 export default function SupervisorLoginPage() {
   useRedirectIfAuthenticated();
@@ -63,15 +60,13 @@ export default function SupervisorLoginPage() {
               <label htmlFor="password" className={formLabelClass}>
                 Password
               </label>
-              <input
+              <PasswordInput
                 id="password"
                 name="password"
-                type="password"
                 autoComplete="current-password"
                 required
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
-                className={formInputClass}
               />
             </div>
             {error ? (
