@@ -66,7 +66,7 @@ function isWritten(examinationDate: string | null, todayIso: string): boolean {
 function buildSubjectCompletion(subject: ScriptSubjectRowResponse, todayIso: string): SubjectCompletion {
   let totalSeries = 0;
   let completedSeries = 0;
-  let notRecordedSeries = 0;
+  const notRecordedSeries = 0;
   for (const paper of subject.papers) {
     if (!isWritten(paper.examination_date ?? null, todayIso)) continue;
     for (const series of paper.series) {

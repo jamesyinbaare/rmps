@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { useState } from "react";
 
 import { AuthCard } from "@/components/auth-card";
+import { PasswordInput } from "@/components/password-input";
 import { PublicSiteNav } from "@/components/public-site-nav";
 import { useRedirectIfAuthenticated } from "@/hooks/use-redirect-if-authed";
 import { loginInspector } from "@/lib/auth";
@@ -63,15 +64,17 @@ export default function InspectorLoginPage() {
               <label htmlFor="phone" className={formLabelClass}>
                 Phone number
               </label>
-              <input
+              <PasswordInput
                 id="phone"
                 name="phone"
-                type="tel"
+                revealType="tel"
+                inputMode="tel"
                 autoComplete="tel"
                 required
                 value={phone}
                 onChange={(e) => setPhone(e.target.value)}
-                className={formInputClass}
+                toggleShowLabel="Show phone number"
+                toggleHideLabel="Hide phone number"
               />
             </div>
             {error ? (
