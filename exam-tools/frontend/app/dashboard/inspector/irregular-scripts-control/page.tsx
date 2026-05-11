@@ -6,6 +6,11 @@ import { DashboardShell } from "@/components/dashboard-shell";
 import { RoleGuard } from "@/components/role-guard";
 import { formInputClass, formLabelClass } from "@/lib/form-classes";
 import {
+  formatUpcomingPapersLabel,
+  getPaperInspectorVisuals,
+  groupUpcomingBundlesBySubjectAndDate,
+} from "@/lib/paper-inspector-styles";
+import {
   apiJson,
   deleteIrregularScriptSeries,
   getMySchoolIrregularScriptControl,
@@ -311,8 +316,9 @@ export default function InspectorIrregularScriptsControlPage() {
     const showSeriesLabel = seriesCount > 1;
     const capForPaper = data ? maxBookletsForPaper(data, paperNumber) : 50;
     const editingHasOverCap = isEditing && draft.envelopes.some((e) => e.booklet_count > capForPaper);
+    const paperVisuals = getPaperInspectorVisuals(paperNumber);
     return (
-      <li key={slot.series_number} className="flex flex-col gap-2 rounded-lg border border-border/80 bg-background/50 p-3">
+      <li key={slot.series_number} className={paperVisuals.seriesRowClass}>
         <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
           <div>
             {showSeriesLabel ? <p className="text-sm font-medium text-foreground">Series {slot.series_number}</p> : null}
@@ -350,7 +356,7 @@ export default function InspectorIrregularScriptsControlPage() {
           </div>
         </div>
         {isEditing ? (
-          <div className="mt-3 w-full space-y-3 border-t border-border pt-3">
+          <div className={`mt-3 w-full space-y-3 pt-3 ${paperVisuals.editDividerClass}`}>
             {formError ? <p className="text-sm text-destructive">{formError}</p> : null}
             <div>
               <div className="flex items-center justify-between gap-2">
@@ -393,22 +399,34 @@ export default function InspectorIrregularScriptsControlPage() {
   function renderPaperBundles(bundles: PaperBundle[]) {
     return (
       <div className="space-y-6">
-        {bundles.map((bundle, idx) => (
-          <Fragment key={`${bundle.subjectId}-${bundle.paperNumber}`}>
-            {(idx === 0 || bundles[idx - 1].subjectId !== bundle.subjectId) && (
-              <h2 className="text-lg font-semibold text-card-foreground">{bundle.subjectOriginalCode ?? bundle.subjectCode} — {bundle.subjectName}</h2>
-            )}
-            <div className="rounded-2xl border border-border bg-card p-4 sm:p-5">
-              <h3 className="text-sm font-medium text-card-foreground">
-                Paper {bundle.paperNumber}
-                {bundle.examinationDate ? <span className="ml-2 font-normal text-muted-foreground">· Scheduled {bundle.examinationDate}</span> : null}
-              </h3>
-              <ul className="mt-2 space-y-2">
-                {bundle.series.map((slot) => renderSeriesRow(bundle.subjectId, bundle.paperNumber, slot, bundle.series.length))}
-              </ul>
-            </div>
-          </Fragment>
-        ))}
+        {bundles.map((bundle, idx) => {
+          const v = getPaperInspectorVisuals(bundle.paperNumber);
+          return (
+            <Fragment key={`${bundle.subjectId}-${bundle.paperNumber}`}>
+              {(idx === 0 || bundles[idx - 1].subjectId !== bundle.subjectId) && (
+                <h2 className="text-lg font-semibold text-card-foreground">{bundle.subjectOriginalCode ?? bundle.subjectCode} — {bundle.subjectName}</h2>
+              )}
+              <div className={v.cardClass}>
+                <h3 className="flex flex-wrap items-center gap-x-2 gap-y-1 text-sm font-medium text-card-foreground">
+                  <span className={v.badgeClass} title={`Paper ${bundle.paperNumber}`}>
+                    {v.badgeShortLabel}
+                  </span>
+                  <span>
+                    Paper {bundle.paperNumber}
+                    {bundle.examinationDate ? (
+                      <span className="ml-2 font-normal text-muted-foreground">· Scheduled {bundle.examinationDate}</span>
+                    ) : (
+                      <span className="ml-2 font-normal text-muted-foreground">· No date in timetable</span>
+                    )}
+                  </span>
+                </h3>
+                <ul className="mt-2 space-y-2">
+                  {bundle.series.map((slot) => renderSeriesRow(bundle.subjectId, bundle.paperNumber, slot, bundle.series.length))}
+                </ul>
+              </div>
+            </Fragment>
+          );
+        })}
       </div>
     );
   }
@@ -420,6 +438,11 @@ export default function InspectorIrregularScriptsControlPage() {
           <p className="text-sm text-muted-foreground">
             Record irregular worked scripts separately from regular worked scripts, per subject, paper, and series. This is optional and only needed when irregular scripts occur.
             {data ? <> <span className="font-medium text-foreground">{scriptCapsSummary(data)}</span></> : null}
+          </p>
+          <p className="text-xs text-muted-foreground">
+            <span className="font-medium text-accent">Blue accent</span> marks Paper 1 sections;{" "}
+            <span className="font-medium text-success">green accent</span> marks Paper 2. Match irregular counts to the
+            correct paper before saving.
           </p>
 
           <div>
@@ -466,12 +489,23 @@ export default function InspectorIrregularScriptsControlPage() {
                 <section className="space-y-3">
                   <h2 className="text-base font-semibold text-foreground">Upcoming</h2>
                   <ul className="space-y-2 rounded-2xl border border-border bg-card p-4 sm:p-5">
-                    {grouped.upcoming.map((b) => (
-                      <li key={`${b.subjectId}-${b.paperNumber}`} className="text-sm text-foreground border-b border-border/60 pb-2 last:border-b-0 last:pb-0">
-                        <span className="font-medium">{b.subjectOriginalCode ?? b.subjectCode} — {b.subjectName}</span>
-                        <span className="text-muted-foreground"> · Paper {b.paperNumber}{b.series.length > 1 ? ` · ${b.series.length} series` : ""}{b.examinationDate ? ` · ${b.examinationDate}` : ""}</span>
-                      </li>
-                    ))}
+                    {groupUpcomingBundlesBySubjectAndDate(grouped.upcoming).map((bundles) => {
+                      const b = bundles[0];
+                      const nums = bundles.map((x) => x.paperNumber).join("-");
+                      return (
+                        <li
+                          key={`${b.subjectId}-${nums}-${b.examinationDate ?? "na"}`}
+                          className="flex flex-col gap-1 border-b border-border/60 pb-2 text-sm text-foreground last:border-b-0 last:pb-0 sm:flex-row sm:flex-wrap sm:items-baseline sm:gap-x-1.5 sm:gap-y-0"
+                        >
+                          <span className="font-medium">{b.subjectOriginalCode ?? b.subjectCode} — {b.subjectName}</span>
+                          <span className="text-muted-foreground">
+                            <span className="hidden sm:inline">· </span>
+                            {formatUpcomingPapersLabel(bundles)}
+                            {b.examinationDate ? ` · ${b.examinationDate}` : ""}
+                          </span>
+                        </li>
+                      );
+                    })}
                   </ul>
                 </section>
               ) : null}
