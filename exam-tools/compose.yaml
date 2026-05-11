@@ -34,6 +34,9 @@ services:
         fi &&
         uv run fastapi dev app/main.py --host 0.0.0.0 --port 80
       "
+    depends_on:
+      tools_postgres:
+        condition: service_healthy
     restart: unless-stopped
 
   frontend:
