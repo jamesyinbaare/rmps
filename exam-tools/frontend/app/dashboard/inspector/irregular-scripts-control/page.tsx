@@ -6,6 +6,17 @@ import { DashboardShell } from "@/components/dashboard-shell";
 import { RoleGuard } from "@/components/role-guard";
 import { formInputClass, formLabelClass } from "@/lib/form-classes";
 import {
+  formatUpcomingPapersLabel,
+  getPaperInspectorVisuals,
+  groupUpcomingBundlesBySubjectAndDate,
+  seriesInspectorBadgeClass,
+} from "@/lib/paper-inspector-styles";
+import {
+  irregularPackingItemPlural,
+  packingCountDescriptor,
+  packingCountFieldLabel,
+} from "@/lib/script-packing-terms";
+import {
   apiJson,
   deleteIrregularScriptSeries,
   getMySchoolIrregularScriptControl,
@@ -13,7 +24,6 @@ import {
   type Examination,
   type MyCenterSchoolsResponse,
   type MySchoolScriptControlResponse,
-  type ScriptEnvelopeItem,
   type ScriptSeriesPackingResponse,
   type ScriptSeriesSlotResponse,
   type ScriptSubjectRowResponse,
@@ -32,8 +42,13 @@ type EditingState = {
   seriesNumber: number;
 };
 
+type DraftEnvelope = {
+  envelope_number: number;
+  booklet_count: number | null;
+};
+
 type Draft = {
-  envelopes: ScriptEnvelopeItem[];
+  envelopes: DraftEnvelope[];
 };
 
 type PaperBundle = {
@@ -58,11 +73,54 @@ function emptyDraft(): Draft {
 
 function draftFromPacking(p: ScriptSeriesPackingResponse): Draft {
   return {
-    envelopes: p.envelopes.map((e) => ({
-      ...e,
-      booklet_count: Math.max(0, e.booklet_count),
-    })),
+    envelopes: [...p.envelopes]
+      .sort((a, b) => a.envelope_number - b.envelope_number)
+      .map((e) => ({
+        envelope_number: e.envelope_number,
+        booklet_count: Math.max(0, e.booklet_count),
+      })),
   };
+}
+
+function envelopesToPersist(draft: Draft): { envelope_number: number; booklet_count: number }[] {
+  const out: { envelope_number: number; booklet_count: number }[] = [];
+  for (const e of draft.envelopes) {
+    if (e.booklet_count !== null && e.booklet_count > 0) {
+      out.push({ envelope_number: e.envelope_number, booklet_count: e.booklet_count });
+    }
+  }
+  return out;
+}
+
+function isConsecutiveFromOne(envelopeNumbers: number[]): boolean {
+  const nums = [...envelopeNumbers].sort((a, b) => a - b);
+  if (nums.length === 0) return false;
+  return nums.every((n, i) => n === i + 1);
+}
+
+/** Envelope numbers with positive counts must be exactly 1..k; returns i in 1..k not present. */
+function missingEnvelopesInConsecutivePrefix(envelopeNumbers: number[]): number[] {
+  const nums = [...envelopeNumbers].sort((a, b) => a - b);
+  if (nums.length === 0) return [];
+  const k = nums.length;
+  const present = new Set(nums);
+  const missing: number[] = [];
+  for (let i = 1; i <= k; i++) {
+    if (!present.has(i)) missing.push(i);
+  }
+  return missing;
+}
+
+function consecutiveEnvelopeNumbersMessage(paperNumber: number, envelopeNumbers: number[]): string {
+  const missing = missingEnvelopesInConsecutivePrefix(envelopeNumbers);
+  const items = irregularPackingItemPlural(paperNumber);
+  const base = `You can't record envelopes with empty or zero ${items}.`;
+  if (missing.length === 0) {
+    return `${base} Each envelope from 1 up to the number you're saving must have a ${packingCountDescriptor(paperNumber)}.`;
+  }
+  const listed =
+    missing.length === 1 ? `envelope ${missing[0]}` : `envelopes ${missing.join(", ")}`;
+  return `${base} Missing: ${listed}.`;
 }
 
 function scriptCapsSummary(d: MySchoolScriptControlResponse): string {
@@ -70,12 +128,12 @@ function scriptCapsSummary(d: MySchoolScriptControlResponse): string {
   const p1 = d.scripts_per_envelope_paper_1;
   const p2 = d.scripts_per_envelope_paper_2;
   if (p1 === p2 && p2 === g) {
-    return `Each envelope may hold at most ${g} irregular booklets.`;
+    return `Paper 1: up to ${g} irregular scannables per envelope. Paper 2 and other papers: up to ${g} irregular booklets per envelope.`;
   }
   if (p1 === p2) {
-    return `Paper 1 and Paper 2: up to ${p1} irregular booklets per envelope. Other papers: up to ${g} per envelope.`;
+    return `Paper 1: up to ${p1} irregular scannables per envelope; Paper 2: up to ${p1} irregular booklets per envelope. Other papers: up to ${g} irregular booklets per envelope.`;
   }
-  return `Paper 1: up to ${p1}; Paper 2: up to ${p2}; other papers: up to ${g} irregular booklets per envelope.`;
+  return `Paper 1: up to ${p1} irregular scannables; Paper 2: up to ${p2} irregular booklets; other papers: up to ${g} irregular booklets per envelope.`;
 }
 
 function maxBookletsForPaper(d: MySchoolScriptControlResponse, paperNumber: number): number {
@@ -236,9 +294,21 @@ export default function InspectorIrregularScriptsControlPage() {
     if (examId === null || selectedSchoolId.trim() === "" || editing === null || data === null) return;
     setFormError(null);
     const cap = maxBookletsForPaper(data, editing.paperNumber);
-    for (const env of draft.envelopes) {
+    const toSave = envelopesToPersist(draft);
+    if (toSave.length === 0) {
+      setFormError(`Enter at least one ${packingCountDescriptor(editing.paperNumber)} to save.`);
+      return;
+    }
+    const nums = toSave.map((e) => e.envelope_number);
+    if (!isConsecutiveFromOne(nums)) {
+      setFormError(consecutiveEnvelopeNumbersMessage(editing.paperNumber, nums));
+      return;
+    }
+    for (const env of toSave) {
       if (env.booklet_count > cap) {
-        setFormError(`Envelope ${env.envelope_number}: at most ${cap} irregular booklets for paper ${editing.paperNumber}.`);
+        setFormError(
+          `Envelope ${env.envelope_number}: at most ${cap} ${irregularPackingItemPlural(editing.paperNumber)} for paper ${editing.paperNumber}.`,
+        );
         return;
       }
     }
@@ -248,7 +318,10 @@ export default function InspectorIrregularScriptsControlPage() {
         subject_id: editing.subjectId,
         paper_number: editing.paperNumber,
         series_number: editing.seriesNumber,
-        envelopes: draft.envelopes.map((e) => ({ envelope_number: e.envelope_number, booklet_count: e.booklet_count })),
+        envelopes: toSave.map((e) => ({
+          envelope_number: e.envelope_number,
+          booklet_count: e.booklet_count,
+        })),
       });
       await loadData();
       closeEdit();
@@ -280,19 +353,28 @@ export default function InspectorIrregularScriptsControlPage() {
   }
 
   function addEnvelope() {
+    setFormError(null);
     const next = draft.envelopes.length === 0 ? 1 : Math.max(...draft.envelopes.map((e) => e.envelope_number)) + 1;
-    setDraft((d) => ({ ...d, envelopes: [...d.envelopes, { envelope_number: next, booklet_count: 0 }] }));
+    setDraft((d) => ({ ...d, envelopes: [...d.envelopes, { envelope_number: next, booklet_count: null }] }));
   }
   function removeEnvelope(idx: number) {
+    setFormError(null);
     setDraft((d) => ({ ...d, envelopes: d.envelopes.filter((_, i) => i !== idx) }));
   }
-  function updateEnvelope(idx: number, patch: Partial<ScriptEnvelopeItem>) {
+  function updateEnvelope(idx: number, patch: Partial<Pick<DraftEnvelope, "booklet_count">>) {
+    setFormError(null);
     setDraft((d) => ({
       ...d,
       envelopes: d.envelopes.map((e, i) => {
         if (i !== idx) return e;
-        const next = { ...e, ...patch };
-        if ("booklet_count" in patch) next.booklet_count = Math.max(0, next.booklet_count);
+        const next: DraftEnvelope = { ...e, ...patch };
+        if (
+          "booklet_count" in patch &&
+          patch.booklet_count !== null &&
+          patch.booklet_count !== undefined
+        ) {
+          next.booklet_count = Math.max(0, patch.booklet_count);
+        }
         return next;
       }),
     }));
@@ -304,24 +386,38 @@ export default function InspectorIrregularScriptsControlPage() {
   const grouped = data && data.subjects.length > 0 ? partitionPapers(data.subjects, localTodayIso()) : null;
   const groupedHint = grouped ? emptyOutstandingHint(grouped) : null;
 
-  function renderSeriesRow(subjectId: number, paperNumber: number, slot: ScriptSeriesSlotResponse, seriesCount: number) {
+  function renderSeriesRow(subjectId: number, paperNumber: number, slot: ScriptSeriesSlotResponse) {
     const packing = slot.packing;
     const anyEnvelopeVerified = Boolean(packing?.envelopes?.some((e) => e.verified));
     const isEditing = isEditingSlot(subjectId, paperNumber, slot.series_number);
-    const showSeriesLabel = seriesCount > 1;
     const capForPaper = data ? maxBookletsForPaper(data, paperNumber) : 50;
-    const editingHasOverCap = isEditing && draft.envelopes.some((e) => e.booklet_count > capForPaper);
+    const toSave = isEditing ? envelopesToPersist(draft) : [];
+    const editingHasOverCap =
+      isEditing &&
+      draft.envelopes.some(
+        (e) => e.booklet_count !== null && e.booklet_count > capForPaper,
+      );
+    const derivedEnvelopeOrderError =
+      isEditing &&
+      toSave.length > 0 &&
+      !isConsecutiveFromOne(toSave.map((e) => e.envelope_number))
+        ? consecutiveEnvelopeNumbersMessage(paperNumber, toSave.map((e) => e.envelope_number))
+        : null;
+    const paperVisuals = getPaperInspectorVisuals(paperNumber);
     return (
-      <li key={slot.series_number} className="flex flex-col gap-2 rounded-lg border border-border/80 bg-background/50 p-3">
+      <li key={slot.series_number} className={paperVisuals.seriesRowClass}>
         <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
           <div>
-            {showSeriesLabel ? <p className="text-sm font-medium text-foreground">Series {slot.series_number}</p> : null}
+            <span className={seriesInspectorBadgeClass} title="Packing series for this paper">
+              Series {slot.series_number}
+            </span>
             {!isEditing ? (
-              <p className={`text-xs text-muted-foreground ${showSeriesLabel ? "mt-1" : ""}`}>
+              <p className="mt-1 text-xs text-muted-foreground">
                 {packing ? (
                   <>
                     {packing.envelopes.length} envelope{packing.envelopes.length === 1 ? "" : "s"},{" "}
-                    {packing.envelopes.reduce((s, e) => s + e.booklet_count, 0)} irregular booklets total
+                    {packing.envelopes.reduce((s, e) => s + e.booklet_count, 0)}{" "}
+                    {irregularPackingItemPlural(paperNumber)} total
                   </>
                 ) : (
                   "Not recorded"
@@ -350,38 +446,101 @@ export default function InspectorIrregularScriptsControlPage() {
           </div>
         </div>
         {isEditing ? (
-          <div className="mt-3 w-full space-y-3 border-t border-border pt-3">
-            {formError ? <p className="text-sm text-destructive">{formError}</p> : null}
+          <div className={`mt-3 w-full space-y-3 pt-3 ${paperVisuals.editDividerClass}`}>
+            {formError || derivedEnvelopeOrderError ? (
+              <p className="text-sm text-destructive">{formError ?? derivedEnvelopeOrderError}</p>
+            ) : null}
             <div>
               <div className="flex items-center justify-between gap-2">
                 <span className={formLabelClass}>Irregular envelopes</span>
                 <button type="button" className={btnSecondary} onClick={addEnvelope}>Add envelope</button>
               </div>
               <p className="mt-1 text-xs text-muted-foreground">
-                Up to {capForPaper} irregular booklets per envelope for Paper {paperNumber}.
+                Up to {capForPaper} {irregularPackingItemPlural(paperNumber)} per envelope for Paper {paperNumber}.
               </p>
               {draft.envelopes.length === 0 ? (
-                <p className="mt-2 text-xs text-muted-foreground">Add irregular envelopes and booklet counts, then save.</p>
+                <p className="mt-2 text-xs text-muted-foreground">
+                  Add irregular envelopes and {packingCountDescriptor(paperNumber)}s, then save.
+                </p>
               ) : (
                 <ul className="mt-2 space-y-2">
                   {draft.envelopes.map((env, idx) => (
-                    <li key={`${env.envelope_number}-${idx}`} className="grid grid-cols-[auto_minmax(8rem,1fr)_auto] items-end gap-x-2 gap-y-1">
+                    <li
+                      key={`${env.envelope_number}-${idx}`}
+                      className="grid grid-cols-[auto_minmax(8rem,1fr)_auto] items-start gap-x-2 gap-y-1"
+                    >
                       <div className="flex flex-col">
-                        <label className={formLabelClass}>No.</label>
-                        <input type="number" min={1} className={`mt-1 w-20 ${formInputClass}`} value={env.envelope_number} onChange={(e) => updateEnvelope(idx, { envelope_number: Math.max(1, parseInt(e.target.value, 10) || 1) })} />
+                        <span className={`${formLabelClass} invisible select-none`} aria-hidden>
+                          {packingCountFieldLabel(paperNumber)}
+                        </span>
+                        <div className="mt-1.5 flex min-h-11 items-center">
+                          <span className="text-sm font-medium text-foreground">
+                            Env. {env.envelope_number}
+                          </span>
+                        </div>
                       </div>
                       <div className="flex min-w-0 flex-col">
-                        <label className={formLabelClass}>Booklets</label>
-                        <input type="number" min={0} className={`mt-1 w-full min-w-0 ${formInputClass} ${env.booklet_count > capForPaper ? "border-destructive" : ""}`} value={env.booklet_count} onChange={(e) => updateEnvelope(idx, { booklet_count: Math.max(0, parseInt(e.target.value, 10) || 0) })} />
+                        <label
+                          htmlFor={`irregular-packing-count-p${paperNumber}-${env.envelope_number}-${idx}`}
+                          className={formLabelClass}
+                        >
+                          {packingCountFieldLabel(paperNumber)}
+                        </label>
+                        <input
+                          id={`irregular-packing-count-p${paperNumber}-${env.envelope_number}-${idx}`}
+                          type="number"
+                          min={0}
+                          className={`w-full min-w-0 ${formInputClass} ${
+                            env.booklet_count !== null && env.booklet_count > capForPaper
+                              ? "border-destructive"
+                              : ""
+                          }`}
+                          value={env.booklet_count === null ? "" : env.booklet_count}
+                          onChange={(e) => {
+                            const v = e.target.value;
+                            if (v === "") {
+                              updateEnvelope(idx, { booklet_count: null });
+                              return;
+                            }
+                            const n = parseInt(v, 10);
+                            if (Number.isNaN(n)) {
+                              updateEnvelope(idx, { booklet_count: null });
+                            } else {
+                              updateEnvelope(idx, { booklet_count: Math.max(0, n) });
+                            }
+                          }}
+                        />
                       </div>
-                      <button type="button" className={btnDanger} onClick={() => removeEnvelope(idx)}>Remove</button>
+                      <div className="flex flex-col">
+                        <span className={`${formLabelClass} invisible select-none`} aria-hidden>
+                          {packingCountFieldLabel(paperNumber)}
+                        </span>
+                        <div className="mt-1.5 flex min-h-11 items-center">
+                          <button type="button" className={btnDanger} onClick={() => removeEnvelope(idx)}>
+                            Remove
+                          </button>
+                        </div>
+                      </div>
+                      {env.booklet_count !== null && env.booklet_count > capForPaper ? (
+                        <p className="col-start-2 text-xs leading-snug text-destructive">
+                          At most {capForPaper} {irregularPackingItemPlural(paperNumber)} for paper {paperNumber} (you
+                          entered {env.booklet_count}).
+                        </p>
+                      ) : null}
                     </li>
                   ))}
                 </ul>
               )}
             </div>
             <div className="flex flex-wrap gap-2">
-              <button type="button" className={btnPrimary} disabled={busy || editingHasOverCap} onClick={() => void onSave()}>Save</button>
+              <button
+                type="button"
+                className={btnPrimary}
+                disabled={busy || editingHasOverCap}
+                onClick={() => void onSave()}
+              >
+                Save
+              </button>
               <button type="button" className={btnSecondary} disabled={busy} onClick={closeEdit}>Cancel</button>
             </div>
           </div>
@@ -393,22 +552,34 @@ export default function InspectorIrregularScriptsControlPage() {
   function renderPaperBundles(bundles: PaperBundle[]) {
     return (
       <div className="space-y-6">
-        {bundles.map((bundle, idx) => (
-          <Fragment key={`${bundle.subjectId}-${bundle.paperNumber}`}>
-            {(idx === 0 || bundles[idx - 1].subjectId !== bundle.subjectId) && (
-              <h2 className="text-lg font-semibold text-card-foreground">{bundle.subjectOriginalCode ?? bundle.subjectCode} — {bundle.subjectName}</h2>
-            )}
-            <div className="rounded-2xl border border-border bg-card p-4 sm:p-5">
-              <h3 className="text-sm font-medium text-card-foreground">
-                Paper {bundle.paperNumber}
-                {bundle.examinationDate ? <span className="ml-2 font-normal text-muted-foreground">· Scheduled {bundle.examinationDate}</span> : null}
-              </h3>
-              <ul className="mt-2 space-y-2">
-                {bundle.series.map((slot) => renderSeriesRow(bundle.subjectId, bundle.paperNumber, slot, bundle.series.length))}
-              </ul>
-            </div>
-          </Fragment>
-        ))}
+        {bundles.map((bundle, idx) => {
+          const v = getPaperInspectorVisuals(bundle.paperNumber);
+          return (
+            <Fragment key={`${bundle.subjectId}-${bundle.paperNumber}`}>
+              {(idx === 0 || bundles[idx - 1].subjectId !== bundle.subjectId) && (
+                <h2 className="text-lg font-semibold text-card-foreground">{bundle.subjectOriginalCode ?? bundle.subjectCode} — {bundle.subjectName}</h2>
+              )}
+              <div className={v.cardClass}>
+                <h3 className="flex flex-wrap items-center gap-x-2 gap-y-1 text-sm font-medium text-card-foreground">
+                  <span className={v.badgeClass} title={`Paper ${bundle.paperNumber}`}>
+                    {v.badgeShortLabel}
+                  </span>
+                  <span>
+                    Paper {bundle.paperNumber}
+                    {bundle.examinationDate ? (
+                      <span className="ml-2 font-normal text-muted-foreground">· Scheduled {bundle.examinationDate}</span>
+                    ) : (
+                      <span className="ml-2 font-normal text-muted-foreground">· No date in timetable</span>
+                    )}
+                  </span>
+                </h3>
+                <ul className="mt-2 space-y-4">
+                  {bundle.series.map((slot) => renderSeriesRow(bundle.subjectId, bundle.paperNumber, slot))}
+                </ul>
+              </div>
+            </Fragment>
+          );
+        })}
       </div>
     );
   }
@@ -420,6 +591,11 @@ export default function InspectorIrregularScriptsControlPage() {
           <p className="text-sm text-muted-foreground">
             Record irregular worked scripts separately from regular worked scripts, per subject, paper, and series. This is optional and only needed when irregular scripts occur.
             {data ? <> <span className="font-medium text-foreground">{scriptCapsSummary(data)}</span></> : null}
+          </p>
+          <p className="text-xs text-muted-foreground">
+            <span className="font-medium text-accent">Blue accent</span> marks Paper 1 sections;{" "}
+            <span className="font-medium text-success">green accent</span> marks Paper 2. Match irregular counts to the
+            correct paper before saving.
           </p>
 
           <div>
@@ -466,12 +642,23 @@ export default function InspectorIrregularScriptsControlPage() {
                 <section className="space-y-3">
                   <h2 className="text-base font-semibold text-foreground">Upcoming</h2>
                   <ul className="space-y-2 rounded-2xl border border-border bg-card p-4 sm:p-5">
-                    {grouped.upcoming.map((b) => (
-                      <li key={`${b.subjectId}-${b.paperNumber}`} className="text-sm text-foreground border-b border-border/60 pb-2 last:border-b-0 last:pb-0">
-                        <span className="font-medium">{b.subjectOriginalCode ?? b.subjectCode} — {b.subjectName}</span>
-                        <span className="text-muted-foreground"> · Paper {b.paperNumber}{b.series.length > 1 ? ` · ${b.series.length} series` : ""}{b.examinationDate ? ` · ${b.examinationDate}` : ""}</span>
-                      </li>
-                    ))}
+                    {groupUpcomingBundlesBySubjectAndDate(grouped.upcoming).map((bundles) => {
+                      const b = bundles[0];
+                      const nums = bundles.map((x) => x.paperNumber).join("-");
+                      return (
+                        <li
+                          key={`${b.subjectId}-${nums}-${b.examinationDate ?? "na"}`}
+                          className="flex flex-col gap-1 border-b border-border/60 pb-2 text-sm text-foreground last:border-b-0 last:pb-0 sm:flex-row sm:flex-wrap sm:items-baseline sm:gap-x-1.5 sm:gap-y-0"
+                        >
+                          <span className="font-medium">{b.subjectOriginalCode ?? b.subjectCode} — {b.subjectName}</span>
+                          <span className="text-muted-foreground">
+                            <span className="hidden sm:inline">· </span>
+                            {formatUpcomingPapersLabel(bundles)}
+                            {b.examinationDate ? ` · ${b.examinationDate}` : ""}
+                          </span>
+                        </li>
+                      );
+                    })}
                   </ul>
                 </section>
               ) : null}

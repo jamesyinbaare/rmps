@@ -31,6 +31,7 @@ import {
   type ScriptControlAdminRow,
 } from "@/lib/api";
 import { REGION_OPTIONS, ZONE_OPTIONS } from "@/lib/school-enums";
+import { packingItemNounForCount } from "@/lib/script-packing-terms";
 
 type MergedRow = {
   examination_id: number;
@@ -203,7 +204,8 @@ function SeriesEnvelopeCell({
         {envs.map((e) => (
           <li key={e.envelope_number} className="flex flex-col items-start gap-1 text-[11px] leading-snug">
             <span className="w-full break-words tabular-nums text-muted-foreground">
-              Env {e.envelope_number}: {e.booklet_count}
+              Env {e.envelope_number}: {e.booklet_count}{" "}
+              {packingItemNounForCount(e.booklet_count, row.paper_number)}
             </span>
             {e.verified ? (
               <Badge variant="secondary" className="w-fit shrink-0 text-[10px]">
@@ -301,6 +303,14 @@ export default function AdminScriptControlPage() {
           : debouncedSchoolSearch.trim(),
     };
   }, [debouncedSchoolSearch, examId, paperNumber, region, schoolId, subjectId, zone]);
+
+  const adminPackedTableCopy = useMemo(() => {
+    const n = parseInt(paperNumber.trim(), 10);
+    if (Number.isFinite(n) && n === 1) {
+      return { packedPlural: "scannables", totalPackedHeader: "Total scannables" };
+    }
+    return { packedPlural: "booklets", totalPackedHeader: "Total booklets" };
+  }, [paperNumber]);
 
   const fetchRecords = useCallback(async () => {
     if (!scriptControlListParams) {
@@ -540,7 +550,7 @@ export default function AdminScriptControlPage() {
         accessorFn: (row) => seriesBlockBookletTotal(row.bySeries[sn]),
         header: () => (
           <abbr
-            title={`Series ${sn} — booklets packed in this script batch`}
+            title={`Series ${sn} — ${adminPackedTableCopy.packedPlural} packed in this script batch`}
             className="cursor-help whitespace-nowrap font-semibold no-underline tabular-nums tracking-tight"
           >
             S{sn}
@@ -564,7 +574,7 @@ export default function AdminScriptControlPage() {
       {
         id: "series_total_booklets",
         accessorFn: (row) => mergedRowTotalBooklets(row, maxSeriesColumns),
-        header: "Total booklets",
+        header: adminPackedTableCopy.totalPackedHeader,
         meta: SCRIPT_TABLE_META.total,
         cell: ({ row }) => (
           <span className="tabular-nums text-base font-semibold text-foreground">
@@ -593,6 +603,7 @@ export default function AdminScriptControlPage() {
 
     return base;
   }, [
+    adminPackedTableCopy,
     listResponse?.registered_candidates_by_school_subject,
     maxSeriesColumns,
     seriesGrandTotals,
@@ -934,7 +945,7 @@ export default function AdminScriptControlPage() {
               </span>
               <span className="inline-flex items-center gap-1.5">
                 <span className="inline-block h-3.5 w-3.5 shrink-0 rounded-sm bg-slate-100 ring-1 ring-border/40 dark:bg-slate-900/55" />
-                Total booklets
+                {adminPackedTableCopy.totalPackedHeader}
               </span>
               <span className="inline-flex items-center gap-1.5">
                 <span className="inline-block h-3.5 w-3.5 shrink-0 rounded-sm bg-emerald-50/90 ring-1 ring-border/40 dark:bg-emerald-950/40" />

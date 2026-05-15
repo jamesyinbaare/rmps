@@ -7,6 +7,10 @@ import { RoleGuard } from "@/components/role-guard";
 import { formInputClass, formLabelClass } from "@/lib/form-classes";
 import { depotPaperBadgeClass, depotPaperCardAccentClass } from "@/lib/depot-script-paper-visual";
 import {
+  irregularPackingItemPlural,
+  irregularPackingNounForCount,
+} from "@/lib/script-packing-terms";
+import {
   apiJson,
   getDepotSchoolIrregularScriptControl,
   getDepotSchools,
@@ -266,7 +270,8 @@ export default function DepotKeeperIrregularScriptsControlPage() {
       <DashboardShell title="Irregular Worked Scripts Control (Verify)" staffRole="depot-keeper">
         <div className="space-y-6">
           <p className="text-sm text-muted-foreground">
-            Choose an exam and school. This page lists only irregular script packing—check booklet counts, then tap Verify or Unverify.
+            Choose an exam and school. This page lists only irregular script packing—check each envelope’s count
+            (irregular scannables for Paper 1, irregular booklets for other papers), then tap Verify or Unverify.
           </p>
           {loadError ? <p className="rounded-lg border border-destructive/40 bg-destructive/10 px-3 py-2 text-sm text-destructive">{loadError}</p> : null}
           {actionError ? <p className="rounded-lg border border-destructive/40 bg-destructive/10 px-3 py-2 text-sm text-destructive">{actionError}</p> : null}
@@ -365,7 +370,7 @@ export default function DepotKeeperIrregularScriptsControlPage() {
                                 <p className="text-sm font-semibold text-foreground">{subject.subject_original_code ?? subject.subject_code} — {subject.subject_name}</p>
                                 <p className="mt-0.5 text-xs text-muted-foreground">
                                   {subject.papers.length} papers · series per paper: {subjectSeriesPerPaperSummary(subject)} ·{" "}
-                                  {packingTotals.envelopeCount} envelopes · {packingTotals.totalBooklets} irregular booklets
+                                  {packingTotals.envelopeCount} envelopes · {packingTotals.totalBooklets} packed items
                                 </p>
                               </div>
                               <button
@@ -451,7 +456,7 @@ export default function DepotKeeperIrregularScriptsControlPage() {
                                             <p className="text-sm font-semibold text-foreground">Series {ser.series_number}</p>
                                             {!packing ? <p className="mt-1 text-xs text-muted-foreground">Not recorded by inspector</p> : (
                                               <>
-                                                <p className="mt-1 text-xs text-muted-foreground">{st!.envelopeCount} envelopes · {st!.totalBooklets} irregular booklets</p>
+                                                <p className="mt-1 text-xs text-muted-foreground">{st!.envelopeCount} envelopes · {st!.totalBooklets} {irregularPackingItemPlural(paper.paper_number)}</p>
                                                 <ul className="mt-3 space-y-2 border-t border-border/60 pt-3">
                                                   {packing.envelopes.map((env) => {
                                                     const vkey = `${subject.subject_id}-${paper.paper_number}-${ser.series_number}-${env.envelope_number}`;
@@ -463,7 +468,7 @@ export default function DepotKeeperIrregularScriptsControlPage() {
                                                         className="flex flex-col gap-2 rounded-md bg-background/50 px-2 py-2 sm:flex-row sm:items-center sm:justify-between"
                                                       >
                                                         <div className="min-w-0">
-                                                          <span className="text-sm font-medium text-foreground">Envelope {env.envelope_number} · {env.booklet_count} irregular booklets</span>
+                                                          <span className="text-sm font-medium text-foreground">Envelope {env.envelope_number} · {env.booklet_count} {irregularPackingNounForCount(env.booklet_count, paper.paper_number)}</span>
                                                           <p className="mt-1 text-xs text-muted-foreground">{done ? "Verified" : "Not verified"}</p>
                                                         </div>
                                                         <button type="button" className={done ? "inline-flex min-h-11 w-full items-center justify-center rounded-lg border border-input-border bg-background px-3 text-sm font-medium text-foreground transition-colors hover:bg-muted focus:outline-none focus:ring-2 focus:ring-ring/30 sm:min-h-10 sm:w-auto" : `${btnPrimary} w-full sm:w-auto`} disabled={busy || verifying} onClick={() => void onToggleVerify(subject.subject_id, paper.paper_number, ser.series_number, env.envelope_number, !done)}>
