@@ -94,7 +94,7 @@ inspector_only = RoleChecker(allowed_roles={UserRole.INSPECTOR})
 depot_keeper_only = RoleChecker(allowed_roles={UserRole.DEPOT_KEEPER})
 supervisor_or_inspector = RoleChecker(allowed_roles={UserRole.SUPERVISOR, UserRole.INSPECTOR})
 supervisor_inspector_or_depot_keeper = RoleChecker(
-    allowed_roles={UserRole.SUPERVISOR, UserRole.INSPECTOR, UserRole.DEPOT_KEEPER},
+    allowed_roles={UserRole.SUPER_ADMIN, UserRole.SUPERVISOR, UserRole.INSPECTOR, UserRole.DEPOT_KEEPER},
 )
 exam_document_reader = RoleChecker(
     allowed_roles={UserRole.SUPER_ADMIN, UserRole.SUPERVISOR, UserRole.INSPECTOR, UserRole.DEPOT_KEEPER},

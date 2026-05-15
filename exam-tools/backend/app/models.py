@@ -838,6 +838,77 @@ class AllocationAssignment(Base):
     )
 
 
+class ExamOfficialDesignation(enum.Enum):
+    """Role label for personnel at an examination school (inspector capture form)."""
+
+    DEPOT_KEEPER = "Depot Keeper"
+    SUPERVISOR = "Supervisor"
+    ASSISTANT_SUPERVISOR = "Assistant Supervisor"
+    INVIGILATOR = "Invigilator"
+    POLICE_OFFICER = "Police Officer"
+
+
+class BankBranch(Base):
+    """Ghana bank branch directory (6-digit sort code); super-admin bulk upload, inspector pickers."""
+
+    __tablename__ = "bank_branches"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    bank_code = Column(String(32), unique=True, nullable=False, index=True)
+    bank_name = Column(String(255), nullable=False)
+    branch_name = Column(String(255), nullable=False)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+
+    exam_officials = relationship("ExamCentreOfficial", back_populates="bank_branch")
+
+
+class ExamCentreOfficial(Base):
+    """Examination official payment/contact details per examination centre (host school)."""
+
+    __tablename__ = "exam_centre_officials"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    examination_id = Column(Integer, ForeignKey("examinations.id", ondelete="CASCADE"), nullable=False, index=True)
+    center_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("schools.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+        doc="Examination centre host school id.",
+    )
+    full_name = Column(String(255), nullable=False)
+    designation = Column(
+        Enum(
+            ExamOfficialDesignation,
+            values_callable=lambda x: [i.value for i in x],
+            native_enum=False,
+            length=64,
+        ),
+        nullable=False,
+    )
+    bank_branch_id = Column(UUID(as_uuid=True), ForeignKey("bank_branches.id", ondelete="RESTRICT"), nullable=False, index=True)
+    account_number = Column(String(13), nullable=False)
+    num_days = Column(SmallInteger, nullable=False)
+    telephone_number = Column(String(10), nullable=False)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+
+    examination = relationship("Examination", backref="exam_centre_officials")
+    center = relationship("School", foreign_keys=[center_id], backref="exam_centre_officials")
+    bank_branch = relationship("BankBranch", back_populates="exam_officials")
+
+    __table_args__ = (
+        CheckConstraint("num_days >= 1", name="ck_exam_school_official_num_days"),
+        CheckConstraint("length(account_number) = 13 AND account_number ~ '^[0-9]{13}$'", name="ck_exam_school_official_account"),
+        CheckConstraint(
+            "telephone_number ~ '^0(20|23|24|25|26|27|28|29|50|54|55|56|57|59)[0-9]{7}$'",
+            name="ck_exam_school_official_telephone_gh",
+        ),
+        Index("ix_exam_centre_officials_exam_center", "examination_id", "center_id"),
+    )
+
+
 class QuestionPaperControl(Base):
     """Per examination centre (host school), subject, paper, and series: question paper stock counts."""
 

@@ -100,6 +100,7 @@ export function DashboardShell({ title, children, staffRole }: Props) {
   const scriptsHref = `${staffBase}/scripts-control`;
   const irregularScriptsHref = `${staffBase}/irregular-scripts-control`;
   const questionPaperHref = `${staffBase}/question-paper-control`;
+  const examOfficialsHref = `${staffBase}/exam-officials`;
   const examinationNoticeHref = `${staffBase}/examination-notice`;
 
   const staffNav = [
@@ -142,7 +143,23 @@ export function DashboardShell({ title, children, staffRole }: Props) {
       label: "Documents",
       active: pathname.startsWith(documentsHref),
     },
+    ...(staffRole === "inspector"
+      ? [
+          {
+            href: examOfficialsHref,
+            label: "Official account details",
+            active: pathname.startsWith(examOfficialsHref),
+          },
+        ]
+      : []),
   ];
+  const inspectorExamOfficialsItem =
+    staffRole === "inspector"
+      ? (staffNav.find((item) => item.href === examOfficialsHref) ?? null)
+      : null;
+  const staffNavMain = inspectorExamOfficialsItem
+    ? staffNav.filter((item) => item.href !== examOfficialsHref)
+    : staffNav;
 
   return (
     <div
@@ -170,21 +187,38 @@ export function DashboardShell({ title, children, staffRole }: Props) {
             </p>
             <p className="mt-1 text-sm font-semibold text-card-foreground">{roleLabel}</p>
           </div>
-          <nav className="flex flex-1 flex-col gap-1 p-3" aria-label="Dashboard sections">
-            {staffNav.map((item) => (
-              <Link
-                key={item.href}
-                href={item.href}
-                onClick={() => setSidebarOpen(false)}
-                className={`rounded-lg px-3 py-2.5 text-sm font-medium transition-colors ${
-                  item.active
-                    ? "bg-primary text-primary-foreground"
-                    : "text-card-foreground hover:bg-muted"
-                } ${inputFocusRing}`}
-              >
-                {item.label}
-              </Link>
-            ))}
+          <nav className="flex flex-1 flex-col p-3" aria-label="Dashboard sections">
+            <div className="flex flex-col gap-1">
+              {staffNavMain.map((item) => (
+                <Link
+                  key={item.href}
+                  href={item.href}
+                  onClick={() => setSidebarOpen(false)}
+                  className={`rounded-lg px-3 py-2.5 text-sm font-medium transition-colors ${
+                    item.active
+                      ? "bg-primary text-primary-foreground"
+                      : "text-card-foreground hover:bg-muted"
+                  } ${inputFocusRing}`}
+                >
+                  {item.label}
+                </Link>
+              ))}
+            </div>
+            {inspectorExamOfficialsItem ? (
+              <div className="mt-auto flex flex-col gap-1 border-t border-border pb-3 pt-3">
+                <Link
+                  href={inspectorExamOfficialsItem.href}
+                  onClick={() => setSidebarOpen(false)}
+                  className={`rounded-lg px-3 py-2.5 text-sm font-medium transition-colors ${
+                    inspectorExamOfficialsItem.active
+                      ? "bg-primary text-primary-foreground"
+                      : "text-card-foreground hover:bg-muted"
+                  } ${inputFocusRing}`}
+                >
+                  {inspectorExamOfficialsItem.label}
+                </Link>
+              </div>
+            ) : null}
           </nav>
         </div>
       </aside>

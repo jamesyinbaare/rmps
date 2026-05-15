@@ -15,13 +15,16 @@ from app.config import logging_settings, settings
 from app.dependencies.database import get_sessionmanager, initialize_db
 from app.initial_data import ensure_super_admin_user
 from app.routers import (
+    admin_exam_officials,
     auth,
+    bank_branches,
     depots,
     documents,
+    exam_officials,
     examination_candidates,
-    examiners,
-    examiner_groups,
     examinations,
+    examiner_groups,
+    examiners,
     inspectors,
     programmes,
     question_paper_control,
@@ -188,6 +191,9 @@ app.include_router(examination_candidates.router)
 app.include_router(script_control.router)
 app.include_router(script_allocation.router)
 app.include_router(question_paper_control.router)
+app.include_router(bank_branches.router)
+app.include_router(exam_officials.router)
+app.include_router(admin_exam_officials.router)
 app.include_router(documents.router)
 
 

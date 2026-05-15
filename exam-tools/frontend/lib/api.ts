@@ -456,6 +456,80 @@ export type MyCenterSchoolsResponse = {
   schools: CenterScopeSchoolItem[];
 };
 
+/** Ghana bank branch directory (6-digit sort code). */
+export type BankBranchRow = {
+  id: string;
+  bank_code: string;
+  bank_name: string;
+  branch_name: string;
+  created_at: string;
+  updated_at: string;
+};
+
+/** Show bank / sort codes as text (avoids numeric JSON being rendered without quotes). */
+export function displayBankCode(code: string | number | null | undefined): string {
+  if (code === null || code === undefined) return "";
+  if (typeof code === "number" && Number.isFinite(code)) {
+    return Number.isInteger(code) ? String(Math.trunc(code)) : String(code);
+  }
+  return String(code);
+}
+
+export type BankBranchListResponse = {
+  items: BankBranchRow[];
+  total: number;
+};
+
+export type BankBranchBulkUploadError = {
+  row_number: number;
+  error_message: string;
+};
+
+export type BankBranchBulkUploadResponse = {
+  total_rows: number;
+  successful: number;
+  failed: number;
+  errors: BankBranchBulkUploadError[];
+  created: number;
+  updated: number;
+};
+
+export type ListBankBranchesParams = {
+  bank_name?: string | null;
+  /** When set, only rows whose bank_name equals this string (exact). */
+  bank_name_exact?: string | null;
+  branch_name?: string | null;
+  skip?: number;
+  limit?: number;
+};
+
+export async function listBankBranches(params?: ListBankBranchesParams): Promise<BankBranchListResponse> {
+  const q = new URLSearchParams();
+  if (params?.bank_name_exact?.trim()) q.set("bank_name_exact", params.bank_name_exact.trim());
+  else if (params?.bank_name?.trim()) q.set("bank_name", params.bank_name.trim());
+  if (params?.branch_name?.trim()) q.set("branch_name", params.branch_name.trim());
+  if (params?.skip != null) q.set("skip", String(params.skip));
+  if (params?.limit != null) q.set("limit", String(params.limit));
+  const s = q.toString();
+  return apiJson<BankBranchListResponse>(`/bank-branches${s ? `?${s}` : ""}`);
+}
+
+export async function getDistinctBankNames(q?: string | null): Promise<string[]> {
+  const u = new URLSearchParams();
+  if (q?.trim()) u.set("q", q.trim());
+  const s = u.toString();
+  return apiJson<string[]>(`/bank-branches/distinct-bank-names${s ? `?${s}` : ""}`);
+}
+
+export async function uploadBankBranchesBulk(file: File): Promise<BankBranchBulkUploadResponse> {
+  const fd = new FormData();
+  fd.append("file", file);
+  return apiJson<BankBranchBulkUploadResponse>("/bank-branches/bulk-upload", {
+    method: "POST",
+    body: fd,
+  });
+}
+
 export type CentreScopeProgrammeItem = {
   id: number;
   code: string;
@@ -1063,6 +1137,140 @@ export async function deleteIrregularScriptSeries(
   await apiJson(`/examinations/${examId}/irregular-script-control/my-school/series?${q}`, {
     method: "DELETE",
   });
+}
+
+export type ExamOfficialDesignation =
+  | "Depot Keeper"
+  | "Supervisor"
+  | "Assistant Supervisor"
+  | "Invigilator"
+  | "Police Officer";
+
+export type ExamCentreOfficialResponse = {
+  id: string;
+  examination_id: number;
+  center_id: string;
+  full_name: string;
+  designation: ExamOfficialDesignation;
+  bank_branch_id: string;
+  bank_code: string;
+  bank_name: string;
+  branch_name: string;
+  account_number: string;
+  num_days: number;
+  telephone_number: string;
+  created_at: string;
+  updated_at: string;
+};
+
+export type ExamCentreOfficialListResponse = {
+  items: ExamCentreOfficialResponse[];
+};
+
+export type ExamCentreOfficialCreatePayload = {
+  full_name: string;
+  designation: ExamOfficialDesignation;
+  bank_branch_id: string;
+  account_number: string;
+  num_days: number;
+  telephone_number: string;
+};
+
+export type ExamCentreOfficialUpdatePayload = {
+  full_name?: string;
+  designation?: ExamOfficialDesignation;
+  bank_branch_id?: string;
+  account_number?: string;
+  num_days?: number;
+  telephone_number?: string;
+};
+
+export async function getExamOfficialsForMyCentre(examId: number): Promise<ExamCentreOfficialListResponse> {
+  return apiJson<ExamCentreOfficialListResponse>(`/examinations/${examId}/exam-officials/my-centre`);
+}
+
+export async function createExamOfficial(
+  examId: number,
+  payload: ExamCentreOfficialCreatePayload,
+): Promise<ExamCentreOfficialResponse> {
+  return apiJson<ExamCentreOfficialResponse>(`/examinations/${examId}/exam-officials/my-centre`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function updateExamOfficial(
+  examId: number,
+  officialId: string,
+  payload: ExamCentreOfficialUpdatePayload,
+): Promise<ExamCentreOfficialResponse> {
+  return apiJson<ExamCentreOfficialResponse>(
+    `/examinations/${examId}/exam-officials/my-centre/${officialId.trim()}`,
+    {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    },
+  );
+}
+
+export async function deleteExamOfficial(examId: number, officialId: string): Promise<void> {
+  await apiJson(`/examinations/${examId}/exam-officials/my-centre/${officialId.trim()}`, {
+    method: "DELETE",
+  });
+}
+
+export type AdminExamCentreOfficialRow = {
+  id: string;
+  examination_id: number;
+  examination_label: string;
+  center_id: string;
+  center_code: string;
+  center_name: string;
+  full_name: string;
+  designation: string;
+  bank_branch_id: string;
+  bank_code: string;
+  bank_name: string;
+  branch_name: string;
+  account_number: string;
+  num_days: number;
+  telephone_number: string;
+  created_at: string;
+  updated_at: string;
+};
+
+export type AdminExamCentreOfficialListResponse = {
+  items: AdminExamCentreOfficialRow[];
+  total: number;
+};
+
+export async function listAdminExamCentreOfficials(params: {
+  examination_id: number;
+  center_id?: string | null;
+  skip?: number;
+  limit?: number;
+}): Promise<AdminExamCentreOfficialListResponse> {
+  const q = new URLSearchParams();
+  q.set("examination_id", String(params.examination_id));
+  if (params.center_id) q.set("center_id", params.center_id.trim());
+  if (params.skip != null) q.set("skip", String(params.skip));
+  if (params.limit != null) q.set("limit", String(params.limit));
+  return apiJson<AdminExamCentreOfficialListResponse>(`/admin/exam-centre-officials?${q.toString()}`);
+}
+
+export async function downloadAdminExamCentreOfficialsExport(params: {
+  examination_id: number;
+  layout: "zip" | "combined";
+  center_id?: string | null;
+  filename: string;
+}): Promise<void> {
+  const q = new URLSearchParams();
+  q.set("examination_id", String(params.examination_id));
+  q.set("layout", params.layout);
+  if (params.center_id) q.set("center_id", params.center_id.trim());
+  await downloadApiFile(`/admin/exam-centre-officials/export?${q.toString()}`, params.filename);
 }
 
 export type QuestionPaperSeriesSlotResponse = {

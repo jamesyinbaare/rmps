@@ -17,6 +17,8 @@ REQUIRED_COLUMNS = ("code", "name", "region", "zone")
 
 INSPECTOR_REQUIRED_COLUMNS = ("school_code", "phone_number", "full_name")
 
+BANK_BRANCH_REQUIRED_COLUMNS = ("bank_code", "bank_name", "branch_name")
+
 # Optional school bulk column: comma-separated programme codes (registration-portal parity).
 _PROGRAMMES_COLUMN_CANDIDATES = ("programme_codes", "programmes", "programme_list", "programme_code")
 
@@ -71,6 +73,56 @@ def validate_inspector_required_columns(df: pd.DataFrame) -> None:
     missing = [c for c in INSPECTOR_REQUIRED_COLUMNS if c not in df.columns]
     if missing:
         raise SchoolUploadParseError(f"Missing required columns: {', '.join(missing)}")
+
+
+def validate_bank_branch_required_columns(df: pd.DataFrame) -> None:
+    if df.empty:
+        raise SchoolUploadParseError("File has no data rows")
+    missing = [c for c in BANK_BRANCH_REQUIRED_COLUMNS if c not in df.columns]
+    if missing:
+        raise SchoolUploadParseError(f"Missing required columns: {', '.join(missing)}")
+
+
+def parse_bank_code_cell(val: Any) -> str:
+    """Bank / branch code as plain text (no integer coercion; preserves string cells from CSV/Excel).
+
+    Trims surrounding whitespace. For the common Excel float rendering ``123456.0``, strips the fractional part
+    without casting through ``int`` so values that were already strings stay strings.
+    """
+    if val is None or isinstance(val, bool):
+        raise ValueError("bank_code is required")
+    if isinstance(val, float) and pd.isna(val):
+        raise ValueError("bank_code is required")
+    try:
+        if pd.isna(val):
+            raise ValueError("bank_code is required")
+    except (TypeError, ValueError):
+        pass
+
+    if isinstance(val, str):
+        s = val.strip()
+    else:
+        s = str(val).strip()
+        if s.lower() in ("nan", "none", "<na>"):
+            raise ValueError("bank_code is required")
+        m = re.fullmatch(r"(.+)\.0+", s)
+        if m:
+            s = m.group(1).strip()
+
+    if not s:
+        raise ValueError("bank_code is required")
+    if len(s) > 32:
+        raise ValueError("bank_code must be at most 32 characters")
+    return s
+
+
+def parse_bank_branch_label(val: Any, field_label: str) -> str:
+    s = _cell_str(val)
+    if not s:
+        raise ValueError(f"{field_label} is required")
+    if len(s) > 255:
+        raise ValueError(f"{field_label} is too long (max 255 characters)")
+    return s
 
 
 def find_programmes_column(df: pd.DataFrame) -> str | None:

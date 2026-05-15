@@ -10,6 +10,9 @@ import { clearAuth, getMe, type UserMe } from "@/lib/auth";
 const inputFocusRing =
   "focus:border-primary focus:outline-none focus:ring-2 focus:ring-ring/30";
 
+const BANK_DIRECTORY_HREF = "/dashboard/admin/bank-directory";
+const EXAM_OFFICIALS_HREF = "/dashboard/admin/exam-officials";
+
 const nav = [
   { href: "/dashboard/admin", label: "Overview" },
   { href: "/dashboard/admin/examinations", label: "Examinations" },
@@ -19,6 +22,7 @@ const nav = [
   { href: "/dashboard/admin/examination-centres", label: "Examination centres" },
   { href: "/dashboard/admin/users", label: "Users" },
   { href: "/dashboard/admin/depots", label: "Depots" },
+  { href: BANK_DIRECTORY_HREF, label: "Bank directory" },
   { href: "/dashboard/admin/timetable", label: "Examination timetable" },
   { href: "/dashboard/admin/monitoring", label: "Exam overview" },
   { href: "/dashboard/admin/script-control", label: "Worked scripts control" },
@@ -38,6 +42,14 @@ const TEST_ADMIN_OFFICER_NAV_HREFS = [
   SCRIPTS_ALLOCATION_HREF,
 ];
 
+type NavLinkItem = { type: "link"; href: string; label: string };
+type NavHeadingItem = { type: "heading"; label: string };
+type NavEntry = NavLinkItem | NavHeadingItem;
+
+function toLinkItem(item: { href: string; label: string }): NavLinkItem {
+  return { type: "link", href: item.href, label: item.label };
+}
+
 type Props = {
   children: React.ReactNode;
 };
@@ -55,12 +67,23 @@ export function AdminDashboardShell({ children }: Props) {
       .catch(() => setMe(null));
   }, []);
 
-  const visibleNav = useMemo(() => {
+  const visibleNavEntries = useMemo((): NavEntry[] | null => {
     if (!me) return null;
     if (me.role === "TEST_ADMIN_OFFICER") {
-      return nav.filter((item) => TEST_ADMIN_OFFICER_NAV_HREFS.includes(item.href));
+      return nav.filter((item) => TEST_ADMIN_OFFICER_NAV_HREFS.includes(item.href)).map(toLinkItem);
     }
-    return nav;
+    if (me.role === "SUPER_ADMIN") {
+      const bankItem = nav.find((n) => n.href === BANK_DIRECTORY_HREF);
+      const withoutBank = nav.filter((n) => n.href !== BANK_DIRECTORY_HREF);
+      if (!bankItem) return nav.map(toLinkItem);
+      return [
+        ...withoutBank.map(toLinkItem),
+        { type: "heading", label: "Finance" },
+        { type: "link", href: bankItem.href, label: bankItem.label },
+        { type: "link", href: EXAM_OFFICIALS_HREF, label: "Official account details" },
+      ];
+    }
+    return nav.map(toLinkItem);
   }, [me]);
 
   const isMonitoringOfficer = me?.role === "TEST_ADMIN_OFFICER";
@@ -96,19 +119,31 @@ export function AdminDashboardShell({ children }: Props) {
               {isMonitoringOfficer ? "Monitoring" : "Administration"}
             </p>
           </div>
-          <nav className="flex flex-1 flex-col gap-1 p-3">
-            {visibleNav === null ? (
+          <nav className="flex flex-1 flex-col gap-1 p-3" aria-label="Dashboard sections">
+            {visibleNavEntries === null ? (
               <p className="px-3 text-sm text-muted-foreground">Loading…</p>
             ) : (
-              visibleNav.map((item) => {
+              visibleNavEntries.map((entry) => {
+                if (entry.type === "heading") {
+                  return (
+                    <div
+                      key={`heading-${entry.label}`}
+                      className="mt-4 border-t border-border px-3 pt-4"
+                    >
+                      <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                        {entry.label}
+                      </p>
+                    </div>
+                  );
+                }
                 const active =
-                  item.href === "/dashboard/admin"
-                    ? pathname === item.href
-                    : pathname === item.href || pathname.startsWith(`${item.href}/`);
+                  entry.href === "/dashboard/admin"
+                    ? pathname === entry.href
+                    : pathname === entry.href || pathname.startsWith(`${entry.href}/`);
                 return (
                   <Link
-                    key={item.href}
-                    href={item.href}
+                    key={entry.href}
+                    href={entry.href}
                     onClick={() => setSidebarOpen(false)}
                     className={`rounded-lg px-3 py-2.5 text-sm font-medium transition-colors ${
                       active
@@ -116,7 +151,7 @@ export function AdminDashboardShell({ children }: Props) {
                         : "text-card-foreground hover:bg-muted"
                     } ${inputFocusRing}`}
                   >
-                    {item.label}
+                    {entry.label}
                   </Link>
                 );
               })
