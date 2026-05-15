@@ -67,11 +67,11 @@ class MySchoolScriptControlResponse(BaseModel):
     )
     scripts_per_envelope_paper_1: int = Field(
         ge=1,
-        description="Effective maximum booklets per envelope for paper 1.",
+        description="Effective maximum scannables per envelope for paper 1.",
     )
     scripts_per_envelope_paper_2: int = Field(
         ge=1,
-        description="Effective maximum booklets per envelope for paper 2.",
+        description="Effective maximum answer booklets per envelope for paper 2.",
     )
     subjects: list[ScriptSubjectRowResponse]
 

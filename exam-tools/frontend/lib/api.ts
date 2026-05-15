@@ -828,9 +828,9 @@ export type MySchoolScriptControlResponse = {
   school_code: string;
   /** Maximum for papers other than 1 and 2; default when paper-specific caps match this. */
   scripts_per_envelope: number;
-  /** Effective max booklets per envelope for paper 1. */
+  /** Effective max scannables per envelope for paper 1. */
   scripts_per_envelope_paper_1: number;
-  /** Effective max booklets per envelope for paper 2. */
+  /** Effective max answer booklets per envelope for paper 2. */
   scripts_per_envelope_paper_2: number;
   subjects: ScriptSubjectRowResponse[];
 };

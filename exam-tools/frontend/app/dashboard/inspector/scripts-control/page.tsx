@@ -12,6 +12,12 @@ import {
   seriesInspectorBadgeClass,
 } from "@/lib/paper-inspector-styles";
 import {
+  packingCountDescriptor,
+  packingCountFieldLabel,
+  packingCountTypePhrase,
+  packingItemPlural,
+} from "@/lib/script-packing-terms";
+import {
   apiJson,
   deleteScriptSeries,
   getMySchoolScriptControl,
@@ -107,11 +113,12 @@ function missingEnvelopesInConsecutivePrefix(envelopeNumbers: number[]): number[
   return missing;
 }
 
-function consecutiveEnvelopeNumbersMessage(envelopeNumbers: number[]): string {
+function consecutiveEnvelopeNumbersMessage(paperNumber: number, envelopeNumbers: number[]): string {
   const missing = missingEnvelopesInConsecutivePrefix(envelopeNumbers);
-  const base = "You can't record envelopes with empty or zero booklets.";
+  const items = packingItemPlural(paperNumber);
+  const base = `You can't record envelopes with empty or zero ${items}.`;
   if (missing.length === 0) {
-    return `${base} Each envelope from 1 up to the number you're saving must have a booklet count.`;
+    return `${base} Each envelope from 1 up to the number you're saving must have a ${packingCountDescriptor(paperNumber)}.`;
   }
   const listed =
     missing.length === 1 ? `envelope ${missing[0]}` : `envelopes ${missing.join(", ")}`;
@@ -123,12 +130,12 @@ function scriptCapsSummary(d: MySchoolScriptControlResponse): string {
   const p1 = d.scripts_per_envelope_paper_1;
   const p2 = d.scripts_per_envelope_paper_2;
   if (p1 === p2 && p2 === g) {
-    return `Each envelope may hold at most ${g} booklets.`;
+    return `Paper 1: up to ${g} scannables per envelope. Paper 2 and other papers: up to ${g} booklets per envelope.`;
   }
   if (p1 === p2) {
-    return `Paper 1 and Paper 2: up to ${p1} booklets per envelope. Other papers: up to ${g} booklets per envelope.`;
+    return `Paper 1: up to ${p1} scannables per envelope; Paper 2: up to ${p1} booklets per envelope. Other papers: up to ${g} booklets per envelope.`;
   }
-  return `Paper 1: up to ${p1}; Paper 2: up to ${p2}; other papers: up to ${g} booklets per envelope.`;
+  return `Paper 1: up to ${p1} scannables; Paper 2: up to ${p2} booklets; other papers: up to ${g} booklets per envelope.`;
 }
 
 function maxBookletsForPaper(d: MySchoolScriptControlResponse, paperNumber: number): number {
@@ -306,18 +313,18 @@ export default function InspectorScriptsControlPage() {
     const cap = maxBookletsForPaper(data, editing.paperNumber);
     const toSave = envelopesToPersist(draft);
     if (toSave.length === 0) {
-      setFormError("Booklets counts can't be zero or empty.");
+      setFormError(`${packingCountTypePhrase(editing.paperNumber)} counts can't be zero or empty.`);
       return;
     }
     const nums = toSave.map((e) => e.envelope_number);
     if (!isConsecutiveFromOne(nums)) {
-      setFormError(consecutiveEnvelopeNumbersMessage(nums));
+      setFormError(consecutiveEnvelopeNumbersMessage(editing.paperNumber, nums));
       return;
     }
     for (const env of toSave) {
       if (env.booklet_count > cap) {
         setFormError(
-          `Envelope ${env.envelope_number}: at most ${cap} booklets for paper ${editing.paperNumber}.`,
+          `Envelope ${env.envelope_number}: at most ${cap} ${packingItemPlural(editing.paperNumber)} for paper ${editing.paperNumber}.`,
         );
         return;
       }
@@ -426,7 +433,7 @@ export default function InspectorScriptsControlPage() {
       isEditing &&
       toSave.length > 0 &&
       !isConsecutiveFromOne(toSave.map((e) => e.envelope_number))
-        ? consecutiveEnvelopeNumbersMessage(toSave.map((e) => e.envelope_number))
+        ? consecutiveEnvelopeNumbersMessage(paperNumber, toSave.map((e) => e.envelope_number))
         : null;
     const paperVisuals = getPaperInspectorVisuals(paperNumber);
     return (
@@ -445,7 +452,8 @@ export default function InspectorScriptsControlPage() {
                   <>
                     {packing.envelopes.length} envelope
                     {packing.envelopes.length === 1 ? "" : "s"},{" "}
-                    {packing.envelopes.reduce((s, e) => s + e.booklet_count, 0)} booklets total
+                    {packing.envelopes.reduce((s, e) => s + e.booklet_count, 0)}{" "}
+                    {packingItemPlural(paperNumber)} total
                   </>
                 ) : (
                   "Not recorded"
@@ -500,11 +508,13 @@ export default function InspectorScriptsControlPage() {
                 </button>
               </div>
               <p className="mt-1 text-xs text-muted-foreground">
-                Up to {capForPaper} booklets per envelope for Paper {paperNumber}.
+                Up to {capForPaper} {packingItemPlural(paperNumber)} per envelope for Paper {paperNumber}.
                 {paperNumber === 1 ? " Counts of 250 or more must be split into multiple envelopes." : ""}
               </p>
               {draft.envelopes.length === 0 ? (
-                <p className="mt-2 text-xs text-muted-foreground">Add envelopes and booklet counts, then save.</p>
+                <p className="mt-2 text-xs text-muted-foreground">
+                  Add envelopes and {packingCountDescriptor(paperNumber)}s, then save.
+                </p>
               ) : (
                 <ul className="mt-2 space-y-2">
                   {draft.envelopes.map((env, idx) => (
@@ -514,7 +524,7 @@ export default function InspectorScriptsControlPage() {
                     >
                       <div className="flex flex-col">
                         <span className={`${formLabelClass} invisible select-none`} aria-hidden>
-                          Booklets
+                          {packingCountFieldLabel(paperNumber)}
                         </span>
                         <div className="mt-1.5 flex min-h-11 items-center">
                           <span className="text-sm font-medium text-foreground">
@@ -523,11 +533,14 @@ export default function InspectorScriptsControlPage() {
                         </div>
                       </div>
                       <div className="flex min-w-0 flex-col">
-                        <label htmlFor={`script-booklets-${env.envelope_number}-${idx}`} className={formLabelClass}>
-                          Booklets
+                        <label
+                          htmlFor={`script-packing-count-p${paperNumber}-${env.envelope_number}-${idx}`}
+                          className={formLabelClass}
+                        >
+                          {packingCountFieldLabel(paperNumber)}
                         </label>
                         <input
-                          id={`script-booklets-${env.envelope_number}-${idx}`}
+                          id={`script-packing-count-p${paperNumber}-${env.envelope_number}-${idx}`}
                           type="number"
                           min={0}
                           className={`w-full min-w-0 ${formInputClass} ${
@@ -553,7 +566,7 @@ export default function InspectorScriptsControlPage() {
                       </div>
                       <div className="flex flex-col">
                         <span className={`${formLabelClass} invisible select-none`} aria-hidden>
-                          Booklets
+                          {packingCountFieldLabel(paperNumber)}
                         </span>
                         <div className="mt-1.5 flex min-h-11 items-center">
                           <button type="button" className={btnDanger} onClick={() => removeEnvelope(idx)}>
@@ -563,7 +576,8 @@ export default function InspectorScriptsControlPage() {
                       </div>
                       {env.booklet_count !== null && env.booklet_count > capForPaper ? (
                         <p className="col-start-2 text-xs leading-snug text-destructive">
-                          At most {capForPaper} for paper {paperNumber} (you entered {env.booklet_count}).
+                          At most {capForPaper} {packingItemPlural(paperNumber)} for paper {paperNumber} (you entered{" "}
+                          {env.booklet_count}).
                         </p>
                       ) : null}
                     </li>
@@ -636,9 +650,9 @@ export default function InspectorScriptsControlPage() {
       <DashboardShell title="Worked Scripts Control" staffRole="inspector">
         <div className="space-y-6">
           <p className="text-sm text-muted-foreground">
-            Record the number of booklets per envelope for each subject and
-            (series) after the scheduled paper date. Record Paper 1
-            and Paper 2 separately. Papers that are fully packed are grouped under “Past papers — packed”.
+            Record scannables per envelope for Paper 1 and booklets per envelope for Paper 2 and later papers, for each
+            subject and (series) after the scheduled paper date. Record Paper 1 and Paper 2 separately. Papers that are
+            fully packed are grouped under “Past papers — packed”.
             {data ? (
               <>
                 {" "}

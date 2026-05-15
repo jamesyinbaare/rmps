@@ -12,6 +12,11 @@ import {
   seriesInspectorBadgeClass,
 } from "@/lib/paper-inspector-styles";
 import {
+  irregularPackingItemPlural,
+  packingCountDescriptor,
+  packingCountFieldLabel,
+} from "@/lib/script-packing-terms";
+import {
   apiJson,
   deleteIrregularScriptSeries,
   getMySchoolIrregularScriptControl,
@@ -106,11 +111,12 @@ function missingEnvelopesInConsecutivePrefix(envelopeNumbers: number[]): number[
   return missing;
 }
 
-function consecutiveEnvelopeNumbersMessage(envelopeNumbers: number[]): string {
+function consecutiveEnvelopeNumbersMessage(paperNumber: number, envelopeNumbers: number[]): string {
   const missing = missingEnvelopesInConsecutivePrefix(envelopeNumbers);
-  const base = "You can't record envelopes with empty or zero booklets.";
+  const items = irregularPackingItemPlural(paperNumber);
+  const base = `You can't record envelopes with empty or zero ${items}.`;
   if (missing.length === 0) {
-    return `${base} Each envelope from 1 up to the number you're saving must have a booklet count.`;
+    return `${base} Each envelope from 1 up to the number you're saving must have a ${packingCountDescriptor(paperNumber)}.`;
   }
   const listed =
     missing.length === 1 ? `envelope ${missing[0]}` : `envelopes ${missing.join(", ")}`;
@@ -122,12 +128,12 @@ function scriptCapsSummary(d: MySchoolScriptControlResponse): string {
   const p1 = d.scripts_per_envelope_paper_1;
   const p2 = d.scripts_per_envelope_paper_2;
   if (p1 === p2 && p2 === g) {
-    return `Each envelope may hold at most ${g} irregular booklets.`;
+    return `Paper 1: up to ${g} irregular scannables per envelope. Paper 2 and other papers: up to ${g} irregular booklets per envelope.`;
   }
   if (p1 === p2) {
-    return `Paper 1 and Paper 2: up to ${p1} irregular booklets per envelope. Other papers: up to ${g} per envelope.`;
+    return `Paper 1: up to ${p1} irregular scannables per envelope; Paper 2: up to ${p1} irregular booklets per envelope. Other papers: up to ${g} irregular booklets per envelope.`;
   }
-  return `Paper 1: up to ${p1}; Paper 2: up to ${p2}; other papers: up to ${g} irregular booklets per envelope.`;
+  return `Paper 1: up to ${p1} irregular scannables; Paper 2: up to ${p2} irregular booklets; other papers: up to ${g} irregular booklets per envelope.`;
 }
 
 function maxBookletsForPaper(d: MySchoolScriptControlResponse, paperNumber: number): number {
@@ -290,18 +296,18 @@ export default function InspectorIrregularScriptsControlPage() {
     const cap = maxBookletsForPaper(data, editing.paperNumber);
     const toSave = envelopesToPersist(draft);
     if (toSave.length === 0) {
-      setFormError("Enter at least one booklet count to save.");
+      setFormError(`Enter at least one ${packingCountDescriptor(editing.paperNumber)} to save.`);
       return;
     }
     const nums = toSave.map((e) => e.envelope_number);
     if (!isConsecutiveFromOne(nums)) {
-      setFormError(consecutiveEnvelopeNumbersMessage(nums));
+      setFormError(consecutiveEnvelopeNumbersMessage(editing.paperNumber, nums));
       return;
     }
     for (const env of toSave) {
       if (env.booklet_count > cap) {
         setFormError(
-          `Envelope ${env.envelope_number}: at most ${cap} irregular booklets for paper ${editing.paperNumber}.`,
+          `Envelope ${env.envelope_number}: at most ${cap} ${irregularPackingItemPlural(editing.paperNumber)} for paper ${editing.paperNumber}.`,
         );
         return;
       }
@@ -395,7 +401,7 @@ export default function InspectorIrregularScriptsControlPage() {
       isEditing &&
       toSave.length > 0 &&
       !isConsecutiveFromOne(toSave.map((e) => e.envelope_number))
-        ? consecutiveEnvelopeNumbersMessage(toSave.map((e) => e.envelope_number))
+        ? consecutiveEnvelopeNumbersMessage(paperNumber, toSave.map((e) => e.envelope_number))
         : null;
     const paperVisuals = getPaperInspectorVisuals(paperNumber);
     return (
@@ -410,7 +416,8 @@ export default function InspectorIrregularScriptsControlPage() {
                 {packing ? (
                   <>
                     {packing.envelopes.length} envelope{packing.envelopes.length === 1 ? "" : "s"},{" "}
-                    {packing.envelopes.reduce((s, e) => s + e.booklet_count, 0)} irregular booklets total
+                    {packing.envelopes.reduce((s, e) => s + e.booklet_count, 0)}{" "}
+                    {irregularPackingItemPlural(paperNumber)} total
                   </>
                 ) : (
                   "Not recorded"
@@ -449,10 +456,12 @@ export default function InspectorIrregularScriptsControlPage() {
                 <button type="button" className={btnSecondary} onClick={addEnvelope}>Add envelope</button>
               </div>
               <p className="mt-1 text-xs text-muted-foreground">
-                Up to {capForPaper} irregular booklets per envelope for Paper {paperNumber}.
+                Up to {capForPaper} {irregularPackingItemPlural(paperNumber)} per envelope for Paper {paperNumber}.
               </p>
               {draft.envelopes.length === 0 ? (
-                <p className="mt-2 text-xs text-muted-foreground">Add irregular envelopes and booklet counts, then save.</p>
+                <p className="mt-2 text-xs text-muted-foreground">
+                  Add irregular envelopes and {packingCountDescriptor(paperNumber)}s, then save.
+                </p>
               ) : (
                 <ul className="mt-2 space-y-2">
                   {draft.envelopes.map((env, idx) => (
@@ -462,7 +471,7 @@ export default function InspectorIrregularScriptsControlPage() {
                     >
                       <div className="flex flex-col">
                         <span className={`${formLabelClass} invisible select-none`} aria-hidden>
-                          Booklets
+                          {packingCountFieldLabel(paperNumber)}
                         </span>
                         <div className="mt-1.5 flex min-h-11 items-center">
                           <span className="text-sm font-medium text-foreground">
@@ -471,11 +480,14 @@ export default function InspectorIrregularScriptsControlPage() {
                         </div>
                       </div>
                       <div className="flex min-w-0 flex-col">
-                        <label htmlFor={`irregular-booklets-${env.envelope_number}-${idx}`} className={formLabelClass}>
-                          Booklets
+                        <label
+                          htmlFor={`irregular-packing-count-p${paperNumber}-${env.envelope_number}-${idx}`}
+                          className={formLabelClass}
+                        >
+                          {packingCountFieldLabel(paperNumber)}
                         </label>
                         <input
-                          id={`irregular-booklets-${env.envelope_number}-${idx}`}
+                          id={`irregular-packing-count-p${paperNumber}-${env.envelope_number}-${idx}`}
                           type="number"
                           min={0}
                           className={`w-full min-w-0 ${formInputClass} ${
@@ -501,7 +513,7 @@ export default function InspectorIrregularScriptsControlPage() {
                       </div>
                       <div className="flex flex-col">
                         <span className={`${formLabelClass} invisible select-none`} aria-hidden>
-                          Booklets
+                          {packingCountFieldLabel(paperNumber)}
                         </span>
                         <div className="mt-1.5 flex min-h-11 items-center">
                           <button type="button" className={btnDanger} onClick={() => removeEnvelope(idx)}>
@@ -511,8 +523,8 @@ export default function InspectorIrregularScriptsControlPage() {
                       </div>
                       {env.booklet_count !== null && env.booklet_count > capForPaper ? (
                         <p className="col-start-2 text-xs leading-snug text-destructive">
-                          At most {capForPaper} irregular booklets for paper {paperNumber} (you entered{" "}
-                          {env.booklet_count}).
+                          At most {capForPaper} {irregularPackingItemPlural(paperNumber)} for paper {paperNumber} (you
+                          entered {env.booklet_count}).
                         </p>
                       ) : null}
                     </li>

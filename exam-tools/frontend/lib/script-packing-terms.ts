@@ -1,0 +1,37 @@
+/** User-facing nouns for script packing: Paper 1 uses scannables; other papers use booklets. */
+
+export function packingItemPlural(paperNumber: number): string {
+  return paperNumber === 1 ? "scannables" : "booklets";
+}
+
+export function packingItemSingular(paperNumber: number): string {
+  return paperNumber === 1 ? "scannable" : "booklet";
+}
+
+export function packingCountDescriptor(paperNumber: number): string {
+  return paperNumber === 1 ? "scannable count" : "booklet count";
+}
+
+export function packingCountFieldLabel(paperNumber: number): string {
+  return paperNumber === 1 ? "Scannables" : "Booklets";
+}
+
+export function irregularPackingItemPlural(paperNumber: number): string {
+  return paperNumber === 1 ? "irregular scannables" : "irregular booklets";
+}
+
+export function irregularPackingItemSingular(paperNumber: number): string {
+  return paperNumber === 1 ? "irregular scannable" : "irregular booklet";
+}
+
+export function packingItemNounForCount(count: number, paperNumber: number): string {
+  return count === 1 ? packingItemSingular(paperNumber) : packingItemPlural(paperNumber);
+}
+
+export function irregularPackingNounForCount(count: number, paperNumber: number): string {
+  return count === 1 ? irregularPackingItemSingular(paperNumber) : irregularPackingItemPlural(paperNumber);
+}
+
+export function packingCountTypePhrase(paperNumber: number): string {
+  return paperNumber === 1 ? "Scannable" : "Booklet";
+}

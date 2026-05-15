@@ -7,6 +7,11 @@ import { RoleGuard } from "@/components/role-guard";
 import { formInputClass, formLabelClass } from "@/lib/form-classes";
 import { depotPaperBadgeClass, depotPaperCardAccentClass } from "@/lib/depot-script-paper-visual";
 import {
+  packingCountFieldLabel,
+  packingItemNounForCount,
+  packingItemPlural,
+} from "@/lib/script-packing-terms";
+import {
   apiJson,
   getDepotSchoolScriptControl,
   getDepotSchools,
@@ -204,7 +209,7 @@ function countEnvelopes(groups: SubjectGroup[]): number {
   );
 }
 
-/** Envelope rows and booklet sums from recorded packing only. */
+/** Envelope rows and count sums from recorded packing only (API field: booklet_count). */
 function subjectPackingTotals(subject: SubjectGroup): { envelopeCount: number; totalBooklets: number } {
   let envelopeCount = 0;
   let totalBooklets = 0;
@@ -403,7 +408,8 @@ export default function DepotKeeperScriptsControlPage() {
       <DashboardShell title="Worked Scripts Control (Verify)" staffRole="depot-keeper">
         <div className="space-y-6">
           <p className="text-sm text-muted-foreground">
-            Choose an exam and school, check each envelope’s booklet count against what the inspector recorded, then tap Verify or Unverify.
+            Choose an exam and school, check each envelope’s count (scannables for Paper 1, booklets for other papers)
+            against what the inspector recorded, then tap Verify or Unverify.
           </p>
 
           {loadError ? (
@@ -619,7 +625,7 @@ export default function DepotKeeperScriptsControlPage() {
                                         <span className="tabular-nums font-semibold text-foreground">
                                           {packingTotals.totalBooklets}
                                         </span>
-                                        <span className="text-muted-foreground">booklets</span>
+                                        <span className="text-muted-foreground">packed items</span>
                                         <span className="text-border">·</span>
                                         <span className="tabular-nums font-semibold text-foreground">
                                           {subject.completion.completedSeries}/{subject.completion.totalSeries}
@@ -667,7 +673,7 @@ export default function DepotKeeperScriptsControlPage() {
                                         </div>
                                         <div>
                                           <p className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
-                                            Total booklets
+                                            Total packed items
                                           </p>
                                           <p className="mt-1 text-2xl font-bold tabular-nums leading-none tracking-tight text-foreground">
                                             {packingTotals.totalBooklets}
@@ -751,7 +757,7 @@ export default function DepotKeeperScriptsControlPage() {
                                                     <span className="font-semibold tabular-nums text-foreground">
                                                       {paperTotals.totalBooklets}
                                                     </span>{" "}
-                                                    booklets
+                                                    {packingItemPlural(paper.paper_number)}
                                                   </span>
                                                 </div>
                                               )}
@@ -788,7 +794,7 @@ export default function DepotKeeperScriptsControlPage() {
                                                               </div>
                                                               <div>
                                                                 <p className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
-                                                                  Booklets
+                                                                  {packingCountFieldLabel(paper.paper_number)}
                                                                 </p>
                                                                 <p className="mt-0.5 text-lg font-bold tabular-nums text-foreground">
                                                                   {st!.totalBooklets}
@@ -839,7 +845,7 @@ export default function DepotKeeperScriptsControlPage() {
                                                                       {env.booklet_count}
                                                                     </span>
                                                                     <span className="text-xs font-medium text-muted-foreground">
-                                                                      booklet{env.booklet_count === 1 ? "" : "s"}
+                                                                      {packingItemNounForCount(env.booklet_count, paper.paper_number)}
                                                                     </span>
                                                                   </div>
                                                                   {done ? (

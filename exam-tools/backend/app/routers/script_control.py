@@ -1,4 +1,4 @@
-"""Script packing (answer booklets in envelopes): inspector CRUD per school in centre scope; super admin list."""
+"""Script packing (Paper 1 scannables and other answer booklets in envelopes): inspector CRUD per school in centre scope; super admin list."""
 
 from datetime import datetime
 from typing import Literal
@@ -122,7 +122,23 @@ def _missing_envelopes_consecutive_prefix(nums_sorted: list[int]) -> list[int]:
     return [i for i in range(1, k + 1) if i not in present]
 
 
-def _envelopes_for_script_upsert(raw: list[ScriptEnvelopeItem]) -> list[ScriptEnvelopeItem]:
+def _packing_items_word(paper_number: int, *, irregular: bool) -> str:
+    """User-facing noun for counts in validation messages (Paper 1 → scannables)."""
+    if irregular:
+        return "irregular scannables" if paper_number == 1 else "irregular booklets"
+    return "scannables" if paper_number == 1 else "booklets"
+
+
+def _packing_count_descriptor(paper_number: int) -> str:
+    return "scannable count" if paper_number == 1 else "booklet count"
+
+
+def _envelopes_for_script_upsert(
+    raw: list[ScriptEnvelopeItem],
+    *,
+    paper_number: int,
+    irregular: bool = False,
+) -> list[ScriptEnvelopeItem]:
     """Keep only positive booklet counts; require envelope numbers to be 1..k consecutive."""
     items = [e for e in raw if e.booklet_count > 0]
     if not items:
@@ -131,14 +147,14 @@ def _envelopes_for_script_upsert(raw: list[ScriptEnvelopeItem]) -> list[ScriptEn
     expected = list(range(1, len(nums_sorted) + 1))
     if nums_sorted != expected:
         missing = _missing_envelopes_consecutive_prefix(nums_sorted)
-        base = "You can't record envelopes with empty or zero booklets."
+        items_word = _packing_items_word(paper_number, irregular=irregular)
+        base = f"You can't record envelopes with empty or zero {items_word}."
         if missing:
             listed = f"envelope {missing[0]}" if len(missing) == 1 else f"envelopes {', '.join(str(x) for x in missing)}"
             detail = f"{base} Missing: {listed}."
         else:
-            detail = (
-                f"{base} Each envelope from 1 up to the number you're saving must have a booklet count."
-            )
+            desc = _packing_count_descriptor(paper_number)
+            detail = f"{base} Each envelope from 1 up to the number you're saving must have a {desc}."
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=detail,
@@ -404,13 +420,14 @@ async def upsert_my_school_script_series(
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e)) from None
 
     cap = script_envelope_cap(body.paper_number)
-    items = _envelopes_for_script_upsert(body.envelopes)
+    items = _envelopes_for_script_upsert(body.envelopes, paper_number=body.paper_number, irregular=False)
+    items_word = _packing_items_word(body.paper_number, irregular=False)
     for env in items:
         if env.booklet_count > cap:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail=(
-                    f"Envelope {env.envelope_number}: at most {cap} booklets for paper {body.paper_number}."
+                    f"Envelope {env.envelope_number}: at most {cap} {items_word} for paper {body.paper_number}."
                 ),
             )
 
@@ -821,12 +838,13 @@ async def upsert_my_school_irregular_script_series(
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e)) from None
 
     cap = script_envelope_cap(body.paper_number)
-    items = _envelopes_for_script_upsert(body.envelopes)
+    items = _envelopes_for_script_upsert(body.envelopes, paper_number=body.paper_number, irregular=True)
+    items_word = _packing_items_word(body.paper_number, irregular=True)
     for env in items:
         if env.booklet_count > cap:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail=f"Envelope {env.envelope_number}: at most {cap} booklets for paper {body.paper_number}.",
+                detail=f"Envelope {env.envelope_number}: at most {cap} {items_word} for paper {body.paper_number}.",
             )
 
     stmt = (
