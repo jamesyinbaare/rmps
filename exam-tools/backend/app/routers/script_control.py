@@ -113,6 +113,39 @@ def _packing_to_response(ps: ScriptPackingSeries) -> ScriptSeriesPackingResponse
     )
 
 
+def _missing_envelopes_consecutive_prefix(nums_sorted: list[int]) -> list[int]:
+    """For a sorted list of envelope numbers with positive counts, gaps in required prefix 1..k (k = len)."""
+    if not nums_sorted:
+        return []
+    k = len(nums_sorted)
+    present = set(nums_sorted)
+    return [i for i in range(1, k + 1) if i not in present]
+
+
+def _envelopes_for_script_upsert(raw: list[ScriptEnvelopeItem]) -> list[ScriptEnvelopeItem]:
+    """Keep only positive booklet counts; require envelope numbers to be 1..k consecutive."""
+    items = [e for e in raw if e.booklet_count > 0]
+    if not items:
+        return []
+    nums_sorted = sorted(e.envelope_number for e in items)
+    expected = list(range(1, len(nums_sorted) + 1))
+    if nums_sorted != expected:
+        missing = _missing_envelopes_consecutive_prefix(nums_sorted)
+        base = "You can't record envelopes with empty or zero booklets."
+        if missing:
+            listed = f"envelope {missing[0]}" if len(missing) == 1 else f"envelopes {', '.join(str(x) for x in missing)}"
+            detail = f"{base} Missing: {listed}."
+        else:
+            detail = (
+                f"{base} Each envelope from 1 up to the number you're saving must have a booklet count."
+            )
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=detail,
+        )
+    return items
+
+
 async def _build_my_school_script_grid(
     session: DBSessionDep,
     exam_id: int,
@@ -371,7 +404,8 @@ async def upsert_my_school_script_series(
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e)) from None
 
     cap = script_envelope_cap(body.paper_number)
-    for env in body.envelopes:
+    items = _envelopes_for_script_upsert(body.envelopes)
+    for env in items:
         if env.booklet_count > cap:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
@@ -418,7 +452,7 @@ async def upsert_my_school_script_series(
         )
         session.add(row)
         await session.flush()
-        for item in body.envelopes:
+        for item in items:
             session.add(
                 ScriptEnvelope(
                     packing_series_id=row.id,
@@ -430,8 +464,8 @@ async def upsert_my_school_script_series(
     else:
         row.updated_by_id = user.id
         by_number = {e.envelope_number: e for e in row.envelopes}
-        wanted_numbers = {item.envelope_number for item in body.envelopes}
-        for item in body.envelopes:
+        wanted_numbers = {item.envelope_number for item in items}
+        for item in items:
             existing = by_number.get(item.envelope_number)
             if existing is not None:
                 if existing.booklet_count != item.booklet_count:
@@ -787,7 +821,8 @@ async def upsert_my_school_irregular_script_series(
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e)) from None
 
     cap = script_envelope_cap(body.paper_number)
-    for env in body.envelopes:
+    items = _envelopes_for_script_upsert(body.envelopes)
+    for env in items:
         if env.booklet_count > cap:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
@@ -832,7 +867,7 @@ async def upsert_my_school_irregular_script_series(
         )
         session.add(row)
         await session.flush()
-        for item in body.envelopes:
+        for item in items:
             session.add(
                 IrregularScriptEnvelope(
                     packing_series_id=row.id,
@@ -844,8 +879,8 @@ async def upsert_my_school_irregular_script_series(
     else:
         row.updated_by_id = user.id
         by_number = {e.envelope_number: e for e in row.envelopes}
-        wanted_numbers = {item.envelope_number for item in body.envelopes}
-        for item in body.envelopes:
+        wanted_numbers = {item.envelope_number for item in items}
+        for item in items:
             existing = by_number.get(item.envelope_number)
             if existing is not None:
                 existing.booklet_count = item.booklet_count

@@ -11,6 +11,10 @@ export type PaperInspectorVisuals = {
   editDividerClass: string;
 };
 
+/** Distinct from paper P1/P2 badges — warm secondary (gold) tint so series stands out. */
+export const seriesInspectorBadgeClass =
+  "inline-flex shrink-0 items-center rounded-md border border-secondary/50 bg-secondary/25 px-2.5 py-1 text-xs font-semibold tabular-nums text-secondary-foreground shadow-sm";
+
 /**
  * Merge consecutive upcoming rows that share the same subject and scheduled date
  * (e.g. Paper 1 and Paper 2 on the same day → one list row).
