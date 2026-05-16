@@ -2,7 +2,25 @@ import enum
 import uuid
 from datetime import datetime
 
-from sqlalchemy import JSON, Boolean, CheckConstraint, Column, Date, DateTime, Enum, Float, ForeignKey, Index, Integer, SmallInteger, String, Table, Text, UniqueConstraint
+from sqlalchemy import (
+    JSON,
+    Boolean,
+    CheckConstraint,
+    Column,
+    Date,
+    DateTime,
+    Enum,
+    Float,
+    ForeignKey,
+    Index,
+    Integer,
+    SmallInteger,
+    String,
+    Table,
+    Text,
+    UniqueConstraint,
+    text,
+)
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import relationship
 
@@ -129,6 +147,15 @@ class User(Base):
     refresh_tokens = relationship("RefreshToken", back_populates="user", cascade="all, delete-orphan")
     uploaded_exam_documents = relationship("ExamDocument", back_populates="uploaded_by")
     depot = relationship("Depot", back_populates="users")
+
+    __table_args__ = (
+        Index(
+            "ix_users_unique_phone_inspector",
+            "phone_number",
+            unique=True,
+            postgresql_where=text("role = 'INSPECTOR' AND phone_number IS NOT NULL"),
+        ),
+    )
 
 
 class RefreshToken(Base):
@@ -292,6 +319,21 @@ class Examination(Base):
         cascade="all, delete-orphan",
         order_by="ExaminerGroup.name",
     )
+
+
+class SystemSettings(Base):
+    """Singleton application settings; use ``id`` = 1."""
+
+    __tablename__ = "system_settings"
+
+    id = Column(Integer, primary_key=True)
+    active_examination_id = Column(
+        Integer,
+        ForeignKey("examinations.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+
+    active_examination = relationship("Examination", foreign_keys=[active_examination_id])
 
 
 class ExaminationSubjectScriptSeries(Base):
@@ -906,6 +948,60 @@ class ExamCentreOfficial(Base):
             name="ck_exam_school_official_telephone_gh",
         ),
         Index("ix_exam_centre_officials_exam_center", "examination_id", "center_id"),
+    )
+
+
+class ExamInspectorSubjectScope(enum.Enum):
+    """Subject scope for an inspector's posting at an examination centre."""
+
+    ALL = "ALL"
+    CORE = "CORE"
+    ELECTIVE = "ELECTIVE"
+
+
+class InspectorExamPosting(Base):
+    """Per examination: inspector operational posting to a centre host with subject scope."""
+
+    __tablename__ = "inspector_exam_postings"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    examination_id = Column(Integer, ForeignKey("examinations.id", ondelete="CASCADE"), nullable=False, index=True)
+    inspector_user_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+    center_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("schools.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+        doc="Examination centre host school id.",
+    )
+    subject_scope = Column(
+        Enum(
+            ExamInspectorSubjectScope,
+            values_callable=lambda x: [i.value for i in x],
+            native_enum=False,
+            length=16,
+        ),
+        nullable=False,
+    )
+    notes = Column(Text, nullable=True)
+    created_by_user_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True, index=True)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+
+    examination = relationship("Examination", backref="inspector_exam_postings")
+    inspector_user = relationship("User", foreign_keys=[inspector_user_id], backref="inspector_exam_postings")
+    center = relationship("School", foreign_keys=[center_id], backref="inspector_exam_postings_as_center")
+    created_by = relationship("User", foreign_keys=[created_by_user_id])
+
+    __table_args__ = (
+        Index("ix_inspector_exam_postings_exam_inspector", "examination_id", "inspector_user_id"),
+        UniqueConstraint(
+            "examination_id",
+            "center_id",
+            "inspector_user_id",
+            "subject_scope",
+            name="uq_inspector_postings_exam_center_inspector_scope",
+        ),
     )
 
 

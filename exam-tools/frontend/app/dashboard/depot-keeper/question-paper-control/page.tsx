@@ -6,9 +6,9 @@ import { DashboardShell } from "@/components/dashboard-shell";
 import { RoleGuard } from "@/components/role-guard";
 import { formInputClass, formLabelClass } from "@/lib/form-classes";
 import {
-  apiJson,
   getDepotCenterQuestionPaperControl,
   getDepotCenters,
+  getStaffDefaultExamination,
   verifyDepotQuestionPaperSlot,
   type DepotSchoolRow,
   type Examination,
@@ -62,11 +62,11 @@ export default function DepotKeeperQuestionPaperControlPage() {
     async function init() {
       setLoadError(null);
       try {
-        const list = await apiJson<Examination[]>("/examinations/public-list");
-        setExams(list);
-        setExamId((prev) => (prev === null && list.length ? list[0].id : prev));
+        const ex = await getStaffDefaultExamination();
+        setExams([ex]);
+        setExamId(ex.id);
       } catch (e) {
-        setLoadError(e instanceof Error ? e.message : "Failed to load examinations");
+        setLoadError(e instanceof Error ? e.message : "Failed to load active examination");
         return;
       }
       try {
@@ -126,26 +126,17 @@ export default function DepotKeeperQuestionPaperControlPage() {
           ) : null}
 
           <div className="grid gap-4 sm:grid-cols-2">
-            <div>
-              <label htmlFor="dk-qp-exam" className={formLabelClass}>
-                Examination
-              </label>
-              <select
-                id="dk-qp-exam"
-                className={`mt-1 w-full ${formInputClass}`}
-                value={examId ?? ""}
-                onChange={(e) => setExamId(e.target.value ? Number(e.target.value) : null)}
-              >
-                {exams.length === 0 ? <option value="">No examinations</option> : null}
-                {exams.map((ex) => (
-                  <option key={ex.id} value={ex.id}>
-                    {ex.year}
-                    {ex.exam_series ? ` ${ex.exam_series}` : ""} — {ex.exam_type}
-                  </option>
-                ))}
-              </select>
-            </div>
-            <div>
+            {examId != null && exams[0] ? (
+              <div className="sm:col-span-2">
+                <p className="text-sm text-muted-foreground">
+                  <span className="font-medium text-foreground">Examination</span>
+                  {": "}
+                  {exams[0].year}
+                  {exams[0].exam_series ? ` ${exams[0].exam_series}` : ""} — {exams[0].exam_type}
+                </p>
+              </div>
+            ) : null}
+            <div className="sm:col-span-2">
               <label htmlFor="dk-qp-center" className={formLabelClass}>
                 Examination centre (host)
               </label>

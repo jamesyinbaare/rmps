@@ -39,13 +39,23 @@ export type InspectorSchoolRow = {
   full_name: string;
   phone_number: string | null;
   school_code: string | null;
-  school_name: string;
+  school_name?: string | null;
 };
 
 export type ExaminationCenterDetailResponse = {
   center: School;
   hosted_schools: School[];
   inspectors: InspectorSchoolRow[];
+  posted_inspectors: PostedInspectorAtCentreRow[];
+};
+
+export type PostedInspectorAtCentreRow = {
+  posting_id: string;
+  examination_id: number;
+  inspector_user_id: string;
+  inspector_full_name: string;
+  inspector_phone: string | null;
+  subject_scope: string;
 };
 
 export type InspectorListResponse = {
@@ -54,9 +64,13 @@ export type InspectorListResponse = {
 };
 
 export type InspectorCreatePayload = {
-  school_code: string;
   phone_number: string;
   full_name: string;
+  password: string;
+  /** When set with at least one of core/elective, create postings for this examination. */
+  examination_id?: number | null;
+  core?: string | null;
+  elective?: string | null;
 };
 
 export type TestAdminOfficerCreatePayload = {
@@ -141,7 +155,6 @@ export type InspectorBulkUploadError = {
 
 export type InspectorBulkCreatedRow = {
   row_number: number;
-  school_code: string;
   phone_number: string;
   full_name: string;
 };
@@ -549,6 +562,31 @@ export async function getMyDepotSchools(): Promise<MyDepotSchoolsResponse> {
   return apiJson<MyDepotSchoolsResponse>("/examinations/timetable/my-depot-schools");
 }
 
+/** Default examination for staff dashboards (admin-selected, else env, else most recently created). */
+export async function getStaffDefaultExamination(): Promise<Examination> {
+  return apiJson<Examination>("/examinations/staff-default-examination");
+}
+
+export type ActiveExaminationAdminResponse = {
+  active_examination_id: number | null;
+  resolved_examination_id: number;
+  examination: Examination;
+};
+
+export async function getAdminActiveExamination(): Promise<ActiveExaminationAdminResponse> {
+  return apiJson<ActiveExaminationAdminResponse>("/admin/system/active-examination");
+}
+
+export async function putAdminActiveExamination(
+  activeExaminationId: number | null,
+): Promise<ActiveExaminationAdminResponse> {
+  return apiJson<ActiveExaminationAdminResponse>("/admin/system/active-examination", {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ active_examination_id: activeExaminationId }),
+  });
+}
+
 export async function getMyDepotProgrammes(filterSchoolId?: string | null): Promise<MyCenterProgrammesResponse> {
   const u = new URLSearchParams();
   if (filterSchoolId != null && filterSchoolId.trim() !== "") {
@@ -560,10 +598,27 @@ export async function getMyDepotProgrammes(filterSchoolId?: string | null): Prom
   );
 }
 
-export async function getMyCenterProgrammes(filterSchoolId?: string | null): Promise<MyCenterProgrammesResponse> {
+export async function getMyCenterSchoolsForTimetable(
+  examinationId?: number | null,
+): Promise<MyCenterSchoolsResponse> {
+  const u = new URLSearchParams();
+  if (examinationId != null) u.set("examination_id", String(examinationId));
+  const s = u.toString();
+  return apiJson<MyCenterSchoolsResponse>(
+    `/examinations/timetable/my-center-schools${s ? `?${s}` : ""}`,
+  );
+}
+
+export async function getMyCenterProgrammes(
+  filterSchoolId?: string | null,
+  examinationId?: number | null,
+): Promise<MyCenterProgrammesResponse> {
   const u = new URLSearchParams();
   if (filterSchoolId != null && filterSchoolId.trim() !== "") {
     u.set("school_id", filterSchoolId.trim());
+  }
+  if (examinationId != null) {
+    u.set("examination_id", String(examinationId));
   }
   const s = u.toString();
   return apiJson<MyCenterProgrammesResponse>(
@@ -605,6 +660,27 @@ export type StaffCentreOverviewResponse = {
     school_name: string;
     candidate_count: number;
   }[];
+  inspector_posted_workspaces?: InspectorPostedWorkspaceItem[] | null;
+};
+
+export type InspectorPostedWorkspaceItem = {
+  posting_id: string;
+  center_id: string;
+  center_code: string;
+  center_name: string;
+  subject_scope: string;
+};
+
+export type MyInspectorPostingRow = {
+  id: string;
+  center_id: string;
+  center_code: string;
+  center_name: string;
+  subject_scope: string;
+};
+
+export type MyInspectorPostingsResponse = {
+  items: MyInspectorPostingRow[];
 };
 
 export type StaffCentreDaySummarySlotRow = {
@@ -626,6 +702,144 @@ export type StaffCentreDaySummaryResponse = {
 
 export async function getStaffCentreOverview(examId: number): Promise<StaffCentreOverviewResponse> {
   return apiJson<StaffCentreOverviewResponse>(`/examinations/${examId}/my-center-overview`);
+}
+
+export async function getMyInspectorPostings(examId: number): Promise<MyInspectorPostingsResponse> {
+  return apiJson<MyInspectorPostingsResponse>(`/examinations/${examId}/my-inspector-postings`);
+}
+
+/** Super-admin: inspector examination postings (Core/Elective per centre). */
+export type ExamInspectorSubjectScopeApi = "ALL" | "CORE" | "ELECTIVE";
+
+export type AdminInspectorExamPostingRow = {
+  id: string;
+  examination_id: number;
+  inspector_user_id: string;
+  center_id: string;
+  center_code: string;
+  center_name: string;
+  subject_scope: string;
+  notes: string | null;
+  created_by_user_id: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
+export type AdminInspectorExamPostingListResponse = {
+  items: AdminInspectorExamPostingRow[];
+};
+
+export async function adminListInspectorPostings(params: {
+  examinationId: number;
+  inspectorUserId?: string | null;
+  centerId?: string | null;
+}): Promise<AdminInspectorExamPostingListResponse> {
+  const q = new URLSearchParams();
+  if (params.inspectorUserId?.trim()) q.set("inspector_user_id", params.inspectorUserId.trim());
+  if (params.centerId?.trim()) q.set("center_id", params.centerId.trim());
+  const s = q.toString();
+  return apiJson<AdminInspectorExamPostingListResponse>(
+    `/admin/examinations/${params.examinationId}/inspector-postings${s ? `?${s}` : ""}`,
+  );
+}
+
+export type AdminInspectorExamPostingCreatePayload = {
+  inspector_user_id: string;
+  center_id: string;
+  subject_scope: ExamInspectorSubjectScopeApi;
+  notes?: string | null;
+};
+
+export type AdminInspectorExamPostingUpdatePayload = {
+  center_id?: string | null;
+  subject_scope?: ExamInspectorSubjectScopeApi | null;
+  notes?: string | null;
+};
+
+export async function adminCreateInspectorPosting(
+  examinationId: number,
+  payload: AdminInspectorExamPostingCreatePayload,
+): Promise<AdminInspectorExamPostingRow> {
+  return apiJson<AdminInspectorExamPostingRow>(
+    `/admin/examinations/${examinationId}/inspector-postings`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    },
+  );
+}
+
+export async function adminUpdateInspectorPosting(
+  examinationId: number,
+  postingId: string,
+  payload: AdminInspectorExamPostingUpdatePayload,
+): Promise<AdminInspectorExamPostingRow> {
+  return apiJson<AdminInspectorExamPostingRow>(
+    `/admin/examinations/${examinationId}/inspector-postings/${encodeURIComponent(postingId)}`,
+    {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    },
+  );
+}
+
+export async function adminDeleteInspectorPosting(
+  examinationId: number,
+  postingId: string,
+): Promise<void> {
+  await apiJson(
+    `/admin/examinations/${examinationId}/inspector-postings/${encodeURIComponent(postingId)}`,
+    { method: "DELETE" },
+  );
+}
+
+export type InspectorPostingBulkUploadError = {
+  row_number: number;
+  error_message: string;
+};
+
+export type InspectorPostingBulkCreatedInspectorRow = {
+  row_number: number;
+  phone_number: string;
+  full_name: string;
+};
+
+export type InspectorPostingBulkCreatedPostingRow = {
+  row_number: number;
+  inspector_user_id: string;
+  center_code: string;
+  subject_scope: string;
+};
+
+export type InspectorPostingBulkUploadResponse = {
+  total_rows: number;
+  successful: number;
+  failed: number;
+  errors: InspectorPostingBulkUploadError[];
+  created_inspectors: InspectorPostingBulkCreatedInspectorRow[];
+  created_postings: InspectorPostingBulkCreatedPostingRow[];
+};
+
+export async function adminBulkUploadInspectorPostings(
+  examinationId: number,
+  file: File,
+): Promise<InspectorPostingBulkUploadResponse> {
+  const body = new FormData();
+  body.append("file", file);
+  return apiJson<InspectorPostingBulkUploadResponse>(
+    `/admin/examinations/${examinationId}/inspector-postings/bulk-upload`,
+    { method: "POST", body },
+  );
+}
+
+/** Excel (.xlsx) template for inspector postings bulk upload. */
+export async function downloadInspectorPostingsBulkTemplate(examinationId: number): Promise<void> {
+  await downloadApiFile(
+    `/admin/examinations/${examinationId}/inspector-postings/bulk-upload/template`,
+    "inspector_postings_bulk_template.xlsx",
+  );
 }
 
 export async function getStaffCentreDaySummary(
@@ -1049,8 +1263,10 @@ export type ScriptSeriesUpsertPayload = {
 export async function getMySchoolScriptControl(
   examId: number,
   schoolId: string,
+  postingId?: string | null,
 ): Promise<MySchoolScriptControlResponse> {
   const q = new URLSearchParams({ school_id: schoolId.trim() });
+  if (postingId?.trim()) q.set("posting_id", postingId.trim());
   return apiJson<MySchoolScriptControlResponse>(
     `/examinations/${examId}/script-control/my-school?${q}`,
   );
@@ -1060,8 +1276,10 @@ export async function getMySchoolScriptControl(
 export async function getMySchoolIrregularScriptControl(
   examId: number,
   schoolId: string,
+  postingId?: string | null,
 ): Promise<MySchoolScriptControlResponse> {
   const q = new URLSearchParams({ school_id: schoolId.trim() });
+  if (postingId?.trim()) q.set("posting_id", postingId.trim());
   return apiJson<MySchoolScriptControlResponse>(
     `/examinations/${examId}/irregular-script-control/my-school?${q}`,
   );
@@ -1071,8 +1289,10 @@ export async function upsertScriptSeries(
   examId: number,
   schoolId: string,
   payload: ScriptSeriesUpsertPayload,
+  postingId?: string | null,
 ): Promise<ScriptSeriesPackingResponse> {
   const q = new URLSearchParams({ school_id: schoolId.trim() });
+  if (postingId?.trim()) q.set("posting_id", postingId.trim());
   return apiJson<ScriptSeriesPackingResponse>(
     `/examinations/${examId}/script-control/my-school/series?${q}`,
     {
@@ -1087,8 +1307,10 @@ export async function upsertIrregularScriptSeries(
   examId: number,
   schoolId: string,
   payload: ScriptSeriesUpsertPayload,
+  postingId?: string | null,
 ): Promise<ScriptSeriesPackingResponse> {
   const q = new URLSearchParams({ school_id: schoolId.trim() });
+  if (postingId?.trim()) q.set("posting_id", postingId.trim());
   return apiJson<ScriptSeriesPackingResponse>(
     `/examinations/${examId}/irregular-script-control/my-school/series?${q}`,
     {
@@ -1106,6 +1328,7 @@ export async function deleteScriptSeries(
     subject_id: number;
     paper_number: number;
     series_number: number;
+    posting_id?: string | null;
   },
 ): Promise<void> {
   const q = new URLSearchParams({
@@ -1114,6 +1337,7 @@ export async function deleteScriptSeries(
     paper_number: String(params.paper_number),
     series_number: String(params.series_number),
   });
+  if (params.posting_id?.trim()) q.set("posting_id", params.posting_id.trim());
   await apiJson(`/examinations/${examId}/script-control/my-school/series?${q}`, {
     method: "DELETE",
   });
@@ -1126,6 +1350,7 @@ export async function deleteIrregularScriptSeries(
     subject_id: number;
     paper_number: number;
     series_number: number;
+    posting_id?: string | null;
   },
 ): Promise<void> {
   const q = new URLSearchParams({
@@ -1134,6 +1359,7 @@ export async function deleteIrregularScriptSeries(
     paper_number: String(params.paper_number),
     series_number: String(params.series_number),
   });
+  if (params.posting_id?.trim()) q.set("posting_id", params.posting_id.trim());
   await apiJson(`/examinations/${examId}/irregular-script-control/my-school/series?${q}`, {
     method: "DELETE",
   });
@@ -1185,28 +1411,47 @@ export type ExamCentreOfficialUpdatePayload = {
   telephone_number?: string;
 };
 
-export async function getExamOfficialsForMyCentre(examId: number): Promise<ExamCentreOfficialListResponse> {
-  return apiJson<ExamCentreOfficialListResponse>(`/examinations/${examId}/exam-officials/my-centre`);
+export async function getExamOfficialsForMyCentre(
+  examId: number,
+  postingId?: string | null,
+): Promise<ExamCentreOfficialListResponse> {
+  const u = new URLSearchParams();
+  if (postingId?.trim()) u.set("posting_id", postingId.trim());
+  const s = u.toString();
+  return apiJson<ExamCentreOfficialListResponse>(
+    `/examinations/${examId}/exam-officials/my-centre${s ? `?${s}` : ""}`,
+  );
 }
 
 export async function createExamOfficial(
   examId: number,
   payload: ExamCentreOfficialCreatePayload,
+  postingId?: string | null,
 ): Promise<ExamCentreOfficialResponse> {
-  return apiJson<ExamCentreOfficialResponse>(`/examinations/${examId}/exam-officials/my-centre`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(payload),
-  });
+  const u = new URLSearchParams();
+  if (postingId?.trim()) u.set("posting_id", postingId.trim());
+  const s = u.toString();
+  return apiJson<ExamCentreOfficialResponse>(
+    `/examinations/${examId}/exam-officials/my-centre${s ? `?${s}` : ""}`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    },
+  );
 }
 
 export async function updateExamOfficial(
   examId: number,
   officialId: string,
   payload: ExamCentreOfficialUpdatePayload,
+  postingId?: string | null,
 ): Promise<ExamCentreOfficialResponse> {
+  const u = new URLSearchParams();
+  if (postingId?.trim()) u.set("posting_id", postingId.trim());
+  const s = u.toString();
   return apiJson<ExamCentreOfficialResponse>(
-    `/examinations/${examId}/exam-officials/my-centre/${officialId.trim()}`,
+    `/examinations/${examId}/exam-officials/my-centre/${officialId.trim()}${s ? `?${s}` : ""}`,
     {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
@@ -1215,8 +1460,15 @@ export async function updateExamOfficial(
   );
 }
 
-export async function deleteExamOfficial(examId: number, officialId: string): Promise<void> {
-  await apiJson(`/examinations/${examId}/exam-officials/my-centre/${officialId.trim()}`, {
+export async function deleteExamOfficial(
+  examId: number,
+  officialId: string,
+  postingId?: string | null,
+): Promise<void> {
+  const u = new URLSearchParams();
+  if (postingId?.trim()) u.set("posting_id", postingId.trim());
+  const s = u.toString();
+  await apiJson(`/examinations/${examId}/exam-officials/my-centre/${officialId.trim()}${s ? `?${s}` : ""}`, {
     method: "DELETE",
   });
 }
@@ -1342,18 +1594,26 @@ export type DepotSchoolListResponse = {
 
 export async function getMyCenterQuestionPaperControl(
   examId: number,
+  postingId?: string | null,
 ): Promise<MyCenterQuestionPaperControlResponse> {
+  const u = new URLSearchParams();
+  if (postingId?.trim()) u.set("posting_id", postingId.trim());
+  const s = u.toString();
   return apiJson<MyCenterQuestionPaperControlResponse>(
-    `/examinations/${examId}/question-paper-control/my-center`,
+    `/examinations/${examId}/question-paper-control/my-center${s ? `?${s}` : ""}`,
   );
 }
 
 export async function upsertQuestionPaperSlot(
   examId: number,
   payload: QuestionPaperSlotUpsertPayload,
+  postingId?: string | null,
 ): Promise<QuestionPaperSlotUpsertResponse> {
+  const u = new URLSearchParams();
+  if (postingId?.trim()) u.set("posting_id", postingId.trim());
+  const s = u.toString();
   return apiJson<QuestionPaperSlotUpsertResponse>(
-    `/examinations/${examId}/question-paper-control/my-center/slot`,
+    `/examinations/${examId}/question-paper-control/my-center/slot${s ? `?${s}` : ""}`,
     {
       method: "PUT",
       headers: { "Content-Type": "application/json" },

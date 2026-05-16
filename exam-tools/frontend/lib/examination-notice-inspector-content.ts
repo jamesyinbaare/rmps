@@ -85,6 +85,44 @@ export function inspectorAppointmentIntro(params: {
   return `For the ${params.year} ${seriesBit}${params.examType}, this portal shows you as a Centre Inspector for the Commission for Technical and Vocational Education and Training (CTVET). Your assigned examination centre is ${params.centreName} (Centre No ${params.centreCode}), ${params.region} Region.`;
 }
 
+/** Opening paragraph for the inspector notice: single centre (no postings) or multiple posted workspaces. */
+export function inspectorAppointmentBodyText(params: {
+  year: number;
+  examType: string;
+  examSeries: string | null;
+  region: string;
+  /** From centre overview when there are no admin postings (home / fallback centre). */
+  defaultCentreName: string;
+  defaultCentreCode: string;
+  postings: Array<{
+    center_name: string;
+    center_code: string;
+    subject_scope: string;
+  }>;
+}): string {
+  if (params.postings.length === 0) {
+    return inspectorAppointmentIntro({
+      year: params.year,
+      examType: params.examType,
+      examSeries: params.examSeries,
+      centreName: params.defaultCentreName,
+      centreCode: params.defaultCentreCode,
+      region: params.region,
+    });
+  }
+  const series = params.examSeries?.trim();
+  const seriesBit = series ? `${series} ` : "";
+  const parts = params.postings.map((p, i) => {
+    return `${i + 1}. ${p.subject_scope} at ${p.center_name} (Centre No ${p.center_code}).`;
+  });
+  return (
+    `For the ${params.year} ${seriesBit}${params.examType}, this portal shows you as a Centre Inspector for the Commission for Technical and Vocational Education and Training (CTVET). ` +
+    `Administrators have assigned you these posted workspaces for this examination: ${parts.join(" ")} ` +
+    `Use the workspace selector on worked scripts, irregular scripts, question papers, and exam officials so each task uses the matching centre and subject scope (All, Core, or Elective). ` +
+    `The summary and school list on this page cover every school in the examination centres where you are posted (${params.region} Region is shown on the overview line items where applicable).`
+  );
+}
+
 export const inspectorPleaseNoteLead =
   "The points below are the same expectations CTVET sets for inspectors in the field; use them alongside the timetable and tools in this system.";
 

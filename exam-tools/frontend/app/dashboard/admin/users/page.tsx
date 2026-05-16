@@ -10,6 +10,7 @@ import {
   apiJson,
   createTestAdminOfficer,
   type AdminDepotRow,
+  type Examination,
   type InspectorCreatePayload,
 } from "@/lib/api";
 import { getMe, type UserMe } from "@/lib/auth";
@@ -85,9 +86,13 @@ export default function AdminUsersPage() {
   const [officerSubmitting, setOfficerSubmitting] = useState(false);
 
   const [inspectorOpen, setInspectorOpen] = useState(false);
-  const [inspSchoolCode, setInspSchoolCode] = useState("");
   const [inspPhone, setInspPhone] = useState("");
   const [inspFullName, setInspFullName] = useState("");
+  const [inspPassword, setInspPassword] = useState("");
+  const [inspExamId, setInspExamId] = useState<number | "">("");
+  const [inspCore, setInspCore] = useState("");
+  const [inspElective, setInspElective] = useState("");
+  const [inspExams, setInspExams] = useState<Examination[]>([]);
   const [inspFormError, setInspFormError] = useState<string | null>(null);
   const [inspSubmitting, setInspSubmitting] = useState(false);
 
@@ -133,6 +138,28 @@ export default function AdminUsersPage() {
   }, [loadDepots]);
 
   useEffect(() => {
+    if (!inspectorOpen) return;
+    let cancelled = false;
+    void (async () => {
+      try {
+        const list = await apiJson<Examination[]>("/examinations");
+        if (!cancelled) {
+          setInspExams(list);
+          setInspExamId((prev) => {
+            if (prev !== "") return prev;
+            return list.length ? list[0].id : "";
+          });
+        }
+      } catch {
+        if (!cancelled) setInspExams([]);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [inspectorOpen]);
+
+  useEffect(() => {
     if (typeof window === "undefined" || me?.role !== "SUPER_ADMIN") return;
     const hash = window.location.hash.slice(1);
     if (hash === "test-admin-officer") setOfficerOpen(true);
@@ -152,9 +179,12 @@ export default function AdminUsersPage() {
   }
 
   function openInspectorModal() {
-    setInspSchoolCode("");
     setInspPhone("");
     setInspFullName("");
+    setInspPassword("");
+    setInspExamId("");
+    setInspCore("");
+    setInspElective("");
     setInspFormError(null);
     setInspectorOpen(true);
   }
@@ -194,18 +224,33 @@ export default function AdminUsersPage() {
   async function onCreateInspector(e: React.FormEvent) {
     e.preventDefault();
     setInspFormError(null);
-    const sc = inspSchoolCode.trim();
     const pn = inspPhone.trim();
     const fn = inspFullName.trim();
-    if (!sc || !pn || !fn) {
-      setInspFormError("School code, phone number, and full name are required.");
+    const pw = inspPassword;
+    if (!pn || !fn || !pw) {
+      setInspFormError("Phone number, full name, and password are required.");
+      return;
+    }
+    const c = inspCore.trim();
+    const el = inspElective.trim();
+    if (inspExamId !== "" && !c && !el) {
+      setInspFormError("When an examination is selected, provide at least one centre code (core or elective).");
+      return;
+    }
+    if ((c || el) && inspExamId === "") {
+      setInspFormError("Select an examination when adding centre codes.");
       return;
     }
     const payload: InspectorCreatePayload = {
-      school_code: sc,
       phone_number: pn,
       full_name: fn,
+      password: pw,
     };
+    if (inspExamId !== "") {
+      payload.examination_id = inspExamId;
+      if (c) payload.core = c;
+      if (el) payload.elective = el;
+    }
     setInspSubmitting(true);
     try {
       await apiJson("/inspectors", {
@@ -292,10 +337,11 @@ export default function AdminUsersPage() {
           <section id="inspectors" className={sectionClass}>
             <h3 className="text-base font-semibold text-card-foreground">Inspector</h3>
             <p className="text-sm text-muted-foreground">
-              School code and phone number are their credentials.{" "}
+              Phone and password are used to sign in. Assign examination postings from the{" "}
               <Link href="/dashboard/admin/inspectors" className={subLinkClass}>
-                Inspectors list & bulk upload
-              </Link>
+                Inspectors list
+              </Link>{" "}
+              or optionally below.
             </p>
             <button type="button" onClick={openInspectorModal} className={btnPrimary}>
               Create inspector…
@@ -386,19 +432,6 @@ export default function AdminUsersPage() {
             >
               <form className="space-y-4" onSubmit={onCreateInspector}>
                 <div>
-                  <label htmlFor="insp-school" className={formLabelClass}>
-                    School code
-                  </label>
-                  <input
-                    id="insp-school"
-                    type="text"
-                    required
-                    value={inspSchoolCode}
-                    onChange={(e) => setInspSchoolCode(e.target.value)}
-                    className={formInputClass}
-                  />
-                </div>
-                <div>
                   <label htmlFor="insp-phone" className={formLabelClass}>
                     Phone number
                   </label>
@@ -422,6 +455,68 @@ export default function AdminUsersPage() {
                     value={inspFullName}
                     onChange={(e) => setInspFullName(e.target.value)}
                     className={formInputClass}
+                  />
+                </div>
+                <div>
+                  <label htmlFor="insp-password" className={formLabelClass}>
+                    Password
+                  </label>
+                  <input
+                    id="insp-password"
+                    type="password"
+                    required
+                    value={inspPassword}
+                    onChange={(e) => setInspPassword(e.target.value)}
+                    className={formInputClass}
+                    autoComplete="new-password"
+                  />
+                </div>
+                <div>
+                  <label htmlFor="insp-exam" className={formLabelClass}>
+                    Examination (optional postings)
+                  </label>
+                  <select
+                    id="insp-exam"
+                    className={formInputClass}
+                    value={inspExamId === "" ? "" : String(inspExamId)}
+                    onChange={(e) => {
+                      const v = e.target.value;
+                      setInspExamId(v === "" ? "" : parseInt(v, 10));
+                    }}
+                  >
+                    <option value="">No postings — assign later</option>
+                    {inspExams.map((ex) => (
+                      <option key={ex.id} value={ex.id}>
+                        {ex.year} {ex.exam_type}
+                        {ex.exam_series ? ` (${ex.exam_series})` : ""}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                <div>
+                  <label htmlFor="insp-core" className={formLabelClass}>
+                    Core centre code
+                  </label>
+                  <input
+                    id="insp-core"
+                    type="text"
+                    value={inspCore}
+                    onChange={(e) => setInspCore(e.target.value)}
+                    className={formInputClass}
+                    placeholder="Host centre code (optional)"
+                  />
+                </div>
+                <div>
+                  <label htmlFor="insp-elective" className={formLabelClass}>
+                    Elective centre code
+                  </label>
+                  <input
+                    id="insp-elective"
+                    type="text"
+                    value={inspElective}
+                    onChange={(e) => setInspElective(e.target.value)}
+                    className={formInputClass}
+                    placeholder="Host centre code (optional)"
                   />
                 </div>
                 {inspFormError ? (

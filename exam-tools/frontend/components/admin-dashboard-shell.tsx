@@ -20,6 +20,7 @@ const nav = [
   { href: "/dashboard/admin/programmes", label: "Programmes" },
   { href: "/dashboard/admin/subjects", label: "Subjects" },
   { href: "/dashboard/admin/examination-centres", label: "Examination centres" },
+  { href: "/dashboard/admin/inspector-postings", label: "Inspector postings" },
   { href: "/dashboard/admin/users", label: "Users" },
   { href: "/dashboard/admin/depots", label: "Depots" },
   { href: BANK_DIRECTORY_HREF, label: "Bank directory" },

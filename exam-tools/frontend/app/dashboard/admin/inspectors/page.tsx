@@ -6,6 +6,7 @@ import { useCallback, useEffect, useState } from "react";
 import {
   apiFetch,
   apiJson,
+  type Examination,
   type InspectorBulkUploadResponse,
   type InspectorCreatePayload,
   type InspectorListResponse,
@@ -17,7 +18,7 @@ const PAGE_SIZE = 20;
 const inputFocusRing =
   "focus:border-primary focus:outline-none focus:ring-2 focus:ring-ring/30";
 
-type SortField = "center" | "full_name" | "phone" | "school_code";
+type SortField = "full_name" | "phone" | "school_code";
 
 function Modal({
   title,
@@ -110,9 +111,13 @@ export default function AdminInspectorsPage() {
 
   const [addOpen, setAddOpen] = useState(false);
   const [uploadOpen, setUploadOpen] = useState(false);
-  const [schoolCode, setSchoolCode] = useState("");
   const [phone, setPhone] = useState("");
   const [fullName, setFullName] = useState("");
+  const [password, setPassword] = useState("");
+  const [examId, setExamId] = useState<number | "">("");
+  const [coreCode, setCoreCode] = useState("");
+  const [electiveCode, setElectiveCode] = useState("");
+  const [exams, setExams] = useState<Examination[]>([]);
   const [formError, setFormError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
 
@@ -125,6 +130,28 @@ export default function AdminInspectorsPage() {
     const t = setTimeout(() => setDebouncedSearch(searchInput.trim()), 300);
     return () => clearTimeout(t);
   }, [searchInput]);
+
+  useEffect(() => {
+    if (!addOpen) return;
+    let cancelled = false;
+    void (async () => {
+      try {
+        const list = await apiJson<Examination[]>("/examinations");
+        if (!cancelled) {
+          setExams(list);
+          setExamId((prev) => {
+            if (prev !== "") return prev;
+            return list.length ? list[0].id : "";
+          });
+        }
+      } catch {
+        if (!cancelled) setExams([]);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [addOpen]);
 
   useEffect(() => {
     setPage(1);
@@ -164,9 +191,12 @@ export default function AdminInspectorsPage() {
   }
 
   function openAdd() {
-    setSchoolCode("");
     setPhone("");
     setFullName("");
+    setPassword("");
+    setExamId("");
+    setCoreCode("");
+    setElectiveCode("");
     setFormError(null);
     setAddOpen(true);
   }
@@ -180,18 +210,33 @@ export default function AdminInspectorsPage() {
 
   async function submitAdd() {
     setFormError(null);
-    const sc = schoolCode.trim();
     const pn = phone.trim();
     const fn = fullName.trim();
-    if (!sc || !pn || !fn) {
-      setFormError("School code, phone number, and full name are required.");
+    const pw = password;
+    if (!pn || !fn || !pw) {
+      setFormError("Phone number, full name, and password are required.");
+      return;
+    }
+    const coreTrim = coreCode.trim();
+    const electTrim = electiveCode.trim();
+    if (examId !== "" && !coreTrim && !electTrim) {
+      setFormError("When an examination is selected, provide at least one centre code (core or elective).");
+      return;
+    }
+    if ((coreTrim || electTrim) && examId === "") {
+      setFormError("Select an examination when adding centre codes.");
       return;
     }
     const payload: InspectorCreatePayload = {
-      school_code: sc,
       phone_number: pn,
       full_name: fn,
+      password: pw,
     };
+    if (examId !== "") {
+      payload.examination_id = examId;
+      if (coreTrim) payload.core = coreTrim;
+      if (electTrim) payload.elective = electTrim;
+    }
     setSubmitting(true);
     try {
       await apiJson("/inspectors", {
@@ -269,7 +314,7 @@ export default function AdminInspectorsPage() {
 
       <div>
         <label htmlFor="inspector-search" className={formLabelClass}>
-          Search (name, phone, school code, or centre name)
+          Search (name or phone)
         </label>
         <input
           id="inspector-search"
@@ -291,13 +336,6 @@ export default function AdminInspectorsPage() {
           <thead className="border-b border-border bg-muted/40 text-muted-foreground">
             <tr>
               <SortTh
-                label="Centre (school)"
-                field="center"
-                currentSort={sort}
-                currentOrder={order}
-                onSort={handleSort}
-              />
-              <SortTh
                 label="Full name"
                 field="full_name"
                 currentSort={sort}
@@ -318,6 +356,7 @@ export default function AdminInspectorsPage() {
                 currentOrder={order}
                 onSort={handleSort}
               />
+              <th className="px-3 py-3 font-medium text-muted-foreground">Actions</th>
             </tr>
           </thead>
           <tbody>
@@ -336,12 +375,17 @@ export default function AdminInspectorsPage() {
             ) : (
               items.map((row) => (
                 <tr key={row.id} className="border-b border-border last:border-0">
-                  <td className="max-w-[220px] px-3 py-3">
-                    <span className="font-medium text-foreground">{row.school_name}</span>
-                  </td>
                   <td className="px-3 py-3">{row.full_name}</td>
                   <td className="px-3 py-3 font-mono text-xs">{row.phone_number ?? "—"}</td>
                   <td className="px-3 py-3 font-mono text-xs">{row.school_code ?? "—"}</td>
+                  <td className="px-3 py-3">
+                    <Link
+                      href={`/dashboard/admin/inspector-postings?inspectorUserId=${encodeURIComponent(row.id)}`}
+                      className={`text-sm font-medium text-primary hover:underline ${inputFocusRing} rounded px-1 py-0.5`}
+                    >
+                      Postings
+                    </Link>
+                  </td>
                 </tr>
               ))
             )}
@@ -379,21 +423,10 @@ export default function AdminInspectorsPage() {
         <Modal
           title="Add inspector"
           titleId="add-inspector-modal-title"
+          panelClassName="max-w-xl"
           onClose={() => !submitting && setAddOpen(false)}
         >
           <div className="space-y-4">
-            <div>
-              <label htmlFor="add-school-code" className={formLabelClass}>
-                School code
-              </label>
-              <input
-                id="add-school-code"
-                className={formInputClass}
-                value={schoolCode}
-                onChange={(e) => setSchoolCode(e.target.value)}
-                autoComplete="off"
-              />
-            </div>
             <div>
               <label htmlFor="add-phone" className={formLabelClass}>
                 Phone number
@@ -417,6 +450,71 @@ export default function AdminInspectorsPage() {
                 onChange={(e) => setFullName(e.target.value)}
               />
             </div>
+            <div>
+              <label htmlFor="add-password" className={formLabelClass}>
+                Password
+              </label>
+              <input
+                id="add-password"
+                type="password"
+                className={formInputClass}
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                autoComplete="new-password"
+              />
+            </div>
+            <div>
+              <label htmlFor="add-exam" className={formLabelClass}>
+                Examination (optional postings)
+              </label>
+              <select
+                id="add-exam"
+                className={formInputClass}
+                value={examId === "" ? "" : String(examId)}
+                onChange={(e) => {
+                  const v = e.target.value;
+                  setExamId(v === "" ? "" : parseInt(v, 10));
+                }}
+              >
+                <option value="">No postings — assign later</option>
+                {exams.map((ex) => (
+                  <option key={ex.id} value={ex.id}>
+                    {ex.year} {ex.exam_type}
+                    {ex.exam_series ? ` (${ex.exam_series})` : ""}
+                  </option>
+                ))}
+              </select>
+            </div>
+            <div>
+              <label htmlFor="add-core" className={formLabelClass}>
+                Core centre code
+              </label>
+              <input
+                id="add-core"
+                className={formInputClass}
+                value={coreCode}
+                onChange={(e) => setCoreCode(e.target.value)}
+                placeholder="Host centre code (optional)"
+                autoComplete="off"
+              />
+            </div>
+            <div>
+              <label htmlFor="add-elective" className={formLabelClass}>
+                Elective centre code
+              </label>
+              <input
+                id="add-elective"
+                className={formInputClass}
+                value={electiveCode}
+                onChange={(e) => setElectiveCode(e.target.value)}
+                placeholder="Host centre code (optional)"
+                autoComplete="off"
+              />
+            </div>
+            <p className="text-xs text-muted-foreground">
+              If both codes match one centre, one posting with scope ALL is created. If they differ, CORE and ELECTIVE
+              postings are created.
+            </p>
             {formError ? (
               <p className="text-sm text-destructive" role="alert">
                 {formError}
@@ -453,9 +551,9 @@ export default function AdminInspectorsPage() {
         >
           <p className="text-sm text-muted-foreground">
             Required columns:{" "}
-            <code className="rounded bg-muted px-1">school_code</code>,{" "}
             <code className="rounded bg-muted px-1">phone_number</code>,{" "}
-            <code className="rounded bg-muted px-1">full_name</code>. Schools must already exist.
+            <code className="rounded bg-muted px-1">full_name</code>,{" "}
+            <code className="rounded bg-muted px-1">password</code>. Phone numbers must be unique among inspectors.
           </p>
           <form onSubmit={onUpload} className="mt-4">
             <label htmlFor="inspector-bulk-file" className={formLabelClass}>

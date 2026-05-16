@@ -200,6 +200,16 @@ class StaffCentreOverviewUpcomingItem(BaseModel):
     examination_time: time
 
 
+class InspectorPostedWorkspaceItem(BaseModel):
+    """Inspector operational workspace for an examination (posting)."""
+
+    posting_id: UUID
+    center_id: UUID
+    center_code: str
+    center_name: str
+    subject_scope: str
+
+
 class StaffCentreSchoolCandidateItem(BaseModel):
     """Per-school candidate totals within a centre scope."""
 
@@ -248,6 +258,10 @@ class StaffCentreOverviewResponse(BaseModel):
     schools_with_candidate_counts: list[StaffCentreSchoolCandidateItem] = Field(
         default_factory=list,
         description="Ordered schools in the centre scope with total candidates per school for this examination.",
+    )
+    inspector_posted_workspaces: list[InspectorPostedWorkspaceItem] | None = Field(
+        default=None,
+        description="Inspectors with postings: workspaces (centre + subject scope) for this examination.",
     )
 
 

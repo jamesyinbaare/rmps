@@ -1,6 +1,7 @@
 "use client";
 
 import { Fragment, useCallback, useEffect, useState } from "react";
+import { useRouter } from "next/navigation";
 
 import { DashboardShell } from "@/components/dashboard-shell";
 import { RoleGuard } from "@/components/role-guard";
@@ -17,17 +18,21 @@ import {
   packingCountFieldLabel,
 } from "@/lib/script-packing-terms";
 import {
-  apiJson,
   deleteIrregularScriptSeries,
+  getMyCenterSchoolsForTimetable,
+  getMyInspectorPostings,
   getMySchoolIrregularScriptControl,
+  getStaffDefaultExamination,
   upsertIrregularScriptSeries,
   type Examination,
   type MyCenterSchoolsResponse,
+  type MyInspectorPostingRow,
   type MySchoolScriptControlResponse,
   type ScriptSeriesPackingResponse,
   type ScriptSeriesSlotResponse,
   type ScriptSubjectRowResponse,
 } from "@/lib/api";
+import { inspectorMustPickWorkspaceGlobally, pickInspectorPostingId } from "@/lib/auth";
 
 const btnPrimary =
   "inline-flex min-h-10 items-center justify-center rounded-lg bg-primary px-3 text-sm font-medium text-primary-foreground transition-colors hover:bg-primary-hover focus:outline-none focus:ring-2 focus:ring-ring/30";
@@ -222,10 +227,17 @@ function emptyOutstandingHint(g: GroupedPapers): string | null {
   return null;
 }
 
+function workspaceOptionLabel(p: MyInspectorPostingRow): string {
+  return `${p.center_name} (${p.center_code}) — ${p.subject_scope}`;
+}
+
 export default function InspectorIrregularScriptsControlPage() {
+  const router = useRouter();
   const [exams, setExams] = useState<Examination[]>([]);
   const [examId, setExamId] = useState<number | null>(null);
   const [centerSchools, setCenterSchools] = useState<MyCenterSchoolsResponse | null>(null);
+  const [postings, setPostings] = useState<MyInspectorPostingRow[]>([]);
+  const [selectedPostingId, setSelectedPostingId] = useState<string | null>(null);
   const [selectedSchoolId, setSelectedSchoolId] = useState("");
   const [data, setData] = useState<MySchoolScriptControlResponse | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -237,10 +249,12 @@ export default function InspectorIrregularScriptsControlPage() {
 
   const loadData = useCallback(async () => {
     if (examId === null || selectedSchoolId.trim() === "") return;
+    if (postings.length > 0 && !selectedPostingId) return;
     setLoadError(null);
     setBusy(true);
     try {
-      const res = await getMySchoolIrregularScriptControl(examId, selectedSchoolId);
+      const postingParam = postings.length > 0 ? selectedPostingId! : undefined;
+      const res = await getMySchoolIrregularScriptControl(examId, selectedSchoolId, postingParam);
       setData(res);
     } catch (e) {
       setLoadError(e instanceof Error ? e.message : "Failed to load irregular script control data");
@@ -248,37 +262,62 @@ export default function InspectorIrregularScriptsControlPage() {
     } finally {
       setBusy(false);
     }
-  }, [examId, selectedSchoolId]);
+  }, [examId, selectedSchoolId, postings.length, selectedPostingId]);
 
   useEffect(() => {
-    async function loadExamsAndScope() {
+    async function loadActiveExam() {
       setLoadError(null);
       try {
-        const list = await apiJson<Examination[]>("/examinations/public-list");
-        setExams(list);
-        setExamId((prev) => (prev === null && list.length ? list[0].id : prev));
+        const ex = await getStaffDefaultExamination();
+        setExams([ex]);
+        setExamId(ex.id);
       } catch (e) {
-        setLoadError(e instanceof Error ? e.message : "Failed to load examinations");
-        return;
-      }
-      try {
-        const scope = await apiJson<MyCenterSchoolsResponse>("/examinations/timetable/my-center-schools");
-        setCenterSchools(scope);
-        if (scope.schools.length === 1) setSelectedSchoolId(scope.schools[0].id);
-        else setSelectedSchoolId("");
-      } catch (e) {
-        setCenterSchools(null);
-        setSelectedSchoolId("");
-        setLoadError(e instanceof Error ? e.message : "Failed to load examination centre schools");
+        setLoadError(e instanceof Error ? e.message : "Failed to load active examination");
       }
     }
-    void loadExamsAndScope();
+    void loadActiveExam();
   }, []);
 
   useEffect(() => {
-    if (examId !== null && selectedSchoolId.trim() !== "") void loadData();
-    else setData(null);
-  }, [examId, selectedSchoolId, loadData]);
+    if (inspectorMustPickWorkspaceGlobally(postings.length)) {
+      router.replace("/dashboard/inspector/select-workspace");
+    }
+  }, [postings.length, router]);
+
+  useEffect(() => {
+    if (examId === null) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const [scope, postingRes] = await Promise.all([
+          getMyCenterSchoolsForTimetable(examId),
+          getMyInspectorPostings(examId),
+        ]);
+        if (cancelled) return;
+        setCenterSchools(scope);
+        setPostings(postingRes.items);
+        setSelectedPostingId((prev) => pickInspectorPostingId(postingRes.items, prev));
+        if (scope.schools.length === 1) setSelectedSchoolId(scope.schools[0].id);
+        else setSelectedSchoolId("");
+      } catch (e) {
+        if (cancelled) return;
+        setCenterSchools(null);
+        setPostings([]);
+        setSelectedPostingId(null);
+        setSelectedSchoolId("");
+        setLoadError(e instanceof Error ? e.message : "Failed to load examination centre schools");
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [examId]);
+
+  useEffect(() => {
+    if (examId !== null && selectedSchoolId.trim() !== "" && (postings.length === 0 || selectedPostingId)) {
+      void loadData();
+    } else setData(null);
+  }, [examId, selectedSchoolId, selectedPostingId, postings.length, loadData]);
 
   function openEdit(subjectId: number, paperNumber: number, seriesNumber: number, packing: ScriptSeriesPackingResponse | null) {
     setEditing({ subjectId, paperNumber, seriesNumber });
@@ -322,7 +361,7 @@ export default function InspectorIrregularScriptsControlPage() {
           envelope_number: e.envelope_number,
           booklet_count: e.booklet_count,
         })),
-      });
+      }, postings.length > 0 ? selectedPostingId! : undefined);
       await loadData();
       closeEdit();
     } catch (e) {
@@ -342,6 +381,7 @@ export default function InspectorIrregularScriptsControlPage() {
         subject_id: subjectId,
         paper_number: paperNumber,
         series_number: seriesNumber,
+        posting_id: postings.length > 0 ? selectedPostingId! : undefined,
       });
       await loadData();
       closeEdit();
@@ -599,12 +639,25 @@ export default function InspectorIrregularScriptsControlPage() {
           </p>
 
           <div>
-            <label htmlFor="irregular-script-exam" className={formLabelClass}>Examination</label>
-            <select id="irregular-script-exam" className={`mt-1 w-full max-w-md ${formInputClass}`} value={examId ?? ""} onChange={(e) => { setExamId(e.target.value ? Number(e.target.value) : null); closeEdit(); }}>
-              {exams.length === 0 ? <option value="">No examinations</option> : null}
-              {exams.map((ex) => <option key={ex.id} value={ex.id}>{ex.year}{ex.exam_series ? ` ${ex.exam_series}` : ""} — {ex.exam_type}</option>)}
-            </select>
+            {examId != null && exams[0] ? (
+              <p className="text-sm text-muted-foreground">
+                <span className="font-medium text-foreground">Examination</span>
+                {": "}
+                {exams[0].year}
+                {exams[0].exam_series ? ` ${exams[0].exam_series}` : ""} — {exams[0].exam_type}
+              </p>
+            ) : null}
           </div>
+
+          {selectedPostingId ? (
+            <p className="text-sm text-muted-foreground">
+              <span className="font-medium text-foreground">Workspace:</span>{" "}
+              {(() => {
+                const p = postings.find((x) => x.id === selectedPostingId);
+                return p ? workspaceOptionLabel(p) : "—";
+              })()}
+            </p>
+          ) : null}
 
           {centerSchools && centerSchools.schools.length > 1 ? (
             <div>

@@ -5,10 +5,9 @@ import { usePathname } from "next/navigation";
 import { useEffect, useState } from "react";
 
 import {
-  apiJson,
   getStaffCentreOverview,
+  getStaffDefaultExamination,
   getStaffDepotOverview,
-  type Examination,
 } from "@/lib/api";
 
 const DISMISS_KEY = "exam-tools-notice-promo-dismissed";
@@ -82,14 +81,9 @@ export function ExaminationNoticeSessionBanner({ staffRole, examinationNoticeHre
 
     async function run() {
       try {
-        const exams = await apiJson<Examination[]>("/examinations/public-list");
+        const active = await getStaffDefaultExamination();
         if (cancelled) return;
-        if (exams.length === 0) {
-          setVisible(false);
-          setReady(true);
-          return;
-        }
-        const examId = exams[0].id;
+        const examId = active.id;
         const overview =
           staffRole === "depot-keeper"
             ? await getStaffDepotOverview(examId)

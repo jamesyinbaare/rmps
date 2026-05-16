@@ -7,6 +7,7 @@ import {
   apiJson,
   getStaffCentreDaySummary,
   getStaffCentreOverview,
+  getStaffDefaultExamination,
   getStaffDepotDaySummary,
   getStaffDepotOverview,
   getStaffNationalDaySummary,
@@ -18,7 +19,6 @@ import {
   type StaffCentreOverviewUpcomingItem,
   type StaffDepotOverviewResponse,
 } from "@/lib/api";
-import { formInputClass, formLabelClass } from "@/lib/form-classes";
 
 const statCardClass =
   "rounded-2xl border border-border bg-card p-5 shadow-sm";
@@ -616,10 +616,16 @@ export function StaffDashboardOverview({
     setError(null);
     try {
       const path = variant === "national" ? "/examinations" : "/examinations/public-list";
-      const list = await apiJson<Examination[]>(path);
+      const [list, defaultExam] = await Promise.all([
+        apiJson<Examination[]>(path),
+        getStaffDefaultExamination().catch(() => null),
+      ]);
       setInternalExams(list);
       setInternalExamId((prev) => {
         if (prev != null && list.some((e) => e.id === prev)) return prev;
+        const fromDefault =
+          defaultExam != null && list.some((e) => e.id === defaultExam.id) ? defaultExam.id : null;
+        if (fromDefault != null) return fromDefault;
         return list.length ? list[0].id : null;
       });
     } catch (e) {
@@ -976,27 +982,17 @@ export function StaffDashboardOverview({
 
   return (
     <div className={`${depotCompact ? "space-y-6" : "space-y-8"}`}>
-      {controlledExam ? null : (
-        <div>
-          <label htmlFor="overview-exam" className={formLabelClass}>
-            Examination
-          </label>
-          <select
-            id="overview-exam"
-            className={`mt-1 w-full max-w-md ${formInputClass}`}
-            value={examId ?? ""}
-            onChange={(e) => setExamId(e.target.value ? Number(e.target.value) : null)}
-            disabled={exams.length === 0}
-          >
-            {exams.length === 0 ? <option value="">No examinations</option> : null}
-            {exams.map((ex) => (
-              <option key={ex.id} value={ex.id}>
-                {formatExamLabel(ex)}
-              </option>
-            ))}
-          </select>
+      {examId != null ? (
+        <div className="rounded-lg border border-border bg-muted/30 px-4 py-3">
+          <p className="text-sm text-muted-foreground">
+            <span className="font-medium text-foreground">Examination</span>
+            {": "}
+            {exams.find((e) => e.id === examId)
+              ? formatExamLabel(exams.find((e) => e.id === examId)!)
+              : "—"}
+          </p>
         </div>
-      )}
+      ) : null}
 
       {examinationNoticeTeaser}
 

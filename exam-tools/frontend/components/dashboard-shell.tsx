@@ -6,7 +6,7 @@ import { useEffect, useId, useState } from "react";
 
 import { DashboardSimpleHeader, DashboardStickyHeader } from "@/components/dashboard-sticky-header";
 import { ExaminationNoticeSessionBanner } from "@/components/examination-notice-session-banner";
-import { clearAuth, getMe, type UserMe } from "@/lib/auth";
+import { clearAuth, AUTH_TOKEN_UPDATED_EVENT, getMe, type UserMe } from "@/lib/auth";
 
 /** Subtitle under the page title: full name plus school name and code when present. */
 function staffHeaderSubtitle(me: UserMe): string {
@@ -22,6 +22,10 @@ function staffHeaderSubtitle(me: UserMe): string {
     if (userSeg) parts.push(userSeg);
     if (dep) parts.push(dep);
     return parts.filter((p) => p !== "").join(" · ");
+  }
+  const workspace = me.inspector_workspace_label?.trim();
+  if (me.role === "INSPECTOR" && workspace) {
+    return `${me.full_name.trim()} · ${workspace}`;
   }
   const schoolSegment =
     me.school_name != null && me.school_name.trim() !== ""
@@ -59,9 +63,17 @@ export function DashboardShell({ title, children, staffRole }: Props) {
   const [sidebarOpen, setSidebarOpen] = useState(false);
 
   useEffect(() => {
-    getMe()
-      .then(setMe)
-      .catch(() => setMe(null));
+    function refreshMe() {
+      getMe()
+        .then(setMe)
+        .catch(() => setMe(null));
+    }
+    refreshMe();
+    if (typeof window !== "undefined") {
+      window.addEventListener(AUTH_TOKEN_UPDATED_EVENT, refreshMe);
+      return () => window.removeEventListener(AUTH_TOKEN_UPDATED_EVENT, refreshMe);
+    }
+    return undefined;
   }, []);
 
   function logout() {

@@ -1,18 +1,22 @@
 "use client";
 
 import { Fragment, useCallback, useEffect, useState } from "react";
+import { useRouter } from "next/navigation";
 
 import { DashboardShell } from "@/components/dashboard-shell";
 import { RoleGuard } from "@/components/role-guard";
 import { formInputClass, formLabelClass } from "@/lib/form-classes";
 import {
-  apiJson,
+  getMyInspectorPostings,
   getMyCenterQuestionPaperControl,
+  getStaffDefaultExamination,
   upsertQuestionPaperSlot,
   type Examination,
   type MyCenterQuestionPaperControlResponse,
+  type MyInspectorPostingRow,
   type QuestionPaperSeriesSlotResponse,
 } from "@/lib/api";
+import { inspectorMustPickWorkspaceGlobally, pickInspectorPostingId } from "@/lib/auth";
 
 const btnPrimary =
   "inline-flex min-h-11 min-w-[44px] items-center justify-center rounded-lg bg-primary px-4 text-sm font-medium text-primary-foreground transition-colors hover:bg-primary-hover focus:outline-none focus:ring-2 focus:ring-ring/30 disabled:pointer-events-none disabled:opacity-50";
@@ -270,9 +274,16 @@ function groupCompletedGroupsBySubject(groups: CompletedTableGroup[]): SubjectCo
   return Array.from(map.values());
 }
 
+function workspaceOptionLabel(p: MyInspectorPostingRow): string {
+  return `${p.center_name} (${p.center_code}) — ${p.subject_scope}`;
+}
+
 export default function InspectorQuestionPaperControlPage() {
+  const router = useRouter();
   const [exams, setExams] = useState<Examination[]>([]);
   const [examId, setExamId] = useState<number | null>(null);
+  const [postings, setPostings] = useState<MyInspectorPostingRow[]>([]);
+  const [selectedPostingId, setSelectedPostingId] = useState<string | null>(null);
   const [data, setData] = useState<MyCenterQuestionPaperControlResponse | null>(null);
   const [drafts, setDrafts] = useState<Record<string, SlotCounts>>({});
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -283,10 +294,12 @@ export default function InspectorQuestionPaperControlPage() {
 
   const loadData = useCallback(async () => {
     if (examId === null) return;
+    if (postings.length > 0 && !selectedPostingId) return;
     setLoadError(null);
     setBusy(true);
     try {
-      const res = await getMyCenterQuestionPaperControl(examId);
+      const postingParam = postings.length > 0 ? selectedPostingId! : undefined;
+      const res = await getMyCenterQuestionPaperControl(examId, postingParam);
       setData(res);
       setDrafts(draftsFromData(res));
     } catch (e) {
@@ -296,31 +309,57 @@ export default function InspectorQuestionPaperControlPage() {
     } finally {
       setBusy(false);
     }
-  }, [examId]);
+  }, [examId, postings.length, selectedPostingId]);
 
   useEffect(() => {
-    async function loadExams() {
+    if (inspectorMustPickWorkspaceGlobally(postings.length)) {
+      router.replace("/dashboard/inspector/select-workspace");
+    }
+  }, [postings.length, router]);
+
+  useEffect(() => {
+    async function loadActiveExam() {
       setLoadError(null);
       try {
-        const list = await apiJson<Examination[]>("/examinations/public-list");
-        setExams(list);
-        setExamId((prev) => (prev === null && list.length ? list[0].id : prev));
+        const ex = await getStaffDefaultExamination();
+        setExams([ex]);
+        setExamId(ex.id);
       } catch (e) {
-        setLoadError(e instanceof Error ? e.message : "Failed to load examinations");
+        setLoadError(e instanceof Error ? e.message : "Failed to load active examination");
       }
     }
-    void loadExams();
+    void loadActiveExam();
   }, []);
 
   useEffect(() => {
-    if (examId !== null) {
+    if (examId === null) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const postingRes = await getMyInspectorPostings(examId);
+        if (cancelled) return;
+        setPostings(postingRes.items);
+        setSelectedPostingId((prev) => pickInspectorPostingId(postingRes.items, prev));
+      } catch {
+        if (cancelled) return;
+        setPostings([]);
+        setSelectedPostingId(null);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [examId]);
+
+  useEffect(() => {
+    if (examId !== null && (postings.length === 0 || selectedPostingId)) {
       void loadData();
     } else {
       setData(null);
       setDrafts({});
     }
     setPastEdit(null);
-  }, [examId, loadData]);
+  }, [examId, postings.length, selectedPostingId, loadData]);
 
   function updateDraft(key: string, patch: Partial<SlotCounts>) {
     setDrafts((prev) => {
@@ -343,15 +382,19 @@ export default function InspectorQuestionPaperControlPage() {
     setSlotError(null);
     setSavingKey(key);
     try {
-      await upsertQuestionPaperSlot(examId, {
-        subject_id: subjectId,
-        paper_number: paperNumber,
-        series_number: seriesNumber,
-        copies_received: d.copies_received,
-        copies_used: d.copies_used,
-        copies_to_library: d.copies_to_library,
-        copies_remaining: d.copies_remaining,
-      });
+      await upsertQuestionPaperSlot(
+        examId,
+        {
+          subject_id: subjectId,
+          paper_number: paperNumber,
+          series_number: seriesNumber,
+          copies_received: d.copies_received,
+          copies_used: d.copies_used,
+          copies_to_library: d.copies_to_library,
+          copies_remaining: d.copies_remaining,
+        },
+        postings.length > 0 ? selectedPostingId! : undefined,
+      );
       await loadData();
       setPastEdit(null);
     } catch (e) {
@@ -661,35 +704,32 @@ export default function InspectorQuestionPaperControlPage() {
           ) : null}
 
           <div className="flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-end">
-            <div className="min-w-0 flex-1 sm:max-w-md">
-              <label htmlFor="qp-exam" className={formLabelClass}>
-                Examination
-              </label>
-              <select
-                id="qp-exam"
-                className={`${formInputClass} max-w-none`}
-                value={examId ?? ""}
-                onChange={(e) => {
-                  setExamId(e.target.value ? Number(e.target.value) : null);
-                  setSlotError(null);
-                }}
-                disabled={busy || exams.length === 0}
-              >
-                {exams.length === 0 ? <option value="">No examinations</option> : null}
-                {exams.map((ex) => (
-                  <option key={ex.id} value={ex.id}>
-                    {ex.exam_type} {ex.year}
-                    {ex.exam_series ? ` (${ex.exam_series})` : ""}
-                  </option>
-                ))}
-              </select>
-            </div>
+            {examId != null && exams[0] ? (
+              <div className="min-w-0 flex-1 sm:max-w-md">
+                <p className="text-sm text-muted-foreground">
+                  <span className="font-medium text-foreground">Examination</span>
+                  {": "}
+                  {exams[0].exam_type} {exams[0].year}
+                  {exams[0].exam_series ? ` (${exams[0].exam_series})` : ""}
+                </p>
+              </div>
+            ) : null}
             {data && data.subjects.length > 0 ? (
               <button type="button" className={btnSecondary} disabled={busy} onClick={() => void loadData()}>
                 Refresh data
               </button>
             ) : null}
           </div>
+
+          {selectedPostingId ? (
+            <p className="text-sm text-muted-foreground">
+              <span className="font-medium text-foreground">Workspace:</span>{" "}
+              {(() => {
+                const p = postings.find((x) => x.id === selectedPostingId);
+                return p ? workspaceOptionLabel(p) : "—";
+              })()}
+            </p>
+          ) : null}
 
           {data ? (
             <div className="rounded-xl border border-border bg-muted/40 px-4 py-3 text-sm text-foreground">

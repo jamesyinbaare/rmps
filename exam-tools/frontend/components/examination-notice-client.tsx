@@ -6,15 +6,17 @@ import { StaffDepotNoticeBanner } from "@/components/staff-depot-notice-banner";
 import { StaffExamCentreNotice } from "@/components/staff-exam-centre-notice";
 import { StaffInspectorNoticeBanner } from "@/components/staff-inspector-notice-banner";
 import {
-  apiJson,
   getMyCenterProgrammes,
   getMyDepotProgrammes,
   getMyDepotSchools,
+  getMyInspectorPostings,
   getStaffCentreOverview,
+  getStaffDefaultExamination,
   getStaffDepotOverview,
   type CenterScopeSchoolItem,
   type CentreScopeProgrammeItem,
   type Examination,
+  type MyInspectorPostingRow,
   type StaffCentreOverviewResponse,
   type StaffDepotOverviewResponse,
 } from "@/lib/api";
@@ -38,6 +40,7 @@ import {
 } from "@/lib/examination-notice-depot-content";
 import {
   formatOrdinalLongDate,
+  inspectorAppointmentBodyText,
   inspectorExaminationAppointmentHeading,
   inspectorExaminationClosing,
   inspectorExaminationSignOff,
@@ -59,7 +62,6 @@ import {
   preExamInstructions,
   requiredDocumentsChecklist,
 } from "@/lib/examination-notice-content";
-import { formInputClass, formLabelClass } from "@/lib/form-classes";
 
 export type ExaminationNoticeDataScope = "centre" | "depot";
 
@@ -73,10 +75,6 @@ type Props = {
 
 const DEPOT_SCHOOLS_LIST_CAP = 20;
 const DEPOT_PROGRAMMES_SHOW = 12;
-
-function formatExamLabel(ex: Examination): string {
-  return `${ex.year}${ex.exam_series ? ` ${ex.exam_series}` : ""} — ${ex.exam_type}`;
-}
 
 function printExaminationNotice() {
   document.body.classList.add("printing-examination-notice");
@@ -111,26 +109,43 @@ export function ExaminationNoticeClient({ dataScope, centreRole = "supervisor" }
   const [depotSchools, setDepotSchools] = useState<CenterScopeSchoolItem[]>([]);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [inspectorPostings, setInspectorPostings] = useState<MyInspectorPostingRow[]>([]);
 
   const loadExams = useCallback(async () => {
     setError(null);
     try {
-      const list = await apiJson<Examination[]>("/examinations/public-list");
-      setExams(list);
-      setExamId((prev) => {
-        if (prev != null && list.some((it) => it.id === prev)) return prev;
-        return list.length > 0 ? list[0].id : null;
-      });
+      const ex = await getStaffDefaultExamination();
+      setExams([ex]);
+      setExamId(ex.id);
     } catch (e) {
       setExams([]);
       setExamId(null);
-      setError(e instanceof Error ? e.message : "Could not load examinations");
+      setError(e instanceof Error ? e.message : "Could not load active examination");
     }
   }, []);
 
   useEffect(() => {
     void loadExams();
   }, [loadExams]);
+
+  useEffect(() => {
+    if (examId == null || dataScope !== "centre" || centreRole !== "inspector") {
+      setInspectorPostings([]);
+      return;
+    }
+    let cancelled = false;
+    void (async () => {
+      try {
+        const r = await getMyInspectorPostings(examId);
+        if (!cancelled) setInspectorPostings(r.items);
+      } catch {
+        if (!cancelled) setInspectorPostings([]);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [examId, dataScope, centreRole]);
 
   useEffect(() => {
     if (examId == null) {
@@ -162,7 +177,7 @@ export function ExaminationNoticeClient({ dataScope, centreRole = "supervisor" }
         } else {
           const [overviewData, programmesData] = await Promise.all([
             getStaffCentreOverview(examIdResolved),
-            getMyCenterProgrammes(),
+            getMyCenterProgrammes(null, examIdResolved),
           ]);
           if (cancelled) return;
           setOverviewCentre(overviewData);
@@ -225,26 +240,6 @@ export function ExaminationNoticeClient({ dataScope, centreRole = "supervisor" }
 
   return (
     <div className="space-y-5">
-      <div className="max-w-md">
-        <label htmlFor="examination-notice-exam" className={formLabelClass}>
-          Examination
-        </label>
-        <select
-          id="examination-notice-exam"
-          className={`mt-1 w-full ${formInputClass}`}
-          value={examId ?? ""}
-          onChange={(e) => setExamId(e.target.value ? Number(e.target.value) : null)}
-          disabled={exams.length === 0 || busy}
-        >
-          {exams.length === 0 ? <option value="">No examinations</option> : null}
-          {exams.map((ex) => (
-            <option key={ex.id} value={ex.id}>
-              {formatExamLabel(ex)}
-            </option>
-          ))}
-        </select>
-      </div>
-
       {error ? (
         <p className="rounded-lg border border-destructive/40 bg-destructive/10 px-3 py-2 text-sm text-destructive">
           {error}
@@ -303,6 +298,21 @@ export function ExaminationNoticeClient({ dataScope, centreRole = "supervisor" }
                 <div className="mt-3">
                   <StaffInspectorNoticeBanner overview={overviewCentre} />
                 </div>
+                <p className="mt-3 text-sm text-foreground [overflow-wrap:anywhere]">
+                  {inspectorAppointmentBodyText({
+                    year: activeExam.year,
+                    examType: activeExam.exam_type,
+                    examSeries: activeExam.exam_series,
+                    region: overviewCentre.examination_centre_region,
+                    defaultCentreName: overviewCentre.examination_centre_host_name,
+                    defaultCentreCode: overviewCentre.examination_centre_host_code,
+                    postings: inspectorPostings.map((p) => ({
+                      center_name: p.center_name,
+                      center_code: p.center_code,
+                      subject_scope: p.subject_scope,
+                    })),
+                  })}
+                </p>
               </>
             ) : (
               <>

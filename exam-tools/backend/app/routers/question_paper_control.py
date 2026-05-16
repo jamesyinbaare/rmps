@@ -6,9 +6,9 @@ from uuid import UUID
 from fastapi import APIRouter, HTTPException, Query, status
 from sqlalchemy import func, select
 
-from app.dependencies.auth import DepotKeeperDep, InspectorDep, SuperAdminDep
+from app.dependencies.auth import DepotKeeperDep, InspectorDep, InspectorJwtPostingIdDep, SuperAdminDep
 from app.dependencies.database import DBSessionDep
-from app.models import QuestionPaperControl, School, Subject
+from app.models import ExamInspectorSubjectScope, QuestionPaperControl, School, Subject
 from app.schemas.question_paper_control import (
     MyCenterQuestionPaperControlResponse,
     QuestionPaperControlAdminListResponse,
@@ -26,31 +26,43 @@ from app.services.depot_scope import (
     require_depot_id_for_depot_keeper,
 )
 from app.services.exam_timetable_pdf import load_examination_or_raise
+from app.services.inspector_posting import (
+    assert_subject_allowed_for_workspace,
+    filter_subject_rows_for_scope,
+    resolve_inspector_workspace,
+)
 from app.services.question_paper_control import (
     load_subject_paper_rows_for_exam_and_center,
     valid_question_paper_triples,
 )
 from app.services.script_control import (
     assert_script_packing_calendar_allowed,
-    inspector_center_scope_school_ids,
     paper_examination_date_for_triple,
-    school_from_inspector_user,
     script_packing_today_in_configured_zone,
     subject_series_count_map,
 )
-from app.services.timetable_service import center_scope_school_ids, resolve_center_host_school
+from app.services.timetable_service import center_scope_school_ids
 
 router = APIRouter(tags=["question-paper-control"])
 
 
-async def _inspector_center_host_and_scope(
+async def _inspector_question_paper_workspace(
     session: DBSessionDep,
     user: InspectorDep,
-) -> tuple[School, set[UUID]]:
+    examination_id: int,
+    posting_id: UUID | None,
+    jwt_posting_id: UUID | None,
+):
     try:
-        scope_ids = await inspector_center_scope_school_ids(session, user)
-        user_school = await school_from_inspector_user(session, user)
-        center_host = await resolve_center_host_school(session, user_school)
+        return await resolve_inspector_workspace(
+            session,
+            examination_id=examination_id,
+            user=user,
+            posting_id=posting_id,
+            jwt_posting_id=jwt_posting_id,
+        )
+    except HTTPException:
+        raise
     except PermissionError:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Inspector access only") from None
     except ValueError as e:
@@ -58,7 +70,6 @@ async def _inspector_center_host_and_scope(
         if "examination centre scope" in detail or "Centre host school is missing" in detail:
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=detail) from None
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=detail) from None
-    return center_host, scope_ids
 
 
 async def _build_center_question_paper_grid(
@@ -66,9 +77,11 @@ async def _build_center_question_paper_grid(
     exam_id: int,
     center_host: School,
     scope_ids: set[UUID],
+    subject_scope: ExamInspectorSubjectScope,
 ) -> MyCenterQuestionPaperControlResponse:
     exam = await load_examination_or_raise(session, exam_id)
     rows = await load_subject_paper_rows_for_exam_and_center(session, exam_id, scope_ids)
+    rows = filter_subject_rows_for_scope(rows, subject_scope)
     q_stmt = select(QuestionPaperControl).where(
         QuestionPaperControl.examination_id == exam_id,
         QuestionPaperControl.center_id == center_host.id,
@@ -137,11 +150,18 @@ async def get_my_center_question_paper_control(
     exam_id: int,
     session: DBSessionDep,
     user: InspectorDep,
+    jwt_posting_id: InspectorJwtPostingIdDep,
+    posting_id: UUID | None = Query(
+        default=None,
+        description="Inspector posting (workspace); overrides JWT when set; required when you have multiple postings.",
+    ),
 ) -> MyCenterQuestionPaperControlResponse:
-    center_host, scope_ids = await _inspector_center_host_and_scope(session, user)
+    ctx = await _inspector_question_paper_workspace(session, user, exam_id, posting_id, jwt_posting_id)
 
     try:
-        return await _build_center_question_paper_grid(session, exam_id, center_host, scope_ids)
+        return await _build_center_question_paper_grid(
+            session, exam_id, ctx.center_host, ctx.scope_ids, ctx.subject_scope
+        )
     except ValueError:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Examination not found") from None
 
@@ -175,7 +195,9 @@ async def get_depot_center_question_paper_control(
 
     scope_ids = await center_scope_school_ids(session, center_host)
     try:
-        return await _build_center_question_paper_grid(session, exam_id, center_host, scope_ids)
+        return await _build_center_question_paper_grid(
+            session, exam_id, center_host, scope_ids, ExamInspectorSubjectScope.ALL
+        )
     except ValueError:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Examination not found") from None
 
@@ -263,13 +285,22 @@ async def upsert_my_center_question_paper_slot(
     body: QuestionPaperSlotUpsertRequest,
     session: DBSessionDep,
     user: InspectorDep,
+    jwt_posting_id: InspectorJwtPostingIdDep,
+    posting_id: UUID | None = Query(
+        default=None,
+        description="Inspector posting (workspace); overrides JWT when set; required when you have multiple postings.",
+    ),
 ) -> QuestionPaperSlotUpsertResponse:
-    center_host, scope_ids = await _inspector_center_host_and_scope(session, user)
+    ctx = await _inspector_question_paper_workspace(session, user, exam_id, posting_id, jwt_posting_id)
 
     try:
         await load_examination_or_raise(session, exam_id)
     except ValueError:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Examination not found") from None
+
+    await assert_subject_allowed_for_workspace(session, ctx, body.subject_id)
+
+    center_host, scope_ids = ctx.center_host, ctx.scope_ids
 
     allowed = await valid_question_paper_triples(session, exam_id, scope_ids)
     if (body.subject_id, body.paper_number, body.series_number) not in allowed:

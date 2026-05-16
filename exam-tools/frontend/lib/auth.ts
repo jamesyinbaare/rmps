@@ -40,6 +40,9 @@ export function clearAuth(): void {
   localStorage.removeItem(TOKEN_KEY);
 }
 
+/** Fired after ``setStoredToken`` from select-posting (and similar) so layouts can refetch ``/auth/me``. */
+export const AUTH_TOKEN_UPDATED_EVENT = "exam-tools-auth-token-updated";
+
 export type ApiRole =
   | "SUPER_ADMIN"
   | "TEST_ADMIN_OFFICER"
@@ -64,6 +67,8 @@ export type UserMe = {
   depot_id?: string | null;
   depot_code?: string | null;
   depot_name?: string | null;
+  /** When inspector JWT includes ``inspector_posting_id``; centre label for header subtitle. */
+  inspector_workspace_label?: string | null;
 };
 
 export type TokenResponse = {
@@ -121,19 +126,94 @@ export async function parseErrorMessage(res: Response): Promise<string> {
   return fallback;
 }
 
-export async function loginInspector(
-  school_code: string,
-  phone_number: string,
-): Promise<string> {
+export function parseJwtPayload(token: string): Record<string, unknown> | null {
+  try {
+    const parts = token.split(".");
+    if (parts.length < 2) return null;
+    const payload = parts[1];
+    const base64 = payload.replace(/-/g, "+").replace(/_/g, "/");
+    const padded = base64.padStart(base64.length + ((4 - (base64.length % 4)) % 4), "=");
+    const json =
+      typeof atob !== "undefined"
+        ? atob(padded)
+        : Buffer.from(payload, "base64url").toString("utf8");
+    return JSON.parse(json) as Record<string, unknown>;
+  } catch {
+    return null;
+  }
+}
+
+/** ``inspector_posting_id`` from the current access token (global workspace), if present. */
+export function getInspectorPostingIdFromToken(): string | null {
+  const token = getStoredToken();
+  if (!token) return null;
+  const payload = parseJwtPayload(token);
+  const raw = payload?.inspector_posting_id;
+  if (typeof raw === "string" && raw.trim()) return raw.trim();
+  if (raw != null && String(raw).trim() !== "") return String(raw).trim();
+  return null;
+}
+
+/**
+ * When the inspector has more than one posting, the session token must include
+ * ``inspector_posting_id`` (set on login if only one posting, or via select-workspace).
+ * Per-page workspace dropdowns are not shown.
+ */
+export function inspectorMustPickWorkspaceGlobally(postingsCount: number): boolean {
+  return postingsCount > 1 && getInspectorPostingIdFromToken() == null;
+}
+
+/**
+ * Choose which inspector posting to use on dashboard pages: preserve in-page selection when
+ * still valid, otherwise use the JWT workspace (after login / select-workspace), else first listing.
+ */
+export function pickInspectorPostingId(
+  items: { id: string }[],
+  prev: string | null,
+): string | null {
+  if (items.length === 0) return null;
+  if (items.length === 1) return items[0].id;
+  if (prev && items.some((x) => x.id === prev)) return prev;
+  const jwtId = getInspectorPostingIdFromToken();
+  if (jwtId && items.some((x) => x.id === jwtId)) return jwtId;
+  return items[0]?.id ?? null;
+}
+
+export async function loginInspector(phone_number: string, password: string): Promise<string> {
   const res = await fetch(`${getApiBaseUrl()}/auth/inspector/login`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ school_code, phone_number }),
+    body: JSON.stringify({ phone_number, password }),
   });
   if (!res.ok) throw new Error(await parseErrorMessage(res));
   const data = (await res.json()) as TokenResponse;
   setStoredToken(data.access_token);
+  if (data.role === "INSPECTOR" || data.role === 20) {
+    const jwt = parseJwtPayload(data.access_token);
+    if (jwt?.inspector_posting_id) return "/dashboard/inspector";
+    return "/dashboard/inspector/select-workspace";
+  }
   return dashboardPathForLoginRole(data.role);
+}
+
+export async function selectInspectorPosting(posting_id: string): Promise<TokenResponse> {
+  const token = getStoredToken();
+  if (!token) throw new Error("Not authenticated");
+  const res = await fetch(`${getApiBaseUrl()}/auth/inspector/select-posting`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${token}`,
+    },
+    body: JSON.stringify({ posting_id }),
+  });
+  if (!res.ok) throw new Error(await parseErrorMessage(res));
+  const data = (await res.json()) as TokenResponse;
+  setStoredToken(data.access_token);
+  if (typeof window !== "undefined") {
+    window.dispatchEvent(new Event(AUTH_TOKEN_UPDATED_EVENT));
+  }
+  return data;
 }
 
 export async function loginSupervisor(

@@ -4,11 +4,11 @@ from datetime import datetime
 from typing import cast
 from uuid import UUID
 
-from fastapi import APIRouter, HTTPException, status
+from fastapi import APIRouter, HTTPException, Query, status
 from sqlalchemy import select
 from sqlalchemy.orm import selectinload
 
-from app.dependencies.auth import InspectorDep
+from app.dependencies.auth import InspectorDep, InspectorJwtPostingIdDep
 from app.dependencies.database import DBSessionDep
 from app.models import BankBranch, ExamCentreOfficial, ExamOfficialDesignation, User, UserRole
 from app.schemas.exam_official import (
@@ -18,29 +18,31 @@ from app.schemas.exam_official import (
     ExamCentreOfficialUpdate,
 )
 from app.services.exam_timetable_pdf import load_examination_or_raise
-from app.services.script_control import school_from_inspector_user
-from app.services.timetable_service import resolve_center_host_school
+from app.services.inspector_posting import resolve_inspector_workspace
 
 router = APIRouter(tags=["exam-officials"])
 
 
-async def _inspector_examination_centre_id(session: DBSessionDep, user: User) -> UUID:
+async def _inspector_officials_center_id(
+    session: DBSessionDep,
+    user: User,
+    exam_id: int,
+    posting_id: UUID | None,
+    jwt_posting_id: UUID | None,
+) -> UUID:
     if user.role != UserRole.INSPECTOR:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Inspector access only")
     try:
-        user_school = await school_from_inspector_user(session, user)
-    except PermissionError:
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Inspector access only") from None
-    except ValueError as e:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e)) from None
-    try:
-        host = await resolve_center_host_school(session, user_school)
-    except ValueError as e:
-        detail = str(e)
-        if "Centre host school is missing" in detail or "examination centre" in detail.lower():
-            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=detail) from None
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=detail) from None
-    return host.id
+        ctx = await resolve_inspector_workspace(
+            session,
+            examination_id=exam_id,
+            user=user,
+            posting_id=posting_id,
+            jwt_posting_id=jwt_posting_id,
+        )
+    except HTTPException:
+        raise
+    return ctx.center_host.id
 
 
 def _official_to_response(row: ExamCentreOfficial) -> ExamCentreOfficialResponse:
@@ -76,8 +78,13 @@ async def list_exam_officials(
     exam_id: int,
     session: DBSessionDep,
     user: InspectorDep,
+    jwt_posting_id: InspectorJwtPostingIdDep,
+    posting_id: UUID | None = Query(
+        default=None,
+        description="Inspector posting (workspace); overrides JWT when set; required when you have multiple postings.",
+    ),
 ) -> ExamCentreOfficialListResponse:
-    center_id = await _inspector_examination_centre_id(session, user)
+    center_id = await _inspector_officials_center_id(session, user, exam_id, posting_id, jwt_posting_id)
     try:
         await load_examination_or_raise(session, exam_id)
     except ValueError:
@@ -104,8 +111,13 @@ async def create_exam_official(
     session: DBSessionDep,
     user: InspectorDep,
     body: ExamCentreOfficialCreate,
+    jwt_posting_id: InspectorJwtPostingIdDep,
+    posting_id: UUID | None = Query(
+        default=None,
+        description="Inspector posting (workspace); overrides JWT when set; required when you have multiple postings.",
+    ),
 ) -> ExamCentreOfficialResponse:
-    center_id = await _inspector_examination_centre_id(session, user)
+    center_id = await _inspector_officials_center_id(session, user, exam_id, posting_id, jwt_posting_id)
     try:
         await load_examination_or_raise(session, exam_id)
     except ValueError:
@@ -147,8 +159,13 @@ async def update_exam_official(
     session: DBSessionDep,
     user: InspectorDep,
     body: ExamCentreOfficialUpdate,
+    jwt_posting_id: InspectorJwtPostingIdDep,
+    posting_id: UUID | None = Query(
+        default=None,
+        description="Inspector posting (workspace); overrides JWT when set; required when you have multiple postings.",
+    ),
 ) -> ExamCentreOfficialResponse:
-    center_id = await _inspector_examination_centre_id(session, user)
+    center_id = await _inspector_officials_center_id(session, user, exam_id, posting_id, jwt_posting_id)
     try:
         await load_examination_or_raise(session, exam_id)
     except ValueError:
@@ -202,8 +219,13 @@ async def delete_exam_official(
     official_id: UUID,
     session: DBSessionDep,
     user: InspectorDep,
+    jwt_posting_id: InspectorJwtPostingIdDep,
+    posting_id: UUID | None = Query(
+        default=None,
+        description="Inspector posting (workspace); overrides JWT when set; required when you have multiple postings.",
+    ),
 ) -> None:
-    center_id = await _inspector_examination_centre_id(session, user)
+    center_id = await _inspector_officials_center_id(session, user, exam_id, posting_id, jwt_posting_id)
     try:
         await load_examination_or_raise(session, exam_id)
     except ValueError:

@@ -10,12 +10,13 @@ from sqlalchemy import delete, distinct, func, or_, select, tuple_
 from sqlalchemy.orm import contains_eager, selectinload
 
 from app.config import resolved_scripts_per_envelope_paper_1, resolved_scripts_per_envelope_paper_2, script_envelope_cap, settings
-from app.dependencies.auth import DepotKeeperDep, InspectorDep, SuperAdminOrTestAdminOfficerDep
+from app.dependencies.auth import DepotKeeperDep, InspectorDep, InspectorJwtPostingIdDep, SuperAdminOrTestAdminOfficerDep
 from app.dependencies.database import DBSessionDep
 from app.models import (
     AllocationAssignment,
     ExaminationCandidate,
     ExaminationCandidateSubject,
+    ExamInspectorSubjectScope,
     IrregularScriptEnvelope,
     IrregularScriptPackingSeries,
     Region,
@@ -47,6 +48,11 @@ from app.services.depot_scope import (
     script_scope_for_school,
 )
 from app.services.exam_timetable_pdf import load_examination_or_raise
+from app.services.inspector_posting import (
+    assert_subject_allowed_for_workspace,
+    filter_subject_rows_for_scope,
+    resolve_inspector_workspace,
+)
 from app.services.script_control_export import (
     build_script_control_export_dataframe,
     compute_max_series,
@@ -56,7 +62,6 @@ from app.services.script_control_export import (
 from app.services.script_control import (
     assert_packing_school_in_scope,
     assert_script_packing_calendar_allowed,
-    inspector_center_scope_school_ids,
     load_subject_paper_rows_for_exam_and_school,
     ordered_subjects_on_examination_timetable,
     paper_examination_date_for_triple,
@@ -68,15 +73,26 @@ from app.services.script_control import (
 router = APIRouter(tags=["script-control"])
 
 
-async def _inspector_scope_and_packing_school(
+async def _inspector_workspace_and_packing_school(
     session: DBSessionDep,
     user: User,
+    exam_id: int,
     school_id: UUID,
-) -> tuple[School, set[UUID]]:
+    posting_id: UUID | None,
+    jwt_posting_id: UUID | None,
+):
     if user.role != UserRole.INSPECTOR:
         raise PermissionError("Inspector access only")
     try:
-        scope_ids = await inspector_center_scope_school_ids(session, user)
+        ctx = await resolve_inspector_workspace(
+            session,
+            examination_id=exam_id,
+            user=user,
+            posting_id=posting_id,
+            jwt_posting_id=jwt_posting_id,
+        )
+    except HTTPException:
+        raise
     except PermissionError:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Inspector access only") from None
     except ValueError as e:
@@ -89,10 +105,10 @@ async def _inspector_scope_and_packing_school(
     if packing_school is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="School not found")
     try:
-        assert_packing_school_in_scope(school_id, scope_ids)
+        assert_packing_school_in_scope(school_id, ctx.scope_ids)
     except ValueError as e:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e)) from None
-    return packing_school, scope_ids
+    return packing_school, ctx.scope_ids, ctx
 
 
 def _packing_to_response(ps: ScriptPackingSeries) -> ScriptSeriesPackingResponse:
@@ -167,11 +183,13 @@ async def _build_my_school_script_grid(
     exam_id: int,
     packing_school: School,
     scope_ids: set[UUID],
+    subject_scope: ExamInspectorSubjectScope,
 ) -> MySchoolScriptControlResponse:
     exam = await load_examination_or_raise(session, exam_id)
     rows = await load_subject_paper_rows_for_exam_and_school(
         session, exam_id, scope_ids, packing_school.id
     )
+    rows = filter_subject_rows_for_scope(rows, subject_scope)
     pack_stmt = (
         select(ScriptPackingSeries)
         .where(
@@ -243,15 +261,24 @@ async def get_my_school_script_control(
     exam_id: int,
     session: DBSessionDep,
     user: InspectorDep,
+    jwt_posting_id: InspectorJwtPostingIdDep,
     school_id: UUID = Query(
         ...,
         description="School whose registered candidates define subjects; read/write packing for this school.",
     ),
+    posting_id: UUID | None = Query(
+        default=None,
+        description="Inspector posting (workspace); overrides JWT when set; required when you have multiple postings.",
+    ),
 ) -> MySchoolScriptControlResponse:
-    packing_school, scope_ids = await _inspector_scope_and_packing_school(session, user, school_id)
+    packing_school, scope_ids, ctx = await _inspector_workspace_and_packing_school(
+        session, user, exam_id, school_id, posting_id, jwt_posting_id
+    )
 
     try:
-        return await _build_my_school_script_grid(session, exam_id, packing_school, scope_ids)
+        return await _build_my_school_script_grid(
+            session, exam_id, packing_school, scope_ids, ctx.subject_scope
+        )
     except ValueError:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Examination not found") from None
 
@@ -285,7 +312,9 @@ async def get_depot_school_script_control(
 
     scope_ids = await script_scope_for_school(session, packing_school)
     try:
-        return await _build_my_school_script_grid(session, exam_id, packing_school, scope_ids)
+        return await _build_my_school_script_grid(
+            session, exam_id, packing_school, scope_ids, ExamInspectorSubjectScope.ALL
+        )
     except ValueError:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Examination not found") from None
 
@@ -394,17 +423,26 @@ async def upsert_my_school_script_series(
     body: ScriptSeriesUpsertRequest,
     session: DBSessionDep,
     user: InspectorDep,
+    jwt_posting_id: InspectorJwtPostingIdDep,
     school_id: UUID = Query(
         ...,
         description="School whose registered candidates define subjects; read/write packing for this school.",
     ),
+    posting_id: UUID | None = Query(
+        default=None,
+        description="Inspector posting (workspace); overrides JWT when set; required when you have multiple postings.",
+    ),
 ) -> ScriptSeriesPackingResponse:
-    packing_school, scope_ids = await _inspector_scope_and_packing_school(session, user, school_id)
+    packing_school, scope_ids, ctx = await _inspector_workspace_and_packing_school(
+        session, user, exam_id, school_id, posting_id, jwt_posting_id
+    )
 
     try:
         await load_examination_or_raise(session, exam_id)
     except ValueError:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Examination not found") from None
+
+    await assert_subject_allowed_for_workspace(session, ctx, body.subject_id)
 
     allowed = await valid_script_packing_triples(session, exam_id, scope_ids, packing_school.id)
     if (body.subject_id, body.paper_number, body.series_number) not in allowed:
@@ -524,6 +562,7 @@ async def delete_my_school_script_series(
     exam_id: int,
     session: DBSessionDep,
     user: InspectorDep,
+    jwt_posting_id: InspectorJwtPostingIdDep,
     school_id: UUID = Query(
         ...,
         description="School whose registered candidates define subjects; read/write packing for this school.",
@@ -531,13 +570,21 @@ async def delete_my_school_script_series(
     subject_id: int = Query(...),
     paper_number: int = Query(..., ge=1),
     series_number: int = Query(..., ge=1, le=32767),
+    posting_id: UUID | None = Query(
+        default=None,
+        description="Inspector posting (workspace); overrides JWT when set; required when you have multiple postings.",
+    ),
 ) -> None:
-    packing_school, _scope_ids = await _inspector_scope_and_packing_school(session, user, school_id)
+    packing_school, _scope_ids, ctx = await _inspector_workspace_and_packing_school(
+        session, user, exam_id, school_id, posting_id, jwt_posting_id
+    )
 
     try:
         await load_examination_or_raise(session, exam_id)
     except ValueError:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Examination not found") from None
+
+    await assert_subject_allowed_for_workspace(session, ctx, subject_id)
 
     exam_date = await paper_examination_date_for_triple(session, exam_id, subject_id, paper_number)
     try:
@@ -594,9 +641,11 @@ async def _build_my_school_irregular_script_grid(
     exam_id: int,
     packing_school: School,
     scope_ids: set[UUID],
+    subject_scope: ExamInspectorSubjectScope,
 ) -> MySchoolScriptControlResponse:
     exam = await load_examination_or_raise(session, exam_id)
     rows = await load_subject_paper_rows_for_exam_and_school(session, exam_id, scope_ids, packing_school.id)
+    rows = filter_subject_rows_for_scope(rows, subject_scope)
     pack_stmt = (
         select(IrregularScriptPackingSeries)
         .where(
@@ -662,14 +711,23 @@ async def get_my_school_irregular_script_control(
     exam_id: int,
     session: DBSessionDep,
     user: InspectorDep,
+    jwt_posting_id: InspectorJwtPostingIdDep,
     school_id: UUID = Query(
         ...,
         description="School whose registered candidates define subjects; read/write irregular packing for this school.",
     ),
+    posting_id: UUID | None = Query(
+        default=None,
+        description="Inspector posting (workspace); overrides JWT when set; required when you have multiple postings.",
+    ),
 ) -> MySchoolScriptControlResponse:
-    packing_school, scope_ids = await _inspector_scope_and_packing_school(session, user, school_id)
+    packing_school, scope_ids, ctx = await _inspector_workspace_and_packing_school(
+        session, user, exam_id, school_id, posting_id, jwt_posting_id
+    )
     try:
-        return await _build_my_school_irregular_script_grid(session, exam_id, packing_school, scope_ids)
+        return await _build_my_school_irregular_script_grid(
+            session, exam_id, packing_school, scope_ids, ctx.subject_scope
+        )
     except ValueError:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Examination not found") from None
 
@@ -703,7 +761,9 @@ async def get_depot_school_irregular_script_control(
 
     scope_ids = await script_scope_for_school(session, packing_school)
     try:
-        return await _build_my_school_irregular_script_grid(session, exam_id, packing_school, scope_ids)
+        return await _build_my_school_irregular_script_grid(
+            session, exam_id, packing_school, scope_ids, ExamInspectorSubjectScope.ALL
+        )
     except ValueError:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Examination not found") from None
 
@@ -813,16 +873,25 @@ async def upsert_my_school_irregular_script_series(
     body: ScriptSeriesUpsertRequest,
     session: DBSessionDep,
     user: InspectorDep,
+    jwt_posting_id: InspectorJwtPostingIdDep,
     school_id: UUID = Query(
         ...,
         description="School whose registered candidates define subjects; read/write irregular packing for this school.",
     ),
+    posting_id: UUID | None = Query(
+        default=None,
+        description="Inspector posting (workspace); overrides JWT when set; required when you have multiple postings.",
+    ),
 ) -> ScriptSeriesPackingResponse:
-    packing_school, scope_ids = await _inspector_scope_and_packing_school(session, user, school_id)
+    packing_school, scope_ids, ctx = await _inspector_workspace_and_packing_school(
+        session, user, exam_id, school_id, posting_id, jwt_posting_id
+    )
     try:
         await load_examination_or_raise(session, exam_id)
     except ValueError:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Examination not found") from None
+
+    await assert_subject_allowed_for_workspace(session, ctx, body.subject_id)
 
     allowed = await valid_script_packing_triples(session, exam_id, scope_ids, packing_school.id)
     if (body.subject_id, body.paper_number, body.series_number) not in allowed:
@@ -934,6 +1003,7 @@ async def delete_my_school_irregular_script_series(
     exam_id: int,
     session: DBSessionDep,
     user: InspectorDep,
+    jwt_posting_id: InspectorJwtPostingIdDep,
     school_id: UUID = Query(
         ...,
         description="School whose registered candidates define subjects; read/write irregular packing for this school.",
@@ -941,12 +1011,20 @@ async def delete_my_school_irregular_script_series(
     subject_id: int = Query(...),
     paper_number: int = Query(..., ge=1),
     series_number: int = Query(..., ge=1, le=32767),
+    posting_id: UUID | None = Query(
+        default=None,
+        description="Inspector posting (workspace); overrides JWT when set; required when you have multiple postings.",
+    ),
 ) -> None:
-    packing_school, _scope_ids = await _inspector_scope_and_packing_school(session, user, school_id)
+    packing_school, _scope_ids, ctx = await _inspector_workspace_and_packing_school(
+        session, user, exam_id, school_id, posting_id, jwt_posting_id
+    )
     try:
         await load_examination_or_raise(session, exam_id)
     except ValueError:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Examination not found") from None
+
+    await assert_subject_allowed_for_workspace(session, ctx, subject_id)
 
     exam_date = await paper_examination_date_for_triple(session, exam_id, subject_id, paper_number)
     try:

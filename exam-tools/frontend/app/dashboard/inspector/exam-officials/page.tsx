@@ -1,18 +1,20 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
+import { useRouter } from "next/navigation";
 
 import { DashboardShell } from "@/components/dashboard-shell";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { RoleGuard } from "@/components/role-guard";
 import { formInputClass, formLabelClass } from "@/lib/form-classes";
 import {
-  apiJson,
   createExamOfficial,
   deleteExamOfficial,
   displayBankCode,
   getDistinctBankNames,
   getExamOfficialsForMyCentre,
+  getMyInspectorPostings,
+  getStaffDefaultExamination,
   listBankBranches,
   updateExamOfficial,
   type BankBranchRow,
@@ -20,7 +22,9 @@ import {
   type ExamOfficialDesignation,
   type ExamCentreOfficialResponse,
   type ExamCentreOfficialCreatePayload,
+  type MyInspectorPostingRow,
 } from "@/lib/api";
+import { inspectorMustPickWorkspaceGlobally, pickInspectorPostingId } from "@/lib/auth";
 
 const btnPrimary =
   "inline-flex min-h-11 w-full min-w-[44px] items-center justify-center rounded-lg bg-primary px-3 text-sm font-medium text-primary-foreground transition-colors hover:bg-primary-hover focus:outline-none focus:ring-2 focus:ring-ring/30 disabled:pointer-events-none disabled:opacity-50 sm:min-h-10 sm:w-auto";
@@ -181,9 +185,12 @@ function DeleteConfirmModal({
 
 export default function InspectorExamOfficialsPage() {
   const FORM_ID = "exam-official-form";
+  const router = useRouter();
 
   const [exams, setExams] = useState<Examination[]>([]);
   const [examId, setExamId] = useState<number | null>(null);
+  const [postings, setPostings] = useState<MyInspectorPostingRow[]>([]);
+  const [selectedPostingId, setSelectedPostingId] = useState<string | null>(null);
   const [items, setItems] = useState<ExamCentreOfficialResponse[]>([]);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -216,10 +223,14 @@ export default function InspectorExamOfficialsPage() {
 
   const loadList = useCallback(async () => {
     if (examId === null) return;
+    if (postings.length > 0 && !selectedPostingId) return;
     setLoadError(null);
     setBusy(true);
     try {
-      const res = await getExamOfficialsForMyCentre(examId);
+      const res = await getExamOfficialsForMyCentre(
+        examId,
+        postings.length > 0 ? selectedPostingId : undefined,
+      );
       setItems(res.items);
     } catch (e) {
       setLoadError(e instanceof Error ? e.message : "Failed to load exam officials");
@@ -227,18 +238,23 @@ export default function InspectorExamOfficialsPage() {
     } finally {
       setBusy(false);
     }
-  }, [examId]);
+  }, [examId, postings.length, selectedPostingId]);
+
+  useEffect(() => {
+    if (inspectorMustPickWorkspaceGlobally(postings.length)) {
+      router.replace("/dashboard/inspector/select-workspace");
+    }
+  }, [postings.length, router]);
 
   useEffect(() => {
     async function boot() {
       setLoadError(null);
       try {
-        const list = await apiJson<Examination[]>("/examinations/public-list");
-        setExams(list);
-        setExamId((prev) => (prev === null && list.length ? list[0].id : prev));
+        const ex = await getStaffDefaultExamination();
+        setExams([ex]);
+        setExamId(ex.id);
       } catch (e) {
-        setLoadError(e instanceof Error ? e.message : "Failed to load examinations");
-        return;
+        setLoadError(e instanceof Error ? e.message : "Failed to load active examination");
       }
     }
     void boot();
@@ -249,8 +265,29 @@ export default function InspectorExamOfficialsPage() {
   }, [loadList]);
 
   useEffect(() => {
-    setDesktopActionsMenuRowId(null);
+    if (examId === null) return;
+    let cancelled = false;
+    void (async () => {
+      try {
+        const postingRes = await getMyInspectorPostings(examId);
+        if (cancelled) return;
+        setPostings(postingRes.items);
+        setSelectedPostingId((prev) => pickInspectorPostingId(postingRes.items, prev));
+      } catch {
+        if (!cancelled) {
+          setPostings([]);
+          setSelectedPostingId(null);
+        }
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
   }, [examId]);
+
+  useEffect(() => {
+    setDesktopActionsMenuRowId(null);
+  }, [examId, selectedPostingId]);
 
   useEffect(() => {
     const t = setTimeout(() => {
@@ -370,6 +407,10 @@ export default function InspectorExamOfficialsPage() {
   async function onSubmit(e: React.FormEvent) {
     e.preventDefault();
     if (examId === null) return;
+    if (postings.length > 0 && !selectedPostingId) {
+      setFormError("Choose a workspace (centre and subject scope) first.");
+      return;
+    }
     setFormError(null);
 
     if (!selectedBranchId.trim()) {
@@ -411,19 +452,25 @@ export default function InspectorExamOfficialsPage() {
       telephone_number: phone,
     };
 
+    const postingParam = postings.length > 0 ? selectedPostingId : undefined;
     setBusy(true);
     try {
       if (editing) {
-        await updateExamOfficial(examId, editing.id, {
-          full_name: payload.full_name,
-          designation: payload.designation,
-          bank_branch_id: payload.bank_branch_id,
-          account_number: payload.account_number,
-          num_days: payload.num_days,
-          telephone_number: payload.telephone_number,
-        });
+        await updateExamOfficial(
+          examId,
+          editing.id,
+          {
+            full_name: payload.full_name,
+            designation: payload.designation,
+            bank_branch_id: payload.bank_branch_id,
+            account_number: payload.account_number,
+            num_days: payload.num_days,
+            telephone_number: payload.telephone_number,
+          },
+          postingParam,
+        );
       } else {
-        await createExamOfficial(examId, payload);
+        await createExamOfficial(examId, payload, postingParam);
       }
       closeModal();
       await loadList();
@@ -436,9 +483,14 @@ export default function InspectorExamOfficialsPage() {
 
   async function confirmDelete() {
     if (examId === null || pendingDelete === null) return;
+    if (postings.length > 0 && !selectedPostingId) return;
     setDeleteBusy(true);
     try {
-      await deleteExamOfficial(examId, pendingDelete.id);
+      await deleteExamOfficial(
+        examId,
+        pendingDelete.id,
+        postings.length > 0 ? selectedPostingId : undefined,
+      );
       setPendingDelete(null);
       setMobileOfficialActionsOpenId(null);
       setDesktopActionsMenuRowId(null);
@@ -494,24 +546,21 @@ export default function InspectorExamOfficialsPage() {
 
           <div className="sticky top-0 z-10 -mx-1 flex flex-col gap-3 rounded-xl border border-border bg-background/95 px-3 py-3 shadow-sm backdrop-blur sm:static sm:z-0 sm:mx-0 sm:flex-row sm:flex-wrap sm:items-end sm:border-0 sm:bg-transparent sm:px-0 sm:py-0 sm:shadow-none sm:backdrop-blur-none">
             <div className="min-w-48 flex-1">
-              <label className={formLabelClass} htmlFor="exam-officials-exam">
-                Examination
-              </label>
-              <select
-                id="exam-officials-exam"
-                className={formInputClass}
-                value={examId ?? ""}
-                onChange={(e) => setExamId(e.target.value ? Number(e.target.value) : null)}
-              >
-                {exams.map((ex) => (
-                  <option key={ex.id} value={ex.id}>
-                    {ex.year}
-                    {ex.exam_series ? ` ${ex.exam_series}` : ""} — {ex.exam_type}
-                  </option>
-                ))}
-              </select>
+              {examId != null && exams[0] ? (
+                <p className="text-sm text-muted-foreground">
+                  <span className="font-medium text-foreground">Examination</span>
+                  {": "}
+                  {exams[0].year}
+                  {exams[0].exam_series ? ` ${exams[0].exam_series}` : ""} — {exams[0].exam_type}
+                </p>
+              ) : null}
             </div>
-            <button type="button" className={btnPrimary} onClick={openAdd} disabled={examId === null || busy}>
+            <button
+              type="button"
+              className={btnPrimary}
+              onClick={openAdd}
+              disabled={examId === null || busy || (postings.length > 0 && !selectedPostingId)}
+            >
               Add official account details
             </button>
           </div>
@@ -534,7 +583,7 @@ export default function InspectorExamOfficialsPage() {
                   type="button"
                   className={`${btnPrimary} mx-auto mt-5 max-w-xs`}
                   onClick={openAdd}
-                  disabled={examId === null || busy}
+                  disabled={examId === null || busy || (postings.length > 0 && !selectedPostingId)}
                 >
                   Add first account record
                 </button>
@@ -806,7 +855,7 @@ export default function InspectorExamOfficialsPage() {
               </div>
               {!busy && items.length === 0 ? (
                 <div className="border-t border-border bg-muted/15 px-3 py-4 text-center">
-                  <button type="button" className={btnPrimary} onClick={openAdd} disabled={examId === null || busy}>
+                  <button type="button" className={btnPrimary} onClick={openAdd} disabled={examId === null || busy || (postings.length > 0 && !selectedPostingId)}>
                     Add first account record
                   </button>
                 </div>
