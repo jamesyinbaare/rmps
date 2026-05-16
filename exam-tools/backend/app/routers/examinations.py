@@ -19,7 +19,9 @@ from app.dependencies.auth import (
     InspectorDep,
     InspectorJwtPostingIdDep,
     StaffActiveExaminationDep,
+    PortalExaminationListDep,
     SuperAdminDep,
+    SuperAdminOrFinanceOfficerDep,
     SuperAdminOrTestAdminOfficerDep,
     SupervisorInspectorOrDepotKeeperDep,
     SupervisorOrInspectorDep,
@@ -55,6 +57,11 @@ from app.schemas.examination import (
     ExaminationScriptSeriesConfigResponse,
     ExaminationScriptSeriesConfigRow,
     ExaminationUpdate,
+    FinanceCentreDayInvigilatorRow,
+    FinanceCentreInvigilatorSummaryItem,
+    FinanceCentreInvigilatorSummaryResponse,
+    FinanceCentreInvigilatorSummaryShellResponse,
+    FinanceCentreShellCentre,
     InspectorPostedWorkspaceItem,
     MyCenterProgrammesResponse,
     MyCenterSchoolsResponse,
@@ -194,7 +201,7 @@ async def create_examination(
 @router.get("", response_model=list[ExaminationResponse])
 async def list_examinations(
     session: DBSessionDep,
-    _: SuperAdminOrTestAdminOfficerDep,
+    _: PortalExaminationListDep,
 ) -> list[ExaminationResponse]:
     stmt = select(Examination).order_by(Examination.year.desc(), Examination.id.desc())
     result = await session.execute(stmt)
@@ -1110,6 +1117,8 @@ async def _staff_center_filtered_timetable_entries(
     session: DBSessionDep,
     exam_id: int,
     scope_ids: set[UUID],
+    *,
+    subject_filter: TimetableDownloadFilter = TimetableDownloadFilter.ALL,
 ) -> list[TimetableEntry]:
     """Timetable entries for the centre scope (candidate-linked subjects ∩ schedules), same filter as overview PDFs."""
     explicit_codes = await get_candidate_schedule_codes_for_exam(
@@ -1125,7 +1134,7 @@ async def _staff_center_filtered_timetable_entries(
     filtered_codes = await filter_schedule_codes_by_subject_type(
         session,
         intersected,
-        TimetableDownloadFilter.ALL,
+        subject_filter,
     )
     filtered = [s for s in all_schedules if s.subject_code in filtered_codes]
     return schedules_to_entries(filtered)
@@ -1158,6 +1167,8 @@ async def _build_staff_day_summary_for_scope(
     examination_date: date,
     scope_ids: set[UUID],
     ordered_schools: list[School],
+    *,
+    subject_filter: TimetableDownloadFilter = TimetableDownloadFilter.ALL,
 ) -> StaffCentreDaySummaryResponse:
     """Shared day-summary builder for centre scope or national (all candidate schools)."""
     if not scope_ids:
@@ -1171,7 +1182,9 @@ async def _build_staff_day_summary_for_scope(
 
     school_index = {s.id: i for i, s in enumerate(ordered_schools)}
 
-    entries = await _staff_center_filtered_timetable_entries(session, exam_id, scope_ids)
+    entries = await _staff_center_filtered_timetable_entries(
+        session, exam_id, scope_ids, subject_filter=subject_filter
+    )
     day_entries = [e for e in entries if e.examination_date == examination_date]
     day_entries.sort(key=lambda x: (x.examination_time, x.subject_code, x.paper))
 
@@ -1624,8 +1637,6 @@ async def get_my_center_overview(
     cand_by_school = {row[0]: int(row[1]) for row in cand_by_school_rows.all()}
 
     entries = await _staff_center_filtered_timetable_entries(session, exam_id, scope_ids)
-
-    examination_centre_region = center_host.region.value
     if entries:
         entry_dates = [e.examination_date for e in entries]
         examination_window_start = min(entry_dates)
@@ -1849,8 +1860,6 @@ async def get_national_overview(
     candidate_count = int((await session.execute(cand_stmt)).scalar_one())
 
     entries = await _staff_center_filtered_timetable_entries(session, exam_id, scope_ids)
-
-    region_vals = {s.region.value for s in ordered_schools if s.region is not None}
     if len(region_vals) == 1:
         examination_centre_region = next(iter(region_vals))
     elif len(region_vals) > 1:
@@ -1945,6 +1954,181 @@ async def get_national_day_summary(
     return await _build_staff_day_summary_for_scope(
         session, exam_id, examination_date, scope_ids, ordered_schools
     )
+
+
+async def _finance_centre_hosts(
+    session: DBSessionDep,
+    center_host_id: UUID | None,
+) -> list[School]:
+    if center_host_id is not None:
+        host = await session.get(School, center_host_id)
+        if host is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="School not found")
+        if host.writes_at_center_id is not None:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="School is not an examination centre host",
+            )
+        return [host]
+    hosts_stmt = (
+        select(School)
+        .where(School.writes_at_center_id.is_(None))
+        .order_by(asc(School.code))
+    )
+    hosts_result = await session.execute(hosts_stmt)
+    return list(hosts_result.scalars().all())
+
+
+async def _build_finance_centre_invigilator_item(
+    session: DBSessionDep,
+    exam_id: int,
+    center_host: School,
+    subject_filter: TimetableDownloadFilter,
+) -> FinanceCentreInvigilatorSummaryItem:
+    scope_ids = await center_scope_school_ids(session, center_host)
+    ordered_schools = await schools_in_center_scope_ordered(session, center_host)
+    if not scope_ids:
+        return FinanceCentreInvigilatorSummaryItem(
+            center_id=center_host.id,
+            center_code=str(center_host.code),
+            center_name=str(center_host.name),
+            days=[],
+        )
+    entries = await _staff_center_filtered_timetable_entries(
+        session, exam_id, scope_ids, subject_filter=subject_filter
+    )
+    dates_sorted = sorted({e.examination_date for e in entries})
+    day_rows: list[FinanceCentreDayInvigilatorRow] = []
+    for d in dates_sorted:
+        summary = await _build_staff_day_summary_for_scope(
+            session,
+            exam_id,
+            d,
+            scope_ids,
+            ordered_schools,
+            subject_filter=subject_filter,
+        )
+        day_rows.append(
+            FinanceCentreDayInvigilatorRow(
+                examination_date=d,
+                unique_candidates=summary.unique_candidates,
+                invigilators_required=summary.invigilators_required,
+            ),
+        )
+    return FinanceCentreInvigilatorSummaryItem(
+        center_id=center_host.id,
+        center_code=str(center_host.code),
+        center_name=str(center_host.name),
+        days=day_rows,
+    )
+
+
+async def _finance_examination_dates_for_filter(
+    session: DBSessionDep,
+    exam_id: int,
+    subject_filter: TimetableDownloadFilter,
+) -> list[date]:
+    scope_ids = await _national_candidate_school_ids(session, exam_id)
+    if not scope_ids:
+        return []
+    entries = await _staff_center_filtered_timetable_entries(
+        session, exam_id, scope_ids, subject_filter=subject_filter
+    )
+    return sorted({e.examination_date for e in entries})
+
+
+@router.get(
+    "/{exam_id}/finance/centre-invigilator-summary/shell",
+    response_model=FinanceCentreInvigilatorSummaryShellResponse,
+)
+async def get_finance_centre_invigilator_summary_shell(
+    exam_id: int,
+    session: DBSessionDep,
+    _: SuperAdminOrFinanceOfficerDep,
+    subject_filter: TimetableDownloadFilter = Query(
+        TimetableDownloadFilter.ALL,
+        description="Subject scope used to determine which examination dates appear as columns.",
+    ),
+) -> FinanceCentreInvigilatorSummaryShellResponse:
+    """Centre names and column dates only; load per-centre invigilator counts separately."""
+    try:
+        await load_examination_or_raise(session, exam_id)
+    except ValueError:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Examination not found") from None
+
+    center_hosts = await _finance_centre_hosts(session, None)
+    examination_dates = await _finance_examination_dates_for_filter(session, exam_id, subject_filter)
+    return FinanceCentreInvigilatorSummaryShellResponse(
+        examination_id=exam_id,
+        examination_dates=examination_dates,
+        centres=[
+            FinanceCentreShellCentre(
+                center_id=h.id,
+                center_code=str(h.code),
+                center_name=str(h.name),
+            )
+            for h in center_hosts
+        ],
+    )
+
+
+@router.get(
+    "/{exam_id}/finance/centre-invigilator-summary/centres/{center_host_id}",
+    response_model=FinanceCentreInvigilatorSummaryItem,
+)
+async def get_finance_centre_invigilator_summary_for_centre(
+    exam_id: int,
+    center_host_id: UUID,
+    session: DBSessionDep,
+    _: SuperAdminOrFinanceOfficerDep,
+    subject_filter: TimetableDownloadFilter = Query(
+        TimetableDownloadFilter.ALL,
+        description="Subject scope for invigilator counts at this centre.",
+    ),
+) -> FinanceCentreInvigilatorSummaryItem:
+    """Invigilator counts per day for one examination centre host."""
+    try:
+        await load_examination_or_raise(session, exam_id)
+    except ValueError:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Examination not found") from None
+
+    hosts = await _finance_centre_hosts(session, center_host_id)
+    return await _build_finance_centre_invigilator_item(session, exam_id, hosts[0], subject_filter)
+
+
+@router.get(
+    "/{exam_id}/finance/centre-invigilator-summary",
+    response_model=FinanceCentreInvigilatorSummaryResponse,
+)
+async def get_finance_centre_invigilator_summary(
+    exam_id: int,
+    session: DBSessionDep,
+    _: SuperAdminOrFinanceOfficerDep,
+    center_host_id: UUID | None = Query(
+        None,
+        description="Optional examination centre host school id; when set, only that centre is included.",
+    ),
+    subject_filter: TimetableDownloadFilter = Query(
+        TimetableDownloadFilter.ALL,
+        description="Which subject types determine schedule dates and per-day invigilator counts: all, core only, or electives only.",
+    ),
+) -> FinanceCentreInvigilatorSummaryResponse:
+    """Per-centre, per-day unique candidates and invigilators (ceil(candidates/30)) for finance reporting."""
+    try:
+        await load_examination_or_raise(session, exam_id)
+    except ValueError:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Examination not found") from None
+
+    center_hosts = await _finance_centre_hosts(session, center_host_id)
+    centres_out: list[FinanceCentreInvigilatorSummaryItem] = []
+    for center_host in center_hosts:
+        centres_out.append(
+            await _build_finance_centre_invigilator_item(
+                session, exam_id, center_host, subject_filter
+            ),
+        )
+
+    return FinanceCentreInvigilatorSummaryResponse(examination_id=exam_id, centres=centres_out)
 
 
 @router.get("/{exam_id}/my-depot-overview", response_model=StaffDepotOverviewResponse)

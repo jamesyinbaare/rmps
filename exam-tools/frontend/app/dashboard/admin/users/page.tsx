@@ -8,6 +8,7 @@ import {
   adminCreateDepotKeeper,
   adminListDepots,
   apiJson,
+  createFinanceOfficer,
   createTestAdminOfficer,
   type AdminDepotRow,
   type Examination,
@@ -85,6 +86,13 @@ export default function AdminUsersPage() {
   const [officerFormError, setOfficerFormError] = useState<string | null>(null);
   const [officerSubmitting, setOfficerSubmitting] = useState(false);
 
+  const [financeOpen, setFinanceOpen] = useState(false);
+  const [financeEmail, setFinanceEmail] = useState("");
+  const [financePassword, setFinancePassword] = useState("");
+  const [financeFullName, setFinanceFullName] = useState("Finance officer");
+  const [financeFormError, setFinanceFormError] = useState<string | null>(null);
+  const [financeSubmitting, setFinanceSubmitting] = useState(false);
+
   const [inspectorOpen, setInspectorOpen] = useState(false);
   const [inspPhone, setInspPhone] = useState("");
   const [inspFullName, setInspFullName] = useState("");
@@ -123,6 +131,9 @@ export default function AdminUsersPage() {
         setMe(user);
         if (user.role === "TEST_ADMIN_OFFICER") {
           router.replace("/dashboard/admin/monitoring");
+        }
+        if (user.role === "FINANCE_OFFICER") {
+          router.replace("/dashboard/admin/exam-officials");
         }
       } catch {
         if (!cancelled) setMe(null);
@@ -163,6 +174,7 @@ export default function AdminUsersPage() {
     if (typeof window === "undefined" || me?.role !== "SUPER_ADMIN") return;
     const hash = window.location.hash.slice(1);
     if (hash === "test-admin-officer") setOfficerOpen(true);
+    else if (hash === "finance-officer") setFinanceOpen(true);
     else if (hash === "inspectors") setInspectorOpen(true);
     else if (hash === "depot-keepers") {
       setKeeperOpen(true);
@@ -218,6 +230,36 @@ export default function AdminUsersPage() {
       setOfficerFormError(err instanceof Error ? err.message : "Create failed");
     } finally {
       setOfficerSubmitting(false);
+    }
+  }
+
+  function openFinanceModal() {
+    setFinanceEmail("");
+    setFinancePassword("");
+    setFinanceFullName("Finance officer");
+    setFinanceFormError(null);
+    setFinanceOpen(true);
+  }
+
+  async function onCreateFinanceOfficer(e: React.FormEvent) {
+    e.preventDefault();
+    setFinanceFormError(null);
+    setFinanceSubmitting(true);
+    try {
+      await createFinanceOfficer({
+        email: financeEmail.trim(),
+        password: financePassword,
+        full_name: financeFullName.trim(),
+      });
+      setFinanceFormError(null);
+      setFinanceEmail("");
+      setFinancePassword("");
+      setFinanceFullName("Finance officer");
+      setFinanceOpen(false);
+    } catch (err) {
+      setFinanceFormError(err instanceof Error ? err.message : "Create failed");
+    } finally {
+      setFinanceSubmitting(false);
     }
   }
 
@@ -296,7 +338,7 @@ export default function AdminUsersPage() {
     }
   }
 
-  if (me?.role === "TEST_ADMIN_OFFICER") {
+  if (me?.role === "TEST_ADMIN_OFFICER" || me?.role === "FINANCE_OFFICER") {
     return (
       <div className="flex min-h-[40vh] items-center justify-center">
         <p className="text-sm text-muted-foreground">Redirecting…</p>
@@ -309,7 +351,8 @@ export default function AdminUsersPage() {
       <div>
         <h2 className="text-xl font-semibold text-foreground">Users</h2>
         <p className="mt-1 max-w-3xl text-sm text-muted-foreground">
-          Create accounts for inspectors, depot keepers, and test admin officers (read-only worked-scripts monitoring).
+          Create accounts for inspectors, depot keepers, test admin officers (read-only worked-scripts monitoring),
+          and finance officers (official accounts and centre invigilator summaries).
           For full lists, search, edits, and bulk upload, use{" "}
           <Link href="/dashboard/admin/inspectors" className={subLinkClass}>
             Inspectors
@@ -331,6 +374,17 @@ export default function AdminUsersPage() {
             </p>
             <button type="button" onClick={openOfficerModal} className={btnPrimary}>
               Create test admin officer…
+            </button>
+          </section>
+
+          <section id="finance-officer" className={sectionClass}>
+            <h3 className="text-base font-semibold text-card-foreground">Finance officer</h3>
+            <p className="text-sm text-muted-foreground">
+              Email and password (administrator sign-in). Access to official account details and centre invigilator
+              summaries only.
+            </p>
+            <button type="button" onClick={openFinanceModal} className={btnPrimary}>
+              Create finance officer…
             </button>
           </section>
 
@@ -418,6 +472,68 @@ export default function AdminUsersPage() {
                 ) : null}
                 <button type="submit" disabled={officerSubmitting} className={primaryButtonClass}>
                   {officerSubmitting ? "Creating…" : "Create"}
+                </button>
+              </form>
+            </Modal>
+          ) : null}
+
+          {financeOpen ? (
+            <Modal
+              title="Create finance officer"
+              titleId="modal-finance-title"
+              onClose={() => !financeSubmitting && setFinanceOpen(false)}
+              canClose={!financeSubmitting}
+            >
+              <form className="space-y-4" onSubmit={onCreateFinanceOfficer}>
+                <div>
+                  <label htmlFor="finance-email" className={formLabelClass}>
+                    Email
+                  </label>
+                  <input
+                    id="finance-email"
+                    type="email"
+                    autoComplete="off"
+                    required
+                    value={financeEmail}
+                    onChange={(e) => setFinanceEmail(e.target.value)}
+                    className={formInputClass}
+                  />
+                </div>
+                <div>
+                  <label htmlFor="finance-password" className={formLabelClass}>
+                    Password
+                  </label>
+                  <input
+                    id="finance-password"
+                    type="password"
+                    autoComplete="new-password"
+                    required
+                    minLength={8}
+                    value={financePassword}
+                    onChange={(e) => setFinancePassword(e.target.value)}
+                    className={formInputClass}
+                  />
+                </div>
+                <div>
+                  <label htmlFor="finance-name" className={formLabelClass}>
+                    Full name
+                  </label>
+                  <input
+                    id="finance-name"
+                    type="text"
+                    required
+                    value={financeFullName}
+                    onChange={(e) => setFinanceFullName(e.target.value)}
+                    className={formInputClass}
+                  />
+                </div>
+                {financeFormError ? (
+                  <p className="text-sm text-destructive" role="alert">
+                    {financeFormError}
+                  </p>
+                ) : null}
+                <button type="submit" disabled={financeSubmitting} className={primaryButtonClass}>
+                  {financeSubmitting ? "Creating…" : "Create"}
                 </button>
               </form>
             </Modal>

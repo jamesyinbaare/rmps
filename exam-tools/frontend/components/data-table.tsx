@@ -1,6 +1,6 @@
 "use client";
 
-import { flexRender, type Table as TanstackTable } from "@tanstack/react-table";
+import { flexRender, type Header, type Row, type Table as TanstackTable } from "@tanstack/react-table";
 import { ArrowDown, ArrowUp, ArrowUpDown } from "lucide-react";
 
 import {
@@ -19,6 +19,10 @@ export type DataTableColumnMeta = {
   headerClassName?: string;
   cellClassName?: string;
   footerClassName?: string;
+  /** Visible label for the sort button when `header` is not a plain string */
+  sortAriaLabel?: string;
+  /** Sticky columns need solid backgrounds when striped so scrolled cells do not show through */
+  stickyOpaque?: boolean;
 };
 
 type DataTableProps<TData> = {
@@ -26,6 +30,8 @@ type DataTableProps<TData> = {
   emptyMessage?: string;
   /** When false, no footer row is rendered even if columns define `footer`. */
   showFooter?: boolean;
+  /** Alternate row background; body cells use `bg-inherit` so row color shows through (pair with sticky `bg-inherit` in column meta). */
+  striped?: boolean;
 };
 
 function metaClasses(
@@ -33,13 +39,25 @@ function metaClasses(
   key: keyof DataTableColumnMeta,
 ): string | undefined {
   if (!columnMeta || typeof columnMeta !== "object") return undefined;
-  return (columnMeta as DataTableColumnMeta)[key];
+  const value = (columnMeta as DataTableColumnMeta)[key];
+  return typeof value === "string" ? value : undefined;
+}
+
+function sortButtonAriaLabel<TData>(header: Header<TData, unknown>): string {
+  const meta = header.column.columnDef.meta;
+  if (meta && typeof meta === "object" && "sortAriaLabel" in meta) {
+    const label = (meta as DataTableColumnMeta).sortAriaLabel;
+    if (typeof label === "string" && label.length) return label;
+  }
+  const h = header.column.columnDef.header;
+  return typeof h === "string" ? `Sort by ${h}` : "Sort column";
 }
 
 export function DataTable<TData>({
   table,
   emptyMessage = "No results.",
   showFooter = true,
+  striped = false,
 }: DataTableProps<TData>) {
   const colCount = table.getAllColumns().length;
   const hasFooter = showFooter && table.getAllColumns().some((c) => c.columnDef.footer != null);
@@ -65,11 +83,7 @@ export function DataTable<TData>({
                         "-ml-2 inline-flex items-start gap-1 rounded-md px-2 py-1 text-left text-sm font-medium hover:bg-muted/80",
                         header.column.getIsSorted() && "text-foreground",
                       )}
-                      aria-label={
-                        typeof header.column.columnDef.header === "string"
-                          ? `Sort by ${header.column.columnDef.header}`
-                          : "Sort column"
-                      }
+                      aria-label={sortButtonAriaLabel(header)}
                       onClick={header.column.getToggleSortingHandler()}
                     >
                       {flexRender(header.column.columnDef.header, header.getContext())}
@@ -91,19 +105,38 @@ export function DataTable<TData>({
         </TableHeader>
         <TableBody>
           {table.getRowModel().rows?.length ? (
-            table.getRowModel().rows.map((row) => (
-              <TableRow key={row.id} data-state={row.getIsSelected() && "selected"}>
-                {row.getVisibleCells().map((cell) => (
+            table.getRowModel().rows.map((row: Row<TData>) => (
+              <TableRow
+                key={row.id}
+                data-state={row.getIsSelected() && "selected"}
+                className={
+                  striped ? (row.index % 2 === 0 ? "bg-card" : "bg-muted/30") : undefined
+                }
+              >
+                {row.getVisibleCells().map((cell) => {
+                  const stickyOpaque = Boolean(
+                    cell.column.columnDef.meta &&
+                      typeof cell.column.columnDef.meta === "object" &&
+                      (cell.column.columnDef.meta as DataTableColumnMeta).stickyOpaque,
+                  );
+                  return (
                   <TableCell
                     key={cell.id}
                     className={cn(
                       "align-top text-sm",
                       metaClasses(cell.column.columnDef.meta, "cellClassName"),
+                      striped &&
+                        (stickyOpaque
+                          ? row.index % 2 === 0
+                            ? "bg-card"
+                            : "bg-muted"
+                          : "bg-inherit"),
                     )}
                   >
                     {flexRender(cell.column.columnDef.cell, cell.getContext())}
                   </TableCell>
-                ))}
+                  );
+                })}
               </TableRow>
             ))
           ) : (

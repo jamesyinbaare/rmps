@@ -133,7 +133,9 @@ async def super_admin_login(
 ) -> TokenResponse:
     stmt = select(User).where(
         User.email == data.email,
-        User.role.in_((UserRole.SUPER_ADMIN, UserRole.TEST_ADMIN_OFFICER)),
+        User.role.in_(
+            (UserRole.SUPER_ADMIN, UserRole.TEST_ADMIN_OFFICER, UserRole.FINANCE_OFFICER),
+        ),
     )
     user = await _get_user_by_stmt(session, stmt)
 

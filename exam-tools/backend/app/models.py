@@ -104,6 +104,7 @@ class UserRole(enum.IntEnum):
 
     SUPER_ADMIN = 0
     TEST_ADMIN_OFFICER = 5
+    FINANCE_OFFICER = 6
     SUPERVISOR = 10
     INSPECTOR = 20
     DEPOT_KEEPER = 30
@@ -888,6 +889,7 @@ class ExamOfficialDesignation(enum.Enum):
     ASSISTANT_SUPERVISOR = "Assistant Supervisor"
     INVIGILATOR = "Invigilator"
     POLICE_OFFICER = "Police Officer"
+    EXTERNAL_INSPECTOR = "External Inspector"
 
 
 class BankBranch(Base):

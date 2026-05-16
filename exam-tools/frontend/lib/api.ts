@@ -94,6 +94,27 @@ export async function createTestAdminOfficer(
   });
 }
 
+export type FinanceOfficerCreatePayload = {
+  email: string;
+  password: string;
+  full_name: string;
+};
+
+export type FinanceOfficerCreatedResponse = {
+  id: string;
+  full_name: string;
+  email: string;
+};
+
+export async function createFinanceOfficer(
+  payload: FinanceOfficerCreatePayload,
+): Promise<FinanceOfficerCreatedResponse> {
+  return apiJson<FinanceOfficerCreatedResponse>("/finance-officers", {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
+
 export type SchoolCreatePayload = {
   code: string;
   name: string;
@@ -1370,7 +1391,8 @@ export type ExamOfficialDesignation =
   | "Supervisor"
   | "Assistant Supervisor"
   | "Invigilator"
-  | "Police Officer";
+  | "Police Officer"
+  | "External Inspector";
 
 export type ExamCentreOfficialResponse = {
   id: string;
@@ -1501,12 +1523,14 @@ export type AdminExamCentreOfficialListResponse = {
 export async function listAdminExamCentreOfficials(params: {
   examination_id: number;
   center_id?: string | null;
+  designation?: string | null;
   skip?: number;
   limit?: number;
 }): Promise<AdminExamCentreOfficialListResponse> {
   const q = new URLSearchParams();
   q.set("examination_id", String(params.examination_id));
   if (params.center_id) q.set("center_id", params.center_id.trim());
+  if (params.designation?.trim()) q.set("designation", params.designation.trim());
   if (params.skip != null) q.set("skip", String(params.skip));
   if (params.limit != null) q.set("limit", String(params.limit));
   return apiJson<AdminExamCentreOfficialListResponse>(`/admin/exam-centre-officials?${q.toString()}`);
@@ -1516,13 +1540,116 @@ export async function downloadAdminExamCentreOfficialsExport(params: {
   examination_id: number;
   layout: "zip" | "combined";
   center_id?: string | null;
+  designation?: string | null;
   filename: string;
 }): Promise<void> {
   const q = new URLSearchParams();
   q.set("examination_id", String(params.examination_id));
   q.set("layout", params.layout);
   if (params.center_id) q.set("center_id", params.center_id.trim());
+  if (params.designation?.trim()) q.set("designation", params.designation.trim());
   await downloadApiFile(`/admin/exam-centre-officials/export?${q.toString()}`, params.filename);
+}
+
+export type FinanceCentreDayInvigilatorRow = {
+  examination_date: string;
+  unique_candidates: number;
+  invigilators_required: number;
+};
+
+export type FinanceCentreInvigilatorSummaryItem = {
+  center_id: string;
+  center_code: string;
+  center_name: string;
+  days: FinanceCentreDayInvigilatorRow[];
+};
+
+export type FinanceCentreInvigilatorSummaryResponse = {
+  examination_id: number;
+  centres: FinanceCentreInvigilatorSummaryItem[];
+};
+
+export type TimetableSubjectFilter = "ALL" | "CORE_ONLY" | "ELECTIVE_ONLY";
+
+export type FinanceCentreInvigilatorSummaryShellResponse = {
+  examination_id: number;
+  examination_dates: string[];
+  centres: { center_id: string; center_code: string; center_name: string }[];
+};
+
+function financeSummaryQuery(subject_filter?: TimetableSubjectFilter): string {
+  const q = new URLSearchParams();
+  if (subject_filter != null) q.set("subject_filter", subject_filter);
+  const s = q.toString();
+  return s ? `?${s}` : "";
+}
+
+export async function getFinanceCentreInvigilatorSummaryShell(params: {
+  examId: number;
+  subject_filter?: TimetableSubjectFilter;
+}): Promise<FinanceCentreInvigilatorSummaryShellResponse> {
+  return apiJson<FinanceCentreInvigilatorSummaryShellResponse>(
+    `/examinations/${params.examId}/finance/centre-invigilator-summary/shell${financeSummaryQuery(params.subject_filter)}`,
+  );
+}
+
+export async function getFinanceCentreInvigilatorSummaryForCentre(params: {
+  examId: number;
+  center_host_id: string;
+  subject_filter?: TimetableSubjectFilter;
+}): Promise<FinanceCentreInvigilatorSummaryItem> {
+  return apiJson<FinanceCentreInvigilatorSummaryItem>(
+    `/examinations/${params.examId}/finance/centre-invigilator-summary/centres/${params.center_host_id}${financeSummaryQuery(params.subject_filter)}`,
+  );
+}
+
+export async function getFinanceCentreInvigilatorSummary(params: {
+  examId: number;
+  center_host_id?: string | null;
+  subject_filter?: TimetableSubjectFilter;
+}): Promise<FinanceCentreInvigilatorSummaryResponse> {
+  const q = new URLSearchParams();
+  if (params.center_host_id?.trim()) q.set("center_host_id", params.center_host_id.trim());
+  if (params.subject_filter != null) q.set("subject_filter", params.subject_filter);
+  const suffix = q.toString() ? `?${q.toString()}` : "";
+  return apiJson<FinanceCentreInvigilatorSummaryResponse>(
+    `/examinations/${params.examId}/finance/centre-invigilator-summary${suffix}`,
+  );
+}
+
+const FINANCE_CENTRE_FETCH_CONCURRENCY = 5;
+
+/** Load shell first, then fetch each centre’s day counts with limited parallelism. */
+export async function loadFinanceCentreInvigilatorSummaryProgressive(
+  params: {
+    examId: number;
+    subject_filter?: TimetableSubjectFilter;
+  },
+  onCentreLoaded: (centre: FinanceCentreInvigilatorSummaryItem) => void,
+  onShellLoaded?: (shell: FinanceCentreInvigilatorSummaryShellResponse) => void,
+): Promise<FinanceCentreInvigilatorSummaryShellResponse> {
+  const shell = await getFinanceCentreInvigilatorSummaryShell(params);
+  onShellLoaded?.(shell);
+
+  let index = 0;
+  async function worker() {
+    while (index < shell.centres.length) {
+      const i = index++;
+      const c = shell.centres[i]!;
+      const item = await getFinanceCentreInvigilatorSummaryForCentre({
+        examId: params.examId,
+        center_host_id: c.center_id,
+        subject_filter: params.subject_filter,
+      });
+      onCentreLoaded(item);
+    }
+  }
+  const workers = Array.from(
+    { length: Math.min(FINANCE_CENTRE_FETCH_CONCURRENCY, shell.centres.length) },
+    () => worker(),
+  );
+  await Promise.all(workers);
+  return shell;
 }
 
 export type QuestionPaperSeriesSlotResponse = {

@@ -317,6 +317,38 @@ class StaffCentreDaySummaryResponse(BaseModel):
     invigilators_required: int = Field(ge=0, description="ceil(unique_candidates / 30); 0 if no candidates.")
 
 
+class FinanceCentreDayInvigilatorRow(BaseModel):
+    examination_date: date
+    unique_candidates: int = Field(ge=0)
+    invigilators_required: int = Field(ge=0)
+
+
+class FinanceCentreInvigilatorSummaryItem(BaseModel):
+    center_id: UUID
+    center_code: str
+    center_name: str
+    days: list[FinanceCentreDayInvigilatorRow] = Field(default_factory=list)
+
+
+class FinanceCentreInvigilatorSummaryResponse(BaseModel):
+    examination_id: int
+    centres: list[FinanceCentreInvigilatorSummaryItem] = Field(default_factory=list)
+
+
+class FinanceCentreShellCentre(BaseModel):
+    center_id: UUID
+    center_code: str
+    center_name: str
+
+
+class FinanceCentreInvigilatorSummaryShellResponse(BaseModel):
+    """Centre list and examination dates for progressive finance grid loading."""
+
+    examination_id: int
+    examination_dates: list[date] = Field(default_factory=list)
+    centres: list[FinanceCentreShellCentre] = Field(default_factory=list)
+
+
 class ExaminationScriptSeriesConfigRow(BaseModel):
     subject_id: int
     subject_code: str

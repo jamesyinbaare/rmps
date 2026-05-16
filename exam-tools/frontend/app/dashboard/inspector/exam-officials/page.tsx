@@ -39,6 +39,7 @@ const DESIGNATIONS: ExamOfficialDesignation[] = [
   "Assistant Supervisor",
   "Invigilator",
   "Police Officer",
+  "External Inspector",
 ];
 
 const GHANA_PHONE_RE = /^0(20|23|24|25|26|27|28|29|50|54|55|56|57|59)\d{7}$/;

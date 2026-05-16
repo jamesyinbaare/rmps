@@ -15,7 +15,7 @@ from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
 from sqlalchemy import func, select
 from sqlalchemy.orm import selectinload
 
-from app.dependencies.auth import SuperAdminDep
+from app.dependencies.auth import SuperAdminOrFinanceOfficerDep
 from app.dependencies.database import DBSessionDep
 from app.models import ExamCentreOfficial, Examination, ExamOfficialDesignation, School
 from app.schemas.admin_exam_official import AdminExamCentreOfficialListResponse, AdminExamCentreOfficialRow
@@ -164,6 +164,7 @@ async def _load_examination(session: DBSessionDep, exam_id: int) -> Examination:
 def _base_official_query(
     examination_id: int,
     center_id: UUID | None,
+    designation: ExamOfficialDesignation | None = None,
 ):
     stmt = (
         select(ExamCentreOfficial, School)
@@ -173,18 +174,40 @@ def _base_official_query(
     )
     if center_id is not None:
         stmt = stmt.where(ExamCentreOfficial.center_id == center_id)
+    if designation is not None:
+        stmt = stmt.where(ExamCentreOfficial.designation == designation)
     return stmt.order_by(School.code.asc(), ExamCentreOfficial.full_name.asc())
+
+
+def _designation_filter_from_query(
+    designation: str | None,
+) -> ExamOfficialDesignation | None:
+    if designation is None or not str(designation).strip():
+        return None
+    raw = str(designation).strip()
+    for member in ExamOfficialDesignation:
+        if member.value == raw:
+            return member
+    raise HTTPException(
+        status_code=status.HTTP_400_BAD_REQUEST,
+        detail=f"Invalid designation (expected one of: {[e.value for e in ExamOfficialDesignation]})",
+    )
 
 
 @router.get("", response_model=AdminExamCentreOfficialListResponse)
 async def admin_list_exam_centre_officials(
     session: DBSessionDep,
-    _admin: SuperAdminDep,
+    _admin: SuperAdminOrFinanceOfficerDep,
     examination_id: int = Query(..., description="Examination id"),
     center_id: UUID | None = Query(None, description="Filter by examination centre (host school) id"),
+    designation: str | None = Query(
+        None,
+        description="Filter by official designation label (e.g. External Inspector).",
+    ),
     skip: int = Query(0, ge=0),
     limit: int = Query(_DEFAULT_LIST, ge=1, le=_MAX_LIST),
 ) -> AdminExamCentreOfficialListResponse:
+    des = _designation_filter_from_query(designation)
     ex = await _load_examination(session, examination_id)
     exam_label = _examination_label(ex)
 
@@ -193,9 +216,11 @@ async def admin_list_exam_centre_officials(
     )
     if center_id is not None:
         count_stmt = count_stmt.where(ExamCentreOfficial.center_id == center_id)
+    if des is not None:
+        count_stmt = count_stmt.where(ExamCentreOfficial.designation == des)
     total = int(await session.scalar(count_stmt) or 0)
 
-    stmt = _base_official_query(examination_id, center_id).offset(skip).limit(limit)
+    stmt = _base_official_query(examination_id, center_id, des).offset(skip).limit(limit)
     result = await session.execute(stmt)
     rows = result.all()
 
@@ -230,15 +255,20 @@ async def admin_list_exam_centre_officials(
 @router.get("/export")
 async def admin_export_exam_centre_officials(
     session: DBSessionDep,
-    _admin: SuperAdminDep,
+    _admin: SuperAdminOrFinanceOfficerDep,
     examination_id: int = Query(..., description="Examination id"),
     layout: Literal["zip", "combined"] = Query("zip", description="zip = one workbook per centre in a zip; combined = one workbook"),
     center_id: UUID | None = Query(None, description="Optional: only this centre"),
+    designation: str | None = Query(
+        None,
+        description="Optional: only this designation (e.g. External Inspector).",
+    ),
 ) -> Response:
+    des = _designation_filter_from_query(designation)
     ex = await _load_examination(session, examination_id)
     exam_label = _examination_label(ex)
 
-    stmt = _base_official_query(examination_id, center_id)
+    stmt = _base_official_query(examination_id, center_id, des)
     result = await session.execute(stmt)
     pairs: list[tuple[ExamCentreOfficial, School]] = list(result.all())
     if not pairs:

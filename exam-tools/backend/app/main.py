@@ -27,6 +27,7 @@ from app.routers import (
     examinations,
     examiner_groups,
     examiners,
+    finance_officers,
     inspectors,
     programmes,
     question_paper_control,
@@ -180,6 +181,7 @@ app.add_middleware(
 # Include routers
 app.include_router(auth.router)
 app.include_router(test_admin_officers.router)
+app.include_router(finance_officers.router)
 app.include_router(depots.router_admin)
 app.include_router(depots.router_keeper)
 app.include_router(inspectors.router)

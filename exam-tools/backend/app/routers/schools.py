@@ -8,7 +8,11 @@ from sqlalchemy import delete, func, insert, or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import selectinload
 
-from app.dependencies.auth import SuperAdminDep, SuperAdminOrTestAdminOfficerDep
+from app.dependencies.auth import (
+    SuperAdminDep,
+    SuperAdminOrFinanceOfficerDep,
+    SuperAdminOrTestAdminOfficerDep,
+)
 from app.dependencies.database import DBSessionDep
 from app.models import (
     Depot,
@@ -129,7 +133,7 @@ async def list_schools(
 )
 async def list_examination_centers(
     session: DBSessionDep,
-    _admin: SuperAdminDep,
+    _admin: SuperAdminOrFinanceOfficerDep,
     skip: int = Query(0, ge=0),
     limit: int = Query(_DEFAULT_PAGE_SIZE, ge=1, le=_EXAMINATION_CENTRE_LIST_MAX),
     q: str | None = Query(None, description="Search code or name (case-insensitive)"),
@@ -182,7 +186,7 @@ async def list_examination_centers(
 async def get_examination_center_detail(
     center_id: UUID,
     session: DBSessionDep,
-    _admin: SuperAdminDep,
+    _admin: SuperAdminOrFinanceOfficerDep,
     examination_id: int | None = Query(
         None,
         description="When set, list inspectors posted to this centre for this examination.",

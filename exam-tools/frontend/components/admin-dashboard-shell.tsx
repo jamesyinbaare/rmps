@@ -12,6 +12,8 @@ const inputFocusRing =
 
 const BANK_DIRECTORY_HREF = "/dashboard/admin/bank-directory";
 const EXAM_OFFICIALS_HREF = "/dashboard/admin/exam-officials";
+const EXTERNAL_INSPECTORS_HREF = "/dashboard/admin/external-inspectors";
+const FINANCE_CENTRE_SUMMARY_HREF = "/dashboard/admin/finance-centre-summary";
 
 const nav = [
   { href: "/dashboard/admin", label: "Overview" },
@@ -47,6 +49,13 @@ type NavLinkItem = { type: "link"; href: string; label: string };
 type NavHeadingItem = { type: "heading"; label: string };
 type NavEntry = NavLinkItem | NavHeadingItem;
 
+const FINANCE_OFFICER_NAV: NavEntry[] = [
+  { type: "heading", label: "Finance" },
+  { type: "link", href: EXAM_OFFICIALS_HREF, label: "Official account details" },
+  { type: "link", href: EXTERNAL_INSPECTORS_HREF, label: "External inspectors" },
+  { type: "link", href: FINANCE_CENTRE_SUMMARY_HREF, label: "Centre invigilator summary" },
+];
+
 function toLinkItem(item: { href: string; label: string }): NavLinkItem {
   return { type: "link", href: item.href, label: item.label };
 }
@@ -73,6 +82,9 @@ export function AdminDashboardShell({ children }: Props) {
     if (me.role === "TEST_ADMIN_OFFICER") {
       return nav.filter((item) => TEST_ADMIN_OFFICER_NAV_HREFS.includes(item.href)).map(toLinkItem);
     }
+    if (me.role === "FINANCE_OFFICER") {
+      return FINANCE_OFFICER_NAV;
+    }
     if (me.role === "SUPER_ADMIN") {
       const bankItem = nav.find((n) => n.href === BANK_DIRECTORY_HREF);
       const withoutBank = nav.filter((n) => n.href !== BANK_DIRECTORY_HREF);
@@ -82,12 +94,15 @@ export function AdminDashboardShell({ children }: Props) {
         { type: "heading", label: "Finance" },
         { type: "link", href: bankItem.href, label: bankItem.label },
         { type: "link", href: EXAM_OFFICIALS_HREF, label: "Official account details" },
+        { type: "link", href: EXTERNAL_INSPECTORS_HREF, label: "External inspectors" },
+        { type: "link", href: FINANCE_CENTRE_SUMMARY_HREF, label: "Centre invigilator summary" },
       ];
     }
     return nav.map(toLinkItem);
   }, [me]);
 
   const isMonitoringOfficer = me?.role === "TEST_ADMIN_OFFICER";
+  const isFinanceOfficer = me?.role === "FINANCE_OFFICER";
 
   function logout() {
     clearAuth();
@@ -117,7 +132,7 @@ export function AdminDashboardShell({ children }: Props) {
               Exam tools
             </p>
             <p className="mt-1 text-sm font-semibold text-card-foreground">
-              {isMonitoringOfficer ? "Monitoring" : "Administration"}
+              {isMonitoringOfficer ? "Monitoring" : isFinanceOfficer ? "Finance" : "Administration"}
             </p>
           </div>
           <nav className="flex flex-1 flex-col gap-1 p-3" aria-label="Dashboard sections">
@@ -163,7 +178,9 @@ export function AdminDashboardShell({ children }: Props) {
 
       <div className="lg:pl-64">
         <DashboardStickyHeader
-          title={isMonitoringOfficer ? "Exam monitoring" : "Administrator dashboard"}
+          title={
+            isMonitoringOfficer ? "Exam monitoring" : isFinanceOfficer ? "Finance" : "Administrator dashboard"
+          }
           subtitle={
             me
               ? `${me.full_name}${me.email ? ` · ${me.email}` : ""}`

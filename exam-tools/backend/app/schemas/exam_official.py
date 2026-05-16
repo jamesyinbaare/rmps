@@ -18,6 +18,7 @@ class ExamOfficialDesignationApi(str, Enum):
     assistant_supervisor = "Assistant Supervisor"
     invigilator = "Invigilator"
     police_officer = "Police Officer"
+    external_inspector = "External Inspector"
 
 
 class ExamCentreOfficialResponse(BaseModel):

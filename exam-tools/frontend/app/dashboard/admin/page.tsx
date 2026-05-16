@@ -51,6 +51,10 @@ export default function AdminDashboardPage() {
           router.replace("/dashboard/admin/monitoring");
           return;
         }
+        if (user.role === "FINANCE_OFFICER") {
+          router.replace("/dashboard/admin/exam-officials");
+          return;
+        }
       } catch {
         if (cancelled) return;
         setMe(null);
@@ -96,7 +100,7 @@ export default function AdminDashboardPage() {
     return n.toLocaleString();
   }
 
-  if (me?.role === "TEST_ADMIN_OFFICER") {
+  if (me?.role === "TEST_ADMIN_OFFICER" || me?.role === "FINANCE_OFFICER") {
     return (
       <div className="flex min-h-[40vh] items-center justify-center">
         <p className="text-sm text-muted-foreground">Redirecting…</p>
