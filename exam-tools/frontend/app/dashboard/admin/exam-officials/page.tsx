@@ -12,14 +12,18 @@ import {
   type Examination,
   type ExaminationCenterListResponse,
 } from "@/lib/api";
+import { OfficialAccountsPageIntro } from "@/components/official-accounts-page-intro";
+import { OfficialAccountsPanelHeader } from "@/components/official-accounts-panel-header";
 import { formInputClass, formLabelClass } from "@/lib/form-classes";
+import {
+  officialAccountsBtnPrimary,
+  officialAccountsBtnSecondary,
+  officialAccountsPanelClass,
+  officialAccountsPanelFooterClass,
+  officialAccountsPanelToolbarClass,
+} from "@/lib/official-accounts-zone";
 
 const PAGE_SIZE = 50;
-
-const btnPrimary =
-  "inline-flex min-h-10 items-center justify-center rounded-lg bg-primary px-3 text-sm font-medium text-primary-foreground transition-colors hover:bg-primary-hover focus:outline-none focus:ring-2 focus:ring-ring/30 disabled:pointer-events-none disabled:opacity-50";
-const btnSecondary =
-  "inline-flex min-h-10 items-center justify-center rounded-lg border border-input-border bg-background px-3 text-sm font-medium text-foreground transition-colors hover:bg-muted focus:outline-none focus:ring-2 focus:ring-ring/30 disabled:pointer-events-none disabled:opacity-50";
 
 function exportFilenameBase(exam: Examination | null): string {
   if (!exam) return "exam";
@@ -132,17 +136,11 @@ function AdminExamOfficialsContent() {
 
   return (
     <div className="space-y-6">
-      <div>
-        <h1 className="text-xl font-semibold text-foreground">Official account details</h1>
-        <p className="mt-1 text-sm text-muted-foreground">
-          Bank account and contact records for examination officials at each centre. All centres for the selected
-          examination. Filter by examination centre, then export as a zip of one workbook per centre or as a single
-          workbook with each centre section titled and spaced.
-        </p>
-      </div>
+      <OfficialAccountsPageIntro description="View and export bank account and contact records for examination officials at each centre." />
 
-      <div className="flex flex-col gap-4 rounded-xl border border-border bg-card p-4 shadow-sm sm:flex-row sm:flex-wrap sm:items-end">
-        <div className="min-w-48 flex-1">
+      <div className={officialAccountsPanelClass}>
+        <div className={officialAccountsPanelToolbarClass}>
+          <div className="min-w-48 flex-1 sm:max-w-xs">
           <label className={formLabelClass} htmlFor="admin-eo-exam">
             Examination
           </label>
@@ -178,33 +176,35 @@ function AdminExamOfficialsContent() {
             ))}
           </select>
         </div>
-        <div className="flex flex-wrap gap-2">
-          <button
-            type="button"
-            className={btnSecondary}
-            disabled={examId === null || !!exportBusy}
-            onClick={() => void onExport("zip")}
-          >
-            {exportBusy === "zip" ? "Preparing zip…" : "Export zip (one Excel per centre)"}
-          </button>
-          <button
-            type="button"
-            className={btnPrimary}
-            disabled={examId === null || !!exportBusy}
-            onClick={() => void onExport("combined")}
-          >
-            {exportBusy === "combined" ? "Preparing workbook…" : "Export one Excel (all centres)"}
-          </button>
+          <div className="flex w-full flex-col gap-2 sm:ml-auto sm:w-auto sm:flex-row">
+            <button
+              type="button"
+              className={officialAccountsBtnSecondary}
+              disabled={examId === null || !!exportBusy}
+              onClick={() => void onExport("zip")}
+            >
+              {exportBusy === "zip" ? "Preparing…" : "Zip per centre"}
+            </button>
+            <button
+              type="button"
+              className={officialAccountsBtnPrimary}
+              disabled={examId === null || !!exportBusy}
+              onClick={() => void onExport("combined")}
+            >
+              {exportBusy === "combined" ? "Preparing…" : "Single workbook"}
+            </button>
+          </div>
         </div>
-      </div>
 
-      {loadError ? (
-        <p className="rounded-lg border border-destructive/40 bg-destructive/10 px-3 py-2 text-sm text-destructive">
-          {loadError}
-        </p>
-      ) : null}
+        {loadError ? (
+          <p className="mx-4 mt-4 rounded-lg border border-destructive/40 bg-destructive/10 px-3 py-2 text-sm text-destructive sm:mx-5">
+            {loadError}
+          </p>
+        ) : null}
 
-      <div className="overflow-x-auto rounded-xl border border-border">
+        <OfficialAccountsPanelHeader count={total} busy={busy} />
+
+        <div className="overflow-x-auto">
         <table className="w-full min-w-[56rem] border-collapse text-sm">
           <thead>
             <tr className="border-b border-border/60 bg-muted/30 text-left">
@@ -239,15 +239,16 @@ function AdminExamOfficialsContent() {
           <tbody className="divide-y divide-border/70">
             {busy && items.length === 0 ? (
               <tr>
-                <td colSpan={9} className="px-3 py-8 text-center text-muted-foreground">
-                  Loading…
+                <td colSpan={9} className="px-4 py-12 text-center">
+                  <p className="text-sm font-medium text-muted-foreground">Loading records…</p>
                 </td>
               </tr>
             ) : null}
             {!busy && items.length === 0 ? (
               <tr>
-                <td colSpan={9} className="px-3 py-8 text-center text-muted-foreground">
-                  No account records for this filter.
+                <td colSpan={9} className="px-4 py-12 text-center">
+                  <p className="text-sm font-medium text-foreground">No records match this filter</p>
+                  <p className="mt-1 text-xs text-muted-foreground">Try another centre or examination.</p>
                 </td>
               </tr>
             ) : null}
@@ -274,33 +275,35 @@ function AdminExamOfficialsContent() {
             ))}
           </tbody>
         </table>
-      </div>
-
-      {total > PAGE_SIZE ? (
-        <div className="flex flex-wrap items-center justify-between gap-3 text-sm">
-          <p className="text-muted-foreground">
-            Showing {(page - 1) * PAGE_SIZE + 1}–{Math.min(page * PAGE_SIZE, total)} of {total}
-          </p>
-          <div className="flex gap-2">
-            <button
-              type="button"
-              className={btnSecondary}
-              disabled={page <= 1 || busy}
-              onClick={() => setPage((p) => Math.max(1, p - 1))}
-            >
-              Previous
-            </button>
-            <button
-              type="button"
-              className={btnSecondary}
-              disabled={page >= totalPages || busy}
-              onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
-            >
-              Next
-            </button>
-          </div>
         </div>
-      ) : null}
+
+        {total > PAGE_SIZE ? (
+          <div className={officialAccountsPanelFooterClass}>
+            <p className="text-muted-foreground">
+              Showing {(page - 1) * PAGE_SIZE + 1}–{Math.min(page * PAGE_SIZE, total)} of{" "}
+              {total.toLocaleString()}
+            </p>
+            <div className="flex gap-2">
+              <button
+                type="button"
+                className={officialAccountsBtnSecondary}
+                disabled={page <= 1 || busy}
+                onClick={() => setPage((p) => Math.max(1, p - 1))}
+              >
+                Previous
+              </button>
+              <button
+                type="button"
+                className={officialAccountsBtnSecondary}
+                disabled={page >= totalPages || busy}
+                onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
+              >
+                Next
+              </button>
+            </div>
+          </div>
+        ) : null}
+      </div>
     </div>
   );
 }

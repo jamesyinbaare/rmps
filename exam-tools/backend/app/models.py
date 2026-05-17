@@ -946,7 +946,7 @@ class ExamCentreOfficial(Base):
         CheckConstraint("num_days >= 1", name="ck_exam_school_official_num_days"),
         CheckConstraint("length(account_number) = 13 AND account_number ~ '^[0-9]{13}$'", name="ck_exam_school_official_account"),
         CheckConstraint(
-            "telephone_number ~ '^0(20|23|24|25|26|27|28|29|50|54|55|56|57|59)[0-9]{7}$'",
+            "length(telephone_number) = 10 AND telephone_number ~ '^[0-9]{10}$'",
             name="ck_exam_school_official_telephone_gh",
         ),
         Index("ix_exam_centre_officials_exam_center", "examination_id", "center_id"),

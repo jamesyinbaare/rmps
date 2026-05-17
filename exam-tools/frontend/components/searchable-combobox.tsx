@@ -16,10 +16,14 @@ export type SearchableComboboxProps = {
   searchPlaceholder: string;
   emptyText?: string;
   widthClass?: string;
+  popoverWidthClass?: string;
   /** When false, the list has no “All” row; the user must pick an option. */
   showAllOption?: boolean;
   /** Label for the clear-all row when `showAllOption` is true (default “All”). */
   allOptionLabel?: string;
+  /** Fired when the user types in the search box (for server-backed lists). */
+  onSearchChange?: (query: string) => void;
+  disabled?: boolean;
 };
 
 export function SearchableCombobox({
@@ -30,8 +34,11 @@ export function SearchableCombobox({
   searchPlaceholder,
   emptyText = "No match.",
   widthClass = "w-[280px]",
+  popoverWidthClass,
   showAllOption = true,
   allOptionLabel = "All",
+  onSearchChange,
+  disabled = false,
 }: SearchableComboboxProps) {
   const [open, setOpen] = useState(false);
   const selected = options.find((o) => o.value === value);
@@ -42,19 +49,28 @@ export function SearchableCombobox({
           variant="outline"
           role="combobox"
           aria-expanded={open}
-          className={cn("justify-between font-normal", widthClass)}
+          disabled={disabled}
+          className={cn("h-11 min-h-11 justify-between font-normal sm:h-10 sm:min-h-10", widthClass)}
         >
           <span className="truncate">{selected ? selected.label : placeholder}</span>
           <ChevronsUpDown className="ml-2 size-4 shrink-0 opacity-50" />
         </Button>
       </PopoverTrigger>
       <PopoverContent
-        className={cn("p-0", widthClass)}
+        className={cn(
+          "p-0",
+          popoverWidthClass ?? "w-[var(--radix-popover-trigger-width)] max-w-[min(100vw-2rem,24rem)]",
+          widthClass === "w-full" ? "min-w-[var(--radix-popover-trigger-width)]" : widthClass,
+        )}
         align="start"
         onOpenAutoFocus={(e) => e.preventDefault()}
       >
-        <Command>
-          <CommandInput placeholder={searchPlaceholder} className="h-9" />
+        <Command shouldFilter={onSearchChange ? false : true}>
+          <CommandInput
+            placeholder={searchPlaceholder}
+            className="h-9"
+            onValueChange={onSearchChange}
+          />
           <CommandList>
             <CommandEmpty>{emptyText}</CommandEmpty>
             <CommandGroup>

@@ -21,11 +21,18 @@ type Props = {
   onLogout: () => void;
   /** When set, shows the mobile sidebar trigger (hidden at `lg` and up). */
   sidebar?: DashboardStickyHeaderSidebar;
+  /** Green accent border for official account details routes. */
+  accent?: "official-accounts";
 };
 
-export function DashboardStickyHeader({ title, subtitle, onLogout, sidebar }: Props) {
+export function DashboardStickyHeader({ title, subtitle, onLogout, sidebar, accent }: Props) {
   return (
-    <header className="sticky top-0 z-30 border-b border-border bg-card/95 backdrop-blur">
+    <header
+      className={cn(
+        "sticky top-0 z-30 border-b bg-card/95 backdrop-blur",
+        accent === "official-accounts" ? "border-success/40" : "border-border",
+      )}
+    >
       <div className="flex items-center gap-3 px-4 py-3 sm:px-6">
         {sidebar ? (
           <Button

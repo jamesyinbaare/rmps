@@ -7,6 +7,10 @@ import { useEffect, useId, useState } from "react";
 import { DashboardSimpleHeader, DashboardStickyHeader } from "@/components/dashboard-sticky-header";
 import { ExaminationNoticeSessionBanner } from "@/components/examination-notice-session-banner";
 import { clearAuth, AUTH_TOKEN_UPDATED_EVENT, getMe, type UserMe } from "@/lib/auth";
+import {
+  OfficialAccountsNavLink,
+  OfficialAccountsNavSection,
+} from "@/components/official-accounts-nav-link";
 
 /** Subtitle under the page title: full name plus school name and code when present. */
 function staffHeaderSubtitle(me: UserMe): string {
@@ -172,7 +176,6 @@ export function DashboardShell({ title, children, staffRole }: Props) {
   const staffNavMain = inspectorExamOfficialsItem
     ? staffNav.filter((item) => item.href !== examOfficialsHref)
     : staffNav;
-
   return (
     <div
       className="min-h-screen bg-background [--staff-sticky-header-offset:4.5rem] [scroll-padding-top:var(--staff-sticky-header-offset)]"
@@ -199,8 +202,12 @@ export function DashboardShell({ title, children, staffRole }: Props) {
             </p>
             <p className="mt-1 text-sm font-semibold text-card-foreground">{roleLabel}</p>
           </div>
-          <nav className="flex flex-1 flex-col p-3" aria-label="Dashboard sections">
-            <div className="flex flex-col gap-1">
+          <nav
+            className="flex min-h-0 flex-1 flex-col overflow-y-auto overscroll-contain p-3 pb-6"
+            aria-label="Dashboard sections"
+          >
+            <div className="flex flex-col lg:min-h-full lg:flex-1">
+              <div className="flex flex-col gap-1">
               {staffNavMain.map((item) => (
                 <Link
                   key={item.href}
@@ -217,20 +224,15 @@ export function DashboardShell({ title, children, staffRole }: Props) {
               ))}
             </div>
             {inspectorExamOfficialsItem ? (
-              <div className="mt-auto flex flex-col gap-1 border-t border-border pb-3 pt-3">
-                <Link
+              <OfficialAccountsNavSection>
+                <OfficialAccountsNavLink
                   href={inspectorExamOfficialsItem.href}
-                  onClick={() => setSidebarOpen(false)}
-                  className={`rounded-lg px-3 py-2.5 text-sm font-medium transition-colors ${
-                    inspectorExamOfficialsItem.active
-                      ? "bg-primary text-primary-foreground"
-                      : "text-card-foreground hover:bg-muted"
-                  } ${inputFocusRing}`}
-                >
-                  {inspectorExamOfficialsItem.label}
-                </Link>
-              </div>
+                  active={inspectorExamOfficialsItem.active}
+                  onNavigate={() => setSidebarOpen(false)}
+                />
+              </OfficialAccountsNavSection>
             ) : null}
+            </div>
           </nav>
         </div>
       </aside>

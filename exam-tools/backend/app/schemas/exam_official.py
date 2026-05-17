@@ -9,7 +9,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from app.schemas.bank_branch import normalize_bank_code_for_api
 
-GHANA_PHONE_RE = re.compile(r"^0(20|23|24|25|26|27|28|29|50|54|55|56|57|59)\d{7}$")
+PHONE_TEN_DIGITS_RE = re.compile(r"^\d{10}$")
 
 
 class ExamOfficialDesignationApi(str, Enum):
@@ -67,10 +67,10 @@ class ExamCentreOfficialCreate(BaseModel):
 
     @field_validator("telephone_number")
     @classmethod
-    def validate_gh_phone(cls, v: str) -> str:
+    def validate_phone_digits(cls, v: str) -> str:
         s = v.strip()
-        if not GHANA_PHONE_RE.fullmatch(s):
-            raise ValueError("telephone_number must be a valid Ghana number (10 digits)")
+        if not PHONE_TEN_DIGITS_RE.fullmatch(s):
+            raise ValueError("telephone_number must be exactly 10 digits")
         return s
 
 
@@ -94,10 +94,10 @@ class ExamCentreOfficialUpdate(BaseModel):
 
     @field_validator("telephone_number")
     @classmethod
-    def validate_gh_phone(cls, v: str | None) -> str | None:
+    def validate_phone_digits(cls, v: str | None) -> str | None:
         if v is None:
             return None
         s = v.strip()
-        if not GHANA_PHONE_RE.fullmatch(s):
-            raise ValueError("telephone_number must be a valid Ghana number (10 digits)")
+        if not PHONE_TEN_DIGITS_RE.fullmatch(s):
+            raise ValueError("telephone_number must be exactly 10 digits")
         return s

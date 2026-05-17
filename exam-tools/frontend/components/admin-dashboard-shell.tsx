@@ -6,12 +6,18 @@ import { useEffect, useId, useMemo, useState } from "react";
 
 import { DashboardStickyHeader } from "@/components/dashboard-sticky-header";
 import { clearAuth, getMe, type UserMe } from "@/lib/auth";
+import { OfficialAccountsNavLink } from "@/components/official-accounts-nav-link";
+import {
+  isOfficialAccountsHref,
+  isOfficialAccountsPath,
+  OFFICIAL_ACCOUNTS_ADMIN_HREF,
+} from "@/lib/official-accounts-zone";
+import { cn } from "@/lib/utils";
 
 const inputFocusRing =
   "focus:border-primary focus:outline-none focus:ring-2 focus:ring-ring/30";
 
 const BANK_DIRECTORY_HREF = "/dashboard/admin/bank-directory";
-const EXAM_OFFICIALS_HREF = "/dashboard/admin/exam-officials";
 const EXTERNAL_INSPECTORS_HREF = "/dashboard/admin/external-inspectors";
 const FINANCE_CENTRE_SUMMARY_HREF = "/dashboard/admin/finance-centre-summary";
 
@@ -51,7 +57,7 @@ type NavEntry = NavLinkItem | NavHeadingItem;
 
 const FINANCE_OFFICER_NAV: NavEntry[] = [
   { type: "heading", label: "Finance" },
-  { type: "link", href: EXAM_OFFICIALS_HREF, label: "Official account details" },
+  { type: "link", href: OFFICIAL_ACCOUNTS_ADMIN_HREF, label: "Official account details" },
   { type: "link", href: EXTERNAL_INSPECTORS_HREF, label: "External inspectors" },
   { type: "link", href: FINANCE_CENTRE_SUMMARY_HREF, label: "Centre invigilator summary" },
 ];
@@ -93,7 +99,7 @@ export function AdminDashboardShell({ children }: Props) {
         ...withoutBank.map(toLinkItem),
         { type: "heading", label: "Finance" },
         { type: "link", href: bankItem.href, label: bankItem.label },
-        { type: "link", href: EXAM_OFFICIALS_HREF, label: "Official account details" },
+        { type: "link", href: OFFICIAL_ACCOUNTS_ADMIN_HREF, label: "Official account details" },
         { type: "link", href: EXTERNAL_INSPECTORS_HREF, label: "External inspectors" },
         { type: "link", href: FINANCE_CENTRE_SUMMARY_HREF, label: "Centre invigilator summary" },
       ];
@@ -103,6 +109,7 @@ export function AdminDashboardShell({ children }: Props) {
 
   const isMonitoringOfficer = me?.role === "TEST_ADMIN_OFFICER";
   const isFinanceOfficer = me?.role === "FINANCE_OFFICER";
+  const onOfficialAccountsPage = isOfficialAccountsPath(pathname);
 
   function logout() {
     clearAuth();
@@ -135,7 +142,10 @@ export function AdminDashboardShell({ children }: Props) {
               {isMonitoringOfficer ? "Monitoring" : isFinanceOfficer ? "Finance" : "Administration"}
             </p>
           </div>
-          <nav className="flex flex-1 flex-col gap-1 p-3" aria-label="Dashboard sections">
+          <nav
+            className="flex min-h-0 flex-1 flex-col gap-1 overflow-y-auto overscroll-contain p-3 pb-6"
+            aria-label="Dashboard sections"
+          >
             {visibleNavEntries === null ? (
               <p className="px-3 text-sm text-muted-foreground">Loading…</p>
             ) : (
@@ -156,16 +166,29 @@ export function AdminDashboardShell({ children }: Props) {
                   entry.href === "/dashboard/admin"
                     ? pathname === entry.href
                     : pathname === entry.href || pathname.startsWith(`${entry.href}/`);
+                if (isOfficialAccountsHref(entry.href)) {
+                  return (
+                    <OfficialAccountsNavLink
+                      key={entry.href}
+                      href={entry.href}
+                      active={active}
+                      onNavigate={() => setSidebarOpen(false)}
+                    />
+                  );
+                }
                 return (
                   <Link
                     key={entry.href}
                     href={entry.href}
                     onClick={() => setSidebarOpen(false)}
-                    className={`rounded-lg px-3 py-2.5 text-sm font-medium transition-colors ${
+                    aria-current={active ? "page" : undefined}
+                    className={cn(
+                      "rounded-lg px-3 py-2.5 text-sm font-medium transition-colors",
                       active
                         ? "bg-primary text-primary-foreground"
-                        : "text-card-foreground hover:bg-muted"
-                    } ${inputFocusRing}`}
+                        : "text-card-foreground hover:bg-muted",
+                      inputFocusRing,
+                    )}
                   >
                     {entry.label}
                   </Link>
@@ -179,7 +202,13 @@ export function AdminDashboardShell({ children }: Props) {
       <div className="lg:pl-64">
         <DashboardStickyHeader
           title={
-            isMonitoringOfficer ? "Exam monitoring" : isFinanceOfficer ? "Finance" : "Administrator dashboard"
+            onOfficialAccountsPage
+              ? "Official account details"
+              : isMonitoringOfficer
+                ? "Exam monitoring"
+                : isFinanceOfficer
+                  ? "Finance"
+                  : "Administrator dashboard"
           }
           subtitle={
             me

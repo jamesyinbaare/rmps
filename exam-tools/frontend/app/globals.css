@@ -54,6 +54,7 @@
   --color-ring: var(--ring);
   --color-popover: var(--popover);
   --color-popover-foreground: var(--popover-foreground);
+  --color-zone-canvas: var(--zone-canvas);
 
   --font-sans: var(--font-geist-sans);
   --font-mono: var(--font-geist-mono);
@@ -97,6 +98,8 @@
 
   --popover: var(--ghana-white);
   --popover-foreground: var(--ghana-black);
+
+  --zone-canvas: #f0f7f4;
 }
 
 /* Dark Mode */
@@ -129,6 +132,23 @@
 
   --popover: #1a1f2e;
   --popover-foreground: #f8f9fa;
+
+  --zone-canvas: #121a16;
+}
+
+/* Official account details — scoped page zone (Ghana green primary) */
+[data-zone="official-accounts"] {
+  --primary: var(--ghana-green);
+  --primary-hover: var(--ghana-forest-green);
+  --primary-foreground: var(--ghana-white);
+  --ring: var(--ghana-green);
+}
+
+.dark [data-zone="official-accounts"] {
+  --primary: #22c06a;
+  --primary-hover: #17a45a;
+  --primary-foreground: #ffffff;
+  --ring: #22c06a;
 }
 
 /* CTVET Theme - Light Mode with Green Primary */
