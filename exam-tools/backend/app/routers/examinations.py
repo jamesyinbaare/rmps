@@ -1637,6 +1637,8 @@ async def get_my_center_overview(
     cand_by_school = {row[0]: int(row[1]) for row in cand_by_school_rows.all()}
 
     entries = await _staff_center_filtered_timetable_entries(session, exam_id, scope_ids)
+
+    examination_centre_region = center_host.region.value
     if entries:
         entry_dates = [e.examination_date for e in entries]
         examination_window_start = min(entry_dates)
@@ -1860,6 +1862,8 @@ async def get_national_overview(
     candidate_count = int((await session.execute(cand_stmt)).scalar_one())
 
     entries = await _staff_center_filtered_timetable_entries(session, exam_id, scope_ids)
+
+    region_vals = {s.region.value for s in ordered_schools if s.region is not None}
     if len(region_vals) == 1:
         examination_centre_region = next(iter(region_vals))
     elif len(region_vals) > 1:
