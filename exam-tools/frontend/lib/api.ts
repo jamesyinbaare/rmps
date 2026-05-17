@@ -40,6 +40,22 @@ export type InspectorSchoolRow = {
   phone_number: string | null;
   school_code: string | null;
   school_name?: string | null;
+  is_active: boolean;
+};
+
+export type InspectorUpdatePayload = {
+  full_name?: string;
+  phone_number?: string;
+  is_active?: boolean;
+};
+
+export type InspectorListParams = {
+  skip?: number;
+  limit?: number;
+  sort?: string;
+  order?: "asc" | "desc";
+  q?: string | null;
+  is_active?: boolean | null;
 };
 
 export type ExaminationCenterDetailResponse = {
@@ -72,6 +88,45 @@ export type InspectorCreatePayload = {
   core?: string | null;
   elective?: string | null;
 };
+
+export async function listInspectors(params: InspectorListParams = {}): Promise<InspectorListResponse> {
+  const q = new URLSearchParams();
+  if (params.skip != null) q.set("skip", String(params.skip));
+  if (params.limit != null) q.set("limit", String(params.limit));
+  if (params.sort) q.set("sort", params.sort);
+  if (params.order) q.set("order", params.order);
+  if (params.q?.trim()) q.set("q", params.q.trim());
+  if (params.is_active != null) q.set("is_active", String(params.is_active));
+  const s = q.toString();
+  return apiJson<InspectorListResponse>(`/inspectors${s ? `?${s}` : ""}`);
+}
+
+export async function adminUpdateInspector(
+  userId: string,
+  payload: InspectorUpdatePayload,
+): Promise<InspectorSchoolRow> {
+  return apiJson<InspectorSchoolRow>(`/inspectors/${encodeURIComponent(userId)}`, {
+    method: "PATCH",
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function adminResetInspectorPassword(userId: string, newPassword: string): Promise<void> {
+  const res = await apiFetch(`/inspectors/${encodeURIComponent(userId)}/reset-password`, {
+    method: "POST",
+    body: JSON.stringify({ new_password: newPassword }),
+  });
+  if (!res.ok) {
+    throw new Error(await parseErrorMessage(res));
+  }
+}
+
+export async function adminDeleteInspector(userId: string): Promise<void> {
+  const res = await apiFetch(`/inspectors/${encodeURIComponent(userId)}`, { method: "DELETE" });
+  if (!res.ok) {
+    throw new Error(await parseErrorMessage(res));
+  }
+}
 
 export type TestAdminOfficerCreatePayload = {
   email: string;
@@ -736,6 +791,8 @@ export type AdminInspectorExamPostingRow = {
   id: string;
   examination_id: number;
   inspector_user_id: string;
+  inspector_full_name: string;
+  inspector_phone_number: string | null;
   center_id: string;
   center_code: string;
   center_name: string;

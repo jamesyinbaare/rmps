@@ -234,6 +234,7 @@ async def get_examination_center_detail(
                 phone_number=cast(str | None, u.phone_number),
                 school_code=cast(str | None, u.school_code),
                 school_name=None,
+                is_active=bool(u.is_active),
             )
             for u in insp_result.scalars().all()
         ]

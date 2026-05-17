@@ -51,7 +51,11 @@ from app.services.template_generator import generate_inspector_postings_bulk_tem
 router = APIRouter(prefix="/admin/examinations", tags=["admin-inspector-postings"])
 
 
-def _posting_to_response(row: InspectorExamPosting, center: School) -> InspectorExamPostingResponse:
+def _posting_to_response(
+    row: InspectorExamPosting,
+    center: School,
+    inspector: User,
+) -> InspectorExamPostingResponse:
     scope = row.subject_scope
     if isinstance(scope, ExamInspectorSubjectScope):
         scope_str = scope.value
@@ -61,6 +65,8 @@ def _posting_to_response(row: InspectorExamPosting, center: School) -> Inspector
         id=row.id,
         examination_id=row.examination_id,
         inspector_user_id=row.inspector_user_id,
+        inspector_full_name=cast(str, inspector.full_name),
+        inspector_phone_number=cast(str | None, inspector.phone_number),
         center_id=row.center_id,
         center_code=cast(str, center.code),
         center_name=cast(str, center.name),
@@ -99,14 +105,18 @@ async def list_inspector_postings(
         return InspectorExamPostingListResponse(items=[])
 
     centre_ids = {r.center_id for r in rows}
+    inspector_ids = {r.inspector_user_id for r in rows}
     sch_stmt = select(School).where(School.id.in_(centre_ids))
     centres = {s.id: s for s in (await session.execute(sch_stmt)).scalars().all()}
+    insp_stmt = select(User).where(User.id.in_(inspector_ids))
+    inspectors = {u.id: u for u in (await session.execute(insp_stmt)).scalars().all()}
     out: list[InspectorExamPostingResponse] = []
     for r in rows:
         c = centres.get(r.center_id)
-        if c is None:
+        insp = inspectors.get(r.inspector_user_id)
+        if c is None or insp is None:
             continue
-        out.append(_posting_to_response(r, c))
+        out.append(_posting_to_response(r, c, insp))
     return InspectorExamPostingListResponse(items=out)
 
 
@@ -151,7 +161,7 @@ async def create_inspector_posting(
     await session.refresh(row)
     center = await session.get(School, row.center_id)
     assert center is not None
-    return _posting_to_response(row, center)
+    return _posting_to_response(row, center, insp)
 
 
 @router.get(
@@ -386,8 +396,9 @@ async def update_inspector_posting(
     await session.commit()
     await session.refresh(row)
     center = await session.get(School, row.center_id)
-    assert center is not None
-    return _posting_to_response(row, center)
+    insp = await session.get(User, row.inspector_user_id)
+    assert center is not None and insp is not None
+    return _posting_to_response(row, center, insp)
 
 
 @router.delete(

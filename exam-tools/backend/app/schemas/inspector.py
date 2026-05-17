@@ -80,6 +80,25 @@ class InspectorSchoolRow(BaseModel):
     phone_number: str | None
     school_code: str | None
     school_name: str | None = None
+    is_active: bool = True
+
+
+class InspectorUpdate(BaseModel):
+    full_name: str | None = Field(None, max_length=255, min_length=1)
+    phone_number: str | None = Field(None, max_length=50)
+    is_active: bool | None = None
+
+    model_config = ConfigDict(str_strip_whitespace=True)
+
+    @model_validator(mode="after")
+    def require_at_least_one_field(self) -> Self:
+        if self.full_name is None and self.phone_number is None and self.is_active is None:
+            raise ValueError("At least one of full_name, phone_number, or is_active must be provided")
+        return self
+
+
+class InspectorPasswordReset(BaseModel):
+    new_password: str = Field(..., min_length=8)
 
 
 class InspectorListResponse(BaseModel):

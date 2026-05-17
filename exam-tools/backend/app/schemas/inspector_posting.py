@@ -30,6 +30,8 @@ class InspectorExamPostingResponse(BaseModel):
     id: UUID
     examination_id: int
     inspector_user_id: UUID
+    inspector_full_name: str
+    inspector_phone_number: str | None = None
     center_id: UUID
     center_code: str
     center_name: str

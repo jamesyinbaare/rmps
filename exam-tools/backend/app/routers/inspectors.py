@@ -2,16 +2,17 @@
 
 from datetime import datetime
 from typing import cast
+from uuid import UUID
 
 from fastapi import APIRouter, File, HTTPException, Query, UploadFile, status
-from sqlalchemy import asc, desc, func, or_, select
+from sqlalchemy import asc, delete, desc, func, or_, select
 from sqlalchemy.exc import IntegrityError
 
 from app.config import settings
 from app.core.security import get_password_hash
 from app.dependencies.auth import SuperAdminDep
 from app.dependencies.database import DBSessionDep
-from app.models import ExamInspectorSubjectScope, School, User, UserRole
+from app.models import ExamInspectorSubjectScope, RefreshToken, School, User, UserRole
 from app.schemas.inspector import (
     InspectorBulkCreatedRow,
     InspectorBulkUploadError,
@@ -20,7 +21,9 @@ from app.schemas.inspector import (
     InspectorCreatedPostingRow,
     InspectorCreatedResponse,
     InspectorListResponse,
+    InspectorPasswordReset,
     InspectorSchoolRow,
+    InspectorUpdate,
 )
 from app.services.exam_timetable_pdf import load_examination_or_raise
 from app.services.inspector_posting import create_inspector_postings_from_core_elective_codes
@@ -46,6 +49,43 @@ _SORT_COLUMNS = {
 }
 
 
+def _inspector_school_row(user: User) -> InspectorSchoolRow:
+    return InspectorSchoolRow(
+        id=user.id,
+        full_name=cast(str, user.full_name),
+        phone_number=cast(str | None, user.phone_number),
+        school_code=cast(str | None, user.school_code),
+        school_name=None,
+        is_active=bool(user.is_active),
+    )
+
+
+async def _load_inspector_user(session: DBSessionDep, user_id: UUID) -> User:
+    stmt = select(User).where(User.id == user_id, User.role == UserRole.INSPECTOR)
+    result = await session.execute(stmt)
+    user = result.scalar_one_or_none()
+    if user is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Inspector not found")
+    return user
+
+
+async def _ensure_unique_inspector_phone(
+    session: DBSessionDep,
+    phone_number: str,
+    *,
+    exclude_user_id: UUID | None = None,
+) -> None:
+    stmt = select(User).where(User.role == UserRole.INSPECTOR, User.phone_number == phone_number)
+    if exclude_user_id is not None:
+        stmt = stmt.where(User.id != exclude_user_id)
+    dup = (await session.execute(stmt)).scalar_one_or_none()
+    if dup is not None:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="An inspector with this phone_number already exists",
+        )
+
+
 @router.get(
     "",
     response_model=InspectorListResponse,
@@ -62,6 +102,7 @@ async def list_inspectors(
         description="Sort field: full_name, phone, school_code",
     ),
     order: str = Query("asc", description="asc or desc"),
+    is_active: bool | None = Query(None, description="Filter by active status"),
 ) -> InspectorListResponse:
     sort_key = (sort or "full_name").lower()
     if sort_key not in _SORT_COLUMNS:
@@ -77,6 +118,8 @@ async def list_inspectors(
         )
 
     filters = [User.role == UserRole.INSPECTOR]
+    if is_active is not None:
+        filters.append(User.is_active == is_active)
     search_filter = None
     if q and q.strip():
         pattern = f"%{q.strip()}%"
@@ -99,17 +142,70 @@ async def list_inspectors(
     list_stmt = list_stmt.order_by(order_clause, asc(User.id)).offset(skip).limit(limit)
 
     result = await session.execute(list_stmt)
-    items = [
-        InspectorSchoolRow(
-            id=row.id,
-            full_name=cast(str, row.full_name),
-            phone_number=cast(str | None, row.phone_number),
-            school_code=cast(str | None, row.school_code),
-            school_name=None,
-        )
-        for row in result.scalars().all()
-    ]
+    items = [_inspector_school_row(row) for row in result.scalars().all()]
     return InspectorListResponse(items=items, total=total)
+
+
+@router.patch("/{user_id}", response_model=InspectorSchoolRow, summary="Update an inspector account")
+async def update_inspector(
+    user_id: UUID,
+    data: InspectorUpdate,
+    session: DBSessionDep,
+    _admin: SuperAdminDep,
+) -> InspectorSchoolRow:
+    user = await _load_inspector_user(session, user_id)
+    if data.full_name is not None:
+        user.full_name = data.full_name
+    if data.phone_number is not None:
+        await _ensure_unique_inspector_phone(session, data.phone_number, exclude_user_id=user.id)
+        user.phone_number = data.phone_number
+    if data.is_active is not None:
+        user.is_active = data.is_active
+        if not data.is_active:
+            await session.execute(delete(RefreshToken).where(RefreshToken.user_id == user.id))
+    try:
+        await session.commit()
+        await session.refresh(user)
+    except IntegrityError:
+        await session.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Could not update inspector (constraint violation)",
+        ) from None
+    return _inspector_school_row(user)
+
+
+@router.post(
+    "/{user_id}/reset-password",
+    status_code=status.HTTP_204_NO_CONTENT,
+    summary="Reset an inspector password",
+)
+async def reset_inspector_password(
+    user_id: UUID,
+    data: InspectorPasswordReset,
+    session: DBSessionDep,
+    _admin: SuperAdminDep,
+) -> None:
+    if len(data.new_password) < settings.password_min_length:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"password must be at least {settings.password_min_length} characters",
+        )
+    user = await _load_inspector_user(session, user_id)
+    user.hashed_password = get_password_hash(data.new_password)
+    await session.execute(delete(RefreshToken).where(RefreshToken.user_id == user.id))
+    await session.commit()
+
+
+@router.delete("/{user_id}", status_code=status.HTTP_204_NO_CONTENT, summary="Delete an inspector account")
+async def delete_inspector(
+    user_id: UUID,
+    session: DBSessionDep,
+    _admin: SuperAdminDep,
+) -> None:
+    user = await _load_inspector_user(session, user_id)
+    await session.delete(user)
+    await session.commit()
 
 
 @router.post(
