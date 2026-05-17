@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useCallback, useEffect, useState } from "react";
 
-import { apiFetch, apiJson, type Examination } from "@/lib/api";
+import { apiFetch, apiJson, getAdminActiveExamination, putAdminActiveExamination, type Examination } from "@/lib/api";
 import { formInputClass, formLabelClass, primaryButtonClass } from "@/lib/form-classes";
 
 const inputFocusRing =
@@ -66,9 +66,17 @@ export default function AdminExaminationsPage() {
   const [description, setDescription] = useState("");
   const [saving, setSaving] = useState(false);
 
+  const [pinnedExamId, setPinnedExamId] = useState<number | null>(null);
+  const [resolvedDefaultExam, setResolvedDefaultExam] = useState<Examination | null>(null);
+  const [activeLoading, setActiveLoading] = useState(true);
+  const [activeSaving, setActiveSaving] = useState(false);
+  const [activeError, setActiveError] = useState("");
+
   const load = useCallback(async () => {
     setError("");
+    setActiveError("");
     setLoading(true);
+    setActiveLoading(true);
     try {
       const data = await apiJson<Examination[]>("/examinations");
       setItems(data);
@@ -77,11 +85,35 @@ export default function AdminExaminationsPage() {
     } finally {
       setLoading(false);
     }
+    try {
+      const activeSettings = await getAdminActiveExamination();
+      setPinnedExamId(activeSettings.active_examination_id);
+      setResolvedDefaultExam(activeSettings.examination);
+    } catch (e) {
+      setActiveError(e instanceof Error ? e.message : "Failed to load active examination settings");
+    } finally {
+      setActiveLoading(false);
+    }
   }, []);
 
   useEffect(() => {
     void load();
   }, [load]);
+
+  async function onSaveActiveExamination(e: React.FormEvent) {
+    e.preventDefault();
+    setActiveSaving(true);
+    setActiveError("");
+    try {
+      const r = await putAdminActiveExamination(pinnedExamId);
+      setPinnedExamId(r.active_examination_id);
+      setResolvedDefaultExam(r.examination);
+    } catch (err) {
+      setActiveError(err instanceof Error ? err.message : "Could not save");
+    } finally {
+      setActiveSaving(false);
+    }
+  }
 
   async function onCreate(e: React.FormEvent) {
     e.preventDefault();
@@ -126,6 +158,62 @@ export default function AdminExaminationsPage() {
         </button>
       </div>
 
+      <div className="rounded-2xl border border-border bg-card p-5">
+        <h3 className="text-base font-semibold text-card-foreground">Active examination (staff default)</h3>
+        <p className="mt-1 text-sm text-muted-foreground">
+          Supervisors, inspectors, and depot keepers land on this examination on their dashboards when they sign in.
+          Choose &quot;Automatic&quot; to use the deployment environment value, if any, otherwise the most recently
+          created examination.
+        </p>
+        {activeLoading ? (
+          <p className="mt-3 text-sm text-muted-foreground">Loading…</p>
+        ) : (
+          <form className="mt-4 flex flex-col gap-4 sm:flex-row sm:flex-wrap sm:items-end" onSubmit={onSaveActiveExamination}>
+            <div className="min-w-0 flex-1 sm:max-w-md">
+              <label htmlFor="admin-active-exam" className={formLabelClass}>
+                Pinned examination
+              </label>
+              <select
+                id="admin-active-exam"
+                className={`mt-1 w-full ${formInputClass}`}
+                value={pinnedExamId === null ? "" : String(pinnedExamId)}
+                onChange={(e) => {
+                  const v = e.target.value;
+                  setPinnedExamId(v === "" ? null : Number(v));
+                }}
+              >
+                <option value="">Automatic (env or latest created)</option>
+                {items.map((ex) => (
+                  <option key={ex.id} value={String(ex.id)}>
+                    {ex.year}
+                    {ex.exam_series ? ` ${ex.exam_series}` : ""} — {ex.exam_type}
+                  </option>
+                ))}
+              </select>
+            </div>
+            <button type="submit" disabled={activeSaving} className={primaryButtonClass}>
+              {activeSaving ? "Saving…" : "Save"}
+            </button>
+          </form>
+        )}
+        {activeError ? (
+          <p className="mt-3 text-sm text-destructive" role="alert">
+            {activeError}
+          </p>
+        ) : null}
+        {resolvedDefaultExam ? (
+          <p className="mt-3 text-sm text-muted-foreground">
+            Currently applied for staff:{" "}
+            <span className="font-medium text-foreground">
+              {resolvedDefaultExam.year}
+              {resolvedDefaultExam.exam_series ? ` ${resolvedDefaultExam.exam_series}` : ""} —{" "}
+              {resolvedDefaultExam.exam_type}
+            </span>{" "}
+            (id {resolvedDefaultExam.id})
+          </p>
+        ) : null}
+      </div>
+
       {error && !modalOpen ? (
         <p className="text-sm text-destructive" role="alert">
           {error}
@@ -149,12 +237,20 @@ export default function AdminExaminationsPage() {
                   <p className="mt-1 text-sm text-muted-foreground">{ex.description}</p>
                 ) : null}
               </div>
-              <Link
-                href={`/dashboard/admin/examinations/${ex.id}`}
-                className={`inline-flex min-h-11 items-center justify-center rounded-lg bg-primary px-4 text-sm font-medium text-primary-foreground hover:bg-primary-hover ${inputFocusRing}`}
-              >
-                Open
-              </Link>
+              <div className="flex flex-wrap gap-2">
+                <Link
+                  href={`/dashboard/admin/inspector-postings?examinationId=${ex.id}`}
+                  className={`inline-flex min-h-11 items-center justify-center rounded-lg border border-input-border bg-background px-4 text-sm font-medium text-foreground hover:bg-muted ${inputFocusRing}`}
+                >
+                  Inspector postings
+                </Link>
+                <Link
+                  href={`/dashboard/admin/examinations/${ex.id}`}
+                  className={`inline-flex min-h-11 items-center justify-center rounded-lg bg-primary px-4 text-sm font-medium text-primary-foreground hover:bg-primary-hover ${inputFocusRing}`}
+                >
+                  Open
+                </Link>
+              </div>
             </li>
           ))}
         </ul>

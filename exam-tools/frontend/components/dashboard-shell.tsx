@@ -6,7 +6,11 @@ import { useEffect, useId, useState } from "react";
 
 import { DashboardSimpleHeader, DashboardStickyHeader } from "@/components/dashboard-sticky-header";
 import { ExaminationNoticeSessionBanner } from "@/components/examination-notice-session-banner";
-import { clearAuth, getMe, type UserMe } from "@/lib/auth";
+import { clearAuth, AUTH_TOKEN_UPDATED_EVENT, getMe, type UserMe } from "@/lib/auth";
+import {
+  OfficialAccountsNavLink,
+  OfficialAccountsNavSection,
+} from "@/components/official-accounts-nav-link";
 
 /** Subtitle under the page title: full name plus school name and code when present. */
 function staffHeaderSubtitle(me: UserMe): string {
@@ -22,6 +26,10 @@ function staffHeaderSubtitle(me: UserMe): string {
     if (userSeg) parts.push(userSeg);
     if (dep) parts.push(dep);
     return parts.filter((p) => p !== "").join(" · ");
+  }
+  const workspace = me.inspector_workspace_label?.trim();
+  if (me.role === "INSPECTOR" && workspace) {
+    return `${me.full_name.trim()} · ${workspace}`;
   }
   const schoolSegment =
     me.school_name != null && me.school_name.trim() !== ""
@@ -59,9 +67,17 @@ export function DashboardShell({ title, children, staffRole }: Props) {
   const [sidebarOpen, setSidebarOpen] = useState(false);
 
   useEffect(() => {
-    getMe()
-      .then(setMe)
-      .catch(() => setMe(null));
+    function refreshMe() {
+      getMe()
+        .then(setMe)
+        .catch(() => setMe(null));
+    }
+    refreshMe();
+    if (typeof window !== "undefined") {
+      window.addEventListener(AUTH_TOKEN_UPDATED_EVENT, refreshMe);
+      return () => window.removeEventListener(AUTH_TOKEN_UPDATED_EVENT, refreshMe);
+    }
+    return undefined;
   }, []);
 
   function logout() {
@@ -100,6 +116,7 @@ export function DashboardShell({ title, children, staffRole }: Props) {
   const scriptsHref = `${staffBase}/scripts-control`;
   const irregularScriptsHref = `${staffBase}/irregular-scripts-control`;
   const questionPaperHref = `${staffBase}/question-paper-control`;
+  const examOfficialsHref = `${staffBase}/exam-officials`;
   const examinationNoticeHref = `${staffBase}/examination-notice`;
 
   const staffNav = [
@@ -142,8 +159,23 @@ export function DashboardShell({ title, children, staffRole }: Props) {
       label: "Documents",
       active: pathname.startsWith(documentsHref),
     },
+    ...(staffRole === "inspector"
+      ? [
+          {
+            href: examOfficialsHref,
+            label: "Official account details",
+            active: pathname.startsWith(examOfficialsHref),
+          },
+        ]
+      : []),
   ];
-
+  const inspectorExamOfficialsItem =
+    staffRole === "inspector"
+      ? (staffNav.find((item) => item.href === examOfficialsHref) ?? null)
+      : null;
+  const staffNavMain = inspectorExamOfficialsItem
+    ? staffNav.filter((item) => item.href !== examOfficialsHref)
+    : staffNav;
   return (
     <div
       className="min-h-screen bg-background [--staff-sticky-header-offset:4.5rem] [scroll-padding-top:var(--staff-sticky-header-offset)]"
@@ -170,21 +202,37 @@ export function DashboardShell({ title, children, staffRole }: Props) {
             </p>
             <p className="mt-1 text-sm font-semibold text-card-foreground">{roleLabel}</p>
           </div>
-          <nav className="flex flex-1 flex-col gap-1 p-3" aria-label="Dashboard sections">
-            {staffNav.map((item) => (
-              <Link
-                key={item.href}
-                href={item.href}
-                onClick={() => setSidebarOpen(false)}
-                className={`rounded-lg px-3 py-2.5 text-sm font-medium transition-colors ${
-                  item.active
-                    ? "bg-primary text-primary-foreground"
-                    : "text-card-foreground hover:bg-muted"
-                } ${inputFocusRing}`}
-              >
-                {item.label}
-              </Link>
-            ))}
+          <nav
+            className="flex min-h-0 flex-1 flex-col overflow-y-auto overscroll-contain p-3 pb-6"
+            aria-label="Dashboard sections"
+          >
+            <div className="flex flex-col lg:min-h-full lg:flex-1">
+              <div className="flex flex-col gap-1">
+              {staffNavMain.map((item) => (
+                <Link
+                  key={item.href}
+                  href={item.href}
+                  onClick={() => setSidebarOpen(false)}
+                  className={`rounded-lg px-3 py-2.5 text-sm font-medium transition-colors ${
+                    item.active
+                      ? "bg-primary text-primary-foreground"
+                      : "text-card-foreground hover:bg-muted"
+                  } ${inputFocusRing}`}
+                >
+                  {item.label}
+                </Link>
+              ))}
+            </div>
+            {inspectorExamOfficialsItem ? (
+              <OfficialAccountsNavSection>
+                <OfficialAccountsNavLink
+                  href={inspectorExamOfficialsItem.href}
+                  active={inspectorExamOfficialsItem.active}
+                  onNavigate={() => setSidebarOpen(false)}
+                />
+              </OfficialAccountsNavSection>
+            ) : null}
+            </div>
           </nav>
         </div>
       </aside>

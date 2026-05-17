@@ -6,6 +6,7 @@ import { useEffect } from "react";
 import {
   clearAuth,
   dashboardPathForRole,
+  getInspectorPostingIdFromToken,
   getMe,
   getStoredToken,
 } from "@/lib/auth";
@@ -21,7 +22,16 @@ export function useRedirectIfAuthenticated() {
       if (!getStoredToken()) return;
       try {
         const me = await getMe();
-        if (!cancelled) router.replace(dashboardPathForRole(me.role));
+        if (!cancelled) {
+          if (me.role === "INSPECTOR") {
+            const hasWorkspace = Boolean(getInspectorPostingIdFromToken());
+            router.replace(
+              hasWorkspace ? "/dashboard/inspector" : "/dashboard/inspector/select-workspace",
+            );
+          } else {
+            router.replace(dashboardPathForRole(me.role));
+          }
+        }
       } catch {
         clearAuth();
       }

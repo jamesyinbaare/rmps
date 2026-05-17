@@ -15,7 +15,11 @@ from app.models import Region, SchoolType, Zone
 
 REQUIRED_COLUMNS = ("code", "name", "region", "zone")
 
-INSPECTOR_REQUIRED_COLUMNS = ("school_code", "phone_number", "full_name")
+INSPECTOR_REQUIRED_COLUMNS = ("phone_number", "full_name", "password")
+
+INSPECTOR_POSTING_BULK_REQUIRED_COLUMNS = ("phone_number", "full_name")
+
+BANK_BRANCH_REQUIRED_COLUMNS = ("bank_code", "bank_name", "branch_name")
 
 # Optional school bulk column: comma-separated programme codes (registration-portal parity).
 _PROGRAMMES_COLUMN_CANDIDATES = ("programme_codes", "programmes", "programme_list", "programme_code")
@@ -25,8 +29,18 @@ class SchoolUploadParseError(Exception):
     """Raised when the uploaded file cannot be read or parsed."""
 
 
-def read_upload_as_dataframe(content: bytes, filename: str) -> pd.DataFrame:
-    """Load CSV or Excel bytes into a DataFrame."""
+def read_upload_as_dataframe(
+    content: bytes,
+    filename: str,
+    *,
+    all_columns_as_string: bool = False,
+) -> pd.DataFrame:
+    """Load CSV or Excel bytes into a DataFrame.
+
+    When ``all_columns_as_string`` is True (inspector phone uploads), read every cell as
+    str so Excel does not coerce phone numbers to floats and strip leading zeros. Uses
+    ``keep_default_na=False`` so empty cells become "" instead of NaN.
+    """
     name = (filename or "unknown").lower()
     try:
         if name.endswith(".csv"):
@@ -34,10 +48,29 @@ def read_upload_as_dataframe(content: bytes, filename: str) -> pd.DataFrame:
                 text = content.decode("utf-8")
             except UnicodeDecodeError:
                 text = content.decode("latin-1")
+            if all_columns_as_string:
+                return pd.read_csv(
+                    io.StringIO(text),
+                    dtype=str,
+                    keep_default_na=False,
+                )
             return pd.read_csv(io.StringIO(text))
         if name.endswith(".xlsx"):
+            if all_columns_as_string:
+                return pd.read_excel(
+                    io.BytesIO(content),
+                    engine="openpyxl",
+                    dtype=str,
+                    keep_default_na=False,
+                )
             return pd.read_excel(io.BytesIO(content), engine="openpyxl")
         if name.endswith(".xls"):
+            if all_columns_as_string:
+                return pd.read_excel(
+                    io.BytesIO(content),
+                    dtype=str,
+                    keep_default_na=False,
+                )
             return pd.read_excel(io.BytesIO(content))
     except Exception as exc:
         raise SchoolUploadParseError(f"Could not parse file: {exc}") from exc
@@ -71,6 +104,64 @@ def validate_inspector_required_columns(df: pd.DataFrame) -> None:
     missing = [c for c in INSPECTOR_REQUIRED_COLUMNS if c not in df.columns]
     if missing:
         raise SchoolUploadParseError(f"Missing required columns: {', '.join(missing)}")
+
+
+def validate_inspector_posting_bulk_required_columns(df: pd.DataFrame) -> None:
+    if df.empty:
+        raise SchoolUploadParseError("File has no data rows")
+    missing = [c for c in INSPECTOR_POSTING_BULK_REQUIRED_COLUMNS if c not in df.columns]
+    if missing:
+        raise SchoolUploadParseError(f"Missing required columns: {', '.join(missing)}")
+
+
+def validate_bank_branch_required_columns(df: pd.DataFrame) -> None:
+    if df.empty:
+        raise SchoolUploadParseError("File has no data rows")
+    missing = [c for c in BANK_BRANCH_REQUIRED_COLUMNS if c not in df.columns]
+    if missing:
+        raise SchoolUploadParseError(f"Missing required columns: {', '.join(missing)}")
+
+
+def parse_bank_code_cell(val: Any) -> str:
+    """Bank / branch code as plain text (no integer coercion; preserves string cells from CSV/Excel).
+
+    Trims surrounding whitespace. For the common Excel float rendering ``123456.0``, strips the fractional part
+    without casting through ``int`` so values that were already strings stay strings.
+    """
+    if val is None or isinstance(val, bool):
+        raise ValueError("bank_code is required")
+    if isinstance(val, float) and pd.isna(val):
+        raise ValueError("bank_code is required")
+    try:
+        if pd.isna(val):
+            raise ValueError("bank_code is required")
+    except (TypeError, ValueError):
+        pass
+
+    if isinstance(val, str):
+        s = val.strip()
+    else:
+        s = str(val).strip()
+        if s.lower() in ("nan", "none", "<na>"):
+            raise ValueError("bank_code is required")
+        m = re.fullmatch(r"(.+)\.0+", s)
+        if m:
+            s = m.group(1).strip()
+
+    if not s:
+        raise ValueError("bank_code is required")
+    if len(s) > 32:
+        raise ValueError("bank_code must be at most 32 characters")
+    return s
+
+
+def parse_bank_branch_label(val: Any, field_label: str) -> str:
+    s = _cell_str(val)
+    if not s:
+        raise ValueError(f"{field_label} is required")
+    if len(s) > 255:
+        raise ValueError(f"{field_label} is too long (max 255 characters)")
+    return s
 
 
 def find_programmes_column(df: pd.DataFrame) -> str | None:
@@ -263,12 +354,29 @@ def parse_inspector_school_code(raw: Any) -> str:
 
 
 def parse_inspector_phone_number(raw: Any) -> str:
-    s = _cell_str(raw)
+    """Normalize phone from CSV/Excel; coerces Excel float cells (e.g. 244123456.0) to digit strings."""
+    s = _spreadsheet_school_code_cell(raw)
+    if not s:
+        s = _cell_str(raw)
     if not s:
         raise ValueError("phone_number is required")
     if len(s) > 50:
         raise ValueError("phone_number must be at most 50 characters")
     return s
+
+
+def inspector_phone_lookup_candidates(phone: str) -> list[str]:
+    """Candidates for DB lookup when signing in (legacy rows may store Excel float text like ``244123456.0``)."""
+    p = phone.strip()
+    if not p:
+        return []
+    out: list[str] = [p]
+    m = re.fullmatch(r"(\d+)\.0+", p)
+    if m:
+        out.append(m.group(1))
+    elif re.fullmatch(r"\d+", p):
+        out.append(f"{p}.0")
+    return list(dict.fromkeys(out))
 
 
 def parse_inspector_full_name(raw: Any) -> str:
@@ -277,4 +385,32 @@ def parse_inspector_full_name(raw: Any) -> str:
         raise ValueError("full_name is required")
     if len(s) > 255:
         raise ValueError("full_name must be at most 255 characters")
+    return s
+
+
+def parse_inspector_password(raw: Any, *, min_length: int = 8) -> str:
+    s = _cell_str(raw)
+    if not s:
+        raise ValueError("password is required")
+    if len(s) < min_length:
+        raise ValueError(f"password must be at least {min_length} characters")
+    return s
+
+
+def parse_optional_inspector_password(raw: Any, *, min_length: int = 8) -> str | None:
+    s = _cell_str(raw)
+    if not s:
+        return None
+    if len(s) < min_length:
+        raise ValueError(f"password must be at least {min_length} characters when set")
+    return s
+
+
+def parse_optional_examination_centre_host_code(raw: Any) -> str | None:
+    """Optional host examination centre school code from CSV/Excel (same coercion as ``school_code``)."""
+    s = _spreadsheet_school_code_cell(raw)
+    if not s:
+        return None
+    if len(s) > 15:
+        raise ValueError("centre code must be at most 15 characters")
     return s

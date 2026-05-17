@@ -200,6 +200,16 @@ class StaffCentreOverviewUpcomingItem(BaseModel):
     examination_time: time
 
 
+class InspectorPostedWorkspaceItem(BaseModel):
+    """Inspector operational workspace for an examination (posting)."""
+
+    posting_id: UUID
+    center_id: UUID
+    center_code: str
+    center_name: str
+    subject_scope: str
+
+
 class StaffCentreSchoolCandidateItem(BaseModel):
     """Per-school candidate totals within a centre scope."""
 
@@ -248,6 +258,10 @@ class StaffCentreOverviewResponse(BaseModel):
     schools_with_candidate_counts: list[StaffCentreSchoolCandidateItem] = Field(
         default_factory=list,
         description="Ordered schools in the centre scope with total candidates per school for this examination.",
+    )
+    inspector_posted_workspaces: list[InspectorPostedWorkspaceItem] | None = Field(
+        default=None,
+        description="Inspectors with postings: workspaces (centre + subject scope) for this examination.",
     )
 
 
@@ -301,6 +315,38 @@ class StaffCentreDaySummaryResponse(BaseModel):
     slots: list[StaffCentreDaySummarySlotRow] = Field(default_factory=list)
     unique_candidates: int = Field(ge=0)
     invigilators_required: int = Field(ge=0, description="ceil(unique_candidates / 30); 0 if no candidates.")
+
+
+class FinanceCentreDayInvigilatorRow(BaseModel):
+    examination_date: date
+    unique_candidates: int = Field(ge=0)
+    invigilators_required: int = Field(ge=0)
+
+
+class FinanceCentreInvigilatorSummaryItem(BaseModel):
+    center_id: UUID
+    center_code: str
+    center_name: str
+    days: list[FinanceCentreDayInvigilatorRow] = Field(default_factory=list)
+
+
+class FinanceCentreInvigilatorSummaryResponse(BaseModel):
+    examination_id: int
+    centres: list[FinanceCentreInvigilatorSummaryItem] = Field(default_factory=list)
+
+
+class FinanceCentreShellCentre(BaseModel):
+    center_id: UUID
+    center_code: str
+    center_name: str
+
+
+class FinanceCentreInvigilatorSummaryShellResponse(BaseModel):
+    """Centre list and examination dates for progressive finance grid loading."""
+
+    examination_id: int
+    examination_dates: list[date] = Field(default_factory=list)
+    centres: list[FinanceCentreShellCentre] = Field(default_factory=list)
 
 
 class ExaminationScriptSeriesConfigRow(BaseModel):

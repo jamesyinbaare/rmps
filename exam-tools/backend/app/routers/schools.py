@@ -8,15 +8,33 @@ from sqlalchemy import delete, func, insert, or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import selectinload
 
-from app.dependencies.auth import SuperAdminDep, SuperAdminOrTestAdminOfficerDep
+from app.dependencies.auth import (
+    SuperAdminDep,
+    SuperAdminOrFinanceOfficerDep,
+    SuperAdminOrTestAdminOfficerDep,
+)
 from app.dependencies.database import DBSessionDep
-from app.models import Depot, Programme, Region, School, SchoolType, User, UserRole, Zone, school_programmes
+from app.models import (
+    Depot,
+    ExamInspectorSubjectScope,
+    Examination,
+    InspectorExamPosting,
+    Programme,
+    Region,
+    School,
+    SchoolType,
+    User,
+    UserRole,
+    Zone,
+    school_programmes,
+)
 from app.schemas.inspector import InspectorSchoolRow
 from app.schemas.programme import ProgrammeResponse
 from app.schemas.school import (
     ExaminationCenterDetailResponse,
     ExaminationCenterListResponse,
     ExaminationCenterSummary,
+    PostedInspectorAtCentreRow,
     ProvisionedSupervisor,
     SchoolBulkUploadError,
     SchoolBulkUploadResponse,
@@ -49,6 +67,8 @@ router = APIRouter(prefix="/schools", tags=["schools"])
 
 _MAX_PAGE_SIZE = 200
 _DEFAULT_PAGE_SIZE = 20
+# Host centres only; admin UIs may request a larger page for dropdowns.
+_EXAMINATION_CENTRE_LIST_MAX = 500
 
 _SCHOOL_RESPONSE_OPTIONS = (selectinload(School.depot), selectinload(School.writes_at_center))
 
@@ -113,9 +133,9 @@ async def list_schools(
 )
 async def list_examination_centers(
     session: DBSessionDep,
-    _admin: SuperAdminDep,
+    _admin: SuperAdminOrFinanceOfficerDep,
     skip: int = Query(0, ge=0),
-    limit: int = Query(_DEFAULT_PAGE_SIZE, ge=1, le=_MAX_PAGE_SIZE),
+    limit: int = Query(_DEFAULT_PAGE_SIZE, ge=1, le=_EXAMINATION_CENTRE_LIST_MAX),
     q: str | None = Query(None, description="Search code or name (case-insensitive)"),
 ) -> ExaminationCenterListResponse:
     """Schools where ``writes_at_center_id`` is null are treated as examination centre hosts."""
@@ -166,7 +186,11 @@ async def list_examination_centers(
 async def get_examination_center_detail(
     center_id: UUID,
     session: DBSessionDep,
-    _admin: SuperAdminDep,
+    _admin: SuperAdminOrFinanceOfficerDep,
+    examination_id: int | None = Query(
+        None,
+        description="When set, list inspectors posted to this centre for this examination.",
+    ),
 ) -> ExaminationCenterDetailResponse:
     center_stmt = (
         select(School).options(*_SCHOOL_RESPONSE_OPTIONS).where(School.id == center_id)
@@ -190,29 +214,67 @@ async def get_examination_center_detail(
     hosted_result = await session.execute(hosted_stmt)
     hosted_schools = [school_to_response(s) for s in hosted_result.scalars().all()]
 
-    codes: set[str] = {cast(str, school.code)}
-    codes.update(cast(str, s.code) for s in hosted_schools)
-    insp_stmt = (
-        select(User, School.name.label("school_name"))
-        .join(School, School.code == User.school_code)
-        .where(User.role == UserRole.INSPECTOR, User.school_code.in_(codes))
-        .order_by(User.full_name, User.school_code)
-    )
-    insp_result = await session.execute(insp_stmt)
-    inspectors = [
-        InspectorSchoolRow(
-            id=row[0].id,
-            full_name=cast(str, row[0].full_name),
-            phone_number=cast(str | None, row[0].phone_number),
-            school_code=cast(str | None, row[0].school_code),
-            school_name=cast(str, row[1]),
+    inspectors: list[InspectorSchoolRow] = []
+    if examination_id is None:
+        posted_here = (
+            select(InspectorExamPosting.inspector_user_id)
+            .where(InspectorExamPosting.center_id == center_id)
+            .distinct()
         )
-        for row in insp_result.all()
-    ]
+        insp_stmt = (
+            select(User)
+            .where(User.role == UserRole.INSPECTOR, User.id.in_(posted_here))
+            .order_by(User.full_name.asc(), User.phone_number.asc())
+        )
+        insp_result = await session.execute(insp_stmt)
+        inspectors = [
+            InspectorSchoolRow(
+                id=u.id,
+                full_name=cast(str, u.full_name),
+                phone_number=cast(str | None, u.phone_number),
+                school_code=cast(str | None, u.school_code),
+                school_name=None,
+                is_active=bool(u.is_active),
+            )
+            for u in insp_result.scalars().all()
+        ]
+
+    posted_rows: list[PostedInspectorAtCentreRow] = []
+    if examination_id is not None:
+        ex = await session.get(Examination, examination_id)
+        if ex is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Examination not found")
+        pst_stmt = (
+            select(InspectorExamPosting, User)
+            .join(User, User.id == InspectorExamPosting.inspector_user_id)
+            .where(
+                InspectorExamPosting.examination_id == examination_id,
+                InspectorExamPosting.center_id == center_id,
+            )
+            .order_by(User.full_name.asc(), InspectorExamPosting.id.asc())
+        )
+        pst_result = await session.execute(pst_stmt)
+        for posting, insp_user in pst_result.all():
+            st_scope = posting.subject_scope
+            if isinstance(st_scope, ExamInspectorSubjectScope):
+                scope_str = st_scope.value
+            else:
+                scope_str = str(st_scope)
+            posted_rows.append(
+                PostedInspectorAtCentreRow(
+                    posting_id=posting.id,
+                    examination_id=posting.examination_id,
+                    inspector_user_id=posting.inspector_user_id,
+                    inspector_full_name=cast(str, insp_user.full_name),
+                    inspector_phone=cast(str | None, insp_user.phone_number),
+                    subject_scope=scope_str,
+                )
+            )
     return ExaminationCenterDetailResponse(
         center=school_to_response(school),
         hosted_schools=hosted_schools,
         inspectors=inspectors,
+        posted_inspectors=posted_rows,
     )
 
 

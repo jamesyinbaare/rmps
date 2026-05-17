@@ -8,8 +8,10 @@ import {
   adminCreateDepotKeeper,
   adminListDepots,
   apiJson,
+  createFinanceOfficer,
   createTestAdminOfficer,
   type AdminDepotRow,
+  type Examination,
   type InspectorCreatePayload,
 } from "@/lib/api";
 import { getMe, type UserMe } from "@/lib/auth";
@@ -84,10 +86,21 @@ export default function AdminUsersPage() {
   const [officerFormError, setOfficerFormError] = useState<string | null>(null);
   const [officerSubmitting, setOfficerSubmitting] = useState(false);
 
+  const [financeOpen, setFinanceOpen] = useState(false);
+  const [financeEmail, setFinanceEmail] = useState("");
+  const [financePassword, setFinancePassword] = useState("");
+  const [financeFullName, setFinanceFullName] = useState("Finance officer");
+  const [financeFormError, setFinanceFormError] = useState<string | null>(null);
+  const [financeSubmitting, setFinanceSubmitting] = useState(false);
+
   const [inspectorOpen, setInspectorOpen] = useState(false);
-  const [inspSchoolCode, setInspSchoolCode] = useState("");
   const [inspPhone, setInspPhone] = useState("");
   const [inspFullName, setInspFullName] = useState("");
+  const [inspPassword, setInspPassword] = useState("");
+  const [inspExamId, setInspExamId] = useState<number | "">("");
+  const [inspCore, setInspCore] = useState("");
+  const [inspElective, setInspElective] = useState("");
+  const [inspExams, setInspExams] = useState<Examination[]>([]);
   const [inspFormError, setInspFormError] = useState<string | null>(null);
   const [inspSubmitting, setInspSubmitting] = useState(false);
 
@@ -119,6 +132,9 @@ export default function AdminUsersPage() {
         if (user.role === "TEST_ADMIN_OFFICER") {
           router.replace("/dashboard/admin/monitoring");
         }
+        if (user.role === "FINANCE_OFFICER") {
+          router.replace("/dashboard/admin/exam-officials");
+        }
       } catch {
         if (!cancelled) setMe(null);
       }
@@ -133,9 +149,32 @@ export default function AdminUsersPage() {
   }, [loadDepots]);
 
   useEffect(() => {
+    if (!inspectorOpen) return;
+    let cancelled = false;
+    void (async () => {
+      try {
+        const list = await apiJson<Examination[]>("/examinations");
+        if (!cancelled) {
+          setInspExams(list);
+          setInspExamId((prev) => {
+            if (prev !== "") return prev;
+            return list.length ? list[0].id : "";
+          });
+        }
+      } catch {
+        if (!cancelled) setInspExams([]);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [inspectorOpen]);
+
+  useEffect(() => {
     if (typeof window === "undefined" || me?.role !== "SUPER_ADMIN") return;
     const hash = window.location.hash.slice(1);
     if (hash === "test-admin-officer") setOfficerOpen(true);
+    else if (hash === "finance-officer") setFinanceOpen(true);
     else if (hash === "inspectors") setInspectorOpen(true);
     else if (hash === "depot-keepers") {
       setKeeperOpen(true);
@@ -152,9 +191,12 @@ export default function AdminUsersPage() {
   }
 
   function openInspectorModal() {
-    setInspSchoolCode("");
     setInspPhone("");
     setInspFullName("");
+    setInspPassword("");
+    setInspExamId("");
+    setInspCore("");
+    setInspElective("");
     setInspFormError(null);
     setInspectorOpen(true);
   }
@@ -191,21 +233,66 @@ export default function AdminUsersPage() {
     }
   }
 
+  function openFinanceModal() {
+    setFinanceEmail("");
+    setFinancePassword("");
+    setFinanceFullName("Finance officer");
+    setFinanceFormError(null);
+    setFinanceOpen(true);
+  }
+
+  async function onCreateFinanceOfficer(e: React.FormEvent) {
+    e.preventDefault();
+    setFinanceFormError(null);
+    setFinanceSubmitting(true);
+    try {
+      await createFinanceOfficer({
+        email: financeEmail.trim(),
+        password: financePassword,
+        full_name: financeFullName.trim(),
+      });
+      setFinanceFormError(null);
+      setFinanceEmail("");
+      setFinancePassword("");
+      setFinanceFullName("Finance officer");
+      setFinanceOpen(false);
+    } catch (err) {
+      setFinanceFormError(err instanceof Error ? err.message : "Create failed");
+    } finally {
+      setFinanceSubmitting(false);
+    }
+  }
+
   async function onCreateInspector(e: React.FormEvent) {
     e.preventDefault();
     setInspFormError(null);
-    const sc = inspSchoolCode.trim();
     const pn = inspPhone.trim();
     const fn = inspFullName.trim();
-    if (!sc || !pn || !fn) {
-      setInspFormError("School code, phone number, and full name are required.");
+    const pw = inspPassword;
+    if (!pn || !fn || !pw) {
+      setInspFormError("Phone number, full name, and password are required.");
+      return;
+    }
+    const c = inspCore.trim();
+    const el = inspElective.trim();
+    if (inspExamId !== "" && !c && !el) {
+      setInspFormError("When an examination is selected, provide at least one centre code (core or elective).");
+      return;
+    }
+    if ((c || el) && inspExamId === "") {
+      setInspFormError("Select an examination when adding centre codes.");
       return;
     }
     const payload: InspectorCreatePayload = {
-      school_code: sc,
       phone_number: pn,
       full_name: fn,
+      password: pw,
     };
+    if (inspExamId !== "") {
+      payload.examination_id = inspExamId;
+      if (c) payload.core = c;
+      if (el) payload.elective = el;
+    }
     setInspSubmitting(true);
     try {
       await apiJson("/inspectors", {
@@ -251,7 +338,7 @@ export default function AdminUsersPage() {
     }
   }
 
-  if (me?.role === "TEST_ADMIN_OFFICER") {
+  if (me?.role === "TEST_ADMIN_OFFICER" || me?.role === "FINANCE_OFFICER") {
     return (
       <div className="flex min-h-[40vh] items-center justify-center">
         <p className="text-sm text-muted-foreground">Redirecting…</p>
@@ -264,7 +351,8 @@ export default function AdminUsersPage() {
       <div>
         <h2 className="text-xl font-semibold text-foreground">Users</h2>
         <p className="mt-1 max-w-3xl text-sm text-muted-foreground">
-          Create accounts for inspectors, depot keepers, and test admin officers (read-only worked-scripts monitoring).
+          Create accounts for inspectors, depot keepers, test admin officers (read-only worked-scripts monitoring),
+          and finance officers (official accounts and centre invigilator summaries).
           For full lists, search, edits, and bulk upload, use{" "}
           <Link href="/dashboard/admin/inspectors" className={subLinkClass}>
             Inspectors
@@ -289,13 +377,25 @@ export default function AdminUsersPage() {
             </button>
           </section>
 
+          <section id="finance-officer" className={sectionClass}>
+            <h3 className="text-base font-semibold text-card-foreground">Finance officer</h3>
+            <p className="text-sm text-muted-foreground">
+              Email and password (administrator sign-in). Access to official account details and centre invigilator
+              summaries only.
+            </p>
+            <button type="button" onClick={openFinanceModal} className={btnPrimary}>
+              Create finance officer…
+            </button>
+          </section>
+
           <section id="inspectors" className={sectionClass}>
             <h3 className="text-base font-semibold text-card-foreground">Inspector</h3>
             <p className="text-sm text-muted-foreground">
-              School code and phone number are their credentials.{" "}
+              Phone and password are used to sign in. Assign examination postings from the{" "}
               <Link href="/dashboard/admin/inspectors" className={subLinkClass}>
-                Inspectors list & bulk upload
-              </Link>
+                Inspectors list
+              </Link>{" "}
+              or optionally below.
             </p>
             <button type="button" onClick={openInspectorModal} className={btnPrimary}>
               Create inspector…
@@ -377,6 +477,68 @@ export default function AdminUsersPage() {
             </Modal>
           ) : null}
 
+          {financeOpen ? (
+            <Modal
+              title="Create finance officer"
+              titleId="modal-finance-title"
+              onClose={() => !financeSubmitting && setFinanceOpen(false)}
+              canClose={!financeSubmitting}
+            >
+              <form className="space-y-4" onSubmit={onCreateFinanceOfficer}>
+                <div>
+                  <label htmlFor="finance-email" className={formLabelClass}>
+                    Email
+                  </label>
+                  <input
+                    id="finance-email"
+                    type="email"
+                    autoComplete="off"
+                    required
+                    value={financeEmail}
+                    onChange={(e) => setFinanceEmail(e.target.value)}
+                    className={formInputClass}
+                  />
+                </div>
+                <div>
+                  <label htmlFor="finance-password" className={formLabelClass}>
+                    Password
+                  </label>
+                  <input
+                    id="finance-password"
+                    type="password"
+                    autoComplete="new-password"
+                    required
+                    minLength={8}
+                    value={financePassword}
+                    onChange={(e) => setFinancePassword(e.target.value)}
+                    className={formInputClass}
+                  />
+                </div>
+                <div>
+                  <label htmlFor="finance-name" className={formLabelClass}>
+                    Full name
+                  </label>
+                  <input
+                    id="finance-name"
+                    type="text"
+                    required
+                    value={financeFullName}
+                    onChange={(e) => setFinanceFullName(e.target.value)}
+                    className={formInputClass}
+                  />
+                </div>
+                {financeFormError ? (
+                  <p className="text-sm text-destructive" role="alert">
+                    {financeFormError}
+                  </p>
+                ) : null}
+                <button type="submit" disabled={financeSubmitting} className={primaryButtonClass}>
+                  {financeSubmitting ? "Creating…" : "Create"}
+                </button>
+              </form>
+            </Modal>
+          ) : null}
+
           {inspectorOpen ? (
             <Modal
               title="Create inspector"
@@ -385,19 +547,6 @@ export default function AdminUsersPage() {
               canClose={!inspSubmitting}
             >
               <form className="space-y-4" onSubmit={onCreateInspector}>
-                <div>
-                  <label htmlFor="insp-school" className={formLabelClass}>
-                    School code
-                  </label>
-                  <input
-                    id="insp-school"
-                    type="text"
-                    required
-                    value={inspSchoolCode}
-                    onChange={(e) => setInspSchoolCode(e.target.value)}
-                    className={formInputClass}
-                  />
-                </div>
                 <div>
                   <label htmlFor="insp-phone" className={formLabelClass}>
                     Phone number
@@ -422,6 +571,68 @@ export default function AdminUsersPage() {
                     value={inspFullName}
                     onChange={(e) => setInspFullName(e.target.value)}
                     className={formInputClass}
+                  />
+                </div>
+                <div>
+                  <label htmlFor="insp-password" className={formLabelClass}>
+                    Password
+                  </label>
+                  <input
+                    id="insp-password"
+                    type="password"
+                    required
+                    value={inspPassword}
+                    onChange={(e) => setInspPassword(e.target.value)}
+                    className={formInputClass}
+                    autoComplete="new-password"
+                  />
+                </div>
+                <div>
+                  <label htmlFor="insp-exam" className={formLabelClass}>
+                    Examination (optional postings)
+                  </label>
+                  <select
+                    id="insp-exam"
+                    className={formInputClass}
+                    value={inspExamId === "" ? "" : String(inspExamId)}
+                    onChange={(e) => {
+                      const v = e.target.value;
+                      setInspExamId(v === "" ? "" : parseInt(v, 10));
+                    }}
+                  >
+                    <option value="">No postings — assign later</option>
+                    {inspExams.map((ex) => (
+                      <option key={ex.id} value={ex.id}>
+                        {ex.year} {ex.exam_type}
+                        {ex.exam_series ? ` (${ex.exam_series})` : ""}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                <div>
+                  <label htmlFor="insp-core" className={formLabelClass}>
+                    Core centre code
+                  </label>
+                  <input
+                    id="insp-core"
+                    type="text"
+                    value={inspCore}
+                    onChange={(e) => setInspCore(e.target.value)}
+                    className={formInputClass}
+                    placeholder="Host centre code (optional)"
+                  />
+                </div>
+                <div>
+                  <label htmlFor="insp-elective" className={formLabelClass}>
+                    Elective centre code
+                  </label>
+                  <input
+                    id="insp-elective"
+                    type="text"
+                    value={inspElective}
+                    onChange={(e) => setInspElective(e.target.value)}
+                    className={formInputClass}
+                    placeholder="Host centre code (optional)"
                   />
                 </div>
                 {inspFormError ? (

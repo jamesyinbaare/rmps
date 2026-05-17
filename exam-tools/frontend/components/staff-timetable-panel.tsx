@@ -6,13 +6,14 @@ import {
   apiJson,
   downloadApiFile,
   getMyCenterProgrammes,
+  getMyCenterSchoolsForTimetable,
   getMyDepotProgrammes,
   getMyDepotSchools,
+  getStaffDefaultExamination,
   timetableDownloadQuery,
   type CenterScopeSchoolItem,
   type CentreScopeProgrammeItem,
   type Examination,
-  type MyCenterSchoolsResponse,
   type TimetableDownloadFilter,
   type TimetablePreviewResponse,
 } from "@/lib/api";
@@ -30,7 +31,7 @@ type StaffTimetablePanelProps = {
 };
 
 export function StaffTimetablePanel({ timetableScope = "centre" }: StaffTimetablePanelProps) {
-  const [exams, setExams] = useState<Examination[]>([]);
+  const [activeExam, setActiveExam] = useState<Examination | null>(null);
   const [examId, setExamId] = useState("");
   const [subjectFilter, setSubjectFilter] = useState<TimetableDownloadFilter>("ALL");
   const [mergeByDate, setMergeByDate] = useState(false);
@@ -51,24 +52,21 @@ export function StaffTimetablePanel({ timetableScope = "centre" }: StaffTimetabl
     setLoadingExams(true);
     setError("");
     try {
-      const examData = await apiJson<Examination[]>("/examinations/public-list");
-      setExams(examData);
-      setExamId((prev) => (prev ? prev : examData.length ? String(examData[0].id) : ""));
-      try {
-        if (timetableScope === "depot") {
+      const ex = await getStaffDefaultExamination();
+      setActiveExam(ex);
+      setExamId(String(ex.id));
+      if (timetableScope === "depot") {
+        try {
           const d = await getMyDepotSchools();
           setScopeSchools(d.schools);
-        } else {
-          const scopeData = await apiJson<MyCenterSchoolsResponse>(
-            "/examinations/timetable/my-center-schools",
-          );
-          setScopeSchools(scopeData.schools);
+        } catch {
+          setScopeSchools(null);
         }
-      } catch {
-        setScopeSchools(null);
       }
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Could not load examinations");
+      setActiveExam(null);
+      setExamId("");
+      setError(e instanceof Error ? e.message : "Could not load active examination");
     } finally {
       setLoadingExams(false);
     }
@@ -78,21 +76,52 @@ export function StaffTimetablePanel({ timetableScope = "centre" }: StaffTimetabl
     void loadExams();
   }, [loadExams]);
 
+  useEffect(() => {
+    if (timetableScope !== "centre") {
+      return;
+    }
+    if (!examId.trim()) {
+      setScopeSchools(null);
+      return;
+    }
+    const idNum = parseInt(examId.trim(), 10);
+    if (Number.isNaN(idNum)) {
+      setScopeSchools(null);
+      return;
+    }
+    let cancelled = false;
+    void (async () => {
+      try {
+        const scopeData = await getMyCenterSchoolsForTimetable(idNum);
+        if (!cancelled) setScopeSchools(scopeData.schools);
+      } catch {
+        if (!cancelled) setScopeSchools(null);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [examId, timetableScope]);
+
   const loadProgrammes = useCallback(async () => {
     setProgrammesLoading(true);
     try {
       const schoolArg = filterSchoolIdTrimmed !== "" ? filterSchoolIdTrimmed : null;
+      const centreExamId =
+        timetableScope === "centre" && examId.trim() !== "" && !Number.isNaN(parseInt(examId.trim(), 10))
+          ? parseInt(examId.trim(), 10)
+          : null;
       const data =
         timetableScope === "depot"
           ? await getMyDepotProgrammes(schoolArg)
-          : await getMyCenterProgrammes(schoolArg);
+          : await getMyCenterProgrammes(schoolArg, centreExamId);
       setProgrammes(data.programmes);
     } catch {
       setProgrammes([]);
     } finally {
       setProgrammesLoading(false);
     }
-  }, [filterSchoolIdTrimmed, timetableScope]);
+  }, [filterSchoolIdTrimmed, timetableScope, examId]);
 
   useEffect(() => {
     void loadProgrammes();
@@ -169,34 +198,19 @@ export function StaffTimetablePanel({ timetableScope = "centre" }: StaffTimetabl
       ) : null}
 
       {loadingExams ? (
-        <p className="mt-4 text-sm text-muted-foreground">Loading examinations…</p>
-      ) : exams.length === 0 ? (
+        <p className="mt-4 text-sm text-muted-foreground">Loading examination…</p>
+      ) : activeExam == null ? (
         <p className="mt-4 text-sm text-muted-foreground">
-          No examinations are configured yet. Contact your administrator.
+          No active examination is available. Contact your administrator.
         </p>
       ) : (
         <div className="mt-4 space-y-4">
-          <div>
-            <label className={formLabelClass} htmlFor="staff-exam">
-              Examination
-            </label>
-            <select
-              id="staff-exam"
-              className={formInputClass}
-              value={examId}
-              onChange={(e) => {
-                setExamId(e.target.value);
-                setPreview(null);
-              }}
-            >
-              {exams.map((ex) => (
-                <option key={ex.id} value={String(ex.id)}>
-                  {ex.year}
-                  {ex.exam_series ? ` ${ex.exam_series}` : ""} — {ex.exam_type}
-                </option>
-              ))}
-            </select>
-          </div>
+          <p className="text-sm text-muted-foreground">
+            <span className="font-medium text-foreground">Examination</span>
+            {": "}
+            {activeExam.year}
+            {activeExam.exam_series ? ` ${activeExam.exam_series}` : ""} — {activeExam.exam_type}
+          </p>
           {scopeSchools && scopeSchools.length > 0 ? (
             <div>
               <label className={formLabelClass} htmlFor="staff-school-filter">

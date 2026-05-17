@@ -5,8 +5,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { DashboardShell } from "@/components/dashboard-shell";
 import { RoleGuard } from "@/components/role-guard";
 import { StaffDashboardOverview } from "@/components/staff-dashboard-overview";
-import { formInputClass, formLabelClass } from "@/lib/form-classes";
-import { apiJson, getDepotSchoolScriptControl, getDepotSchools, type Examination, type ScriptEnvelopeItem } from "@/lib/api";
+import { getDepotSchoolScriptControl, getDepotSchools, getStaffDefaultExamination, type Examination, type ScriptEnvelopeItem } from "@/lib/api";
 
 type EnvelopeSummary = {
   verified: number;
@@ -75,16 +74,13 @@ export default function DepotKeeperDashboardPage() {
     async function init() {
       setInitError(null);
       try {
-        const list = await apiJson<Examination[]>("/examinations/public-list");
-        setExams(list);
-        setExamId((prev) => {
-          if (prev != null && list.some((e) => e.id === prev)) return prev;
-          return list.length ? list[0].id : null;
-        });
+        const ex = await getStaffDefaultExamination();
+        setExams([ex]);
+        setExamId(ex.id);
       } catch (e) {
         setExams([]);
         setExamId(null);
-        setInitError(e instanceof Error ? e.message : "Could not load examinations");
+        setInitError(e instanceof Error ? e.message : "Could not load active examination");
       }
     }
     void init();
@@ -135,27 +131,6 @@ export default function DepotKeeperDashboardPage() {
     <RoleGuard expectedRole="DEPOT_KEEPER" loginHref="/login/depot-keeper">
       <DashboardShell title="Depot keeper dashboard" staffRole="depot-keeper">
         <div className="space-y-6">
-
-          <div>
-            <label htmlFor="dk-dashboard-exam" className={formLabelClass}>
-              Examination
-            </label>
-            <select
-              id="dk-dashboard-exam"
-              className={`mt-1 w-full max-w-md ${formInputClass}`}
-              value={examId ?? ""}
-              onChange={(e) => setExamId(e.target.value ? Number(e.target.value) : null)}
-              disabled={exams.length === 0}
-            >
-              {exams.length === 0 ? <option value="">No examinations</option> : null}
-              {exams.map((ex) => (
-                <option key={ex.id} value={ex.id}>
-                  {ex.year}
-                  {ex.exam_series ? ` ${ex.exam_series}` : ""} — {ex.exam_type}
-                </option>
-              ))}
-            </select>
-          </div>
 
           {initError ? (
             <p className="rounded-lg border border-destructive/40 bg-destructive/10 px-3 py-2 text-sm text-destructive">

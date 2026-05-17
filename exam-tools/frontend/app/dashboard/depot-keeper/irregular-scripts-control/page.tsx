@@ -11,9 +11,9 @@ import {
   irregularPackingNounForCount,
 } from "@/lib/script-packing-terms";
 import {
-  apiJson,
   getDepotSchoolIrregularScriptControl,
   getDepotSchools,
+  getStaffDefaultExamination,
   setDepotIrregularScriptEnvelopeVerification,
   type DepotSchoolRow,
   type Examination,
@@ -187,11 +187,11 @@ export default function DepotKeeperIrregularScriptsControlPage() {
     async function init() {
       setLoadError(null);
       try {
-        const list = await apiJson<Examination[]>("/examinations/public-list");
-        setExams(list);
-        setExamId((prev) => (prev === null && list.length ? list[0].id : prev));
+        const ex = await getStaffDefaultExamination();
+        setExams([ex]);
+        setExamId(ex.id);
       } catch (e) {
-        setLoadError(e instanceof Error ? e.message : "Failed to load examinations");
+        setLoadError(e instanceof Error ? e.message : "Failed to load active examination");
         return;
       }
       try {
@@ -270,20 +270,23 @@ export default function DepotKeeperIrregularScriptsControlPage() {
       <DashboardShell title="Irregular Worked Scripts Control (Verify)" staffRole="depot-keeper">
         <div className="space-y-6">
           <p className="text-sm text-muted-foreground">
-            Choose an exam and school. This page lists only irregular script packing—check each envelope’s count
+            Choose a school. This page lists only irregular script packing—check each envelope’s count
             (irregular scannables for Paper 1, irregular booklets for other papers), then tap Verify or Unverify.
           </p>
           {loadError ? <p className="rounded-lg border border-destructive/40 bg-destructive/10 px-3 py-2 text-sm text-destructive">{loadError}</p> : null}
           {actionError ? <p className="rounded-lg border border-destructive/40 bg-destructive/10 px-3 py-2 text-sm text-destructive">{actionError}</p> : null}
 
           <div className="grid gap-4 sm:grid-cols-2">
-            <div>
-              <label htmlFor="dk-irregular-script-exam" className={formLabelClass}>Examination</label>
-              <select id="dk-irregular-script-exam" className={`mt-1 w-full ${formInputClass}`} value={examId ?? ""} onChange={(e) => setExamId(e.target.value ? Number(e.target.value) : null)}>
-                {exams.length === 0 ? <option value="">No examinations</option> : null}
-                {exams.map((ex) => <option key={ex.id} value={ex.id}>{ex.year}{ex.exam_series ? ` ${ex.exam_series}` : ""} — {ex.exam_type}</option>)}
-              </select>
-            </div>
+            {examId != null && exams[0] ? (
+              <div className="sm:col-span-2">
+                <p className="text-sm text-muted-foreground">
+                  <span className="font-medium text-foreground">Examination</span>
+                  {": "}
+                  {exams[0].year}
+                  {exams[0].exam_series ? ` ${exams[0].exam_series}` : ""} — {exams[0].exam_type}
+                </p>
+              </div>
+            ) : null}
             <div>
               <label htmlFor="dk-irregular-script-school" className={formLabelClass}>School</label>
               <select id="dk-irregular-script-school" className={`mt-1 w-full ${formInputClass}`} value={selectedSchoolId} onChange={(e) => setSelectedSchoolId(e.target.value)}>

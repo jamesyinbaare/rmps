@@ -2,7 +2,25 @@ import enum
 import uuid
 from datetime import datetime
 
-from sqlalchemy import JSON, Boolean, CheckConstraint, Column, Date, DateTime, Enum, Float, ForeignKey, Index, Integer, SmallInteger, String, Table, Text, UniqueConstraint
+from sqlalchemy import (
+    JSON,
+    Boolean,
+    CheckConstraint,
+    Column,
+    Date,
+    DateTime,
+    Enum,
+    Float,
+    ForeignKey,
+    Index,
+    Integer,
+    SmallInteger,
+    String,
+    Table,
+    Text,
+    UniqueConstraint,
+    text,
+)
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import relationship
 
@@ -86,6 +104,7 @@ class UserRole(enum.IntEnum):
 
     SUPER_ADMIN = 0
     TEST_ADMIN_OFFICER = 5
+    FINANCE_OFFICER = 6
     SUPERVISOR = 10
     INSPECTOR = 20
     DEPOT_KEEPER = 30
@@ -129,6 +148,15 @@ class User(Base):
     refresh_tokens = relationship("RefreshToken", back_populates="user", cascade="all, delete-orphan")
     uploaded_exam_documents = relationship("ExamDocument", back_populates="uploaded_by")
     depot = relationship("Depot", back_populates="users")
+
+    __table_args__ = (
+        Index(
+            "ix_users_unique_phone_inspector",
+            "phone_number",
+            unique=True,
+            postgresql_where=text("role = 'INSPECTOR' AND phone_number IS NOT NULL"),
+        ),
+    )
 
 
 class RefreshToken(Base):
@@ -292,6 +320,21 @@ class Examination(Base):
         cascade="all, delete-orphan",
         order_by="ExaminerGroup.name",
     )
+
+
+class SystemSettings(Base):
+    """Singleton application settings; use ``id`` = 1."""
+
+    __tablename__ = "system_settings"
+
+    id = Column(Integer, primary_key=True)
+    active_examination_id = Column(
+        Integer,
+        ForeignKey("examinations.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+
+    active_examination = relationship("Examination", foreign_keys=[active_examination_id])
 
 
 class ExaminationSubjectScriptSeries(Base):
@@ -835,6 +878,132 @@ class AllocationAssignment(Base):
     __table_args__ = (
         UniqueConstraint("allocation_run_id", "script_envelope_id", name="uq_allocation_assignment_run_envelope"),
         CheckConstraint("booklet_count >= 0", name="ck_allocation_assignment_booklet_count"),
+    )
+
+
+class ExamOfficialDesignation(enum.Enum):
+    """Role label for personnel at an examination school (inspector capture form)."""
+
+    DEPOT_KEEPER = "Depot Keeper"
+    SUPERVISOR = "Supervisor"
+    ASSISTANT_SUPERVISOR = "Assistant Supervisor"
+    INVIGILATOR = "Invigilator"
+    POLICE_OFFICER = "Police Officer"
+    EXTERNAL_INSPECTOR = "External Inspector"
+
+
+class BankBranch(Base):
+    """Ghana bank branch directory (6-digit sort code); super-admin bulk upload, inspector pickers."""
+
+    __tablename__ = "bank_branches"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    bank_code = Column(String(32), unique=True, nullable=False, index=True)
+    bank_name = Column(String(255), nullable=False)
+    branch_name = Column(String(255), nullable=False)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+
+    exam_officials = relationship("ExamCentreOfficial", back_populates="bank_branch")
+
+
+class ExamCentreOfficial(Base):
+    """Examination official payment/contact details per examination centre (host school)."""
+
+    __tablename__ = "exam_centre_officials"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    examination_id = Column(Integer, ForeignKey("examinations.id", ondelete="CASCADE"), nullable=False, index=True)
+    center_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("schools.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+        doc="Examination centre host school id.",
+    )
+    full_name = Column(String(255), nullable=False)
+    designation = Column(
+        Enum(
+            ExamOfficialDesignation,
+            values_callable=lambda x: [i.value for i in x],
+            native_enum=False,
+            length=64,
+        ),
+        nullable=False,
+    )
+    bank_branch_id = Column(UUID(as_uuid=True), ForeignKey("bank_branches.id", ondelete="RESTRICT"), nullable=False, index=True)
+    account_number = Column(String(13), nullable=False)
+    num_days = Column(SmallInteger, nullable=False)
+    telephone_number = Column(String(10), nullable=False)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+
+    examination = relationship("Examination", backref="exam_centre_officials")
+    center = relationship("School", foreign_keys=[center_id], backref="exam_centre_officials")
+    bank_branch = relationship("BankBranch", back_populates="exam_officials")
+
+    __table_args__ = (
+        CheckConstraint("num_days >= 1", name="ck_exam_school_official_num_days"),
+        CheckConstraint("length(account_number) = 13 AND account_number ~ '^[0-9]{13}$'", name="ck_exam_school_official_account"),
+        CheckConstraint(
+            "length(telephone_number) = 10 AND telephone_number ~ '^[0-9]{10}$'",
+            name="ck_exam_school_official_telephone_gh",
+        ),
+        Index("ix_exam_centre_officials_exam_center", "examination_id", "center_id"),
+    )
+
+
+class ExamInspectorSubjectScope(enum.Enum):
+    """Subject scope for an inspector's posting at an examination centre."""
+
+    ALL = "ALL"
+    CORE = "CORE"
+    ELECTIVE = "ELECTIVE"
+
+
+class InspectorExamPosting(Base):
+    """Per examination: inspector operational posting to a centre host with subject scope."""
+
+    __tablename__ = "inspector_exam_postings"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    examination_id = Column(Integer, ForeignKey("examinations.id", ondelete="CASCADE"), nullable=False, index=True)
+    inspector_user_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+    center_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("schools.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+        doc="Examination centre host school id.",
+    )
+    subject_scope = Column(
+        Enum(
+            ExamInspectorSubjectScope,
+            values_callable=lambda x: [i.value for i in x],
+            native_enum=False,
+            length=16,
+        ),
+        nullable=False,
+    )
+    notes = Column(Text, nullable=True)
+    created_by_user_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True, index=True)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+
+    examination = relationship("Examination", backref="inspector_exam_postings")
+    inspector_user = relationship("User", foreign_keys=[inspector_user_id], backref="inspector_exam_postings")
+    center = relationship("School", foreign_keys=[center_id], backref="inspector_exam_postings_as_center")
+    created_by = relationship("User", foreign_keys=[created_by_user_id])
+
+    __table_args__ = (
+        Index("ix_inspector_exam_postings_exam_inspector", "examination_id", "inspector_user_id"),
+        UniqueConstraint(
+            "examination_id",
+            "center_id",
+            "inspector_user_id",
+            "subject_scope",
+            name="uq_inspector_postings_exam_center_inspector_scope",
+        ),
     )
 
 

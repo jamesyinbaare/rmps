@@ -84,6 +84,10 @@ class Settings(BaseSettings):
 
 
 
+    # System-wide examination used for inspector sign-in (centre + phone + password + subject_scope → posting).
+    # In non-dev environments this must be set to a valid examinations.id.
+    active_inspector_examination_id: int | None = None
+
     secret_key: str = "your-secret-key-change-in-production"  # Should be set via environment variable
     algorithm: str = "HS256"
     access_token_expire_minutes: int = 60

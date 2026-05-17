@@ -42,6 +42,23 @@ def generate_subject_template() -> bytes:
     return output.getvalue()
 
 
+def generate_inspector_postings_bulk_template() -> bytes:
+    """Excel template for inspector postings bulk upload (phone, name, password, core/elective centre codes).
+
+    Phone column is formatted as Text so Excel does not strip leading zeros on entry.
+    """
+    df = pd.DataFrame(columns=["phone_number", "full_name", "password", "core", "elective"])
+
+    output = io.BytesIO()
+    with pd.ExcelWriter(output, engine="openpyxl") as writer:
+        df.to_excel(writer, index=False, sheet_name="Postings")
+        ws = writer.sheets["Postings"]
+        for row in range(1, 10001):
+            ws.cell(row=row, column=1).number_format = "@"
+    output.seek(0)
+    return output.getvalue()
+
+
 async def generate_schedule_template(
     session: "AsyncSession",
     exam_year: int | None = None,  # noqa: ARG001

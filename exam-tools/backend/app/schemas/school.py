@@ -114,7 +114,24 @@ class ExaminationCenterListResponse(BaseModel):
     total: int
 
 
+class PostedInspectorAtCentreRow(BaseModel):
+    posting_id: UUID
+    examination_id: int
+    inspector_user_id: UUID
+    inspector_full_name: str
+    inspector_phone: str | None
+    subject_scope: str
+
+
 class ExaminationCenterDetailResponse(BaseModel):
     center: SchoolResponse
     hosted_schools: list[SchoolResponse]
-    inspectors: list[InspectorSchoolRow]
+    inspectors: list[InspectorSchoolRow] = Field(
+        default_factory=list,
+        description="Deprecated: inspectors whose home school_code is the centre host or a hosted school. "
+        "Empty when examination_id is set; use posted_inspectors for the operational roster.",
+    )
+    posted_inspectors: list[PostedInspectorAtCentreRow] = Field(
+        default_factory=list,
+        description="When examination_id query param is set: postings to this centre for that exam.",
+    )

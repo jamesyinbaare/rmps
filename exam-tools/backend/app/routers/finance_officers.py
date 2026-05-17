@@ -1,0 +1,59 @@
+"""Finance officer accounts; super admin creates."""
+
+from fastapi import APIRouter, HTTPException, status
+from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
+
+from app.core.security import get_password_hash
+from app.dependencies.auth import SuperAdminDep
+from app.dependencies.database import DBSessionDep
+from app.models import User, UserRole
+from app.schemas.finance_officer import FinanceOfficerCreate, FinanceOfficerCreatedResponse
+
+router = APIRouter(prefix="/finance-officers", tags=["finance-officers"])
+
+
+@router.post(
+    "",
+    response_model=FinanceOfficerCreatedResponse,
+    status_code=status.HTTP_201_CREATED,
+    summary="Create a finance officer account",
+)
+async def create_finance_officer(
+    data: FinanceOfficerCreate,
+    session: DBSessionDep,
+    _admin: SuperAdminDep,
+) -> FinanceOfficerCreatedResponse:
+    """Email/password sign-in via ``POST /auth/super-admin/login``; finance reporting APIs only."""
+    email_str = str(data.email).strip()
+
+    dup = await session.execute(select(User).where(User.email == email_str))
+    if dup.scalar_one_or_none() is not None:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="A user with this email already exists",
+        )
+
+    user = User(
+        email=email_str,
+        full_name=data.full_name.strip(),
+        role=UserRole.FINANCE_OFFICER,
+        hashed_password=get_password_hash(data.password),
+        is_active=True,
+    )
+    session.add(user)
+    try:
+        await session.commit()
+        await session.refresh(user)
+    except IntegrityError:
+        await session.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Could not create user (constraint violation)",
+        ) from None
+
+    return FinanceOfficerCreatedResponse(
+        id=user.id,
+        full_name=user.full_name,
+        email=user.email,
+    )

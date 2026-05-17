@@ -16,7 +16,12 @@ from sqlalchemy.orm import selectinload
 from app.config import settings
 from app.dependencies.auth import (
     DepotKeeperDep,
+    InspectorDep,
+    InspectorJwtPostingIdDep,
+    StaffActiveExaminationDep,
+    PortalExaminationListDep,
     SuperAdminDep,
+    SuperAdminOrFinanceOfficerDep,
     SuperAdminOrTestAdminOfficerDep,
     SupervisorInspectorOrDepotKeeperDep,
     SupervisorOrInspectorDep,
@@ -28,6 +33,7 @@ from app.models import (
     ExaminationCandidate,
     ExaminationSchedule,
     ExaminationSubjectScriptSeries,
+    ExamInspectorSubjectScope,
     Programme,
     School,
     ScriptPackingSeries,
@@ -39,6 +45,7 @@ from app.models import (
 )
 from app.schemas.examination import (
     CenterScopeSchoolItem,
+    CentreScopeProgrammeItem,
     ExaminationCreate,
     ExaminationResponse,
     ExaminationScheduleBulkUploadError,
@@ -50,20 +57,31 @@ from app.schemas.examination import (
     ExaminationScriptSeriesConfigResponse,
     ExaminationScriptSeriesConfigRow,
     ExaminationUpdate,
-    CentreScopeProgrammeItem,
+    FinanceCentreDayInvigilatorRow,
+    FinanceCentreInvigilatorSummaryItem,
+    FinanceCentreInvigilatorSummaryResponse,
+    FinanceCentreInvigilatorSummaryShellResponse,
+    FinanceCentreShellCentre,
+    InspectorPostedWorkspaceItem,
     MyCenterProgrammesResponse,
     MyCenterSchoolsResponse,
     MyDepotSchoolsResponse,
     StaffCentreDaySummaryResponse,
     StaffCentreDaySummarySlotRow,
     StaffCentreOverviewResponse,
-    StaffCentreSchoolCandidateItem,
     StaffCentreOverviewUpcomingItem,
+    StaffCentreSchoolCandidateItem,
     StaffDepotOverviewResponse,
     TimetableEntry,
     TimetablePreviewResponse,
 )
+from app.schemas.inspector_posting import MyInspectorPostingRow, MyInspectorPostingsResponse
 from app.schemas.timetable import TimetableDownloadFilter
+from app.services.active_examination import (
+    require_active_inspector_examination_id,
+    resolve_active_examination_id,
+)
+from app.services.depot_scope import depot_school_ids, require_depot_id_for_depot_keeper
 from app.services.exam_timetable_pdf import (
     build_full_exam_timetable_pdf,
     build_school_timetable_pdf,
@@ -73,6 +91,10 @@ from app.services.exam_timetable_pdf import (
     load_examination_or_raise,
     load_schedules_for_exam,
     schedules_to_entries,
+)
+from app.services.inspector_posting import (
+    load_postings_for_inspector_exam,
+    resolve_inspector_workspace,
 )
 from app.services.schedule_upload import (
     ScheduleUploadParseError,
@@ -90,7 +112,6 @@ from app.services.script_control import (
     subject_series_count_map,
 )
 from app.services.template_generator import generate_schedule_template
-from app.services.depot_scope import depot_school_ids, require_depot_id_for_depot_keeper
 from app.services.timetable_service import (
     center_scope_school_ids,
     get_candidate_schedule_codes_for_exam,
@@ -180,7 +201,7 @@ async def create_examination(
 @router.get("", response_model=list[ExaminationResponse])
 async def list_examinations(
     session: DBSessionDep,
-    _: SuperAdminOrTestAdminOfficerDep,
+    _: PortalExaminationListDep,
 ) -> list[ExaminationResponse]:
     stmt = select(Examination).order_by(Examination.year.desc(), Examination.id.desc())
     result = await session.execute(stmt)
@@ -198,18 +219,60 @@ async def list_examinations_for_staff(
     return [ExaminationResponse.model_validate(e) for e in result.scalars().all()]
 
 
+@router.get("/staff-default-examination", response_model=ExaminationResponse)
+async def get_staff_default_examination(
+    session: DBSessionDep,
+    user: StaffActiveExaminationDep,
+) -> ExaminationResponse:
+    """Examination id used as default for supervisor, inspector, and depot keeper dashboards."""
+    _ = user
+    eid = await resolve_active_examination_id(session)
+    exam = await session.get(Examination, eid)
+    if exam is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Examination not found")
+    return ExaminationResponse.model_validate(exam)
+
+
 @router.get("/timetable/my-center-schools", response_model=MyCenterSchoolsResponse)
 async def list_my_center_schools_for_timetable(
     session: DBSessionDep,
     user: SupervisorOrInspectorDep,
+    jwt_posting_id: InspectorJwtPostingIdDep,
+    examination_id: int | None = Query(
+        default=None,
+        description="When set, inspector scope is the selected workspace for this examination (see JWT posting_id).",
+    ),
+    posting_id: UUID | None = Query(
+        default=None,
+        description="Inspector posting (workspace); overrides JWT when set; required when you have multiple postings.",
+    ),
 ) -> MyCenterSchoolsResponse:
     """Host centre plus schools that write there; for supervisor/inspector timetable school filter."""
-    user_school = await _school_from_user(session, user)
+    user_school = await _school_from_user(
+        session,
+        user,
+        examination_id=examination_id,
+        jwt_inspector_posting_id=jwt_posting_id,
+        posting_id=posting_id,
+    )
     try:
         center_host = await resolve_center_host_school(session, user_school)
     except ValueError as e:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e)) from None
-    ordered = await schools_in_center_scope_ordered(session, center_host)
+    if examination_id is not None:
+        try:
+            await load_examination_or_raise(session, examination_id)
+        except ValueError:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Examination not found") from None
+    scope_ids = await _scope_ids_for_centre_timetable(
+        session,
+        user,
+        user_school,
+        examination_id,
+        jwt_inspector_posting_id=jwt_posting_id,
+        posting_id=posting_id,
+    )
+    ordered = await _schools_with_ids_ordered_by_code(session, scope_ids)
     return MyCenterSchoolsResponse(
         center_school_id=center_host.id,
         schools=[CenterScopeSchoolItem(id=s.id, code=s.code, name=s.name) for s in ordered],
@@ -220,18 +283,45 @@ async def list_my_center_schools_for_timetable(
 async def list_my_center_programmes_for_timetable(
     session: DBSessionDep,
     user: SupervisorOrInspectorDep,
+    jwt_posting_id: InspectorJwtPostingIdDep,
     school_id: UUID | None = Query(
         default=None,
         description="If set, only programmes linked to this school (must be in your centre scope).",
     ),
+    examination_id: int | None = Query(
+        default=None,
+        description="When set, inspector scope is the selected workspace for this examination (see JWT posting_id).",
+    ),
+    posting_id: UUID | None = Query(
+        default=None,
+        description="Inspector posting (workspace); overrides JWT when set; required when you have multiple postings.",
+    ),
 ) -> MyCenterProgrammesResponse:
     """Programmes offered at the centre (or one school), with subject counts for timetable filtering."""
-    user_school = await _school_from_user(session, user)
+    user_school = await _school_from_user(
+        session,
+        user,
+        examination_id=examination_id,
+        jwt_inspector_posting_id=jwt_posting_id,
+        posting_id=posting_id,
+    )
+    if examination_id is not None:
+        try:
+            await load_examination_or_raise(session, examination_id)
+        except ValueError:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Examination not found") from None
     try:
-        center_host = await resolve_center_host_school(session, user_school)
+        await resolve_center_host_school(session, user_school)
     except ValueError as e:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e)) from None
-    scope_ids = await center_scope_school_ids(session, center_host)
+    scope_ids = await _scope_ids_for_centre_timetable(
+        session,
+        user,
+        user_school,
+        examination_id,
+        jwt_inspector_posting_id=jwt_posting_id,
+        posting_id=posting_id,
+    )
     if school_id is not None:
         if school_id not in scope_ids:
             raise HTTPException(
@@ -897,24 +987,65 @@ async def preview_school_timetable(
     )
 
 
-async def _school_from_user(session: DBSessionDep, user: User) -> School:
+async def _school_from_user(
+    session: DBSessionDep,
+    user: User,
+    *,
+    examination_id: int | None = None,
+    jwt_inspector_posting_id: UUID | None = None,
+    posting_id: UUID | None = None,
+) -> School:
+    """Anchor school for supervisor/inspector centre-scope endpoints.
+
+    Supervisors use ``user.school_code``. Inspectors may omit ``school_code``; their
+    centre host is the selected workspace (JWT ``inspector_posting_id`` or ``posting_id``)
+    for the given examination (or the configured active examination when no exam id).
+    """
     if user.role not in (UserRole.SUPERVISOR, UserRole.INSPECTOR):
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="School-scoped access only")
-    if not user.school_code or not user.school_code.strip():
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Your account is not linked to a school code",
-        )
-    code = user.school_code.strip()
-    school_stmt = select(School).where(School.code == code)
-    school_result = await session.execute(school_stmt)
-    school = school_result.scalar_one_or_none()
-    if school is None:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="School not found for your account",
-        )
-    return school
+
+    if user.role == UserRole.SUPERVISOR:
+        if not user.school_code or not str(user.school_code).strip():
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Your account is not linked to a school code",
+            )
+        code = str(user.school_code).strip()
+        school_stmt = select(School).where(School.code == code)
+        school_result = await session.execute(school_stmt)
+        school = school_result.scalar_one_or_none()
+        if school is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="School not found for your account",
+            )
+        return school
+
+    # INSPECTOR
+    if user.school_code and str(user.school_code).strip():
+        code = str(user.school_code).strip()
+        school_stmt = select(School).where(School.code == code)
+        school_result = await session.execute(school_stmt)
+        school = school_result.scalar_one_or_none()
+        if school is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="School not found for your account",
+            )
+        return school
+
+    eid = examination_id
+    if eid is None:
+        eid = await require_active_inspector_examination_id(session)
+
+    ctx = await resolve_inspector_workspace(
+        session,
+        examination_id=eid,
+        user=user,
+        posting_id=posting_id,
+        jwt_posting_id=jwt_inspector_posting_id,
+    )
+    return ctx.center_host
 
 
 async def _staff_scope_and_display_school(
@@ -938,6 +1069,28 @@ async def _staff_scope_and_display_school(
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="School not found")
         return scope_ids, display
     return scope_ids, center_host
+
+
+async def _scope_ids_for_centre_timetable(
+    session: DBSessionDep,
+    user: User,
+    user_school: School,
+    examination_id: int | None,
+    jwt_inspector_posting_id: UUID | None = None,
+    posting_id: UUID | None = None,
+) -> set[UUID]:
+    """Supervisor / home centre scope; inspectors use the selected workspace for this examination."""
+    if user.role != UserRole.INSPECTOR or examination_id is None:
+        center_host = await resolve_center_host_school(session, user_school)
+        return await center_scope_school_ids(session, center_host)
+    ctx = await resolve_inspector_workspace(
+        session,
+        examination_id=examination_id,
+        user=user,
+        posting_id=posting_id,
+        jwt_posting_id=jwt_inspector_posting_id,
+    )
+    return ctx.scope_ids
 
 
 async def _validate_programme_in_scope(
@@ -964,6 +1117,8 @@ async def _staff_center_filtered_timetable_entries(
     session: DBSessionDep,
     exam_id: int,
     scope_ids: set[UUID],
+    *,
+    subject_filter: TimetableDownloadFilter = TimetableDownloadFilter.ALL,
 ) -> list[TimetableEntry]:
     """Timetable entries for the centre scope (candidate-linked subjects ∩ schedules), same filter as overview PDFs."""
     explicit_codes = await get_candidate_schedule_codes_for_exam(
@@ -979,7 +1134,7 @@ async def _staff_center_filtered_timetable_entries(
     filtered_codes = await filter_schedule_codes_by_subject_type(
         session,
         intersected,
-        TimetableDownloadFilter.ALL,
+        subject_filter,
     )
     filtered = [s for s in all_schedules if s.subject_code in filtered_codes]
     return schedules_to_entries(filtered)
@@ -1012,6 +1167,8 @@ async def _build_staff_day_summary_for_scope(
     examination_date: date,
     scope_ids: set[UUID],
     ordered_schools: list[School],
+    *,
+    subject_filter: TimetableDownloadFilter = TimetableDownloadFilter.ALL,
 ) -> StaffCentreDaySummaryResponse:
     """Shared day-summary builder for centre scope or national (all candidate schools)."""
     if not scope_ids:
@@ -1025,7 +1182,9 @@ async def _build_staff_day_summary_for_scope(
 
     school_index = {s.id: i for i, s in enumerate(ordered_schools)}
 
-    entries = await _staff_center_filtered_timetable_entries(session, exam_id, scope_ids)
+    entries = await _staff_center_filtered_timetable_entries(
+        session, exam_id, scope_ids, subject_filter=subject_filter
+    )
     day_entries = [e for e in entries if e.examination_date == examination_date]
     day_entries.sort(key=lambda x: (x.examination_time, x.subject_code, x.paper))
 
@@ -1162,6 +1321,7 @@ async def download_my_school_timetable_pdf(
     exam_id: int,
     session: DBSessionDep,
     user: SupervisorOrInspectorDep,
+    jwt_posting_id: InspectorJwtPostingIdDep,
     subject_filter: TimetableDownloadFilter = Query(default=TimetableDownloadFilter.ALL),
     programme_id: int | None = Query(default=None),
     filter_school_id: UUID | None = Query(
@@ -1170,8 +1330,18 @@ async def download_my_school_timetable_pdf(
     ),
     merge_by_date: bool = Query(default=False, description="Merge subjects written on the same day"),
     orientation: str = Query(default="portrait", description="Page orientation: portrait or landscape"),
+    posting_id: UUID | None = Query(
+        default=None,
+        description="Inspector posting (workspace); overrides JWT when set; required when you have multiple postings.",
+    ),
 ) -> Response:
-    user_school = await _school_from_user(session, user)
+    user_school = await _school_from_user(
+        session,
+        user,
+        examination_id=exam_id,
+        jwt_inspector_posting_id=jwt_posting_id,
+        posting_id=posting_id,
+    )
     scope_ids, display_school = await _staff_scope_and_display_school(session, user_school, filter_school_id)
     if programme_id is not None:
         await _validate_programme_in_scope(session, programme_id, scope_ids)
@@ -1213,14 +1383,25 @@ async def preview_my_school_timetable(
     exam_id: int,
     session: DBSessionDep,
     user: SupervisorOrInspectorDep,
+    jwt_posting_id: InspectorJwtPostingIdDep,
     subject_filter: TimetableDownloadFilter = Query(default=TimetableDownloadFilter.ALL),
     programme_id: int | None = Query(default=None),
     filter_school_id: UUID | None = Query(
         default=None,
         description="Limit to candidates from this school (must be in your examination centre scope)",
     ),
+    posting_id: UUID | None = Query(
+        default=None,
+        description="Inspector posting (workspace); overrides JWT when set; required when you have multiple postings.",
+    ),
 ) -> TimetablePreviewResponse:
-    user_school = await _school_from_user(session, user)
+    user_school = await _school_from_user(
+        session,
+        user,
+        examination_id=exam_id,
+        jwt_inspector_posting_id=jwt_posting_id,
+        posting_id=posting_id,
+    )
     try:
         exam = await load_examination_or_raise(session, exam_id)
     except ValueError:
@@ -1354,21 +1535,90 @@ async def get_my_center_overview(
     exam_id: int,
     session: DBSessionDep,
     user: SupervisorOrInspectorDep,
+    jwt_posting_id: InspectorJwtPostingIdDep,
+    posting_id: UUID | None = Query(
+        default=None,
+        description="Inspector posting (workspace); overrides JWT when set; required when you have multiple postings.",
+    ),
 ) -> StaffCentreOverviewResponse:
     """Centre-wide candidate count, school count, and next timetable slots for supervisors and inspectors."""
-    user_school = await _school_from_user(session, user)
     try:
         exam = await load_examination_or_raise(session, exam_id)
     except ValueError:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Examination not found") from None
 
-    try:
-        center_host = await resolve_center_host_school(session, user_school)
-    except ValueError as e:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e)) from None
-    scope_ids = await center_scope_school_ids(session, center_host)
+    inspector_posted_workspaces: list[InspectorPostedWorkspaceItem] | None = None
+    center_host: School
+    user_school: School
+    scope_ids: set[UUID]
+    ordered_scope_schools: list[School]
+
+    if user.role == UserRole.INSPECTOR:
+        iposts = await load_postings_for_inspector_exam(
+            session, examination_id=exam_id, inspector_user_id=user.id
+        )
+        if iposts:
+            ctx = await resolve_inspector_workspace(
+                session,
+                examination_id=exam_id,
+                user=user,
+                posting_id=posting_id,
+                jwt_posting_id=jwt_posting_id,
+            )
+            center_host = ctx.center_host
+            user_school = ctx.center_host
+            scope_ids = ctx.scope_ids
+            ordered_scope_schools = await _schools_with_ids_ordered_by_code(session, scope_ids)
+            ws_items: list[InspectorPostedWorkspaceItem] = []
+            for p in iposts:
+                sch = await session.get(School, p.center_id)
+                if sch is None:
+                    continue
+                st_scope = p.subject_scope
+                if isinstance(st_scope, ExamInspectorSubjectScope):
+                    scope_str = st_scope.value
+                else:
+                    scope_str = str(st_scope)
+                ws_items.append(
+                    InspectorPostedWorkspaceItem(
+                        posting_id=p.id,
+                        center_id=p.center_id,
+                        center_code=sch.code,
+                        center_name=sch.name,
+                        subject_scope=scope_str,
+                    )
+                )
+            inspector_posted_workspaces = ws_items
+        else:
+            user_school = await _school_from_user(
+                session,
+                user,
+                examination_id=exam_id,
+                jwt_inspector_posting_id=jwt_posting_id,
+                posting_id=posting_id,
+            )
+            try:
+                center_host = await resolve_center_host_school(session, user_school)
+            except ValueError as e:
+                raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e)) from None
+            scope_ids = await center_scope_school_ids(session, center_host)
+            ordered_scope_schools = await schools_in_center_scope_ordered(session, center_host)
+    else:
+        user_school = await _school_from_user(
+            session,
+            user,
+            examination_id=exam_id,
+            jwt_inspector_posting_id=jwt_posting_id,
+            posting_id=posting_id,
+        )
+        try:
+            center_host = await resolve_center_host_school(session, user_school)
+        except ValueError as e:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e)) from None
+        scope_ids = await center_scope_school_ids(session, center_host)
+        ordered_scope_schools = await schools_in_center_scope_ordered(session, center_host)
+
     school_count = len(scope_ids)
-    ordered_scope_schools = await schools_in_center_scope_ordered(session, center_host)
 
     cand_stmt = select(func.count()).select_from(ExaminationCandidate).where(
         ExaminationCandidate.examination_id == exam_id,
@@ -1463,7 +1713,43 @@ async def get_my_center_overview(
             )
             for s in ordered_scope_schools
         ],
+        inspector_posted_workspaces=inspector_posted_workspaces,
     )
+
+
+@router.get("/{exam_id}/my-inspector-postings", response_model=MyInspectorPostingsResponse)
+async def get_my_inspector_postings(
+    exam_id: int,
+    session: DBSessionDep,
+    user: InspectorDep,
+) -> MyInspectorPostingsResponse:
+    try:
+        await load_examination_or_raise(session, exam_id)
+    except ValueError:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Examination not found") from None
+    postings = await load_postings_for_inspector_exam(
+        session, examination_id=exam_id, inspector_user_id=user.id
+    )
+    rows: list[MyInspectorPostingRow] = []
+    for p in postings:
+        sch = await session.get(School, p.center_id)
+        if sch is None:
+            continue
+        st_scope = p.subject_scope
+        if isinstance(st_scope, ExamInspectorSubjectScope):
+            scope_str = st_scope.value
+        else:
+            scope_str = str(st_scope)
+        rows.append(
+            MyInspectorPostingRow(
+                id=p.id,
+                center_id=p.center_id,
+                center_code=sch.code,
+                center_name=sch.name,
+                subject_scope=scope_str,
+            )
+        )
+    return MyInspectorPostingsResponse(items=rows)
 
 
 @router.get("/{exam_id}/my-center-day-summary", response_model=StaffCentreDaySummaryResponse)
@@ -1472,18 +1758,57 @@ async def get_my_center_day_summary(
     examination_date: date,
     session: DBSessionDep,
     user: SupervisorOrInspectorDep,
+    jwt_posting_id: InspectorJwtPostingIdDep,
+    posting_id: UUID | None = Query(
+        default=None,
+        description="Inspector posting (workspace); overrides JWT when set; required when you have multiple postings.",
+    ),
 ) -> StaffCentreDaySummaryResponse:
     """Per-day candidate counts by slot and school; invigilators from unique candidates."""
-    user_school = await _school_from_user(session, user)
     try:
         await load_examination_or_raise(session, exam_id)
     except ValueError:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Examination not found") from None
 
-    scope_ids, _ = await _staff_scope_and_display_school(session, user_school, None)
+    scope_ids: set[UUID]
+    ordered_schools: list[School]
 
-    center_host = await resolve_center_host_school(session, user_school)
-    ordered_schools = await schools_in_center_scope_ordered(session, center_host)
+    if user.role == UserRole.INSPECTOR:
+        iposts = await load_postings_for_inspector_exam(
+            session, examination_id=exam_id, inspector_user_id=user.id
+        )
+        if iposts:
+            ctx = await resolve_inspector_workspace(
+                session,
+                examination_id=exam_id,
+                user=user,
+                posting_id=posting_id,
+                jwt_posting_id=jwt_posting_id,
+            )
+            scope_ids = ctx.scope_ids
+            ordered_schools = await _schools_with_ids_ordered_by_code(session, scope_ids)
+        else:
+            user_school = await _school_from_user(
+                session,
+                user,
+                examination_id=exam_id,
+                jwt_inspector_posting_id=jwt_posting_id,
+                posting_id=posting_id,
+            )
+            scope_ids, _ = await _staff_scope_and_display_school(session, user_school, None)
+            center_host = await resolve_center_host_school(session, user_school)
+            ordered_schools = await schools_in_center_scope_ordered(session, center_host)
+    else:
+        user_school = await _school_from_user(
+            session,
+            user,
+            examination_id=exam_id,
+            jwt_inspector_posting_id=jwt_posting_id,
+            posting_id=posting_id,
+        )
+        scope_ids, _ = await _staff_scope_and_display_school(session, user_school, None)
+        center_host = await resolve_center_host_school(session, user_school)
+        ordered_schools = await schools_in_center_scope_ordered(session, center_host)
 
     return await _build_staff_day_summary_for_scope(
         session, exam_id, examination_date, scope_ids, ordered_schools
@@ -1633,6 +1958,181 @@ async def get_national_day_summary(
     return await _build_staff_day_summary_for_scope(
         session, exam_id, examination_date, scope_ids, ordered_schools
     )
+
+
+async def _finance_centre_hosts(
+    session: DBSessionDep,
+    center_host_id: UUID | None,
+) -> list[School]:
+    if center_host_id is not None:
+        host = await session.get(School, center_host_id)
+        if host is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="School not found")
+        if host.writes_at_center_id is not None:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="School is not an examination centre host",
+            )
+        return [host]
+    hosts_stmt = (
+        select(School)
+        .where(School.writes_at_center_id.is_(None))
+        .order_by(asc(School.code))
+    )
+    hosts_result = await session.execute(hosts_stmt)
+    return list(hosts_result.scalars().all())
+
+
+async def _build_finance_centre_invigilator_item(
+    session: DBSessionDep,
+    exam_id: int,
+    center_host: School,
+    subject_filter: TimetableDownloadFilter,
+) -> FinanceCentreInvigilatorSummaryItem:
+    scope_ids = await center_scope_school_ids(session, center_host)
+    ordered_schools = await schools_in_center_scope_ordered(session, center_host)
+    if not scope_ids:
+        return FinanceCentreInvigilatorSummaryItem(
+            center_id=center_host.id,
+            center_code=str(center_host.code),
+            center_name=str(center_host.name),
+            days=[],
+        )
+    entries = await _staff_center_filtered_timetable_entries(
+        session, exam_id, scope_ids, subject_filter=subject_filter
+    )
+    dates_sorted = sorted({e.examination_date for e in entries})
+    day_rows: list[FinanceCentreDayInvigilatorRow] = []
+    for d in dates_sorted:
+        summary = await _build_staff_day_summary_for_scope(
+            session,
+            exam_id,
+            d,
+            scope_ids,
+            ordered_schools,
+            subject_filter=subject_filter,
+        )
+        day_rows.append(
+            FinanceCentreDayInvigilatorRow(
+                examination_date=d,
+                unique_candidates=summary.unique_candidates,
+                invigilators_required=summary.invigilators_required,
+            ),
+        )
+    return FinanceCentreInvigilatorSummaryItem(
+        center_id=center_host.id,
+        center_code=str(center_host.code),
+        center_name=str(center_host.name),
+        days=day_rows,
+    )
+
+
+async def _finance_examination_dates_for_filter(
+    session: DBSessionDep,
+    exam_id: int,
+    subject_filter: TimetableDownloadFilter,
+) -> list[date]:
+    scope_ids = await _national_candidate_school_ids(session, exam_id)
+    if not scope_ids:
+        return []
+    entries = await _staff_center_filtered_timetable_entries(
+        session, exam_id, scope_ids, subject_filter=subject_filter
+    )
+    return sorted({e.examination_date for e in entries})
+
+
+@router.get(
+    "/{exam_id}/finance/centre-invigilator-summary/shell",
+    response_model=FinanceCentreInvigilatorSummaryShellResponse,
+)
+async def get_finance_centre_invigilator_summary_shell(
+    exam_id: int,
+    session: DBSessionDep,
+    _: SuperAdminOrFinanceOfficerDep,
+    subject_filter: TimetableDownloadFilter = Query(
+        TimetableDownloadFilter.ALL,
+        description="Subject scope used to determine which examination dates appear as columns.",
+    ),
+) -> FinanceCentreInvigilatorSummaryShellResponse:
+    """Centre names and column dates only; load per-centre invigilator counts separately."""
+    try:
+        await load_examination_or_raise(session, exam_id)
+    except ValueError:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Examination not found") from None
+
+    center_hosts = await _finance_centre_hosts(session, None)
+    examination_dates = await _finance_examination_dates_for_filter(session, exam_id, subject_filter)
+    return FinanceCentreInvigilatorSummaryShellResponse(
+        examination_id=exam_id,
+        examination_dates=examination_dates,
+        centres=[
+            FinanceCentreShellCentre(
+                center_id=h.id,
+                center_code=str(h.code),
+                center_name=str(h.name),
+            )
+            for h in center_hosts
+        ],
+    )
+
+
+@router.get(
+    "/{exam_id}/finance/centre-invigilator-summary/centres/{center_host_id}",
+    response_model=FinanceCentreInvigilatorSummaryItem,
+)
+async def get_finance_centre_invigilator_summary_for_centre(
+    exam_id: int,
+    center_host_id: UUID,
+    session: DBSessionDep,
+    _: SuperAdminOrFinanceOfficerDep,
+    subject_filter: TimetableDownloadFilter = Query(
+        TimetableDownloadFilter.ALL,
+        description="Subject scope for invigilator counts at this centre.",
+    ),
+) -> FinanceCentreInvigilatorSummaryItem:
+    """Invigilator counts per day for one examination centre host."""
+    try:
+        await load_examination_or_raise(session, exam_id)
+    except ValueError:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Examination not found") from None
+
+    hosts = await _finance_centre_hosts(session, center_host_id)
+    return await _build_finance_centre_invigilator_item(session, exam_id, hosts[0], subject_filter)
+
+
+@router.get(
+    "/{exam_id}/finance/centre-invigilator-summary",
+    response_model=FinanceCentreInvigilatorSummaryResponse,
+)
+async def get_finance_centre_invigilator_summary(
+    exam_id: int,
+    session: DBSessionDep,
+    _: SuperAdminOrFinanceOfficerDep,
+    center_host_id: UUID | None = Query(
+        None,
+        description="Optional examination centre host school id; when set, only that centre is included.",
+    ),
+    subject_filter: TimetableDownloadFilter = Query(
+        TimetableDownloadFilter.ALL,
+        description="Which subject types determine schedule dates and per-day invigilator counts: all, core only, or electives only.",
+    ),
+) -> FinanceCentreInvigilatorSummaryResponse:
+    """Per-centre, per-day unique candidates and invigilators (ceil(candidates/30)) for finance reporting."""
+    try:
+        await load_examination_or_raise(session, exam_id)
+    except ValueError:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Examination not found") from None
+
+    center_hosts = await _finance_centre_hosts(session, center_host_id)
+    centres_out: list[FinanceCentreInvigilatorSummaryItem] = []
+    for center_host in center_hosts:
+        centres_out.append(
+            await _build_finance_centre_invigilator_item(
+                session, exam_id, center_host, subject_filter
+            ),
+        )
+
+    return FinanceCentreInvigilatorSummaryResponse(examination_id=exam_id, centres=centres_out)
 
 
 @router.get("/{exam_id}/my-depot-overview", response_model=StaffDepotOverviewResponse)

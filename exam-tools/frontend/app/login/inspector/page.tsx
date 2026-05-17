@@ -18,8 +18,8 @@ import {
 export default function InspectorLoginPage() {
   useRedirectIfAuthenticated();
   const router = useRouter();
-  const [schoolCode, setSchoolCode] = useState("");
   const [phone, setPhone] = useState("");
+  const [password, setPassword] = useState("");
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
 
@@ -28,7 +28,7 @@ export default function InspectorLoginPage() {
     setError("");
     setLoading(true);
     try {
-      const path = await loginInspector(schoolCode.trim(), phone.trim());
+      const path = await loginInspector(phone.trim(), password);
       router.replace(path);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Sign in failed");
@@ -43,38 +43,36 @@ export default function InspectorLoginPage() {
       <div className="flex flex-1 flex-col items-center justify-center px-4 py-8 sm:px-6">
         <AuthCard
           title="Inspector sign in"
-          description="Use the school code and phone number on your account."
+          description="Use your phone number and password. If you have more than one centre posting, you will choose a workspace after signing in."
         >
           <form className="flex flex-col gap-4" onSubmit={onSubmit}>
-            <div>
-              <label htmlFor="school_code" className={formLabelClass}>
-                School code
-              </label>
-              <input
-                id="school_code"
-                name="school_code"
-                autoComplete="username"
-                required
-                value={schoolCode}
-                onChange={(e) => setSchoolCode(e.target.value)}
-                className={formInputClass}
-              />
-            </div>
             <div>
               <label htmlFor="phone" className={formLabelClass}>
                 Phone number
               </label>
-              <PasswordInput
+              <input
                 id="phone"
                 name="phone"
-                revealType="tel"
+                type="tel"
                 inputMode="tel"
                 autoComplete="tel"
                 required
                 value={phone}
                 onChange={(e) => setPhone(e.target.value)}
-                toggleShowLabel="Show phone number"
-                toggleHideLabel="Hide phone number"
+                className={formInputClass}
+              />
+            </div>
+            <div>
+              <label htmlFor="password" className={formLabelClass}>
+                Password
+              </label>
+              <PasswordInput
+                id="password"
+                name="password"
+                autoComplete="current-password"
+                required
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
               />
             </div>
             {error ? (
@@ -82,11 +80,7 @@ export default function InspectorLoginPage() {
                 {error}
               </p>
             ) : null}
-            <button
-              type="submit"
-              disabled={loading}
-              className={primaryButtonClass}
-            >
+            <button type="submit" disabled={loading} className={primaryButtonClass}>
               {loading ? "Signing in…" : "Sign in"}
             </button>
           </form>

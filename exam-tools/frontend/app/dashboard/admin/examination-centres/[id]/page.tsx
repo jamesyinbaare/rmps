@@ -4,7 +4,8 @@ import Link from "next/link";
 import { useParams } from "next/navigation";
 import { useCallback, useEffect, useState } from "react";
 
-import { apiJson, type ExaminationCenterDetailResponse, type School } from "@/lib/api";
+import { apiJson, type Examination, type ExaminationCenterDetailResponse, type School } from "@/lib/api";
+import { formInputClass, formLabelClass } from "@/lib/form-classes";
 
 const inputFocusRing =
   "focus:border-primary focus:outline-none focus:ring-2 focus:ring-ring/30";
@@ -57,17 +58,41 @@ export default function ExaminationCentreDetailPage() {
   const params = useParams();
   const id = typeof params.id === "string" ? params.id : "";
 
+  const [exams, setExams] = useState<Examination[]>([]);
+  const [examFilterId, setExamFilterId] = useState<number | null>(null);
   const [data, setData] = useState<ExaminationCenterDetailResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    let cancelled = false;
+    void (async () => {
+      try {
+        const list = await apiJson<Examination[]>("/examinations");
+        if (cancelled) return;
+        setExams(list);
+        setExamFilterId((prev) => {
+          if (prev != null && list.some((e) => e.id === prev)) return prev;
+          return list.length ? list[0].id : null;
+        });
+      } catch {
+        if (!cancelled) setExams([]);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   const load = useCallback(async () => {
     if (!id) return;
     setLoading(true);
     setError(null);
     try {
+      const q =
+        examFilterId != null ? `?examination_id=${encodeURIComponent(String(examFilterId))}` : "";
       const res = await apiJson<ExaminationCenterDetailResponse>(
-        `/schools/examination-centers/${encodeURIComponent(id)}`,
+        `/schools/examination-centers/${encodeURIComponent(id)}${q}`,
       );
       setData(res);
     } catch (e) {
@@ -76,7 +101,7 @@ export default function ExaminationCentreDetailPage() {
     } finally {
       setLoading(false);
     }
-  }, [id]);
+  }, [id, examFilterId]);
 
   useEffect(() => {
     void load();
@@ -91,6 +116,37 @@ export default function ExaminationCentreDetailPage() {
         >
           Back to list
         </Link>
+      </div>
+
+      <div className="max-w-md">
+        <label htmlFor="centre-detail-exam" className={formLabelClass}>
+          Examination
+        </label>
+        <select
+          id="centre-detail-exam"
+          className={formInputClass}
+          value={examFilterId ?? ""}
+          onChange={(e) => setExamFilterId(e.target.value ? Number(e.target.value) : null)}
+        >
+          {exams.length === 0 ? <option value="">No examinations</option> : null}
+          {exams.map((ex) => (
+            <option key={ex.id} value={ex.id}>
+              {ex.year}
+              {ex.exam_series ? ` ${ex.exam_series}` : ""} — {ex.exam_type}
+            </option>
+          ))}
+        </select>
+        <p className="mt-1 text-xs text-muted-foreground">
+          Operational inspectors for this centre are defined by postings for the selected examination.
+        </p>
+        {examFilterId != null && id ? (
+          <Link
+            href={`/dashboard/admin/inspector-postings?examinationId=${examFilterId}&centerId=${encodeURIComponent(id)}&openCreate=1`}
+            className={`mt-3 inline-flex min-h-11 items-center justify-center rounded-lg bg-primary px-4 text-sm font-medium text-primary-foreground hover:bg-primary-hover ${inputFocusRing}`}
+          >
+            Assign inspector posting at this centre
+          </Link>
+        ) : null}
       </div>
 
       {loading ? (
@@ -147,42 +203,72 @@ export default function ExaminationCentreDetailPage() {
           </section>
 
           <section className="rounded-2xl border border-border bg-card p-5">
-            <h3 className="text-lg font-semibold text-card-foreground">
-              Inspectors at this centre
-            </h3>
-            <p className="mt-1 text-sm text-muted-foreground">
-              Inspectors linked to the host school or any school that writes at this centre (
-              {data.inspectors.length} total).
-            </p>
-            {data.inspectors.length > 0 ? (
-              <div className="mt-4 overflow-x-auto rounded-lg border border-border">
-                <table className="w-full min-w-[560px] text-left text-sm">
-                  <thead className="border-b border-border bg-muted/40 text-muted-foreground">
-                    <tr>
-                      <th className="px-3 py-2 font-medium">Assigned school</th>
-                      <th className="px-3 py-2 font-medium">Full name</th>
-                      <th className="px-3 py-2 font-medium">Phone</th>
-                      <th className="px-3 py-2 font-medium">School code</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {data.inspectors.map((row) => (
-                      <tr key={row.id} className="border-b border-border last:border-0">
-                        <td className="max-w-[200px] px-3 py-2">{row.school_name}</td>
-                        <td className="px-3 py-2">{row.full_name}</td>
-                        <td className="px-3 py-2 font-mono text-xs">
-                          {row.phone_number ?? "—"}
-                        </td>
-                        <td className="px-3 py-2 font-mono text-xs">{row.school_code ?? "—"}</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
+            <h3 className="text-lg font-semibold text-card-foreground">Inspectors at this centre</h3>
+            {examFilterId != null ? (
+              <>
+                <p className="mt-1 text-sm text-muted-foreground">
+                  Posted for the selected examination ({data.posted_inspectors.length} total).
+                </p>
+                {data.posted_inspectors.length > 0 ? (
+                  <div className="mt-4 overflow-x-auto rounded-lg border border-border">
+                    <table className="w-full min-w-[520px] text-left text-sm">
+                      <thead className="border-b border-border bg-muted/40 text-muted-foreground">
+                        <tr>
+                          <th className="px-3 py-2 font-medium">Inspector</th>
+                          <th className="px-3 py-2 font-medium">Phone</th>
+                          <th className="px-3 py-2 font-medium">Scope</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {data.posted_inspectors.map((row) => (
+                          <tr key={row.posting_id} className="border-b border-border last:border-0">
+                            <td className="px-3 py-2">{row.inspector_full_name}</td>
+                            <td className="px-3 py-2 font-mono text-xs">{row.inspector_phone ?? "—"}</td>
+                            <td className="px-3 py-2">{row.subject_scope}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                ) : (
+                  <p className="mt-4 text-sm text-muted-foreground">
+                    No inspector postings target this centre for this examination.
+                  </p>
+                )}
+              </>
             ) : (
-              <p className="mt-4 text-sm text-muted-foreground">
-                No inspectors are linked to schools in this centre.
-              </p>
+              <>
+                <p className="mt-1 text-sm text-muted-foreground">
+                  Select an examination to see posted inspectors, or view inspectors who have been posted to this
+                  centre on any examination ({data.inspectors.length} total).
+                </p>
+                {data.inspectors.length > 0 ? (
+                  <div className="mt-4 overflow-x-auto rounded-lg border border-border">
+                    <table className="w-full min-w-[560px] text-left text-sm">
+                      <thead className="border-b border-border bg-muted/40 text-muted-foreground">
+                        <tr>
+                          <th className="px-3 py-2 font-medium">Full name</th>
+                          <th className="px-3 py-2 font-medium">Phone</th>
+                          <th className="px-3 py-2 font-medium">School code</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {data.inspectors.map((row) => (
+                          <tr key={row.id} className="border-b border-border last:border-0">
+                            <td className="px-3 py-2">{row.full_name}</td>
+                            <td className="px-3 py-2 font-mono text-xs">{row.phone_number ?? "—"}</td>
+                            <td className="px-3 py-2 font-mono text-xs">{row.school_code ?? "—"}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                ) : (
+                  <p className="mt-4 text-sm text-muted-foreground">
+                    No inspectors linked to schools in this centre (without an examination filter).
+                  </p>
+                )}
+              </>
             )}
           </section>
         </>

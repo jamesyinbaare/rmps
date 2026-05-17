@@ -10,6 +10,7 @@ from app.dependencies.database import DBSessionDep
 from app.models import User, UserRole
 
 security = HTTPBearer()
+optional_bearer = HTTPBearer(auto_error=False)
 
 
 async def get_current_user(
@@ -86,15 +87,34 @@ class RoleChecker:
 
 
 super_admin_only = RoleChecker(allowed_roles={UserRole.SUPER_ADMIN})
+super_admin_or_finance_officer = RoleChecker(
+    allowed_roles={UserRole.SUPER_ADMIN, UserRole.FINANCE_OFFICER},
+)
 super_admin_or_test_admin_officer = RoleChecker(
     allowed_roles={UserRole.SUPER_ADMIN, UserRole.TEST_ADMIN_OFFICER},
+)
+portal_examination_list = RoleChecker(
+    allowed_roles={
+        UserRole.SUPER_ADMIN,
+        UserRole.TEST_ADMIN_OFFICER,
+        UserRole.FINANCE_OFFICER,
+    },
 )
 supervisor_only = RoleChecker(allowed_roles={UserRole.SUPERVISOR})
 inspector_only = RoleChecker(allowed_roles={UserRole.INSPECTOR})
 depot_keeper_only = RoleChecker(allowed_roles={UserRole.DEPOT_KEEPER})
 supervisor_or_inspector = RoleChecker(allowed_roles={UserRole.SUPERVISOR, UserRole.INSPECTOR})
 supervisor_inspector_or_depot_keeper = RoleChecker(
-    allowed_roles={UserRole.SUPERVISOR, UserRole.INSPECTOR, UserRole.DEPOT_KEEPER},
+    allowed_roles={UserRole.SUPER_ADMIN, UserRole.SUPERVISOR, UserRole.INSPECTOR, UserRole.DEPOT_KEEPER},
+)
+staff_active_examination_roles = RoleChecker(
+    allowed_roles={
+        UserRole.SUPER_ADMIN,
+        UserRole.TEST_ADMIN_OFFICER,
+        UserRole.SUPERVISOR,
+        UserRole.INSPECTOR,
+        UserRole.DEPOT_KEEPER,
+    },
 )
 exam_document_reader = RoleChecker(
     allowed_roles={UserRole.SUPER_ADMIN, UserRole.SUPERVISOR, UserRole.INSPECTOR, UserRole.DEPOT_KEEPER},
@@ -103,10 +123,36 @@ exam_document_reader = RoleChecker(
 
 CurrentUserDep = Annotated[User, Depends(get_current_active_user)]
 SuperAdminDep = Annotated[User, Depends(super_admin_only)]
+SuperAdminOrFinanceOfficerDep = Annotated[User, Depends(super_admin_or_finance_officer)]
 SuperAdminOrTestAdminOfficerDep = Annotated[User, Depends(super_admin_or_test_admin_officer)]
+PortalExaminationListDep = Annotated[User, Depends(portal_examination_list)]
 SupervisorDep = Annotated[User, Depends(supervisor_only)]
 InspectorDep = Annotated[User, Depends(inspector_only)]
 DepotKeeperDep = Annotated[User, Depends(depot_keeper_only)]
 SupervisorOrInspectorDep = Annotated[User, Depends(supervisor_or_inspector)]
 SupervisorInspectorOrDepotKeeperDep = Annotated[User, Depends(supervisor_inspector_or_depot_keeper)]
+StaffActiveExaminationDep = Annotated[User, Depends(staff_active_examination_roles)]
 ExamDocumentReaderDep = Annotated[User, Depends(exam_document_reader)]
+
+
+def get_inspector_posting_id_from_token(
+    credentials: Annotated[HTTPAuthorizationCredentials | None, Depends(optional_bearer)],
+) -> UUID | None:
+    """JWT claim from inspector login; ignored for other roles."""
+    if credentials is None:
+        return None
+    payload = verify_token(credentials.credentials)
+    if payload is None:
+        return None
+    if payload.get("role") != UserRole.INSPECTOR.name:
+        return None
+    raw = payload.get("inspector_posting_id")
+    if not raw:
+        return None
+    try:
+        return UUID(str(raw))
+    except (ValueError, TypeError):
+        return None
+
+
+InspectorJwtPostingIdDep = Annotated[UUID | None, Depends(get_inspector_posting_id_from_token)]
