@@ -87,6 +87,27 @@ export type InspectorCreatePayload = {
   examination_id?: number | null;
   core?: string | null;
   elective?: string | null;
+  /** Send login credentials via SMS when backend SMS is enabled. */
+  send_sms?: boolean;
+};
+
+export type InspectorCreatedResponse = {
+  id: string;
+  sms_sent?: boolean | null;
+  sms_error?: string | null;
+};
+
+export type InspectorPasswordResetPayload = {
+  mode?: "auto" | "manual";
+  new_password?: string;
+  send_sms?: boolean;
+};
+
+export type InspectorPasswordResetResponse = {
+  sms_sent?: boolean | null;
+  sms_error?: string | null;
+  sms_delivery_id?: string | null;
+  generated_password?: string | null;
 };
 
 export async function listInspectors(params: InspectorListParams = {}): Promise<InspectorListResponse> {
@@ -111,14 +132,17 @@ export async function adminUpdateInspector(
   });
 }
 
-export async function adminResetInspectorPassword(userId: string, newPassword: string): Promise<void> {
-  const res = await apiFetch(`/inspectors/${encodeURIComponent(userId)}/reset-password`, {
-    method: "POST",
-    body: JSON.stringify({ new_password: newPassword }),
-  });
-  if (!res.ok) {
-    throw new Error(await parseErrorMessage(res));
-  }
+export async function adminResetInspectorPassword(
+  userId: string,
+  payload: InspectorPasswordResetPayload,
+): Promise<InspectorPasswordResetResponse> {
+  return apiJson<InspectorPasswordResetResponse>(
+    `/inspectors/${encodeURIComponent(userId)}/reset-password`,
+    {
+      method: "POST",
+      body: JSON.stringify(payload),
+    },
+  );
 }
 
 export async function adminDeleteInspector(userId: string): Promise<void> {
@@ -233,6 +257,8 @@ export type InspectorBulkCreatedRow = {
   row_number: number;
   phone_number: string;
   full_name: string;
+  sms_sent?: boolean | null;
+  sms_error?: string | null;
 };
 
 export type InspectorBulkUploadResponse = {
@@ -882,6 +908,8 @@ export type InspectorPostingBulkCreatedInspectorRow = {
   row_number: number;
   phone_number: string;
   full_name: string;
+  sms_sent?: boolean | null;
+  sms_error?: string | null;
 };
 
 export type InspectorPostingBulkCreatedPostingRow = {
@@ -903,13 +931,91 @@ export type InspectorPostingBulkUploadResponse = {
 export async function adminBulkUploadInspectorPostings(
   examinationId: number,
   file: File,
+  options?: { send_sms?: boolean },
 ): Promise<InspectorPostingBulkUploadResponse> {
   const body = new FormData();
   body.append("file", file);
+  const q = options?.send_sms ? "?send_sms=true" : "";
   return apiJson<InspectorPostingBulkUploadResponse>(
-    `/admin/examinations/${examinationId}/inspector-postings/bulk-upload`,
+    `/admin/examinations/${examinationId}/inspector-postings/bulk-upload${q}`,
     { method: "POST", body },
   );
+}
+
+export type SmsDeliveryRow = {
+  id: string;
+  user_id: string;
+  inspector_full_name: string;
+  phone_number: string;
+  msisdn: string;
+  message_type: string;
+  trigger: string;
+  status: string;
+  error_message: string | null;
+  provider: string;
+  retried_from_id: string | null;
+  triggered_by_user_id: string | null;
+  created_at: string;
+  sent_at: string | null;
+};
+
+export type SmsDeliveryListResponse = {
+  items: SmsDeliveryRow[];
+  total: number;
+};
+
+export type SmsDeliveryRetryPayload = {
+  mode: "auto" | "manual";
+  new_password?: string;
+};
+
+export type SmsDeliveryRetryResponse = {
+  delivery_id: string;
+  sms_sent: boolean;
+  sms_error: string | null;
+  generated_password: string | null;
+};
+
+export type SmsDeliveryListParams = {
+  skip?: number;
+  limit?: number;
+  status?: string;
+  q?: string;
+};
+
+export async function listSmsDeliveries(
+  params: SmsDeliveryListParams = {},
+): Promise<SmsDeliveryListResponse> {
+  const q = new URLSearchParams();
+  if (params.skip != null) q.set("skip", String(params.skip));
+  if (params.limit != null) q.set("limit", String(params.limit));
+  if (params.status) q.set("status", params.status);
+  if (params.q?.trim()) q.set("q", params.q.trim());
+  const s = q.toString();
+  return apiJson<SmsDeliveryListResponse>(`/admin/sms-deliveries${s ? `?${s}` : ""}`);
+}
+
+export async function retrySmsDelivery(
+  deliveryId: string,
+  payload: SmsDeliveryRetryPayload,
+): Promise<SmsDeliveryRetryResponse> {
+  return apiJson<SmsDeliveryRetryResponse>(
+    `/admin/sms-deliveries/${encodeURIComponent(deliveryId)}/retry`,
+    { method: "POST", body: JSON.stringify(payload) },
+  );
+}
+
+/** User-facing note when account saved but SMS failed or was skipped. */
+export function inspectorSmsStatusMessage(
+  sms_sent: boolean | null | undefined,
+  sms_error: string | null | undefined,
+): string | null {
+  if (sms_sent === true) return null;
+  if (sms_sent === false && sms_error) {
+    return `Account saved, but SMS could not be sent: ${sms_error}`;
+  }
+  if (sms_sent === false) return "Account saved, but SMS could not be sent.";
+  return null;
 }
 
 /** Excel (.xlsx) template for inspector postings bulk upload. */

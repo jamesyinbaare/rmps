@@ -94,6 +94,12 @@ class Settings(BaseSettings):
     refresh_token_expire_days: int = 7
     inactivity_timeout_minutes: int = 30  # For frontend reference
     password_min_length: int = 8
+    # Inspector credential SMS (Nalo Solutions)
+    sms_enabled: bool = False
+    nalo_sms_key: str = ""
+    nalo_sms_sender_id: str = "CTVET"
+    nalo_sms_url: str = "https://sms.nalosolutions.com/smsbackend/Resl_Nalo/send-message/"
+    inspector_portal_url: str = "monitoring.ctvet.gov.gh"
     # Super admin initialization settings
     super_admin_email: str = ""  # Required: Email for the initial SUPER_ADMIN user
     super_admin_password: str = ""  # Required: Password for the initial SUPER_ADMIN user

@@ -1,5 +1,7 @@
+from __future__ import annotations
+
 from datetime import datetime
-from typing import Self
+from typing import Literal, Self
 from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
@@ -16,6 +18,7 @@ class InspectorCreate(BaseModel):
     examination_id: int | None = None
     core: str | None = None
     elective: str | None = None
+    send_sms: bool | None = None
 
     model_config = ConfigDict(str_strip_whitespace=True)
 
@@ -49,6 +52,9 @@ class InspectorCreatedResponse(BaseModel):
     role: UserRole
     created_at: datetime
     created_postings: list[InspectorCreatedPostingRow] = Field(default_factory=list)
+    sms_sent: bool | None = None
+    sms_error: str | None = None
+    sms_delivery_id: UUID | None = None
 
 
 class InspectorBulkUploadError(BaseModel):
@@ -60,6 +66,8 @@ class InspectorBulkCreatedRow(BaseModel):
     row_number: int
     phone_number: str
     full_name: str
+    sms_sent: bool | None = None
+    sms_error: str | None = None
 
 
 class InspectorBulkUploadResponse(BaseModel):
@@ -98,7 +106,22 @@ class InspectorUpdate(BaseModel):
 
 
 class InspectorPasswordReset(BaseModel):
-    new_password: str = Field(..., min_length=8)
+    mode: Literal["auto", "manual"] = "manual"
+    new_password: str | None = Field(None, min_length=8)
+    send_sms: bool | None = None
+
+    @model_validator(mode="after")
+    def validate_manual_password(self) -> Self:
+        if self.mode == "manual" and not self.new_password:
+            raise ValueError("new_password is required when mode is manual")
+        return self
+
+
+class InspectorPasswordResetResponse(BaseModel):
+    sms_sent: bool | None = None
+    sms_error: str | None = None
+    sms_delivery_id: UUID | None = None
+    generated_password: str | None = None
 
 
 class InspectorListResponse(BaseModel):

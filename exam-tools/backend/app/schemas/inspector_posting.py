@@ -67,6 +67,8 @@ class InspectorPostingBulkCreatedInspectorRow(BaseModel):
     row_number: int
     phone_number: str
     full_name: str
+    sms_sent: bool | None = None
+    sms_error: str | None = None
 
 
 class InspectorPostingBulkCreatedPostingRow(BaseModel):

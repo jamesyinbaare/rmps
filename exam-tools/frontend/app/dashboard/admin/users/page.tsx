@@ -12,7 +12,9 @@ import {
   createTestAdminOfficer,
   type AdminDepotRow,
   type Examination,
+  inspectorSmsStatusMessage,
   type InspectorCreatePayload,
+  type InspectorCreatedResponse,
 } from "@/lib/api";
 import { getMe, type UserMe } from "@/lib/auth";
 import {
@@ -103,6 +105,8 @@ export default function AdminUsersPage() {
   const [inspExams, setInspExams] = useState<Examination[]>([]);
   const [inspFormError, setInspFormError] = useState<string | null>(null);
   const [inspSubmitting, setInspSubmitting] = useState(false);
+  const [inspSendSms, setInspSendSms] = useState(true);
+  const [inspSuccess, setInspSuccess] = useState<string | null>(null);
 
   const [keeperOpen, setKeeperOpen] = useState(false);
   const [depots, setDepots] = useState<AdminDepotRow[]>([]);
@@ -287,6 +291,7 @@ export default function AdminUsersPage() {
       phone_number: pn,
       full_name: fn,
       password: pw,
+      send_sms: inspSendSms,
     };
     if (inspExamId !== "") {
       payload.examination_id = inspExamId;
@@ -295,11 +300,13 @@ export default function AdminUsersPage() {
     }
     setInspSubmitting(true);
     try {
-      await apiJson("/inspectors", {
+      const created = await apiJson<InspectorCreatedResponse>("/inspectors", {
         method: "POST",
         body: JSON.stringify(payload),
       });
       setInspectorOpen(false);
+      const smsNote = inspectorSmsStatusMessage(created.sms_sent, created.sms_error);
+      setInspSuccess(smsNote ? `Inspector created. ${smsNote}` : "Inspector created.");
     } catch (err) {
       setInspFormError(err instanceof Error ? err.message : "Create failed");
     } finally {
@@ -635,6 +642,20 @@ export default function AdminUsersPage() {
                     placeholder="Host centre code (optional)"
                   />
                 </div>
+                <label className="flex cursor-pointer items-center gap-2 text-sm text-foreground">
+                  <input
+                    type="checkbox"
+                    checked={inspSendSms}
+                    onChange={(e) => setInspSendSms(e.target.checked)}
+                    className="size-4 rounded border-input-border"
+                  />
+                  Send login details by SMS
+                </label>
+                {inspSuccess ? (
+                  <p className="text-sm text-success" role="status">
+                    {inspSuccess}
+                  </p>
+                ) : null}
                 {inspFormError ? (
                   <p className="text-sm text-destructive" role="alert">
                     {inspFormError}

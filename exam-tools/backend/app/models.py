@@ -159,6 +159,45 @@ class User(Base):
     )
 
 
+class SmsDelivery(Base):
+    """Audit log for outbound SMS (inspector credentials, etc.)."""
+
+    __tablename__ = "sms_deliveries"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    user_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+    phone_number = Column(String(50), nullable=False)
+    msisdn = Column(String(20), nullable=False)
+    message_type = Column(String(32), nullable=False)
+    trigger = Column(String(32), nullable=False)
+    status = Column(String(16), nullable=False, index=True)
+    error_message = Column(Text, nullable=True)
+    provider = Column(String(16), nullable=False, default="nalo")
+    provider_response = Column(Text, nullable=True)
+    retried_from_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("sms_deliveries.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+    triggered_by_user_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("users.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False, index=True)
+    sent_at = Column(DateTime, nullable=True)
+
+    user = relationship("User", foreign_keys=[user_id])
+    triggered_by = relationship("User", foreign_keys=[triggered_by_user_id])
+    retried_from = relationship("SmsDelivery", remote_side=[id], foreign_keys=[retried_from_id])
+
+    __table_args__ = (
+        Index("ix_sms_deliveries_status_created_at", "status", "created_at"),
+    )
+
+
 class RefreshToken(Base):
     __tablename__ = "refresh_tokens"
 

@@ -270,6 +270,7 @@ export default function AdminInspectorPostingsPage() {
   const [formError, setFormError] = useState<string | null>(null);
 
   const [bulkFile, setBulkFile] = useState<File | null>(null);
+  const [sendSmsOnBulk, setSendSmsOnBulk] = useState(false);
   const [bulkBusy, setBulkBusy] = useState(false);
   const [bulkResult, setBulkResult] = useState<InspectorPostingBulkUploadResponse | null>(null);
   const [bulkError, setBulkError] = useState<string | null>(null);
@@ -558,7 +559,9 @@ export default function AdminInspectorPostingsPage() {
     setBulkError(null);
     setBulkResult(null);
     try {
-      const res = await adminBulkUploadInspectorPostings(examId, bulkFile);
+      const res = await adminBulkUploadInspectorPostings(examId, bulkFile, {
+        send_sms: sendSmsOnBulk,
+      });
       setBulkResult(res);
       setBulkFile(null);
       await reloadPostings();
@@ -807,6 +810,15 @@ export default function AdminInspectorPostingsPage() {
                   onChange={(e) => setBulkFile(e.target.files?.[0] ?? null)}
                 />
               </div>
+              <label className="flex w-full cursor-pointer items-center gap-2 text-sm text-foreground sm:w-auto">
+                <input
+                  type="checkbox"
+                  checked={sendSmsOnBulk}
+                  onChange={(e) => setSendSmsOnBulk(e.target.checked)}
+                  className="size-4 rounded border-input-border"
+                />
+                Send SMS for new inspectors
+              </label>
               <button type="button" className={btnPrimary} disabled={bulkBusy || !bulkFile} onClick={() => void onBulkUpload()}>
                 {bulkBusy ? "Uploading…" : "Upload file"}
               </button>

@@ -11,8 +11,10 @@ import {
   apiJson,
   listInspectors,
   type Examination,
+  inspectorSmsStatusMessage,
   type InspectorBulkUploadResponse,
   type InspectorCreatePayload,
+  type InspectorCreatedResponse,
   type InspectorSchoolRow,
 } from "@/lib/api";
 import { formInputClass, formLabelClass } from "@/lib/form-classes";
@@ -150,16 +152,21 @@ export default function AdminInspectorsPage() {
   const [exams, setExams] = useState<Examination[]>([]);
   const [formError, setFormError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
+  const [sendSmsOnCreate, setSendSmsOnCreate] = useState(true);
 
   const [file, setFile] = useState<File | null>(null);
+  const [sendSmsOnBulk, setSendSmsOnBulk] = useState(false);
   const [uploadBusy, setUploadBusy] = useState(false);
   const [uploadError, setUploadError] = useState<string | null>(null);
   const [uploadResult, setUploadResult] = useState<InspectorBulkUploadResponse | null>(null);
 
   const [resetTarget, setResetTarget] = useState<InspectorSchoolRow | null>(null);
+  const [resetMode, setResetMode] = useState<"auto" | "manual">("auto");
   const [resetPassword, setResetPassword] = useState("");
   const [resetConfirm, setResetConfirm] = useState("");
   const [resetError, setResetError] = useState<string | null>(null);
+  const [resetGeneratedPassword, setResetGeneratedPassword] = useState<string | null>(null);
+  const [sendSmsOnReset, setSendSmsOnReset] = useState(true);
   const [toggleTarget, setToggleTarget] = useState<InspectorSchoolRow | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<InspectorSchoolRow | null>(null);
 
@@ -283,6 +290,7 @@ export default function AdminInspectorsPage() {
       phone_number: pn,
       full_name: fn,
       password: pw,
+      send_sms: sendSmsOnCreate,
     };
     if (examId !== "") {
       payload.examination_id = examId;
@@ -291,12 +299,13 @@ export default function AdminInspectorsPage() {
     }
     setSubmitting(true);
     try {
-      await apiJson("/inspectors", {
+      const created = await apiJson<InspectorCreatedResponse>("/inspectors", {
         method: "POST",
         body: JSON.stringify(payload),
       });
       setAddOpen(false);
-      setActionSuccess("Inspector created.");
+      const smsNote = inspectorSmsStatusMessage(created.sms_sent, created.sms_error);
+      setActionSuccess(smsNote ? `Inspector created. ${smsNote}` : "Inspector created.");
       await load();
     } catch (e) {
       setFormError(e instanceof Error ? e.message : "Could not create inspector");
@@ -317,7 +326,8 @@ export default function AdminInspectorsPage() {
     body.append("file", file);
     setUploadBusy(true);
     try {
-      const res = await apiFetch("/inspectors/bulk-upload", {
+      const bulkQs = sendSmsOnBulk ? "?send_sms=true" : "";
+      const res = await apiFetch(`/inspectors/bulk-upload${bulkQs}`, {
         method: "POST",
         body,
       });
@@ -332,22 +342,63 @@ export default function AdminInspectorsPage() {
     }
   }
 
+  function closeResetModal() {
+    setResetTarget(null);
+    setResetGeneratedPassword(null);
+    setResetMode("auto");
+    setResetPassword("");
+    setResetConfirm("");
+    setResetError(null);
+  }
+
+  async function copyResetGeneratedPassword() {
+    if (!resetGeneratedPassword) return;
+    try {
+      await navigator.clipboard.writeText(resetGeneratedPassword);
+      setActionSuccess("Password copied to clipboard.");
+    } catch {
+      setActionSuccess("Copy manually — clipboard access was denied.");
+    }
+  }
+
   async function confirmReset() {
     if (!resetTarget) return;
-    if (resetPassword.length < 8) {
-      setResetError("Password must be at least 8 characters.");
-      return;
-    }
-    if (resetPassword !== resetConfirm) {
-      setResetError("Passwords do not match.");
-      return;
+    if (resetMode === "manual") {
+      if (resetPassword.length < 8) {
+        setResetError("Password must be at least 8 characters.");
+        return;
+      }
+      if (resetPassword !== resetConfirm) {
+        setResetError("Passwords do not match.");
+        return;
+      }
     }
     setResetError(null);
+    setResetGeneratedPassword(null);
     setActionBusy(true);
+    const inspectorName = resetTarget.full_name;
     try {
-      await adminResetInspectorPassword(resetTarget.id, resetPassword);
-      setResetTarget(null);
-      setActionSuccess(`Password reset for ${resetTarget.full_name}.`);
+      const resetRes = await adminResetInspectorPassword(resetTarget.id, {
+        mode: resetMode,
+        new_password: resetMode === "manual" ? resetPassword : undefined,
+        send_sms: sendSmsOnReset,
+      });
+      const smsNote = inspectorSmsStatusMessage(resetRes.sms_sent, resetRes.sms_error);
+      if (resetMode === "auto" && resetRes.generated_password) {
+        setResetGeneratedPassword(resetRes.generated_password);
+        setActionSuccess(
+          smsNote
+            ? `Password reset for ${inspectorName}. ${smsNote} Copy the password below.`
+            : `Password reset for ${inspectorName}. Copy the password below — shown only once.`,
+        );
+      } else {
+        closeResetModal();
+        setActionSuccess(
+          smsNote
+            ? `Password reset for ${inspectorName}. ${smsNote}`
+            : `Password reset for ${inspectorName}.`,
+        );
+      }
     } catch (e) {
       setResetError(e instanceof Error ? e.message : "Reset failed");
     } finally {
@@ -420,6 +471,12 @@ export default function AdminInspectorsPage() {
           >
             Upload
           </button>
+          <Link
+            href="/dashboard/admin/sms-deliveries"
+            className={`inline-flex min-h-11 items-center justify-center rounded-lg border border-input-border bg-background px-4 text-sm font-medium text-foreground hover:bg-muted ${inputFocusRing}`}
+          >
+            SMS failures
+          </Link>
         </div>
       </div>
 
@@ -554,9 +611,11 @@ export default function AdminInspectorsPage() {
                               role="menuitem"
                               className="block w-full px-3 py-2 text-left text-sm hover:bg-muted"
                               onClick={() => {
+                                setResetMode("auto");
                                 setResetPassword("");
                                 setResetConfirm("");
                                 setResetError(null);
+                                setResetGeneratedPassword(null);
                                 setResetTarget(row);
                                 setOpenActionsId(null);
                               }}
@@ -716,6 +775,15 @@ export default function AdminInspectorsPage() {
                 autoComplete="off"
               />
             </div>
+            <label className="flex cursor-pointer items-center gap-2 text-sm text-foreground">
+              <input
+                type="checkbox"
+                checked={sendSmsOnCreate}
+                onChange={(e) => setSendSmsOnCreate(e.target.checked)}
+                className="size-4 rounded border-input-border"
+              />
+              Send login details by SMS
+            </label>
             <p className="text-xs text-muted-foreground">
               If both codes match one centre, one posting with scope ALL is created. If they differ, CORE and ELECTIVE
               postings are created.
@@ -773,6 +841,15 @@ export default function AdminInspectorsPage() {
               onChange={(e) => setFile(e.target.files?.[0] ?? null)}
               className={`mt-2 block w-full text-sm text-foreground file:mr-4 file:rounded-lg file:border-0 file:bg-primary file:px-4 file:py-2 file:text-sm file:font-medium file:text-primary-foreground ${inputFocusRing}`}
             />
+            <label className="mt-4 flex cursor-pointer items-center gap-2 text-sm text-foreground">
+              <input
+                type="checkbox"
+                checked={sendSmsOnBulk}
+                onChange={(e) => setSendSmsOnBulk(e.target.checked)}
+                className="size-4 rounded border-input-border"
+              />
+              Send login details by SMS for each created inspector
+            </label>
             {uploadError ? (
               <p className="mt-3 text-sm text-destructive" role="alert">
                 {uploadError}
@@ -822,6 +899,18 @@ export default function AdminInspectorsPage() {
                   ))}
                 </ul>
               ) : null}
+              {uploadResult.created.some((r) => r.sms_sent === false) ? (
+                <ul className="max-h-40 space-y-1 overflow-y-auto rounded-lg border border-warning/40 bg-warning/10 p-3 text-sm">
+                  {uploadResult.created
+                    .filter((r) => r.sms_sent === false)
+                    .map((r) => (
+                      <li key={r.row_number}>
+                        Row {r.row_number} ({r.phone_number}): SMS failed
+                        {r.sms_error ? ` — ${r.sms_error}` : ""}
+                      </li>
+                    ))}
+                </ul>
+              ) : null}
             </div>
           ) : null}
         </Modal>
@@ -831,54 +920,99 @@ export default function AdminInspectorsPage() {
         <Modal
           title={`Reset password — ${resetTarget.full_name}`}
           titleId="reset-inspector-password-title"
-          onClose={() => !actionBusy && setResetTarget(null)}
+          onClose={() => !actionBusy && closeResetModal()}
           canClose={!actionBusy}
         >
           <div className="space-y-4">
-            <div>
-              <label htmlFor="reset-password" className={formLabelClass}>
-                New password
-              </label>
-              <input
-                id="reset-password"
-                type="password"
-                className={formInputClass}
-                value={resetPassword}
-                onChange={(e) => setResetPassword(e.target.value)}
-                autoComplete="new-password"
-              />
-            </div>
-            <div>
-              <label htmlFor="reset-confirm" className={formLabelClass}>
-                Confirm password
-              </label>
-              <input
-                id="reset-confirm"
-                type="password"
-                className={formInputClass}
-                value={resetConfirm}
-                onChange={(e) => setResetConfirm(e.target.value)}
-                autoComplete="new-password"
-              />
-            </div>
+            {resetGeneratedPassword ? (
+              <div className="rounded-lg border border-border bg-muted/30 p-3">
+                <p className="text-sm font-medium text-foreground">Generated password (copy now)</p>
+                <p className="mt-2 font-mono text-lg tracking-wide">{resetGeneratedPassword}</p>
+                <div className="mt-3 flex flex-wrap gap-2">
+                  <button type="button" className={btnPrimary} onClick={() => void copyResetGeneratedPassword()}>
+                    Copy password
+                  </button>
+                  <button type="button" className={btnSecondary} onClick={closeResetModal}>
+                    Done
+                  </button>
+                </div>
+              </div>
+            ) : (
+              <>
+                <label className="flex cursor-pointer items-center gap-2 text-sm text-foreground">
+                  <input
+                    type="radio"
+                    name="reset-mode"
+                    checked={resetMode === "auto"}
+                    onChange={() => setResetMode("auto")}
+                  />
+                  Auto-generate password (8 characters: a–z, A–Z, 0–9)
+                </label>
+                <label className="flex cursor-pointer items-center gap-2 text-sm text-foreground">
+                  <input
+                    type="radio"
+                    name="reset-mode"
+                    checked={resetMode === "manual"}
+                    onChange={() => setResetMode("manual")}
+                  />
+                  Enter password manually
+                </label>
+                {resetMode === "manual" ? (
+                  <>
+                    <div>
+                      <label htmlFor="reset-password" className={formLabelClass}>
+                        New password
+                      </label>
+                      <input
+                        id="reset-password"
+                        type="password"
+                        className={formInputClass}
+                        value={resetPassword}
+                        onChange={(e) => setResetPassword(e.target.value)}
+                        autoComplete="new-password"
+                      />
+                    </div>
+                    <div>
+                      <label htmlFor="reset-confirm" className={formLabelClass}>
+                        Confirm password
+                      </label>
+                      <input
+                        id="reset-confirm"
+                        type="password"
+                        className={formInputClass}
+                        value={resetConfirm}
+                        onChange={(e) => setResetConfirm(e.target.value)}
+                        autoComplete="new-password"
+                      />
+                    </div>
+                  </>
+                ) : null}
+                <label className="flex cursor-pointer items-center gap-2 text-sm text-foreground">
+                  <input
+                    type="checkbox"
+                    checked={sendSmsOnReset}
+                    onChange={(e) => setSendSmsOnReset(e.target.checked)}
+                    className="size-4 rounded border-input-border"
+                  />
+                  Send new password by SMS
+                </label>
+              </>
+            )}
             {resetError ? (
               <p className="text-sm text-destructive" role="alert">
                 {resetError}
               </p>
             ) : null}
-            <div className="flex flex-wrap gap-2">
-              <button type="button" className={btnPrimary} disabled={actionBusy} onClick={() => void confirmReset()}>
-                {actionBusy ? "Resetting…" : "Reset password"}
-              </button>
-              <button
-                type="button"
-                className={btnSecondary}
-                disabled={actionBusy}
-                onClick={() => setResetTarget(null)}
-              >
-                Cancel
-              </button>
-            </div>
+            {!resetGeneratedPassword ? (
+              <div className="flex flex-wrap gap-2">
+                <button type="button" className={btnPrimary} disabled={actionBusy} onClick={() => void confirmReset()}>
+                  {actionBusy ? "Resetting…" : "Reset password"}
+                </button>
+                <button type="button" className={btnSecondary} disabled={actionBusy} onClick={closeResetModal}>
+                  Cancel
+                </button>
+              </div>
+            ) : null}
           </div>
         </Modal>
       ) : null}

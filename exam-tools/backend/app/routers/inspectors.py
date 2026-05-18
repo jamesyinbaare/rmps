@@ -9,6 +9,7 @@ from sqlalchemy import asc, delete, desc, func, or_, select
 from sqlalchemy.exc import IntegrityError
 
 from app.config import settings
+from app.core.passwords import generate_inspector_password
 from app.core.security import get_password_hash
 from app.dependencies.auth import SuperAdminDep
 from app.dependencies.database import DBSessionDep
@@ -22,6 +23,7 @@ from app.schemas.inspector import (
     InspectorCreatedResponse,
     InspectorListResponse,
     InspectorPasswordReset,
+    InspectorPasswordResetResponse,
     InspectorSchoolRow,
     InspectorUpdate,
 )
@@ -36,6 +38,7 @@ from app.services.school_bulk_upload import (
     read_upload_as_dataframe,
     validate_inspector_required_columns,
 )
+from app.services.sms import maybe_send_inspector_credentials
 
 router = APIRouter(prefix="/inspectors", tags=["inspectors"])
 
@@ -177,24 +180,51 @@ async def update_inspector(
 
 @router.post(
     "/{user_id}/reset-password",
-    status_code=status.HTTP_204_NO_CONTENT,
+    response_model=InspectorPasswordResetResponse,
     summary="Reset an inspector password",
 )
 async def reset_inspector_password(
     user_id: UUID,
     data: InspectorPasswordReset,
     session: DBSessionDep,
-    _admin: SuperAdminDep,
-) -> None:
-    if len(data.new_password) < settings.password_min_length:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"password must be at least {settings.password_min_length} characters",
-        )
+    admin: SuperAdminDep,
+) -> InspectorPasswordResetResponse:
+    generated_password: str | None = None
+    if data.mode == "auto":
+        new_password = generate_inspector_password(8)
+        generated_password = new_password
+    else:
+        assert data.new_password is not None
+        new_password = data.new_password
+        if len(new_password) < settings.password_min_length:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"password must be at least {settings.password_min_length} characters",
+            )
     user = await _load_inspector_user(session, user_id)
-    user.hashed_password = get_password_hash(data.new_password)
+    user.hashed_password = get_password_hash(new_password)
     await session.execute(delete(RefreshToken).where(RefreshToken.user_id == user.id))
     await session.commit()
+    phone = cast(str | None, user.phone_number)
+    sms_sent: bool | None = None
+    sms_error: str | None = None
+    sms_delivery_id: UUID | None = None
+    if phone:
+        sms_sent, sms_error, sms_delivery_id = await maybe_send_inspector_credentials(
+            phone,
+            new_password,
+            data.send_sms,
+            session=session,
+            user_id=user.id,
+            trigger="reset",
+            triggered_by_user_id=admin.id,
+        )
+    return InspectorPasswordResetResponse(
+        sms_sent=sms_sent,
+        sms_error=sms_error,
+        sms_delivery_id=sms_delivery_id,
+        generated_password=generated_password,
+    )
 
 
 @router.delete("/{user_id}", status_code=status.HTTP_204_NO_CONTENT, summary="Delete an inspector account")
@@ -299,6 +329,15 @@ async def create_inspector(
             detail="Could not create inspector (constraint violation)",
         ) from None
 
+    sms_sent, sms_error, sms_delivery_id = await maybe_send_inspector_credentials(
+        data.phone_number,
+        data.password,
+        data.send_sms,
+        session=session,
+        user_id=user.id,
+        trigger="create",
+        triggered_by_user_id=admin.id,
+    )
     return InspectorCreatedResponse(
         id=user.id,
         school_code=user.school_code,
@@ -307,6 +346,9 @@ async def create_inspector(
         role=cast(UserRole, user.role),
         created_at=cast(datetime, user.created_at),
         created_postings=created_postings,
+        sms_sent=sms_sent,
+        sms_error=sms_error,
+        sms_delivery_id=sms_delivery_id,
     )
 
 
@@ -318,8 +360,9 @@ async def create_inspector(
 )
 async def bulk_upload_inspectors(
     session: DBSessionDep,
-    _admin: SuperAdminDep,
+    admin: SuperAdminDep,
     file: UploadFile = File(...),
+    send_sms: bool = Query(False, description="Send login credentials SMS for each created inspector"),
 ) -> InspectorBulkUploadResponse:
     """Required columns: ``phone_number``, ``full_name``, ``password``."""
     content = await file.read()
@@ -406,11 +449,23 @@ async def bulk_upload_inspectors(
             continue
 
         existing_phones.add(phone_number)
+        sms_sent, sms_error, _delivery_id = await maybe_send_inspector_credentials(
+            phone_number,
+            password,
+            send_sms,
+            bulk=True,
+            session=session,
+            user_id=user.id,
+            trigger="bulk_create",
+            triggered_by_user_id=admin.id,
+        )
         created.append(
             InspectorBulkCreatedRow(
                 row_number=row_number,
                 phone_number=phone_number,
                 full_name=full_name,
+                sms_sent=sms_sent,
+                sms_error=sms_error,
             )
         )
         successful += 1
