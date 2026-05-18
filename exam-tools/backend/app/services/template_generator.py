@@ -43,11 +43,28 @@ def generate_subject_template() -> bytes:
 
 
 def generate_inspector_postings_bulk_template() -> bytes:
-    """Excel template for inspector postings bulk upload (phone, name, password, core/elective centre codes).
+    """Excel template for inspector postings bulk upload.
 
+    Use center_N + scope_N (ALL/CORE/ELECTIVE) for up to five centres per row.
     Phone column is formatted as Text so Excel does not strip leading zeros on entry.
     """
-    df = pd.DataFrame(columns=["phone_number", "full_name", "password", "core", "elective"])
+    df = pd.DataFrame(
+        columns=[
+            "phone_number",
+            "full_name",
+            "password",
+            "center_1",
+            "scope_1",
+            "center_2",
+            "scope_2",
+            "center_3",
+            "scope_3",
+            "center_4",
+            "scope_4",
+            "center_5",
+            "scope_5",
+        ]
+    )
 
     output = io.BytesIO()
     with pd.ExcelWriter(output, engine="openpyxl") as writer:

@@ -7,10 +7,18 @@ from uuid import UUID
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from app.models import UserRole
+from app.schemas.inspector_posting import ExamInspectorSubjectScopeApi
+
+
+class InspectorPostingTargetCreate(BaseModel):
+    center_code: str = Field(..., min_length=1, max_length=15)
+    subject_scope: ExamInspectorSubjectScopeApi
+
+    model_config = ConfigDict(str_strip_whitespace=True)
 
 
 class InspectorCreate(BaseModel):
-    """Inspector accounts use phone + password; optional postings via core/elective centre host codes."""
+    """Inspector accounts use phone + password; optional postings via postings list or core/elective codes."""
 
     phone_number: str = Field(..., max_length=50)
     full_name: str = Field(..., max_length=255, min_length=1)
@@ -18,12 +26,19 @@ class InspectorCreate(BaseModel):
     examination_id: int | None = None
     core: str | None = None
     elective: str | None = None
+    postings: list[InspectorPostingTargetCreate] | None = None
     send_sms: bool | None = None
 
     model_config = ConfigDict(str_strip_whitespace=True)
 
     @model_validator(mode="after")
     def validate_posting_fields(self) -> Self:
+        if self.postings:
+            if self.examination_id is None:
+                raise ValueError("examination_id is required when postings is set")
+            if not self.postings:
+                raise ValueError("postings must not be empty when provided")
+            return self
         core_s = (self.core or "").strip()
         elective_s = (self.elective or "").strip()
         touched = self.examination_id is not None or bool(core_s) or bool(elective_s)

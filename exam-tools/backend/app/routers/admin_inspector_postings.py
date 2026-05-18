@@ -33,15 +33,15 @@ from app.schemas.inspector_posting import (
 from app.services.exam_timetable_pdf import load_examination_or_raise
 from app.services.inspector_posting import (
     assert_centre_host_school,
-    create_inspector_postings_from_core_elective_codes,
+    create_inspector_postings_from_targets,
     validate_new_posting_no_overlap,
 )
 from app.services.school_bulk_upload import (
     SchoolUploadParseError,
+    inspector_posting_targets_from_bulk_row,
     normalize_column_names,
     parse_inspector_full_name,
     parse_inspector_phone_number,
-    parse_optional_examination_centre_host_code,
     parse_optional_inspector_password,
     read_upload_as_dataframe,
     validate_inspector_posting_bulk_required_columns,
@@ -174,7 +174,7 @@ async def download_inspector_postings_bulk_template(
     session: DBSessionDep,
     _admin: SuperAdminDep,
 ) -> Response:
-    """Single-sheet Excel file with columns: phone_number, full_name, password, core, elective."""
+    """Single-sheet Excel: phone_number, full_name, password; center_1/scope_1 … center_5/scope_5."""
     try:
         await load_examination_or_raise(session, examination_id)
     except ValueError:
@@ -192,7 +192,7 @@ async def download_inspector_postings_bulk_template(
     "/{examination_id}/inspector-postings/bulk-upload",
     response_model=InspectorPostingBulkUploadResponse,
     status_code=status.HTTP_200_OK,
-    summary="Bulk-create inspector postings from CSV or Excel (CORE / ELECTIVE centre codes per row)",
+    summary="Bulk-create inspector postings from CSV or Excel (center_N + scope_N per row)",
 )
 async def bulk_upload_inspector_postings(
     examination_id: int,
@@ -201,9 +201,9 @@ async def bulk_upload_inspector_postings(
     file: UploadFile = File(...),
     send_sms: bool = Query(False, description="Send login credentials SMS when a new inspector account is created"),
 ) -> InspectorPostingBulkUploadResponse:
-    """Requires ``phone_number``, ``full_name``; optional ``core`` / ``elective`` host centre codes; optional ``password`` (required when creating a new inspector).
+    """Requires ``phone_number``, ``full_name``; optional ``password`` (required for new accounts).
 
-    Creates inspector accounts when missing (unique by phone). At least one of ``core`` or ``elective`` must be set per row.
+    Postings per row: ``center_1``/``scope_1`` … ``center_5``/``scope_5`` (scope: ALL, CORE, ELECTIVE). At least one pair is required per row.
     """
     try:
         await load_examination_or_raise(session, examination_id)
@@ -233,20 +233,8 @@ async def bulk_upload_inspector_postings(
                 row.get("password"),
                 min_length=settings.password_min_length,
             )
-            core_code = parse_optional_examination_centre_host_code(row.get("core"))
-            elective_code = parse_optional_examination_centre_host_code(row.get("elective"))
         except ValueError as exc:
             errors.append(InspectorPostingBulkUploadError(row_number=row_number, error_message=str(exc)))
-            failed += 1
-            continue
-
-        if not core_code and not elective_code:
-            errors.append(
-                InspectorPostingBulkUploadError(
-                    row_number=row_number,
-                    error_message="At least one of core or elective centre code is required",
-                )
-            )
             failed += 1
             continue
 
@@ -279,12 +267,18 @@ async def bulk_upload_inspector_postings(
                 inspector = user
                 new_inspector_password = password_optional
 
-            posting_rows = await create_inspector_postings_from_core_elective_codes(
+            try:
+                targets = inspector_posting_targets_from_bulk_row(row)
+            except ValueError as exc:
+                errors.append(InspectorPostingBulkUploadError(row_number=row_number, error_message=str(exc)))
+                failed += 1
+                continue
+
+            posting_rows = await create_inspector_postings_from_targets(
                 session,
                 examination_id=examination_id,
                 inspector_user_id=inspector.id,
-                core_code=core_code,
-                elective_code=elective_code,
+                targets=targets,
                 created_by_user_id=admin.id,
                 notes=None,
             )

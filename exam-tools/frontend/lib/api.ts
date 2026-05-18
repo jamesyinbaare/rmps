@@ -79,12 +79,19 @@ export type InspectorListResponse = {
   total: number;
 };
 
+export type InspectorPostingTargetPayload = {
+  center_code: string;
+  subject_scope: ExamInspectorSubjectScopeApi;
+};
+
 export type InspectorCreatePayload = {
   phone_number: string;
   full_name: string;
   password: string;
-  /** When set with at least one of core/elective, create postings for this examination. */
+  /** When set with postings or core/elective, create postings for this examination. */
   examination_id?: number | null;
+  /** Explicit centre+scope rows (alternative to core/elective shorthand). */
+  postings?: InspectorPostingTargetPayload[];
   core?: string | null;
   elective?: string | null;
   /** Send login credentials via SMS when backend SMS is enabled. */

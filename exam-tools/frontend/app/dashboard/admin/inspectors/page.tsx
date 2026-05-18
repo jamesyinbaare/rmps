@@ -12,9 +12,11 @@ import {
   listInspectors,
   type Examination,
   inspectorSmsStatusMessage,
+  type ExamInspectorSubjectScopeApi,
   type InspectorBulkUploadResponse,
   type InspectorCreatePayload,
   type InspectorCreatedResponse,
+  type InspectorPostingTargetPayload,
   type InspectorSchoolRow,
 } from "@/lib/api";
 import { formInputClass, formLabelClass } from "@/lib/form-classes";
@@ -29,6 +31,27 @@ const btnDestructive = `inline-flex min-h-11 items-center justify-center rounded
 
 type SortField = "full_name" | "phone" | "school_code";
 type StatusFilter = "all" | "active" | "inactive";
+
+type ExtraInspectorPosting = { centerCode: string; scope: ExamInspectorSubjectScopeApi };
+
+function buildInspectorPostingsFromForm(
+  coreTrim: string,
+  electTrim: string,
+  extras: ExtraInspectorPosting[],
+): InspectorPostingTargetPayload[] {
+  const postings: InspectorPostingTargetPayload[] = [];
+  if (coreTrim && electTrim && coreTrim === electTrim) {
+    postings.push({ center_code: coreTrim, subject_scope: "ALL" });
+  } else {
+    if (coreTrim) postings.push({ center_code: coreTrim, subject_scope: "CORE" });
+    if (electTrim) postings.push({ center_code: electTrim, subject_scope: "ELECTIVE" });
+  }
+  for (const ex of extras) {
+    const c = ex.centerCode.trim();
+    if (c) postings.push({ center_code: c, subject_scope: ex.scope });
+  }
+  return postings;
+}
 
 function Modal({
   title,
@@ -149,6 +172,7 @@ export default function AdminInspectorsPage() {
   const [examId, setExamId] = useState<number | "">("");
   const [coreCode, setCoreCode] = useState("");
   const [electiveCode, setElectiveCode] = useState("");
+  const [extraPostings, setExtraPostings] = useState<ExtraInspectorPosting[]>([]);
   const [exams, setExams] = useState<Examination[]>([]);
   const [formError, setFormError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
@@ -256,6 +280,7 @@ export default function AdminInspectorsPage() {
     setExamId("");
     setCoreCode("");
     setElectiveCode("");
+    setExtraPostings([]);
     setFormError(null);
     setAddOpen(true);
   }
@@ -278,12 +303,15 @@ export default function AdminInspectorsPage() {
     }
     const coreTrim = coreCode.trim();
     const electTrim = electiveCode.trim();
-    if (examId !== "" && !coreTrim && !electTrim) {
-      setFormError("When an examination is selected, provide at least one centre code (core or elective).");
+    const postings = buildInspectorPostingsFromForm(coreTrim, electTrim, extraPostings);
+    if (examId !== "" && postings.length === 0) {
+      setFormError(
+        "When an examination is selected, add at least one centre posting (core/elective codes or additional centres).",
+      );
       return;
     }
-    if ((coreTrim || electTrim) && examId === "") {
-      setFormError("Select an examination when adding centre codes.");
+    if (postings.length > 0 && examId === "") {
+      setFormError("Select an examination when adding centre postings.");
       return;
     }
     const payload: InspectorCreatePayload = {
@@ -292,10 +320,9 @@ export default function AdminInspectorsPage() {
       password: pw,
       send_sms: sendSmsOnCreate,
     };
-    if (examId !== "") {
+    if (examId !== "" && postings.length > 0) {
       payload.examination_id = examId;
-      if (coreTrim) payload.core = coreTrim;
-      if (electTrim) payload.elective = electTrim;
+      payload.postings = postings;
     }
     setSubmitting(true);
     try {
@@ -784,10 +811,67 @@ export default function AdminInspectorsPage() {
               />
               Send login details by SMS
             </label>
-            <p className="text-xs text-muted-foreground">
-              If both codes match one centre, one posting with scope ALL is created. If they differ, CORE and ELECTIVE
-              postings are created.
-            </p>
+            {examId !== "" ? (
+              <div className="space-y-3">
+                <p className="text-xs text-muted-foreground">
+                  Each centre can have its own scope (ALL, CORE, or ELECTIVE). The same scope may be used at multiple
+                  centres. Matching core and elective codes create one ALL posting at that centre.
+                </p>
+                {extraPostings.map((row, idx) => (
+                  <div key={idx} className="grid gap-2 sm:grid-cols-[1fr_auto_auto] sm:items-end">
+                    <div>
+                      <label className={formLabelClass}>Centre code</label>
+                      <input
+                        className={formInputClass}
+                        value={row.centerCode}
+                        onChange={(e) => {
+                          const next = [...extraPostings];
+                          next[idx] = { ...row, centerCode: e.target.value };
+                          setExtraPostings(next);
+                        }}
+                        placeholder="Host centre code"
+                        autoComplete="off"
+                      />
+                    </div>
+                    <div>
+                      <label className={formLabelClass}>Scope</label>
+                      <select
+                        className={formInputClass}
+                        value={row.scope}
+                        onChange={(e) => {
+                          const next = [...extraPostings];
+                          next[idx] = {
+                            ...row,
+                            scope: e.target.value as ExamInspectorSubjectScopeApi,
+                          };
+                          setExtraPostings(next);
+                        }}
+                      >
+                        <option value="ALL">ALL</option>
+                        <option value="CORE">CORE</option>
+                        <option value="ELECTIVE">ELECTIVE</option>
+                      </select>
+                    </div>
+                    <button
+                      type="button"
+                      className={`min-h-11 rounded-lg border border-input-border px-3 text-sm hover:bg-muted ${inputFocusRing}`}
+                      onClick={() => setExtraPostings(extraPostings.filter((_, i) => i !== idx))}
+                    >
+                      Remove
+                    </button>
+                  </div>
+                ))}
+                <button
+                  type="button"
+                  className={`text-sm font-medium text-primary hover:underline ${inputFocusRing}`}
+                  onClick={() =>
+                    setExtraPostings([...extraPostings, { centerCode: "", scope: "CORE" }])
+                  }
+                >
+                  Add another centre
+                </button>
+              </div>
+            ) : null}
             {formError ? (
               <p className="text-sm text-destructive" role="alert">
                 {formError}
