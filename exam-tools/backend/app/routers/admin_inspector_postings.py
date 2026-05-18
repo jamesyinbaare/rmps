@@ -42,7 +42,6 @@ from app.services.school_bulk_upload import (
     normalize_column_names,
     parse_inspector_full_name,
     parse_inspector_phone_number,
-    parse_optional_examination_centre_host_code,
     parse_optional_inspector_password,
     read_upload_as_dataframe,
     validate_inspector_posting_bulk_required_columns,
@@ -175,7 +174,7 @@ async def download_inspector_postings_bulk_template(
     session: DBSessionDep,
     _admin: SuperAdminDep,
 ) -> Response:
-    """Single-sheet Excel: phone_number, full_name, password; core/elective and/or center_N + scope_N pairs."""
+    """Single-sheet Excel: phone_number, full_name, password; center_1/scope_1 … center_5/scope_5."""
     try:
         await load_examination_or_raise(session, examination_id)
     except ValueError:
@@ -193,7 +192,7 @@ async def download_inspector_postings_bulk_template(
     "/{examination_id}/inspector-postings/bulk-upload",
     response_model=InspectorPostingBulkUploadResponse,
     status_code=status.HTTP_200_OK,
-    summary="Bulk-create inspector postings from CSV or Excel (CORE / ELECTIVE centre codes per row)",
+    summary="Bulk-create inspector postings from CSV or Excel (center_N + scope_N per row)",
 )
 async def bulk_upload_inspector_postings(
     examination_id: int,
@@ -204,8 +203,7 @@ async def bulk_upload_inspector_postings(
 ) -> InspectorPostingBulkUploadResponse:
     """Requires ``phone_number``, ``full_name``; optional ``password`` (required for new accounts).
 
-    Postings per row: use ``center_1``/``scope_1`` … ``center_5``/``scope_5`` (scope: ALL, CORE, ELECTIVE), and/or legacy ``core``/``elective`` columns.
-    At least one posting source is required per row.
+    Postings per row: ``center_1``/``scope_1`` … ``center_5``/``scope_5`` (scope: ALL, CORE, ELECTIVE). At least one pair is required per row.
     """
     try:
         await load_examination_or_raise(session, examination_id)
@@ -235,8 +233,6 @@ async def bulk_upload_inspector_postings(
                 row.get("password"),
                 min_length=settings.password_min_length,
             )
-            core_code = parse_optional_examination_centre_host_code(row.get("core"))
-            elective_code = parse_optional_examination_centre_host_code(row.get("elective"))
         except ValueError as exc:
             errors.append(InspectorPostingBulkUploadError(row_number=row_number, error_message=str(exc)))
             failed += 1
@@ -272,11 +268,7 @@ async def bulk_upload_inspector_postings(
                 new_inspector_password = password_optional
 
             try:
-                targets = inspector_posting_targets_from_bulk_row(
-                    row,
-                    core_code=core_code,
-                    elective_code=elective_code,
-                )
+                targets = inspector_posting_targets_from_bulk_row(row)
             except ValueError as exc:
                 errors.append(InspectorPostingBulkUploadError(row_number=row_number, error_message=str(exc)))
                 failed += 1

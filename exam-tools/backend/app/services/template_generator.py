@@ -45,7 +45,7 @@ def generate_subject_template() -> bytes:
 def generate_inspector_postings_bulk_template() -> bytes:
     """Excel template for inspector postings bulk upload.
 
-    Use center_N + scope_N (ALL/CORE/ELECTIVE) for multiple centres per row, and/or legacy core/elective columns.
+    Use center_N + scope_N (ALL/CORE/ELECTIVE) for up to five centres per row.
     Phone column is formatted as Text so Excel does not strip leading zeros on entry.
     """
     df = pd.DataFrame(
@@ -59,8 +59,10 @@ def generate_inspector_postings_bulk_template() -> bytes:
             "scope_2",
             "center_3",
             "scope_3",
-            "core",
-            "elective",
+            "center_4",
+            "scope_4",
+            "center_5",
+            "scope_5",
         ]
     )
 

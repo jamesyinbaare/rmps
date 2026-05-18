@@ -437,15 +437,8 @@ def parse_exam_inspector_subject_scope_cell(raw: Any, field_label: str) -> ExamI
         raise ValueError(f"{field_label} must be ALL, CORE, or ELECTIVE") from exc
 
 
-def inspector_posting_targets_from_bulk_row(
-    row: Any,
-    *,
-    core_code: str | None,
-    elective_code: str | None,
-) -> list[tuple[ExamInspectorSubjectScope, str]]:
-    """Resolve center_N/scope_N pairs when present, else core/elective shorthand columns."""
-    from app.services.inspector_posting import inspector_posting_targets_from_codes
-
+def inspector_posting_targets_from_bulk_row(row: Any) -> list[tuple[ExamInspectorSubjectScope, str]]:
+    """Resolve center_1/scope_1 … center_5/scope_5 pairs from a bulk upload row."""
     targets: list[tuple[ExamInspectorSubjectScope, str]] = []
     for center_col, scope_col in INSPECTOR_POSTING_BULK_PAIR_COLUMNS:
         code = parse_optional_examination_centre_host_code(row.get(center_col))
@@ -461,6 +454,6 @@ def inspector_posting_targets_from_bulk_row(
             raise ValueError(f"{center_col} is required when {scope_col} is set")
         scope = parse_exam_inspector_subject_scope_cell(scope_raw, scope_col)
         targets.append((scope, code))
-    if targets:
-        return targets
-    return inspector_posting_targets_from_codes(core_code, elective_code)
+    if not targets:
+        raise ValueError("At least one center_N and scope_N pair is required")
+    return targets

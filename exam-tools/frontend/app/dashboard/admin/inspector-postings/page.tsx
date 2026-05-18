@@ -792,7 +792,7 @@ export default function AdminInspectorPostingsPage() {
           <div className="space-y-4 border-t border-border px-4 pb-5 pt-2 sm:px-5">
             <p className="text-xs text-muted-foreground">
               Columns: phone_number, full_name, optional password; center_1/scope_1 … center_5/scope_5 (ALL, CORE,
-              ELECTIVE); and/or legacy core/elective centre codes.
+              ELECTIVE). At least one centre+scope pair per row (center_1/scope_1 … center_5/scope_5).
             </p>
             <div className="flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-end">
               <div className="min-w-0 flex-1 sm:max-w-md">
