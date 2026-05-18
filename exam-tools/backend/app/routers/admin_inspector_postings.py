@@ -46,6 +46,7 @@ from app.services.school_bulk_upload import (
     read_upload_as_dataframe,
     validate_inspector_posting_bulk_required_columns,
 )
+from app.services.sms import maybe_send_inspector_credentials
 from app.services.template_generator import generate_inspector_postings_bulk_template
 
 router = APIRouter(prefix="/admin/examinations", tags=["admin-inspector-postings"])
@@ -198,6 +199,7 @@ async def bulk_upload_inspector_postings(
     session: DBSessionDep,
     admin: SuperAdminDep,
     file: UploadFile = File(...),
+    send_sms: bool = Query(False, description="Send login credentials SMS when a new inspector account is created"),
 ) -> InspectorPostingBulkUploadResponse:
     """Requires ``phone_number``, ``full_name``; optional ``core`` / ``elective`` host centre codes; optional ``password`` (required when creating a new inspector).
 
@@ -250,6 +252,7 @@ async def bulk_upload_inspector_postings(
 
         row_new_inspectors: list[InspectorPostingBulkCreatedInspectorRow] = []
         row_new_postings: list[InspectorPostingBulkCreatedPostingRow] = []
+        new_inspector_password: str | None = None
 
         try:
             insp_stmt = select(User).where(
@@ -274,13 +277,7 @@ async def bulk_upload_inspector_postings(
                 session.add(user)
                 await session.flush()
                 inspector = user
-                row_new_inspectors.append(
-                    InspectorPostingBulkCreatedInspectorRow(
-                        row_number=row_number,
-                        phone_number=phone_number,
-                        full_name=full_name,
-                    )
-                )
+                new_inspector_password = password_optional
 
             posting_rows = await create_inspector_postings_from_core_elective_codes(
                 session,
@@ -329,6 +326,26 @@ async def bulk_upload_inspector_postings(
             )
             failed += 1
         else:
+            if new_inspector_password is not None:
+                sms_sent, sms_error, _delivery_id = await maybe_send_inspector_credentials(
+                    phone_number,
+                    new_inspector_password,
+                    send_sms,
+                    bulk=True,
+                    session=session,
+                    user_id=inspector.id,
+                    trigger="posting_bulk_create",
+                    triggered_by_user_id=admin.id,
+                )
+                row_new_inspectors.append(
+                    InspectorPostingBulkCreatedInspectorRow(
+                        row_number=row_number,
+                        phone_number=phone_number,
+                        full_name=full_name,
+                        sms_sent=sms_sent,
+                        sms_error=sms_error,
+                    )
+                )
             created_inspectors.extend(row_new_inspectors)
             created_postings.extend(row_new_postings)
             successful += 1

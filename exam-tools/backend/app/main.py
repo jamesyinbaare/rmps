@@ -17,6 +17,7 @@ from app.initial_data import ensure_super_admin_user
 from app.routers import (
     admin_exam_officials,
     admin_inspector_postings,
+    admin_sms_deliveries,
     admin_system,
     auth,
     bank_branches,
@@ -199,6 +200,7 @@ app.include_router(bank_branches.router)
 app.include_router(exam_officials.router)
 app.include_router(admin_exam_officials.router)
 app.include_router(admin_inspector_postings.router)
+app.include_router(admin_sms_deliveries.router)
 app.include_router(admin_system.router)
 app.include_router(documents.router)
 
