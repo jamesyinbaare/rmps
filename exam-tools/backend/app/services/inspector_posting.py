@@ -39,11 +39,13 @@ def normalize_exam_inspector_subject_scope(
 
 def posting_pair_conflicts(
     scope_a: ExamInspectorSubjectScope | str,
-    _center_a: UUID,
+    center_a: UUID,
     scope_b: ExamInspectorSubjectScope | str,
-    _center_b: UUID,
+    center_b: UUID,
 ) -> bool:
     """True if two postings cannot coexist for the same examination and inspector."""
+    if center_a != center_b:
+        return False
     a = normalize_exam_inspector_subject_scope(scope_a)
     b = normalize_exam_inspector_subject_scope(scope_b)
     if a == ExamInspectorSubjectScope.ALL or b == ExamInspectorSubjectScope.ALL:
@@ -105,8 +107,9 @@ async def validate_new_posting_no_overlap(
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail=(
-                    "Posting conflicts with an existing one for this examination "
-                    "(ALL excludes other postings; duplicate subject scope cannot be used for more than one centre)"
+                    "Posting conflicts with an existing one at this examination centre "
+                    "(ALL cannot be combined with other scopes at the same centre; "
+                    "duplicate subject scope at the same centre is not allowed)"
                 ),
             )
 
@@ -286,27 +289,21 @@ async def find_inspector_posting_exact(
     return result.scalar_one_or_none()
 
 
-async def create_inspector_postings_from_core_elective_codes(
+async def create_inspector_postings_from_targets(
     session: AsyncSession,
     *,
     examination_id: int,
     inspector_user_id: UUID,
-    core_code: str | None,
-    elective_code: str | None,
+    targets: list[tuple[ExamInspectorSubjectScope, str]],
     created_by_user_id: UUID | None,
     notes: str | None = None,
 ) -> list[tuple[InspectorExamPosting, bool]]:
-    """Create postings from optional core/elective centre host codes.
+    """Create postings from (scope, centre host code) pairs.
 
-    - Both set and equal → one ALL posting at that centre.
-    - Both set and different → CORE at first centre, ELECTIVE at second.
-    - Only core → CORE; only elective → ELECTIVE.
-
-    Requires at least one non-empty code. Raises ValueError for bad codes (same as bulk upload).
-
-    Returns (posting, inserted): ``inserted`` is False when this centre+scope was already present (idempotent).
+    Returns (posting, inserted): ``inserted`` is False when centre+scope already existed.
     """
-    targets = inspector_posting_targets_from_codes(core_code, elective_code)
+    if not targets:
+        raise ValueError("At least one centre posting is required")
 
     created: list[tuple[InspectorExamPosting, bool]] = []
     for scope, code in targets:
@@ -342,3 +339,34 @@ async def create_inspector_postings_from_core_elective_codes(
         created.append((posting, True))
 
     return created
+
+
+async def create_inspector_postings_from_core_elective_codes(
+    session: AsyncSession,
+    *,
+    examination_id: int,
+    inspector_user_id: UUID,
+    core_code: str | None,
+    elective_code: str | None,
+    created_by_user_id: UUID | None,
+    notes: str | None = None,
+) -> list[tuple[InspectorExamPosting, bool]]:
+    """Create postings from optional core/elective centre host codes.
+
+    - Both set and equal → one ALL posting at that centre.
+    - Both set and different → CORE at first centre, ELECTIVE at second.
+    - Only core → CORE; only elective → ELECTIVE.
+
+    Requires at least one non-empty code. Raises ValueError for bad codes (same as bulk upload).
+
+    Returns (posting, inserted): ``inserted`` is False when this centre+scope was already present (idempotent).
+    """
+    targets = inspector_posting_targets_from_codes(core_code, elective_code)
+    return await create_inspector_postings_from_targets(
+        session,
+        examination_id=examination_id,
+        inspector_user_id=inspector_user_id,
+        targets=targets,
+        created_by_user_id=created_by_user_id,
+        notes=notes,
+    )

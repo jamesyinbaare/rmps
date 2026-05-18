@@ -3,9 +3,11 @@
 import pandas as pd
 import pytest
 
+from app.models import ExamInspectorSubjectScope
 from app.services.school_bulk_upload import (
     SchoolUploadParseError,
     inspector_phone_lookup_candidates,
+    inspector_posting_targets_from_bulk_row,
     parse_inspector_phone_number,
     parse_optional_examination_centre_host_code,
     validate_inspector_posting_bulk_required_columns,
@@ -20,6 +22,33 @@ def test_parse_optional_centre_code_empty() -> None:
 
 def test_parse_optional_centre_code_numeric_cell() -> None:
     assert parse_optional_examination_centre_host_code(817002.0) == "817002"
+
+
+def test_bulk_row_explicit_center_scope_pairs() -> None:
+    row = pd.Series(
+        {
+            "center_1": "H001",
+            "scope_1": "ALL",
+            "center_2": "H002",
+            "scope_2": "CORE",
+            "core": "",
+            "elective": "",
+        }
+    )
+    targets = inspector_posting_targets_from_bulk_row(row, core_code=None, elective_code=None)
+    assert targets == [
+        (ExamInspectorSubjectScope.ALL, "H001"),
+        (ExamInspectorSubjectScope.CORE, "H002"),
+    ]
+
+
+def test_bulk_row_falls_back_to_core_elective() -> None:
+    row = pd.Series({"core": "H001", "elective": "H002"})
+    targets = inspector_posting_targets_from_bulk_row(row, core_code="H001", elective_code="H002")
+    assert targets == [
+        (ExamInspectorSubjectScope.CORE, "H001"),
+        (ExamInspectorSubjectScope.ELECTIVE, "H002"),
+    ]
 
 
 def test_validate_bulk_columns_missing() -> None:

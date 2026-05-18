@@ -28,7 +28,10 @@ from app.schemas.inspector import (
     InspectorUpdate,
 )
 from app.services.exam_timetable_pdf import load_examination_or_raise
-from app.services.inspector_posting import create_inspector_postings_from_core_elective_codes
+from app.services.inspector_posting import (
+    create_inspector_postings_from_core_elective_codes,
+    create_inspector_postings_from_targets,
+)
 from app.services.school_bulk_upload import (
     SchoolUploadParseError,
     normalize_column_names,
@@ -249,7 +252,7 @@ async def create_inspector(
     session: DBSessionDep,
     admin: SuperAdminDep,
 ) -> InspectorCreatedResponse:
-    """Create one inspector. Optional postings for an examination using core/elective centre host codes."""
+    """Create one inspector. Optional postings via ``postings`` or core/elective centre host codes."""
     if len(data.password) < settings.password_min_length:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -266,7 +269,9 @@ async def create_inspector(
 
     core_s = (data.core or "").strip()
     elective_s = (data.elective or "").strip()
-    wants_postings = data.examination_id is not None and (bool(core_s) or bool(elective_s))
+    wants_postings = data.examination_id is not None and (
+        bool(data.postings) or bool(core_s) or bool(elective_s)
+    )
 
     user = User(
         school_code=None,
@@ -289,15 +294,29 @@ async def create_inspector(
                 await session.rollback()
                 raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Examination not found") from None
             try:
-                postings = await create_inspector_postings_from_core_elective_codes(
-                    session,
-                    examination_id=data.examination_id,
-                    inspector_user_id=user.id,
-                    core_code=core_s or None,
-                    elective_code=elective_s or None,
-                    created_by_user_id=admin.id,
-                    notes=None,
-                )
+                if data.postings:
+                    targets = [
+                        (ExamInspectorSubjectScope(p.subject_scope.value), p.center_code.strip())
+                        for p in data.postings
+                    ]
+                    postings = await create_inspector_postings_from_targets(
+                        session,
+                        examination_id=data.examination_id,
+                        inspector_user_id=user.id,
+                        targets=targets,
+                        created_by_user_id=admin.id,
+                        notes=None,
+                    )
+                else:
+                    postings = await create_inspector_postings_from_core_elective_codes(
+                        session,
+                        examination_id=data.examination_id,
+                        inspector_user_id=user.id,
+                        core_code=core_s or None,
+                        elective_code=elective_s or None,
+                        created_by_user_id=admin.id,
+                        notes=None,
+                    )
             except ValueError as exc:
                 await session.rollback()
                 raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc

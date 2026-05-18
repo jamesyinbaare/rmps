@@ -11,7 +11,7 @@ from uuid import UUID
 
 import pandas as pd  # type: ignore[import-untyped]
 
-from app.models import Region, SchoolType, Zone
+from app.models import ExamInspectorSubjectScope, Region, SchoolType, Zone
 
 REQUIRED_COLUMNS = ("code", "name", "region", "zone")
 
@@ -414,3 +414,53 @@ def parse_optional_examination_centre_host_code(raw: Any) -> str | None:
     if len(s) > 15:
         raise ValueError("centre code must be at most 15 characters")
     return s
+
+
+INSPECTOR_POSTING_BULK_PAIR_COLUMNS: tuple[tuple[str, str], ...] = (
+    ("center_1", "scope_1"),
+    ("center_2", "scope_2"),
+    ("center_3", "scope_3"),
+    ("center_4", "scope_4"),
+    ("center_5", "scope_5"),
+)
+
+
+def parse_exam_inspector_subject_scope_cell(raw: Any, field_label: str) -> ExamInspectorSubjectScope:
+    if raw is None:
+        raise ValueError(f"{field_label} is required")
+    s = str(raw).strip().upper()
+    if not s or s.lower() in ("nan", "none", "<na>"):
+        raise ValueError(f"{field_label} is required")
+    try:
+        return ExamInspectorSubjectScope(s)
+    except ValueError as exc:
+        raise ValueError(f"{field_label} must be ALL, CORE, or ELECTIVE") from exc
+
+
+def inspector_posting_targets_from_bulk_row(
+    row: Any,
+    *,
+    core_code: str | None,
+    elective_code: str | None,
+) -> list[tuple[ExamInspectorSubjectScope, str]]:
+    """Resolve center_N/scope_N pairs when present, else core/elective shorthand columns."""
+    from app.services.inspector_posting import inspector_posting_targets_from_codes
+
+    targets: list[tuple[ExamInspectorSubjectScope, str]] = []
+    for center_col, scope_col in INSPECTOR_POSTING_BULK_PAIR_COLUMNS:
+        code = parse_optional_examination_centre_host_code(row.get(center_col))
+        scope_raw = row.get(scope_col)
+        scope_empty = scope_raw is None or str(scope_raw).strip() == "" or str(scope_raw).strip().lower() in (
+            "nan",
+            "none",
+            "<na>",
+        )
+        if code is None and scope_empty:
+            continue
+        if code is None:
+            raise ValueError(f"{center_col} is required when {scope_col} is set")
+        scope = parse_exam_inspector_subject_scope_cell(scope_raw, scope_col)
+        targets.append((scope, code))
+    if targets:
+        return targets
+    return inspector_posting_targets_from_codes(core_code, elective_code)
