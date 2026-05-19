@@ -90,7 +90,7 @@ async def bulk_upload_bank_branches(
 ) -> BankBranchBulkUploadResponse:
     content = await file.read()
     try:
-        df = read_upload_as_dataframe(content, file.filename or "")
+        df = read_upload_as_dataframe(content, file.filename or "", all_columns_as_string=True)
         df = normalize_column_names(df)
         validate_bank_branch_required_columns(df)
     except SchoolUploadParseError as exc:
