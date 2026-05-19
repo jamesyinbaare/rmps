@@ -17,6 +17,7 @@ from app.schemas.exam_official import (
     ExamCentreOfficialResponse,
     ExamCentreOfficialUpdate,
 )
+from app.services.exam_official_account import normalize_account_for_save
 from app.services.exam_timetable_pdf import load_examination_or_raise
 from app.services.inspector_posting import resolve_inspector_workspace
 
@@ -43,6 +44,23 @@ async def _inspector_officials_center_id(
     except HTTPException:
         raise
     return ctx.center_host.id
+
+
+def _normalize_account_or_400(
+    account_number: str,
+    bb: BankBranch,
+    *,
+    for_update: bool,
+) -> str:
+    try:
+        return normalize_account_for_save(
+            account_number,
+            bank_name=cast(str, bb.bank_name),
+            bank_code=cast(str, bb.bank_code),
+            for_update=for_update,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
 
 
 def _official_to_response(row: ExamCentreOfficial) -> ExamCentreOfficialResponse:
@@ -128,13 +146,14 @@ async def create_exam_official(
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Unknown bank_branch_id")
 
     des = ExamOfficialDesignation(body.designation.value)
+    stored_account = _normalize_account_or_400(body.account_number, bb, for_update=False)
     row = ExamCentreOfficial(
         examination_id=exam_id,
         center_id=center_id,
         full_name=body.full_name,
         designation=des,
         bank_branch_id=body.bank_branch_id,
-        account_number=body.account_number,
+        account_number=stored_account,
         num_days=body.num_days,
         telephone_number=body.telephone_number,
     )
@@ -188,13 +207,19 @@ async def update_exam_official(
         row.full_name = body.full_name
     if body.designation is not None:
         row.designation = ExamOfficialDesignation(body.designation.value)
+    bb_for_account: BankBranch | None = None
     if body.bank_branch_id is not None:
-        bb = await session.get(BankBranch, body.bank_branch_id)
-        if bb is None:
+        bb_for_account = await session.get(BankBranch, body.bank_branch_id)
+        if bb_for_account is None:
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Unknown bank_branch_id")
         row.bank_branch_id = body.bank_branch_id
     if body.account_number is not None:
-        row.account_number = body.account_number
+        bb_acct = bb_for_account if bb_for_account is not None else row.bank_branch
+        row.account_number = _normalize_account_or_400(
+            body.account_number,
+            bb_acct,
+            for_update=True,
+        )
     if body.num_days is not None:
         row.num_days = body.num_days
     if body.telephone_number is not None:

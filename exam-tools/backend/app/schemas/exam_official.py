@@ -10,6 +10,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 from app.schemas.bank_branch import normalize_bank_code_for_api
 
 PHONE_TEN_DIGITS_RE = re.compile(r"^\d{10}$")
+ACCOUNT_DIGITS_RE = re.compile(r"^\d+$")
 
 
 class ExamOfficialDesignationApi(str, Enum):
@@ -53,7 +54,7 @@ class ExamCentreOfficialCreate(BaseModel):
     full_name: str = Field(..., min_length=1, max_length=255)
     designation: ExamOfficialDesignationApi
     bank_branch_id: UUID
-    account_number: str = Field(..., pattern=r"^\d{13}$")
+    account_number: str = Field(..., min_length=1, max_length=16)
     num_days: int = Field(..., ge=1, le=32767)
     telephone_number: str = Field(..., min_length=10, max_length=10)
 
@@ -64,6 +65,14 @@ class ExamCentreOfficialCreate(BaseModel):
         if not t:
             raise ValueError("full_name cannot be blank")
         return t
+
+    @field_validator("account_number")
+    @classmethod
+    def validate_account_digits(cls, v: str) -> str:
+        s = v.strip()
+        if not ACCOUNT_DIGITS_RE.fullmatch(s):
+            raise ValueError("account_number must contain digits only")
+        return s
 
     @field_validator("telephone_number")
     @classmethod
@@ -78,7 +87,7 @@ class ExamCentreOfficialUpdate(BaseModel):
     full_name: str | None = Field(None, min_length=1, max_length=255)
     designation: ExamOfficialDesignationApi | None = None
     bank_branch_id: UUID | None = None
-    account_number: str | None = Field(None, pattern=r"^\d{13}$")
+    account_number: str | None = Field(None, min_length=1, max_length=16)
     num_days: int | None = Field(None, ge=1, le=32767)
     telephone_number: str | None = Field(None, min_length=10, max_length=10)
 
@@ -91,6 +100,16 @@ class ExamCentreOfficialUpdate(BaseModel):
         if not t:
             raise ValueError("full_name cannot be blank")
         return t
+
+    @field_validator("account_number")
+    @classmethod
+    def validate_account_digits(cls, v: str | None) -> str | None:
+        if v is None:
+            return None
+        s = v.strip()
+        if not ACCOUNT_DIGITS_RE.fullmatch(s):
+            raise ValueError("account_number must contain digits only")
+        return s
 
     @field_validator("telephone_number")
     @classmethod
