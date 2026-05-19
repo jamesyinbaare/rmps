@@ -37,6 +37,14 @@ import {
   officialAccountsBtnSecondary,
   officialAccountsPanelClass,
 } from "@/lib/official-accounts-zone";
+import {
+  accountInputMaxLengthForEdit,
+  accountValidationMessage,
+  getAccountFieldCopy,
+  isValidAccountInput,
+  resolveBankKind,
+  splitAbsaAccountForDisplay,
+} from "@/lib/exam-official-account";
 
 const btnPrimary =
   "inline-flex min-h-11 w-full min-w-[44px] items-center justify-center rounded-lg bg-primary px-3 text-sm font-medium text-primary-foreground transition-colors hover:bg-primary-hover focus:outline-none focus:ring-2 focus:ring-ring/30 disabled:pointer-events-none disabled:opacity-50 sm:min-h-10 sm:w-auto";
@@ -55,7 +63,6 @@ const DESIGNATIONS: ExamOfficialDesignation[] = [
 ];
 
 const GHANA_PHONE_RE = /^0(2[0-9]|5[0-9]|9[0-9])[0-9]{7}$/;
-const ACCOUNT_RE = /^\d{13}$/;
 const PHONE_HINT = "Enter a 10-digit phone number (e.g. 0241234567).";
 
 function truncateLabel(s: string, max = 28): string {
@@ -458,8 +465,12 @@ export default function InspectorExamOfficialsPage() {
     setFullName(row.full_name);
     setDesignation(row.designation);
     setTelephone(row.telephone_number);
-    setAccountNumber(row.account_number);
-    setAccountConfirm(row.account_number);
+    const acctDisplay =
+      resolveBankKind(row.bank_name) === "absa"
+        ? splitAbsaAccountForDisplay(row.account_number, row.bank_code)
+        : row.account_number;
+    setAccountNumber(acctDisplay);
+    setAccountConfirm(acctDisplay);
     setNumDays(String(row.num_days));
     setNumDaysConfirm(String(row.num_days));
     setSelectedBankName(row.bank_name);
@@ -491,8 +502,12 @@ export default function InspectorExamOfficialsPage() {
       setFormError("Select a bank and branch.");
       return;
     }
-    if (!ACCOUNT_RE.test(accountNumber.trim())) {
-      setFormError("Account number must be exactly 13 digits.");
+    if (
+      !isValidAccountInput(accountNumber, selectedBankName, {
+        forUpdate: Boolean(editing),
+      })
+    ) {
+      setFormError(accountValidationMessage(selectedBankName, Boolean(editing)));
       return;
     }
     if (accountNumber.trim() !== accountConfirm.trim()) {
@@ -573,11 +588,20 @@ export default function InspectorExamOfficialsPage() {
     }
   }
 
+  const accountFieldCopy = getAccountFieldCopy(selectedBankName, Boolean(editing));
+  const accountMaxLen = editing
+    ? accountInputMaxLengthForEdit(selectedBankName)
+    : accountFieldCopy.targetLen;
+
   const acctLen = accountNumber.replace(/\D/g, "").length;
   const acctConfirmLen = accountConfirm.replace(/\D/g, "").length;
-  const acctValid = ACCOUNT_RE.test(accountNumber.trim());
+  const acctValid = isValidAccountInput(accountNumber, selectedBankName, {
+    forUpdate: Boolean(editing),
+  });
   const acctMatch =
-    acctValid && accountNumber.trim() === accountConfirm.trim() && accountConfirm.trim().length === 13;
+    acctValid &&
+    accountNumber.trim() === accountConfirm.trim() &&
+    accountConfirm.trim().length > 0;
 
   const daysN = parseInt(numDays.trim(), 10);
   const daysCN = parseInt(numDaysConfirm.trim(), 10);
@@ -996,7 +1020,7 @@ export default function InspectorExamOfficialsPage() {
               </FormSection>
               <FormSection
                 title="Bank account details"
-                description="13-digit account number at the selected branch."
+                description={accountFieldCopy.description}
               >
               {editing && !editBankOpen ? (
                 <div className="md:col-span-2 space-y-2 rounded-lg border border-border bg-muted/20 px-3 py-3">
@@ -1032,6 +1056,8 @@ export default function InspectorExamOfficialsPage() {
                     setSelectedBankName(name);
                     setBankNameQuery(name);
                     setSelectedBranchId("");
+                    setAccountNumber("");
+                    setAccountConfirm("");
                     setFormError(null);
                   }}
                   onSearchChange={(q) => {
@@ -1055,7 +1081,13 @@ export default function InspectorExamOfficialsPage() {
                 <SearchableCombobox
                   options={branchComboboxOptions}
                   value={selectedBranchId}
-                  onChange={setSelectedBranchId}
+                  onChange={(id) => {
+                    setSelectedBranchId(id);
+                    if (resolveBankKind(selectedBankName) === "absa") {
+                      setAccountNumber("");
+                      setAccountConfirm("");
+                    }
+                  }}
                   placeholder={branchSelectHint}
                   searchPlaceholder="Search branches…"
                   emptyText={
@@ -1095,7 +1127,7 @@ export default function InspectorExamOfficialsPage() {
                 <>
               <div>
                 <label className={formLabelClass} htmlFor="eo-acct">
-                  Account number (13 digits)
+                  {accountFieldCopy.label}
                 </label>
                 <input
                   id="eo-acct"
@@ -1103,12 +1135,15 @@ export default function InspectorExamOfficialsPage() {
                   inputMode="numeric"
                   autoComplete="off"
                   value={accountNumber}
-                  onChange={(e) => setAccountNumber(e.target.value.replace(/\D/g, "").slice(0, 13))}
+                  onChange={(e) =>
+                    setAccountNumber(e.target.value.replace(/\D/g, "").slice(0, accountMaxLen))
+                  }
                   enterKeyHint="next"
                 />
                 <p className="mt-1 text-xs text-muted-foreground">
-                  {acctLen}/13 digits
-                  {acctValid ? " · format OK" : acctLen > 0 && acctLen < 13 ? " · keep typing" : ""}
+                  {acctLen}/{accountMaxLen} digits
+                  {accountFieldCopy.helper ? ` · ${accountFieldCopy.helper}` : ""}
+                  {acctValid ? " · format OK" : acctLen > 0 && acctLen < accountMaxLen ? " · keep typing" : ""}
                   {acctConfirmLen > 0 ? (
                     <span className={acctMatch ? " text-success" : " text-destructive"}>
                       {acctMatch ? " · matches confirmation" : " · does not match confirmation"}
@@ -1126,7 +1161,9 @@ export default function InspectorExamOfficialsPage() {
                   inputMode="numeric"
                   autoComplete="off"
                   value={accountConfirm}
-                  onChange={(e) => setAccountConfirm(e.target.value.replace(/\D/g, "").slice(0, 13))}
+                  onChange={(e) =>
+                    setAccountConfirm(e.target.value.replace(/\D/g, "").slice(0, accountMaxLen))
+                  }
                   onPaste={preventClipboardInsert}
                   onDrop={preventClipboardInsert}
                   enterKeyHint="next"
