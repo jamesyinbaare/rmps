@@ -223,6 +223,7 @@ async def bulk_upload_inspector_postings(
     created_postings: list[InspectorPostingBulkCreatedPostingRow] = []
     successful = 0
     failed = 0
+    admin_user_id = cast(UUID, admin.id)
 
     for i, (_, row) in enumerate(df.iterrows()):
         row_number = i + 2
@@ -270,6 +271,7 @@ async def bulk_upload_inspector_postings(
             try:
                 targets = inspector_posting_targets_from_bulk_row(row)
             except ValueError as exc:
+                await session.rollback()
                 errors.append(InspectorPostingBulkUploadError(row_number=row_number, error_message=str(exc)))
                 failed += 1
                 continue
@@ -279,7 +281,7 @@ async def bulk_upload_inspector_postings(
                 examination_id=examination_id,
                 inspector_user_id=inspector.id,
                 targets=targets,
-                created_by_user_id=admin.id,
+                created_by_user_id=admin_user_id,
                 notes=None,
             )
             for posting, inserted in posting_rows:
@@ -329,7 +331,7 @@ async def bulk_upload_inspector_postings(
                     session=session,
                     user_id=inspector.id,
                     trigger="posting_bulk_create",
-                    triggered_by_user_id=admin.id,
+                    triggered_by_user_id=admin_user_id,
                 )
                 row_new_inspectors.append(
                     InspectorPostingBulkCreatedInspectorRow(
