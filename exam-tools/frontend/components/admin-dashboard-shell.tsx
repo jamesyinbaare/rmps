@@ -56,11 +56,14 @@ type NavLinkItem = { type: "link"; href: string; label: string };
 type NavHeadingItem = { type: "heading"; label: string };
 type NavEntry = NavLinkItem | NavHeadingItem;
 
+const ATTENDANCE_SHEETS_HREF = "/dashboard/admin/attendance-sheets";
+
 const FINANCE_OFFICER_NAV: NavEntry[] = [
   { type: "heading", label: "Finance" },
   { type: "link", href: OFFICIAL_ACCOUNTS_ADMIN_HREF, label: "Official account details" },
   { type: "link", href: EXTERNAL_INSPECTORS_HREF, label: "External inspectors" },
   { type: "link", href: FINANCE_CENTRE_SUMMARY_HREF, label: "Centre invigilator summary" },
+  { type: "link", href: ATTENDANCE_SHEETS_HREF, label: "Attendance sheets" },
 ];
 
 function toLinkItem(item: { href: string; label: string }): NavLinkItem {
@@ -103,6 +106,7 @@ export function AdminDashboardShell({ children }: Props) {
         { type: "link", href: OFFICIAL_ACCOUNTS_ADMIN_HREF, label: "Official account details" },
         { type: "link", href: EXTERNAL_INSPECTORS_HREF, label: "External inspectors" },
         { type: "link", href: FINANCE_CENTRE_SUMMARY_HREF, label: "Centre invigilator summary" },
+        { type: "link", href: ATTENDANCE_SHEETS_HREF, label: "Attendance sheets" },
       ];
     }
     return nav.map(toLinkItem);
@@ -224,7 +228,16 @@ export function AdminDashboardShell({ children }: Props) {
           }}
         />
 
-        <main className="mx-auto max-w-6xl px-4 py-6 sm:px-6">{children}</main>
+        <main
+          className={cn(
+            "mx-auto px-4 py-6 sm:px-6",
+            pathname === ATTENDANCE_SHEETS_HREF || pathname.startsWith(`${ATTENDANCE_SHEETS_HREF}/`)
+              ? "max-w-[1600px]"
+              : "max-w-6xl",
+          )}
+        >
+          {children}
+        </main>
       </div>
     </div>
   );

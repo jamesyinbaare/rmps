@@ -8,9 +8,11 @@ import { DashboardSimpleHeader, DashboardStickyHeader } from "@/components/dashb
 import { ExaminationNoticeSessionBanner } from "@/components/examination-notice-session-banner";
 import { clearAuth, AUTH_TOKEN_UPDATED_EVENT, getMe, type UserMe } from "@/lib/auth";
 import {
+  AllowancesSubNavLink,
   OfficialAccountsNavLink,
   OfficialAccountsNavSection,
 } from "@/components/official-accounts-nav-link";
+import { OFFICIAL_ACCOUNTS_INSPECTOR_ATTENDANCE_HREF } from "@/lib/official-accounts-zone";
 
 /** Subtitle under the page title: full name plus school name and code when present. */
 function staffHeaderSubtitle(me: UserMe): string {
@@ -169,13 +171,14 @@ export function DashboardShell({ title, children, staffRole }: Props) {
         ]
       : []),
   ];
-  const inspectorExamOfficialsItem =
-    staffRole === "inspector"
-      ? (staffNav.find((item) => item.href === examOfficialsHref) ?? null)
-      : null;
+  const showInspectorAllowances = staffRole === "inspector";
+  const inspectorExamOfficialsItem = showInspectorAllowances
+    ? (staffNav.find((item) => item.href === examOfficialsHref) ?? null)
+    : null;
   const staffNavMain = inspectorExamOfficialsItem
     ? staffNav.filter((item) => item.href !== examOfficialsHref)
     : staffNav;
+  const attendanceSheetsActive = pathname.startsWith(OFFICIAL_ACCOUNTS_INSPECTOR_ATTENDANCE_HREF);
   return (
     <div
       className="min-h-screen bg-background [--staff-sticky-header-offset:4.5rem] [scroll-padding-top:var(--staff-sticky-header-offset)]"
@@ -223,11 +226,16 @@ export function DashboardShell({ title, children, staffRole }: Props) {
                 </Link>
               ))}
             </div>
-            {inspectorExamOfficialsItem ? (
+            {showInspectorAllowances && inspectorExamOfficialsItem ? (
               <OfficialAccountsNavSection>
                 <OfficialAccountsNavLink
                   href={inspectorExamOfficialsItem.href}
                   active={inspectorExamOfficialsItem.active}
+                  onNavigate={() => setSidebarOpen(false)}
+                />
+                <AllowancesSubNavLink
+                  href={OFFICIAL_ACCOUNTS_INSPECTOR_ATTENDANCE_HREF}
+                  active={attendanceSheetsActive}
                   onNavigate={() => setSidebarOpen(false)}
                 />
               </OfficialAccountsNavSection>

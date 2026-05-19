@@ -2589,3 +2589,246 @@ export async function downloadScriptsAllocationFormPdf(
   const path = `/allocation-runs/${encodeURIComponent(runId)}/scripts-allocation-form.pdf${qs ? `?${qs}` : ""}`;
   await downloadApiFile(path, filename);
 }
+
+export type AttendanceSheet = {
+  id: string;
+  examination_id: number;
+  inspector_exam_posting_id: string;
+  center_id: string;
+  center_code: string;
+  center_name: string;
+  examination_date: string;
+  notes: string | null;
+  original_filename: string;
+  size_bytes: number;
+  uploaded_by_id: string | null;
+  created_at: string;
+};
+
+export type AttendanceSheetListResponse = {
+  items: AttendanceSheet[];
+  total: number;
+};
+
+export type AttendanceSheetScheduledDatesResponse = {
+  dates: string[];
+};
+
+export type AttendanceSheetAdmin = AttendanceSheet & {
+  inspector_user_id: string;
+  inspector_full_name: string;
+  inspector_phone: string | null;
+};
+
+export type AttendanceSheetAdminListResponse = {
+  items: AttendanceSheetAdmin[];
+  total: number;
+  page: number;
+  page_size: number;
+};
+
+export type AttendanceSheetAdminSummary = {
+  total_uploads: number;
+  centres_with_uploads: number;
+  centres_expected: number | null;
+  centres_missing: number | null;
+};
+
+export type AttendanceCentreComplianceItem = {
+  center_id: string;
+  center_code: string;
+  center_name: string;
+  inspector_user_id: string;
+  inspector_full_name: string;
+  inspector_phone: string | null;
+  file_count: number;
+  upload_status: "uploaded" | "missing";
+};
+
+export type AttendanceCentreComplianceListResponse = {
+  items: AttendanceCentreComplianceItem[];
+  total: number;
+};
+
+export type AttendanceUploadStatusFilter = "all" | "uploaded" | "missing";
+
+function attendanceSheetsPostingQuery(postingId?: string | null): string {
+  const q = new URLSearchParams();
+  if (postingId?.trim()) q.set("posting_id", postingId.trim());
+  const s = q.toString();
+  return s ? `?${s}` : "";
+}
+
+export async function getInspectorAttendanceScheduledDates(
+  examId: number,
+  postingId?: string | null,
+): Promise<AttendanceSheetScheduledDatesResponse> {
+  return apiJson<AttendanceSheetScheduledDatesResponse>(
+    `/examinations/${examId}/attendance-sheets/scheduled-dates${attendanceSheetsPostingQuery(postingId)}`,
+  );
+}
+
+export async function listInspectorAttendanceSheets(
+  examId: number,
+  options?: { postingId?: string | null; examinationDate?: string | null },
+): Promise<AttendanceSheetListResponse> {
+  const q = new URLSearchParams();
+  if (options?.postingId?.trim()) q.set("posting_id", options.postingId.trim());
+  if (options?.examinationDate?.trim()) q.set("examination_date", options.examinationDate.trim());
+  const s = q.toString();
+  return apiJson<AttendanceSheetListResponse>(
+    `/examinations/${examId}/attendance-sheets${s ? `?${s}` : ""}`,
+  );
+}
+
+export async function uploadInspectorAttendanceSheet(
+  examId: number,
+  examinationDate: string,
+  file: File,
+  options?: { notes?: string | null; postingId?: string | null },
+): Promise<AttendanceSheet> {
+  const token = getStoredToken();
+  if (!token) throw new Error("Not authenticated");
+
+  const formData = new FormData();
+  formData.append("examination_date", examinationDate);
+  if (options?.notes != null && options.notes.trim() !== "") {
+    formData.append("notes", options.notes.trim());
+  }
+  formData.append("file", file);
+
+  const q = attendanceSheetsPostingQuery(options?.postingId);
+  const res = await fetch(`${getApiBaseUrl()}/examinations/${examId}/attendance-sheets${q}`, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${token}` },
+    body: formData,
+  });
+  if (!res.ok) {
+    throw new Error(await parseErrorMessage(res));
+  }
+  return (await res.json()) as AttendanceSheet;
+}
+
+export async function downloadInspectorAttendanceSheet(
+  examId: number,
+  sheet: AttendanceSheet,
+  postingId?: string | null,
+): Promise<void> {
+  await downloadApiFile(
+    `/examinations/${examId}/attendance-sheets/${sheet.id}/file${attendanceSheetsPostingQuery(postingId)}`,
+    sheet.original_filename,
+  );
+}
+
+export async function deleteInspectorAttendanceSheet(
+  examId: number,
+  sheetId: string,
+  postingId?: string | null,
+): Promise<void> {
+  await apiFetch(
+    `/examinations/${examId}/attendance-sheets/${sheetId}${attendanceSheetsPostingQuery(postingId)}`,
+    { method: "DELETE" },
+  );
+}
+
+export async function getAdminAttendanceScheduledDates(
+  examId: number,
+): Promise<AttendanceSheetScheduledDatesResponse> {
+  return apiJson<AttendanceSheetScheduledDatesResponse>(
+    `/admin/examinations/${examId}/attendance-sheets/scheduled-dates`,
+  );
+}
+
+export async function getAdminAttendanceSheetSummary(
+  examId: number,
+  params?: { examinationDate?: string | null; search?: string | null },
+): Promise<AttendanceSheetAdminSummary> {
+  const q = new URLSearchParams();
+  if (params?.examinationDate?.trim()) q.set("examination_date", params.examinationDate.trim());
+  if (params?.search?.trim()) q.set("q", params.search.trim());
+  const s = q.toString();
+  return apiJson<AttendanceSheetAdminSummary>(
+    `/admin/examinations/${examId}/attendance-sheets/summary${s ? `?${s}` : ""}`,
+  );
+}
+
+export async function listAdminAttendanceComplianceCentres(
+  examId: number,
+  params: {
+    examinationDate: string;
+    uploadStatus?: AttendanceUploadStatusFilter;
+    search?: string | null;
+  },
+): Promise<AttendanceCentreComplianceListResponse> {
+  const q = new URLSearchParams();
+  q.set("examination_date", params.examinationDate.trim());
+  if (params.uploadStatus && params.uploadStatus !== "all") {
+    q.set("upload_status", params.uploadStatus);
+  }
+  if (params.search?.trim()) q.set("q", params.search.trim());
+  return apiJson<AttendanceCentreComplianceListResponse>(
+    `/admin/examinations/${examId}/attendance-sheets/compliance-centres?${q.toString()}`,
+  );
+}
+
+export async function listAdminAttendanceSheets(
+  examId: number,
+  params?: {
+    page?: number;
+    pageSize?: number;
+    centerId?: string | null;
+    examinationDate?: string | null;
+    inspectorUserId?: string | null;
+    search?: string | null;
+  },
+): Promise<AttendanceSheetAdminListResponse> {
+  const q = new URLSearchParams();
+  if (params?.page != null) q.set("page", String(params.page));
+  if (params?.pageSize != null) q.set("page_size", String(params.pageSize));
+  if (params?.centerId?.trim()) q.set("center_id", params.centerId.trim());
+  if (params?.examinationDate?.trim()) q.set("examination_date", params.examinationDate.trim());
+  if (params?.inspectorUserId?.trim()) q.set("inspector_user_id", params.inspectorUserId.trim());
+  if (params?.search?.trim()) q.set("q", params.search.trim());
+  const s = q.toString();
+  return apiJson<AttendanceSheetAdminListResponse>(
+    `/admin/examinations/${examId}/attendance-sheets${s ? `?${s}` : ""}`,
+  );
+}
+
+export async function downloadAdminAttendanceSheet(
+  examId: number,
+  sheet: AttendanceSheetAdmin | AttendanceSheet,
+): Promise<void> {
+  await downloadApiFile(
+    `/admin/examinations/${examId}/attendance-sheets/${sheet.id}/file`,
+    sheet.original_filename,
+  );
+}
+
+export async function downloadAdminAttendanceSheetsZip(
+  examId: number,
+  params: {
+    centerId: string;
+    examinationDate?: string | null;
+    search?: string | null;
+  },
+  filename: string,
+): Promise<void> {
+  const q = new URLSearchParams();
+  q.set("center_id", params.centerId);
+  if (params.examinationDate?.trim()) q.set("examination_date", params.examinationDate.trim());
+  if (params.search?.trim()) q.set("q", params.search.trim());
+  await downloadApiFile(
+    `/admin/examinations/${examId}/attendance-sheets/download-zip?${q.toString()}`,
+    filename,
+  );
+}
+
+/** Fetch attendance sheet bytes for in-browser preview. Caller must revoke blob URLs. */
+export async function fetchAdminAttendanceSheetBlob(
+  examId: number,
+  sheetId: string,
+): Promise<Blob> {
+  const res = await apiFetch(`/admin/examinations/${examId}/attendance-sheets/${sheetId}/file`);
+  return res.blob();
+}
