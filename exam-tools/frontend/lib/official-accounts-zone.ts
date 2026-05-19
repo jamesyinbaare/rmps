@@ -2,10 +2,12 @@ import { cn } from "@/lib/utils";
 
 export const OFFICIAL_ACCOUNTS_ADMIN_HREF = "/dashboard/admin/exam-officials";
 export const OFFICIAL_ACCOUNTS_INSPECTOR_HREF = "/dashboard/inspector/exam-officials";
+export const OFFICIAL_ACCOUNTS_INSPECTOR_ATTENDANCE_HREF = "/dashboard/inspector/attendance-sheets";
 
 export const OFFICIAL_ACCOUNTS_PATHS = [
   OFFICIAL_ACCOUNTS_ADMIN_HREF,
   OFFICIAL_ACCOUNTS_INSPECTOR_HREF,
+  OFFICIAL_ACCOUNTS_INSPECTOR_ATTENDANCE_HREF,
 ] as const;
 
 export const OFFICIAL_ACCOUNTS_ZONE_ATTR = {
@@ -13,7 +15,11 @@ export const OFFICIAL_ACCOUNTS_ZONE_ATTR = {
 } as const;
 
 export function isOfficialAccountsHref(href: string): boolean {
-  return href === OFFICIAL_ACCOUNTS_ADMIN_HREF || href === OFFICIAL_ACCOUNTS_INSPECTOR_HREF;
+  return (
+    href === OFFICIAL_ACCOUNTS_ADMIN_HREF ||
+    href === OFFICIAL_ACCOUNTS_INSPECTOR_HREF ||
+    href === OFFICIAL_ACCOUNTS_INSPECTOR_ATTENDANCE_HREF
+  );
 }
 
 export function isOfficialAccountsPath(pathname: string): boolean {

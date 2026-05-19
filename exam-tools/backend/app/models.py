@@ -1046,6 +1046,55 @@ class InspectorExamPosting(Base):
     )
 
 
+class InspectorAttendanceSheet(Base):
+    """Inspector-uploaded attendance sheet (PDF/image) for an examination centre host and scheduled date."""
+
+    __tablename__ = "inspector_attendance_sheets"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    examination_id = Column(Integer, ForeignKey("examinations.id", ondelete="CASCADE"), nullable=False, index=True)
+    inspector_exam_posting_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("inspector_exam_postings.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    center_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("schools.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+        doc="Examination centre host school id.",
+    )
+    examination_date = Column(Date, nullable=False)
+    notes = Column(Text, nullable=True)
+    original_filename = Column(String(512), nullable=False)
+    stored_path = Column(String(512), unique=True, nullable=False)
+    content_type = Column(String(255), nullable=True)
+    size_bytes = Column(Integer, nullable=False)
+    uploaded_by_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True, index=True)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+
+    examination = relationship("Examination", backref="inspector_attendance_sheets")
+    inspector_exam_posting = relationship("InspectorExamPosting", backref="attendance_sheets")
+    center = relationship("School", foreign_keys=[center_id], backref="inspector_attendance_sheets_as_center")
+    uploaded_by = relationship("User", foreign_keys=[uploaded_by_id])
+
+    __table_args__ = (
+        Index(
+            "ix_inspector_attendance_sheets_exam_posting",
+            "examination_id",
+            "inspector_exam_posting_id",
+        ),
+        Index(
+            "ix_inspector_attendance_sheets_exam_center_date",
+            "examination_id",
+            "center_id",
+            "examination_date",
+        ),
+    )
+
+
 class QuestionPaperControl(Base):
     """Per examination centre (host school), subject, paper, and series: question paper stock counts."""
 

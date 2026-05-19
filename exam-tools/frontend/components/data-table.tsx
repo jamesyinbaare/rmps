@@ -32,6 +32,7 @@ type DataTableProps<TData> = {
   showFooter?: boolean;
   /** Alternate row background; body cells use `bg-inherit` so row color shows through (pair with sticky `bg-inherit` in column meta). */
   striped?: boolean;
+  onRowClick?: (row: TData) => void;
 };
 
 function metaClasses(
@@ -58,6 +59,7 @@ export function DataTable<TData>({
   emptyMessage = "No results.",
   showFooter = true,
   striped = false,
+  onRowClick,
 }: DataTableProps<TData>) {
   const colCount = table.getAllColumns().length;
   const hasFooter = showFooter && table.getAllColumns().some((c) => c.columnDef.footer != null);
@@ -109,9 +111,11 @@ export function DataTable<TData>({
               <TableRow
                 key={row.id}
                 data-state={row.getIsSelected() && "selected"}
-                className={
-                  striped ? (row.index % 2 === 0 ? "bg-card" : "bg-muted/30") : undefined
-                }
+                className={cn(
+                  striped ? (row.index % 2 === 0 ? "bg-card" : "bg-muted/30") : undefined,
+                  onRowClick && "cursor-pointer hover:bg-muted/50",
+                )}
+                onClick={onRowClick ? () => onRowClick(row.original) : undefined}
               >
                 {row.getVisibleCells().map((cell) => {
                   const stickyOpaque = Boolean(

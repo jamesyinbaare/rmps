@@ -19,6 +19,7 @@ from app.routers import (
     admin_inspector_postings,
     admin_sms_deliveries,
     admin_system,
+    attendance_sheets,
     auth,
     bank_branches,
     depots,
@@ -203,6 +204,8 @@ app.include_router(admin_inspector_postings.router)
 app.include_router(admin_sms_deliveries.router)
 app.include_router(admin_system.router)
 app.include_router(documents.router)
+app.include_router(attendance_sheets.inspector_router)
+app.include_router(attendance_sheets.admin_router)
 
 
 @app.get("/", status_code=status.HTTP_200_OK)
