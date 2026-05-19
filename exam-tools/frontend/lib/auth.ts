@@ -130,6 +130,25 @@ export async function parseErrorMessage(res: Response): Promise<string> {
   return fallback;
 }
 
+const API_NETWORK_ERROR_DEV =
+  "Network error: could not reach the API. Check that the backend is running, NEXT_PUBLIC_API_BASE_URL matches the server, and browser devtools Network tab for CORS or blocked requests.";
+
+const API_NETWORK_ERROR_PROD =
+  "Unable to connect to the server. Please check your connection and try again later.";
+
+/** True on localhost; also when Next dev server runs (NODE_ENV is forced to development). */
+export function useDetailedApiNetworkErrors(): boolean {
+  if (typeof window !== "undefined") {
+    const host = window.location.hostname;
+    return host === "localhost" || host === "127.0.0.1";
+  }
+  return process.env.NODE_ENV !== "production";
+}
+
+export function apiNetworkErrorMessage(): string {
+  return useDetailedApiNetworkErrors() ? API_NETWORK_ERROR_DEV : API_NETWORK_ERROR_PROD;
+}
+
 export function parseJwtPayload(token: string): Record<string, unknown> | null {
   try {
     const parts = token.split(".");

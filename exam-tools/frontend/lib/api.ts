@@ -1,4 +1,10 @@
-import { getApiBaseUrl, getStoredToken, parseErrorMessage } from "@/lib/auth";
+import {
+  apiNetworkErrorMessage,
+  getApiBaseUrl,
+  getStoredToken,
+  parseErrorMessage,
+  useDetailedApiNetworkErrors,
+} from "@/lib/auth";
 
 export type School = {
   id: string;
@@ -405,9 +411,10 @@ export async function apiFetch(path: string, init: RequestInit = {}): Promise<Re
     });
   } catch (e) {
     if (e instanceof TypeError) {
-      throw new Error(
-        "Network error: could not reach the API. Check that the backend is running, NEXT_PUBLIC_API_BASE_URL matches the server, and browser devtools Network tab for CORS or blocked requests.",
-      );
+      if (useDetailedApiNetworkErrors()) {
+        console.error("API fetch failed:", url, e);
+      }
+      throw new Error(apiNetworkErrorMessage());
     }
     throw e;
   }
