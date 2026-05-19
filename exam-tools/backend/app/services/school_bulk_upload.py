@@ -37,8 +37,9 @@ def read_upload_as_dataframe(
 ) -> pd.DataFrame:
     """Load CSV or Excel bytes into a DataFrame.
 
-    When ``all_columns_as_string`` is True (inspector phone uploads), read every cell as
-    str so Excel does not coerce phone numbers to floats and strip leading zeros. Uses
+    When ``all_columns_as_string`` is True (inspector phone and bank branch uploads), read
+    every cell as str so Excel does not coerce numeric-looking values to floats and strip
+    leading zeros. Uses
     ``keep_default_na=False`` so empty cells become "" instead of NaN.
     """
     name = (filename or "unknown").lower()
