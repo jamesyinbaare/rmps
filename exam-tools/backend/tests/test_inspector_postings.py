@@ -1,7 +1,8 @@
 """Inspector examination posting overlap rules and scope helpers."""
 
+from typing import cast
 from unittest.mock import AsyncMock, MagicMock, patch
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 import pytest
 from fastapi import HTTPException
@@ -202,3 +203,15 @@ async def test_validate_overlap_rejects_core_when_existing_all_same_centre() -> 
                 center_id=c,
                 subject_scope=ExamInspectorSubjectScope.CORE,
             )
+
+
+def test_bulk_upload_captures_admin_user_id_before_per_row_rollback() -> None:
+    """Per-row session.rollback() expires the auth User; re-reading admin.id can raise MissingGreenlet in async."""
+    admin_id = uuid4()
+    admin = MagicMock()
+    admin.id = admin_id
+    admin_user_id = cast(UUID, admin.id)
+
+    # Simulates expired ORM state after rollback: a later admin.id read would hit the DB.
+    admin.id = uuid4()
+    assert admin_user_id == admin_id

@@ -421,6 +421,7 @@ async def bulk_upload_inspectors(
     successful = 0
     failed = len(errors)
     created: list[InspectorBulkCreatedRow] = []
+    admin_user_id = cast(UUID, admin.id)
 
     for row_number, phone_number, full_name, password in row_specs:
         if phone_number in seen_in_file:
@@ -476,7 +477,7 @@ async def bulk_upload_inspectors(
             session=session,
             user_id=user.id,
             trigger="bulk_create",
-            triggered_by_user_id=admin.id,
+            triggered_by_user_id=admin_user_id,
         )
         created.append(
             InspectorBulkCreatedRow(
