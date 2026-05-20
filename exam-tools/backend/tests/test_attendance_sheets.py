@@ -13,6 +13,7 @@ from app.services.attendance_sheet_files import (
     build_attendance_sheet_filename,
 )
 from app.routers.attendance_sheets import admin_attendance_list_search_pattern
+from app.services.script_control import assert_script_packing_calendar_allowed
 from app.services.timetable_dates import timetable_filter_for_inspector_scope
 
 
@@ -68,6 +69,17 @@ def test_admin_attendance_list_search_pattern() -> None:
     assert admin_attendance_list_search_pattern("") is None
     assert admin_attendance_list_search_pattern("   ") is None
     assert admin_attendance_list_search_pattern("  Wesley  ") == "%Wesley%"
+
+
+def test_assert_script_packing_calendar_allowed_blocks_future_date() -> None:
+    today = date(2026, 5, 20)
+    with pytest.raises(ValueError, match="on or after the scheduled examination date"):
+        assert_script_packing_calendar_allowed(date(2026, 5, 21), today)
+
+
+def test_assert_script_packing_calendar_allowed_allows_same_day() -> None:
+    today = date(2026, 5, 20)
+    assert_script_packing_calendar_allowed(date(2026, 5, 20), today)
 
 
 def test_timetable_filter_for_inspector_scope() -> None:

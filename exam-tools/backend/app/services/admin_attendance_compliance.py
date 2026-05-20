@@ -12,10 +12,18 @@ from sqlalchemy.orm import joinedload
 
 from app.models import InspectorAttendanceSheet, InspectorExamPosting, School, User
 from app.services.inspector_posting import InspectorWorkspaceContext, assert_centre_host_school
+from app.services.script_control import script_packing_today_in_configured_zone
 from app.services.timetable_dates import scheduled_examination_dates_for_inspector_workspace
 from app.services.timetable_service import center_scope_school_ids
 
 UploadStatusFilter = str  # "all" | "uploaded" | "missing"
+
+
+def attendance_upload_status(examination_date: date, today: date, file_count: int) -> str:
+    """uploaded | missing | not_due (before the scheduled examination day)."""
+    if today < examination_date:
+        return "not_due"
+    return "uploaded" if file_count > 0 else "missing"
 
 
 @dataclass(frozen=True)
@@ -27,7 +35,7 @@ class ExpectedCentreRow:
     inspector_full_name: str
     inspector_phone: str | None
     file_count: int
-    upload_status: str  # "uploaded" | "missing"
+    upload_status: str  # "uploaded" | "missing" | "not_due"
 
 
 async def _scheduled_dates_for_posting(
@@ -87,6 +95,7 @@ async def expected_centres_for_examination_date(
     )
     postings = list((await session.execute(stmt)).scalars().unique().all())
     upload_counts = await _upload_counts_by_center(session, examination_id, examination_date)
+    today = script_packing_today_in_configured_zone()
     date_cache: dict[UUID, set[date]] = {}
     by_center: dict[UUID, ExpectedCentreRow] = {}
 
@@ -110,7 +119,7 @@ async def expected_centres_for_examination_date(
             inspector_full_name=insp.full_name if insp else "—",
             inspector_phone=insp.phone_number if insp else None,
             file_count=count,
-            upload_status="uploaded" if count > 0 else "missing",
+            upload_status=attendance_upload_status(examination_date, today, count),
         )
     return by_center
 

@@ -44,6 +44,10 @@ from app.services.attendance_sheet_files import (
 from app.services.exam_documents import ensure_storage_dir
 from app.services.exam_timetable_pdf import load_examination_or_raise
 from app.services.inspector_posting import resolve_inspector_workspace
+from app.services.script_control import (
+    assert_script_packing_calendar_allowed,
+    script_packing_today_in_configured_zone,
+)
 from app.services.timetable_dates import (
     scheduled_examination_dates_for_exam,
     scheduled_examination_dates_for_inspector_workspace,
@@ -138,7 +142,10 @@ async def list_scheduled_dates(
 ) -> AttendanceSheetScheduledDatesResponse:
     ctx = await _resolve_inspector_ctx(session, examination_id, user, posting_id, jwt_posting_id)
     dates = await scheduled_examination_dates_for_inspector_workspace(session, examination_id, ctx)
-    return AttendanceSheetScheduledDatesResponse(dates=dates)
+    return AttendanceSheetScheduledDatesResponse(
+        dates=dates,
+        today=script_packing_today_in_configured_zone(),
+    )
 
 
 @inspector_router.get("", response_model=AttendanceSheetListResponse)
@@ -188,6 +195,14 @@ async def upload_inspector_attendance_sheet(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="examination_date is not a scheduled date for this examination centre",
         )
+
+    try:
+        assert_script_packing_calendar_allowed(
+            examination_date,
+            script_packing_today_in_configured_zone(),
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e)) from None
 
     raw = await file.read()
     try:
@@ -333,7 +348,10 @@ async def admin_attendance_scheduled_dates(
     except ValueError:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Examination not found") from None
     dates = await scheduled_examination_dates_for_exam(session, examination_id)
-    return AttendanceSheetScheduledDatesResponse(dates=dates)
+    return AttendanceSheetScheduledDatesResponse(
+        dates=dates,
+        today=script_packing_today_in_configured_zone(),
+    )
 
 
 @admin_router.get("/summary", response_model=AttendanceSheetAdminSummaryResponse)

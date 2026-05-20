@@ -8,6 +8,7 @@ from pydantic import BaseModel, Field
 
 class AttendanceSheetScheduledDatesResponse(BaseModel):
     dates: list[date]
+    today: date
 
 
 class AttendanceSheetResponse(BaseModel):
@@ -60,7 +61,7 @@ class AttendanceCentreComplianceItem(BaseModel):
     inspector_full_name: str
     inspector_phone: str | None = None
     file_count: int = 0
-    upload_status: str  # "uploaded" | "missing"
+    upload_status: str  # "uploaded" | "missing" | "not_due"
 
 
 class AttendanceCentreComplianceListResponse(BaseModel):

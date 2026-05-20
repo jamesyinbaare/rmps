@@ -2684,6 +2684,7 @@ export type AttendanceSheetListResponse = {
 
 export type AttendanceSheetScheduledDatesResponse = {
   dates: string[];
+  today: string;
 };
 
 export type AttendanceSheetAdmin = AttendanceSheet & {
@@ -2714,7 +2715,7 @@ export type AttendanceCentreComplianceItem = {
   inspector_full_name: string;
   inspector_phone: string | null;
   file_count: number;
-  upload_status: "uploaded" | "missing";
+  upload_status: "uploaded" | "missing" | "not_due";
 };
 
 export type AttendanceCentreComplianceListResponse = {

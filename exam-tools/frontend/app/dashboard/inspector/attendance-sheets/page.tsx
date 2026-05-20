@@ -31,8 +31,16 @@ const btnFilePicker =
 const panelClass = "rounded-2xl border border-border bg-card p-4 sm:p-6";
 
 type DateGroup = { date: string; sheets: AttendanceSheet[] };
-type DateStatus = { date: string; sheets: AttendanceSheet[]; status: "uploaded" | "missing" };
+type DateStatus = {
+  date: string;
+  sheets: AttendanceSheet[];
+  status: "uploaded" | "missing";
+};
 type UploadDraft = { notes: string; file: File | null };
+
+function isSubmissionAllowed(examinationDate: string, todayIso: string): boolean {
+  return examinationDate <= todayIso;
+}
 
 function localTodayIso(): string {
   const d = new Date();
@@ -75,8 +83,11 @@ function groupSheetsByDate(items: AttendanceSheet[]): Map<string, AttendanceShee
   return map;
 }
 
-function buildDateStatuses(scheduledDates: string[], sheetsByDate: Map<string, AttendanceSheet[]>): DateStatus[] {
-  return scheduledDates.map((date) => {
+function buildDateStatuses(
+  actionableDates: string[],
+  sheetsByDate: Map<string, AttendanceSheet[]>,
+): DateStatus[] {
+  return actionableDates.map((date) => {
     const sheets = sheetsByDate.get(date) ?? [];
     return {
       date,
@@ -163,6 +174,9 @@ function AttendanceDateOverview({ statuses, todayIso, onSelectDate }: Attendance
           status === "uploaded"
             ? `${sheets.length} ${sheets.length === 1 ? "file" : "files"}`
             : "Missing";
+        const statusDotClass =
+          status === "uploaded" ? "bg-success" : "border-2 border-muted-foreground/50 bg-transparent";
+        const countClass = status === "uploaded" ? "text-muted-foreground" : "text-destructive";
         return (
           <li key={date}>
             <button
@@ -170,10 +184,7 @@ function AttendanceDateOverview({ statuses, todayIso, onSelectDate }: Attendance
               onClick={() => onSelectDate(date)}
               className="flex min-h-12 w-full items-center gap-3 px-3 py-3 text-left transition-colors hover:bg-muted/50 focus:outline-none focus-visible:bg-muted/50 focus-visible:ring-2 focus-visible:ring-ring/30"
             >
-              <span
-                className={`flex h-2.5 w-2.5 shrink-0 rounded-full ${status === "uploaded" ? "bg-success" : "border-2 border-muted-foreground/50 bg-transparent"}`}
-                aria-hidden
-              />
+              <span className={`flex h-2.5 w-2.5 shrink-0 rounded-full ${statusDotClass}`} aria-hidden />
               <span className="min-w-0 flex-1">
                 <span className="block text-sm font-medium text-foreground">{formatExamDateLabel(date)}</span>
                 {isToday ? (
@@ -182,11 +193,7 @@ function AttendanceDateOverview({ statuses, todayIso, onSelectDate }: Attendance
                   </span>
                 ) : null}
               </span>
-              <span
-                className={`shrink-0 text-xs font-medium tabular-nums ${status === "uploaded" ? "text-muted-foreground" : "text-destructive"}`}
-              >
-                {countLabel}
-              </span>
+              <span className={`shrink-0 text-xs font-medium tabular-nums ${countClass}`}>{countLabel}</span>
             </button>
           </li>
         );
@@ -354,7 +361,8 @@ function AttendanceDateGroup({
 
 export default function InspectorAttendanceSheetsPage() {
   const router = useRouter();
-  const todayIso = useMemo(() => localTodayIso(), []);
+  const [serverToday, setServerToday] = useState<string | null>(null);
+  const todayIso = serverToday ?? localTodayIso();
   const [exam, setExam] = useState<Examination | null>(null);
   const [postingId, setPostingId] = useState<string | null>(null);
   const [centreLabel, setCentreLabel] = useState<string>("");
@@ -374,15 +382,24 @@ export default function InspectorAttendanceSheetsPage() {
   const chooseFileRefs = useRef<Record<string, HTMLInputElement | null>>({});
 
   const sheetsByDate = useMemo(() => groupSheetsByDate(items), [items]);
-  const dateStatuses = useMemo(
-    () => buildDateStatuses(scheduledDates, sheetsByDate),
-    [scheduledDates, sheetsByDate],
+  const actionableDates = useMemo(
+    () => scheduledDates.filter((d) => isSubmissionAllowed(d, todayIso)),
+    [scheduledDates, todayIso],
   );
-  const dateGroups = useMemo(() => buildDateGroups(scheduledDates, sheetsByDate), [scheduledDates, sheetsByDate]);
+  const nextUpcomingDate = useMemo(() => {
+    const upcoming = scheduledDates.filter((d) => d > todayIso).sort((a, b) => a.localeCompare(b));
+    return upcoming[0];
+  }, [scheduledDates, todayIso]);
+  const dateStatuses = useMemo(
+    () => buildDateStatuses(actionableDates, sheetsByDate),
+    [actionableDates, sheetsByDate],
+  );
+  const dateGroups = useMemo(() => buildDateGroups(actionableDates, sheetsByDate), [actionableDates, sheetsByDate]);
 
   const totalFiles = items.length;
   const todayMissing =
-    scheduledDates.includes(todayIso) && (sheetsByDate.get(todayIso)?.length ?? 0) === 0;
+    actionableDates.includes(todayIso) && (sheetsByDate.get(todayIso)?.length ?? 0) === 0;
+  const noDueDaysYet = !loading && scheduledDates.length > 0 && actionableDates.length === 0;
 
   const getDraft = useCallback(
     (date: string): UploadDraft => draftByDate[date] ?? emptyDraft(),
@@ -412,6 +429,7 @@ export default function InspectorAttendanceSheetsPage() {
     const dates = Array.isArray(datesRes.dates) ? [...datesRes.dates] : [];
     dates.sort((a, b) => b.localeCompare(a));
     setScheduledDates(dates);
+    setServerToday(datesRes.today ?? null);
     setItems(Array.isArray(listRes.items) ? listRes.items : []);
   }, []);
 
@@ -468,6 +486,7 @@ export default function InspectorAttendanceSheetsPage() {
   async function onUpload(date: string, e: FormEvent) {
     e.preventDefault();
     if (!exam) return;
+    if (!isSubmissionAllowed(date, todayIso)) return;
     const draft = getDraft(date);
     if (!draft.file) return;
 
@@ -566,11 +585,27 @@ export default function InspectorAttendanceSheetsPage() {
               <p className="mt-1.5 text-base font-semibold leading-snug text-foreground">{centreLabel || "—"}</p>
             )}
             <p className="mt-2 text-sm text-muted-foreground">
-              Upload a PDF or photo of the attendance sheet for each scheduled examination day.
+              Upload a signed PDFs or photos of the attendance sheets for each examination day.
             </p>
+            {!loading && nextUpcomingDate ? (
+              <p className="mt-1.5 text-xs text-muted-foreground">
+                Next examination day: {formatExamDateLabel(nextUpcomingDate)}
+              </p>
+            ) : null}
           </header>
 
-          {!loading && scheduledDates.length > 0 ? (
+          {noDueDaysYet ? (
+            <section className={panelClass}>
+              <p className="text-sm text-muted-foreground">No examination day is due for upload yet.</p>
+              {nextUpcomingDate ? (
+                <p className="mt-2 text-sm font-medium text-foreground">
+                  Next day: {formatExamDateLabel(nextUpcomingDate)}
+                </p>
+              ) : null}
+            </section>
+          ) : null}
+
+          {!loading && actionableDates.length > 0 ? (
             <section className={panelClass}>
               <h2 className="text-base font-semibold text-card-foreground sm:text-lg">Examination days</h2>
               <p className="mt-1 text-sm text-muted-foreground">
@@ -593,6 +628,7 @@ export default function InspectorAttendanceSheetsPage() {
             </section>
           ) : null}
 
+          {(actionableDates.length > 0 || loading) ? (
           <section className="space-y-4">
             <div className="px-1">
               <h2 className="text-base font-semibold text-card-foreground sm:text-lg">Attendance by day</h2>
@@ -603,7 +639,7 @@ export default function InspectorAttendanceSheetsPage() {
 
             {loading ? (
               <p className={`${panelClass} text-center text-sm text-muted-foreground`}>Loading…</p>
-            ) : scheduledDates.length === 0 ? null : (
+            ) : actionableDates.length === 0 ? null : (
               <div className="space-y-3">
                 {dateGroups.map((group) => (
                   <AttendanceDateGroup
@@ -642,6 +678,7 @@ export default function InspectorAttendanceSheetsPage() {
               </div>
             )}
           </section>
+          ) : null}
         </div>
 
         {!loading && todayMissing ? (
