@@ -226,7 +226,7 @@ async def upload_inspector_attendance_sheet(
     )
 
     try:
-        stored_name = write_attendance_sheet_file(raw, ext)
+        stored_name = write_attendance_sheet_file(raw, examination_id, display_name)
     except AttendanceSheetUploadError as e:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e)) from e
 

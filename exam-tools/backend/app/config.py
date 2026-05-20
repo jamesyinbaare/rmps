@@ -81,7 +81,8 @@ class Settings(BaseSettings):
     gcs_credentials_path: str = ""
     # Object prefix inside the bucket for exam document blobs (no leading slash)
     gcs_documents_prefix: str = "exam-tools/documents"
-
+    # Object prefix for inspector attendance sheet blobs (separate from exam documents)
+    gcs_attendance_sheets_prefix: str = "exam-tools/attendance-sheets"
 
 
     # System-wide examination used for inspector sign-in (centre + phone + password + subject_scope → posting).

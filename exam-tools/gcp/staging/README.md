@@ -29,7 +29,7 @@ Root files:
 
 2. **VM**: Create an Ubuntu 22.04 VM (e.g. `e2-medium`), attach a service account with **`roles/cloudsql.client`**, **`roles/storage.objectAdmin`** (or `objectCreator` + `objectViewer` if you tighten IAM), and Secret Manager access if you use it. Tag the VM (e.g. `exam-tools-staging`) for firewall rules.
 
-3. **GCS bucket**: Create a bucket (e.g. in `europe-west9`). Set `STORAGE_BACKEND=gcs`, `GCS_BUCKET_NAME`, and `GCS_PROJECT_ID` in `.env.staging.gcp`. Exam documents are stored under the prefix from `GCS_DOCUMENTS_PREFIX` (default `exam-tools/documents`). To migrate existing local files from a dev machine, use [`scripts/migrate-storage-to-gcs.sh`](scripts/migrate-storage-to-gcs.sh).
+3. **GCS bucket**: Create a bucket (e.g. in `europe-west9`). Set `STORAGE_BACKEND=gcs`, `GCS_BUCKET_NAME`, and `GCS_PROJECT_ID` in `.env.staging.gcp`. Exam documents are stored under the prefix from `GCS_DOCUMENTS_PREFIX` (default `exam-tools/documents`). Inspector attendance sheets use a separate prefix, `GCS_ATTENDANCE_SHEETS_PREFIX` (default `exam-tools/attendance-sheets`), with human-readable filenames per examination. To migrate existing local files from a dev machine, use [`scripts/migrate-storage-to-gcs.sh`](scripts/migrate-storage-to-gcs.sh).
 
 4. **Firewall** (from your workstation, with `gcloud` configured):
 
