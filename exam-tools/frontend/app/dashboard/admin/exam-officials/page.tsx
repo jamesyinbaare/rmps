@@ -1,5 +1,6 @@
 "use client";
 
+import { useSearchParams } from "next/navigation";
 import { useCallback, useEffect, useMemo, useState } from "react";
 
 import { RoleGuard } from "@/components/role-guard";
@@ -33,10 +34,12 @@ function exportFilenameBase(exam: Examination | null): string {
 }
 
 function AdminExamOfficialsContent() {
+  const searchParams = useSearchParams();
   const [exams, setExams] = useState<Examination[]>([]);
   const [examId, setExamId] = useState<number | null>(null);
   const [centers, setCenters] = useState<ExaminationCenterListResponse["items"]>([]);
   const [centerId, setCenterId] = useState<string>("");
+  const [urlHydrated, setUrlHydrated] = useState(false);
   const [items, setItems] = useState<AdminExamCentreOfficialRow[]>([]);
   const [total, setTotal] = useState(0);
   const [page, setPage] = useState(1);
@@ -51,7 +54,24 @@ function AdminExamOfficialsContent() {
         const list = await apiJson<Examination[]>("/examinations");
         if (cancelled) return;
         setExams(list);
-        setExamId((cur) => (cur === null && list.length ? list[0]!.id : cur));
+        if (!urlHydrated) {
+          const rawExam = searchParams.get("exam");
+          if (rawExam) {
+            const n = Number.parseInt(rawExam, 10);
+            if (!Number.isNaN(n) && list.some((e) => e.id === n)) {
+              setExamId(n);
+            } else {
+              setExamId(list.length ? list[0]!.id : null);
+            }
+          } else {
+            setExamId(list.length ? list[0]!.id : null);
+          }
+          const cid = searchParams.get("centerId")?.trim();
+          if (cid) setCenterId(cid);
+          setUrlHydrated(true);
+        } else {
+          setExamId((cur) => (cur === null && list.length ? list[0]!.id : cur));
+        }
       } catch (e) {
         if (!cancelled) setLoadError(e instanceof Error ? e.message : "Failed to load examinations");
       }
@@ -59,7 +79,7 @@ function AdminExamOfficialsContent() {
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [searchParams, urlHydrated]);
 
   useEffect(() => {
     let cancelled = false;

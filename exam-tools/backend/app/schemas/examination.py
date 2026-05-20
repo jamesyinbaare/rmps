@@ -4,6 +4,8 @@ from uuid import UUID
 
 from pydantic import BaseModel, Field, field_validator
 
+from app.schemas.admin_exam_official import AdminExamCentreOfficialRow
+
 
 class ExaminationCreate(BaseModel):
     exam_type: str = Field(..., min_length=1, max_length=50)
@@ -347,6 +349,26 @@ class FinanceCentreInvigilatorSummaryShellResponse(BaseModel):
     examination_id: int
     examination_dates: list[date] = Field(default_factory=list)
     centres: list[FinanceCentreShellCentre] = Field(default_factory=list)
+
+
+class FinanceCentreSchoolSummaryRoleCounts(BaseModel):
+    external_inspector: int = Field(0, ge=0)
+    police_officer: int = Field(0, ge=0)
+    supervisor: int = Field(0, ge=0)
+    depot_keeper: int = Field(0, ge=0)
+    assistant_supervisor: int = Field(0, ge=0)
+
+
+class FinanceCentreSchoolSummaryResponse(BaseModel):
+    center_id: UUID
+    center_code: str
+    center_name: str
+    subject_filter: str
+    expected_invigilations_total: int = Field(ge=0)
+    invigilator_days_declared: int = Field(ge=0)
+    variance: int
+    role_counts: FinanceCentreSchoolSummaryRoleCounts
+    officials: list[AdminExamCentreOfficialRow] = Field(default_factory=list)
 
 
 class ExaminationScriptSeriesConfigRow(BaseModel):

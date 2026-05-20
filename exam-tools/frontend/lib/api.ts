@@ -1748,6 +1748,71 @@ export type FinanceCentreInvigilatorSummaryResponse = {
 
 export type TimetableSubjectFilter = "ALL" | "CORE_ONLY" | "ELECTIVE_ONLY";
 
+export type FinanceCentreSchoolSummaryRoleCounts = {
+  external_inspector: number;
+  police_officer: number;
+  supervisor: number;
+  depot_keeper: number;
+  assistant_supervisor: number;
+};
+
+export type FinanceCentreSchoolSummaryResponse = {
+  center_id: string;
+  center_code: string;
+  center_name: string;
+  subject_filter: TimetableSubjectFilter;
+  expected_invigilations_total: number;
+  invigilator_days_declared: number;
+  variance: number;
+  role_counts: FinanceCentreSchoolSummaryRoleCounts;
+  officials: AdminExamCentreOfficialRow[];
+};
+
+function centreSchoolSummaryQuery(params: {
+  centerId: string;
+  subject_filter?: TimetableSubjectFilter;
+}): string {
+  const q = new URLSearchParams();
+  q.set("center_id", params.centerId.trim());
+  if (params.subject_filter != null) q.set("subject_filter", params.subject_filter);
+  return `?${q.toString()}`;
+}
+
+export function schoolSummaryExportFilename(
+  centerCode: string,
+  centerName: string,
+  subjectFilter: TimetableSubjectFilter,
+): string {
+  const suffix =
+    subjectFilter === "CORE_ONLY" ? "CORE" : subjectFilter === "ELECTIVE_ONLY" ? "ELECTIVE" : "ALL";
+  return `${centerCode} ${centerName} ${suffix}.xlsx`;
+}
+
+export async function getFinanceCentreSchoolSummary(params: {
+  examId: number;
+  centerId: string;
+  subject_filter?: TimetableSubjectFilter;
+}): Promise<FinanceCentreSchoolSummaryResponse> {
+  return apiJson<FinanceCentreSchoolSummaryResponse>(
+    `/examinations/${params.examId}/finance/centre-school-summary${centreSchoolSummaryQuery(params)}`,
+  );
+}
+
+export async function downloadFinanceCentreSchoolSummaryExport(params: {
+  examId: number;
+  centerId: string;
+  subject_filter?: TimetableSubjectFilter;
+  filename: string;
+}): Promise<void> {
+  await downloadApiFile(
+    `/examinations/${params.examId}/finance/centre-school-summary/export${centreSchoolSummaryQuery({
+      centerId: params.centerId,
+      subject_filter: params.subject_filter,
+    })}`,
+    params.filename,
+  );
+}
+
 export type FinanceCentreInvigilatorSummaryShellResponse = {
   examination_id: number;
   examination_dates: string[];
