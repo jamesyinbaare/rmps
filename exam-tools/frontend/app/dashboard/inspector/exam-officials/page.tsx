@@ -109,6 +109,8 @@ function OfficialModal({
   scrollRef?: React.RefObject<HTMLDivElement | null>;
   focusNameOnMount?: boolean;
 }) {
+  const [keyboardInset, setKeyboardInset] = useState(0);
+
   useEffect(() => {
     function onKey(e: KeyboardEvent) {
       if (e.key === "Escape") {
@@ -137,6 +139,24 @@ function OfficialModal({
     };
   }, []);
 
+  useEffect(() => {
+    const vv = window.visualViewport;
+    if (!vv) return;
+
+    function update() {
+      if (!vv) return;
+      setKeyboardInset(Math.max(0, window.innerHeight - vv.height - vv.offsetTop));
+    }
+
+    update();
+    vv.addEventListener("resize", update);
+    vv.addEventListener("scroll", update);
+    return () => {
+      vv.removeEventListener("resize", update);
+      vv.removeEventListener("scroll", update);
+    };
+  }, []);
+
   const sheet = (
     <>
       <button type="button" aria-label="Close dialog" className="absolute inset-0 bg-foreground/40" onClick={onClose} />
@@ -145,7 +165,7 @@ function OfficialModal({
         aria-modal="true"
         aria-labelledby={titleId}
         aria-describedby={subtitle ? subtitleId : undefined}
-        className="relative z-10 grid w-full max-w-lg grid-rows-[auto_minmax(0,1fr)_auto] overflow-hidden rounded-t-2xl border border-border bg-card shadow-lg max-sm:max-h-[90svh] max-sm:min-h-0 sm:max-h-[min(90vh,920px)] sm:max-w-2xl sm:rounded-2xl"
+        className="relative z-10 flex min-h-0 w-full max-w-lg flex-col overflow-hidden rounded-t-2xl border border-border bg-card shadow-lg max-sm:max-h-[min(90dvh,90svh)] sm:max-h-[min(90vh,920px)] sm:max-w-2xl sm:rounded-2xl"
       >
         <div className="shrink-0 border-b border-border">
           <div
@@ -174,7 +194,7 @@ function OfficialModal({
         </div>
         <div
           ref={scrollRef}
-          className="min-h-0 overflow-y-auto overscroll-contain px-4 py-4 sm:px-5"
+          className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-4 py-4 sm:px-5"
         >
           {formError ? (
             <p
@@ -186,7 +206,12 @@ function OfficialModal({
           ) : null}
           {children}
         </div>
-        <div className="shrink-0 border-t border-border bg-card px-4 pt-3 pb-4 max-sm:pb-[max(1.25rem,env(safe-area-inset-bottom,0px))] sm:px-5">
+        <div
+          className="shrink-0 border-t border-border bg-card px-4 pt-3 sm:px-5"
+          style={{
+            paddingBottom: `max(1.25rem, calc(env(safe-area-inset-bottom, 0px) + ${keyboardInset}px))`,
+          }}
+        >
           {footer}
         </div>
       </div>
@@ -255,7 +280,7 @@ function DeleteConfirmModal({
           Remove <span className="font-medium text-foreground">{name}</span> from this centre&apos;s account-details list
           for this examination. This cannot be undone.
         </p>
-        <div className="mt-6 flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
+        <div className="mt-6 flex flex-col-reverse gap-2 max-sm:pb-[max(0px,env(safe-area-inset-bottom,0px))] sm:flex-row sm:justify-end">
           <button type="button" className={btnSecondary} onClick={onCancel} disabled={busy}>
             Cancel
           </button>
@@ -970,7 +995,7 @@ export default function InspectorExamOfficialsPage() {
                 </button>
                 <button
                   type="button"
-                  className="min-h-11 w-full shrink-0 text-sm font-medium text-muted-foreground underline-offset-2 hover:text-foreground hover:underline disabled:opacity-50 sm:order-first sm:min-h-10 sm:w-auto sm:px-3 sm:no-underline sm:hover:bg-muted"
+                  className={`${btnSecondary} sm:order-first`}
                   onClick={closeModal}
                   disabled={busy}
                 >
