@@ -37,6 +37,12 @@ _EXT_RE = re.compile(r"^\.[a-z0-9]{1,12}$")
 # stored_path in DB: uuid32hex + extension (from write_stored_file)
 _STORED_NAME_RE = re.compile(r"^[a-f0-9]{32}(\.[a-z0-9]{1,12})$")
 
+
+def is_uuid_stored_object_key(stored_path: str) -> bool:
+    """True if *stored_path* is the legacy blob suffix (32-char hex + extension) used for exam documents."""
+    return bool(_STORED_NAME_RE.match(stored_path.lower()))
+
+
 _gcs_bucket: Any = None
 
 
