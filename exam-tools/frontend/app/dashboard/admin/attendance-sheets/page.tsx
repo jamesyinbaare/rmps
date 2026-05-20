@@ -53,15 +53,25 @@ const CENTRE_LIST_LABEL_MAX_LEN = 25;
 /** Fixed master–detail height on large screens; table and centre list scroll inside. */
 const attendancePanelHeightClass = "lg:h-[min(72vh,720px)]";
 
+type CentreUploadStatus = "uploaded" | "missing" | "not_due";
+
 type CentreGroup = {
   centerId: string;
   centerCode: string;
   centerName: string;
   sheets: AttendanceSheetAdmin[];
-  uploadStatus?: "uploaded" | "missing";
+  uploadStatus?: CentreUploadStatus;
   inspectorFullName?: string;
   inspectorPhone?: string | null;
 };
+
+function localTodayIso(): string {
+  const d = new Date();
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, "0");
+  const day = String(d.getDate()).padStart(2, "0");
+  return `${y}-${m}-${day}`;
+}
 
 type PreviewKind = "pdf" | "image" | "unsupported";
 
@@ -383,6 +393,7 @@ function AttendanceSheetsContent() {
 
   const [exams, setExams] = useState<Examination[]>([]);
   const [scheduledDates, setScheduledDates] = useState<string[]>([]);
+  const [serverToday, setServerToday] = useState<string | null>(null);
   const [scheduledDatesLoading, setScheduledDatesLoading] = useState(false);
   const [examId, setExamId] = useState<number | null>(null);
   const [filterDate, setFilterDate] = useState("");
@@ -410,6 +421,8 @@ function AttendanceSheetsContent() {
 
   const useComplianceSidebar = uploadStatusFilter !== "all" && Boolean(filterDate);
   const scheduledDateSet = useMemo(() => new Set(scheduledDates), [scheduledDates]);
+  const todayIso = serverToday ?? localTodayIso();
+  const selectedDateNotYetDue = Boolean(filterDate && filterDate > todayIso);
 
   useEffect(() => {
     const t = setTimeout(() => setDebouncedSearch(searchInput.trim()), 300);
@@ -462,6 +475,7 @@ function AttendanceSheetsContent() {
   useEffect(() => {
     if (examId === null) {
       setScheduledDates([]);
+      setServerToday(null);
       return;
     }
     let cancelled = false;
@@ -472,6 +486,7 @@ function AttendanceSheetsContent() {
         if (cancelled) return;
         const dates = Array.isArray(res.dates) ? res.dates.map(String) : [];
         setScheduledDates(dates);
+        setServerToday(res.today ?? null);
       } catch {
         if (!cancelled) setScheduledDates([]);
       } finally {
@@ -1039,16 +1054,22 @@ function AttendanceSheetsContent() {
             <span className="rounded-md border border-border bg-muted/50 px-2 py-1 tabular-nums text-foreground">
               Expected: {summary.centres_expected}
             </span>
-            <span
-              className={cn(
-                "rounded-md border px-2 py-1 tabular-nums",
-                (summary.centres_missing ?? 0) > 0
-                  ? "border-destructive/40 bg-destructive/10 text-destructive"
-                  : "border-border bg-muted/50 text-foreground",
-              )}
-            >
-              Missing: {summary.centres_missing ?? 0}
-            </span>
+            {selectedDateNotYetDue ? (
+              <span className="rounded-md border border-border bg-muted/50 px-2 py-1 text-foreground">
+                Not yet due
+              </span>
+            ) : (
+              <span
+                className={cn(
+                  "rounded-md border px-2 py-1 tabular-nums",
+                  (summary.centres_missing ?? 0) > 0
+                    ? "border-destructive/40 bg-destructive/10 text-destructive"
+                    : "border-border bg-muted/50 text-foreground",
+                )}
+              >
+                Missing: {summary.centres_missing ?? 0}
+              </span>
+            )}
             <span className="text-muted-foreground">· {formatExamDateLabel(filterDate)}</span>
           </div>
         ) : null}
@@ -1129,7 +1150,8 @@ function AttendanceSheetsContent() {
               >
                 {filteredCentreGroups.map((group) => {
                   const selected = selectedGroup?.centerId === group.centerId;
-                  const uploaded = group.uploadStatus !== "missing";
+                  const uploaded = group.uploadStatus === "uploaded";
+                  const notYetDue = group.uploadStatus === "not_due";
                   const centreLabel = formatCentreListLabel(group.centerCode, group.centerName);
                   const centreLabelFull = `${group.centerCode} - ${group.centerName}`;
                   return (
@@ -1149,7 +1171,11 @@ function AttendanceSheetsContent() {
                         <span
                           className={cn(
                             "flex h-2.5 w-2.5 shrink-0 rounded-full",
-                            uploaded ? "bg-success" : "border-2 border-muted-foreground/50 bg-transparent",
+                            uploaded
+                              ? "bg-success"
+                              : notYetDue
+                                ? "border-2 border-muted-foreground/30 bg-transparent"
+                                : "border-2 border-muted-foreground/50 bg-transparent",
                           )}
                           aria-hidden
                         />
@@ -1218,7 +1244,12 @@ function AttendanceSheetsContent() {
                       </div>
                     ) : tableSheets.length === 0 ? (
                       <div className="rounded-lg border border-dashed border-border bg-muted/10 px-4 py-12 text-center text-sm text-muted-foreground">
-                        {selectedGroup.uploadStatus === "missing" ? (
+                        {selectedGroup.uploadStatus === "not_due" ? (
+                          <>
+                            Attendance submission is not yet due for this centre
+                            {filterDate ? ` on ${formatExamDateLabel(filterDate)}` : ""}.
+                          </>
+                        ) : selectedGroup.uploadStatus === "missing" ? (
                           <>
                             No attendance sheet uploaded for this centre
                             {filterDate ? ` on ${formatExamDateLabel(filterDate)}` : ""}. Contact the inspector to upload.

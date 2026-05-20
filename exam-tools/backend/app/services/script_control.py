@@ -89,7 +89,7 @@ def assert_script_packing_calendar_allowed(examination_date: date | None, today_
         return
     if today_local < examination_date:
         raise ValueError(
-            "Packing for this paper is only allowed on or after the scheduled examination date."
+            "This action is only allowed on or after the scheduled examination date."
         )
 
 
