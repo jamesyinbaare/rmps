@@ -20,6 +20,7 @@ const inputFocusRing =
 const BANK_DIRECTORY_HREF = "/dashboard/admin/bank-directory";
 const EXTERNAL_INSPECTORS_HREF = "/dashboard/admin/external-inspectors";
 const FINANCE_CENTRE_SUMMARY_HREF = "/dashboard/admin/finance-centre-summary";
+const CENTRE_SUMMARY_HREF = "/dashboard/admin/centre-summary";
 
 const nav = [
   { href: "/dashboard/admin", label: "Overview" },
@@ -63,6 +64,7 @@ const FINANCE_OFFICER_NAV: NavEntry[] = [
   { type: "link", href: OFFICIAL_ACCOUNTS_ADMIN_HREF, label: "Official account details" },
   { type: "link", href: EXTERNAL_INSPECTORS_HREF, label: "External inspectors" },
   { type: "link", href: FINANCE_CENTRE_SUMMARY_HREF, label: "Centre invigilator summary" },
+  { type: "link", href: CENTRE_SUMMARY_HREF, label: "Centre summary" },
   { type: "link", href: ATTENDANCE_SHEETS_HREF, label: "Attendance sheets" },
 ];
 
@@ -106,6 +108,7 @@ export function AdminDashboardShell({ children }: Props) {
         { type: "link", href: OFFICIAL_ACCOUNTS_ADMIN_HREF, label: "Official account details" },
         { type: "link", href: EXTERNAL_INSPECTORS_HREF, label: "External inspectors" },
         { type: "link", href: FINANCE_CENTRE_SUMMARY_HREF, label: "Centre invigilator summary" },
+        { type: "link", href: CENTRE_SUMMARY_HREF, label: "Centre summary" },
         { type: "link", href: ATTENDANCE_SHEETS_HREF, label: "Attendance sheets" },
       ];
     }
@@ -114,7 +117,9 @@ export function AdminDashboardShell({ children }: Props) {
 
   const isMonitoringOfficer = me?.role === "TEST_ADMIN_OFFICER";
   const isFinanceOfficer = me?.role === "FINANCE_OFFICER";
-  const onOfficialAccountsPage = isOfficialAccountsPath(pathname);
+  const onCentreSummaryPage =
+    pathname === CENTRE_SUMMARY_HREF || pathname.startsWith(`${CENTRE_SUMMARY_HREF}/`);
+  const onOfficialAccountsPage = isOfficialAccountsPath(pathname) && !onCentreSummaryPage;
 
   function logout() {
     clearAuth();
@@ -207,13 +212,15 @@ export function AdminDashboardShell({ children }: Props) {
       <div className="lg:pl-64">
         <DashboardStickyHeader
           title={
-            onOfficialAccountsPage
-              ? "Official account details"
-              : isMonitoringOfficer
-                ? "Exam monitoring"
-                : isFinanceOfficer
-                  ? "Finance"
-                  : "Administrator dashboard"
+            onCentreSummaryPage
+              ? "Centre summary"
+              : onOfficialAccountsPage
+                ? "Official account details"
+                : isMonitoringOfficer
+                  ? "Exam monitoring"
+                  : isFinanceOfficer
+                    ? "Finance"
+                    : "Administrator dashboard"
           }
           subtitle={
             me

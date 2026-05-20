@@ -61,6 +61,7 @@ from app.schemas.examination import (
     FinanceCentreInvigilatorSummaryItem,
     FinanceCentreInvigilatorSummaryResponse,
     FinanceCentreInvigilatorSummaryShellResponse,
+    FinanceCentreSchoolSummaryResponse,
     FinanceCentreShellCentre,
     InspectorPostedWorkspaceItem,
     MyCenterProgrammesResponse,
@@ -2133,6 +2134,100 @@ async def get_finance_centre_invigilator_summary(
         )
 
     return FinanceCentreInvigilatorSummaryResponse(examination_id=exam_id, centres=centres_out)
+
+
+@router.get(
+    "/{exam_id}/finance/centre-school-summary",
+    response_model=FinanceCentreSchoolSummaryResponse,
+)
+async def get_finance_centre_school_summary(
+    exam_id: int,
+    session: DBSessionDep,
+    _: SuperAdminOrFinanceOfficerDep,
+    center_id: UUID = Query(..., description="Examination centre host school id"),
+    subject_filter: TimetableDownloadFilter = Query(
+        TimetableDownloadFilter.ALL,
+        description="Subject scope for expected invigilation totals.",
+    ),
+) -> FinanceCentreSchoolSummaryResponse:
+    """Per-centre allowance summary: expected invigilations, role counts, and official roster."""
+    from app.services.finance_school_summary import build_finance_centre_school_summary
+
+    try:
+        ex = await load_examination_or_raise(session, exam_id)
+    except ValueError:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Examination not found") from None
+
+    hosts = await _finance_centre_hosts(session, center_id)
+    return await build_finance_centre_school_summary(
+        session,
+        ex,
+        hosts[0],
+        subject_filter,
+        build_invigilator_item=_build_finance_centre_invigilator_item,
+    )
+
+
+@router.get("/{exam_id}/finance/centre-school-summary/export")
+async def export_finance_centre_school_summary(
+    exam_id: int,
+    session: DBSessionDep,
+    _: SuperAdminOrFinanceOfficerDep,
+    center_id: UUID = Query(..., description="Examination centre host school id"),
+    subject_filter: TimetableDownloadFilter = Query(
+        TimetableDownloadFilter.ALL,
+        description="Subject scope suffix for export filename and expected invigilation summary rows.",
+    ),
+) -> Response:
+    """Export centre official account details to Excel."""
+    from app.services.exam_official_export import (
+        examination_label,
+        workbook_bytes,
+        workbook_for_centre,
+    )
+    from app.services.finance_school_summary import (
+        build_finance_centre_school_summary,
+        load_officials_for_centre,
+        school_summary_export_filename,
+        subject_filter_filename_suffix,
+    )
+
+    try:
+        ex = await load_examination_or_raise(session, exam_id)
+    except ValueError:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Examination not found") from None
+
+    hosts = await _finance_centre_hosts(session, center_id)
+    center_host = hosts[0]
+    summary = await build_finance_centre_school_summary(
+        session,
+        ex,
+        center_host,
+        subject_filter,
+        build_invigilator_item=_build_finance_centre_invigilator_item,
+    )
+
+    pairs = await load_officials_for_centre(session, exam_id, center_id)
+    scope_label = subject_filter_filename_suffix(subject_filter)
+    preamble = [
+        ("Expected invigilations", summary.expected_invigilations_total),
+        ("Invigilator days declared", summary.invigilator_days_declared),
+        ("Variance (declared − expected)", summary.variance),
+        ("Subject scope", scope_label),
+    ]
+    exam_label = examination_label(ex)
+    wb = workbook_for_centre(center_host, exam_label, pairs, preamble_rows=preamble)
+    payload = workbook_bytes(wb)
+    filename = school_summary_export_filename(
+        summary.center_code,
+        summary.center_name,
+        subject_filter,
+    )
+    return Response(
+        content=payload,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
 
 
 @router.get("/{exam_id}/my-depot-overview", response_model=StaffDepotOverviewResponse)
