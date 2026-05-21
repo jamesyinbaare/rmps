@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { useState } from "react";
 
 import { AuthCard } from "@/components/auth-card";
+import { LoginExpiredNotice } from "@/components/login-expired-notice";
 import { PasswordInput } from "@/components/password-input";
 import { PublicSiteNav } from "@/components/public-site-nav";
 import { useRedirectIfAuthenticated } from "@/hooks/use-redirect-if-authed";
@@ -45,6 +46,7 @@ export default function DepotKeeperLoginPage() {
           title="Depot keeper sign in"
           description="Use the username and password assigned by your administrator."
         >
+          <LoginExpiredNotice />
           <form className="flex flex-col gap-4" onSubmit={onSubmit}>
             <div>
               <label htmlFor="dk_username" className={formLabelClass}>

@@ -34,10 +34,57 @@ export function getStoredToken(): string | null {
 
 export function setStoredToken(token: string): void {
   localStorage.setItem(TOKEN_KEY, token);
+  resetSessionExpiredRedirect();
 }
 
 export function clearAuth(): void {
   localStorage.removeItem(TOKEN_KEY);
+}
+
+/** Query param set when redirecting to login after session expiry. */
+export const SESSION_EXPIRED_PARAM = "expired";
+
+export const SESSION_EXPIRED_MESSAGE = "Your session expired. Please sign in again.";
+
+/** Internal marker thrown after ``handleSessionExpired`` triggers redirect. */
+export const SESSION_EXPIRED_ERROR = "SESSION_EXPIRED";
+
+let sessionExpiredRedirecting = false;
+
+/** Reset redirect guard after a successful sign-in. */
+export function resetSessionExpiredRedirect(): void {
+  sessionExpiredRedirecting = false;
+}
+
+export function loginHrefFromPathname(pathname: string): string {
+  if (pathname.startsWith("/dashboard/admin")) return "/login/admin";
+  if (pathname.startsWith("/dashboard/supervisor")) return "/login/supervisor";
+  if (pathname.startsWith("/dashboard/inspector")) return "/login/inspector";
+  if (pathname.startsWith("/dashboard/depot-keeper")) return "/login/depot-keeper";
+  return "/";
+}
+
+/**
+ * Clear auth and send the user to the role-appropriate login with an expired-session notice.
+ * No-op on the server, on login routes, or when a redirect is already in progress.
+ */
+export function handleSessionExpired(loginHrefOverride?: string): void {
+  if (typeof window === "undefined") return;
+  if (sessionExpiredRedirecting) return;
+  if (window.location.pathname.startsWith("/login")) return;
+
+  sessionExpiredRedirecting = true;
+  clearAuth();
+  const loginHref = loginHrefOverride ?? loginHrefFromPathname(window.location.pathname);
+  const url = `${loginHref}?${SESSION_EXPIRED_PARAM}=true`;
+  window.location.assign(url);
+}
+
+/** If ``res`` is 401, redirect to login and throw ``SESSION_EXPIRED_ERROR``. */
+export function throwIfUnauthorized(res: Response, loginHrefOverride?: string): void {
+  if (res.status !== 401) return;
+  handleSessionExpired(loginHrefOverride);
+  throw new Error(SESSION_EXPIRED_ERROR);
 }
 
 /** Fired after ``setStoredToken`` from select-posting (and similar) so layouts can refetch ``/auth/me``. */
@@ -238,6 +285,7 @@ export async function selectInspectorPosting(posting_id: string): Promise<TokenR
     },
     body: JSON.stringify({ posting_id }),
   });
+  throwIfUnauthorized(res);
   if (!res.ok) throw new Error(await parseErrorMessage(res));
   const data = (await res.json()) as TokenResponse;
   setStoredToken(data.access_token);
@@ -296,6 +344,7 @@ export async function getMe(): Promise<UserMe> {
   const res = await fetch(`${getApiBaseUrl()}/auth/me`, {
     headers: { Authorization: `Bearer ${token}` },
   });
+  throwIfUnauthorized(res);
   if (!res.ok) throw new Error(await parseErrorMessage(res));
   return (await res.json()) as UserMe;
 }

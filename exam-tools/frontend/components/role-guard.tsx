@@ -8,6 +8,7 @@ import {
   dashboardPathForRole,
   getMe,
   getStoredToken,
+  SESSION_EXPIRED_ERROR,
   type ApiRole,
 } from "@/lib/auth";
 
@@ -58,8 +59,9 @@ export function RoleGuard(props: Props) {
           return;
         }
         setReady(true);
-      } catch {
+      } catch (err) {
         if (cancelled) return;
+        if (err instanceof Error && err.message === SESSION_EXPIRED_ERROR) return;
         clearAuth();
         router.replace(loginHref);
       }
