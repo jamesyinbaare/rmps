@@ -67,25 +67,35 @@ export function ExecutiveStatTile({
     return (
       <div
         className={cn(
-          "flex w-full flex-col items-center rounded-xl border px-4 py-5 text-center shadow-md sm:px-5 sm:py-6",
+          "flex w-full flex-col items-center justify-center rounded-xl border px-4 py-5 text-center shadow-md sm:px-5 sm:py-6 lg:py-4",
           styles,
           className,
         )}
       >
-        <p className={cn("text-4xl font-bold sm:text-5xl", valueClass)}>
+        <p className={cn("text-4xl font-bold sm:text-5xl lg:text-5xl", valueClass)}>
           <AnimatedStatFigure value={value} animationDelayMs={animationDelayMs} />
         </p>
-        <p className="mt-2 text-xs font-bold uppercase tracking-wide text-muted-foreground">{label}</p>
+        <p className="mt-2 text-xs font-bold uppercase tracking-wide text-muted-foreground lg:mt-1.5 lg:text-sm">
+          {label}
+        </p>
       </div>
     );
   }
 
   return (
-    <div className={cn("flex flex-col items-center rounded-xl border p-3.5 text-center shadow-sm", styles, className)}>
-      <p className={cn("text-2xl font-bold", valueClass)}>
+    <div
+      className={cn(
+        "flex flex-col items-center justify-center rounded-xl border p-3.5 text-center shadow-sm lg:p-4",
+        styles,
+        className,
+      )}
+    >
+      <p className={cn("text-2xl font-bold lg:text-5xl", valueClass)}>
         <AnimatedStatFigure value={value} animationDelayMs={animationDelayMs} />
       </p>
-      <p className="mt-1.5 text-[10px] font-bold uppercase tracking-wide text-muted-foreground">{label}</p>
+      <p className="mt-1.5 text-[10px] font-bold uppercase tracking-wide text-muted-foreground lg:mt-2 lg:text-sm">
+        {label}
+      </p>
     </div>
   );
 }
