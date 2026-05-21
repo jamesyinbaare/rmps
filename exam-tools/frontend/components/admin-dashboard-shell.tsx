@@ -1,10 +1,16 @@
 "use client";
 
 import Link from "next/link";
-import { usePathname, useRouter } from "next/navigation";
-import { useEffect, useId, useMemo, useState } from "react";
+import { usePathname, useRouter, useSearchParams } from "next/navigation";
+import { Suspense, useEffect, useId, useMemo, useState } from "react";
 
 import { DashboardStickyHeader } from "@/components/dashboard-sticky-header";
+import { ExecutiveBottomTabNav } from "@/components/executive-bottom-tab-nav";
+import {
+  EXECUTIVE_CENTRES_HREF,
+  EXECUTIVE_MONITORING_HREF,
+  executiveMonitoringHref,
+} from "@/lib/executive-selected-examination";
 import { clearAuth, getMe, type UserMe } from "@/lib/auth";
 import { OfficialAccountsNavLink } from "@/components/official-accounts-nav-link";
 import {
@@ -53,6 +59,11 @@ const TEST_ADMIN_OFFICER_NAV_HREFS = [
   SCRIPTS_ALLOCATION_HREF,
 ];
 
+const EXECUTIVE_VIEWER_NAV: NavLinkItem[] = [
+  { type: "link", href: EXECUTIVE_MONITORING_HREF, label: "Home" },
+  { type: "link", href: EXECUTIVE_CENTRES_HREF, label: "Centres" },
+];
+
 type NavLinkItem = { type: "link"; href: string; label: string };
 type NavHeadingItem = { type: "heading"; label: string };
 type NavEntry = NavLinkItem | NavHeadingItem;
@@ -79,6 +90,8 @@ type Props = {
 export function AdminDashboardShell({ children }: Props) {
   const pathname = usePathname();
   const router = useRouter();
+  const searchParams = useSearchParams();
+  const executiveExamIdFromUrl = searchParams.get("exam_id");
   const sidebarNavId = useId();
   const [me, setMe] = useState<UserMe | null>(null);
   const [sidebarOpen, setSidebarOpen] = useState(false);
@@ -93,6 +106,9 @@ export function AdminDashboardShell({ children }: Props) {
     if (!me) return null;
     if (me.role === "TEST_ADMIN_OFFICER") {
       return nav.filter((item) => TEST_ADMIN_OFFICER_NAV_HREFS.includes(item.href)).map(toLinkItem);
+    }
+    if (me.role === "EXECUTIVE_VIEWER") {
+      return EXECUTIVE_VIEWER_NAV;
     }
     if (me.role === "FINANCE_OFFICER") {
       return FINANCE_OFFICER_NAV;
@@ -116,7 +132,10 @@ export function AdminDashboardShell({ children }: Props) {
   }, [me]);
 
   const isMonitoringOfficer = me?.role === "TEST_ADMIN_OFFICER";
+  const isExecutiveViewer = me?.role === "EXECUTIVE_VIEWER";
+  const isTopLevelOfficer = isMonitoringOfficer || isExecutiveViewer;
   const isFinanceOfficer = me?.role === "FINANCE_OFFICER";
+  const onExecutiveCentresPage = pathname === EXECUTIVE_CENTRES_HREF;
   const onCentreSummaryPage =
     pathname === CENTRE_SUMMARY_HREF || pathname.startsWith(`${CENTRE_SUMMARY_HREF}/`);
   const onOfficialAccountsPage = isOfficialAccountsPath(pathname) && !onCentreSummaryPage;
@@ -124,6 +143,23 @@ export function AdminDashboardShell({ children }: Props) {
   function logout() {
     clearAuth();
     router.replace("/");
+  }
+
+  const executiveStickyTitle = isExecutiveViewer
+    ? onExecutiveCentresPage
+      ? "Centres"
+      : "Home"
+    : null;
+
+  function navLinkActive(href: string): boolean {
+    if (href === "/dashboard/admin") return pathname === href;
+    if (isExecutiveViewer && href === EXECUTIVE_MONITORING_HREF) {
+      return pathname === EXECUTIVE_MONITORING_HREF;
+    }
+    if (isExecutiveViewer && href === EXECUTIVE_CENTRES_HREF) {
+      return pathname === EXECUTIVE_CENTRES_HREF;
+    }
+    return pathname === href || pathname.startsWith(`${href}/`);
   }
 
   return (
@@ -139,9 +175,11 @@ export function AdminDashboardShell({ children }: Props) {
 
       <aside
         id={sidebarNavId}
-        className={`fixed inset-y-0 left-0 z-50 w-64 border-r border-border bg-card transition-transform duration-200 ease-out motion-reduce:transition-none lg:translate-x-0 ${
-          sidebarOpen ? "translate-x-0" : "-translate-x-full"
-        }`}
+        className={cn(
+          "fixed inset-y-0 left-0 z-50 w-64 border-r border-border bg-card transition-transform duration-200 ease-out motion-reduce:transition-none lg:translate-x-0",
+          isExecutiveViewer && "hidden lg:block",
+          sidebarOpen ? "translate-x-0" : "-translate-x-full",
+        )}
       >
         <div className="flex h-full flex-col">
           <div className="border-b border-border p-4">
@@ -149,7 +187,13 @@ export function AdminDashboardShell({ children }: Props) {
               Exam tools
             </p>
             <p className="mt-1 text-sm font-semibold text-card-foreground">
-              {isMonitoringOfficer ? "Monitoring" : isFinanceOfficer ? "Finance" : "Administration"}
+              {isTopLevelOfficer
+                ? isExecutiveViewer
+                  ? "Executive overview"
+                  : "Monitoring"
+                : isFinanceOfficer
+                  ? "Finance"
+                  : "Administration"}
             </p>
           </div>
           <nav
@@ -172,10 +216,7 @@ export function AdminDashboardShell({ children }: Props) {
                     </div>
                   );
                 }
-                const active =
-                  entry.href === "/dashboard/admin"
-                    ? pathname === entry.href
-                    : pathname === entry.href || pathname.startsWith(`${entry.href}/`);
+                const active = navLinkActive(entry.href);
                 if (isOfficialAccountsHref(entry.href)) {
                   return (
                     <OfficialAccountsNavLink
@@ -186,10 +227,14 @@ export function AdminDashboardShell({ children }: Props) {
                     />
                   );
                 }
+                const linkHref =
+                  isExecutiveViewer && entry.type === "link"
+                    ? executiveMonitoringHref(entry.href, executiveExamIdFromUrl)
+                    : entry.href;
                 return (
                   <Link
                     key={entry.href}
-                    href={entry.href}
+                    href={linkHref}
                     onClick={() => setSidebarOpen(false)}
                     aria-current={active ? "page" : undefined}
                     className={cn(
@@ -216,8 +261,10 @@ export function AdminDashboardShell({ children }: Props) {
               ? "Centre summary"
               : onOfficialAccountsPage
                 ? "Official account details"
-                : isMonitoringOfficer
-                  ? "Exam monitoring"
+                : isTopLevelOfficer
+                  ? isExecutiveViewer
+                    ? executiveStickyTitle!
+                    : "Exam monitoring"
                   : isFinanceOfficer
                     ? "Finance"
                     : "Administrator dashboard"
@@ -228,11 +275,16 @@ export function AdminDashboardShell({ children }: Props) {
               : null
           }
           onLogout={logout}
-          sidebar={{
-            id: sidebarNavId,
-            open: sidebarOpen,
-            onOpenChange: setSidebarOpen,
-          }}
+          executiveMobileOnly={isExecutiveViewer}
+          sidebar={
+            isExecutiveViewer
+              ? undefined
+              : {
+                  id: sidebarNavId,
+                  open: sidebarOpen,
+                  onOpenChange: setSidebarOpen,
+                }
+          }
         />
 
         <main
@@ -241,10 +293,17 @@ export function AdminDashboardShell({ children }: Props) {
             pathname === ATTENDANCE_SHEETS_HREF || pathname.startsWith(`${ATTENDANCE_SHEETS_HREF}/`)
               ? "max-w-[1600px]"
               : "max-w-6xl",
+            isExecutiveViewer && "pb-[calc(5rem+env(safe-area-inset-bottom))] lg:pb-6",
           )}
         >
           {children}
         </main>
+
+        {isExecutiveViewer ? (
+          <Suspense fallback={null}>
+            <ExecutiveBottomTabNav />
+          </Suspense>
+        ) : null}
       </div>
     </div>
   );

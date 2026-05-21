@@ -105,6 +105,7 @@ class UserRole(enum.IntEnum):
     SUPER_ADMIN = 0
     TEST_ADMIN_OFFICER = 5
     FINANCE_OFFICER = 6
+    EXECUTIVE_VIEWER = 7
     SUPERVISOR = 10
     INSPECTOR = 20
     DEPOT_KEEPER = 30

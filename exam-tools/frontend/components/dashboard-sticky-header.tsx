@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { Home, LogOut, Menu } from "lucide-react";
+import type { ReactNode } from "react";
 
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
@@ -16,16 +17,25 @@ export type DashboardStickyHeaderSidebar = {
 };
 
 type Props = {
-  title: string;
+  title: ReactNode;
   subtitle?: string | null;
   onLogout: () => void;
   /** When set, shows the mobile sidebar trigger (hidden at `lg` and up). */
   sidebar?: DashboardStickyHeaderSidebar;
   /** Green accent border for official account details routes. */
   accent?: "official-accounts";
+  /** Simpler bar below `lg`; full navbar from `lg` up when used with sidebar on desktop. */
+  executiveMobileOnly?: boolean;
 };
 
-export function DashboardStickyHeader({ title, subtitle, onLogout, sidebar, accent }: Props) {
+export function DashboardStickyHeader({
+  title,
+  subtitle,
+  onLogout,
+  sidebar,
+  accent,
+  executiveMobileOnly = false,
+}: Props) {
   return (
     <header
       className={cn(
@@ -33,7 +43,12 @@ export function DashboardStickyHeader({ title, subtitle, onLogout, sidebar, acce
         accent === "official-accounts" ? "border-success/40" : "border-border",
       )}
     >
-      <div className="flex items-center gap-3 px-4 py-3 sm:px-6">
+      <div
+        className={cn(
+          "flex items-center gap-3 px-4 sm:px-6",
+          executiveMobileOnly ? "py-2.5 lg:py-3" : "py-3",
+        )}
+      >
         {sidebar ? (
           <Button
             type="button"
@@ -49,17 +64,26 @@ export function DashboardStickyHeader({ title, subtitle, onLogout, sidebar, acce
           </Button>
         ) : null}
         <div className="min-w-0 flex-1">
-          <h1 className="truncate text-base font-semibold text-card-foreground sm:text-lg">
-            {title}
-          </h1>
+          <h1 className="truncate text-base font-semibold text-card-foreground sm:text-lg">{title}</h1>
           {subtitle ? (
-            <p className="truncate text-sm text-muted-foreground">{subtitle}</p>
+            <p
+              className={cn(
+                "truncate text-sm text-muted-foreground",
+                executiveMobileOnly && "hidden lg:block",
+              )}
+            >
+              {subtitle}
+            </p>
           ) : null}
         </div>
-        <div className="flex shrink-0 flex-wrap items-center gap-2">
+        <div className="flex shrink-0 items-center gap-2">
           <Button
             variant="outline"
-            className={cn("hidden min-h-11 gap-2 px-3 sm:px-4 lg:inline-flex", inputFocusRing)}
+            className={cn(
+              "hidden min-h-11 gap-2 px-3 sm:px-4 lg:inline-flex",
+              executiveMobileOnly && "max-lg:hidden",
+              inputFocusRing,
+            )}
             asChild
           >
             <Link href="/">
@@ -67,14 +91,37 @@ export function DashboardStickyHeader({ title, subtitle, onLogout, sidebar, acce
               Home
             </Link>
           </Button>
-          <Button
-            type="button"
-            className={cn("min-h-11 gap-2 px-3 sm:px-4", inputFocusRing)}
-            onClick={onLogout}
-          >
-            <LogOut className="size-4 shrink-0" aria-hidden />
-            Log out
-          </Button>
+          {executiveMobileOnly ? (
+            <>
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon"
+                className={cn("min-h-10 min-w-10 shrink-0 lg:hidden", inputFocusRing)}
+                onClick={onLogout}
+                aria-label="Log out"
+              >
+                <LogOut className="size-4 shrink-0" aria-hidden />
+              </Button>
+              <Button
+                type="button"
+                className={cn("hidden min-h-11 gap-2 px-3 sm:px-4 lg:inline-flex", inputFocusRing)}
+                onClick={onLogout}
+              >
+                <LogOut className="size-4 shrink-0" aria-hidden />
+                Log out
+              </Button>
+            </>
+          ) : (
+            <Button
+              type="button"
+              className={cn("min-h-11 gap-2 px-3 sm:px-4", inputFocusRing)}
+              onClick={onLogout}
+            >
+              <LogOut className="size-4 shrink-0" aria-hidden />
+              Log out
+            </Button>
+          )}
         </div>
       </div>
     </header>
@@ -86,7 +133,7 @@ export function DashboardSimpleHeader({
   title,
   subtitle,
   onLogout,
-}: Omit<Props, "sidebar">) {
+}: Omit<Props, "sidebar" | "executiveMobileOnly" | "accent">) {
   return (
     <header className="sticky top-0 z-30 border-b border-border bg-card/95 backdrop-blur">
       <div className="mx-auto flex max-w-3xl flex-col gap-3 p-4 sm:flex-row sm:items-center sm:justify-between sm:p-6">

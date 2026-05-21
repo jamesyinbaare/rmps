@@ -8,6 +8,7 @@ import {
   adminCreateDepotKeeper,
   adminListDepots,
   apiJson,
+  createExecutiveViewer,
   createFinanceOfficer,
   createTestAdminOfficer,
   type AdminDepotRow,
@@ -95,6 +96,13 @@ export default function AdminUsersPage() {
   const [financeFormError, setFinanceFormError] = useState<string | null>(null);
   const [financeSubmitting, setFinanceSubmitting] = useState(false);
 
+  const [executiveOpen, setExecutiveOpen] = useState(false);
+  const [executiveEmail, setExecutiveEmail] = useState("");
+  const [executivePassword, setExecutivePassword] = useState("");
+  const [executiveFullName, setExecutiveFullName] = useState("Executive viewer");
+  const [executiveFormError, setExecutiveFormError] = useState<string | null>(null);
+  const [executiveSubmitting, setExecutiveSubmitting] = useState(false);
+
   const [inspectorOpen, setInspectorOpen] = useState(false);
   const [inspPhone, setInspPhone] = useState("");
   const [inspFullName, setInspFullName] = useState("");
@@ -178,6 +186,7 @@ export default function AdminUsersPage() {
     if (typeof window === "undefined" || me?.role !== "SUPER_ADMIN") return;
     const hash = window.location.hash.slice(1);
     if (hash === "test-admin-officer") setOfficerOpen(true);
+    else if (hash === "executive-viewer") setExecutiveOpen(true);
     else if (hash === "finance-officer") setFinanceOpen(true);
     else if (hash === "inspectors") setInspectorOpen(true);
     else if (hash === "depot-keepers") {
@@ -243,6 +252,36 @@ export default function AdminUsersPage() {
     setFinanceFullName("Finance officer");
     setFinanceFormError(null);
     setFinanceOpen(true);
+  }
+
+  function openExecutiveModal() {
+    setExecutiveEmail("");
+    setExecutivePassword("");
+    setExecutiveFullName("Executive viewer");
+    setExecutiveFormError(null);
+    setExecutiveOpen(true);
+  }
+
+  async function onCreateExecutiveViewer(e: React.FormEvent) {
+    e.preventDefault();
+    setExecutiveFormError(null);
+    setExecutiveSubmitting(true);
+    try {
+      await createExecutiveViewer({
+        email: executiveEmail.trim(),
+        password: executivePassword,
+        full_name: executiveFullName.trim(),
+      });
+      setExecutiveFormError(null);
+      setExecutiveEmail("");
+      setExecutivePassword("");
+      setExecutiveFullName("Executive viewer");
+      setExecutiveOpen(false);
+    } catch (err) {
+      setExecutiveFormError(err instanceof Error ? err.message : "Create failed");
+    } finally {
+      setExecutiveSubmitting(false);
+    }
   }
 
   async function onCreateFinanceOfficer(e: React.FormEvent) {
@@ -359,7 +398,8 @@ export default function AdminUsersPage() {
         <h2 className="text-xl font-semibold text-foreground">Users</h2>
         <p className="mt-1 max-w-3xl text-sm text-muted-foreground">
           Create accounts for inspectors, depot keepers, test admin officers (read-only worked-scripts monitoring),
-          and finance officers (official accounts and centre invigilator summaries).
+          executive viewers (national monitoring dashboard), and finance officers (official accounts and centre
+          invigilator summaries).
           For full lists, search, edits, and bulk upload, use{" "}
           <Link href="/dashboard/admin/inspectors" className={subLinkClass}>
             Inspectors
@@ -392,6 +432,17 @@ export default function AdminUsersPage() {
             </p>
             <button type="button" onClick={openFinanceModal} className={btnPrimary}>
               Create finance officer…
+            </button>
+          </section>
+
+          <section id="executive-viewer" className={sectionClass}>
+            <h3 className="text-base font-semibold text-card-foreground">Executive viewer</h3>
+            <p className="text-sm text-muted-foreground">
+              Email and password (administrator sign-in). Read-only national monitoring: candidates, schools,
+              upcoming sessions, and centre inspector contacts.
+            </p>
+            <button type="button" onClick={openExecutiveModal} className={btnPrimary}>
+              Create executive viewer…
             </button>
           </section>
 
@@ -541,6 +592,68 @@ export default function AdminUsersPage() {
                 ) : null}
                 <button type="submit" disabled={financeSubmitting} className={primaryButtonClass}>
                   {financeSubmitting ? "Creating…" : "Create"}
+                </button>
+              </form>
+            </Modal>
+          ) : null}
+
+          {executiveOpen ? (
+            <Modal
+              title="Create executive viewer"
+              titleId="modal-executive-title"
+              onClose={() => !executiveSubmitting && setExecutiveOpen(false)}
+              canClose={!executiveSubmitting}
+            >
+              <form className="space-y-4" onSubmit={onCreateExecutiveViewer}>
+                <div>
+                  <label htmlFor="executive-email" className={formLabelClass}>
+                    Email
+                  </label>
+                  <input
+                    id="executive-email"
+                    type="email"
+                    autoComplete="off"
+                    required
+                    value={executiveEmail}
+                    onChange={(e) => setExecutiveEmail(e.target.value)}
+                    className={formInputClass}
+                  />
+                </div>
+                <div>
+                  <label htmlFor="executive-password" className={formLabelClass}>
+                    Password
+                  </label>
+                  <input
+                    id="executive-password"
+                    type="password"
+                    autoComplete="new-password"
+                    required
+                    minLength={8}
+                    value={executivePassword}
+                    onChange={(e) => setExecutivePassword(e.target.value)}
+                    className={formInputClass}
+                  />
+                </div>
+                <div>
+                  <label htmlFor="executive-name" className={formLabelClass}>
+                    Full name
+                  </label>
+                  <input
+                    id="executive-name"
+                    type="text"
+                    required
+                    value={executiveFullName}
+                    onChange={(e) => setExecutiveFullName(e.target.value)}
+                    className={formInputClass}
+                  />
+                </div>
+                {executiveFormError ? (
+                  <p className="text-sm text-destructive" role="alert">
+                    {executiveFormError}
+                  </p>
+                ) : null}
+                <button type="submit" disabled={executiveSubmitting} className={primaryButtonClass}>
+                  {executiveSubmitting ? "Creating…" : "Create"}
                 </button>
               </form>
             </Modal>

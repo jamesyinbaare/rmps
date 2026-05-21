@@ -1050,8 +1050,76 @@ export async function getStaffCentreDaySummary(
   );
 }
 
-export async function getStaffNationalOverview(examId: number): Promise<StaffCentreOverviewResponse> {
-  return apiJson<StaffCentreOverviewResponse>(`/examinations/${examId}/national-overview`);
+export type ExecutiveCentreListItem = {
+  center_id: string;
+  center_code: string;
+  center_name: string;
+  region: string;
+  zone: string;
+  candidate_count: number;
+  school_count: number;
+  inspector_count: number;
+};
+
+export type NationalExecutiveOverviewResponse = StaffCentreOverviewResponse & {
+  centres: ExecutiveCentreListItem[];
+  centre_count: number;
+};
+
+export async function getStaffNationalOverview(
+  examId: number,
+  options?: { includeCentres?: boolean },
+): Promise<NationalExecutiveOverviewResponse> {
+  const q = new URLSearchParams();
+  if (options?.includeCentres === false) {
+    q.set("include_centres", "false");
+  }
+  const suffix = q.toString();
+  return apiJson<NationalExecutiveOverviewResponse>(
+    `/examinations/${examId}/national-overview${suffix ? `?${suffix}` : ""}`,
+  );
+}
+
+export type ExecutivePostedInspectorItem = {
+  posting_id: string;
+  inspector_full_name: string;
+  inspector_phone_number: string | null;
+  subject_scope: string;
+};
+
+export type ExecutiveCentreDetailResponse = {
+  overview: StaffCentreOverviewResponse;
+  posted_inspectors: ExecutivePostedInspectorItem[];
+};
+
+export async function getExecutiveCentreDetail(
+  examId: number,
+  centerId: string,
+): Promise<ExecutiveCentreDetailResponse> {
+  return apiJson<ExecutiveCentreDetailResponse>(
+    `/examinations/${examId}/centres/${centerId}/executive-detail`,
+  );
+}
+
+export type ExecutiveViewerCreatePayload = {
+  email: string;
+  password: string;
+  full_name: string;
+};
+
+export type ExecutiveViewerCreatedResponse = {
+  id: string;
+  full_name: string;
+  email: string;
+};
+
+export async function createExecutiveViewer(
+  payload: ExecutiveViewerCreatePayload,
+): Promise<ExecutiveViewerCreatedResponse> {
+  return apiJson<ExecutiveViewerCreatedResponse>("/executive-viewers", {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
 }
 
 export async function getStaffNationalDaySummary(

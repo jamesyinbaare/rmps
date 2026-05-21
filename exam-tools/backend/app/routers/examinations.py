@@ -23,6 +23,7 @@ from app.dependencies.auth import (
     SuperAdminDep,
     SuperAdminOrFinanceOfficerDep,
     SuperAdminOrTestAdminOfficerDep,
+    TopLevelOfficerDep,
     SupervisorInspectorOrDepotKeeperDep,
     SupervisorOrInspectorDep,
 )
@@ -72,6 +73,8 @@ from app.schemas.examination import (
     StaffCentreOverviewResponse,
     StaffCentreOverviewUpcomingItem,
     StaffCentreSchoolCandidateItem,
+    ExecutiveCentreDetailResponse,
+    NationalExecutiveOverviewResponse,
     StaffDepotOverviewResponse,
     TimetableEntry,
     TimetablePreviewResponse,
@@ -113,6 +116,10 @@ from app.services.script_control import (
     subject_series_count_map,
 )
 from app.services.template_generator import generate_schedule_template
+from app.services.executive_overview import (
+    build_executive_centre_detail,
+    build_national_executive_overview,
+)
 from app.services.timetable_service import (
     center_scope_school_ids,
     get_candidate_schedule_codes_for_exam,
@@ -1819,12 +1826,16 @@ async def get_my_center_day_summary(
 _NATIONAL_PLACEHOLDER_CENTRE_ID = UUID("00000000-0000-0000-0000-000000000000")
 
 
-@router.get("/{exam_id}/national-overview", response_model=StaffCentreOverviewResponse)
+@router.get("/{exam_id}/national-overview", response_model=NationalExecutiveOverviewResponse)
 async def get_national_overview(
     exam_id: int,
     session: DBSessionDep,
-    _: SuperAdminOrTestAdminOfficerDep,
-) -> StaffCentreOverviewResponse:
+    _: TopLevelOfficerDep,
+    include_centres: bool = Query(
+        default=True,
+        description="When false, omit per-centre rows and return centre_count only (faster monitoring home).",
+    ),
+) -> NationalExecutiveOverviewResponse:
     """All schools with registered candidates: today's papers and upcoming sessions (monitoring)."""
     try:
         exam = await load_examination_or_raise(session, exam_id)
@@ -1836,7 +1847,7 @@ async def get_national_overview(
     school_count = len(scope_ids)
 
     if not scope_ids:
-        return StaffCentreOverviewResponse(
+        empty = StaffCentreOverviewResponse(
             examination_id=exam.id,
             exam_type=exam.exam_type,
             exam_series=exam.exam_series,
@@ -1855,6 +1866,7 @@ async def get_national_overview(
             examination_window_start=None,
             examination_window_end=None,
         )
+        return NationalExecutiveOverviewResponse(**empty.model_dump(), centres=[], centre_count=0)
 
     cand_stmt = select(func.count()).select_from(ExaminationCandidate).where(
         ExaminationCandidate.examination_id == exam_id,
@@ -1902,7 +1914,7 @@ async def get_national_overview(
     )
 
     first_school = ordered_schools[0]
-    return StaffCentreOverviewResponse(
+    base = StaffCentreOverviewResponse(
         examination_id=exam.id,
         exam_type=exam.exam_type,
         exam_series=exam.exam_series,
@@ -1939,6 +1951,37 @@ async def get_national_overview(
         examination_window_start=examination_window_start,
         examination_window_end=examination_window_end,
     )
+    return await build_national_executive_overview(
+        session,
+        exam_id,
+        base,
+        scope_ids,
+        include_centres=include_centres,
+    )
+
+
+@router.get(
+    "/{exam_id}/centres/{center_id}/executive-detail",
+    response_model=ExecutiveCentreDetailResponse,
+)
+async def get_executive_centre_detail(
+    exam_id: int,
+    center_id: UUID,
+    session: DBSessionDep,
+    _: TopLevelOfficerDep,
+) -> ExecutiveCentreDetailResponse:
+    """Centre summary and posted inspectors for senior management drill-down."""
+    try:
+        await load_examination_or_raise(session, exam_id)
+    except ValueError:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Examination not found") from None
+    try:
+        return await build_executive_centre_detail(session, exam_id, center_id)
+    except ValueError as e:
+        msg = str(e)
+        if "not found" in msg.lower():
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=msg) from e
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=msg) from e
 
 
 @router.get("/{exam_id}/national-day-summary", response_model=StaffCentreDaySummaryResponse)
@@ -1946,7 +1989,7 @@ async def get_national_day_summary(
     exam_id: int,
     examination_date: date,
     session: DBSessionDep,
-    _: SuperAdminOrTestAdminOfficerDep,
+    _: TopLevelOfficerDep,
 ) -> StaffCentreDaySummaryResponse:
     """Per-day slot table across all schools that have candidates for this examination."""
     try:
