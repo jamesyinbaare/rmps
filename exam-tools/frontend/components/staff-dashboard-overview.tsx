@@ -188,54 +188,129 @@ function ExecutiveNationalStatsRow({
   centreCount: number;
 }) {
   return (
-    <div className="flex flex-col gap-3">
+    <div className="flex flex-col gap-3 lg:grid lg:grid-cols-4 lg:gap-3">
       <ExecutiveStatTile
         label="Candidates"
         value={candidateCount}
         tint="primary"
         featured
+        className="lg:col-span-2 lg:aspect-2/1 lg:h-auto lg:w-full"
         animationDelayMs={0}
       />
-      <div className="grid grid-cols-2 gap-3">
-        <ExecutiveStatTile label="Schools" value={schoolCount} tint="success" animationDelayMs={120} />
-        <ExecutiveStatTile label="Centres" value={centreCount} tint="secondary" animationDelayMs={240} />
+      <div className="grid grid-cols-2 gap-3 lg:contents">
+        <ExecutiveStatTile
+          label="Schools"
+          value={schoolCount}
+          tint="success"
+          className="lg:aspect-square lg:h-auto lg:w-full"
+          animationDelayMs={120}
+        />
+        <ExecutiveStatTile
+          label="Centres"
+          value={centreCount}
+          tint="secondary"
+          className="lg:aspect-square lg:h-auto lg:w-full"
+          animationDelayMs={240}
+        />
       </div>
     </div>
   );
 }
 
+function ExecutiveSessionSlotRow({ row, index }: { row: MergedUpcomingCardSlot; index: number }) {
+  const accent = sessionAccentBar[index % sessionAccentBar.length];
+  return (
+    <li className={`border-l-[3px] pl-2.5 ${accent} lg:border-l-4 lg:pl-3`}>
+      <p className="font-medium leading-snug text-foreground lg:text-base">
+        <span className="font-semibold">{row.subject_code}</span>
+        {row.papersParenLabel != null ? (
+          <span className="text-muted-foreground lg:hidden"> ({row.papersParenLabel})</span>
+        ) : (
+          <span className="text-muted-foreground lg:hidden"> · Paper {row.papers[0]}</span>
+        )}
+        <span className="font-normal text-muted-foreground lg:hidden"> · </span>
+        <span className="tabular-nums lg:hidden">{row.timesLabel}</span>
+        <span className="hidden font-normal text-muted-foreground lg:inline">
+          {" "}
+          — {row.subject_name}
+          {row.papersParenLabel != null ? ` (${row.papersParenLabel})` : null}
+        </span>
+      </p>
+      <p className="mt-0.5 truncate text-xs text-muted-foreground lg:hidden" title={row.subject_name}>
+        {truncateSchoolNameEnd(row.subject_name, 36)}
+      </p>
+      <p className="mt-1 hidden text-sm tabular-nums text-muted-foreground lg:block">
+        {row.papersParenLabel != null ? (
+          row.timesLabel
+        ) : (
+          <>
+            Paper {row.papers[0]} · {row.timesLabel}
+          </>
+        )}
+      </p>
+    </li>
+  );
+}
+
 function ExecutiveNextSessionCard({
   date,
+  dateKey,
   slots,
   isToday,
 }: {
   date: Date;
+  dateKey: string;
   slots: MergedUpcomingCardSlot[];
   isToday: boolean;
 }) {
   const sessionHeading = isToday ? "Today's session" : "Next session";
   const dayNum = date.getDate();
   const monthShort = monthDayFormatter.format(date).split(" ")[0];
+  const weekdayShort = weekdayFormatter.format(date).slice(0, 3);
   const sessionLabel = slots.length === 1 ? "session" : "sessions";
   const single = slots.length === 1 ? slots[0] : null;
+  const useSlotGrid = slots.length > 2;
 
   return (
-    <article className="overflow-hidden rounded-2xl border-2 border-primary/40 bg-card shadow-md ring-1 ring-primary/15">
-      <div className="flex min-w-0">
-        <div className="flex w-[4.5rem] shrink-0 flex-col items-center justify-center bg-linear-to-br from-primary via-accent to-success px-2 py-4 text-primary-foreground">
-          <span className="text-[10px] font-bold uppercase tracking-wide text-primary-foreground/85">
-            {monthShort}
-          </span>
-          <span className="text-3xl font-black leading-none tabular-nums">{dayNum}</span>
-          <span className="mt-1 text-center text-[10px] font-semibold leading-tight text-primary-foreground/90">
-            {weekdayFormatter.format(date).slice(0, 3)}
-          </span>
+    <article
+      className={cn(
+        "overflow-hidden rounded-2xl border-2 bg-card shadow-md ring-1",
+        isToday
+          ? "border-primary/50 ring-primary/20"
+          : "border-primary/40 ring-primary/15",
+      )}
+    >
+      <div className="flex min-w-0 items-stretch">
+        <div className="flex w-18 shrink-0 flex-col items-center justify-center self-stretch bg-linear-to-br from-primary via-accent to-success px-2 py-4 text-primary-foreground lg:w-40 lg:justify-between lg:px-4 lg:py-6">
+          <time dateTime={dateKey} className="flex flex-col items-center text-center">
+            <span className="text-[10px] font-bold uppercase tracking-wide text-primary-foreground/85 lg:hidden">
+              {monthShort}
+            </span>
+            <span className="hidden text-xs font-bold uppercase tracking-wide text-primary-foreground/90 lg:block">
+              {monthShort}
+            </span>
+            <span className="text-3xl font-black leading-none tabular-nums lg:mt-1 lg:text-5xl">{dayNum}</span>
+            <span className="mt-1 text-center text-[10px] font-semibold leading-tight text-primary-foreground/90 lg:hidden">
+              {weekdayShort}
+            </span>
+            <span className="mt-2 hidden text-sm font-medium leading-snug text-primary-foreground/90 lg:block">
+              {weekdayFormatter.format(date)}
+            </span>
+            <span className="mt-1 hidden text-sm font-medium text-primary-foreground/90 lg:block">
+              {monthDayFormatter.format(date)}
+            </span>
+          </time>
+          <p className="mt-3 hidden text-xs text-primary-foreground/80 lg:block">
+            {slots.length} {sessionLabel}
+          </p>
         </div>
-        <div className="min-w-0 flex-1 border-l border-primary/15 px-4 py-3.5">
-          <p className="text-[10px] font-bold uppercase tracking-wide text-primary">{sessionHeading}</p>
+        <div className="min-w-0 flex-1 border-l border-primary/15 px-4 py-3.5 lg:px-6 lg:py-5">
+          <p className="text-[10px] font-bold uppercase tracking-wide text-primary lg:text-xs lg:tracking-wider">
+            {sessionHeading}
+          </p>
           {single != null ? (
             <>
-              <p className="mt-1 font-semibold leading-snug text-foreground">
+              <p className="mt-1 font-semibold leading-snug text-foreground lg:mt-2 lg:text-xl">
                 {single.subject_code}
                 {single.papersParenLabel != null ? (
                   <span className="font-normal text-muted-foreground"> ({single.papersParenLabel})</span>
@@ -243,38 +318,33 @@ function ExecutiveNextSessionCard({
                   <span className="font-normal text-muted-foreground"> · Paper {single.papers[0]}</span>
                 )}
               </p>
-              <p className="mt-0.5 truncate text-xs text-muted-foreground" title={single.subject_name}>
+              <p
+                className="mt-0.5 truncate text-xs text-muted-foreground lg:mt-1.5 lg:line-clamp-2 lg:text-base lg:whitespace-normal"
+                title={single.subject_name}
+              >
                 {single.subject_name}
               </p>
-              <p className="mt-2 inline-flex rounded-md bg-secondary/20 px-2 py-0.5 text-sm font-semibold tabular-nums text-foreground">
+              <p className="mt-2 inline-flex rounded-md bg-secondary/20 px-2 py-0.5 text-sm font-semibold tabular-nums text-foreground lg:mt-3 lg:px-3 lg:py-1 lg:text-base">
                 {single.timesLabel}
               </p>
             </>
           ) : (
             <>
-              <p className="mt-0.5 text-xs font-medium tabular-nums text-muted-foreground">
+              <p className="mt-0.5 text-xs font-medium tabular-nums text-muted-foreground lg:mt-1 lg:text-sm">
                 {slots.length} {sessionLabel}
               </p>
-              <ul className="mt-2.5 space-y-2.5">
+              <ul
+                className={cn(
+                  "mt-2.5 space-y-2.5 lg:mt-4 lg:space-y-3",
+                  useSlotGrid && "lg:grid lg:grid-cols-2 lg:gap-x-8 lg:gap-y-4 lg:space-y-0",
+                )}
+              >
                 {slots.map((row, i) => (
-                  <li
+                  <ExecutiveSessionSlotRow
                     key={`${row.subject_code}-${row.papers.join("-")}-${row.timesLabel}-${i}`}
-                    className={`border-l-[3px] pl-2.5 ${sessionAccentBar[i % sessionAccentBar.length]}`}
-                  >
-                    <p className="font-medium leading-snug text-foreground">
-                      <span className="font-semibold">{row.subject_code}</span>
-                      {row.papersParenLabel != null ? (
-                        <span className="text-muted-foreground"> ({row.papersParenLabel})</span>
-                      ) : (
-                        <span className="text-muted-foreground"> · Paper {row.papers[0]}</span>
-                      )}
-                      <span className="font-normal text-muted-foreground"> · </span>
-                      <span className="tabular-nums">{row.timesLabel}</span>
-                    </p>
-                    <p className="mt-0.5 truncate text-xs text-muted-foreground" title={row.subject_name}>
-                      {truncateSchoolNameEnd(row.subject_name, 36)}
-                    </p>
-                  </li>
+                    row={row}
+                    index={i}
+                  />
                 ))}
               </ul>
             </>
@@ -1064,6 +1134,7 @@ export function StaffDashboardOverview({
           <div className="mt-3">
             <ExecutiveNextSessionCard
               date={executiveSessionDay.date}
+              dateKey={executiveSessionDay.dateKey}
               slots={executiveSessionDay.slots}
               isToday={executiveSessionDay.isToday}
             />
