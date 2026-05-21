@@ -10,6 +10,7 @@ import {
   EXECUTIVE_CENTRES_HREF,
   EXECUTIVE_MONITORING_HREF,
   executiveMonitoringHref,
+  executiveUserDisplayName,
 } from "@/lib/executive-selected-examination";
 import { clearAuth, getMe, type UserMe } from "@/lib/auth";
 import { OfficialAccountsNavLink } from "@/components/official-accounts-nav-link";
@@ -187,13 +188,15 @@ export function AdminDashboardShell({ children }: Props) {
               Exam tools
             </p>
             <p className="mt-1 text-sm font-semibold text-card-foreground">
-              {isTopLevelOfficer
-                ? isExecutiveViewer
-                  ? "Executive overview"
-                  : "Monitoring"
-                : isFinanceOfficer
-                  ? "Finance"
-                  : "Administration"}
+              {isExecutiveViewer
+                ? me
+                  ? executiveUserDisplayName(me)
+                  : "Executive overview"
+                : isTopLevelOfficer
+                  ? "Monitoring"
+                  : isFinanceOfficer
+                    ? "Finance"
+                    : "Administration"}
             </p>
           </div>
           <nav
@@ -271,7 +274,9 @@ export function AdminDashboardShell({ children }: Props) {
           }
           subtitle={
             me
-              ? `${me.full_name}${me.email ? ` · ${me.email}` : ""}`
+              ? isExecutiveViewer
+                ? executiveUserDisplayName(me)
+                : `${me.full_name}${me.email ? ` · ${me.email}` : ""}`
               : null
           }
           onLogout={logout}

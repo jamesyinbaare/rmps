@@ -99,7 +99,7 @@ export default function AdminUsersPage() {
   const [executiveOpen, setExecutiveOpen] = useState(false);
   const [executiveEmail, setExecutiveEmail] = useState("");
   const [executivePassword, setExecutivePassword] = useState("");
-  const [executiveFullName, setExecutiveFullName] = useState("Executive viewer");
+  const [executiveFullName, setExecutiveFullName] = useState("");
   const [executiveFormError, setExecutiveFormError] = useState<string | null>(null);
   const [executiveSubmitting, setExecutiveSubmitting] = useState(false);
 
@@ -257,7 +257,7 @@ export default function AdminUsersPage() {
   function openExecutiveModal() {
     setExecutiveEmail("");
     setExecutivePassword("");
-    setExecutiveFullName("Executive viewer");
+    setExecutiveFullName("");
     setExecutiveFormError(null);
     setExecutiveOpen(true);
   }
@@ -275,7 +275,7 @@ export default function AdminUsersPage() {
       setExecutiveFormError(null);
       setExecutiveEmail("");
       setExecutivePassword("");
-      setExecutiveFullName("Executive viewer");
+      setExecutiveFullName("");
       setExecutiveOpen(false);
     } catch (err) {
       setExecutiveFormError(err instanceof Error ? err.message : "Create failed");
@@ -642,6 +642,7 @@ export default function AdminUsersPage() {
                     id="executive-name"
                     type="text"
                     required
+                    placeholder="Officer full name"
                     value={executiveFullName}
                     onChange={(e) => setExecutiveFullName(e.target.value)}
                     className={formInputClass}

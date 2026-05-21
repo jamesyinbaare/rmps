@@ -68,8 +68,8 @@ export function DashboardStickyHeader({
           {subtitle ? (
             <p
               className={cn(
-                "truncate text-sm text-muted-foreground",
-                executiveMobileOnly && "hidden lg:block",
+                "truncate text-muted-foreground",
+                executiveMobileOnly ? "mt-0.5 text-xs lg:mt-0 lg:text-sm" : "text-sm",
               )}
             >
               {subtitle}
