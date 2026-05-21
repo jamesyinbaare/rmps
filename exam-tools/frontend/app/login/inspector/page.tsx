@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { useState } from "react";
 
 import { AuthCard } from "@/components/auth-card";
+import { LoginExpiredNotice } from "@/components/login-expired-notice";
 import { PasswordInput } from "@/components/password-input";
 import { PublicSiteNav } from "@/components/public-site-nav";
 import { useRedirectIfAuthenticated } from "@/hooks/use-redirect-if-authed";
@@ -45,6 +46,7 @@ export default function InspectorLoginPage() {
           title="Inspector sign in"
           description="Use your phone number and password. If you have more than one centre posting, you will choose a workspace after signing in."
         >
+          <LoginExpiredNotice />
           <form className="flex flex-col gap-4" onSubmit={onSubmit}>
             <div>
               <label htmlFor="phone" className={formLabelClass}>

@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { useState } from "react";
 
 import { AuthCard } from "@/components/auth-card";
+import { LoginExpiredNotice } from "@/components/login-expired-notice";
 import { PasswordInput } from "@/components/password-input";
 import { PublicSiteNav } from "@/components/public-site-nav";
 import { useRedirectIfAuthenticated } from "@/hooks/use-redirect-if-authed";
@@ -45,6 +46,7 @@ export default function AdminLoginPage() {
           title="Administrator sign in"
           description="Super admin access for system management."
         >
+          <LoginExpiredNotice />
           <form className="flex flex-col gap-4" onSubmit={onSubmit}>
             <div>
               <label htmlFor="email" className={formLabelClass}>

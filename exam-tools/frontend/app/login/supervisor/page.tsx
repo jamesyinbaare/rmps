@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { useState } from "react";
 
 import { AuthCard } from "@/components/auth-card";
+import { LoginExpiredNotice } from "@/components/login-expired-notice";
 import { PasswordInput } from "@/components/password-input";
 import { PublicSiteNav } from "@/components/public-site-nav";
 import { useRedirectIfAuthenticated } from "@/hooks/use-redirect-if-authed";
@@ -41,6 +42,7 @@ export default function SupervisorLoginPage() {
           title="Supervisor sign in"
           description="Use your school code and password."
         >
+          <LoginExpiredNotice />
           <form className="flex flex-col gap-4" onSubmit={onSubmit}>
             <div>
               <label htmlFor="school_code" className={formLabelClass}>

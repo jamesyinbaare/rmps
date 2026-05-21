@@ -3,8 +3,14 @@ import {
   getApiBaseUrl,
   getStoredToken,
   parseErrorMessage,
+  throwIfUnauthorized,
   useDetailedApiNetworkErrors,
 } from "@/lib/auth";
+
+async function assertAuthedResponse(res: Response): Promise<void> {
+  throwIfUnauthorized(res);
+  if (!res.ok) throw new Error(await parseErrorMessage(res));
+}
 
 export type School = {
   id: string;
@@ -418,7 +424,7 @@ export async function apiFetch(path: string, init: RequestInit = {}): Promise<Re
     }
     throw e;
   }
-  if (!res.ok) throw new Error(await parseErrorMessage(res));
+  await assertAuthedResponse(res);
   return res;
 }
 
@@ -479,9 +485,7 @@ export async function uploadExamDocument(
     headers: { Authorization: `Bearer ${token}` },
     body: formData,
   });
-  if (!res.ok) {
-    throw new Error(await parseErrorMessage(res));
-  }
+  await assertAuthedResponse(res);
   return (await res.json()) as ExamDocument;
 }
 
@@ -1233,9 +1237,7 @@ export async function bulkUploadExaminationSchedules(
     headers: { Authorization: `Bearer ${token}` },
     body: formData,
   });
-  if (!res.ok) {
-    throw new Error(await parseErrorMessage(res));
-  }
+  await assertAuthedResponse(res);
   return (await res.json()) as ExaminationScheduleBulkUploadResponse;
 }
 
@@ -1333,9 +1335,7 @@ export async function importExaminationCandidates(
     headers: { Authorization: `Bearer ${token}` },
     body: formData,
   });
-  if (!res.ok) {
-    throw new Error(await parseErrorMessage(res));
-  }
+  await assertAuthedResponse(res);
   return (await res.json()) as ExaminationCandidateImportResponse;
 }
 
@@ -2844,9 +2844,7 @@ export async function uploadInspectorAttendanceSheet(
     headers: { Authorization: `Bearer ${token}` },
     body: formData,
   });
-  if (!res.ok) {
-    throw new Error(await parseErrorMessage(res));
-  }
+  await assertAuthedResponse(res);
   return (await res.json()) as AttendanceSheet;
 }
 
