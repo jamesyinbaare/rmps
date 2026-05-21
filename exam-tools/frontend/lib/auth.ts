@@ -47,12 +47,18 @@ export type ApiRole =
   | "SUPER_ADMIN"
   | "TEST_ADMIN_OFFICER"
   | "FINANCE_OFFICER"
+  | "EXECUTIVE_VIEWER"
   | "SUPERVISOR"
   | "INSPECTOR"
   | "DEPOT_KEEPER";
 
-/** Roles that may use the admin dashboard layout (super admin + script monitoring officer). */
-export const ADMIN_PORTAL_ROLES: ApiRole[] = ["SUPER_ADMIN", "TEST_ADMIN_OFFICER", "FINANCE_OFFICER"];
+/** Roles that may use the admin dashboard layout (super admin + monitoring / executive / finance). */
+export const ADMIN_PORTAL_ROLES: ApiRole[] = [
+  "SUPER_ADMIN",
+  "TEST_ADMIN_OFFICER",
+  "FINANCE_OFFICER",
+  "EXECUTIVE_VIEWER",
+];
 
 export type UserMe = {
   id: string;
@@ -84,6 +90,7 @@ function dashboardPathForLoginRole(role: TokenResponse["role"]): string {
   if (role === "SUPER_ADMIN" || role === 0) return "/dashboard/admin";
   if (role === "TEST_ADMIN_OFFICER" || role === 5) return "/dashboard/admin/monitoring";
   if (role === "FINANCE_OFFICER" || role === 6) return "/dashboard/admin/exam-officials";
+  if (role === "EXECUTIVE_VIEWER" || role === 7) return "/dashboard/admin/monitoring";
   if (role === "SUPERVISOR" || role === 10) return "/dashboard/supervisor";
   if (role === "INSPECTOR" || role === 20) return "/dashboard/inspector";
   if (role === "DEPOT_KEEPER" || role === 30) return "/dashboard/depot-keeper";
@@ -95,6 +102,7 @@ export function dashboardPathForRole(role: string): string {
     case "SUPER_ADMIN":
       return "/dashboard/admin";
     case "TEST_ADMIN_OFFICER":
+    case "EXECUTIVE_VIEWER":
       return "/dashboard/admin/monitoring";
     case "FINANCE_OFFICER":
       return "/dashboard/admin/exam-officials";

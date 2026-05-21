@@ -1,8 +1,17 @@
 "use client";
 
 import Link from "next/link";
+import { usePathname, useRouter, useSearchParams } from "next/navigation";
+import { CalendarDays, Users } from "lucide-react";
 import { useCallback, useEffect, useState, type ReactNode } from "react";
 
+import {
+  ExecutiveBrandHero,
+  ExecutiveLoadingPulse,
+  ExecutiveSectionHeading,
+  ExecutiveStatTile,
+  executiveExamSelectClass,
+} from "@/components/executive-ui";
 import {
   apiJson,
   getStaffCentreDaySummary,
@@ -13,15 +22,25 @@ import {
   getStaffNationalDaySummary,
   getStaffNationalOverview,
   type Examination,
+  type NationalExecutiveOverviewResponse,
   type StaffCentreDaySummaryResponse,
   type StaffCentreDaySummarySlotRow,
   type StaffCentreOverviewResponse,
   type StaffCentreOverviewUpcomingItem,
   type StaffDepotOverviewResponse,
 } from "@/lib/api";
+import {
+  getCachedExaminations,
+  getCachedNationalOverview,
+  peekCachedExaminations,
+  peekCachedNationalOverview,
+} from "@/lib/executive-overview-cache";
+import { resolveExecutiveExamId, writeExecutiveSelectedExamId } from "@/lib/executive-selected-examination";
+import { parseMonitoringExamIdFromUrl } from "@/lib/monitoring-access";
+import { cn } from "@/lib/utils";
 
 const statCardClass =
-  "rounded-2xl border border-border bg-card p-5 shadow-sm";
+  "rounded-2xl border border-border bg-card p-4 shadow-sm md:p-5";
 
 /** Satellite schools: examination centre destination — visually distinct from plain stat cards. */
 const satelliteWritesCardClass =
@@ -120,6 +139,30 @@ function mergeUpcomingSlotsForMainCard(slots: StaffCentreOverviewUpcomingItem[])
   });
 }
 
+function getDayMergedSlots(
+  items: StaffCentreOverviewUpcomingItem[],
+): { date: Date; dateKey: string; slots: MergedUpcomingCardSlot[] } | null {
+  const groups = groupUpcomingByDate(items);
+  const first = groups[0];
+  if (first == null) return null;
+  const slots = mergeUpcomingSlotsForMainCard(first.slots);
+  if (slots.length === 0) return null;
+  return { date: first.date, dateKey: first.dateKey, slots };
+}
+
+/** Executive mobile: today's papers if any, otherwise the next upcoming exam day. */
+function getExecutiveSessionDay(
+  sessionsToday: StaffCentreOverviewUpcomingItem[] | undefined,
+  upcoming: StaffCentreOverviewUpcomingItem[],
+): ({ date: Date; dateKey: string; slots: MergedUpcomingCardSlot[] } & { isToday: boolean }) | null {
+  if (sessionsToday != null && sessionsToday.length > 0) {
+    const day = getDayMergedSlots(sessionsToday);
+    return day == null ? null : { ...day, isToday: true };
+  }
+  const day = getDayMergedSlots(upcoming);
+  return day == null ? null : { ...day, isToday: false };
+}
+
 /** Left accent bars: theme primary / accent / success (Ghana palette). */
 const sessionAccentBar = ["border-l-primary", "border-l-accent", "border-l-success"] as const;
 
@@ -128,6 +171,119 @@ const summaryToggleClass =
 
 /** Default number of upcoming calendar dates shown before “View all”. */
 const UPCOMING_DATES_PREVIEW = 3;
+
+function nationalCentreCount(overview: StaffCentreOverviewResponse): number {
+  const national = overview as NationalExecutiveOverviewResponse;
+  if (typeof national.centre_count === "number") return national.centre_count;
+  return national.centres?.length ?? 0;
+}
+
+function ExecutiveNationalStatsRow({
+  candidateCount,
+  schoolCount,
+  centreCount,
+}: {
+  candidateCount: number;
+  schoolCount: number;
+  centreCount: number;
+}) {
+  return (
+    <div className="flex flex-col gap-3">
+      <ExecutiveStatTile
+        label="Candidates"
+        value={candidateCount}
+        tint="primary"
+        featured
+        animationDelayMs={0}
+      />
+      <div className="grid grid-cols-2 gap-3">
+        <ExecutiveStatTile label="Schools" value={schoolCount} tint="success" animationDelayMs={120} />
+        <ExecutiveStatTile label="Centres" value={centreCount} tint="secondary" animationDelayMs={240} />
+      </div>
+    </div>
+  );
+}
+
+function ExecutiveNextSessionCard({
+  date,
+  slots,
+  isToday,
+}: {
+  date: Date;
+  slots: MergedUpcomingCardSlot[];
+  isToday: boolean;
+}) {
+  const sessionHeading = isToday ? "Today's session" : "Next session";
+  const dayNum = date.getDate();
+  const monthShort = monthDayFormatter.format(date).split(" ")[0];
+  const sessionLabel = slots.length === 1 ? "session" : "sessions";
+  const single = slots.length === 1 ? slots[0] : null;
+
+  return (
+    <article className="overflow-hidden rounded-2xl border-2 border-primary/40 bg-card shadow-md ring-1 ring-primary/15">
+      <div className="flex min-w-0">
+        <div className="flex w-[4.5rem] shrink-0 flex-col items-center justify-center bg-linear-to-br from-primary via-accent to-success px-2 py-4 text-primary-foreground">
+          <span className="text-[10px] font-bold uppercase tracking-wide text-primary-foreground/85">
+            {monthShort}
+          </span>
+          <span className="text-3xl font-black leading-none tabular-nums">{dayNum}</span>
+          <span className="mt-1 text-center text-[10px] font-semibold leading-tight text-primary-foreground/90">
+            {weekdayFormatter.format(date).slice(0, 3)}
+          </span>
+        </div>
+        <div className="min-w-0 flex-1 border-l border-primary/15 px-4 py-3.5">
+          <p className="text-[10px] font-bold uppercase tracking-wide text-primary">{sessionHeading}</p>
+          {single != null ? (
+            <>
+              <p className="mt-1 font-semibold leading-snug text-foreground">
+                {single.subject_code}
+                {single.papersParenLabel != null ? (
+                  <span className="font-normal text-muted-foreground"> ({single.papersParenLabel})</span>
+                ) : (
+                  <span className="font-normal text-muted-foreground"> · Paper {single.papers[0]}</span>
+                )}
+              </p>
+              <p className="mt-0.5 truncate text-xs text-muted-foreground" title={single.subject_name}>
+                {single.subject_name}
+              </p>
+              <p className="mt-2 inline-flex rounded-md bg-secondary/20 px-2 py-0.5 text-sm font-semibold tabular-nums text-foreground">
+                {single.timesLabel}
+              </p>
+            </>
+          ) : (
+            <>
+              <p className="mt-0.5 text-xs font-medium tabular-nums text-muted-foreground">
+                {slots.length} {sessionLabel}
+              </p>
+              <ul className="mt-2.5 space-y-2.5">
+                {slots.map((row, i) => (
+                  <li
+                    key={`${row.subject_code}-${row.papers.join("-")}-${row.timesLabel}-${i}`}
+                    className={`border-l-[3px] pl-2.5 ${sessionAccentBar[i % sessionAccentBar.length]}`}
+                  >
+                    <p className="font-medium leading-snug text-foreground">
+                      <span className="font-semibold">{row.subject_code}</span>
+                      {row.papersParenLabel != null ? (
+                        <span className="text-muted-foreground"> ({row.papersParenLabel})</span>
+                      ) : (
+                        <span className="text-muted-foreground"> · Paper {row.papers[0]}</span>
+                      )}
+                      <span className="font-normal text-muted-foreground"> · </span>
+                      <span className="tabular-nums">{row.timesLabel}</span>
+                    </p>
+                    <p className="mt-0.5 truncate text-xs text-muted-foreground" title={row.subject_name}>
+                      {truncateSchoolNameEnd(row.subject_name, 36)}
+                    </p>
+                  </li>
+                ))}
+              </ul>
+            </>
+          )}
+        </div>
+      </div>
+    </article>
+  );
+}
 
 function nationalSchoolsWithCandidatesForSlot(slot: StaffCentreDaySummarySlotRow): number {
   return slot.counts_by_school.filter((c) => c > 0).length;
@@ -583,6 +739,12 @@ export type StaffDashboardOverviewProps = {
   depotLearnMoreFooter?: ReactNode;
   /** When set, shows a short card linking to the full examination notice (staff overview). */
   examinationNoticeHref?: string;
+  /** Notified when the selected examination changes (e.g. executive centres section on monitoring page). */
+  onExamIdChange?: (id: number | null) => void;
+  /** Tighter spacing and touch-first national layout (executive monitoring page). */
+  mobileFirst?: boolean;
+  /** When set, read/write selected examination id in the URL query (e.g. `exam_id`). */
+  examIdSearchParam?: string;
 };
 
 export function StaffDashboardOverview({
@@ -591,15 +753,23 @@ export function StaffDashboardOverview({
   depotFrontPage = false,
   depotLearnMoreFooter,
   examinationNoticeHref,
+  onExamIdChange,
+  mobileFirst = false,
+  examIdSearchParam,
 }: StaffDashboardOverviewProps = {}) {
+  const router = useRouter();
+  const pathname = usePathname();
+  const searchParams = useSearchParams();
   const [internalExams, setInternalExams] = useState<Examination[]>([]);
   const [internalExamId, setInternalExamId] = useState<number | null>(null);
+  const [examUrlHydrated, setExamUrlHydrated] = useState(!examIdSearchParam);
   const exams = controlledExam?.exams ?? internalExams;
   const examId = controlledExam?.examId ?? internalExamId;
   const setExamId = controlledExam?.onExamIdChange ?? setInternalExamId;
 
   const [overview, setOverview] = useState<StaffCentreOverviewResponse | StaffDepotOverviewResponse | null>(null);
   const [overviewLoading, setOverviewLoading] = useState(false);
+  const [overviewRevalidating, setOverviewRevalidating] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [expandedDateKey, setExpandedDateKey] = useState<string | null>(null);
   const [daySummary, setDaySummary] = useState<StaffCentreDaySummaryResponse | null>(null);
@@ -611,48 +781,136 @@ export function StaffDashboardOverview({
   const [todaySummaryError, setTodaySummaryError] = useState<string | null>(null);
   const [depotLearnMoreOpen, setDepotLearnMoreOpen] = useState(false);
 
+  const useExecutiveExamsCache = variant === "national";
+
   const loadExams = useCallback(async () => {
     if (controlledExam) return;
     setError(null);
     try {
-      const path = variant === "national" ? "/examinations" : "/examinations/public-list";
+      if (useExecutiveExamsCache) {
+        const result = await getCachedExaminations({
+          onUpdate: (payload) => {
+            setInternalExams(payload.exams);
+          },
+        });
+        const list = result.data.exams;
+        const defaultExam = result.data.defaultExam;
+        setInternalExams(list);
+        const fromUrl =
+          examIdSearchParam != null
+            ? parseMonitoringExamIdFromUrl(searchParams.get(examIdSearchParam))
+            : null;
+        setInternalExamId((prev) =>
+          resolveExecutiveExamId({
+            exams: list,
+            fromUrl,
+            previous: prev,
+            defaultExam,
+          }),
+        );
+        if (examIdSearchParam != null) setExamUrlHydrated(true);
+        return;
+      }
+      const path = "/examinations/public-list";
       const [list, defaultExam] = await Promise.all([
         apiJson<Examination[]>(path),
         getStaffDefaultExamination().catch(() => null),
       ]);
       setInternalExams(list);
+      const fromUrl =
+        examIdSearchParam != null
+          ? parseMonitoringExamIdFromUrl(searchParams.get(examIdSearchParam))
+          : null;
       setInternalExamId((prev) => {
         if (prev != null && list.some((e) => e.id === prev)) return prev;
+        if (fromUrl != null && list.some((e) => e.id === fromUrl)) return fromUrl;
         const fromDefault =
           defaultExam != null && list.some((e) => e.id === defaultExam.id) ? defaultExam.id : null;
         if (fromDefault != null) return fromDefault;
         return list.length ? list[0].id : null;
       });
+      if (examIdSearchParam != null) setExamUrlHydrated(true);
     } catch (e) {
       setInternalExams([]);
       setInternalExamId(null);
       setError(e instanceof Error ? e.message : "Could not load examinations");
     }
-  }, [controlledExam, variant]);
+  }, [controlledExam, variant, examIdSearchParam, searchParams, useExecutiveExamsCache]);
+
+  useEffect(() => {
+    if (controlledExam || examIdSearchParam == null || internalExams.length === 0) return;
+    const fromUrl = parseMonitoringExamIdFromUrl(searchParams.get(examIdSearchParam));
+    setInternalExamId((prev) =>
+      resolveExecutiveExamId({
+        exams: internalExams,
+        fromUrl,
+        previous: prev,
+        defaultExam: null,
+      }),
+    );
+    setExamUrlHydrated(true);
+  }, [controlledExam, examIdSearchParam, internalExams, searchParams]);
+
+  useEffect(() => {
+    if (controlledExam || examIdSearchParam == null || !examUrlHydrated || examId == null) return;
+    const p = new URLSearchParams(searchParams.toString());
+    p.set(examIdSearchParam, String(examId));
+    const next = p.toString();
+    if (next === searchParams.toString()) return;
+    router.replace(`${pathname}?${next}`, { scroll: false });
+  }, [
+    controlledExam,
+    examIdSearchParam,
+    examUrlHydrated,
+    examId,
+    pathname,
+    router,
+    searchParams,
+  ]);
+
+  useEffect(() => {
+    if (!useExecutiveExamsCache || examId == null) return;
+    writeExecutiveSelectedExamId(examId);
+  }, [examId, useExecutiveExamsCache]);
+
+  const slimNationalOverview = mobileFirst && variant === "national";
 
   const loadOverview = useCallback(
     async (id: number) => {
       setError(null);
       try {
+        if (variant === "national") {
+          const result = await getCachedNationalOverview(id, {
+            includeCentres: !slimNationalOverview,
+            onUpdate: (data) => {
+              setOverview(data);
+              setOverviewRevalidating(false);
+            },
+          });
+          setOverview(result.data);
+          setOverviewRevalidating(result.isRevalidating);
+          return;
+        }
         const data =
-          variant === "depot"
-            ? await getStaffDepotOverview(id)
-            : variant === "national"
-              ? await getStaffNationalOverview(id)
-              : await getStaffCentreOverview(id);
+          variant === "depot" ? await getStaffDepotOverview(id) : await getStaffCentreOverview(id);
         setOverview(data);
+        setOverviewRevalidating(false);
       } catch (e) {
         setOverview(null);
+        setOverviewRevalidating(false);
         setError(e instanceof Error ? e.message : "Could not load overview");
       }
     },
-    [variant],
+    [variant, slimNationalOverview],
   );
+
+  useEffect(() => {
+    if (controlledExam || !useExecutiveExamsCache) return;
+    const peek = peekCachedExaminations();
+    if (peek != null && internalExams.length === 0) {
+      setInternalExams(peek.exams);
+    }
+  }, [controlledExam, useExecutiveExamsCache, internalExams.length]);
 
   useEffect(() => {
     // eslint-disable-next-line react-hooks/set-state-in-effect
@@ -660,15 +918,31 @@ export function StaffDashboardOverview({
   }, [loadExams]);
 
   useEffect(() => {
+    onExamIdChange?.(examId);
+  }, [examId, onExamIdChange]);
+
+  useEffect(() => {
     if (examId == null) {
       // eslint-disable-next-line react-hooks/set-state-in-effect
       setOverview(null);
       setOverviewLoading(false);
+      setOverviewRevalidating(false);
       return;
     }
-    setOverviewLoading(true);
+    if (variant === "national") {
+      const peek = peekCachedNationalOverview(examId, !slimNationalOverview);
+      if (peek != null) {
+        setOverview(peek);
+        setOverviewLoading(false);
+      } else {
+        setOverviewLoading(true);
+      }
+    } else {
+      setOverviewLoading(true);
+    }
+    setOverviewRevalidating(false);
     void loadOverview(examId).finally(() => setOverviewLoading(false));
-  }, [examId, loadOverview]);
+  }, [examId, loadOverview, variant, slimNationalOverview]);
 
   useEffect(() => {
     // eslint-disable-next-line react-hooks/set-state-in-effect
@@ -756,19 +1030,47 @@ export function StaffDashboardOverview({
     };
   }, [examId, expandedDateKey, variant]);
 
+  const executiveMobileNational = mobileFirst && variant === "national";
+
   const upcomingDateGroups =
     overview != null && overview.upcoming.length > 0 ? groupUpcomingByDate(overview.upcoming) : [];
+  const upcomingDatesLimit = executiveMobileNational ? 1 : UPCOMING_DATES_PREVIEW;
   const visibleUpcomingDateGroups = showAllUpcomingDates
     ? upcomingDateGroups
-    : upcomingDateGroups.slice(0, UPCOMING_DATES_PREVIEW);
-  const moreUpcomingDatesCount = Math.max(0, upcomingDateGroups.length - UPCOMING_DATES_PREVIEW);
+    : upcomingDateGroups.slice(0, upcomingDatesLimit);
+  const moreUpcomingDatesCount = executiveMobileNational
+    ? 0
+    : Math.max(0, upcomingDateGroups.length - UPCOMING_DATES_PREVIEW);
+  const executiveSessionDay =
+    overview != null
+      ? getExecutiveSessionDay(overview.sessions_today, overview.upcoming)
+      : null;
 
   const sessionScope = variant === "depot" ? "depot" : variant === "national" ? "national" : "centre";
   const isDepotOverview = overview != null && "depot_code" in overview;
   const depotCompact = Boolean(isDepotOverview && depotFrontPage);
 
   const upcomingSection =
-    overview == null ? null : (
+    overview == null ? null : executiveMobileNational ? (
+      <div>
+        <ExecutiveSectionHeading icon={CalendarDays} accentClass="bg-secondary">
+          {executiveSessionDay?.isToday ? "Today's session" : "Upcoming session"}
+        </ExecutiveSectionHeading>
+        {executiveSessionDay == null ? (
+          <p className="mt-3 rounded-lg border border-dashed border-border bg-muted/30 px-3 py-4 text-sm text-muted-foreground">
+            No upcoming sessions — all papers may have been written or the timetable is not set.
+          </p>
+        ) : (
+          <div className="mt-3">
+            <ExecutiveNextSessionCard
+              date={executiveSessionDay.date}
+              slots={executiveSessionDay.slots}
+              isToday={executiveSessionDay.isToday}
+            />
+          </div>
+        )}
+      </div>
+    ) : (
       <div>
         <h2 className="text-sm font-semibold text-card-foreground">Upcoming sessions</h2>
         {overview.upcoming.length === 0 ? (
@@ -980,10 +1282,42 @@ export function StaffDashboardOverview({
       </aside>
     ) : null;
 
+  const rootSpacing =
+    depotCompact || executiveMobileNational ? "space-y-6" : "space-y-8";
+
   return (
-    <div className={`${depotCompact ? "space-y-6" : "space-y-8"}`}>
-      {examId != null ? (
-        <div className="rounded-lg border border-border bg-muted/30 px-4 py-3">
+    <div className={rootSpacing}>
+      {executiveMobileNational && exams.length > 0 ? (
+        <ExecutiveBrandHero title="National monitoring">
+          <label className="flex flex-col gap-1.5">
+            <span className="text-xs font-semibold text-primary-foreground/90">Examination</span>
+            <select
+              className={executiveExamSelectClass}
+              value={examId ?? ""}
+              onChange={(e) => {
+                const v = e.target.value;
+                const next = v === "" ? null : Number(v);
+                setExamId(next);
+                if (next != null) writeExecutiveSelectedExamId(next);
+                else writeExecutiveSelectedExamId(null);
+              }}
+            >
+              {exams.map((ex) => (
+                <option key={ex.id} value={ex.id}>
+                  {formatExamLabel(ex)}
+                </option>
+              ))}
+            </select>
+          </label>
+        </ExecutiveBrandHero>
+      ) : examId != null ? (
+        <div
+          className={
+            mobileFirst && variant === "national"
+              ? "rounded-xl border border-border bg-muted/30 px-4 py-3.5"
+              : "rounded-lg border border-border bg-muted/30 px-4 py-3"
+          }
+        >
           <p className="text-sm text-muted-foreground">
             <span className="font-medium text-foreground">Examination</span>
             {": "}
@@ -1002,7 +1336,19 @@ export function StaffDashboardOverview({
         </p>
       ) : null}
 
-      {overviewLoading ? <p className="text-sm text-muted-foreground">Loading overview…</p> : null}
+      {overviewLoading ? (
+        executiveMobileNational ? (
+          <ExecutiveLoadingPulse label="Loading overview…" />
+        ) : (
+          <p className="text-sm text-muted-foreground">Loading overview…</p>
+        )
+      ) : null}
+
+      {!overviewLoading && overviewRevalidating && overview ? (
+        <p className="text-center text-xs font-medium text-muted-foreground motion-reduce:opacity-100">
+          Updating…
+        </p>
+      ) : null}
 
       {!overviewLoading && overview ? (
         <>
@@ -1091,30 +1437,45 @@ export function StaffDashboardOverview({
                   </li>
                 </ul>
               ) : variant === "national" ? (
-                <ul className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-                  <li className={statCardClass}>
-                    <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
-                      Candidates (national)
-                    </p>
-                    <p className="mt-2 tabular-nums text-3xl font-semibold text-card-foreground">
-                      {overview.candidate_count.toLocaleString()}
-                    </p>
-                    <p className="mt-2 text-sm text-muted-foreground">
-                      Registered candidates for this examination across all schools.
-                    </p>
-                  </li>
-                  <li className={statCardClass}>
-                    <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
-                      Schools with candidates
-                    </p>
-                    <p className="mt-2 tabular-nums text-3xl font-semibold text-card-foreground">
-                      {overview.school_count.toLocaleString()}
-                    </p>
-                    <p className="mt-2 text-sm text-muted-foreground">
-                      Number of schools with registered candidate for this examination.
-                    </p>
-                  </li>
-                </ul>
+                mobileFirst ? (
+                  <div>
+                    <ExecutiveSectionHeading icon={Users} accentClass="bg-primary">
+                      National totals
+                    </ExecutiveSectionHeading>
+                    <div className="mt-3">
+                      <ExecutiveNationalStatsRow
+                        candidateCount={overview.candidate_count}
+                        schoolCount={overview.school_count}
+                        centreCount={nationalCentreCount(overview)}
+                      />
+                    </div>
+                  </div>
+                ) : (
+                  <ul className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+                    <li className={statCardClass}>
+                      <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+                        Candidates (national)
+                      </p>
+                      <p className="mt-2 tabular-nums text-3xl font-semibold text-card-foreground">
+                        {overview.candidate_count.toLocaleString()}
+                      </p>
+                      <p className="mt-2 text-sm text-muted-foreground">
+                        Registered candidates for this examination across all schools.
+                      </p>
+                    </li>
+                    <li className={statCardClass}>
+                      <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+                        Schools with candidates
+                      </p>
+                      <p className="mt-2 tabular-nums text-3xl font-semibold text-card-foreground">
+                        {overview.school_count.toLocaleString()}
+                      </p>
+                      <p className="mt-2 text-sm text-muted-foreground">
+                        Number of schools with registered candidate for this examination.
+                      </p>
+                    </li>
+                  </ul>
+                )
               ) : (
                 <ul className="grid grid-cols-1 gap-4 sm:grid-cols-2">
                   <li className={statCardClass}>
@@ -1156,16 +1517,18 @@ export function StaffDashboardOverview({
                 </ul>
               )}
 
-              <TodayAtCentrePanel
-                items={overview.sessions_today ?? []}
-                summary={todaySummary}
-                summaryLoading={todaySummaryLoading}
-                summaryError={todaySummaryError}
-                sessionScope={sessionScope}
-                hideSchoolNameBadges={variant === "national"}
-                hideCandidateInvigilatorCards={variant === "national"}
-                compactSlotSummary={variant === "national"}
-              />
+              {!executiveMobileNational ? (
+                <TodayAtCentrePanel
+                  items={overview.sessions_today ?? []}
+                  summary={todaySummary}
+                  summaryLoading={todaySummaryLoading}
+                  summaryError={todaySummaryError}
+                  sessionScope={sessionScope}
+                  hideSchoolNameBadges={variant === "national"}
+                  hideCandidateInvigilatorCards={variant === "national"}
+                  compactSlotSummary={variant === "national"}
+                />
+              ) : null}
 
               {upcomingSection}
             </>

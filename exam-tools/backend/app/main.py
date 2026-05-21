@@ -38,6 +38,7 @@ from app.routers import (
     script_control,
     subjects,
     test_admin_officers,
+    executive_viewers,
 )
 
 SENSITIVE_KEYS = {"password", "token", "authorization"}
@@ -183,6 +184,7 @@ app.add_middleware(
 # Include routers
 app.include_router(auth.router)
 app.include_router(test_admin_officers.router)
+app.include_router(executive_viewers.router)
 app.include_router(finance_officers.router)
 app.include_router(depots.router_admin)
 app.include_router(depots.router_keeper)

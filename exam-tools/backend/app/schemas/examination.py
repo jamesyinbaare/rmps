@@ -267,6 +267,41 @@ class StaffCentreOverviewResponse(BaseModel):
     )
 
 
+class ExecutiveCentreListItem(BaseModel):
+    """Examination centre host with aggregated candidate counts (national executive list)."""
+
+    center_id: UUID
+    center_code: str
+    center_name: str
+    region: str
+    zone: str
+    candidate_count: int = Field(ge=0)
+    school_count: int = Field(ge=0, description="Schools in centre scope with at least one candidate.")
+    inspector_count: int = Field(ge=0, description="Inspector postings at this centre for the examination.")
+
+
+class NationalExecutiveOverviewResponse(StaffCentreOverviewResponse):
+    """National monitoring overview plus per-centre rows for drill-down."""
+
+    centres: list[ExecutiveCentreListItem] = Field(default_factory=list)
+    centre_count: int = Field(
+        ge=0,
+        description="Examination centres with candidates in scope (always set; equals len(centres) when centres are included).",
+    )
+
+
+class ExecutivePostedInspectorItem(BaseModel):
+    posting_id: UUID
+    inspector_full_name: str
+    inspector_phone_number: str | None = None
+    subject_scope: str
+
+
+class ExecutiveCentreDetailResponse(BaseModel):
+    overview: StaffCentreOverviewResponse
+    posted_inspectors: list[ExecutivePostedInspectorItem] = Field(default_factory=list)
+
+
 class StaffDepotOverviewResponse(BaseModel):
     """Depot keeper: depot-wide candidate/school counts and timetable slots."""
 

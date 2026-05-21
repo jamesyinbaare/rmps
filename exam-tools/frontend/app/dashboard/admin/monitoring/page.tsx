@@ -1,12 +1,14 @@
 "use client";
 
+import { Suspense } from "react";
 import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 
 import { StaffDashboardOverview } from "@/components/staff-dashboard-overview";
 import { getMe, type UserMe } from "@/lib/auth";
+import { canAccessMonitoring } from "@/lib/monitoring-access";
 
-export default function AdminMonitoringPage() {
+function AdminMonitoringContent() {
   const router = useRouter();
   const [me, setMe] = useState<UserMe | null>(null);
 
@@ -17,7 +19,7 @@ export default function AdminMonitoringPage() {
         const user = await getMe();
         if (cancelled) return;
         setMe(user);
-        if (user.role !== "SUPER_ADMIN" && user.role !== "TEST_ADMIN_OFFICER") {
+        if (!canAccessMonitoring(user.role)) {
           router.replace("/");
         }
       } catch {
@@ -29,14 +31,19 @@ export default function AdminMonitoringPage() {
     };
   }, [router]);
 
-  if (me && me.role !== "SUPER_ADMIN" && me.role !== "TEST_ADMIN_OFFICER") {
+  if (me && !canAccessMonitoring(me.role)) {
     return null;
   }
 
   return (
-    <div className="space-y-6">
+    <StaffDashboardOverview variant="national" mobileFirst examIdSearchParam="exam_id" />
+  );
+}
 
-      <StaffDashboardOverview variant="national" />
-    </div>
+export default function AdminMonitoringPage() {
+  return (
+    <Suspense fallback={<p className="text-sm text-muted-foreground">Loading…</p>}>
+      <AdminMonitoringContent />
+    </Suspense>
   );
 }
