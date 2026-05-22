@@ -26,8 +26,8 @@ export default function TimetablePage() {
           <div className="mx-auto max-w-xl px-4 sm:px-6">
             <div className="rounded-2xl border border-border bg-card p-6 shadow-sm sm:p-8">
               <p className="text-sm text-muted-foreground">
-                Choose your role to open the correct workspace. Administrators use{" "}
-                <strong className="text-card-foreground">Examination timetable</strong> in the admin menu.
+                Choose your role to open the correct workspace. Staff use{" "}
+                <strong className="text-card-foreground">Examination timetable</strong> in the staff menu.
                 Supervisors and inspectors use{" "}
                 <strong className="text-card-foreground">Examination timetable</strong> in their dashboard.
               </p>
@@ -37,7 +37,7 @@ export default function TimetablePage() {
                     href="/login/admin"
                     className="font-medium text-primary underline-offset-2 hover:underline"
                   >
-                    Administrator sign-in
+                    Staff sign-in
                   </Link>
                 </li>
                 <li>

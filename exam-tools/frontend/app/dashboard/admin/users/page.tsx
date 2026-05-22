@@ -427,7 +427,7 @@ export default function AdminUsersPage() {
           <section id="finance-officer" className={sectionClass}>
             <h3 className="text-base font-semibold text-card-foreground">Finance officer</h3>
             <p className="text-sm text-muted-foreground">
-              Email and password (administrator sign-in). Access to official account details and centre invigilator
+              Email and password (staff sign-in). Access to official account details and centre invigilator
               summaries only.
             </p>
             <button type="button" onClick={openFinanceModal} className={btnPrimary}>
@@ -438,7 +438,7 @@ export default function AdminUsersPage() {
           <section id="executive-viewer" className={sectionClass}>
             <h3 className="text-base font-semibold text-card-foreground">Executive viewer</h3>
             <p className="text-sm text-muted-foreground">
-              Email and password (administrator sign-in). Read-only national monitoring: candidates, schools,
+              Email and password (staff sign-in). Read-only national monitoring: candidates, schools,
               upcoming sessions, and centre inspector contacts.
             </p>
             <button type="button" onClick={openExecutiveModal} className={btnPrimary}>

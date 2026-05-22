@@ -205,7 +205,7 @@ export function PublicSiteNav() {
         <div className="hidden items-center gap-2 lg:flex">
           <Link href="/login/admin" className={adminLinkClass}>
             <Shield className="size-4 shrink-0 opacity-70" aria-hidden />
-            Admin sign-in
+            Staff sign-in
           </Link>
         </div>
 
@@ -319,7 +319,7 @@ export function PublicSiteNav() {
                 <span className="flex size-9 shrink-0 items-center justify-center rounded-lg bg-muted">
                   <Shield className="size-4 text-muted-foreground" aria-hidden />
                 </span>
-                <span className="min-w-0 truncate">Admin sign-in</span>
+                <span className="min-w-0 truncate">Staff sign-in</span>
               </Link>
             </div>
           </nav>

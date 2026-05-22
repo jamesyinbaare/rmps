@@ -270,7 +270,7 @@ export function AdminDashboardShell({ children }: Props) {
                     : "Exam monitoring"
                   : isFinanceOfficer
                     ? "Finance"
-                    : "Administrator dashboard"
+                    : "Staff dashboard"
           }
           subtitle={
             me

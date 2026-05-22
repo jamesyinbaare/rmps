@@ -4,6 +4,7 @@ import { useSearchParams } from "next/navigation";
 import { useCallback, useEffect, useMemo, useState } from "react";
 
 import { RoleGuard } from "@/components/role-guard";
+import { SearchableCombobox } from "@/components/searchable-combobox";
 import {
   apiJson,
   displayBankCode,
@@ -99,6 +100,15 @@ function AdminExamOfficialsContent() {
 
   const selectedExam = useMemo(() => exams.find((e) => e.id === examId) ?? null, [exams, examId]);
 
+  const centerOptions = useMemo(
+    () =>
+      centers.map((c) => ({
+        value: c.school.id,
+        label: `${c.school.code} — ${c.school.name}`,
+      })),
+    [centers],
+  );
+
   const loadRows = useCallback(async () => {
     if (examId === null) return;
     setBusy(true);
@@ -179,22 +189,18 @@ function AdminExamOfficialsContent() {
           </select>
         </div>
         <div className="min-w-56 flex-1">
-          <label className={formLabelClass} htmlFor="admin-eo-center">
-            Examination centre
-          </label>
-          <select
-            id="admin-eo-center"
-            className={formInputClass}
+          <p className={formLabelClass}>Examination centre</p>
+          <SearchableCombobox
+            options={centerOptions}
             value={centerId}
-            onChange={(e) => setCenterId(e.target.value)}
-          >
-            <option value="">All centres</option>
-            {centers.map((c) => (
-              <option key={c.school.id} value={c.school.id}>
-                {c.school.code} — {c.school.name}
-              </option>
-            ))}
-          </select>
+            onChange={setCenterId}
+            placeholder="All centres"
+            searchPlaceholder="Code or name…"
+            emptyText={centers.length ? "No match." : "No centres."}
+            widthClass="w-full min-w-0"
+            allOptionLabel="All centres"
+            disabled={centers.length === 0}
+          />
         </div>
           <div className="flex w-full flex-col gap-2 sm:ml-auto sm:w-auto sm:flex-row">
             <button
