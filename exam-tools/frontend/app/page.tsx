@@ -41,10 +41,9 @@ export default function HomePage() {
             <h1 className="mt-3 text-3xl font-semibold tracking-tight text-foreground sm:text-4xl">
               CTVET Exam Operations Portal
             </h1>
-            <p className="mt-3 max-w-2xl text-base leading-7 text-muted-foreground sm:text-lg">
-              Secure role-based access for inspectors, depot keepers, and supervisors.
+            <p className="mt-3 text-base text-muted-foreground sm:text-lg">
+              Choose your role to sign in.
             </p>
-            <p className="mt-3 text-sm font-medium text-foreground">Choose your role to sign in.</p>
           </div>
         </section>
 

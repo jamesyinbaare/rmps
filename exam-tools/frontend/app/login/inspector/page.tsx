@@ -42,10 +42,7 @@ export default function InspectorLoginPage() {
     <div className="flex min-h-screen flex-col bg-background">
       <PublicSiteNav />
       <div className="flex flex-1 flex-col items-center justify-center px-4 py-8 sm:px-6">
-        <AuthCard
-          title="Inspector sign in"
-          description="Use your phone number and password. If you have more than one centre posting, you will choose a workspace after signing in."
-        >
+        <AuthCard title="Inspector sign in">
           <LoginExpiredNotice />
           <form className="flex flex-col gap-4" onSubmit={onSubmit}>
             <div>

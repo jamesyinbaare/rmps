@@ -42,10 +42,7 @@ export default function StaffLoginPage() {
     <div className="flex min-h-screen flex-col bg-background">
       <PublicSiteNav />
       <div className="flex flex-1 flex-col items-center justify-center px-4 py-8 sm:px-6">
-        <AuthCard
-          title="Staff sign in"
-          description="Sign in for CTVET staff: system administration, finance, monitoring, and related operations."
-        >
+        <AuthCard title="Staff sign in">
           <LoginExpiredNotice />
           <form className="flex flex-col gap-4" onSubmit={onSubmit}>
             <div>

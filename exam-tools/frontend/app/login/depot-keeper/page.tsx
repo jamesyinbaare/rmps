@@ -42,10 +42,7 @@ export default function DepotKeeperLoginPage() {
     <div className="flex min-h-screen flex-col bg-background">
       <PublicSiteNav />
       <div className="flex flex-1 flex-col items-center justify-center px-4 py-8 sm:px-6">
-        <AuthCard
-          title="Depot keeper sign in"
-          description="Use the username and password assigned by your administrator."
-        >
+        <AuthCard title="Depot keeper sign in">
           <LoginExpiredNotice />
           <form className="flex flex-col gap-4" onSubmit={onSubmit}>
             <div>
