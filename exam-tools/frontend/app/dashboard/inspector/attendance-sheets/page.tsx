@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } fro
 import { useRouter } from "next/navigation";
 
 import { DashboardShell } from "@/components/dashboard-shell";
+import { TypeToDeleteConfirmModal } from "@/components/type-to-delete-confirm-modal";
 import { RoleGuard } from "@/components/role-guard";
 import { formInputClass, formLabelClass } from "@/lib/form-classes";
 import {
@@ -377,6 +378,8 @@ export default function InspectorAttendanceSheetsPage() {
   const [uploadBusyDate, setUploadBusyDate] = useState<string | null>(null);
   const [downloadingId, setDownloadingId] = useState<string | null>(null);
   const [deletingId, setDeletingId] = useState<string | null>(null);
+  const [pendingDeleteSheet, setPendingDeleteSheet] = useState<AttendanceSheet | null>(null);
+  const [deleteBusy, setDeleteBusy] = useState(false);
 
   const groupRefs = useRef<Record<string, HTMLDetailsElement | null>>({});
   const chooseFileRefs = useRef<Record<string, HTMLInputElement | null>>({});
@@ -530,20 +533,26 @@ export default function InspectorAttendanceSheetsPage() {
     }
   }
 
-  async function onDelete(sheet: AttendanceSheet) {
-    if (!exam) return;
-    const msg = `Delete "${sheet.original_filename}" (${formatExamDateLabel(sheet.examination_date)})?`;
-    if (!window.confirm(msg)) return;
+  function requestDelete(sheet: AttendanceSheet) {
+    setPendingDeleteSheet(sheet);
+  }
+
+  async function confirmDeleteSheet() {
+    if (!exam || pendingDeleteSheet === null) return;
+    const sheet = pendingDeleteSheet;
+    setDeleteBusy(true);
     setDeletingId(sheet.id);
     setActionError(null);
     setActionSuccess(null);
     try {
       await deleteInspectorAttendanceSheet(exam.id, sheet.id, postingId);
+      setPendingDeleteSheet(null);
       await refreshLists(exam.id, postingId);
       setActionSuccess("Attendance sheet deleted.");
     } catch (err) {
       setActionError(err instanceof Error ? err.message : "Delete failed");
     } finally {
+      setDeleteBusy(false);
       setDeletingId(null);
     }
   }
@@ -657,7 +666,7 @@ export default function InspectorAttendanceSheetsPage() {
                     onDraftChange={setDraft}
                     onUpload={(date, e) => void onUpload(date, e)}
                     onDownload={(row) => void onDownload(row)}
-                    onDelete={(row) => void onDelete(row)}
+                    onDelete={requestDelete}
                   />
                 ))}
                 {/* Hidden input for sticky CTA to trigger file picker on today */}
@@ -689,6 +698,22 @@ export default function InspectorAttendanceSheetsPage() {
               </button>
             </div>
           </div>
+        ) : null}
+
+        {pendingDeleteSheet ? (
+          <TypeToDeleteConfirmModal
+            title="Delete attendance sheet?"
+            titleId="delete-attendance-sheet-title"
+            description={
+              <>
+                Delete <span className="font-medium text-foreground">{pendingDeleteSheet.original_filename}</span>?
+                This cannot be undone.
+              </>
+            }
+            onCancel={() => !deleteBusy && setPendingDeleteSheet(null)}
+            onConfirm={() => void confirmDeleteSheet()}
+            busy={deleteBusy}
+          />
         ) : null}
       </DashboardShell>
     </RoleGuard>

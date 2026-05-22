@@ -5,6 +5,7 @@ import { createPortal } from "react-dom";
 import { useRouter } from "next/navigation";
 
 import { DashboardShell } from "@/components/dashboard-shell";
+import { TypeToDeleteConfirmModal } from "@/components/type-to-delete-confirm-modal";
 import { SearchableCombobox } from "@/components/searchable-combobox";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { RoleGuard } from "@/components/role-guard";
@@ -239,57 +240,6 @@ function FormSection({
       {description ? <p className="text-xs text-muted-foreground">{description}</p> : null}
       <div className="space-y-4 md:grid md:grid-cols-2 md:gap-x-4 md:gap-y-4 md:space-y-0">{children}</div>
     </fieldset>
-  );
-}
-
-function DeleteConfirmModal({
-  name,
-  onCancel,
-  onConfirm,
-  busy,
-}: {
-  name: string;
-  onCancel: () => void;
-  onConfirm: () => void;
-  busy: boolean;
-}) {
-  useEffect(() => {
-    function onKey(e: KeyboardEvent) {
-      if (e.key === "Escape") {
-        e.preventDefault();
-        onCancel();
-      }
-    }
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [onCancel]);
-
-  return (
-    <div className="fixed inset-0 z-[60] flex items-center justify-center p-4">
-      <button type="button" aria-label="Dismiss" className="absolute inset-0 bg-foreground/40" onClick={onCancel} />
-      <div
-        role="alertdialog"
-        aria-modal="true"
-        aria-labelledby="delete-official-title"
-        className="relative z-10 w-full max-w-md rounded-2xl border border-border bg-card p-5 shadow-lg"
-      >
-        <h2 id="delete-official-title" className="text-lg font-semibold text-card-foreground">
-          Remove account record?
-        </h2>
-        <p className="mt-2 text-sm text-muted-foreground">
-          Remove <span className="font-medium text-foreground">{name}</span> from this centre&apos;s account-details list
-          for this examination. This cannot be undone.
-        </p>
-        <div className="mt-6 flex flex-col-reverse gap-2 max-sm:pb-[max(0px,env(safe-area-inset-bottom,0px))] sm:flex-row sm:justify-end">
-          <button type="button" className={btnSecondary} onClick={onCancel} disabled={busy}>
-            Cancel
-          </button>
-          <button type="button" className={btnDanger} onClick={onConfirm} disabled={busy}>
-            {busy ? "Deleting…" : "Delete"}
-          </button>
-        </div>
-      </div>
-    </div>
   );
 }
 
@@ -1284,8 +1234,15 @@ export default function InspectorExamOfficialsPage() {
         ) : null}
 
         {pendingDelete ? (
-          <DeleteConfirmModal
-            name={pendingDelete.full_name}
+          <TypeToDeleteConfirmModal
+            title="Remove account record?"
+            titleId="delete-official-title"
+            description={
+              <>
+                Remove <span className="font-medium text-foreground">{pendingDelete.full_name}</span>? This cannot be
+                undone.
+              </>
+            }
             onCancel={() => setPendingDelete(null)}
             onConfirm={() => void confirmDelete()}
             busy={deleteBusy}
