@@ -16,7 +16,7 @@ import {
   primaryButtonClass,
 } from "@/lib/form-classes";
 
-export default function AdminLoginPage() {
+export default function StaffLoginPage() {
   useRedirectIfAuthenticated();
   const router = useRouter();
   const [email, setEmail] = useState("");
@@ -43,8 +43,8 @@ export default function AdminLoginPage() {
       <PublicSiteNav />
       <div className="flex flex-1 flex-col items-center justify-center px-4 py-8 sm:px-6">
         <AuthCard
-          title="Administrator sign in"
-          description="Super admin access for system management."
+          title="Staff sign in"
+          description="Sign in for CTVET staff: system administration, finance, monitoring, and related operations."
         >
           <LoginExpiredNotice />
           <form className="flex flex-col gap-4" onSubmit={onSubmit}>

@@ -78,7 +78,7 @@ export default function HomePage() {
             href="/login/admin"
             className="font-medium text-foreground underline-offset-4 hover:underline"
           >
-            System administrator access
+            Staff sign-in
           </Link>
         </p>
         <p className="mt-2 px-4 text-center text-xs text-muted-foreground">
