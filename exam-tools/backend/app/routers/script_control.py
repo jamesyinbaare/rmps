@@ -121,12 +121,69 @@ def _packing_to_response(ps: ScriptPackingSeries) -> ScriptSeriesPackingResponse
         )
         for e in envs_sorted
     ]
-    all_verified = len(envs_sorted) > 0 and all(e.verified_at is not None for e in envs_sorted)
+    no_scripts = bool(getattr(ps, "no_scripts", False))
+    all_verified = no_scripts or (
+        len(envs_sorted) > 0 and all(e.verified_at is not None for e in envs_sorted)
+    )
     return ScriptSeriesPackingResponse(
         id=ps.id,
         envelopes=envs,
+        no_scripts=no_scripts,
         verified=all_verified,
     )
+
+
+def _series_slot_verified(ps: ScriptPackingSeries) -> bool:
+    if ps.no_scripts:
+        return True
+    return len(ps.envelopes) > 0 and all(e.verified_at is not None for e in ps.envelopes)
+
+
+def _positive_envelope_counts_present(envelopes: list[ScriptEnvelopeItem]) -> bool:
+    return any(e.booklet_count > 0 for e in envelopes)
+
+
+def _detect_no_scripts_from_envelopes(envelopes: list[ScriptEnvelopeItem]) -> bool:
+    """True when envelope 1 is explicitly zero and no other envelopes are submitted."""
+    env1_zero = any(e.envelope_number == 1 and e.booklet_count == 0 for e in envelopes)
+    if not env1_zero:
+        return False
+    if any(e.envelope_number > 1 for e in envelopes):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="When envelope 1 is zero, you cannot add other envelopes.",
+        )
+    return True
+
+
+async def _sync_script_series_envelopes(
+    session: DBSessionDep,
+    row: ScriptPackingSeries,
+    items: list[ScriptEnvelopeItem],
+) -> None:
+    by_number = {e.envelope_number: e for e in row.envelopes}
+    wanted_numbers = {item.envelope_number for item in items}
+    for item in items:
+        existing = by_number.get(item.envelope_number)
+        if existing is not None:
+            if existing.booklet_count != item.booklet_count:
+                await session.execute(
+                    delete(AllocationAssignment).where(
+                        AllocationAssignment.script_envelope_id == existing.id,
+                    )
+                )
+                existing.booklet_count = item.booklet_count
+        else:
+            session.add(
+                ScriptEnvelope(
+                    packing_series_id=row.id,
+                    envelope_number=item.envelope_number,
+                    booklet_count=item.booklet_count,
+                )
+            )
+    for env in list(row.envelopes):
+        if env.envelope_number not in wanted_numbers:
+            await session.delete(env)
 
 
 def _missing_envelopes_consecutive_prefix(nums_sorted: list[int]) -> list[int]:
@@ -214,11 +271,7 @@ async def _build_my_school_script_grid(
             for sn in range(1, n_series + 1):
                 ps = key_map.get((sub.id, pn, sn))
                 packing = _packing_to_response(ps) if ps else None
-                verified = (
-                    ps is not None
-                    and len(ps.envelopes) > 0
-                    and all(e.verified_at is not None for e in ps.envelopes)
-                )
+                verified = ps is not None and _series_slot_verified(ps)
                 series_slots.append(
                     ScriptSeriesSlotResponse(series_number=sn, packing=packing, verified=verified)
                 )
@@ -378,6 +431,11 @@ async def set_depot_school_script_series_envelope_verification(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="No script packing record to verify; the inspector must enter data first.",
         )
+    if row.no_scripts:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="This series has no scripts to verify; the inspector recorded a nil return.",
+        )
     if not row.envelopes:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -457,17 +515,31 @@ async def upsert_my_school_script_series(
     except ValueError as e:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e)) from None
 
-    cap = script_envelope_cap(body.paper_number)
-    items = _envelopes_for_script_upsert(body.envelopes, paper_number=body.paper_number, irregular=False)
-    items_word = _packing_items_word(body.paper_number, irregular=False)
-    for env in items:
-        if env.booklet_count > cap:
+    no_scripts = body.no_scripts or _detect_no_scripts_from_envelopes(body.envelopes)
+    if no_scripts:
+        if _positive_envelope_counts_present(body.envelopes):
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail=(
-                    f"Envelope {env.envelope_number}: at most {cap} {items_word} for paper {body.paper_number}."
-                ),
+                detail="Cannot set no scripts when envelope counts are present.",
             )
+        items: list[ScriptEnvelopeItem] = []
+    else:
+        cap = script_envelope_cap(body.paper_number)
+        items = _envelopes_for_script_upsert(body.envelopes, paper_number=body.paper_number, irregular=False)
+        if not items:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Enter a count for envelope 1, or enter 0 if there are no scripts for this series.",
+            )
+        items_word = _packing_items_word(body.paper_number, irregular=False)
+        for env in items:
+            if env.booklet_count > cap:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail=(
+                        f"Envelope {env.envelope_number}: at most {cap} {items_word} for paper {body.paper_number}."
+                    ),
+                )
 
     stmt = (
         select(ScriptPackingSeries)
@@ -504,33 +576,12 @@ async def upsert_my_school_script_series(
             paper_number=body.paper_number,
             series_number=body.series_number,
             updated_by_id=user.id,
+            no_scripts=no_scripts,
         )
         session.add(row)
         await session.flush()
-        for item in items:
-            session.add(
-                ScriptEnvelope(
-                    packing_series_id=row.id,
-                    envelope_number=item.envelope_number,
-                    booklet_count=item.booklet_count,
-                )
-            )
-        await session.flush()
-    else:
-        row.updated_by_id = user.id
-        by_number = {e.envelope_number: e for e in row.envelopes}
-        wanted_numbers = {item.envelope_number for item in items}
-        for item in items:
-            existing = by_number.get(item.envelope_number)
-            if existing is not None:
-                if existing.booklet_count != item.booklet_count:
-                    await session.execute(
-                        delete(AllocationAssignment).where(
-                            AllocationAssignment.script_envelope_id == existing.id,
-                        )
-                    )
-                    existing.booklet_count = item.booklet_count
-            else:
+        if not no_scripts:
+            for item in items:
                 session.add(
                     ScriptEnvelope(
                         packing_series_id=row.id,
@@ -538,10 +589,19 @@ async def upsert_my_school_script_series(
                         booklet_count=item.booklet_count,
                     )
                 )
-        for env in list(row.envelopes):
-            if env.envelope_number not in wanted_numbers:
+            await session.flush()
+    else:
+        row.updated_by_id = user.id
+        row.no_scripts = no_scripts
+        if no_scripts:
+            row.verified_at = None
+            row.verified_by_id = None
+            for env in list(row.envelopes):
                 await session.delete(env)
-        await session.flush()
+            await session.flush()
+        else:
+            await _sync_script_series_envelopes(session, row, items)
+            await session.flush()
 
     await session.commit()
     await session.refresh(row, attribute_names=["envelopes"])
@@ -633,7 +693,7 @@ def _irregular_packing_to_response(ps: IrregularScriptPackingSeries) -> ScriptSe
         for e in envs_sorted
     ]
     all_verified = len(envs_sorted) > 0 and all(e.verified_at is not None for e in envs_sorted)
-    return ScriptSeriesPackingResponse(id=ps.id, envelopes=envs, verified=all_verified)
+    return ScriptSeriesPackingResponse(id=ps.id, envelopes=envs, no_scripts=False, verified=all_verified)
 
 
 async def _build_my_school_irregular_script_grid(
@@ -883,6 +943,12 @@ async def upsert_my_school_irregular_script_series(
         description="Inspector posting (workspace); overrides JWT when set; required when you have multiple postings.",
     ),
 ) -> ScriptSeriesPackingResponse:
+    if body.no_scripts:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="no_scripts applies to regular worked scripts only.",
+        )
+
     packing_school, scope_ids, ctx = await _inspector_workspace_and_packing_school(
         session, user, exam_id, school_id, posting_id, jwt_posting_id
     )
@@ -1372,6 +1438,7 @@ async def list_script_control_records(
                 series_number=ps.series_number,
                 envelope_count=len(envs),
                 total_booklets=sum(e.booklet_count for e in envs),
+                no_scripts=bool(ps.no_scripts),
                 envelopes=envelope_items,
             )
         )
