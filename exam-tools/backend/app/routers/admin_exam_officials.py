@@ -11,7 +11,13 @@ from sqlalchemy.orm import selectinload
 
 from app.dependencies.auth import SuperAdminOrFinanceOfficerDep
 from app.dependencies.database import DBSessionDep
-from app.models import ExamCentreOfficial, ExamInspectorSubjectScope, Examination, ExamOfficialDesignation, School
+from app.models import (
+    ExamCentreOfficial,
+    ExamInspectorSubjectScope,
+    Examination,
+    ExaminationCentre,
+    ExamOfficialDesignation,
+)
 from app.schemas.admin_exam_official import AdminExamCentreOfficialListResponse, AdminExamCentreOfficialRow
 from app.services.exam_official_export import (
     build_combined_export,
@@ -43,18 +49,21 @@ def _base_official_query(
     subject_scope: ExamInspectorSubjectScope | None = None,
 ):
     stmt = (
-        select(ExamCentreOfficial, School)
-        .join(School, School.id == ExamCentreOfficial.center_id)
+        select(ExamCentreOfficial, ExaminationCentre)
+        .join(
+            ExaminationCentre,
+            ExaminationCentre.id == ExamCentreOfficial.examination_centre_id,
+        )
         .where(ExamCentreOfficial.examination_id == examination_id)
         .options(selectinload(ExamCentreOfficial.bank_branch))
     )
     if center_id is not None:
-        stmt = stmt.where(ExamCentreOfficial.center_id == center_id)
+        stmt = stmt.where(ExamCentreOfficial.examination_centre_id == center_id)
     if designation is not None:
         stmt = stmt.where(ExamCentreOfficial.designation == designation)
     if subject_scope is not None:
         stmt = stmt.where(ExamCentreOfficial.subject_scope == subject_scope)
-    return stmt.order_by(School.code.asc(), ExamCentreOfficial.full_name.asc())
+    return stmt.order_by(ExaminationCentre.code.asc(), ExamCentreOfficial.full_name.asc())
 
 
 def _designation_filter_from_query(
@@ -91,7 +100,7 @@ async def admin_list_exam_centre_officials(
     session: DBSessionDep,
     _admin: SuperAdminOrFinanceOfficerDep,
     examination_id: int = Query(..., description="Examination id"),
-    center_id: UUID | None = Query(None, description="Filter by examination centre (host school) id"),
+    center_id: UUID | None = Query(None, description="Filter by examination centre id"),
     designation: str | None = Query(
         None,
         description="Filter by official designation label (e.g. External Inspector).",
@@ -109,7 +118,7 @@ async def admin_list_exam_centre_officials(
         ExamCentreOfficial.examination_id == examination_id
     )
     if center_id is not None:
-        count_stmt = count_stmt.where(ExamCentreOfficial.center_id == center_id)
+        count_stmt = count_stmt.where(ExamCentreOfficial.examination_centre_id == center_id)
     if des is not None:
         count_stmt = count_stmt.where(ExamCentreOfficial.designation == des)
     if scope is not None:
@@ -144,7 +153,7 @@ async def admin_export_exam_centre_officials(
 
     stmt = _base_official_query(examination_id, center_id, des, scope)
     result = await session.execute(stmt)
-    pairs: list[tuple[ExamCentreOfficial, School]] = list(result.all())
+    pairs: list[tuple[ExamCentreOfficial, ExaminationCentre]] = list(result.all())
     if not pairs:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,

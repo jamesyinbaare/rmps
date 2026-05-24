@@ -32,6 +32,7 @@ from app.models import (
     Depot,
     Examination,
     ExaminationCandidate,
+    ExaminationCentre,
     ExaminationSchedule,
     ExaminationSubjectScriptSeries,
     ExamInspectorSubjectScope,
@@ -96,8 +97,14 @@ from app.services.exam_timetable_pdf import (
     load_schedules_for_exam,
     schedules_to_entries,
 )
+from app.services.centre_resolution import (
+    get_examination_centre_or_404,
+    list_centres_for_examination,
+    resolve_centre_for_user_school,
+)
 from app.services.inspector_posting import (
     load_postings_for_inspector_exam,
+    representative_school_for_centre,
     resolve_inspector_workspace,
 )
 from app.services.schedule_upload import (
@@ -263,15 +270,21 @@ async def list_my_center_schools_for_timetable(
         jwt_inspector_posting_id=jwt_posting_id,
         posting_id=posting_id,
     )
+    if examination_id is None:
+        examination_id = await resolve_active_examination_id(session)
+        if examination_id is None:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="examination_id is required",
+            )
     try:
-        center_host = await resolve_center_host_school(session, user_school)
+        await load_examination_or_raise(session, examination_id)
+    except ValueError:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Examination not found") from None
+    try:
+        center_host = await resolve_center_host_school(session, user_school, examination_id)
     except ValueError as e:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e)) from None
-    if examination_id is not None:
-        try:
-            await load_examination_or_raise(session, examination_id)
-        except ValueError:
-            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Examination not found") from None
     scope_ids = await _scope_ids_for_centre_timetable(
         session,
         user,
@@ -318,8 +331,15 @@ async def list_my_center_programmes_for_timetable(
             await load_examination_or_raise(session, examination_id)
         except ValueError:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Examination not found") from None
+    if examination_id is None:
+        examination_id = await resolve_active_examination_id(session)
+        if examination_id is None:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="examination_id is required",
+            )
     try:
-        await resolve_center_host_school(session, user_school)
+        await resolve_center_host_school(session, user_school, examination_id)
     except ValueError as e:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e)) from None
     scope_ids = await _scope_ids_for_centre_timetable(
@@ -1053,19 +1073,23 @@ async def _school_from_user(
         posting_id=posting_id,
         jwt_posting_id=jwt_inspector_posting_id,
     )
-    return ctx.center_host
+    rep = await representative_school_for_centre(session, ctx.examination_centre)
+    if rep is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Centre has no schools")
+    return rep
 
 
 async def _staff_scope_and_display_school(
     session: DBSessionDep,
     user_school: School,
     filter_school_id: UUID | None,
+    examination_id: int,
 ) -> tuple[set[UUID], School]:
     try:
-        center_host = await resolve_center_host_school(session, user_school)
+        center_host = await resolve_center_host_school(session, user_school, examination_id)
     except ValueError as e:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e)) from None
-    scope_ids = await center_scope_school_ids(session, center_host)
+    scope_ids = await center_scope_school_ids(session, center_host, examination_id)
     if filter_school_id is not None:
         if filter_school_id not in scope_ids:
             raise HTTPException(
@@ -1089,8 +1113,15 @@ async def _scope_ids_for_centre_timetable(
 ) -> set[UUID]:
     """Supervisor / home centre scope; inspectors use the selected workspace for this examination."""
     if user.role != UserRole.INSPECTOR or examination_id is None:
-        center_host = await resolve_center_host_school(session, user_school)
-        return await center_scope_school_ids(session, center_host)
+        if examination_id is None:
+            examination_id = await resolve_active_examination_id(session)
+            if examination_id is None:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="examination_id is required",
+                )
+        center_host = await resolve_center_host_school(session, user_school, examination_id)
+        return await center_scope_school_ids(session, center_host, examination_id)
     ctx = await resolve_inspector_workspace(
         session,
         examination_id=examination_id,
@@ -1350,7 +1381,9 @@ async def download_my_school_timetable_pdf(
         jwt_inspector_posting_id=jwt_posting_id,
         posting_id=posting_id,
     )
-    scope_ids, display_school = await _staff_scope_and_display_school(session, user_school, filter_school_id)
+    scope_ids, display_school = await _staff_scope_and_display_school(
+        session, user_school, filter_school_id, exam_id
+    )
     if programme_id is not None:
         await _validate_programme_in_scope(session, programme_id, scope_ids)
     explicit_codes = await get_candidate_schedule_codes_for_exam(
@@ -1415,7 +1448,9 @@ async def preview_my_school_timetable(
     except ValueError:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Examination not found") from None
 
-    scope_ids, display_school = await _staff_scope_and_display_school(session, user_school, filter_school_id)
+    scope_ids, display_school = await _staff_scope_and_display_school(
+        session, user_school, filter_school_id, exam_id
+    )
     if programme_id is not None:
         await _validate_programme_in_scope(session, programme_id, scope_ids)
 
@@ -1573,14 +1608,20 @@ async def get_my_center_overview(
                 posting_id=posting_id,
                 jwt_posting_id=jwt_posting_id,
             )
-            center_host = ctx.center_host
-            user_school = ctx.center_host
+            centre = ctx.examination_centre
+            center_host = await representative_school_for_centre(session, centre)
+            if center_host is None:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail="Centre has no schools",
+                )
+            user_school = center_host
             scope_ids = ctx.scope_ids
             ordered_scope_schools = await _schools_with_ids_ordered_by_code(session, scope_ids)
             ws_items: list[InspectorPostedWorkspaceItem] = []
             for p in iposts:
-                sch = await session.get(School, p.center_id)
-                if sch is None:
+                cen = await session.get(ExaminationCentre, p.examination_centre_id)
+                if cen is None:
                     continue
                 st_scope = p.subject_scope
                 if isinstance(st_scope, ExamInspectorSubjectScope):
@@ -1590,9 +1631,9 @@ async def get_my_center_overview(
                 ws_items.append(
                     InspectorPostedWorkspaceItem(
                         posting_id=p.id,
-                        center_id=p.center_id,
-                        center_code=sch.code,
-                        center_name=sch.name,
+                        center_id=p.examination_centre_id,
+                        center_code=cen.code,
+                        center_name=cen.name,
                         subject_scope=scope_str,
                     )
                 )
@@ -1606,11 +1647,13 @@ async def get_my_center_overview(
                 posting_id=posting_id,
             )
             try:
-                center_host = await resolve_center_host_school(session, user_school)
+                center_host = await resolve_center_host_school(session, user_school, exam_id)
             except ValueError as e:
                 raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e)) from None
-            scope_ids = await center_scope_school_ids(session, center_host)
-            ordered_scope_schools = await schools_in_center_scope_ordered(session, center_host)
+            scope_ids = await center_scope_school_ids(session, center_host, exam_id)
+            ordered_scope_schools = await schools_in_center_scope_ordered(
+                session, center_host, exam_id
+            )
     else:
         user_school = await _school_from_user(
             session,
@@ -1620,11 +1663,13 @@ async def get_my_center_overview(
             posting_id=posting_id,
         )
         try:
-            center_host = await resolve_center_host_school(session, user_school)
+            center_host = await resolve_center_host_school(session, user_school, exam_id)
         except ValueError as e:
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e)) from None
-        scope_ids = await center_scope_school_ids(session, center_host)
-        ordered_scope_schools = await schools_in_center_scope_ordered(session, center_host)
+        scope_ids = await center_scope_school_ids(session, center_host, exam_id)
+        ordered_scope_schools = await schools_in_center_scope_ordered(
+            session, center_host, exam_id
+        )
 
     school_count = len(scope_ids)
 
@@ -1646,7 +1691,12 @@ async def get_my_center_overview(
 
     entries = await _staff_center_filtered_timetable_entries(session, exam_id, scope_ids)
 
-    examination_centre_region = center_host.region.value
+    exam_centre = await resolve_centre_for_user_school(
+        session, exam_id, user_school, inspector_scope=ExamInspectorSubjectScope.ALL
+    )
+    examination_centre_region = (
+        exam_centre.region.value if exam_centre.region is not None else "—"
+    )
     if entries:
         entry_dates = [e.examination_date for e in entries]
         examination_window_start = min(entry_dates)
@@ -1683,10 +1733,10 @@ async def get_my_center_overview(
         year=exam.year,
         supervisor_school_code=user_school.code,
         supervisor_school_name=user_school.name,
-        examination_centre_host_school_id=center_host.id,
-        examination_centre_host_code=center_host.code,
-        examination_centre_host_name=center_host.name,
-        supervisor_school_is_centre_host=user_school.writes_at_center_id is None,
+        examination_centre_host_school_id=exam_centre.id,
+        examination_centre_host_code=exam_centre.code,
+        examination_centre_host_name=exam_centre.name,
+        supervisor_school_is_centre_host=user_school.id in scope_ids,
         candidate_count=candidate_count,
         school_count=school_count,
         upcoming=[
@@ -1740,8 +1790,8 @@ async def get_my_inspector_postings(
     )
     rows: list[MyInspectorPostingRow] = []
     for p in postings:
-        sch = await session.get(School, p.center_id)
-        if sch is None:
+        cen = await session.get(ExaminationCentre, p.examination_centre_id)
+        if cen is None:
             continue
         st_scope = p.subject_scope
         if isinstance(st_scope, ExamInspectorSubjectScope):
@@ -1751,9 +1801,9 @@ async def get_my_inspector_postings(
         rows.append(
             MyInspectorPostingRow(
                 id=p.id,
-                center_id=p.center_id,
-                center_code=sch.code,
-                center_name=sch.name,
+                center_id=p.examination_centre_id,
+                center_code=cen.code,
+                center_name=cen.name,
                 subject_scope=scope_str,
             )
         )
@@ -1803,9 +1853,11 @@ async def get_my_center_day_summary(
                 jwt_inspector_posting_id=jwt_posting_id,
                 posting_id=posting_id,
             )
-            scope_ids, _ = await _staff_scope_and_display_school(session, user_school, None)
-            center_host = await resolve_center_host_school(session, user_school)
-            ordered_schools = await schools_in_center_scope_ordered(session, center_host)
+            scope_ids, _ = await _staff_scope_and_display_school(session, user_school, None, exam_id)
+            center_host = await resolve_center_host_school(session, user_school, exam_id)
+            ordered_schools = await schools_in_center_scope_ordered(
+                session, center_host, exam_id
+            )
     else:
         user_school = await _school_from_user(
             session,
@@ -1814,9 +1866,11 @@ async def get_my_center_day_summary(
             jwt_inspector_posting_id=jwt_posting_id,
             posting_id=posting_id,
         )
-        scope_ids, _ = await _staff_scope_and_display_school(session, user_school, None)
-        center_host = await resolve_center_host_school(session, user_school)
-        ordered_schools = await schools_in_center_scope_ordered(session, center_host)
+        scope_ids, _ = await _staff_scope_and_display_school(session, user_school, None, exam_id)
+        center_host = await resolve_center_host_school(session, user_school, exam_id)
+        ordered_schools = await schools_in_center_scope_ordered(
+            session, center_host, exam_id
+        )
 
     return await _build_staff_day_summary_for_scope(
         session, exam_id, examination_date, scope_ids, ordered_schools
@@ -2006,40 +2060,35 @@ async def get_national_day_summary(
 
 async def _finance_centre_hosts(
     session: DBSessionDep,
-    center_host_id: UUID | None,
-) -> list[School]:
-    if center_host_id is not None:
-        host = await session.get(School, center_host_id)
-        if host is None:
-            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="School not found")
-        if host.writes_at_center_id is not None:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="School is not an examination centre host",
-            )
-        return [host]
-    hosts_stmt = (
-        select(School)
-        .where(School.writes_at_center_id.is_(None))
-        .order_by(asc(School.code))
-    )
-    hosts_result = await session.execute(hosts_stmt)
-    return list(hosts_result.scalars().all())
+    exam_id: int,
+    centre_id: UUID | None,
+) -> list[ExaminationCentre]:
+    if centre_id is not None:
+        return [await get_examination_centre_or_404(session, exam_id, centre_id)]
+    return await list_centres_for_examination(session, exam_id)
 
 
 async def _build_finance_centre_invigilator_item(
     session: DBSessionDep,
     exam_id: int,
-    center_host: School,
+    centre: ExaminationCentre,
     subject_filter: TimetableDownloadFilter,
 ) -> FinanceCentreInvigilatorSummaryItem:
-    scope_ids = await center_scope_school_ids(session, center_host)
-    ordered_schools = await schools_in_center_scope_ordered(session, center_host)
+    center_host = await representative_school_for_centre(session, centre)
+    if center_host is None:
+        return FinanceCentreInvigilatorSummaryItem(
+            center_id=centre.id,
+            center_code=str(centre.code),
+            center_name=str(centre.name),
+            days=[],
+        )
+    scope_ids = await center_scope_school_ids(session, center_host, exam_id)
+    ordered_schools = await schools_in_center_scope_ordered(session, center_host, exam_id)
     if not scope_ids:
         return FinanceCentreInvigilatorSummaryItem(
-            center_id=center_host.id,
-            center_code=str(center_host.code),
-            center_name=str(center_host.name),
+            center_id=centre.id,
+            center_code=str(centre.code),
+            center_name=str(centre.name),
             days=[],
         )
     entries = await _staff_center_filtered_timetable_entries(
@@ -2064,9 +2113,9 @@ async def _build_finance_centre_invigilator_item(
             ),
         )
     return FinanceCentreInvigilatorSummaryItem(
-        center_id=center_host.id,
-        center_code=str(center_host.code),
-        center_name=str(center_host.name),
+        center_id=centre.id,
+        center_code=str(centre.code),
+        center_name=str(centre.name),
         days=day_rows,
     )
 
@@ -2104,18 +2153,18 @@ async def get_finance_centre_invigilator_summary_shell(
     except ValueError:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Examination not found") from None
 
-    center_hosts = await _finance_centre_hosts(session, None)
+    centres = await _finance_centre_hosts(session, exam_id, None)
     examination_dates = await _finance_examination_dates_for_filter(session, exam_id, subject_filter)
     return FinanceCentreInvigilatorSummaryShellResponse(
         examination_id=exam_id,
         examination_dates=examination_dates,
         centres=[
             FinanceCentreShellCentre(
-                center_id=h.id,
-                center_code=str(h.code),
-                center_name=str(h.name),
+                center_id=c.id,
+                center_code=str(c.code),
+                center_name=str(c.name),
             )
-            for h in center_hosts
+            for c in centres
         ],
     )
 
@@ -2140,7 +2189,7 @@ async def get_finance_centre_invigilator_summary_for_centre(
     except ValueError:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Examination not found") from None
 
-    hosts = await _finance_centre_hosts(session, center_host_id)
+    hosts = await _finance_centre_hosts(session, exam_id, center_host_id)
     return await _build_finance_centre_invigilator_item(session, exam_id, hosts[0], subject_filter)
 
 
@@ -2167,12 +2216,12 @@ async def get_finance_centre_invigilator_summary(
     except ValueError:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Examination not found") from None
 
-    center_hosts = await _finance_centre_hosts(session, center_host_id)
+    centre_list = await _finance_centre_hosts(session, exam_id, center_host_id)
     centres_out: list[FinanceCentreInvigilatorSummaryItem] = []
-    for center_host in center_hosts:
+    for centre in centre_list:
         centres_out.append(
             await _build_finance_centre_invigilator_item(
-                session, exam_id, center_host, subject_filter
+                session, exam_id, centre, subject_filter
             ),
         )
 
@@ -2201,7 +2250,7 @@ async def get_finance_centre_school_summary(
     except ValueError:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Examination not found") from None
 
-    hosts = await _finance_centre_hosts(session, center_id)
+    hosts = await _finance_centre_hosts(session, exam_id, center_id)
     return await build_finance_centre_school_summary(
         session,
         ex,
@@ -2240,12 +2289,12 @@ async def export_finance_centre_school_summary(
     except ValueError:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Examination not found") from None
 
-    hosts = await _finance_centre_hosts(session, center_id)
-    center_host = hosts[0]
+    hosts = await _finance_centre_hosts(session, exam_id, center_id)
+    centre = hosts[0]
     summary = await build_finance_centre_school_summary(
         session,
         ex,
-        center_host,
+        centre,
         subject_filter,
         build_invigilator_item=_build_finance_centre_invigilator_item,
     )
@@ -2259,7 +2308,7 @@ async def export_finance_centre_school_summary(
         ("Subject scope", scope_label),
     ]
     exam_label = examination_label(ex)
-    wb = workbook_for_centre(center_host, exam_label, pairs, preamble_rows=preamble)
+    wb = workbook_for_centre(centre, exam_label, pairs, preamble_rows=preamble)
     payload = workbook_bytes(wb)
     filename = school_summary_export_filename(
         summary.center_code,

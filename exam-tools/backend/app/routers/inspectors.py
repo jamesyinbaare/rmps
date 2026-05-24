@@ -13,7 +13,7 @@ from app.core.passwords import generate_inspector_password
 from app.core.security import get_password_hash
 from app.dependencies.auth import SuperAdminDep
 from app.dependencies.database import DBSessionDep
-from app.models import ExamInspectorSubjectScope, RefreshToken, School, User, UserRole
+from app.models import ExamInspectorSubjectScope, ExaminationCentre, RefreshToken, School, User, UserRole
 from app.schemas.inspector import (
     InspectorBulkCreatedRow,
     InspectorBulkUploadError,
@@ -326,7 +326,7 @@ async def create_inspector(
             for p, inserted in postings:
                 if not inserted:
                     continue
-                sch = await session.get(School, p.center_id)
+                centre = await session.get(ExaminationCentre, p.examination_centre_id)
                 st_scope = p.subject_scope
                 if isinstance(st_scope, ExamInspectorSubjectScope):
                     scope_str = st_scope.value
@@ -335,7 +335,7 @@ async def create_inspector(
                 created_postings.append(
                     InspectorCreatedPostingRow(
                         posting_id=p.id,
-                        center_code=cast(str, sch.code) if sch is not None else "",
+                        center_code=cast(str, centre.code) if centre is not None else "",
                         subject_scope=scope_str,
                     )
                 )

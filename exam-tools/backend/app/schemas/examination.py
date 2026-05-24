@@ -27,6 +27,7 @@ class ExaminationResponse(BaseModel):
     exam_series: str | None
     year: int
     description: str | None
+    centre_structure_mode: str
     created_at: datetime
     updated_at: datetime
 

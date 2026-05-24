@@ -12,7 +12,7 @@ from openpyxl import Workbook
 from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
 from openpyxl.utils import get_column_letter
 
-from app.models import ExamCentreOfficial, ExamInspectorSubjectScope, Examination, School
+from app.models import ExamCentreOfficial, ExamInspectorSubjectScope, Examination, ExaminationCentre
 
 HEADER_LABELS = [
     "Centre code",
@@ -177,12 +177,12 @@ def apply_sheet_finish(ws: object, header_row: int, ncols: int, *, autofilter: b
     ws.print_title_rows = f"${header_row}:${header_row}"
 
 
-def data_values(off: ExamCentreOfficial, school: School) -> tuple[str | int, ...]:
+def data_values(off: ExamCentreOfficial, centre: ExaminationCentre) -> tuple[str | int, ...]:
     bb = off.bank_branch
     scope = off.subject_scope.value if isinstance(off.subject_scope, ExamInspectorSubjectScope) else str(off.subject_scope)
     return (
-        school.code,
-        school.name,
+        centre.code,
+        centre.name,
         off.full_name,
         designation_str(off.designation),
         scope,
@@ -198,9 +198,9 @@ def data_values(off: ExamCentreOfficial, school: School) -> tuple[str | int, ...
 def write_centre_block(
     ws: object,
     start_row: int,
-    school: School,
+    centre: ExaminationCentre,
     exam_label: str,
-    pairs: list[tuple[ExamCentreOfficial, School]],
+    pairs: list[tuple[ExamCentreOfficial, ExaminationCentre]],
     *,
     merge_title: bool,
     preamble_rows: list[tuple[str, str | int]] | None = None,
@@ -213,7 +213,7 @@ def write_centre_block(
             style_preamble_row(ws, r, ncols, label, value)
             r += 1
         r += 1
-    title = f"Examination centre: {school.name} ({school.code}) · {exam_label}"
+    title = f"Examination centre: {centre.name} ({centre.code}) · {exam_label}"
     style_title_row(ws, r, ncols, title, merge=merge_title)
     r += 2
     for i, h in enumerate(HEADER_LABELS, start=1):
@@ -232,9 +232,9 @@ def write_centre_block(
 
 
 def workbook_for_centre(
-    school: School,
+    centre: ExaminationCentre,
     exam_label: str,
-    pairs: list[tuple[ExamCentreOfficial, School]],
+    pairs: list[tuple[ExamCentreOfficial, ExaminationCentre]],
     *,
     preamble_rows: list[tuple[str, str | int]] | None = None,
 ) -> Workbook:
@@ -244,7 +244,7 @@ def workbook_for_centre(
     ws.title = "Officials"
     ncols = len(HEADER_LABELS)
     _, header_row = write_centre_block(
-        ws, 1, school, exam_label, pairs, merge_title=True, preamble_rows=preamble_rows
+        ws, 1, centre, exam_label, pairs, merge_title=True, preamble_rows=preamble_rows
     )
     set_col_widths(ws, COLUMN_WIDTHS)
     apply_sheet_finish(ws, header_row, ncols, autofilter=True)
@@ -258,22 +258,22 @@ def workbook_bytes(wb: Workbook) -> bytes:
 
 
 def build_zip_export(
-    ordered_groups: list[tuple[UUID, list[tuple[ExamCentreOfficial, School]]]],
+    ordered_groups: list[tuple[UUID, list[tuple[ExamCentreOfficial, ExaminationCentre]]]],
     exam_label: str,
     zip_basename: str,
 ) -> tuple[bytes, str, str]:
     buf = io.BytesIO()
     with zipfile.ZipFile(buf, mode="w", compression=zipfile.ZIP_DEFLATED) as zf:
         for _cid, plist in ordered_groups:
-            school = plist[0][1]
-            wb = workbook_for_centre(school, exam_label, plist)
-            fname = f"{safe_filename_part(cast(str, school.code))}-{safe_filename_part(cast(str, school.name))}.xlsx"
+            centre = plist[0][1]
+            wb = workbook_for_centre(centre, exam_label, plist)
+            fname = f"{safe_filename_part(cast(str, centre.code))}-{safe_filename_part(cast(str, centre.name))}.xlsx"
             zf.writestr(fname, workbook_bytes(wb))
     return buf.getvalue(), f"{zip_basename}.zip", "application/zip"
 
 
 def build_combined_export(
-    ordered_groups: list[tuple[UUID, list[tuple[ExamCentreOfficial, School]]]],
+    ordered_groups: list[tuple[UUID, list[tuple[ExamCentreOfficial, ExaminationCentre]]]],
     exam: Examination,
 ) -> tuple[bytes, str, str]:
     wb = Workbook()
@@ -293,8 +293,8 @@ def build_combined_export(
     exam_label = examination_label(exam)
     first_header_row: int | None = None
     for _cid, plist in ordered_groups:
-        school = plist[0][1]
-        r, header_row = write_centre_block(ws, r, school, exam_label, plist, merge_title=True)
+        centre = plist[0][1]
+        r, header_row = write_centre_block(ws, r, centre, exam_label, plist, merge_title=True)
         if first_header_row is None:
             first_header_row = header_row
         r += 2
@@ -312,9 +312,9 @@ def build_combined_export(
 
 
 def group_officials_by_centre(
-    pairs: list[tuple[ExamCentreOfficial, School]],
-) -> list[tuple[UUID, list[tuple[ExamCentreOfficial, School]]]]:
-    groups: dict[UUID, list[tuple[ExamCentreOfficial, School]]] = defaultdict(list)
-    for off, school in pairs:
-        groups[school.id].append((off, school))
+    pairs: list[tuple[ExamCentreOfficial, ExaminationCentre]],
+) -> list[tuple[UUID, list[tuple[ExamCentreOfficial, ExaminationCentre]]]]:
+    groups: dict[UUID, list[tuple[ExamCentreOfficial, ExaminationCentre]]] = defaultdict(list)
+    for off, centre in pairs:
+        groups[centre.id].append((off, centre))
     return sorted(groups.items(), key=lambda kv: kv[1][0][1].code)

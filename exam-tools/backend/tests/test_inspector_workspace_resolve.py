@@ -45,7 +45,7 @@ async def test_resolve_workspace_uses_jwt_posting_when_matches_exam() -> None:
     posting.id = uuid4()
     posting.inspector_user_id = uid
     posting.examination_id = 5
-    posting.center_id = center_id
+    posting.examination_centre_id = center_id
     posting.subject_scope = ExamInspectorSubjectScope.CORE
 
     async def mock_get(_model, pid):
@@ -54,23 +54,26 @@ async def test_resolve_workspace_uses_jwt_posting_when_matches_exam() -> None:
     p1 = MagicMock()
     p1.id = posting.id
     p1.subject_scope = ExamInspectorSubjectScope.CORE
-    p1.center_id = center_id
+    p1.examination_centre_id = center_id
+
+    centre = MagicMock()
+    centre.id = center_id
 
     with patch(
         "app.services.inspector_posting.load_postings_for_inspector_exam",
         new_callable=AsyncMock,
         return_value=[p1],
     ), patch(
-        "app.services.inspector_posting.assert_centre_host_school",
+        "app.services.inspector_posting.assert_examination_centre",
         new_callable=AsyncMock,
-    ) as m_host, patch(
-        "app.services.inspector_posting.center_scope_school_ids",
+        return_value=centre,
+    ), patch(
+        "app.services.inspector_posting.centre_scope_school_ids_for_inspector_scope",
         new_callable=AsyncMock,
         return_value={uuid4()},
     ):
         session = AsyncMock()
         session.get = AsyncMock(side_effect=mock_get)
-        m_host.return_value = MagicMock(id=center_id)
 
         ctx = await resolve_inspector_workspace(
             session,

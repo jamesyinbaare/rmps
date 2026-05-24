@@ -363,7 +363,7 @@ async def get_depot_school_script_control(
     if packing_school is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="School not found")
 
-    scope_ids = await script_scope_for_school(session, packing_school)
+    scope_ids = await script_scope_for_school(session, packing_school, exam_id)
     try:
         return await _build_my_school_script_grid(
             session, exam_id, packing_school, scope_ids, ExamInspectorSubjectScope.ALL
@@ -405,7 +405,7 @@ async def set_depot_school_script_series_envelope_verification(
     except ValueError:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Examination not found") from None
 
-    scope_ids = await script_scope_for_school(session, packing_school)
+    scope_ids = await script_scope_for_school(session, packing_school, exam_id)
     allowed = await valid_script_packing_triples(session, exam_id, scope_ids, packing_school.id)
     if (body.subject_id, body.paper_number, body.series_number) not in allowed:
         raise HTTPException(
@@ -819,7 +819,7 @@ async def get_depot_school_irregular_script_control(
     if packing_school is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="School not found")
 
-    scope_ids = await script_scope_for_school(session, packing_school)
+    scope_ids = await script_scope_for_school(session, packing_school, exam_id)
     try:
         return await _build_my_school_irregular_script_grid(
             session, exam_id, packing_school, scope_ids, ExamInspectorSubjectScope.ALL
@@ -861,7 +861,7 @@ async def set_depot_school_irregular_script_series_envelope_verification(
     except ValueError:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Examination not found") from None
 
-    scope_ids = await script_scope_for_school(session, packing_school)
+    scope_ids = await script_scope_for_school(session, packing_school, exam_id)
     allowed = await valid_script_packing_triples(session, exam_id, scope_ids, packing_school.id)
     if (body.subject_id, body.paper_number, body.series_number) not in allowed:
         raise HTTPException(

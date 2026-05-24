@@ -17,7 +17,13 @@ from app.dependencies.auth import (
     SuperAdminOrFinanceOfficerDep,
 )
 from app.dependencies.database import DBSessionDep
-from app.models import ExamInspectorSubjectScope, InspectorAttendanceSheet, InspectorExamPosting, School, User
+from app.models import (
+    ExamInspectorSubjectScope,
+    ExaminationCentre,
+    InspectorAttendanceSheet,
+    InspectorExamPosting,
+    User,
+)
 from app.schemas.attendance_sheet import (
     AttendanceCentreComplianceItem,
     AttendanceCentreComplianceListResponse,
@@ -83,12 +89,12 @@ def _scope_str(scope: ExamInspectorSubjectScope | str) -> str:
     return str(scope)
 
 
-def _sheet_to_response(row: InspectorAttendanceSheet, center: School) -> AttendanceSheetResponse:
+def _sheet_to_response(row: InspectorAttendanceSheet, center: ExaminationCentre) -> AttendanceSheetResponse:
     return AttendanceSheetResponse(
         id=row.id,
         examination_id=row.examination_id,
         inspector_exam_posting_id=row.inspector_exam_posting_id,
-        center_id=row.center_id,
+        center_id=row.examination_centre_id,
         center_code=str(center.code),
         center_name=str(center.name),
         subject_scope=_scope_str(row.subject_scope),
@@ -134,7 +140,7 @@ async def _collision_index(
         .select_from(InspectorAttendanceSheet)
         .where(
             InspectorAttendanceSheet.examination_id == examination_id,
-            InspectorAttendanceSheet.center_id == center_id,
+            InspectorAttendanceSheet.examination_centre_id == center_id,
             InspectorAttendanceSheet.examination_date == examination_date,
             InspectorAttendanceSheet.subject_scope == subject_scope,
         )
@@ -181,8 +187,8 @@ async def list_inspector_attendance_sheets(
     assert ctx.posting is not None
 
     stmt = (
-        select(InspectorAttendanceSheet, School)
-        .join(School, InspectorAttendanceSheet.center_id == School.id)
+        select(InspectorAttendanceSheet, ExaminationCentre)
+        .join(ExaminationCentre, InspectorAttendanceSheet.examination_centre_id == ExaminationCentre.id)
         .where(InspectorAttendanceSheet.inspector_exam_posting_id == ctx.posting.id)
         .order_by(InspectorAttendanceSheet.examination_date.desc(), InspectorAttendanceSheet.created_at.desc())
     )
@@ -242,13 +248,13 @@ async def upload_inspector_attendance_sheet(
     collision = await _collision_index(
         session,
         examination_id=examination_id,
-        center_id=ctx.center_host.id,
+        examination_centre_id=ctx.examination_centre.id,
         examination_date=examination_date,
         subject_scope=resolved_scope,
     )
     display_name = build_attendance_sheet_filename(
-        str(ctx.center_host.code),
-        str(ctx.center_host.name),
+        str(ctx.examination_centre.code),
+        str(ctx.examination_centre.name),
         examination_date,
         ext,
         collision_index=collision,
@@ -266,7 +272,7 @@ async def upload_inspector_attendance_sheet(
     row = InspectorAttendanceSheet(
         examination_id=examination_id,
         inspector_exam_posting_id=ctx.posting.id,
-        center_id=ctx.center_host.id,
+        examination_centre_id=ctx.examination_centre.id,
         examination_date=examination_date,
         subject_scope=resolved_scope,
         notes=notes_clean,
@@ -288,7 +294,7 @@ async def upload_inspector_attendance_sheet(
             pass
         raise
 
-    return _sheet_to_response(row, ctx.center_host)
+    return _sheet_to_response(row, ctx.examination_centre)
 
 
 async def _load_sheet_for_inspector(
@@ -298,13 +304,13 @@ async def _load_sheet_for_inspector(
     user: User,
     posting_id: UUID | None,
     jwt_posting_id: UUID | None,
-) -> tuple[InspectorAttendanceSheet, School]:
+) -> tuple[InspectorAttendanceSheet, ExaminationCentre]:
     ctx = await _resolve_inspector_ctx(session, examination_id, user, posting_id, jwt_posting_id)
     assert ctx.posting is not None
 
     stmt = (
-        select(InspectorAttendanceSheet, School)
-        .join(School, InspectorAttendanceSheet.center_id == School.id)
+        select(InspectorAttendanceSheet, ExaminationCentre)
+        .join(ExaminationCentre, InspectorAttendanceSheet.examination_centre_id == ExaminationCentre.id)
         .where(
             InspectorAttendanceSheet.id == sheet_id,
             InspectorAttendanceSheet.examination_id == examination_id,
@@ -476,7 +482,7 @@ async def list_admin_attendance_sheets(
 
     filters = [InspectorAttendanceSheet.examination_id == examination_id]
     if center_id is not None:
-        filters.append(InspectorAttendanceSheet.center_id == center_id)
+        filters.append(InspectorAttendanceSheet.examination_centre_id == center_id)
     if examination_date is not None:
         filters.append(InspectorAttendanceSheet.examination_date == examination_date)
     if subject_scope is not None:
@@ -495,8 +501,8 @@ async def list_admin_attendance_sheets(
     if search_pattern is not None:
         filters.append(
             or_(
-                School.code.ilike(search_pattern),
-                School.name.ilike(search_pattern),
+                ExaminationCentre.code.ilike(search_pattern),
+                ExaminationCentre.name.ilike(search_pattern),
                 User.full_name.ilike(search_pattern),
             )
         )
@@ -504,7 +510,7 @@ async def list_admin_attendance_sheets(
     count_stmt = (
         select(func.count(InspectorAttendanceSheet.id))
         .select_from(InspectorAttendanceSheet)
-        .join(InspectorAttendanceSheet.center)
+        .join(InspectorAttendanceSheet.examination_centre)
         .join(InspectorAttendanceSheet.inspector_exam_posting)
     )
     if search_pattern is not None:
@@ -513,7 +519,7 @@ async def list_admin_attendance_sheets(
     total = int((await session.execute(count_stmt)).scalar_one())
 
     load_opts = [
-        contains_eager(InspectorAttendanceSheet.center),
+        contains_eager(InspectorAttendanceSheet.examination_centre),
         contains_eager(InspectorAttendanceSheet.inspector_exam_posting),
     ]
     if search_pattern is not None:
@@ -527,7 +533,7 @@ async def list_admin_attendance_sheets(
 
     base = (
         select(InspectorAttendanceSheet)
-        .join(InspectorAttendanceSheet.center)
+        .join(InspectorAttendanceSheet.examination_centre)
         .join(InspectorAttendanceSheet.inspector_exam_posting)
     )
     if search_pattern is not None:
@@ -536,7 +542,7 @@ async def list_admin_attendance_sheets(
 
     stmt = (
         base.order_by(
-            School.code.asc(),
+            ExaminationCentre.code.asc(),
             InspectorAttendanceSheet.examination_date.desc(),
             InspectorAttendanceSheet.created_at.desc(),
         )
@@ -548,7 +554,7 @@ async def list_admin_attendance_sheets(
 
     items: list[AttendanceSheetAdminResponse] = []
     for sheet in sheets:
-        center = sheet.center
+        center = sheet.examination_centre
         posting = sheet.inspector_exam_posting
         insp = posting.inspector_user if posting else None
         items.append(
@@ -556,7 +562,7 @@ async def list_admin_attendance_sheets(
                 id=sheet.id,
                 examination_id=sheet.examination_id,
                 inspector_exam_posting_id=sheet.inspector_exam_posting_id,
-                center_id=sheet.center_id,
+                center_id=sheet.examination_centre_id,
                 center_code=str(center.code) if center else "",
                 center_name=str(center.name) if center else "",
                 subject_scope=_scope_str(sheet.subject_scope),
@@ -596,7 +602,7 @@ async def download_admin_attendance_sheets_zip(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Examination not found") from None
 
     filters = [InspectorAttendanceSheet.examination_id == examination_id]
-    filters.append(InspectorAttendanceSheet.center_id == center_id)
+    filters.append(InspectorAttendanceSheet.examination_centre_id == center_id)
     if examination_date is not None:
         filters.append(InspectorAttendanceSheet.examination_date == examination_date)
     if inspector_user_id is not None:
@@ -613,14 +619,14 @@ async def download_admin_attendance_sheets_zip(
     if search_pattern is not None:
         filters.append(
             or_(
-                School.code.ilike(search_pattern),
-                School.name.ilike(search_pattern),
+                ExaminationCentre.code.ilike(search_pattern),
+                ExaminationCentre.name.ilike(search_pattern),
                 User.full_name.ilike(search_pattern),
             )
         )
 
     load_opts = [
-        contains_eager(InspectorAttendanceSheet.center),
+        contains_eager(InspectorAttendanceSheet.examination_centre),
         contains_eager(InspectorAttendanceSheet.inspector_exam_posting),
     ]
     if search_pattern is not None:
@@ -634,7 +640,7 @@ async def download_admin_attendance_sheets_zip(
 
     base = (
         select(InspectorAttendanceSheet)
-        .join(InspectorAttendanceSheet.center)
+        .join(InspectorAttendanceSheet.examination_centre)
         .join(InspectorAttendanceSheet.inspector_exam_posting)
     )
     if search_pattern is not None:
@@ -643,7 +649,7 @@ async def download_admin_attendance_sheets_zip(
         base.where(*filters)
         .options(*load_opts)
         .order_by(
-            School.code.asc(),
+            ExaminationCentre.code.asc(),
             InspectorAttendanceSheet.examination_date.desc(),
             InspectorAttendanceSheet.created_at.desc(),
         )
@@ -656,7 +662,7 @@ async def download_admin_attendance_sheets_zip(
             detail="No attendance sheets match the filters.",
         )
 
-    center = sheets[0].center
+    center = sheets[0].examination_centre
     try:
         payload = build_attendance_sheets_zip_bytes(sheets)
     except FileNotFoundError:

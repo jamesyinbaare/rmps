@@ -138,33 +138,92 @@ async def filter_schedule_codes_by_subject_type(
     return schedule_codes
 
 
-async def resolve_center_host_school(session: AsyncSession, school: School) -> School:
-    """Host school for examination-centre scope; unchanged if ``school`` is already the host."""
-    if school.writes_at_center_id is None:
-        return school
-    host = await session.get(School, school.writes_at_center_id)
-    if host is None:
-        raise ValueError("Centre host school is missing (invalid writes_at_center_id)")
-    return host
-
-
-async def center_scope_school_ids(session: AsyncSession, center_host: School) -> set[UUID]:
-    """Host plus every school that writes at this host."""
-    ids: set[UUID] = {center_host.id}
-    hosted_stmt = select(School.id).where(School.writes_at_center_id == center_host.id)
-    hosted_result = await session.execute(hosted_stmt)
-    ids.update(row[0] for row in hosted_result.all())
-    return ids
-
-
-async def schools_in_center_scope_ordered(session: AsyncSession, center_host: School) -> list[School]:
-    """Host first, then hosted schools ordered by code."""
-    hosted_stmt = (
-        select(School).where(School.writes_at_center_id == center_host.id).order_by(School.code)
+async def resolve_center_host_school(
+    session: AsyncSession,
+    school: School,
+    examination_id: int,
+    *,
+    inspector_scope: str | None = None,
+) -> School:
+    """Legacy name: resolve centre for school and return a representative school row (by centre code)."""
+    from app.models import ExamInspectorSubjectScope
+    from app.services.centre_resolution import (
+        resolve_centre_for_user_school,
+        schools_in_centre_scope_ordered,
     )
-    hosted_result = await session.execute(hosted_stmt)
-    hosted = list(hosted_result.scalars().all())
-    return [center_host, *hosted]
+
+    scope = ExamInspectorSubjectScope.ALL if inspector_scope is None else inspector_scope
+    centre = await resolve_centre_for_user_school(
+        session, examination_id, school, inspector_scope=scope
+    )
+    ordered = await schools_in_centre_scope_ordered(session, centre)
+    if ordered:
+        return ordered[0]
+    host_stmt = select(School).where(School.code == centre.code)
+    host_result = await session.execute(host_stmt)
+    host = host_result.scalar_one_or_none()
+    if host is not None:
+        return host
+    raise ValueError(f"No school found for examination centre code {centre.code!r}")
+
+
+async def center_scope_school_ids(
+    session: AsyncSession,
+    center_host: School,
+    examination_id: int,
+    *,
+    inspector_scope: str | None = None,
+) -> set[UUID]:
+    from app.models import ExamInspectorSubjectScope, ExaminationCentre
+    from app.services.centre_resolution import (
+        centre_scope_school_ids_for_inspector_scope,
+        resolve_centre_for_user_school,
+    )
+
+    scope = ExamInspectorSubjectScope.ALL if inspector_scope is None else inspector_scope
+    centre_stmt = select(ExaminationCentre).where(
+        ExaminationCentre.examination_id == examination_id,
+        ExaminationCentre.code == center_host.code,
+    )
+    centre_result = await session.execute(centre_stmt)
+    centre = centre_result.scalar_one_or_none()
+    if centre is None:
+        school = center_host
+        centre = await resolve_centre_for_user_school(
+            session, examination_id, school, inspector_scope=scope
+        )
+    return await centre_scope_school_ids_for_inspector_scope(session, centre, scope)
+
+
+async def schools_in_center_scope_ordered(
+    session: AsyncSession,
+    center_host: School,
+    examination_id: int,
+    *,
+    inspector_scope: str | None = None,
+) -> list[School]:
+    from app.models import ExamInspectorSubjectScope, ExaminationCentre
+    from app.services.centre_resolution import (
+        membership_scope_for_inspector_scope,
+        resolve_centre_for_user_school,
+        schools_in_centre_scope_ordered,
+    )
+    from app.services.centre_resolution import get_examination_or_404
+
+    scope = ExamInspectorSubjectScope.ALL if inspector_scope is None else inspector_scope
+    centre_stmt = select(ExaminationCentre).where(
+        ExaminationCentre.examination_id == examination_id,
+        ExaminationCentre.code == center_host.code,
+    )
+    centre_result = await session.execute(centre_stmt)
+    centre = centre_result.scalar_one_or_none()
+    if centre is None:
+        centre = await resolve_centre_for_user_school(
+            session, examination_id, center_host, inspector_scope=scope
+        )
+    exam = await get_examination_or_404(session, examination_id)
+    mem_scope = membership_scope_for_inspector_scope(exam, scope)
+    return await schools_in_centre_scope_ordered(session, centre, membership_scope=mem_scope)
 
 
 async def get_candidate_schedule_codes_for_exam(

@@ -27,6 +27,7 @@ from app.routers import (
     documents,
     exam_officials,
     examination_candidates,
+    examination_centres,
     examinations,
     examiner_groups,
     examiners,
@@ -194,6 +195,7 @@ app.include_router(schools.router)
 app.include_router(programmes.router)
 app.include_router(subjects.router)
 app.include_router(examinations.router)
+app.include_router(examination_centres.router)
 app.include_router(examiners.router)
 app.include_router(examiner_groups.router)
 app.include_router(examination_candidates.router)

@@ -8,6 +8,7 @@ from typing import cast
 from uuid import UUID
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
+from fastapi import HTTPException
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -15,6 +16,7 @@ from app.config import settings
 from app.models import (
     Examination,
     ExaminationCandidate,
+    ExaminationCentre,
     ExamInspectorSubjectScope,
     InspectorExamPosting,
     School,
@@ -30,10 +32,10 @@ from app.schemas.examination import (
     StaffCentreSchoolCandidateItem,
 )
 from app.services.exam_timetable_pdf import load_examination_or_raise
-from app.services.timetable_service import (
-    center_scope_school_ids,
-    resolve_center_host_school,
-    schools_in_center_scope_ordered,
+from app.services.centre_resolution import (
+    centre_scope_school_ids_for_inspector_scope,
+    membership_scope_for_inspector_scope,
+    resolve_centre_for_school,
 )
 
 
@@ -57,7 +59,7 @@ def _overview_timezone() -> ZoneInfo:
 async def build_centre_overview(
     session: AsyncSession,
     exam: Examination,
-    center_host: School,
+    centre: ExaminationCentre,
     *,
     display_school_code: str | None = None,
     display_school_name: str | None = None,
@@ -66,8 +68,15 @@ async def build_centre_overview(
     from app.schemas.examination import TimetableEntry
 
     exam_id = exam.id
-    scope_ids = await center_scope_school_ids(session, center_host)
-    ordered_scope_schools = await schools_in_center_scope_ordered(session, center_host)
+    scope_ids = await centre_scope_school_ids_for_inspector_scope(
+        session, centre, ExamInspectorSubjectScope.ALL
+    )
+    ordered_scope_schools: list[School] = []
+    if scope_ids:
+        ordered_result = await session.execute(
+            select(School).where(School.id.in_(scope_ids)).order_by(School.code)
+        )
+        ordered_scope_schools = list(ordered_result.scalars().all())
     school_count = len(scope_ids)
 
     candidate_count = 0
@@ -92,7 +101,7 @@ async def build_centre_overview(
     entries = await _staff_center_filtered_timetable_entries(session, exam_id, scope_ids)
 
     examination_centre_region = (
-        center_host.region.value if center_host.region is not None else "—"
+        centre.region.value if centre.region is not None else "—"
     )
     if entries:
         entry_dates = [e.examination_date for e in entries]
@@ -120,8 +129,8 @@ async def build_centre_overview(
         key=lambda x: (x.examination_time, x.subject_code, x.paper),
     )
 
-    sup_code = display_school_code if display_school_code is not None else str(center_host.code)
-    sup_name = display_school_name if display_school_name is not None else str(center_host.name)
+    sup_code = display_school_code if display_school_code is not None else str(centre.code)
+    sup_name = display_school_name if display_school_name is not None else str(centre.name)
 
     return StaffCentreOverviewResponse(
         examination_id=exam.id,
@@ -130,9 +139,9 @@ async def build_centre_overview(
         year=exam.year,
         supervisor_school_code=sup_code,
         supervisor_school_name=sup_name,
-        examination_centre_host_school_id=center_host.id,
-        examination_centre_host_code=str(center_host.code),
-        examination_centre_host_name=str(center_host.name),
+        examination_centre_host_school_id=centre.id,
+        examination_centre_host_code=str(centre.code),
+        examination_centre_host_name=str(centre.name),
         supervisor_school_is_centre_host=True,
         candidate_count=candidate_count,
         school_count=school_count,
@@ -177,43 +186,54 @@ async def aggregate_executive_centres(
     exam_id: int,
     school_ids: set[UUID],
 ) -> list[ExecutiveCentreListItem]:
-    """One row per examination centre host with candidates in scope."""
+    """One row per examination centre with candidates in scope."""
     if not school_ids:
         return []
 
-    stmt = select(School).where(School.id.in_(school_ids))
-    schools_result = await session.execute(stmt)
-    schools = list(schools_result.scalars().all())
+    exam = await session.get(Examination, exam_id)
+    if exam is None:
+        return []
 
-    host_to_schools: dict[UUID, list[School]] = defaultdict(list)
-    host_cache: dict[UUID, School] = {}
+    stmt = select(School).where(School.id.in_(school_ids))
+    schools = list((await session.execute(stmt)).scalars().all())
+
+    centre_cache: dict[UUID, ExaminationCentre] = {}
+    centre_to_schools: dict[UUID, list[School]] = defaultdict(list)
 
     for sch in schools:
         try:
-            host = await resolve_center_host_school(session, sch)
-        except ValueError:
+            centre = await resolve_centre_for_school(
+                session,
+                exam_id,
+                sch.id,
+                membership_scope=membership_scope_for_inspector_scope(
+                    exam, ExamInspectorSubjectScope.ALL
+                ),
+            )
+        except HTTPException:
             continue
-        host_id = host.id
-        host_cache[host_id] = host
-        host_to_schools[host_id].append(sch)
+        centre_cache[centre.id] = centre
+        centre_to_schools[centre.id].append(sch)
 
     posting_counts: dict[UUID, int] = {}
-    if host_cache:
+    if centre_cache:
         pc_stmt = (
-            select(InspectorExamPosting.center_id, func.count())
+            select(InspectorExamPosting.examination_centre_id, func.count())
             .where(
                 InspectorExamPosting.examination_id == exam_id,
-                InspectorExamPosting.center_id.in_(host_cache.keys()),
+                InspectorExamPosting.examination_centre_id.in_(centre_cache.keys()),
             )
-            .group_by(InspectorExamPosting.center_id)
+            .group_by(InspectorExamPosting.examination_centre_id)
         )
         pc_result = await session.execute(pc_stmt)
         posting_counts = {row[0]: int(row[1]) for row in pc_result.all()}
 
     items: list[ExecutiveCentreListItem] = []
-    for host_id, cluster_schools in host_to_schools.items():
-        host = host_cache[host_id]
-        scope_ids = await center_scope_school_ids(session, host)
+    for centre_id, _cluster_schools in centre_to_schools.items():
+        centre = centre_cache[centre_id]
+        scope_ids = await centre_scope_school_ids_for_inspector_scope(
+            session, centre, ExamInspectorSubjectScope.ALL
+        )
         active_scope = scope_ids & school_ids
         if not active_scope:
             continue
@@ -233,19 +253,19 @@ async def aggregate_executive_centres(
             if int((await session.execute(c_stmt)).scalar_one()) > 0:
                 schools_with_candidates += 1
 
-        region_str = host.region.value if host.region is not None else "—"
-        zone_str = host.zone.value if host.zone is not None else "—"
+        region_str = centre.region.value if centre.region is not None else "—"
+        zone_str = centre.zone.value if centre.zone is not None else "—"
 
         items.append(
             ExecutiveCentreListItem(
-                center_id=host.id,
-                center_code=str(host.code),
-                center_name=str(host.name),
+                center_id=centre.id,
+                center_code=str(centre.code),
+                center_name=str(centre.name),
                 region=region_str,
                 zone=zone_str,
                 candidate_count=candidate_count,
                 school_count=schools_with_candidates,
-                inspector_count=posting_counts.get(host_id, 0),
+                inspector_count=posting_counts.get(centre_id, 0),
             )
         )
 
@@ -258,53 +278,22 @@ async def count_executive_centres(
     exam_id: int,
     school_ids: set[UUID],
 ) -> int:
-    """Distinct examination centre hosts with at least one candidate (no per-centre detail rows)."""
-    if not school_ids:
-        return 0
-
-    stmt = select(School).where(School.id.in_(school_ids))
-    schools_result = await session.execute(stmt)
-    schools = list(schools_result.scalars().all())
-
-    host_to_schools: dict[UUID, list[School]] = defaultdict(list)
-    host_cache: dict[UUID, School] = {}
-
-    for sch in schools:
-        try:
-            host = await resolve_center_host_school(session, sch)
-        except ValueError:
-            continue
-        host_id = host.id
-        host_cache[host_id] = host
-        host_to_schools[host_id].append(sch)
-
-    count = 0
-    for host_id in host_to_schools:
-        host = host_cache[host_id]
-        scope_ids = await center_scope_school_ids(session, host)
-        active_scope = scope_ids & school_ids
-        if not active_scope:
-            continue
-        cand_stmt = select(func.count()).select_from(ExaminationCandidate).where(
-            ExaminationCandidate.examination_id == exam_id,
-            ExaminationCandidate.school_id.in_(active_scope),
-        )
-        if int((await session.execute(cand_stmt)).scalar_one()) > 0:
-            count += 1
-    return count
+    """Distinct examination centres with at least one candidate."""
+    centres = await aggregate_executive_centres(session, exam_id, school_ids)
+    return len(centres)
 
 
 async def load_posted_inspectors_for_centre(
     session: AsyncSession,
     examination_id: int,
-    center_id: UUID,
+    centre_id: UUID,
 ) -> list[ExecutivePostedInspectorItem]:
     stmt = (
         select(InspectorExamPosting, User)
         .join(User, InspectorExamPosting.inspector_user_id == User.id)
         .where(
             InspectorExamPosting.examination_id == examination_id,
-            InspectorExamPosting.center_id == center_id,
+            InspectorExamPosting.examination_centre_id == centre_id,
         )
         .order_by(User.full_name)
     )
@@ -351,21 +340,19 @@ async def build_national_executive_overview(
 async def build_executive_centre_detail(
     session: AsyncSession,
     exam_id: int,
-    center_id: UUID,
+    centre_id: UUID,
 ) -> ExecutiveCentreDetailResponse:
     exam = await load_examination_or_raise(session, exam_id)
-    host = await session.get(School, center_id)
-    if host is None:
-        raise ValueError("School not found")
-    if host.writes_at_center_id is not None:
-        raise ValueError("School is not an examination centre host")
+    centre = await session.get(ExaminationCentre, centre_id)
+    if centre is None or centre.examination_id != exam_id:
+        raise ValueError("Examination centre not found")
 
     overview = await build_centre_overview(
         session,
         exam,
-        host,
-        display_school_code=str(host.code),
-        display_school_name=str(host.name),
+        centre,
+        display_school_code=str(centre.code),
+        display_school_name=str(centre.name),
     )
-    inspectors = await load_posted_inspectors_for_centre(session, exam_id, center_id)
+    inspectors = await load_posted_inspectors_for_centre(session, exam_id, centre_id)
     return ExecutiveCentreDetailResponse(overview=overview, posted_inspectors=inspectors)

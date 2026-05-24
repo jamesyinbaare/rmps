@@ -10,6 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models import (
     ExamInspectorSubjectScope,
+    ExaminationCentre,
     InspectorExamPosting,
     School,
     Subject,
@@ -17,7 +18,11 @@ from app.models import (
     User,
     UserRole,
 )
-from app.services.timetable_service import center_scope_school_ids
+from app.services.centre_resolution import (
+    centre_scope_school_ids_for_inspector_scope,
+    get_examination_centre_or_404,
+    schools_in_centre_scope_ordered,
+)
 
 
 def subject_matches_scope(scope: ExamInspectorSubjectScope, subject: Subject) -> bool:
@@ -39,12 +44,12 @@ def normalize_exam_inspector_subject_scope(
 
 def posting_pair_conflicts(
     scope_a: ExamInspectorSubjectScope | str,
-    center_a: UUID,
+    centre_a: UUID,
     scope_b: ExamInspectorSubjectScope | str,
-    center_b: UUID,
+    centre_b: UUID,
 ) -> bool:
     """True if two postings cannot coexist for the same examination and inspector."""
-    if center_a != center_b:
+    if centre_a != centre_b:
         return False
     a = normalize_exam_inspector_subject_scope(scope_a)
     b = normalize_exam_inspector_subject_scope(scope_b)
@@ -73,16 +78,12 @@ async def load_postings_for_inspector_exam(
     return list(result.scalars().all())
 
 
-async def assert_centre_host_school(session: AsyncSession, center_id: UUID) -> School:
-    sch = await session.get(School, center_id)
-    if sch is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Examination centre not found")
-    if sch.writes_at_center_id is not None:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="center_id must be an examination centre host school",
-        )
-    return sch
+async def assert_examination_centre(
+    session: AsyncSession,
+    examination_id: int,
+    examination_centre_id: UUID,
+) -> ExaminationCentre:
+    return await get_examination_centre_or_404(session, examination_id, examination_centre_id)
 
 
 async def validate_new_posting_no_overlap(
@@ -90,7 +91,7 @@ async def validate_new_posting_no_overlap(
     *,
     examination_id: int,
     inspector_user_id: UUID,
-    center_id: UUID,
+    examination_centre_id: UUID,
     subject_scope: ExamInspectorSubjectScope,
     exclude_posting_id: UUID | None = None,
 ) -> None:
@@ -102,7 +103,10 @@ async def validate_new_posting_no_overlap(
         if exclude_posting_id is not None and other.id == exclude_posting_id:
             continue
         if posting_pair_conflicts(
-            new_scope, center_id, other.subject_scope, other.center_id
+            new_scope,
+            examination_centre_id,
+            other.subject_scope,
+            other.examination_centre_id,
         ):
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
@@ -116,10 +120,27 @@ async def validate_new_posting_no_overlap(
 
 @dataclass(frozen=True)
 class InspectorWorkspaceContext:
-    center_host: School
+    examination_centre: ExaminationCentre
     scope_ids: set[UUID]
     subject_scope: ExamInspectorSubjectScope
     posting: InspectorExamPosting | None
+
+    @property
+    def center_host(self) -> None:
+        """Removed; use examination_centre. Kept only to surface AttributeError during migration."""
+        raise AttributeError("Use examination_centre instead of center_host")
+
+
+async def representative_school_for_centre(
+    session: AsyncSession,
+    centre: ExaminationCentre,
+) -> School | None:
+    ordered = await schools_in_centre_scope_ordered(session, centre)
+    if ordered:
+        return ordered[0]
+    stmt = select(School).where(School.code == centre.code)
+    result = await session.execute(stmt)
+    return result.scalar_one_or_none()
 
 
 async def resolve_inspector_workspace(
@@ -130,12 +151,7 @@ async def resolve_inspector_workspace(
     posting_id: UUID | None,
     jwt_posting_id: UUID | None = None,
 ) -> InspectorWorkspaceContext:
-    """Pick centre scope and subject filter for an inspector API call.
-
-    Query ``posting_id`` wins over the posting id embedded in the JWT from inspector login.
-    When postings exist, an effective posting id is required unless exactly one posting exists.
-    Inspectors without a posting for this examination cannot use the workspace APIs.
-    """
+    """Pick centre scope and subject filter for an inspector API call."""
     if user.role != UserRole.INSPECTOR:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Inspector access only")
 
@@ -179,10 +195,14 @@ async def resolve_inspector_workspace(
                 detail="Unknown or invalid posting_id for this examination",
             )
 
-    host = await assert_centre_host_school(session, chosen.center_id)
-    scope_ids = await center_scope_school_ids(session, host)
+    centre = await assert_examination_centre(
+        session, examination_id, chosen.examination_centre_id
+    )
+    scope_ids = await centre_scope_school_ids_for_inspector_scope(
+        session, centre, chosen.subject_scope
+    )
     return InspectorWorkspaceContext(
-        center_host=host,
+        examination_centre=centre,
         scope_ids=scope_ids,
         subject_scope=chosen.subject_scope,
         posting=chosen,
@@ -222,32 +242,41 @@ async def union_scope_school_ids_for_inspector_postings(
 ) -> set[UUID]:
     out: set[UUID] = set()
     for p in postings:
-        host = await assert_centre_host_school(session, p.center_id)
-        out |= await center_scope_school_ids(session, host)
+        centre = await session.get(ExaminationCentre, p.examination_centre_id)
+        if centre is None:
+            continue
+        out |= await centre_scope_school_ids_for_inspector_scope(
+            session, centre, p.subject_scope
+        )
     return out
 
 
-async def resolve_centre_host_school_by_code(session: AsyncSession, code: str) -> School:
-    """Resolve an examination centre host school by its code. Raises ValueError if invalid."""
-    cent_result = await session.execute(select(School).where(School.code == code))
-    centre_host = cent_result.scalar_one_or_none()
-    if centre_host is None:
-        raise ValueError(f"No school with code {code!r}")
-    if centre_host.writes_at_center_id is not None:
-        raise ValueError(f"School {code!r} is not an examination centre host")
-    return centre_host
+async def resolve_examination_centre_by_code(
+    session: AsyncSession,
+    examination_id: int,
+    code: str,
+) -> ExaminationCentre:
+    """Resolve an examination centre by code for this examination. Raises ValueError if invalid."""
+    stmt = select(ExaminationCentre).where(
+        ExaminationCentre.examination_id == examination_id,
+        ExaminationCentre.code == code.strip(),
+    )
+    result = await session.execute(stmt)
+    centre = result.scalar_one_or_none()
+    if centre is None:
+        raise ValueError(f"No examination centre with code {code!r} for this examination")
+    return centre
+
+
+# Backward-compatible alias
+resolve_centre_host_school_by_code = resolve_examination_centre_by_code
 
 
 def inspector_posting_targets_from_codes(
     core_code: str | None,
     elective_code: str | None,
 ) -> list[tuple[ExamInspectorSubjectScope, str]]:
-    """Resolve core/elective host codes to (scope, code) pairs before DB resolution.
-
-    Both set and equal → one ALL at that centre.
-    Both set and different → CORE then ELECTIVE.
-    Only one set → that scope at that centre.
-    """
+    """Resolve core/elective centre codes to (scope, code) pairs before DB resolution."""
     core = core_code.strip() if core_code and core_code.strip() else None
     elective = elective_code.strip() if elective_code and elective_code.strip() else None
 
@@ -275,14 +304,13 @@ async def find_inspector_posting_exact(
     *,
     examination_id: int,
     inspector_user_id: UUID,
-    center_id: UUID,
+    examination_centre_id: UUID,
     subject_scope: ExamInspectorSubjectScope,
 ) -> InspectorExamPosting | None:
-    """Same uniqueness as ``uq_inspector_postings_exam_center_inspector_scope`` (one row per centre+scope)."""
     stmt = select(InspectorExamPosting).where(
         InspectorExamPosting.examination_id == examination_id,
         InspectorExamPosting.inspector_user_id == inspector_user_id,
-        InspectorExamPosting.center_id == center_id,
+        InspectorExamPosting.examination_centre_id == examination_centre_id,
         InspectorExamPosting.subject_scope == subject_scope,
     )
     result = await session.execute(stmt)
@@ -298,21 +326,17 @@ async def create_inspector_postings_from_targets(
     created_by_user_id: UUID | None,
     notes: str | None = None,
 ) -> list[tuple[InspectorExamPosting, bool]]:
-    """Create postings from (scope, centre host code) pairs.
-
-    Returns (posting, inserted): ``inserted`` is False when centre+scope already existed.
-    """
     if not targets:
         raise ValueError("At least one centre posting is required")
 
     created: list[tuple[InspectorExamPosting, bool]] = []
     for scope, code in targets:
-        centre_host = await resolve_centre_host_school_by_code(session, code)
+        centre = await resolve_examination_centre_by_code(session, examination_id, code)
         existing = await find_inspector_posting_exact(
             session,
             examination_id=examination_id,
             inspector_user_id=inspector_user_id,
-            center_id=centre_host.id,
+            examination_centre_id=centre.id,
             subject_scope=scope,
         )
         if existing is not None:
@@ -323,13 +347,13 @@ async def create_inspector_postings_from_targets(
             session,
             examination_id=examination_id,
             inspector_user_id=inspector_user_id,
-            center_id=centre_host.id,
+            examination_centre_id=centre.id,
             subject_scope=scope,
         )
         posting = InspectorExamPosting(
             examination_id=examination_id,
             inspector_user_id=inspector_user_id,
-            center_id=centre_host.id,
+            examination_centre_id=centre.id,
             subject_scope=scope,
             notes=notes,
             created_by_user_id=created_by_user_id,
@@ -351,16 +375,6 @@ async def create_inspector_postings_from_core_elective_codes(
     created_by_user_id: UUID | None,
     notes: str | None = None,
 ) -> list[tuple[InspectorExamPosting, bool]]:
-    """Create postings from optional core/elective centre host codes.
-
-    - Both set and equal → one ALL posting at that centre.
-    - Both set and different → CORE at first centre, ELECTIVE at second.
-    - Only core → CORE; only elective → ELECTIVE.
-
-    Requires at least one non-empty code. Raises ValueError for bad codes (same as bulk upload).
-
-    Returns (posting, inserted): ``inserted`` is False when this centre+scope was already present (idempotent).
-    """
     targets = inspector_posting_targets_from_codes(core_code, elective_code)
     return await create_inspector_postings_from_targets(
         session,

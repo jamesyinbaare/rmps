@@ -303,7 +303,7 @@ async def get_me(
     if current_user.role == UserRole.INSPECTOR and jwt_posting_id is not None:
         posting = await session.get(InspectorExamPosting, jwt_posting_id)
         if posting is not None and posting.inspector_user_id == current_user.id:
-            center = await session.get(School, posting.center_id)
+            center = await session.get(School, posting.examination_centre_id)
             if center is not None:
                 inspector_workspace_label = (
                     f"{center.name} ({center.code}) — {posting.subject_scope.value}"

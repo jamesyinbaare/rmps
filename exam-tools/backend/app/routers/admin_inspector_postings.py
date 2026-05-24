@@ -15,8 +15,8 @@ from app.dependencies.auth import SuperAdminDep
 from app.dependencies.database import DBSessionDep
 from app.models import (
     ExamInspectorSubjectScope,
+    ExaminationCentre,
     InspectorExamPosting,
-    School,
     User,
     UserRole,
 )
@@ -32,7 +32,7 @@ from app.schemas.inspector_posting import (
 )
 from app.services.exam_timetable_pdf import load_examination_or_raise
 from app.services.inspector_posting import (
-    assert_centre_host_school,
+    assert_examination_centre,
     create_inspector_postings_from_targets,
     validate_new_posting_no_overlap,
 )
@@ -54,7 +54,7 @@ router = APIRouter(prefix="/admin/examinations", tags=["admin-inspector-postings
 
 def _posting_to_response(
     row: InspectorExamPosting,
-    center: School,
+    center: ExaminationCentre,
     inspector: User,
 ) -> InspectorExamPostingResponse:
     scope = row.subject_scope
@@ -68,7 +68,7 @@ def _posting_to_response(
         inspector_user_id=row.inspector_user_id,
         inspector_full_name=cast(str, inspector.full_name),
         inspector_phone_number=cast(str | None, inspector.phone_number),
-        center_id=row.center_id,
+        center_id=row.examination_centre_id,
         center_code=cast(str, center.code),
         center_name=cast(str, center.name),
         subject_scope=scope_str,
@@ -99,21 +99,21 @@ async def list_inspector_postings(
     if inspector_user_id is not None:
         stmt = stmt.where(InspectorExamPosting.inspector_user_id == inspector_user_id)
     if center_id is not None:
-        stmt = stmt.where(InspectorExamPosting.center_id == center_id)
+        stmt = stmt.where(InspectorExamPosting.examination_centre_id == center_id)
     stmt = stmt.order_by(InspectorExamPosting.id)
     rows = list((await session.execute(stmt)).scalars().all())
     if not rows:
         return InspectorExamPostingListResponse(items=[])
 
-    centre_ids = {r.center_id for r in rows}
+    centre_ids = {r.examination_centre_id for r in rows}
     inspector_ids = {r.inspector_user_id for r in rows}
-    sch_stmt = select(School).where(School.id.in_(centre_ids))
-    centres = {s.id: s for s in (await session.execute(sch_stmt)).scalars().all()}
+    cen_stmt = select(ExaminationCentre).where(ExaminationCentre.id.in_(centre_ids))
+    centres = {c.id: c for c in (await session.execute(cen_stmt)).scalars().all()}
     insp_stmt = select(User).where(User.id.in_(inspector_ids))
     inspectors = {u.id: u for u in (await session.execute(insp_stmt)).scalars().all()}
     out: list[InspectorExamPostingResponse] = []
     for r in rows:
-        c = centres.get(r.center_id)
+        c = centres.get(r.examination_centre_id)
         insp = inspectors.get(r.inspector_user_id)
         if c is None or insp is None:
             continue
@@ -140,19 +140,19 @@ async def create_inspector_posting(
     insp = await session.get(User, body.inspector_user_id)
     if insp is None or insp.role != UserRole.INSPECTOR:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="inspector_user_id must be an inspector")
-    await assert_centre_host_school(session, body.center_id)
+    await assert_examination_centre(session, examination_id, body.center_id)
     scope = ExamInspectorSubjectScope(body.subject_scope.value)
     await validate_new_posting_no_overlap(
         session,
         examination_id=examination_id,
         inspector_user_id=body.inspector_user_id,
-        center_id=body.center_id,
+        examination_centre_id=body.center_id,
         subject_scope=scope,
     )
     row = InspectorExamPosting(
         examination_id=examination_id,
         inspector_user_id=body.inspector_user_id,
-        center_id=body.center_id,
+        examination_centre_id=body.center_id,
         subject_scope=scope,
         notes=body.notes,
         created_by_user_id=admin.id,
@@ -160,7 +160,7 @@ async def create_inspector_posting(
     session.add(row)
     await session.commit()
     await session.refresh(row)
-    center = await session.get(School, row.center_id)
+    center = await session.get(ExaminationCentre, row.examination_centre_id)
     assert center is not None
     return _posting_to_response(row, center, insp)
 
@@ -287,8 +287,8 @@ async def bulk_upload_inspector_postings(
             for posting, inserted in posting_rows:
                 if not inserted:
                     continue
-                sch = await session.get(School, posting.center_id)
-                if sch is None:
+                cen = await session.get(ExaminationCentre, posting.examination_centre_id)
+                if cen is None:
                     continue
                 st_scope = posting.subject_scope
                 scope_str = st_scope.value if isinstance(st_scope, ExamInspectorSubjectScope) else str(st_scope)
@@ -296,7 +296,7 @@ async def bulk_upload_inspector_postings(
                     InspectorPostingBulkCreatedPostingRow(
                         row_number=row_number,
                         inspector_user_id=inspector.id,
-                        center_code=cast(str, sch.code),
+                        center_code=cast(str, cen.code),
                         subject_scope=scope_str,
                     )
                 )
@@ -376,7 +376,7 @@ async def update_inspector_posting(
     if row is None or row.examination_id != examination_id:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Posting not found")
 
-    center_id = body.center_id if body.center_id is not None else row.center_id
+    center_id = body.center_id if body.center_id is not None else row.examination_centre_id
     scope = (
         ExamInspectorSubjectScope(body.subject_scope.value)
         if body.subject_scope is not None
@@ -387,20 +387,20 @@ async def update_inspector_posting(
         )
     )
     if body.center_id is not None:
-        await assert_centre_host_school(session, body.center_id)
+        await assert_examination_centre(session, examination_id, body.center_id)
 
     if body.center_id is not None or body.subject_scope is not None:
         await validate_new_posting_no_overlap(
             session,
             examination_id=examination_id,
             inspector_user_id=row.inspector_user_id,
-            center_id=center_id,
+            examination_centre_id=center_id,
             subject_scope=scope,
             exclude_posting_id=posting_id,
         )
 
     if body.center_id is not None:
-        row.center_id = body.center_id
+        row.examination_centre_id = body.center_id
     if body.subject_scope is not None:
         row.subject_scope = scope
     if body.notes is not None:
@@ -408,7 +408,7 @@ async def update_inspector_posting(
 
     await session.commit()
     await session.refresh(row)
-    center = await session.get(School, row.center_id)
+    center = await session.get(ExaminationCentre, row.examination_centre_id)
     insp = await session.get(User, row.inspector_user_id)
     assert center is not None and insp is not None
     return _posting_to_response(row, center, insp)

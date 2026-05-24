@@ -10,9 +10,10 @@ import {
   displayBankCode,
   downloadAdminExamCentreOfficialsExport,
   listAdminExamCentreOfficials,
+  listExaminationCentres,
   type AdminExamCentreOfficialRow,
   type Examination,
-  type ExaminationCenterListResponse,
+  type PerExamCentreItem,
   type RecordSubjectScope,
 } from "@/lib/api";
 import { OfficialAccountsPageIntro } from "@/components/official-accounts-page-intro";
@@ -39,7 +40,7 @@ function AdminExamOfficialsContent() {
   const searchParams = useSearchParams();
   const [exams, setExams] = useState<Examination[]>([]);
   const [examId, setExamId] = useState<number | null>(null);
-  const [centers, setCenters] = useState<ExaminationCenterListResponse["items"]>([]);
+  const [centers, setCenters] = useState<PerExamCentreItem[]>([]);
   const [centerId, setCenterId] = useState<string>("");
   const [subjectScopeFilter, setSubjectScopeFilter] = useState<"" | RecordSubjectScope>("");
   const [urlHydrated, setUrlHydrated] = useState(false);
@@ -85,12 +86,17 @@ function AdminExamOfficialsContent() {
   }, [searchParams, urlHydrated]);
 
   useEffect(() => {
+    if (examId == null) {
+      setCenters([]);
+      return;
+    }
     let cancelled = false;
     void (async () => {
       try {
-        const data = await apiJson<ExaminationCenterListResponse>("/schools/examination-centers?skip=0&limit=500");
+        const data = await listExaminationCentres(examId);
         if (cancelled) return;
         setCenters(data.items);
+        setCenterId((cur) => (cur && data.items.some((c) => c.id === cur) ? cur : ""));
       } catch {
         if (!cancelled) setCenters([]);
       }
@@ -98,15 +104,15 @@ function AdminExamOfficialsContent() {
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [examId]);
 
   const selectedExam = useMemo(() => exams.find((e) => e.id === examId) ?? null, [exams, examId]);
 
   const centerOptions = useMemo(
     () =>
       centers.map((c) => ({
-        value: c.school.id,
-        label: `${c.school.code} — ${c.school.name}`,
+        value: c.id,
+        label: `${c.code} — ${c.name}`,
       })),
     [centers],
   );
