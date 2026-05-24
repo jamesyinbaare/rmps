@@ -188,7 +188,11 @@ function SeriesEnvelopeCell({
 }) {
   const block = row.bySeries[seriesNumber];
   if (block?.no_scripts) {
-    return <span className="text-xs text-muted-foreground">No scripts</span>;
+    return (
+      <span className="text-sm font-medium tabular-nums text-muted-foreground" title="No scripts">
+        NS
+      </span>
+    );
   }
   if (!block?.envelopes?.length) {
     return <span className="text-muted-foreground">—</span>;
