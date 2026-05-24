@@ -2,15 +2,16 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 
+import {
+  DepotEnvelopeRow,
+  DepotPaperHeader,
+  DepotSeriesBlock,
+  depotPaperCardClass,
+} from "@/components/depot-script-verify-blocks";
 import { DashboardShell } from "@/components/dashboard-shell";
 import { RoleGuard } from "@/components/role-guard";
 import { formInputClass, formLabelClass } from "@/lib/form-classes";
-import { depotPaperBadgeClass, depotPaperCardAccentClass } from "@/lib/depot-script-paper-visual";
-import {
-  packingCountFieldLabel,
-  packingItemNounForCount,
-  packingItemPlural,
-} from "@/lib/script-packing-terms";
+import { seriesInspectorBadgeClass } from "@/lib/paper-inspector-styles";
 import {
   getDepotSchoolScriptControl,
   getDepotSchools,
@@ -25,8 +26,8 @@ import {
 
 const btnPrimary =
   "inline-flex min-h-11 items-center justify-center rounded-lg bg-primary px-3 text-sm font-medium text-primary-foreground transition-colors hover:bg-primary-hover focus:outline-none focus:ring-2 focus:ring-ring/30 disabled:pointer-events-none disabled:opacity-50 sm:min-h-10";
-
-const EXPANDED_STORAGE_PREFIX = "depot-keeper-worked-expanded";
+const btnSecondary =
+  "inline-flex min-h-11 items-center justify-center rounded-lg border border-input-border bg-background px-3 text-sm font-medium text-foreground transition-colors hover:bg-muted focus:outline-none focus:ring-2 focus:ring-ring/30 disabled:pointer-events-none disabled:opacity-50 sm:min-h-10";
 
 function localTodayIso(): string {
   const d = new Date();
@@ -123,35 +124,49 @@ function buildStatusGroups(
   for (const subject of subjects) {
     const completion = buildSubjectCompletion(subject, todayIso);
     if (completion.totalSeries === 0) continue;
-    const subjectStatus: StatusKey =
-      completion.completedSeries === completion.totalSeries
-        ? "verified"
-        : completion.notRecordedSeries > 0
-          ? "notRecorded"
-          : "unverified";
 
     for (const paper of subject.papers) {
       if (!isWritten(paper.examination_date ?? null, todayIso)) continue;
+
+      const makeItem = (series: SeriesRow): StatusSeriesItem => ({
+        subject: {
+          subject_id: subject.subject_id,
+          subject_code: subject.subject_code,
+          subject_original_code: subject.subject_original_code ?? null,
+          subject_name: subject.subject_name,
+          completion,
+        },
+        paper: {
+          paper_number: paper.paper_number,
+          examination_date: paper.examination_date,
+        },
+        series,
+      });
+
       for (const series of paper.series) {
-        grouped[subjectStatus].push({
-          subject: {
-            subject_id: subject.subject_id,
-            subject_code: subject.subject_code,
-            subject_original_code: subject.subject_original_code ?? null,
-            subject_name: subject.subject_name,
-            completion,
-          },
-          paper: {
-            paper_number: paper.paper_number,
-            examination_date: paper.examination_date,
-          },
-          series,
-        });
+        if (series.packing == null) {
+          grouped.notRecorded.push(makeItem(series));
+        }
+      }
+
+      const recorded = paper.series.filter((s) => s.packing != null);
+      if (recorded.length === 0) continue;
+
+      const paperBucket: "unverified" | "verified" = recorded.every((s) => s.verified)
+        ? "verified"
+        : "unverified";
+
+      for (const series of recorded) {
+        grouped[paperBucket].push(makeItem(series));
       }
     }
   }
 
   return grouped;
+}
+
+function displayDepotSubjectCode(subject: Pick<SubjectGroup, "subject_code" | "subject_original_code">): string {
+  return (subject.subject_original_code?.trim() ? subject.subject_original_code : subject.subject_code).trim();
 }
 
 function nestBySubjectPaper(items: StatusSeriesItem[]): SubjectGroup[] {
@@ -286,7 +301,7 @@ export default function DepotKeeperScriptsControlPage() {
   const [actionError, setActionError] = useState<string | null>(null);
   const [verifyingKey, setVerifyingKey] = useState<string | null>(null);
   const [activeStatus, setActiveStatus] = useState<StatusKey>("unverified");
-  const [expandedSubjects, setExpandedSubjects] = useState<Record<string, boolean>>({});
+  const [openSubjectKey, setOpenSubjectKey] = useState<string | null>(null);
 
   const loadData = useCallback(async () => {
     if (examId === null || selectedSchoolId.trim() === "") return;
@@ -333,14 +348,12 @@ export default function DepotKeeperScriptsControlPage() {
 
   useEffect(() => {
     setActiveStatus("unverified");
-    const storageKey = `${EXPANDED_STORAGE_PREFIX}:${examId ?? "none"}:${selectedSchoolId || "none"}`;
-    try {
-      const raw = sessionStorage.getItem(storageKey);
-      setExpandedSubjects(raw ? (JSON.parse(raw) as Record<string, boolean>) : {});
-    } catch {
-      setExpandedSubjects({});
-    }
+    setOpenSubjectKey(null);
   }, [examId, selectedSchoolId]);
+
+  useEffect(() => {
+    setOpenSubjectKey(null);
+  }, [activeStatus]);
 
   const statusGroups = useMemo<StatusGroup[]>(() => {
     if (!data) return [];
@@ -349,7 +362,8 @@ export default function DepotKeeperScriptsControlPage() {
       {
         key: "unverified",
         title: "Unverified",
-        description: "Inspector has entered packing; depot has not confirmed every envelope yet.",
+        description:
+          "Papers with packing still to confirm. A paper stays here until every series on that paper is verified.",
         emptyLabel: "No envelopes in this category for this exam and school.",
         subjects: nestBySubjectPaper(grouped.unverified),
       },
@@ -364,7 +378,7 @@ export default function DepotKeeperScriptsControlPage() {
       {
         key: "verified",
         title: "Verified",
-        description: "Depot has confirmed all envelopes in this group.",
+        description: "Every envelope in these series has been confirmed by depot.",
         emptyLabel: "No envelopes in this category for this exam and school.",
         subjects: nestBySubjectPaper(grouped.verified),
       },
@@ -563,7 +577,7 @@ export default function DepotKeeperScriptsControlPage() {
                           <div className="mt-4 space-y-3">
                             {group.subjects.map((subject) => {
                               const subjectKey = `${group.key}-${subject.subject_id}`;
-                              const subjectOpen = expandedSubjects[subjectKey] ?? false;
+                              const subjectOpen = openSubjectKey === subjectKey;
                               const packingTotals = subjectPackingTotals(subject);
                               return (
                                 <div
@@ -584,16 +598,7 @@ export default function DepotKeeperScriptsControlPage() {
                                       type="button"
                                       className="shrink-0 rounded-lg border border-input-border bg-background px-2.5 py-1.5 text-sm hover:bg-muted focus:outline-none focus:ring-2 focus:ring-ring/30"
                                       onClick={() => {
-                                        const storageKey = `${EXPANDED_STORAGE_PREFIX}:${examId ?? "none"}:${selectedSchoolId || "none"}`;
-                                        setExpandedSubjects((prev) => {
-                                          const next = { ...prev, [subjectKey]: !subjectOpen };
-                                          try {
-                                            sessionStorage.setItem(storageKey, JSON.stringify(next));
-                                          } catch {
-                                            /* ignore */
-                                          }
-                                          return next;
-                                        });
+                                        setOpenSubjectKey(subjectOpen ? null : subjectKey);
                                       }}
                                       aria-expanded={subjectOpen}
                                       aria-label={subjectOpen ? "Collapse subject" : "Expand subject"}
@@ -715,173 +720,77 @@ export default function DepotKeeperScriptsControlPage() {
                                         return (
                                           <div
                                             key={`${subjectKey}-p${paper.paper_number}`}
-                                            className={`rounded-lg border border-border/70 bg-background/70 p-3 ${depotPaperCardAccentClass(paper.paper_number)}`}
+                                            className={depotPaperCardClass(paper.paper_number)}
                                           >
-                                            <div className="flex flex-col gap-1 sm:flex-row sm:flex-wrap sm:items-baseline sm:justify-between">
-                                              <p className="flex flex-wrap items-center gap-2 text-sm font-semibold text-foreground">
-                                                <span
-                                                  className={`inline-flex rounded-md border px-1.5 py-0.5 text-xs font-bold tabular-nums ${depotPaperBadgeClass(paper.paper_number)}`}
-                                                >
-                                                  P{paper.paper_number}
-                                                </span>
-                                                <span>
-                                                  Paper {paper.paper_number}
-                                                </span>
-                                                {paper.examination_date ? (
-                                                  <span className="ml-2 text-xs font-normal text-muted-foreground">
-                                                    {paper.examination_date}
-                                                  </span>
-                                                ) : null}
-                                                <span className="ml-2 text-xs font-normal text-muted-foreground">
-                                                  {paper.series.length} series (this paper)
-                                                </span>
-                                              </p>
-                                              {(paperTotals.envelopeCount > 0 || paperTotals.totalBooklets > 0) && (
-                                                <div className="flex flex-wrap items-center gap-x-3 gap-y-0.5 text-xs">
-                                                  <span className="text-muted-foreground">
-                                                    <span className="font-semibold tabular-nums text-foreground">
-                                                      {paperTotals.envelopeCount}
-                                                    </span>{" "}
-                                                    env.
-                                                  </span>
-                                                  <span className="text-muted-foreground">
-                                                    <span className="font-semibold tabular-nums text-foreground">
-                                                      {paperTotals.totalBooklets}
-                                                    </span>{" "}
-                                                    {packingItemPlural(paper.paper_number)}
-                                                  </span>
-                                                </div>
-                                              )}
-                                            </div>
+                                            <DepotPaperHeader
+                                              subjectCode={displayDepotSubjectCode(subject)}
+                                              subjectName={subject.subject_name}
+                                              paperNumber={paper.paper_number}
+                                              envelopeCount={paperTotals.envelopeCount}
+                                              totalBooklets={paperTotals.totalBooklets}
+                                            />
 
-                                            <div className="mt-3 space-y-2">
+                                            <div className="mt-3 space-y-3">
                                               {paper.series.map((ser) => {
                                                 const packing = ser.packing;
                                                 const st = packing ? seriesPackingTotals(packing) : null;
-                                                return (
-                                                  <div
-                                                    key={`${subjectKey}-p${paper.paper_number}-s${ser.series_number}`}
-                                                    className="rounded-md border border-border/70 bg-background px-3 py-2"
-                                                  >
-                                                    <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
-                                                      <div className="min-w-0 flex-1">
-                                                        <p className="text-sm font-semibold text-foreground">
-                                                          Series {ser.series_number}
-                                                        </p>
-                                                        {!packing ? (
-                                                          <p className="mt-1 text-xs text-muted-foreground">
-                                                            Not recorded by inspector
-                                                          </p>
-                                                        ) : (
-                                                          <>
-                                                            <div className="mt-2 grid grid-cols-2 gap-3 rounded-md border border-border/60 bg-card/90 px-2 py-2">
-                                                              <div>
-                                                                <p className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
-                                                                  Envelopes
-                                                                </p>
-                                                                <p className="mt-0.5 text-lg font-bold tabular-nums text-foreground">
-                                                                  {st!.envelopeCount}
-                                                                </p>
-                                                              </div>
-                                                              <div>
-                                                                <p className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
-                                                                  {packingCountFieldLabel(paper.paper_number)}
-                                                                </p>
-                                                                <p className="mt-0.5 text-lg font-bold tabular-nums text-foreground">
-                                                                  {st!.totalBooklets}
-                                                                </p>
-                                                                <p className="text-[10px] text-muted-foreground">
-                                                                  in series
-                                                                </p>
-                                                              </div>
-                                                            </div>
-                                                            <p className="mt-2 text-xs text-muted-foreground">
-                                                              {ser.verified ? (
-                                                                <span className="font-medium text-emerald-700 dark:text-emerald-400">
-                                                                  Fully verified
-                                                                </span>
-                                                              ) : (
-                                                                <>
-                                                                  Pending verification on one or more envelopes below.
-                                                                </>
-                                                              )}
-                                                            </p>
-                                                          </>
-                                                        )}
-                                                      </div>
+                                                if (!packing) {
+                                                  return (
+                                                    <div
+                                                      key={`${subjectKey}-p${paper.paper_number}-s${ser.series_number}`}
+                                                      className="rounded-xl border border-dashed border-border px-3 py-2.5"
+                                                    >
+                                                      <span className={`${seriesInspectorBadgeClass} text-sm opacity-70`}>
+                                                        Series {ser.series_number}
+                                                      </span>
+                                                      <p className="mt-2 text-xs text-muted-foreground">
+                                                        Not recorded by inspector
+                                                      </p>
                                                     </div>
-
-                                                    {packing ? (
-                                                      packing.envelopes.length === 0 ? (
-                                                        <p className="mt-2 text-xs text-muted-foreground">
-                                                          No envelopes recorded in this series.
-                                                        </p>
-                                                      ) : (
-                                                        <ul className="mt-3 space-y-2 border-t border-border/60 pt-3">
-                                                          {packing.envelopes.map((env) => {
-                                                            const vkey = `${subject.subject_id}-${paper.paper_number}-${ser.series_number}-${env.envelope_number}`;
-                                                            const verifying = verifyingKey === vkey;
-                                                            const done = env.verified === true;
-                                                            return (
-                                                              <li
-                                                                key={env.envelope_number}
-                                                                className="flex flex-col gap-2 rounded-md bg-background/50 px-2 py-2 sm:flex-row sm:items-center sm:justify-between"
-                                                              >
-                                                                <div className="min-w-0">
-                                                                  <div className="flex flex-wrap items-baseline gap-x-2 gap-y-0.5">
-                                                                    <span className="text-sm font-medium text-foreground">
-                                                                      Envelope {env.envelope_number}
-                                                                    </span>
-                                                                    <span className="rounded-md bg-muted/80 px-2 py-0.5 text-base font-bold tabular-nums text-foreground">
-                                                                      {env.booklet_count}
-                                                                    </span>
-                                                                    <span className="text-xs font-medium text-muted-foreground">
-                                                                      {packingItemNounForCount(env.booklet_count, paper.paper_number)}
-                                                                    </span>
-                                                                  </div>
-                                                                  {done ? (
-                                                                    <p className="mt-1 text-xs font-medium text-emerald-700 dark:text-emerald-400">
-                                                                      Verified
-                                                                    </p>
-                                                                  ) : (
-                                                                    <p className="mt-1 text-xs text-muted-foreground">
-                                                                      Not verified
-                                                                    </p>
-                                                                  )}
-                                                                </div>
-                                                                <button
-                                                                  type="button"
-                                                                  className={
-                                                                    done
-                                                                      ? "inline-flex min-h-11 w-full items-center justify-center rounded-lg border border-input-border bg-background px-3 text-sm font-medium text-foreground transition-colors hover:bg-muted focus:outline-none focus:ring-2 focus:ring-ring/30 sm:min-h-10 sm:w-auto"
-                                                                      : `${btnPrimary} w-full sm:w-auto`
-                                                                  }
-                                                                  disabled={busy || verifying}
-                                                                  onClick={() =>
-                                                                    void onToggleVerify(
-                                                                      subject.subject_id,
-                                                                      paper.paper_number,
-                                                                      ser.series_number,
-                                                                      env.envelope_number,
-                                                                      !done,
-                                                                    )
-                                                                  }
-                                                                >
-                                                                  {verifying
-                                                                    ? done
-                                                                      ? "Unverifying…"
-                                                                      : "Verifying…"
-                                                                    : done
-                                                                      ? "Unverify"
-                                                                      : "Verify"}
-                                                                </button>
-                                                              </li>
-                                                            );
-                                                          })}
-                                                        </ul>
-                                                      )
-                                                    ) : null}
-                                                  </div>
+                                                  );
+                                                }
+                                                return (
+                                                  <DepotSeriesBlock
+                                                    key={`${subjectKey}-p${paper.paper_number}-s${ser.series_number}`}
+                                                    seriesNumber={ser.series_number}
+                                                    paperNumber={paper.paper_number}
+                                                    envelopeCount={st!.envelopeCount}
+                                                    totalBooklets={st!.totalBooklets}
+                                                    verified={Boolean(ser.verified)}
+                                                  >
+                                                    {packing.envelopes.length === 0 ? (
+                                                      <p className="text-xs text-muted-foreground">No envelopes</p>
+                                                    ) : (
+                                                      <ul className="space-y-2">
+                                                        {packing.envelopes.map((env) => {
+                                                          const vkey = `${subject.subject_id}-${paper.paper_number}-${ser.series_number}-${env.envelope_number}`;
+                                                          const done = env.verified === true;
+                                                          return (
+                                                            <DepotEnvelopeRow
+                                                              key={env.envelope_number}
+                                                              envelopeNumber={env.envelope_number}
+                                                              bookletCount={env.booklet_count}
+                                                              paperNumber={paper.paper_number}
+                                                              verified={done}
+                                                              verifying={verifyingKey === vkey}
+                                                              busy={busy}
+                                                              verifyBtnPrimary={btnPrimary}
+                                                              verifyBtnSecondary={`${btnSecondary} w-full sm:w-auto`}
+                                                              onToggle={() =>
+                                                                void onToggleVerify(
+                                                                  subject.subject_id,
+                                                                  paper.paper_number,
+                                                                  ser.series_number,
+                                                                  env.envelope_number,
+                                                                  !done,
+                                                                )
+                                                              }
+                                                            />
+                                                          );
+                                                        })}
+                                                      </ul>
+                                                    )}
+                                                  </DepotSeriesBlock>
                                                 );
                                               })}
                                             </div>

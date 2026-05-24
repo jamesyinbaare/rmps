@@ -2,14 +2,16 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 
+import {
+  DepotEnvelopeRow,
+  DepotPaperHeader,
+  DepotSeriesBlock,
+  depotPaperCardClass,
+} from "@/components/depot-script-verify-blocks";
 import { DashboardShell } from "@/components/dashboard-shell";
 import { RoleGuard } from "@/components/role-guard";
 import { formInputClass, formLabelClass } from "@/lib/form-classes";
-import { depotPaperBadgeClass, depotPaperCardAccentClass } from "@/lib/depot-script-paper-visual";
-import {
-  irregularPackingItemPlural,
-  irregularPackingNounForCount,
-} from "@/lib/script-packing-terms";
+import { irregularPackingItemPlural } from "@/lib/script-packing-terms";
 import {
   getDepotSchoolIrregularScriptControl,
   getDepotSchools,
@@ -24,8 +26,8 @@ import {
 
 const btnPrimary =
   "inline-flex min-h-11 items-center justify-center rounded-lg bg-primary px-3 text-sm font-medium text-primary-foreground transition-colors hover:bg-primary-hover focus:outline-none focus:ring-2 focus:ring-ring/30 disabled:pointer-events-none disabled:opacity-50 sm:min-h-10";
-
-const EXPANDED_STORAGE_PREFIX = "depot-keeper-irregular-expanded";
+const btnSecondary =
+  "inline-flex min-h-11 items-center justify-center rounded-lg border border-input-border bg-background px-3 text-sm font-medium text-foreground transition-colors hover:bg-muted focus:outline-none focus:ring-2 focus:ring-ring/30 disabled:pointer-events-none disabled:opacity-50 sm:min-h-10";
 
 type SubjectPaperBuckets = {
   unverified: ScriptPaperSlotResponse[];
@@ -88,11 +90,23 @@ function buildStatusGroups(subjects: ScriptSubjectRowResponse[], todayIso: strin
     if (completion.totalSeries === 0) continue;
     for (const paper of subject.papers) {
       if (!isWritten(paper.examination_date ?? null, todayIso)) continue;
-      for (const series of paper.series) {
-        if (series.packing == null) continue;
-        const subjectStatus: StatusKey = series.verified ? "verified" : "unverified";
-        grouped[subjectStatus].push({
-          subject: { subject_id: subject.subject_id, subject_code: subject.subject_code, subject_original_code: subject.subject_original_code ?? null, subject_name: subject.subject_name, completion },
+
+      const recorded = paper.series.filter((s) => s.packing != null);
+      if (recorded.length === 0) continue;
+
+      const paperBucket: "unverified" | "verified" = recorded.every((s) => s.verified)
+        ? "verified"
+        : "unverified";
+
+      for (const series of recorded) {
+        grouped[paperBucket].push({
+          subject: {
+            subject_id: subject.subject_id,
+            subject_code: subject.subject_code,
+            subject_original_code: subject.subject_original_code ?? null,
+            subject_name: subject.subject_name,
+            completion,
+          },
           paper: { paper_number: paper.paper_number, examination_date: paper.examination_date },
           series,
         });
@@ -112,6 +126,9 @@ function nestBySubjectPaper(items: StatusSeriesItem[]): SubjectGroup[] {
     subjectMap.set(subjectGroup.subject_id, subjectGroup);
   }
   return Array.from(subjectMap.values()).map((subject) => ({ ...subject, papers: [...subject.papers].sort((a, b) => a.paper_number - b.paper_number) })).sort((a, b) => a.subject_code.localeCompare(b.subject_code));
+}
+function displayDepotSubjectCode(subject: Pick<SubjectGroup, "subject_code" | "subject_original_code">): string {
+  return (subject.subject_original_code?.trim() ? subject.subject_original_code : subject.subject_code).trim();
 }
 function countEnvelopes(groups: SubjectGroup[]): number {
   return groups.reduce((acc, subject) => acc + subject.papers.reduce((paperAcc, paper) => paperAcc + paper.series.reduce((seriesAcc, series) => seriesAcc + (series.packing?.envelopes.length ?? 0), 0), 0), 0);
@@ -137,6 +154,18 @@ function subjectSeriesPerPaperSummary(subject: SubjectGroup): string {
 function seriesPackingTotals(packing: NonNullable<SeriesRow["packing"]>): { envelopeCount: number; totalBooklets: number } {
   const envs = packing.envelopes;
   return { envelopeCount: envs.length, totalBooklets: envs.reduce((s, e) => s + e.booklet_count, 0) };
+}
+
+function paperPackingTotals(paper: PaperGroup): { envelopeCount: number; totalBooklets: number } {
+  let envelopeCount = 0;
+  let totalBooklets = 0;
+  for (const ser of paper.series) {
+    const envs = ser.packing?.envelopes;
+    if (!envs?.length) continue;
+    envelopeCount += envs.length;
+    for (const e of envs) totalBooklets += e.booklet_count;
+  }
+  return { envelopeCount, totalBooklets };
 }
 
 function countUnverifiedEnvelopes(subjects: SubjectGroup[]): number {
@@ -166,7 +195,7 @@ export default function DepotKeeperIrregularScriptsControlPage() {
   const [actionError, setActionError] = useState<string | null>(null);
   const [verifyingKey, setVerifyingKey] = useState<string | null>(null);
   const [activeStatus, setActiveStatus] = useState<StatusKey>("unverified");
-  const [expandedSubjects, setExpandedSubjects] = useState<Record<string, boolean>>({});
+  const [openSubjectKey, setOpenSubjectKey] = useState<string | null>(null);
 
   const loadData = useCallback(async () => {
     if (examId === null || selectedSchoolId.trim() === "") return;
@@ -213,14 +242,12 @@ export default function DepotKeeperIrregularScriptsControlPage() {
 
   useEffect(() => {
     setActiveStatus("unverified");
-    const storageKey = `${EXPANDED_STORAGE_PREFIX}:${examId ?? "none"}:${selectedSchoolId || "none"}`;
-    try {
-      const raw = sessionStorage.getItem(storageKey);
-      setExpandedSubjects(raw ? (JSON.parse(raw) as Record<string, boolean>) : {});
-    } catch {
-      setExpandedSubjects({});
-    }
+    setOpenSubjectKey(null);
   }, [examId, selectedSchoolId]);
+
+  useEffect(() => {
+    setOpenSubjectKey(null);
+  }, [activeStatus]);
 
   const statusGroups = useMemo<StatusGroup[]>(() => {
     if (!data) return [];
@@ -229,14 +256,15 @@ export default function DepotKeeperIrregularScriptsControlPage() {
       {
         key: "unverified",
         title: "Unverified",
-        description: "Inspector has entered packing; depot has not confirmed every envelope yet.",
+        description:
+          "Papers with irregular packing still to confirm. A paper stays here until every series on that paper is verified.",
         emptyLabel: "No envelopes in this category for this exam and school.",
         subjects: nestBySubjectPaper(grouped.unverified),
       },
       {
         key: "verified",
         title: "Verified",
-        description: "Depot has confirmed all envelopes in this group.",
+        description: "Every envelope in these series has been confirmed by depot.",
         emptyLabel: "No envelopes in this category for this exam and school.",
         subjects: nestBySubjectPaper(grouped.verified),
       },
@@ -364,7 +392,7 @@ export default function DepotKeeperIrregularScriptsControlPage() {
                     <div className="mt-4 space-y-3">
                       {activeGroup.subjects.map((subject) => {
                         const subjectKey = `${activeGroup.key}-${subject.subject_id}`;
-                        const subjectOpen = expandedSubjects[subjectKey] ?? false;
+                        const subjectOpen = openSubjectKey === subjectKey;
                         const packingTotals = subjectPackingTotals(subject);
                         return (
                           <div key={subjectKey} className="rounded-xl border border-border/80 bg-background/40 p-3">
@@ -380,16 +408,7 @@ export default function DepotKeeperIrregularScriptsControlPage() {
                                 type="button"
                                 className="shrink-0 rounded-lg border border-input-border bg-background px-2.5 py-1.5 text-sm hover:bg-muted focus:outline-none focus:ring-2 focus:ring-ring/30"
                                 onClick={() => {
-                                  const storageKey = `${EXPANDED_STORAGE_PREFIX}:${examId ?? "none"}:${selectedSchoolId || "none"}`;
-                                  setExpandedSubjects((prev) => {
-                                    const next = { ...prev, [subjectKey]: !subjectOpen };
-                                    try {
-                                      sessionStorage.setItem(storageKey, JSON.stringify(next));
-                                    } catch {
-                                      /* ignore */
-                                    }
-                                    return next;
-                                  });
+                                  setOpenSubjectKey(subjectOpen ? null : subjectKey);
                                 }}
                               >
                                 {subjectOpen ? "Hide" : "Show"}
@@ -431,64 +450,72 @@ export default function DepotKeeperIrregularScriptsControlPage() {
                             ) : null}
                             {subjectOpen ? (
                               <div className="mt-3 grid gap-3 lg:grid-cols-2">
-                                {subject.papers.map((paper) => (
+                                {subject.papers.map((paper) => {
+                                  const paperTotals = paperPackingTotals(paper);
+                                  const itemsWord = irregularPackingItemPlural(paper.paper_number);
+                                  return (
                                   <div
                                     key={`${subjectKey}-p${paper.paper_number}`}
-                                    className={`rounded-lg border border-border/70 bg-background/70 p-3 ${depotPaperCardAccentClass(paper.paper_number)}`}
+                                    className={depotPaperCardClass(paper.paper_number)}
                                   >
-                                    <p className="flex flex-wrap items-center gap-2 text-sm font-semibold text-foreground">
-                                      <span
-                                        className={`inline-flex rounded-md border px-1.5 py-0.5 text-xs font-bold tabular-nums ${depotPaperBadgeClass(paper.paper_number)}`}
-                                      >
-                                        P{paper.paper_number}
-                                      </span>
-                                      <span>Paper {paper.paper_number}</span>
-                                      {paper.examination_date ? (
-                                        <span className="text-xs font-normal text-muted-foreground">{paper.examination_date}</span>
-                                      ) : null}
-                                      <span className="text-xs font-normal text-muted-foreground">
-                                        {paper.series.length} series (this paper)
-                                      </span>
-                                    </p>
-                                    <div className="mt-3 space-y-2">
+                                    <DepotPaperHeader
+                                      subjectCode={displayDepotSubjectCode(subject)}
+                                      subjectName={subject.subject_name}
+                                      paperNumber={paper.paper_number}
+                                      envelopeCount={paperTotals.envelopeCount}
+                                      totalBooklets={paperTotals.totalBooklets}
+                                      itemsWord={itemsWord}
+                                    />
+                                    <div className="mt-3 space-y-3">
                                       {paper.series.map((ser) => {
                                         const packing = ser.packing;
                                         const st = packing ? seriesPackingTotals(packing) : null;
+                                        if (!packing || !st) return null;
                                         return (
-                                          <div key={`${subjectKey}-p${paper.paper_number}-s${ser.series_number}`} className="rounded-md border border-border/70 bg-background px-3 py-2">
-                                            <p className="text-sm font-semibold text-foreground">Series {ser.series_number}</p>
-                                            {!packing ? <p className="mt-1 text-xs text-muted-foreground">Not recorded by inspector</p> : (
-                                              <>
-                                                <p className="mt-1 text-xs text-muted-foreground">{st!.envelopeCount} envelopes · {st!.totalBooklets} {irregularPackingItemPlural(paper.paper_number)}</p>
-                                                <ul className="mt-3 space-y-2 border-t border-border/60 pt-3">
-                                                  {packing.envelopes.map((env) => {
-                                                    const vkey = `${subject.subject_id}-${paper.paper_number}-${ser.series_number}-${env.envelope_number}`;
-                                                    const verifying = verifyingKey === vkey;
-                                                    const done = env.verified === true;
-                                                    return (
-                                                      <li
-                                                        key={env.envelope_number}
-                                                        className="flex flex-col gap-2 rounded-md bg-background/50 px-2 py-2 sm:flex-row sm:items-center sm:justify-between"
-                                                      >
-                                                        <div className="min-w-0">
-                                                          <span className="text-sm font-medium text-foreground">Envelope {env.envelope_number} · {env.booklet_count} {irregularPackingNounForCount(env.booklet_count, paper.paper_number)}</span>
-                                                          <p className="mt-1 text-xs text-muted-foreground">{done ? "Verified" : "Not verified"}</p>
-                                                        </div>
-                                                        <button type="button" className={done ? "inline-flex min-h-11 w-full items-center justify-center rounded-lg border border-input-border bg-background px-3 text-sm font-medium text-foreground transition-colors hover:bg-muted focus:outline-none focus:ring-2 focus:ring-ring/30 sm:min-h-10 sm:w-auto" : `${btnPrimary} w-full sm:w-auto`} disabled={busy || verifying} onClick={() => void onToggleVerify(subject.subject_id, paper.paper_number, ser.series_number, env.envelope_number, !done)}>
-                                                          {verifying ? (done ? "Unverifying…" : "Verifying…") : (done ? "Unverify" : "Verify")}
-                                                        </button>
-                                                      </li>
-                                                    );
-                                                  })}
-                                                </ul>
-                                              </>
-                                            )}
-                                          </div>
+                                          <DepotSeriesBlock
+                                            key={`${subjectKey}-p${paper.paper_number}-s${ser.series_number}`}
+                                            seriesNumber={ser.series_number}
+                                            paperNumber={paper.paper_number}
+                                            envelopeCount={st.envelopeCount}
+                                            totalBooklets={st.totalBooklets}
+                                            verified={Boolean(ser.verified)}
+                                            itemsWord={itemsWord}
+                                          >
+                                            <ul className="space-y-2">
+                                              {packing.envelopes.map((env) => {
+                                                const vkey = `${subject.subject_id}-${paper.paper_number}-${ser.series_number}-${env.envelope_number}`;
+                                                const done = env.verified === true;
+                                                return (
+                                                  <DepotEnvelopeRow
+                                                    key={env.envelope_number}
+                                                    envelopeNumber={env.envelope_number}
+                                                    bookletCount={env.booklet_count}
+                                                    paperNumber={paper.paper_number}
+                                                    verified={done}
+                                                    verifying={verifyingKey === vkey}
+                                                    busy={busy}
+                                                    verifyBtnPrimary={btnPrimary}
+                                                    verifyBtnSecondary={`${btnSecondary} w-full sm:w-auto`}
+                                                    onToggle={() =>
+                                                      void onToggleVerify(
+                                                        subject.subject_id,
+                                                        paper.paper_number,
+                                                        ser.series_number,
+                                                        env.envelope_number,
+                                                        !done,
+                                                      )
+                                                    }
+                                                  />
+                                                );
+                                              })}
+                                            </ul>
+                                          </DepotSeriesBlock>
                                         );
                                       })}
                                     </div>
                                   </div>
-                                ))}
+                                  );
+                                })}
                               </div>
                             ) : null}
                           </div>
