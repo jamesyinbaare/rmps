@@ -1,15 +1,24 @@
 "use client";
 
-import { Fragment, useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 
 import { DashboardShell } from "@/components/dashboard-shell";
 import { RoleGuard } from "@/components/role-guard";
 import { formInputClass, formLabelClass } from "@/lib/form-classes";
 import {
+  displayScriptSubjectCode,
   formatUpcomingPapersLabel,
   getPaperInspectorVisuals,
-  groupUpcomingBundlesBySubjectAndDate,
+  groupPaperBundlesBySubject,
+  irregularDueListHint,
+  isPaperBundleFullyRecorded,
+  partitionDueAndUpcoming,
+  sortSubjectBundleGroups,
+  sortSubjectBundleGroupsAscending,
+  subjectScriptAccordionId,
+  type ScriptPaperBundle,
+  type SubjectScriptBundleGroup,
   seriesInspectorBadgeClass,
 } from "@/lib/paper-inspector-styles";
 import {
@@ -30,7 +39,6 @@ import {
   type MySchoolScriptControlResponse,
   type ScriptSeriesPackingResponse,
   type ScriptSeriesSlotResponse,
-  type ScriptSubjectRowResponse,
 } from "@/lib/api";
 import { inspectorMustPickWorkspaceGlobally, pickInspectorPostingId } from "@/lib/auth";
 
@@ -54,22 +62,6 @@ type DraftEnvelope = {
 
 type Draft = {
   envelopes: DraftEnvelope[];
-};
-
-type PaperBundle = {
-  subjectId: number;
-  subjectCode: string;
-  subjectOriginalCode: string | null;
-  subjectName: string;
-  paperNumber: number;
-  examinationDate: string | null;
-  series: ScriptSeriesSlotResponse[];
-};
-
-type GroupedPapers = {
-  upcoming: PaperBundle[];
-  outstanding: PaperBundle[];
-  completed: PaperBundle[];
 };
 
 function emptyDraft(): Draft {
@@ -155,78 +147,6 @@ function localTodayIso(): string {
   return `${y}-${m}-${day}`;
 }
 
-function partitionPapers(subjects: ScriptSubjectRowResponse[], today: string): GroupedPapers {
-  const upcoming: PaperBundle[] = [];
-  const outstanding: PaperBundle[] = [];
-  const completed: PaperBundle[] = [];
-
-  for (const sub of subjects) {
-    for (const paper of sub.papers) {
-      const bundle: PaperBundle = {
-        subjectId: sub.subject_id,
-        subjectCode: sub.subject_code,
-        subjectOriginalCode: sub.subject_original_code ?? null,
-        subjectName: sub.subject_name,
-        paperNumber: paper.paper_number,
-        examinationDate: paper.examination_date ?? null,
-        series: paper.series,
-      };
-      const ed = bundle.examinationDate;
-      if (ed && ed > today) {
-        upcoming.push(bundle);
-        continue;
-      }
-      const allPacked = bundle.series.length > 0 && bundle.series.every((s) => s.packing != null);
-      if (allPacked) {
-        completed.push(bundle);
-      } else {
-        outstanding.push(bundle);
-      }
-    }
-  }
-
-  const dateSort = (a: PaperBundle, b: PaperBundle) => {
-    const ad = a.examinationDate;
-    const bd = b.examinationDate;
-    if (ad == null && bd == null) return 0;
-    if (ad == null) return 1;
-    if (bd == null) return -1;
-    return ad.localeCompare(bd);
-  };
-
-  const tieBreak = (a: PaperBundle, b: PaperBundle) =>
-    a.subjectCode.localeCompare(b.subjectCode) || a.paperNumber - b.paperNumber;
-
-  upcoming.sort((a, b) => {
-    const c = dateSort(a, b);
-    return c !== 0 ? c : tieBreak(a, b);
-  });
-  outstanding.sort((a, b) => {
-    const c = dateSort(a, b);
-    return c !== 0 ? c : tieBreak(a, b);
-  });
-  completed.sort((a, b) => {
-    const c = dateSort(a, b);
-    return c !== 0 ? c : tieBreak(a, b);
-  });
-
-  return { upcoming, outstanding, completed };
-}
-
-function emptyOutstandingHint(g: GroupedPapers): string | null {
-  if (g.outstanding.length > 0) return null;
-  if (g.completed.length > 0 && g.upcoming.length > 0) {
-    return "No pending irregular entries on due papers. Expand “Past irregular papers — recorded” to review or edit; upcoming papers are listed below.";
-  }
-  if (g.completed.length > 0) {
-    return "No pending irregular entries on due papers. Expand “Past irregular papers — recorded” below to review or edit.";
-  }
-  if (g.upcoming.length > 0) {
-    return "No irregular entries recorded yet. Use this page only when irregular scripts occur.";
-  }
-  return null;
-}
-
 function workspaceOptionLabel(p: MyInspectorPostingRow): string {
   return `${p.center_name} (${p.center_code}) — ${p.subject_scope}`;
 }
@@ -243,6 +163,8 @@ export default function InspectorIrregularScriptsControlPage() {
   const [loadError, setLoadError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [showUpcoming, setShowUpcoming] = useState(true);
+  const [openAccordionId, setOpenAccordionId] = useState<string | null>(null);
+  const subjectAccordionRefs = useRef<Record<string, HTMLDetailsElement | null>>({});
   const [editing, setEditing] = useState<EditingState | null>(null);
   const [draft, setDraft] = useState<Draft>(emptyDraft());
   const [formError, setFormError] = useState<string | null>(null);
@@ -256,9 +178,11 @@ export default function InspectorIrregularScriptsControlPage() {
       const postingParam = postings.length > 0 ? selectedPostingId! : undefined;
       const res = await getMySchoolIrregularScriptControl(examId, selectedSchoolId, postingParam);
       setData(res);
+      setOpenAccordionId(null);
     } catch (e) {
       setLoadError(e instanceof Error ? e.message : "Failed to load irregular script control data");
       setData(null);
+      setOpenAccordionId(null);
     } finally {
       setBusy(false);
     }
@@ -423,8 +347,27 @@ export default function InspectorIrregularScriptsControlPage() {
   const isEditingSlot = (subjectId: number, paperNumber: number, seriesNumber: number) =>
     editing !== null && editing.subjectId === subjectId && editing.paperNumber === paperNumber && editing.seriesNumber === seriesNumber;
 
-  const grouped = data && data.subjects.length > 0 ? partitionPapers(data.subjects, localTodayIso()) : null;
-  const groupedHint = grouped ? emptyOutstandingHint(grouped) : null;
+  const partitioned =
+    data && data.subjects.length > 0 ? partitionDueAndUpcoming(data.subjects, localTodayIso()) : null;
+  const dueSubjectGroups = partitioned
+    ? sortSubjectBundleGroups(groupPaperBundlesBySubject(partitioned.due))
+    : [];
+  const upcomingSubjectGroups = partitioned
+    ? sortSubjectBundleGroupsAscending(groupPaperBundlesBySubject(partitioned.upcoming))
+    : [];
+  const listHint = partitioned ? irregularDueListHint(partitioned.due, partitioned.upcoming) : null;
+
+  function toggleSubjectAccordion(id: string) {
+    const opening = openAccordionId !== id;
+    setOpenAccordionId(opening ? id : null);
+    if (opening) {
+      requestAnimationFrame(() => {
+        requestAnimationFrame(() => {
+          subjectAccordionRefs.current[id]?.scrollIntoView({ behavior: "smooth", block: "start" });
+        });
+      });
+    }
+  }
 
   function renderSeriesRow(subjectId: number, paperNumber: number, slot: ScriptSeriesSlotResponse) {
     const packing = slot.packing;
@@ -589,35 +532,99 @@ export default function InspectorIrregularScriptsControlPage() {
     );
   }
 
-  function renderPaperBundles(bundles: PaperBundle[]) {
+  function renderPaperBundleCard(bundle: ScriptPaperBundle) {
+    const v = getPaperInspectorVisuals(bundle.paperNumber);
+    const fullyRecorded = isPaperBundleFullyRecorded(bundle);
     return (
-      <div className="space-y-6">
-        {bundles.map((bundle, idx) => {
-          const v = getPaperInspectorVisuals(bundle.paperNumber);
+      <div key={`${bundle.subjectId}-${bundle.paperNumber}`} className={v.cardClass}>
+        <h3 className="space-y-2">
+          <p className="text-sm font-medium text-muted-foreground">
+            {displayScriptSubjectCode(bundle)} — {bundle.subjectName}
+          </p>
+          <div className="flex flex-wrap items-center gap-2.5">
+            <span
+              className={`${v.badgeClass} px-2.5 py-1 text-sm font-bold`}
+              title={`Paper ${bundle.paperNumber}`}
+            >
+              {v.badgeShortLabel}
+            </span>
+            <span className="text-xl font-bold tabular-nums tracking-tight text-card-foreground">
+              Paper {bundle.paperNumber}
+            </span>
+            {fullyRecorded ? (
+              <span className="rounded-full bg-muted px-2 py-0.5 text-xs font-medium text-muted-foreground">
+                Recorded
+              </span>
+            ) : null}
+          </div>
+        </h3>
+        <ul className="mt-2 space-y-4">
+          {bundle.series.map((slot) => renderSeriesRow(bundle.subjectId, bundle.paperNumber, slot))}
+        </ul>
+      </div>
+    );
+  }
+
+  function renderSubjectCollapsibleGroups(
+    groups: SubjectScriptBundleGroup[],
+    scope: "due" | "upcoming",
+  ) {
+    return (
+      <div className={scope === "upcoming" ? "space-y-4" : "space-y-6"}>
+        {groups.map((subjectGroup) => {
+          const accordionId = subjectScriptAccordionId(scope, subjectGroup.key);
+          const isOpen = openAccordionId === accordionId;
           return (
-            <Fragment key={`${bundle.subjectId}-${bundle.paperNumber}`}>
-              {(idx === 0 || bundles[idx - 1].subjectId !== bundle.subjectId) && (
-                <h2 className="text-lg font-semibold text-card-foreground">{bundle.subjectOriginalCode ?? bundle.subjectCode} — {bundle.subjectName}</h2>
-              )}
-              <div className={v.cardClass}>
-                <h3 className="flex flex-wrap items-center gap-x-2 gap-y-1 text-sm font-medium text-card-foreground">
-                  <span className={v.badgeClass} title={`Paper ${bundle.paperNumber}`}>
-                    {v.badgeShortLabel}
+            <details
+              key={subjectGroup.key}
+              ref={(el) => {
+                subjectAccordionRefs.current[accordionId] = el;
+              }}
+              className={`scroll-mt-4 group rounded-2xl border border-border p-4 shadow-sm sm:p-5 ${
+                scope === "upcoming" ? "bg-card/60" : "bg-card"
+              }`}
+              open={isOpen}
+            >
+              <summary
+                className="flex min-h-11 cursor-pointer list-none flex-wrap items-center justify-between gap-2 text-sm font-semibold text-foreground marker:hidden [&::-webkit-details-marker]:hidden"
+                onClick={(e) => {
+                  e.preventDefault();
+                  toggleSubjectAccordion(accordionId);
+                }}
+              >
+                <span>
+                  {subjectGroup.subjectCode} — {subjectGroup.subjectName}
+                  <span className="ml-2 font-normal text-muted-foreground">
+                    · {subjectGroup.bundles.length}{" "}
+                    {subjectGroup.bundles.length === 1 ? "paper" : "papers"}
                   </span>
-                  <span>
-                    Paper {bundle.paperNumber}
-                    {bundle.examinationDate ? (
-                      <span className="ml-2 font-normal text-muted-foreground">· Scheduled {bundle.examinationDate}</span>
-                    ) : (
-                      <span className="ml-2 font-normal text-muted-foreground">· No date in timetable</span>
-                    )}
-                  </span>
-                </h3>
-                <ul className="mt-2 space-y-4">
-                  {bundle.series.map((slot) => renderSeriesRow(bundle.subjectId, bundle.paperNumber, slot))}
+                </span>
+                <span className="text-xs font-normal text-muted-foreground">
+                  {isOpen ? "Tap to collapse" : "Tap to expand"}
+                </span>
+              </summary>
+              {scope === "due" ? (
+                <div className="mt-4 space-y-4">
+                  {subjectGroup.bundles.map((bundle) => renderPaperBundleCard(bundle))}
+                </div>
+              ) : (
+                <ul className="mt-3 space-y-2 border-t border-border pt-3">
+                  {subjectGroup.bundles.map((bundle) => (
+                    <li
+                      key={`${bundle.subjectId}-${bundle.paperNumber}`}
+                      className="flex flex-col gap-1 text-sm text-foreground sm:flex-row sm:flex-wrap sm:items-baseline sm:gap-x-1.5"
+                    >
+                      <span className="font-medium">{formatUpcomingPapersLabel([bundle])}</span>
+                      <span className="text-muted-foreground">
+                        {bundle.examinationDate
+                          ? `Scheduled ${bundle.examinationDate}`
+                          : "No date in timetable"}
+                      </span>
+                    </li>
+                  ))}
                 </ul>
-              </div>
-            </Fragment>
+              )}
+            </details>
           );
         })}
       </div>
@@ -629,7 +636,7 @@ export default function InspectorIrregularScriptsControlPage() {
       <DashboardShell title="Irregular Worked Scripts Control" staffRole="inspector">
         <div className="space-y-6">
           <p className="text-sm text-muted-foreground">
-            Record irregular worked scripts separately from regular worked scripts, per subject, paper, and series. This is optional and only needed when irregular scripts occur.
+            Record irregular worked scripts separately from regular worked scripts, per subject, paper, and series. This is optional and only needed when irregular scripts occur. Subjects are listed with the most recent papers first; expand one subject at a time to record or review.
             {data ? <> <span className="font-medium text-foreground">{scriptCapsSummary(data)}</span></> : null}
           </p>
           <p className="text-xs text-muted-foreground">
@@ -662,7 +669,7 @@ export default function InspectorIrregularScriptsControlPage() {
           {centerSchools && centerSchools.schools.length > 1 ? (
             <div>
               <label htmlFor="irregular-script-school" className={formLabelClass}>School</label>
-              <select id="irregular-script-school" className={`mt-1 w-full max-w-md ${formInputClass}`} value={selectedSchoolId} onChange={(e) => { setSelectedSchoolId(e.target.value); setData(null); closeEdit(); }}>
+              <select id="irregular-script-school" className={`mt-1 w-full max-w-md ${formInputClass}`} value={selectedSchoolId} onChange={(e) => { setSelectedSchoolId(e.target.value); setData(null); setOpenAccordionId(null); closeEdit(); }}>
                 <option value="">Select school…</option>
                 {centerSchools.schools.map((s) => <option key={s.id} value={s.id}>{s.code} — {s.name}</option>)}
               </select>
@@ -672,7 +679,7 @@ export default function InspectorIrregularScriptsControlPage() {
           {loadError ? <p className="rounded-lg border border-destructive/40 bg-destructive/10 px-3 py-2 text-sm text-destructive">{loadError}</p> : null}
           {busy && selectedSchoolId.trim() !== "" && !data ? <p className="text-sm text-muted-foreground">Loading…</p> : null}
 
-          {grouped ? (
+          {partitioned ? (
             <div className="space-y-8">
               <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
                 <h2 className="text-base font-semibold text-foreground">Irregular recording (optional)</h2>
@@ -681,38 +688,21 @@ export default function InspectorIrregularScriptsControlPage() {
                   Show upcoming papers
                 </label>
               </div>
-              {groupedHint ? <p className="text-sm text-muted-foreground">{groupedHint}</p> : null}
-              {grouped.outstanding.length > 0 ? renderPaperBundles(grouped.outstanding) : null}
-              {grouped.completed.length > 0 ? (
-                <details className="group rounded-2xl border border-border bg-card/40 p-4 sm:p-5">
-                  <summary className="cursor-pointer text-sm font-semibold text-card-foreground marker:text-muted-foreground">
-                    Past irregular papers — recorded ({grouped.completed.length} {grouped.completed.length === 1 ? "paper" : "papers"})
-                  </summary>
-                  <div className="mt-4">{renderPaperBundles(grouped.completed)}</div>
-                </details>
-              ) : null}
-              {showUpcoming && grouped.upcoming.length > 0 ? (
-                <section className="space-y-3">
+              {listHint ? <p className="text-sm text-muted-foreground">{listHint}</p> : null}
+              {dueSubjectGroups.length > 0 ? (
+                renderSubjectCollapsibleGroups(dueSubjectGroups, "due")
+              ) : (
+                <p className="rounded-lg border border-dashed border-border bg-muted/10 px-4 py-6 text-center text-sm text-muted-foreground">
+                  No papers due for irregular recording yet.
+                </p>
+              )}
+              {showUpcoming && upcomingSubjectGroups.length > 0 ? (
+                <section className="space-y-3 border-t border-border pt-8">
                   <h2 className="text-base font-semibold text-foreground">Upcoming</h2>
-                  <ul className="space-y-2 rounded-2xl border border-border bg-card p-4 sm:p-5">
-                    {groupUpcomingBundlesBySubjectAndDate(grouped.upcoming).map((bundles) => {
-                      const b = bundles[0];
-                      const nums = bundles.map((x) => x.paperNumber).join("-");
-                      return (
-                        <li
-                          key={`${b.subjectId}-${nums}-${b.examinationDate ?? "na"}`}
-                          className="flex flex-col gap-1 border-b border-border/60 pb-2 text-sm text-foreground last:border-b-0 last:pb-0 sm:flex-row sm:flex-wrap sm:items-baseline sm:gap-x-1.5 sm:gap-y-0"
-                        >
-                          <span className="font-medium">{b.subjectOriginalCode ?? b.subjectCode} — {b.subjectName}</span>
-                          <span className="text-muted-foreground">
-                            <span className="hidden sm:inline">· </span>
-                            {formatUpcomingPapersLabel(bundles)}
-                            {b.examinationDate ? ` · ${b.examinationDate}` : ""}
-                          </span>
-                        </li>
-                      );
-                    })}
-                  </ul>
+                  <p className="text-xs text-muted-foreground">
+                    Irregular recording is available on or after each paper&apos;s scheduled date.
+                  </p>
+                  {renderSubjectCollapsibleGroups(upcomingSubjectGroups, "upcoming")}
                 </section>
               ) : null}
             </div>
