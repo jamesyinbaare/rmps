@@ -22,9 +22,11 @@ import {
   seriesInspectorBadgeClass,
 } from "@/lib/paper-inspector-styles";
 import {
+  noScriptsEnvelope1Hint,
+  noScriptsSeriesEditHint,
+  noScriptsSeriesSummary,
   packingCountDescriptor,
   packingCountFieldLabel,
-  packingCountTypePhrase,
   packingItemPlural,
 } from "@/lib/script-packing-terms";
 import {
@@ -66,7 +68,22 @@ type Draft = {
 };
 
 function emptyDraft(): Draft {
-  return { envelopes: [] };
+  return { envelopes: [{ envelope_number: 1, booklet_count: null }] };
+}
+
+function draftIsNoScripts(draft: Draft): boolean {
+  const env1 = draft.envelopes.find((e) => e.envelope_number === 1);
+  return env1 !== undefined && env1.booklet_count === 0;
+}
+
+function initialDraftForEdit(packing: ScriptSeriesPackingResponse | null): Draft {
+  if (packing?.no_scripts) {
+    return { envelopes: [{ envelope_number: 1, booklet_count: 0 }] };
+  }
+  if (packing) {
+    return draftFromPacking(packing);
+  }
+  return emptyDraft();
 }
 
 function draftFromPacking(p: ScriptSeriesPackingResponse): Draft {
@@ -258,7 +275,7 @@ export default function InspectorScriptsControlPage() {
   ) {
     setEditing({ subjectId, paperNumber, seriesNumber });
     setFormError(null);
-    setDraft(packing ? draftFromPacking(packing) : emptyDraft());
+    setDraft(initialDraftForEdit(packing));
   }
 
   function closeEdit() {
@@ -271,9 +288,36 @@ export default function InspectorScriptsControlPage() {
     setFormError(null);
 
     const cap = maxBookletsForPaper(data, editing.paperNumber);
+    if (draftIsNoScripts(draft)) {
+      setBusy(true);
+      try {
+        await upsertScriptSeries(
+          examId,
+          selectedSchoolId,
+          {
+            subject_id: editing.subjectId,
+            paper_number: editing.paperNumber,
+            series_number: editing.seriesNumber,
+            no_scripts: true,
+            envelopes: [{ envelope_number: 1, booklet_count: 0 }],
+          },
+          postings.length > 0 ? selectedPostingId! : undefined,
+        );
+        await loadData();
+        closeEdit();
+      } catch (e) {
+        setFormError(e instanceof Error ? e.message : "Save failed");
+      } finally {
+        setBusy(false);
+      }
+      return;
+    }
+
     const toSave = envelopesToPersist(draft);
     if (toSave.length === 0) {
-      setFormError(`${packingCountTypePhrase(editing.paperNumber)} counts can't be zero or empty.`);
+      setFormError(
+        `Enter a count for envelope 1, or enter 0 if there is nothing to pack for this series.`,
+      );
       return;
     }
     const nums = toSave.map((e) => e.envelope_number);
@@ -296,6 +340,7 @@ export default function InspectorScriptsControlPage() {
         subject_id: editing.subjectId,
         paper_number: editing.paperNumber,
         series_number: editing.seriesNumber,
+        no_scripts: false,
         envelopes: toSave.map((e) => ({
           envelope_number: e.envelope_number,
           booklet_count: e.booklet_count,
@@ -332,6 +377,7 @@ export default function InspectorScriptsControlPage() {
   }
 
   function addEnvelope() {
+    if (draftIsNoScripts(draft)) return;
     setFormError(null);
     const next =
       draft.envelopes.length === 0
@@ -345,6 +391,10 @@ export default function InspectorScriptsControlPage() {
 
   function removeEnvelope(idx: number) {
     setFormError(null);
+    const env = draft.envelopes[idx];
+    if (env?.envelope_number === 1 && draft.envelopes.length === 1) {
+      return;
+    }
     setDraft((d) => ({
       ...d,
       envelopes: d.envelopes.filter((_, i) => i !== idx),
@@ -353,9 +403,8 @@ export default function InspectorScriptsControlPage() {
 
   function updateEnvelope(idx: number, patch: Partial<Pick<DraftEnvelope, "booklet_count">>) {
     setFormError(null);
-    setDraft((d) => ({
-      ...d,
-      envelopes: d.envelopes.map((e, i) => {
+    setDraft((d) => {
+      const updated = d.envelopes.map((e, i) => {
         if (i !== idx) return e;
         const next: DraftEnvelope = { ...e, ...patch };
         if (
@@ -366,8 +415,13 @@ export default function InspectorScriptsControlPage() {
           next.booklet_count = Math.max(0, patch.booklet_count);
         }
         return next;
-      }),
-    }));
+      });
+      const env1 = updated.find((e) => e.envelope_number === 1);
+      if (env1?.booklet_count === 0) {
+        return { envelopes: [env1] };
+      }
+      return { envelopes: updated };
+    });
   }
 
   const isEditingSlot = (subjectId: number, paperNumber: number, seriesNumber: number) =>
@@ -409,8 +463,10 @@ export default function InspectorScriptsControlPage() {
       draft.envelopes.some(
         (e) => e.booklet_count !== null && e.booklet_count > capForPaper,
       );
+    const editingNoScripts = isEditing && draftIsNoScripts(draft);
     const derivedEnvelopeOrderError =
       isEditing &&
+      !editingNoScripts &&
       toSave.length > 0 &&
       !isConsecutiveFromOne(toSave.map((e) => e.envelope_number))
         ? consecutiveEnvelopeNumbersMessage(paperNumber, toSave.map((e) => e.envelope_number))
@@ -428,7 +484,9 @@ export default function InspectorScriptsControlPage() {
             </span>
             {!isEditing ? (
               <p className="mt-1 text-xs text-muted-foreground">
-                {packing ? (
+                {packing?.no_scripts ? (
+                  noScriptsSeriesSummary(paperNumber)
+                ) : packing ? (
                   <>
                     {packing.envelopes.length} envelope
                     {packing.envelopes.length === 1 ? "" : "s"},{" "}
@@ -483,17 +541,24 @@ export default function InspectorScriptsControlPage() {
             <div>
               <div className="flex items-center justify-between gap-2">
                 <span className={formLabelClass}>Envelopes</span>
-                <button type="button" className={btnSecondary} onClick={addEnvelope}>
+                <button
+                  type="button"
+                  className={btnSecondary}
+                  disabled={draftIsNoScripts(draft)}
+                  onClick={addEnvelope}
+                >
                   Add envelope
                 </button>
               </div>
               <p className="mt-1 text-xs text-muted-foreground">
                 Up to {capForPaper} {packingItemPlural(paperNumber)} per envelope for Paper {paperNumber}.
                 {paperNumber === 1 ? " Counts of 250 or more must be split into multiple envelopes." : ""}
+                {" "}
+                {noScriptsEnvelope1Hint(paperNumber)}
               </p>
               {draft.envelopes.length === 0 ? (
                 <p className="mt-2 text-xs text-muted-foreground">
-                  Add envelopes and {packingCountDescriptor(paperNumber)}s, then save.
+                  Enter how many are in envelope 1, then save.
                 </p>
               ) : (
                 <ul className="mt-2 space-y-2">
@@ -524,9 +589,11 @@ export default function InspectorScriptsControlPage() {
                           type="number"
                           min={0}
                           className={`w-full min-w-0 ${formInputClass} ${
-                            env.booklet_count !== null && env.booklet_count > capForPaper
-                              ? "border-destructive"
-                              : ""
+                            env.envelope_number === 1 && env.booklet_count === 0
+                              ? "border-primary bg-primary/5 ring-2 ring-primary/25"
+                              : env.booklet_count !== null && env.booklet_count > capForPaper
+                                ? "border-destructive"
+                                : ""
                           }`}
                           value={env.booklet_count === null ? "" : env.booklet_count}
                           onChange={(e) => {
@@ -549,11 +616,22 @@ export default function InspectorScriptsControlPage() {
                           {packingCountFieldLabel(paperNumber)}
                         </span>
                         <div className="mt-1.5 flex min-h-11 items-center">
-                          <button type="button" className={btnDanger} onClick={() => removeEnvelope(idx)}>
-                            Remove
-                          </button>
+                          {env.envelope_number === 1 && draft.envelopes.length === 1 ? null : (
+                            <button type="button" className={btnDanger} onClick={() => removeEnvelope(idx)}>
+                              Remove
+                            </button>
+                          )}
                         </div>
                       </div>
+                      {env.envelope_number === 1 && env.booklet_count === 0 ? (
+                        <p
+                          className="col-span-3 rounded-lg border border-primary/40 bg-primary/10 px-3 py-2.5 text-sm font-medium leading-snug text-primary dark:border-primary/50 dark:bg-primary/15 dark:text-primary-foreground"
+                          role="status"
+                          aria-live="polite"
+                        >
+                          {noScriptsSeriesEditHint(paperNumber)}
+                        </p>
+                      ) : null}
                       {env.booklet_count !== null && env.booklet_count > capForPaper ? (
                         <p className="col-start-2 text-xs leading-snug text-destructive">
                           At most {capForPaper} {packingItemPlural(paperNumber)} for paper {paperNumber} (you entered{" "}

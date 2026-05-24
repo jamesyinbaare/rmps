@@ -8,6 +8,7 @@ import {
   DepotSeriesBlock,
   depotPaperCardClass,
 } from "@/components/depot-script-verify-blocks";
+import { DepotScriptStatusPanelHeader, DepotScriptStatusTabs } from "@/components/depot-script-status-tabs";
 import { DashboardShell } from "@/components/dashboard-shell";
 import { RoleGuard } from "@/components/role-guard";
 import { formInputClass, formLabelClass } from "@/lib/form-classes";
@@ -168,6 +169,18 @@ function paperPackingTotals(paper: PaperGroup): { envelopeCount: number; totalBo
   return { envelopeCount, totalBooklets };
 }
 
+function statusTabMetric(
+  groupKey: StatusKey,
+  subjects: SubjectGroup[],
+): { metricValue: number; metricLabel: string } {
+  if (groupKey === "unverified") {
+    const n = countUnverifiedEnvelopes(subjects);
+    return { metricValue: n, metricLabel: n === 1 ? "to verify" : "to verify" };
+  }
+  const n = countEnvelopes(subjects);
+  return { metricValue: n, metricLabel: n === 1 ? "envelope" : "envelopes" };
+}
+
 function countUnverifiedEnvelopes(subjects: SubjectGroup[]): number {
   let n = 0;
   for (const subject of subjects) {
@@ -256,8 +269,7 @@ export default function DepotKeeperIrregularScriptsControlPage() {
       {
         key: "unverified",
         title: "Unverified",
-        description:
-          "Papers with irregular packing still to confirm. A paper stays here until every series on that paper is verified.",
+        description: "Papers with irregular packing still to confirm.",
         emptyLabel: "No envelopes in this category for this exam and school.",
         subjects: nestBySubjectPaper(grouped.unverified),
       },
@@ -331,65 +343,72 @@ export default function DepotKeeperIrregularScriptsControlPage() {
 
           {data && data.subjects.length > 0 ? (
             <div className="space-y-6">
-              <div className="relative">
-                <p className="mb-1 text-xs text-muted-foreground md:hidden">Swipe sideways to see all statuses</p>
-                <div className="sticky top-[var(--staff-sticky-header-offset,4.5rem)] z-20 -mx-1 overflow-x-auto rounded-xl border border-border bg-background/95 px-1 py-1 backdrop-blur supports-backdrop-filter:bg-background/80 md:overflow-visible">
-                  <div
-                    className="pointer-events-none absolute right-0 top-0 z-[1] h-full w-9 bg-gradient-to-l from-background/95 to-transparent md:hidden"
-                    aria-hidden
-                  />
-                  <div className="relative flex min-w-max gap-1 md:grid md:min-w-0 md:grid-cols-2">
-                    {statusGroups.map((group) => {
-                      const paperCount = group.subjects.reduce((acc, subject) => acc + subject.papers.length, 0);
-                      const isActive = activeStatus === group.key;
-                      return (
-                        <button
-                          key={group.key}
-                          type="button"
-                          className={`min-w-[9.5rem] shrink-0 rounded-lg border px-3 py-2 text-left text-sm transition-colors focus:outline-none focus:ring-2 focus:ring-ring/30 md:min-w-0 ${isActive ? statusToneClass[group.key] : "border-input-border bg-background hover:bg-muted"}`}
-                          onClick={() => setActiveStatus(group.key)}
-                        >
-                          <span className="block font-medium">{group.title}</span>
-                          <span className="block text-xs opacity-80">
-                            {group.subjects.length} subject{group.subjects.length === 1 ? "" : "s"} · {paperCount} paper
-                            {paperCount === 1 ? "" : "s"}
-                          </span>
-                        </button>
-                      );
-                    })}
-                  </div>
-                </div>
-              </div>
+              <DepotScriptStatusTabs
+                tabs={statusGroups.map((group) => {
+                  const paperCount = group.subjects.reduce((acc, subject) => acc + subject.papers.length, 0);
+                  const metric = statusTabMetric(group.key, group.subjects);
+                  return {
+                    key: group.key,
+                    title: group.title,
+                    subjectCount: group.subjects.length,
+                    paperCount,
+                    metricValue: metric.metricValue,
+                    metricLabel: metric.metricLabel,
+                  };
+                })}
+                activeKey={activeStatus}
+                onChange={(key) => {
+                  setActiveStatus(key);
+                  requestAnimationFrame(() => {
+                    document.getElementById("depot-script-status-panel")?.scrollIntoView({
+                      behavior: "smooth",
+                      block: "nearest",
+                    });
+                  });
+                }}
+                statusToneClass={statusToneClass}
+                desktopColumns={2}
+              />
 
               {activeGroup ? (
-                <section className="rounded-2xl border border-border bg-card p-4 sm:p-5">
-                  <h2 className="text-lg font-semibold text-foreground">{activeGroup.title}</h2>
-                  <p className="text-sm text-muted-foreground">{activeGroup.description}</p>
-                  {activeGroup.subjects.length > 0 ? (
-                    <p className="mt-2 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-muted-foreground">
-                      <span>
-                        Envelopes:{" "}
-                        <span className="font-semibold tabular-nums text-foreground">
-                          {countEnvelopes(activeGroup.subjects)}
-                        </span>
-                      </span>
-                      {activeGroup.key === "unverified" && countUnverifiedEnvelopes(activeGroup.subjects) > 0 ? (
-                        <>
-                          <span className="text-border">·</span>
+                <section id="depot-script-status-panel" className="scroll-mt-36 space-y-4">
+                  <DepotScriptStatusPanelHeader
+                    title={activeGroup.title}
+                    description={activeGroup.description}
+                    toneClass={statusToneClass[activeGroup.key]}
+                    stats={
+                      activeGroup.subjects.length > 0 ? (
+                        <p className="flex flex-wrap items-center gap-x-2 gap-y-1">
                           <span>
-                            Left to verify:{" "}
-                            <span className="font-semibold tabular-nums text-foreground">
-                              {countUnverifiedEnvelopes(activeGroup.subjects)}
-                            </span>
+                            <span className="font-semibold tabular-nums">{activeGroup.subjects.length}</span>{" "}
+                            subjects
                           </span>
-                        </>
-                      ) : null}
-                    </p>
-                  ) : null}
+                          <span className="opacity-50">·</span>
+                          <span>
+                            <span className="font-semibold tabular-nums">
+                              {countEnvelopes(activeGroup.subjects)}
+                            </span>{" "}
+                            envelopes
+                          </span>
+                          {activeGroup.key === "unverified" &&
+                          countUnverifiedEnvelopes(activeGroup.subjects) > 0 ? (
+                            <>
+                              <span className="opacity-50">·</span>
+                              <span className="font-semibold">
+                                {countUnverifiedEnvelopes(activeGroup.subjects)} left to verify
+                              </span>
+                            </>
+                          ) : null}
+                        </p>
+                      ) : null
+                    }
+                  />
                   {activeGroup.subjects.length === 0 ? (
-                    <p className="mt-4 rounded-lg border border-border/70 bg-background/60 px-3 py-2 text-sm text-muted-foreground">{activeGroup.emptyLabel}</p>
+                    <p className="rounded-lg border border-dashed border-border bg-muted/30 px-4 py-8 text-center text-sm text-muted-foreground">
+                      {activeGroup.emptyLabel}
+                    </p>
                   ) : (
-                    <div className="mt-4 space-y-3">
+                    <div className="space-y-3">
                       {activeGroup.subjects.map((subject) => {
                         const subjectKey = `${activeGroup.key}-${subject.subject_id}`;
                         const subjectOpen = openSubjectKey === subjectKey;

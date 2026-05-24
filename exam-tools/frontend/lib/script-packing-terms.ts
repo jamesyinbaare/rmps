@@ -35,3 +35,24 @@ export function irregularPackingNounForCount(count: number, paperNumber: number)
 export function packingCountTypePhrase(paperNumber: number): string {
   return paperNumber === 1 ? "Scannable" : "Booklet";
 }
+
+/** Inspector summary when a worked-scripts series has nothing to pack. */
+export function noScriptsSeriesSummary(paperNumber: number): string {
+  return paperNumber === 1
+    ? "No scannables to pack for this series"
+    : "No booklets to pack for this series";
+}
+
+/** Helper while editing when envelope 1 count is zero. */
+export function noScriptsSeriesEditHint(paperNumber: number): string {
+  return paperNumber === 1
+    ? "There are no scannables for this series. Tap Save when you're done."
+    : "There are no booklets for this series. Tap Save when you're done.";
+}
+
+/** Hint above the envelope form (how to record a nil return). */
+export function noScriptsEnvelope1Hint(paperNumber: number): string {
+  return paperNumber === 1
+    ? "If this series has no scannables, enter 0 on envelope 1."
+    : "If this series has no booklets, enter 0 on envelope 1.";
+}

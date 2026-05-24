@@ -1349,6 +1349,7 @@ export type ScriptEnvelopeItem = {
 export type ScriptSeriesPackingResponse = {
   id: string;
   envelopes: ScriptEnvelopeItem[];
+  no_scripts?: boolean;
   verified?: boolean;
 };
 
@@ -1413,6 +1414,7 @@ export type ScriptControlAdminRow = {
   series_number: number;
   envelope_count: number;
   total_booklets: number;
+  no_scripts?: boolean;
   envelopes: ScriptEnvelopeItem[];
 };
 
@@ -1523,6 +1525,8 @@ export type ScriptSeriesUpsertPayload = {
   paper_number: number;
   series_number: number;
   envelopes: ScriptEnvelopeItem[];
+  /** Worked scripts only: record nil return for this series. */
+  no_scripts?: boolean;
 };
 
 /** ``schoolId`` must be a school in the inspector's examination centre (see ``/examinations/timetable/my-center-schools``). */

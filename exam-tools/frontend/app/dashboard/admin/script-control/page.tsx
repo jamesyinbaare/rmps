@@ -187,6 +187,9 @@ function SeriesEnvelopeCell({
   expanded: boolean;
 }) {
   const block = row.bySeries[seriesNumber];
+  if (block?.no_scripts) {
+    return <span className="text-xs text-muted-foreground">No scripts</span>;
+  }
   if (!block?.envelopes?.length) {
     return <span className="text-muted-foreground">—</span>;
   }

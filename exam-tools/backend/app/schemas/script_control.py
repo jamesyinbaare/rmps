@@ -18,9 +18,13 @@ class ScriptEnvelopeItem(BaseModel):
 class ScriptSeriesPackingResponse(BaseModel):
     id: UUID
     envelopes: list[ScriptEnvelopeItem]
+    no_scripts: bool = Field(
+        default=False,
+        description="Inspector recorded that this series has no scannables/booklets to pack (worked scripts only).",
+    )
     verified: bool = Field(
         default=False,
-        description="True when every envelope in this series has been verified by the depot keeper.",
+        description="True when every envelope in this series has been verified by the depot keeper, or when no_scripts.",
     )
 
     model_config = {"from_attributes": False}
@@ -98,6 +102,10 @@ class ScriptSeriesUpsertRequest(BaseModel):
     series_number: int = Field(ge=1, le=32767)
 
     envelopes: list[ScriptEnvelopeItem] = Field(default_factory=list)
+    no_scripts: bool = Field(
+        default=False,
+        description="Worked scripts only: record that this series has nothing to pack.",
+    )
 
     @field_validator("envelopes")
     @classmethod
@@ -124,6 +132,10 @@ class ScriptControlAdminRow(BaseModel):
     series_number: int
     envelope_count: int
     total_booklets: int
+    no_scripts: bool = Field(
+        default=False,
+        description="Inspector recorded nil return for this worked-scripts series.",
+    )
     envelopes: list[ScriptEnvelopeItem] = Field(
         default_factory=list,
         description="Per-envelope booklet counts and verification flags.",
