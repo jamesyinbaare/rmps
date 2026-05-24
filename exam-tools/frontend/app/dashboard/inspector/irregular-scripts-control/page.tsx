@@ -178,7 +178,6 @@ export default function InspectorIrregularScriptsControlPage() {
       const postingParam = postings.length > 0 ? selectedPostingId! : undefined;
       const res = await getMySchoolIrregularScriptControl(examId, selectedSchoolId, postingParam);
       setData(res);
-      setOpenAccordionId(null);
     } catch (e) {
       setLoadError(e instanceof Error ? e.message : "Failed to load irregular script control data");
       setData(null);

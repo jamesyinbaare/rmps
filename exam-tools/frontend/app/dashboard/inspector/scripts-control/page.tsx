@@ -181,7 +181,6 @@ export default function InspectorScriptsControlPage() {
       const postingParam = postings.length > 0 ? selectedPostingId! : undefined;
       const res = await getMySchoolScriptControl(examId, selectedSchoolId, postingParam);
       setData(res);
-      setOpenAccordionId(null);
     } catch (e) {
       setLoadError(e instanceof Error ? e.message : "Failed to load script control data");
       setData(null);
@@ -689,20 +688,14 @@ export default function InspectorScriptsControlPage() {
       <DashboardShell title="Worked Scripts Control" staffRole="inspector">
         <div className="space-y-6">
           <p className="text-sm text-muted-foreground">
-            Record scannables per envelope for Paper 1 and booklets per envelope for Paper 2 and later papers, for each
-            subject and (series) after the scheduled paper date. Record Paper 1 and Paper 2 separately. Subjects are
-            listed with the most recent papers first; expand one subject at a time to record or review packing.
+            After each paper is written, record how many candidates&apos; scripts are in each envelope for that subject.
+            Paper 1 uses scannable sheets; Paper 2 and other papers use answer booklets. Enter each paper separately.
             {data ? (
               <>
                 {" "}
                 <span className="font-medium text-foreground">{scriptCapsSummary(data)}</span>
               </>
             ) : null}
-          </p>
-          <p className="text-xs text-muted-foreground">
-            <span className="font-medium text-accent">Blue accent</span> marks Paper 1 sections;{" "}
-            <span className="font-medium text-success">green accent</span> marks Paper 2. Always match counts to the
-            paper label and P1/P2 badge before saving.
           </p>
 
           <div>
