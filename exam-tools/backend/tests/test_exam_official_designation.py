@@ -5,6 +5,7 @@ from uuid import uuid4
 from app.models import ExamCentreOfficial, ExamOfficialDesignation
 from app.services.exam_official_designation import (
     DESIGNATION_DISPLAY_ORDER,
+    designation_pdf_label,
     designation_sort_rank,
     sort_officials_by_designation_then_name,
 )
@@ -27,6 +28,13 @@ def _official(full_name: str, designation: ExamOfficialDesignation) -> ExamCentr
 
 def test_designation_display_order_length() -> None:
     assert len(DESIGNATION_DISPLAY_ORDER) == 6
+
+
+def test_designation_pdf_label() -> None:
+    assert designation_pdf_label("Assistant Supervisor") == "Asst. Supervisor"
+    assert designation_pdf_label("Police Officer") == "Police"
+    assert designation_pdf_label("External Inspector") == "Ext. Inspector"
+    assert designation_pdf_label("Supervisor") == "Supervisor"
 
 
 def test_designation_sort_rank() -> None:

@@ -19,12 +19,68 @@ from app.models import (
     School,
     User,
 )
-from app.services.exam_official_designation import sort_officials_by_designation_then_name
+from app.services.exam_official_designation import designation_pdf_label, sort_officials_by_designation_then_name
 from app.services.exam_official_export import designation_str, examination_label
 from app.services.inspector_posting import InspectorWorkspaceContext
 from app.services.pdf_generator import PdfGenerator, render_html
 
 TEMPLATE_REL = "exam-officials/centre-summary.html"
+MAX_ROWS_FIRST_PAGE = 10
+MAX_ROWS_CONTINUATION_PAGE = 15
+MAX_ROWS_PER_PAGE = MAX_ROWS_FIRST_PAGE
+
+# Max visible characters per cell (ellipsis appended when truncated).
+PDF_CELL_LIMITS: dict[str, int] = {
+    "full_name": 32,
+    "designation": 24,
+    "branch_name": 40,
+    "telephone_number": 10,
+    "account_number": 13,
+}
+
+
+def truncate_pdf_cell(value: str, max_len: int) -> str:
+    """Single-line cell text; suffix with ... when over max_len."""
+    t = str(value).strip()
+    if len(t) <= max_len:
+        return t
+    if max_len <= 3:
+        return "..."
+    return f"{t[: max_len - 3]}..."
+
+
+def format_pdf_row_cells(row: dict[str, Any]) -> dict[str, Any]:
+    """Apply truncation limits for PDF table cells."""
+    out = dict(row)
+    for key, limit in PDF_CELL_LIMITS.items():
+        if key in out:
+            out[key] = truncate_pdf_cell(str(out[key]), limit)
+    return out
+
+
+def paginate_pdf_rows(
+    rows: list[dict[str, Any]],
+    *,
+    first_page_size: int = MAX_ROWS_FIRST_PAGE,
+    continuation_page_size: int = MAX_ROWS_CONTINUATION_PAGE,
+    page_size: int | None = None,
+) -> list[dict[str, Any]]:
+    """Split rows for PDF pages: first page smaller (header/meta), later pages fit more rows."""
+    if page_size is not None:
+        first_page_size = page_size
+        continuation_page_size = page_size
+    if not rows:
+        return [{"rows": [], "start_index": 1, "is_first": True}]
+    pages: list[dict[str, Any]] = []
+    offset = 0
+    is_first = True
+    while offset < len(rows):
+        limit = first_page_size if is_first else continuation_page_size
+        chunk = rows[offset : offset + limit]
+        pages.append({"rows": chunk, "start_index": offset + 1, "is_first": is_first})
+        offset += limit
+        is_first = False
+    return pages
 
 
 def scope_display_suffix(scope: ExamInspectorSubjectScope | str) -> str:
@@ -78,19 +134,16 @@ def official_rows_for_template(rows: list[ExamCentreOfficial]) -> list[dict[str,
             if isinstance(off.subject_scope, ExamInspectorSubjectScope)
             else str(off.subject_scope)
         )
-        out.append(
-            {
-                "full_name": cast(str, off.full_name),
-                "designation": designation_str(off.designation),
-                "subject_scope": scope,
-                "bank_name": cast(str, bb.bank_name),
-                "branch_name": cast(str, bb.branch_name),
-                "bank_code": str(bb.bank_code),
-                "account_number": cast(str, off.account_number),
-                "num_days": int(off.num_days),
-                "telephone_number": cast(str, off.telephone_number),
-            }
-        )
+        raw = {
+            "full_name": cast(str, off.full_name),
+            "designation": designation_pdf_label(designation_str(off.designation)),
+            "subject_scope": scope,
+            "branch_name": cast(str, bb.branch_name),
+            "telephone_number": cast(str, off.telephone_number),
+            "account_number": cast(str, off.account_number),
+            "num_days": int(off.num_days),
+        }
+        out.append(format_pdf_row_cells(raw))
     return out
 
 
@@ -106,6 +159,7 @@ def render_summary_pdf_sync(
 ) -> bytes:
     templates_dir = Path(__file__).parent.parent / "templates"
     app_dir = Path(__file__).parent.parent.resolve()
+    pages = paginate_pdf_rows(rows)
     main_html = render_html(
         {
             "examination_label": examination_label_str,
@@ -114,7 +168,7 @@ def render_summary_pdf_sync(
             "subject_scope_label": subject_scope_label,
             "inspector_name": inspector_name,
             "record_count": len(rows),
-            "rows": rows,
+            "pages": pages,
             "generated_at": generated_at,
         },
         TEMPLATE_REL,
@@ -125,8 +179,8 @@ def render_summary_pdf_sync(
         header_html=None,
         footer_html=None,
         base_url=str(app_dir),
-        side_margin=1.2,
-        extra_vertical_margin=16,
+        side_margin=0,
+        extra_vertical_margin=0,
     )
     return pdf_gen.render_pdf()
 
