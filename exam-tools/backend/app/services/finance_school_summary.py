@@ -9,7 +9,8 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from app.models import ExamCentreOfficial, Examination, ExamOfficialDesignation, School
+from app.models import ExamCentreOfficial, ExamInspectorSubjectScope, Examination, ExamOfficialDesignation, School
+from app.schemas.timetable import TimetableDownloadFilter
 from app.schemas.admin_exam_official import AdminExamCentreOfficialRow
 from app.schemas.examination import (
     FinanceCentreInvigilatorSummaryItem,
@@ -91,6 +92,11 @@ def officials_to_admin_rows(
                 account_number=cast(str, off.account_number),
                 num_days=int(off.num_days),
                 telephone_number=cast(str, off.telephone_number),
+                subject_scope=(
+                    off.subject_scope.value
+                    if isinstance(off.subject_scope, ExamInspectorSubjectScope)
+                    else str(off.subject_scope)
+                ),
                 created_at=cast(datetime, off.created_at),
                 updated_at=cast(datetime, off.updated_at),
             )
@@ -102,6 +108,8 @@ async def load_officials_for_centre(
     session: AsyncSession,
     examination_id: int,
     center_id: UUID,
+    *,
+    subject_filter: TimetableDownloadFilter = TimetableDownloadFilter.ALL,
 ) -> list[tuple[ExamCentreOfficial, School]]:
     stmt = (
         select(ExamCentreOfficial, School)
@@ -113,6 +121,10 @@ async def load_officials_for_centre(
         .options(selectinload(ExamCentreOfficial.bank_branch))
         .order_by(ExamCentreOfficial.full_name.asc())
     )
+    if subject_filter == TimetableDownloadFilter.CORE_ONLY:
+        stmt = stmt.where(ExamCentreOfficial.subject_scope == ExamInspectorSubjectScope.CORE)
+    elif subject_filter == TimetableDownloadFilter.ELECTIVE_ONLY:
+        stmt = stmt.where(ExamCentreOfficial.subject_scope == ExamInspectorSubjectScope.ELECTIVE)
     result = await session.execute(stmt)
     return list(result.all())
 
@@ -150,7 +162,9 @@ async def build_finance_centre_school_summary(
 ) -> FinanceCentreSchoolSummaryResponse:
     """``build_invigilator_item`` is injected to avoid circular imports from examinations router."""
     exam_label = examination_label(exam)
-    pairs = await load_officials_for_centre(session, exam.id, center_host.id)
+    pairs = await load_officials_for_centre(
+        session, exam.id, center_host.id, subject_filter=subject_filter
+    )
     officials = [off for off, _school in pairs]
     official_rows = officials_to_admin_rows(pairs, exam.id, exam_label)
     invigilator_item = await build_invigilator_item(session, exam.id, center_host, subject_filter)

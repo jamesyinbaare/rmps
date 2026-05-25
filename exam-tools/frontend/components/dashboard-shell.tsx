@@ -2,11 +2,14 @@
 
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
-import { useEffect, useId, useState } from "react";
+import { Building2 } from "lucide-react";
+import { useEffect, useId, useState, type ReactNode } from "react";
 
 import { DashboardSimpleHeader, DashboardStickyHeader } from "@/components/dashboard-sticky-header";
 import { ExaminationNoticeSessionBanner } from "@/components/examination-notice-session-banner";
+import { useInspectorPostings } from "@/hooks/use-inspector-postings";
 import { clearAuth, AUTH_TOKEN_UPDATED_EVENT, getMe, type UserMe } from "@/lib/auth";
+import { cn } from "@/lib/utils";
 import {
   AllowancesSubNavLink,
   OfficialAccountsNavLink,
@@ -51,6 +54,29 @@ function staffHeaderSubtitle(me: UserMe): string {
   return schoolSegment ? `${me.full_name} · ${schoolSegment}` : me.full_name;
 }
 
+const INSPECTOR_SELECT_WORKSPACE_HREF = "/dashboard/inspector/select-workspace?switch=1";
+
+function inspectorHeaderSubtitle(me: UserMe, workspaceSwitchHref: string | null): ReactNode {
+  const workspace = me.inspector_workspace_label?.trim();
+  const fullName = me.full_name.trim();
+  if (!workspace) return staffHeaderSubtitle(me);
+  if (!workspaceSwitchHref) return `${fullName} · ${workspace}`;
+  return (
+    <>
+      {fullName} ·{" "}
+      <Link
+        href={workspaceSwitchHref}
+        className={cn(
+          "rounded-sm underline decoration-muted-foreground/60 underline-offset-2 hover:text-foreground lg:no-underline",
+          inputFocusRing,
+        )}
+      >
+        {workspace}
+      </Link>
+    </>
+  );
+}
+
 type Props = {
   title: string;
   children?: React.ReactNode;
@@ -67,6 +93,14 @@ export function DashboardShell({ title, children, staffRole }: Props) {
   const sidebarNavId = useId();
   const [me, setMe] = useState<UserMe | null>(null);
   const [sidebarOpen, setSidebarOpen] = useState(false);
+  const isInspector = staffRole === "inspector";
+  const { count: inspectorPostingCount } = useInspectorPostings(isInspector);
+  const onSelectWorkspacePage = pathname.startsWith("/dashboard/inspector/select-workspace");
+  const showInspectorChangeCentre =
+    isInspector && inspectorPostingCount > 1 && !onSelectWorkspacePage;
+  const inspectorWorkspaceSwitchHref = showInspectorChangeCentre
+    ? INSPECTOR_SELECT_WORKSPACE_HREF
+    : null;
 
   useEffect(() => {
     function refreshMe() {
@@ -121,7 +155,17 @@ export function DashboardShell({ title, children, staffRole }: Props) {
   const examOfficialsHref = `${staffBase}/exam-officials`;
   const examinationNoticeHref = `${staffBase}/examination-notice`;
 
+  const changeCentreNavItem = showInspectorChangeCentre
+    ? {
+        href: INSPECTOR_SELECT_WORKSPACE_HREF,
+        label: "Change centre",
+        active: onSelectWorkspacePage,
+        icon: true as const,
+      }
+    : null;
+
   const staffNav = [
+    ...(changeCentreNavItem ? [changeCentreNavItem] : []),
     { href: staffBase, label: "Overview", active: pathname === staffBase },
     {
       href: timetableHref,
@@ -216,12 +260,17 @@ export function DashboardShell({ title, children, staffRole }: Props) {
                   key={item.href}
                   href={item.href}
                   onClick={() => setSidebarOpen(false)}
-                  className={`rounded-lg px-3 py-2.5 text-sm font-medium transition-colors ${
+                  className={cn(
+                    "flex min-h-11 items-center gap-2 rounded-lg px-3 py-2.5 text-sm font-medium transition-colors",
                     item.active
                       ? "bg-primary text-primary-foreground"
-                      : "text-card-foreground hover:bg-muted"
-                  } ${inputFocusRing}`}
+                      : "text-card-foreground hover:bg-muted",
+                    inputFocusRing,
+                  )}
                 >
+                  {"icon" in item && item.icon ? (
+                    <Building2 className="size-4 shrink-0 opacity-80" aria-hidden />
+                  ) : null}
                   {item.label}
                 </Link>
               ))}
@@ -248,7 +297,13 @@ export function DashboardShell({ title, children, staffRole }: Props) {
       <div className="lg:pl-64">
         <DashboardStickyHeader
           title={title}
-          subtitle={me ? staffHeaderSubtitle(me) : null}
+          subtitle={
+            me
+              ? isInspector
+                ? inspectorHeaderSubtitle(me, inspectorWorkspaceSwitchHref)
+                : staffHeaderSubtitle(me)
+              : null
+          }
           onLogout={logout}
           sidebar={{
             id: sidebarNavId,

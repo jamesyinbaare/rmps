@@ -152,8 +152,8 @@ def test_workbook_includes_preamble_and_official_rows() -> None:
 
     invigilator_row = next(r for r in range(1, 25) if ws.cell(row=r, column=3).value == "Jane Doe")
     supervisor_row = next(r for r in range(1, 25) if ws.cell(row=r, column=3).value == "Sam Supervisor")
-    assert ws.cell(row=invigilator_row, column=8).number_format == EXCEL_TEXT_FORMAT
-    assert ws.cell(row=invigilator_row, column=8).value == "1234567890123"
+    assert ws.cell(row=invigilator_row, column=9).number_format == EXCEL_TEXT_FORMAT
+    assert ws.cell(row=invigilator_row, column=9).value == "1234567890123"
     assert ws.cell(row=invigilator_row, column=DAYS_COLUMN).value == 4
     assert ws.cell(row=invigilator_row, column=DAYS_COLUMN).number_format != EXCEL_TEXT_FORMAT
 

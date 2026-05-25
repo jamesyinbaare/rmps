@@ -13,6 +13,7 @@ import {
   type AdminExamCentreOfficialRow,
   type Examination,
   type ExaminationCenterListResponse,
+  type RecordSubjectScope,
 } from "@/lib/api";
 import { OfficialAccountsPageIntro } from "@/components/official-accounts-page-intro";
 import { OfficialAccountsPanelHeader } from "@/components/official-accounts-panel-header";
@@ -40,6 +41,7 @@ function AdminExamOfficialsContent() {
   const [examId, setExamId] = useState<number | null>(null);
   const [centers, setCenters] = useState<ExaminationCenterListResponse["items"]>([]);
   const [centerId, setCenterId] = useState<string>("");
+  const [subjectScopeFilter, setSubjectScopeFilter] = useState<"" | RecordSubjectScope>("");
   const [urlHydrated, setUrlHydrated] = useState(false);
   const [items, setItems] = useState<AdminExamCentreOfficialRow[]>([]);
   const [total, setTotal] = useState(0);
@@ -118,6 +120,7 @@ function AdminExamOfficialsContent() {
       const res = await listAdminExamCentreOfficials({
         examination_id: examId,
         center_id: centerId || null,
+        subject_scope: subjectScopeFilter || null,
         skip,
         limit: PAGE_SIZE,
       });
@@ -130,7 +133,7 @@ function AdminExamOfficialsContent() {
     } finally {
       setBusy(false);
     }
-  }, [examId, centerId, page]);
+  }, [examId, centerId, subjectScopeFilter, page]);
 
   useEffect(() => {
     void loadRows();
@@ -138,7 +141,7 @@ function AdminExamOfficialsContent() {
 
   useEffect(() => {
     setPage(1);
-  }, [examId, centerId]);
+  }, [examId, centerId, subjectScopeFilter]);
 
   const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE));
 
@@ -202,6 +205,21 @@ function AdminExamOfficialsContent() {
             disabled={centers.length === 0}
           />
         </div>
+        <div className="min-w-[8rem]">
+          <label className={formLabelClass} htmlFor="admin-eo-scope">
+            Scope
+          </label>
+          <select
+            id="admin-eo-scope"
+            className={formInputClass}
+            value={subjectScopeFilter}
+            onChange={(e) => setSubjectScopeFilter(e.target.value as "" | RecordSubjectScope)}
+          >
+            <option value="">All scopes</option>
+            <option value="CORE">Core</option>
+            <option value="ELECTIVE">Elective</option>
+          </select>
+        </div>
           <div className="flex w-full flex-col gap-2 sm:ml-auto sm:w-auto sm:flex-row">
             <button
               type="button"
@@ -234,7 +252,7 @@ function AdminExamOfficialsContent() {
         <table className="w-full min-w-[56rem] border-collapse text-sm">
           <thead>
             <tr className="border-b border-border/60 bg-muted/30 text-left">
-              <th colSpan={3} className="px-3 py-2 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
+              <th colSpan={4} className="px-3 py-2 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
                 Centre & official
               </th>
               <th
@@ -254,6 +272,7 @@ function AdminExamOfficialsContent() {
               <th className="px-3 py-2.5 font-semibold">Centre</th>
               <th className="px-3 py-2.5 font-semibold">Name</th>
               <th className="px-3 py-2.5 font-semibold">Designation</th>
+              <th className="px-3 py-2.5 font-semibold">Scope</th>
               <th className="border-l border-border/60 px-3 py-2.5 font-semibold">Bank</th>
               <th className="px-3 py-2.5 font-semibold">Branch</th>
               <th className="px-3 py-2.5 font-semibold">Code</th>
@@ -265,14 +284,14 @@ function AdminExamOfficialsContent() {
           <tbody className="divide-y divide-border/70">
             {busy && items.length === 0 ? (
               <tr>
-                <td colSpan={9} className="px-4 py-12 text-center">
+                <td colSpan={10} className="px-4 py-12 text-center">
                   <p className="text-sm font-medium text-muted-foreground">Loading records…</p>
                 </td>
               </tr>
             ) : null}
             {!busy && items.length === 0 ? (
               <tr>
-                <td colSpan={9} className="px-4 py-12 text-center">
+                <td colSpan={10} className="px-4 py-12 text-center">
                   <p className="text-sm font-medium text-foreground">No records match this filter</p>
                   <p className="mt-1 text-xs text-muted-foreground">Try another centre or examination.</p>
                 </td>
@@ -287,6 +306,9 @@ function AdminExamOfficialsContent() {
                 </td>
                 <td className="px-3 py-2 font-medium">{row.full_name}</td>
                 <td className="px-3 py-2">{row.designation}</td>
+                <td className="px-3 py-2 text-xs text-muted-foreground">
+                  {row.subject_scope === "CORE" ? "Core" : "Elective"}
+                </td>
                 <td className="max-w-[10rem] truncate px-3 py-2" title={row.bank_name}>
                   {row.bank_name}
                 </td>

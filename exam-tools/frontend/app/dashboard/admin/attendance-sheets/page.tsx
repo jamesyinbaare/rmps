@@ -31,6 +31,7 @@ import {
   type AttendanceSheetAdminSummary,
   type AttendanceUploadStatusFilter,
   type Examination,
+  type RecordSubjectScope,
 } from "@/lib/api";
 import { cn } from "@/lib/utils";
 
@@ -56,7 +57,9 @@ const attendancePanelHeightClass = "lg:h-[min(72vh,720px)]";
 type CentreUploadStatus = "uploaded" | "missing" | "not_due";
 
 type CentreGroup = {
+  groupKey: string;
   centerId: string;
+  subjectScope: RecordSubjectScope;
   centerCode: string;
   centerName: string;
   sheets: AttendanceSheetAdmin[];
@@ -64,6 +67,14 @@ type CentreGroup = {
   inspectorFullName?: string;
   inspectorPhone?: string | null;
 };
+
+function centreGroupKey(centerId: string, subjectScope: RecordSubjectScope): string {
+  return `${centerId}:${subjectScope}`;
+}
+
+function scopeShortLabel(scope: RecordSubjectScope): string {
+  return scope === "CORE" ? "Core" : "Elective";
+}
 
 function localTodayIso(): string {
   const d = new Date();
@@ -101,25 +112,32 @@ function attendanceFileKind(filename: string): PreviewKind {
 function groupItemsByCentre(items: AttendanceSheetAdmin[]): CentreGroup[] {
   const map = new Map<string, CentreGroup>();
   for (const row of items) {
-    let group = map.get(row.center_id);
+    const key = centreGroupKey(row.center_id, row.subject_scope);
+    let group = map.get(key);
     if (!group) {
       group = {
+        groupKey: key,
         centerId: row.center_id,
+        subjectScope: row.subject_scope,
         centerCode: row.center_code,
         centerName: row.center_name,
         sheets: [],
         uploadStatus: "uploaded",
       };
-      map.set(row.center_id, group);
+      map.set(key, group);
     }
     group.sheets.push(row);
   }
-  return [...map.values()].sort((a, b) => a.centerCode.localeCompare(b.centerCode));
+  return [...map.values()].sort(
+    (a, b) => a.centerCode.localeCompare(b.centerCode) || a.subjectScope.localeCompare(b.subjectScope),
+  );
 }
 
 function complianceToCentreGroups(items: AttendanceCentreComplianceItem[]): CentreGroup[] {
   return items.map((c) => ({
+    groupKey: centreGroupKey(c.center_id, c.subject_scope),
     centerId: c.center_id,
+    subjectScope: c.subject_scope,
     centerCode: c.center_code,
     centerName: c.center_name,
     sheets: [],
@@ -129,8 +147,14 @@ function complianceToCentreGroups(items: AttendanceCentreComplianceItem[]): Cent
   }));
 }
 
-function formatCentreListLabel(code: string, name: string, maxLen = CENTRE_LIST_LABEL_MAX_LEN): string {
-  const full = `${code} - ${name}`;
+function formatCentreListLabel(
+  code: string,
+  name: string,
+  subjectScope?: RecordSubjectScope,
+  maxLen = CENTRE_LIST_LABEL_MAX_LEN,
+): string {
+  const scopeSuffix = subjectScope ? ` · ${scopeShortLabel(subjectScope)}` : "";
+  const full = `${code} - ${name}${scopeSuffix}`;
   if (full.length <= maxLen) return full;
   return `${full.slice(0, maxLen - 1)}…`;
 }
@@ -407,7 +431,8 @@ function AttendanceSheetsContent() {
   const [summary, setSummary] = useState<AttendanceSheetAdminSummary | null>(null);
   const [total, setTotal] = useState(0);
   const [page, setPage] = useState(1);
-  const [selectedCenterId, setSelectedCenterId] = useState<string | null>(null);
+  const [filterSubjectScope, setFilterSubjectScope] = useState<"" | RecordSubjectScope>("");
+  const [selectedGroupKey, setSelectedGroupKey] = useState<string | null>(null);
   const [previewIndex, setPreviewIndex] = useState<number | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
@@ -466,7 +491,13 @@ function AttendanceSheetsContent() {
       if (!Number.isNaN(n) && n >= 1) setPage(n);
     }
     const center = sp.get("center");
-    if (center) setSelectedCenterId(center);
+    const scope = sp.get("scope");
+    if (scope === "CORE" || scope === "ELECTIVE") setFilterSubjectScope(scope);
+    if (center && (scope === "CORE" || scope === "ELECTIVE")) {
+      setSelectedGroupKey(centreGroupKey(center, scope));
+    } else if (center) {
+      setSelectedGroupKey(center);
+    }
     const mode = sp.get("mode");
     if (mode === "uploaded" || mode === "missing" || mode === "all") setUploadStatusFilter(mode);
     setUrlHydrated(true);
@@ -515,7 +546,14 @@ function AttendanceSheetsContent() {
     if (filterDate) p.set("date", filterDate);
     if (debouncedSearch) p.set("q", debouncedSearch);
     if (page > 1) p.set("page", String(page));
-    if (selectedCenterId) p.set("center", selectedCenterId);
+    if (filterSubjectScope) p.set("scope", filterSubjectScope);
+    if (selectedGroupKey) {
+      const [centerId, scope] = selectedGroupKey.includes(":")
+        ? (selectedGroupKey.split(":") as [string, RecordSubjectScope])
+        : [selectedGroupKey, null];
+      if (centerId) p.set("center", centerId);
+      if (scope === "CORE" || scope === "ELECTIVE") p.set("scope", scope);
+    }
     if (uploadStatusFilter !== "all") p.set("mode", uploadStatusFilter);
     const next = p.toString();
     const current = searchParams.toString();
@@ -528,7 +566,8 @@ function AttendanceSheetsContent() {
     filterDate,
     debouncedSearch,
     page,
-    selectedCenterId,
+    selectedGroupKey,
+    filterSubjectScope,
     uploadStatusFilter,
     pathname,
     router,
@@ -548,23 +587,23 @@ function AttendanceSheetsContent() {
   );
 
   const selectedGroup = useMemo(
-    () => filteredCentreGroups.find((g) => g.centerId === selectedCenterId) ?? filteredCentreGroups[0] ?? null,
-    [filteredCentreGroups, selectedCenterId],
+    () => filteredCentreGroups.find((g) => g.groupKey === selectedGroupKey) ?? filteredCentreGroups[0] ?? null,
+    [filteredCentreGroups, selectedGroupKey],
   );
 
   const tableSheets = centreSheets.length > 0 ? centreSheets : (selectedGroup?.sheets ?? []);
 
   useEffect(() => {
     if (filteredCentreGroups.length === 0) {
-      setSelectedCenterId(null);
+      setSelectedGroupKey(null);
       setPreviewIndex(null);
       return;
     }
-    if (!selectedCenterId || !filteredCentreGroups.some((g) => g.centerId === selectedCenterId)) {
-      setSelectedCenterId(filteredCentreGroups[0]!.centerId);
+    if (!selectedGroupKey || !filteredCentreGroups.some((g) => g.groupKey === selectedGroupKey)) {
+      setSelectedGroupKey(filteredCentreGroups[0]!.groupKey);
       setPreviewIndex(null);
     }
-  }, [filteredCentreGroups, selectedCenterId]);
+  }, [filteredCentreGroups, selectedGroupKey]);
 
   const loadSummary = useCallback(async () => {
     if (examId === null) {
@@ -595,6 +634,7 @@ function AttendanceSheetsContent() {
         page,
         pageSize: PAGE_SIZE,
         examinationDate: filterDate || null,
+        subjectScope: filterSubjectScope || null,
         search: debouncedSearch || null,
       });
       setItems(Array.isArray(res.items) ? res.items : []);
@@ -606,7 +646,7 @@ function AttendanceSheetsContent() {
     } finally {
       setLoading(false);
     }
-  }, [examId, page, filterDate, debouncedSearch]);
+  }, [examId, page, filterDate, filterSubjectScope, debouncedSearch]);
 
   const loadCompliance = useCallback(async () => {
     if (examId === null || !filterDate || uploadStatusFilter === "all") {
@@ -630,7 +670,7 @@ function AttendanceSheetsContent() {
   }, [examId, filterDate, uploadStatusFilter, debouncedSearch]);
 
   const loadCentreSheets = useCallback(async () => {
-    if (examId === null || !selectedCenterId) {
+    if (examId === null || !selectedGroup) {
       setCentreSheets([]);
       return;
     }
@@ -640,7 +680,8 @@ function AttendanceSheetsContent() {
       const res = await listAdminAttendanceSheets(examId, {
         page: 1,
         pageSize: 200,
-        centerId: selectedCenterId,
+        centerId: selectedGroup.centerId,
+        subjectScope: selectedGroup.subjectScope,
         examinationDate: filterDate || null,
         search: debouncedSearch || null,
       });
@@ -650,7 +691,7 @@ function AttendanceSheetsContent() {
     } finally {
       setCentreSheetsLoading(false);
     }
-  }, [examId, selectedCenterId, filterDate, debouncedSearch]);
+  }, [examId, selectedGroup, filterDate, debouncedSearch]);
 
   useEffect(() => {
     void loadSummary();
@@ -665,12 +706,12 @@ function AttendanceSheetsContent() {
   }, [useComplianceSidebar, loadCompliance, loadList]);
 
   useEffect(() => {
-    if (selectedCenterId && examId != null) {
+    if (selectedGroup && examId != null) {
       void loadCentreSheets();
     } else {
       setCentreSheets([]);
     }
-  }, [selectedCenterId, examId, loadCentreSheets]);
+  }, [selectedGroup, examId, loadCentreSheets]);
 
   const onDownload = useCallback(
     async (row: AttendanceSheetAdmin) => {
@@ -698,17 +739,18 @@ function AttendanceSheetsContent() {
   );
 
   const onDownloadAllForCentre = useCallback(async () => {
-    if (examId === null || !selectedCenterId || tableSheets.length === 0 || !selectedGroup) return;
+    if (examId === null || !selectedGroup || tableSheets.length === 0) return;
     setBulkCentreBusy(true);
     setLoadError(null);
     try {
-      const zipFilename = `${selectedGroup.centerCode}_${selectedGroup.centerName}_attendance${
+      const zipFilename = `${selectedGroup.centerCode}_${selectedGroup.centerName}_${selectedGroup.subjectScope}_attendance${
         filterDate ? `_${filterDate}` : ""
       }.zip`.replace(/[^\w.\-]+/g, "_");
       await downloadAdminAttendanceSheetsZip(
         examId,
         {
-          centerId: selectedCenterId,
+          centerId: selectedGroup.centerId,
+          subjectScope: selectedGroup.subjectScope,
           examinationDate: filterDate || null,
           search: debouncedSearch || null,
         },
@@ -719,7 +761,7 @@ function AttendanceSheetsContent() {
     } finally {
       setBulkCentreBusy(false);
     }
-  }, [examId, selectedCenterId, selectedGroup, tableSheets.length, filterDate, debouncedSearch]);
+  }, [examId, selectedGroup, tableSheets.length, filterDate, debouncedSearch]);
 
   const columns = useMemo<ColumnDef<AttendanceSheetAdmin>[]>(
     () => [
@@ -741,6 +783,14 @@ function AttendanceSheetsContent() {
               </a>
             ) : null}
           </div>
+        ),
+      },
+      {
+        id: "subject_scope",
+        accessorFn: (row) => row.subject_scope,
+        header: "Scope",
+        cell: ({ row }) => (
+          <span className="whitespace-nowrap text-sm">{scopeShortLabel(row.original.subject_scope)}</span>
         ),
       },
       {
@@ -821,7 +871,7 @@ function AttendanceSheetsContent() {
     ? `${selectedGroup.centerCode} — ${selectedGroup.centerName}`
     : "";
 
-  const hasActiveFilters = Boolean(filterDate || searchInput.trim() || uploadStatusFilter !== "all");
+  const hasActiveFilters = Boolean(filterDate || filterSubjectScope || searchInput.trim() || uploadStatusFilter !== "all");
 
   const resultsMetaLine = useMemo(() => {
     if (examId == null) return null;
@@ -854,6 +904,7 @@ function AttendanceSheetsContent() {
 
   const clearFilters = () => {
     setFilterDate("");
+    setFilterSubjectScope("");
     setSearchInput("");
     setCentreListSearch("");
     setPage(1);
@@ -975,6 +1026,27 @@ function AttendanceSheetsContent() {
                   {formatExamDateLabel(iso)}
                 </option>
               ))}
+            </select>
+          </div>
+
+          <div className={cn(filterFieldClass, "min-w-[8rem] shrink-0")}>
+            <label htmlFor="attendance-filter-scope" className={filterLabelCompact}>
+              Scope
+            </label>
+            <select
+              id="attendance-filter-scope"
+              aria-label="Subject scope"
+              value={filterSubjectScope}
+              disabled={examId === null}
+              onChange={(e) => {
+                setFilterSubjectScope(e.target.value as "" | RecordSubjectScope);
+                setPage(1);
+              }}
+              className={filterControlCompact}
+            >
+              <option value="">All scopes</option>
+              <option value="CORE">Core</option>
+              <option value="ELECTIVE">Elective</option>
             </select>
           </div>
 
@@ -1149,20 +1221,20 @@ function AttendanceSheetsContent() {
                 aria-label="Examination centres"
               >
                 {filteredCentreGroups.map((group) => {
-                  const selected = selectedGroup?.centerId === group.centerId;
+                  const selected = selectedGroup?.groupKey === group.groupKey;
                   const uploaded = group.uploadStatus === "uploaded";
                   const notYetDue = group.uploadStatus === "not_due";
-                  const centreLabel = formatCentreListLabel(group.centerCode, group.centerName);
-                  const centreLabelFull = `${group.centerCode} - ${group.centerName}`;
+                  const centreLabel = formatCentreListLabel(group.centerCode, group.centerName, group.subjectScope);
+                  const centreLabelFull = `${group.centerCode} - ${group.centerName} · ${scopeShortLabel(group.subjectScope)}`;
                   return (
-                    <li key={group.centerId}>
+                    <li key={group.groupKey}>
                       <button
                         type="button"
                         role="option"
                         aria-selected={selected}
                         aria-label={centreLabelFull}
                         title={centreLabelFull}
-                        onClick={() => setSelectedCenterId(group.centerId)}
+                        onClick={() => setSelectedGroupKey(group.groupKey)}
                         className={cn(
                           "flex w-full items-center gap-2 rounded-lg px-3 py-2.5 text-left text-sm transition-colors",
                           selected ? "bg-primary text-primary-foreground" : "text-foreground hover:bg-muted/80",
@@ -1204,6 +1276,9 @@ function AttendanceSheetsContent() {
                         <span className="font-mono tabular-nums">{selectedGroup.centerCode}</span>
                         <span className="mx-2 font-normal text-muted-foreground">—</span>
                         {selectedGroup.centerName}
+                        <span className="ml-2 rounded bg-muted px-1.5 py-0.5 text-xs font-medium text-muted-foreground">
+                          {scopeShortLabel(selectedGroup.subjectScope)}
+                        </span>
                       </h3>
                       <p className="mt-0.5 text-xs text-muted-foreground">
                         {selectedGroup.inspectorFullName ?? tableSheets[0]?.inspector_full_name ?? "Inspector"}

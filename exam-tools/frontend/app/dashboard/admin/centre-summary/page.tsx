@@ -795,7 +795,7 @@ function AdminCentreSummaryContent() {
                     >
                       #
                     </th>
-                    <th colSpan={2} className="px-3 py-2 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
+                    <th colSpan={3} className="px-3 py-2 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
                       Official
                     </th>
                     <th colSpan={4} className="border-l border-border/60 px-3 py-2 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
@@ -820,6 +820,7 @@ function AdminCentreSummaryContent() {
                         Designation {sortKey === "designation" ? (sortDir === "asc" ? "↑" : "↓") : ""}
                       </button>
                     </th>
+                    <th className="px-3 py-2.5 font-semibold">Scope</th>
                     <th className="border-l border-border/60 px-3 py-2.5 font-semibold">Bank</th>
                     <th className="px-3 py-2.5 font-semibold">Branch</th>
                     <th className="px-3 py-2.5 font-semibold">Code</th>
@@ -835,7 +836,7 @@ function AdminCentreSummaryContent() {
                 <tbody className="divide-y divide-border/70">
                   {!busy && filteredOfficials.length === 0 ? (
                     <tr>
-                      <td colSpan={9} className="px-4 py-12 text-center">
+                      <td colSpan={10} className="px-4 py-12 text-center">
                         <p className="text-sm font-medium text-foreground">
                           {officials.length === 0
                             ? "No officials recorded for this centre"
@@ -866,6 +867,9 @@ function AdminCentreSummaryContent() {
                         <td className="px-2 py-2 text-center text-xs tabular-nums text-muted-foreground">{index + 1}</td>
                         <td className="px-3 py-2 font-medium">{row.full_name}</td>
                         <td className="px-3 py-2">{row.designation}</td>
+                        <td className="px-3 py-2 text-xs text-muted-foreground">
+                          {row.subject_scope === "CORE" ? "Core" : "Elective"}
+                        </td>
                         <td className="max-w-40 truncate border-l border-border/60 px-3 py-2" title={row.bank_name}>
                           {row.bank_name}
                         </td>

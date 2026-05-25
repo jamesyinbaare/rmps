@@ -12,13 +12,14 @@ from openpyxl import Workbook
 from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
 from openpyxl.utils import get_column_letter
 
-from app.models import ExamCentreOfficial, Examination, School
+from app.models import ExamCentreOfficial, ExamInspectorSubjectScope, Examination, School
 
 HEADER_LABELS = [
     "Centre code",
     "Centre name",
     "Full name",
     "Designation",
+    "Subject scope",
     "Bank",
     "Branch",
     "Bank code",
@@ -178,11 +179,13 @@ def apply_sheet_finish(ws: object, header_row: int, ncols: int, *, autofilter: b
 
 def data_values(off: ExamCentreOfficial, school: School) -> tuple[str | int, ...]:
     bb = off.bank_branch
+    scope = off.subject_scope.value if isinstance(off.subject_scope, ExamInspectorSubjectScope) else str(off.subject_scope)
     return (
         school.code,
         school.name,
         off.full_name,
         designation_str(off.designation),
+        scope,
         bb.bank_name,
         bb.branch_name,
         str(bb.bank_code),

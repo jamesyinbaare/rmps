@@ -1,4 +1,4 @@
-"""CRUD for exam centre officials (inspector; one roster per examination centre host)."""
+"""CRUD for exam centre officials (inspector; roster per examination centre host and scope)."""
 
 from datetime import datetime
 from typing import cast
@@ -10,31 +10,46 @@ from sqlalchemy.orm import selectinload
 
 from app.dependencies.auth import InspectorDep, InspectorJwtPostingIdDep
 from app.dependencies.database import DBSessionDep
-from app.models import BankBranch, ExamCentreOfficial, ExamOfficialDesignation, User, UserRole
+from app.models import (
+    BankBranch,
+    ExamCentreOfficial,
+    ExamInspectorSubjectScope,
+    ExamOfficialDesignation,
+    User,
+    UserRole,
+)
 from app.schemas.exam_official import (
     ExamCentreOfficialCreate,
     ExamCentreOfficialListResponse,
     ExamCentreOfficialResponse,
     ExamCentreOfficialUpdate,
 )
+from app.schemas.inspector_submission_settings import InspectorSubmissionStatusResponse
 from app.services.exam_official_account import normalize_account_for_save
 from app.services.exam_timetable_pdf import load_examination_or_raise
-from app.services.inspector_posting import resolve_inspector_workspace
+from app.services.inspector_posting import InspectorWorkspaceContext, resolve_inspector_workspace
+from app.services.inspector_submission_settings import (
+    assert_officials_scope_enabled,
+    assert_submission_period_open,
+    get_or_create_submission_settings,
+    submission_status_dict,
+)
+from app.services.subject_scope import resolve_working_scope
 
 router = APIRouter(tags=["exam-officials"])
 
 
-async def _inspector_officials_center_id(
+async def _resolve_inspector_ctx(
     session: DBSessionDep,
     user: User,
     exam_id: int,
     posting_id: UUID | None,
     jwt_posting_id: UUID | None,
-) -> UUID:
+) -> InspectorWorkspaceContext:
     if user.role != UserRole.INSPECTOR:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Inspector access only")
     try:
-        ctx = await resolve_inspector_workspace(
+        return await resolve_inspector_workspace(
             session,
             examination_id=exam_id,
             user=user,
@@ -43,7 +58,12 @@ async def _inspector_officials_center_id(
         )
     except HTTPException:
         raise
-    return ctx.center_host.id
+
+
+def _scope_str(scope: ExamInspectorSubjectScope | str) -> str:
+    if isinstance(scope, ExamInspectorSubjectScope):
+        return scope.value
+    return str(scope)
 
 
 def _normalize_account_or_400(
@@ -83,9 +103,29 @@ def _official_to_response(row: ExamCentreOfficial) -> ExamCentreOfficialResponse
         account_number=cast(str, row.account_number),
         num_days=cast(int, row.num_days),
         telephone_number=cast(str, row.telephone_number),
+        subject_scope=_scope_str(row.subject_scope),
         created_at=cast(datetime, row.created_at),
         updated_at=cast(datetime, row.updated_at),
     )
+
+
+@router.get(
+    "/examinations/{exam_id}/inspector-submission-status",
+    response_model=InspectorSubmissionStatusResponse,
+)
+async def get_inspector_submission_status(
+    exam_id: int,
+    session: DBSessionDep,
+    user: InspectorDep,
+) -> InspectorSubmissionStatusResponse:
+    if user.role != UserRole.INSPECTOR:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Inspector access only")
+    try:
+        await load_examination_or_raise(session, exam_id)
+    except ValueError:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Examination not found") from None
+    settings = await get_or_create_submission_settings(session, exam_id)
+    return InspectorSubmissionStatusResponse(**submission_status_dict(settings))
 
 
 @router.get(
@@ -101,8 +141,13 @@ async def list_exam_officials(
         default=None,
         description="Inspector posting (workspace); overrides JWT when set; required when you have multiple postings.",
     ),
+    working_scope: str | None = Query(
+        default=None,
+        description="CORE or ELECTIVE; required when posting scope is ALL.",
+    ),
 ) -> ExamCentreOfficialListResponse:
-    center_id = await _inspector_officials_center_id(session, user, exam_id, posting_id, jwt_posting_id)
+    ctx = await _resolve_inspector_ctx(session, user, exam_id, posting_id, jwt_posting_id)
+    scope = resolve_working_scope(ctx.subject_scope, working_scope)
     try:
         await load_examination_or_raise(session, exam_id)
     except ValueError:
@@ -110,7 +155,11 @@ async def list_exam_officials(
 
     stmt = (
         select(ExamCentreOfficial)
-        .where(ExamCentreOfficial.examination_id == exam_id, ExamCentreOfficial.center_id == center_id)
+        .where(
+            ExamCentreOfficial.examination_id == exam_id,
+            ExamCentreOfficial.center_id == ctx.center_host.id,
+            ExamCentreOfficial.subject_scope == scope,
+        )
         .options(selectinload(ExamCentreOfficial.bank_branch))
         .order_by(ExamCentreOfficial.full_name.asc(), ExamCentreOfficial.id.asc())
     )
@@ -130,16 +179,18 @@ async def create_exam_official(
     user: InspectorDep,
     body: ExamCentreOfficialCreate,
     jwt_posting_id: InspectorJwtPostingIdDep,
-    posting_id: UUID | None = Query(
-        default=None,
-        description="Inspector posting (workspace); overrides JWT when set; required when you have multiple postings.",
-    ),
+    posting_id: UUID | None = Query(default=None),
+    working_scope: str | None = Query(default=None),
 ) -> ExamCentreOfficialResponse:
-    center_id = await _inspector_officials_center_id(session, user, exam_id, posting_id, jwt_posting_id)
+    ctx = await _resolve_inspector_ctx(session, user, exam_id, posting_id, jwt_posting_id)
+    scope = resolve_working_scope(ctx.subject_scope, working_scope)
     try:
         await load_examination_or_raise(session, exam_id)
     except ValueError:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Examination not found") from None
+
+    await assert_submission_period_open(session, exam_id, scope)
+    await assert_officials_scope_enabled(session, exam_id, scope)
 
     bb = await session.get(BankBranch, body.bank_branch_id)
     if bb is None:
@@ -149,13 +200,14 @@ async def create_exam_official(
     stored_account = _normalize_account_or_400(body.account_number, bb, for_update=False)
     row = ExamCentreOfficial(
         examination_id=exam_id,
-        center_id=center_id,
+        center_id=ctx.center_host.id,
         full_name=body.full_name,
         designation=des,
         bank_branch_id=body.bank_branch_id,
         account_number=stored_account,
         num_days=body.num_days,
         telephone_number=body.telephone_number,
+        subject_scope=scope,
     )
     session.add(row)
     await session.commit()
@@ -179,12 +231,11 @@ async def update_exam_official(
     user: InspectorDep,
     body: ExamCentreOfficialUpdate,
     jwt_posting_id: InspectorJwtPostingIdDep,
-    posting_id: UUID | None = Query(
-        default=None,
-        description="Inspector posting (workspace); overrides JWT when set; required when you have multiple postings.",
-    ),
+    posting_id: UUID | None = Query(default=None),
+    working_scope: str | None = Query(default=None),
 ) -> ExamCentreOfficialResponse:
-    center_id = await _inspector_officials_center_id(session, user, exam_id, posting_id, jwt_posting_id)
+    ctx = await _resolve_inspector_ctx(session, user, exam_id, posting_id, jwt_posting_id)
+    scope = resolve_working_scope(ctx.subject_scope, working_scope)
     try:
         await load_examination_or_raise(session, exam_id)
     except ValueError:
@@ -195,13 +246,16 @@ async def update_exam_official(
         .where(
             ExamCentreOfficial.id == official_id,
             ExamCentreOfficial.examination_id == exam_id,
-            ExamCentreOfficial.center_id == center_id,
+            ExamCentreOfficial.center_id == ctx.center_host.id,
+            ExamCentreOfficial.subject_scope == scope,
         )
         .options(selectinload(ExamCentreOfficial.bank_branch))
     )
     row = (await session.execute(stmt)).scalar_one_or_none()
     if row is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Record not found")
+
+    await assert_submission_period_open(session, exam_id, scope)
 
     if body.full_name is not None:
         row.full_name = body.full_name
@@ -245,12 +299,11 @@ async def delete_exam_official(
     session: DBSessionDep,
     user: InspectorDep,
     jwt_posting_id: InspectorJwtPostingIdDep,
-    posting_id: UUID | None = Query(
-        default=None,
-        description="Inspector posting (workspace); overrides JWT when set; required when you have multiple postings.",
-    ),
+    posting_id: UUID | None = Query(default=None),
+    working_scope: str | None = Query(default=None),
 ) -> None:
-    center_id = await _inspector_officials_center_id(session, user, exam_id, posting_id, jwt_posting_id)
+    ctx = await _resolve_inspector_ctx(session, user, exam_id, posting_id, jwt_posting_id)
+    scope = resolve_working_scope(ctx.subject_scope, working_scope)
     try:
         await load_examination_or_raise(session, exam_id)
     except ValueError:
@@ -259,10 +312,14 @@ async def delete_exam_official(
     stmt = select(ExamCentreOfficial).where(
         ExamCentreOfficial.id == official_id,
         ExamCentreOfficial.examination_id == exam_id,
-        ExamCentreOfficial.center_id == center_id,
+        ExamCentreOfficial.center_id == ctx.center_host.id,
+        ExamCentreOfficial.subject_scope == scope,
     )
     row = (await session.execute(stmt)).scalar_one_or_none()
     if row is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Record not found")
+
+    await assert_submission_period_open(session, exam_id, scope)
+
     await session.delete(row)
     await session.commit()

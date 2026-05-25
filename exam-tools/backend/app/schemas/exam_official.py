@@ -37,6 +37,7 @@ class ExamCentreOfficialResponse(BaseModel):
     account_number: str
     num_days: int
     telephone_number: str
+    subject_scope: str
     created_at: datetime
     updated_at: datetime
 

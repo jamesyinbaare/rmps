@@ -18,7 +18,7 @@ export type DashboardStickyHeaderSidebar = {
 
 type Props = {
   title: ReactNode;
-  subtitle?: string | null;
+  subtitle?: ReactNode;
   onLogout: () => void;
   /** When set, shows the mobile sidebar trigger (hidden at `lg` and up). */
   sidebar?: DashboardStickyHeaderSidebar;

@@ -25,6 +25,8 @@ import {
   type ExaminationSchedule,
   type ExaminationScheduleBulkUploadResponse,
   type ExaminationScriptSeriesConfigRow,
+  getAdminInspectorSubmissionSettings,
+  putAdminInspectorSubmissionSettings,
 } from "@/lib/api";
 import { formInputClass, formLabelClass, primaryButtonClass } from "@/lib/form-classes";
 import { REGION_OPTIONS, ZONE_OPTIONS } from "@/lib/school-enums";
@@ -137,6 +139,16 @@ export default function ExaminationDetailPage() {
   const [scriptSeriesModalOpen, setScriptSeriesModalOpen] = useState(false);
   const [hasLoadedScriptSeries, setHasLoadedScriptSeries] = useState(false);
 
+  const [coreSubmissionPeriodStart, setCoreSubmissionPeriodStart] = useState("");
+  const [coreSubmissionPeriodEnd, setCoreSubmissionPeriodEnd] = useState("");
+  const [electiveSubmissionPeriodStart, setElectiveSubmissionPeriodStart] = useState("");
+  const [electiveSubmissionPeriodEnd, setElectiveSubmissionPeriodEnd] = useState("");
+  const [officialsCoreEnabled, setOfficialsCoreEnabled] = useState(true);
+  const [officialsElectiveEnabled, setOfficialsElectiveEnabled] = useState(true);
+  const [submissionSettingsLoading, setSubmissionSettingsLoading] = useState(false);
+  const [submissionSettingsSaving, setSubmissionSettingsSaving] = useState(false);
+  const [submissionSettingsError, setSubmissionSettingsError] = useState("");
+
   const load = useCallback(async () => {
     if (!Number.isFinite(examId)) return;
     setError("");
@@ -158,6 +170,51 @@ export default function ExaminationDetailPage() {
       setLoading(false);
     }
   }, [examId]);
+
+  const loadSubmissionSettings = useCallback(async () => {
+    if (!Number.isFinite(examId)) return;
+    setSubmissionSettingsLoading(true);
+    setSubmissionSettingsError("");
+    try {
+      const settings = await getAdminInspectorSubmissionSettings(examId);
+      setCoreSubmissionPeriodStart(settings.core_submission_period_start ?? "");
+      setCoreSubmissionPeriodEnd(settings.core_submission_period_end ?? "");
+      setElectiveSubmissionPeriodStart(settings.elective_submission_period_start ?? "");
+      setElectiveSubmissionPeriodEnd(settings.elective_submission_period_end ?? "");
+      setOfficialsCoreEnabled(settings.officials_core_enabled);
+      setOfficialsElectiveEnabled(settings.officials_elective_enabled);
+    } catch (err) {
+      setSubmissionSettingsError(err instanceof Error ? err.message : "Could not load submission settings");
+    } finally {
+      setSubmissionSettingsLoading(false);
+    }
+  }, [examId]);
+
+  useEffect(() => {
+    void loadSubmissionSettings();
+  }, [loadSubmissionSettings]);
+
+  async function saveSubmissionSettings(e: React.FormEvent) {
+    e.preventDefault();
+    if (!Number.isFinite(examId)) return;
+    setSubmissionSettingsSaving(true);
+    setSubmissionSettingsError("");
+    try {
+      await putAdminInspectorSubmissionSettings(examId, {
+        core_submission_period_start: coreSubmissionPeriodStart.trim() || null,
+        core_submission_period_end: coreSubmissionPeriodEnd.trim() || null,
+        elective_submission_period_start: electiveSubmissionPeriodStart.trim() || null,
+        elective_submission_period_end: electiveSubmissionPeriodEnd.trim() || null,
+        officials_core_enabled: officialsCoreEnabled,
+        officials_elective_enabled: officialsElectiveEnabled,
+      });
+      await loadSubmissionSettings();
+    } catch (err) {
+      setSubmissionSettingsError(err instanceof Error ? err.message : "Save failed");
+    } finally {
+      setSubmissionSettingsSaving(false);
+    }
+  }
 
   useEffect(() => {
     void load();
@@ -511,6 +568,112 @@ export default function ExaminationDetailPage() {
             </button>
           </div>
         </form>
+      </section>
+
+      <section className="rounded-2xl border border-border bg-card p-4 sm:p-6">
+        <h3 className="text-lg font-semibold text-card-foreground">Inspector submissions</h3>
+        <p className="mt-1 text-sm text-muted-foreground">
+          Set separate submission windows for Core and Elective. Leave dates empty to keep that scope closed until
+          configured.
+        </p>
+        {submissionSettingsError ? (
+          <p className="mt-3 text-sm text-destructive" role="alert">
+            {submissionSettingsError}
+          </p>
+        ) : null}
+        {submissionSettingsLoading ? (
+          <p className="mt-4 text-sm text-muted-foreground">Loading submission settings…</p>
+        ) : (
+          <form className="mt-4 space-y-6" onSubmit={saveSubmissionSettings}>
+            <div>
+              <p className="text-sm font-semibold text-card-foreground">Core submission period</p>
+              <div className="mt-3 grid gap-4 sm:grid-cols-2">
+                <div>
+                  <label className={formLabelClass} htmlFor="core-submission-start">
+                    Start
+                  </label>
+                  <input
+                    id="core-submission-start"
+                    type="date"
+                    className={formInputClass}
+                    value={coreSubmissionPeriodStart}
+                    onChange={(e) => setCoreSubmissionPeriodStart(e.target.value)}
+                  />
+                </div>
+                <div>
+                  <label className={formLabelClass} htmlFor="core-submission-end">
+                    End
+                  </label>
+                  <input
+                    id="core-submission-end"
+                    type="date"
+                    className={formInputClass}
+                    value={coreSubmissionPeriodEnd}
+                    onChange={(e) => setCoreSubmissionPeriodEnd(e.target.value)}
+                  />
+                </div>
+              </div>
+            </div>
+
+            <div>
+              <p className="text-sm font-semibold text-card-foreground">Elective submission period</p>
+              <div className="mt-3 grid gap-4 sm:grid-cols-2">
+                <div>
+                  <label className={formLabelClass} htmlFor="elective-submission-start">
+                    Start
+                  </label>
+                  <input
+                    id="elective-submission-start"
+                    type="date"
+                    className={formInputClass}
+                    value={electiveSubmissionPeriodStart}
+                    onChange={(e) => setElectiveSubmissionPeriodStart(e.target.value)}
+                  />
+                </div>
+                <div>
+                  <label className={formLabelClass} htmlFor="elective-submission-end">
+                    End
+                  </label>
+                  <input
+                    id="elective-submission-end"
+                    type="date"
+                    className={formInputClass}
+                    value={electiveSubmissionPeriodEnd}
+                    onChange={(e) => setElectiveSubmissionPeriodEnd(e.target.value)}
+                  />
+                </div>
+              </div>
+            </div>
+
+            <label className="flex cursor-pointer items-center gap-2">
+              <input
+                type="checkbox"
+                checked={officialsCoreEnabled}
+                onChange={(e) => setOfficialsCoreEnabled(e.target.checked)}
+                className="size-4 rounded border-input-border"
+              />
+              <span className="text-sm text-foreground">Allow core bank account uploads</span>
+            </label>
+            <label className="flex cursor-pointer items-center gap-2">
+              <input
+                type="checkbox"
+                checked={officialsElectiveEnabled}
+                onChange={(e) => setOfficialsElectiveEnabled(e.target.checked)}
+                className="size-4 rounded border-input-border"
+              />
+              <span className="text-sm text-foreground">Allow elective bank account uploads</span>
+            </label>
+            <p className="text-xs text-muted-foreground">
+              Attendance uploads use the matching scope period and are inferred from the centre timetable on each
+              date.
+            </p>
+            <div>
+              <button type="submit" disabled={submissionSettingsSaving} className={primaryButtonClass}>
+                {submissionSettingsSaving ? "Saving…" : "Save submission settings"}
+              </button>
+            </div>
+          </form>
+        )}
       </section>
 
       <section className="rounded-2xl border border-border bg-card p-4 sm:p-6">
