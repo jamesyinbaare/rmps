@@ -19,6 +19,7 @@ from app.models import (
     School,
     User,
 )
+from app.services.exam_official_designation import sort_officials_by_designation_then_name
 from app.services.exam_official_export import designation_str, examination_label
 from app.services.inspector_posting import InspectorWorkspaceContext
 from app.services.pdf_generator import PdfGenerator, render_html
@@ -145,7 +146,6 @@ async def load_officials_for_summary(
             ExamCentreOfficial.subject_scope == subject_scope,
         )
         .options(selectinload(ExamCentreOfficial.bank_branch))
-        .order_by(ExamCentreOfficial.full_name.asc(), ExamCentreOfficial.id.asc())
     )
     result = await session.execute(stmt)
     return list(result.scalars().all())
@@ -168,6 +168,8 @@ async def build_exam_official_summary_pdf(
     )
     if not rows:
         raise ValueError("No official account records to export")
+
+    rows = sort_officials_by_designation_then_name(rows)
 
     center = ctx.center_host
     center_code = cast(str, center.code)
