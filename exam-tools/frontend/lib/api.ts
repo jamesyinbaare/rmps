@@ -2133,6 +2133,8 @@ export type QuestionPaperSeriesSlotResponse = {
 
 export type QuestionPaperPaperSlotResponse = {
   paper_number: number;
+  /** Timetable papers covered by this row (e.g. [1, 2] when written together). */
+  covers_papers?: number[];
   examination_date: string | null;
   series: QuestionPaperSeriesSlotResponse[];
 };

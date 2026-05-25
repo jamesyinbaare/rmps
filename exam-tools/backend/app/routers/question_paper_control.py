@@ -32,12 +32,16 @@ from app.services.inspector_posting import (
     resolve_inspector_workspace,
 )
 from app.services.question_paper_control import (
+    canonical_question_paper_number,
     load_subject_paper_rows_for_exam_and_center,
+    merged_question_paper_record,
+    schedule_for_subject,
     valid_question_paper_triples,
 )
 from app.services.script_control import (
     assert_script_packing_calendar_allowed,
     paper_examination_date_for_triple,
+    papers_written_together,
     script_packing_today_in_configured_zone,
     subject_series_count_map,
 )
@@ -96,13 +100,29 @@ async def _build_center_question_paper_grid(
 
     subjects_out: list[QuestionPaperSubjectRowResponse] = []
     for sub, paper_dates in rows:
+        sch = await schedule_for_subject(session, exam_id, sub)
+        written_together = papers_written_together(sch)
         paper_slots: list[QuestionPaperPaperSlotResponse] = []
         n_series = counts_map.get(sub.id, 1)
         for pn in sorted(paper_dates.keys()):
+            covers = [1, 2] if written_together and pn == 1 else [pn]
             series_slots: list[QuestionPaperSeriesSlotResponse] = []
             for sn in range(1, n_series + 1):
-                rec = key_map.get((sub.id, pn, sn))
-                verified = rec.verified_at is not None if rec else False
+                rec = merged_question_paper_record(
+                    key_map,
+                    sub.id,
+                    sn,
+                    written_together=written_together,
+                    paper_number=pn,
+                )
+                if written_together and pn == 1:
+                    rec1 = key_map.get((sub.id, 1, sn))
+                    rec2 = key_map.get((sub.id, 2, sn))
+                    verified = any(
+                        r is not None and r.verified_at is not None for r in (rec1, rec2)
+                    )
+                else:
+                    verified = rec.verified_at is not None if rec else False
                 series_slots.append(
                     QuestionPaperSeriesSlotResponse(
                         series_number=sn,
@@ -116,6 +136,7 @@ async def _build_center_question_paper_grid(
             paper_slots.append(
                 QuestionPaperPaperSlotResponse(
                     paper_number=pn,
+                    covers_papers=covers,
                     examination_date=paper_dates[pn],
                     series=series_slots,
                 )
@@ -237,21 +258,37 @@ async def verify_depot_center_question_paper_slot(
 
     scope_ids = await center_scope_school_ids(session, center_host)
     allowed = await valid_question_paper_triples(session, exam_id, scope_ids)
-    if (body.subject_id, body.paper_number, body.series_number) not in allowed:
+    sub = await session.get(Subject, body.subject_id)
+    if sub is None:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Subject not found")
+    sch = await schedule_for_subject(session, exam_id, sub)
+    canon_pn = canonical_question_paper_number(body.paper_number, sch)
+    if (body.subject_id, canon_pn, body.series_number) not in allowed:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Subject, paper, or series is not allowed for question paper control for this centre",
         )
 
-    stmt = select(QuestionPaperControl).where(
+    written_together = papers_written_together(sch)
+    q_stmt = select(QuestionPaperControl).where(
         QuestionPaperControl.examination_id == exam_id,
         QuestionPaperControl.center_id == center_host.id,
         QuestionPaperControl.subject_id == body.subject_id,
-        QuestionPaperControl.paper_number == body.paper_number,
         QuestionPaperControl.series_number == body.series_number,
     )
-    result = await session.execute(stmt)
-    row = result.scalar_one_or_none()
+    if written_together and canon_pn == 1:
+        q_stmt = q_stmt.where(QuestionPaperControl.paper_number.in_([1, 2]))
+    else:
+        q_stmt = q_stmt.where(QuestionPaperControl.paper_number == canon_pn)
+    stored = list((await session.execute(q_stmt)).scalars().all())
+    key_map = {(r.subject_id, r.paper_number, r.series_number): r for r in stored}
+    row = merged_question_paper_record(
+        key_map,
+        body.subject_id,
+        body.series_number,
+        written_together=written_together,
+        paper_number=canon_pn,
+    )
     if row is None:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -302,14 +339,21 @@ async def upsert_my_center_question_paper_slot(
 
     center_host, scope_ids = ctx.center_host, ctx.scope_ids
 
+    sub = await session.get(Subject, body.subject_id)
+    if sub is None:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Subject not found")
+    sch = await schedule_for_subject(session, exam_id, sub)
+    canon_pn = canonical_question_paper_number(body.paper_number, sch)
+    written_together = papers_written_together(sch)
+
     allowed = await valid_question_paper_triples(session, exam_id, scope_ids)
-    if (body.subject_id, body.paper_number, body.series_number) not in allowed:
+    if (body.subject_id, canon_pn, body.series_number) not in allowed:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Subject, paper, or series is not allowed for question paper control (check timetable, registrations, and admin series configuration)",
         )
 
-    exam_date = await paper_examination_date_for_triple(session, exam_id, body.subject_id, body.paper_number)
+    exam_date = await paper_examination_date_for_triple(session, exam_id, body.subject_id, canon_pn)
     try:
         assert_script_packing_calendar_allowed(exam_date, script_packing_today_in_configured_zone())
     except ValueError as e:
@@ -319,7 +363,7 @@ async def upsert_my_center_question_paper_slot(
         QuestionPaperControl.examination_id == exam_id,
         QuestionPaperControl.center_id == center_host.id,
         QuestionPaperControl.subject_id == body.subject_id,
-        QuestionPaperControl.paper_number == body.paper_number,
+        QuestionPaperControl.paper_number == canon_pn,
         QuestionPaperControl.series_number == body.series_number,
     )
     result = await session.execute(stmt)
@@ -336,7 +380,7 @@ async def upsert_my_center_question_paper_slot(
             examination_id=exam_id,
             center_id=center_host.id,
             subject_id=body.subject_id,
-            paper_number=body.paper_number,
+            paper_number=canon_pn,
             series_number=body.series_number,
             updated_by_id=user.id,
         )
@@ -349,6 +393,18 @@ async def upsert_my_center_question_paper_slot(
     row.copies_used = body.copies_used
     row.copies_to_library = body.copies_to_library
     row.copies_remaining = body.copies_remaining
+
+    if written_together and canon_pn == 1:
+        dup_stmt = select(QuestionPaperControl).where(
+            QuestionPaperControl.examination_id == exam_id,
+            QuestionPaperControl.center_id == center_host.id,
+            QuestionPaperControl.subject_id == body.subject_id,
+            QuestionPaperControl.paper_number == 2,
+            QuestionPaperControl.series_number == body.series_number,
+        )
+        dup_row = (await session.execute(dup_stmt)).scalar_one_or_none()
+        if dup_row is not None and dup_row.verified_at is None:
+            await session.delete(dup_row)
 
     await session.commit()
     await session.refresh(row)

@@ -58,6 +58,35 @@ def _paper_numbers_from_schedule(schedule: ExaminationSchedule) -> set[int]:
     return out
 
 
+def _schedule_paper_entry(schedule: ExaminationSchedule, paper_number: int) -> dict | None:
+    for p in schedule.papers or []:
+        if not isinstance(p, dict):
+            continue
+        try:
+            if int(p.get("paper", 1)) == paper_number:
+                return p
+        except (TypeError, ValueError):
+            continue
+    return None
+
+
+def papers_written_together(schedule: ExaminationSchedule | None) -> bool:
+    """
+    True when timetable has paper 1 and 2 on the same calendar date and start time
+    (including schedules uploaded with write_together).
+    """
+    if schedule is None:
+        return False
+    p1 = _schedule_paper_entry(schedule, 1)
+    p2 = _schedule_paper_entry(schedule, 2)
+    if p1 is None or p2 is None:
+        return False
+    d1, d2 = p1.get("date"), p2.get("date")
+    if d1 is None or d2 is None or d1 != d2:
+        return False
+    return p1.get("start_time") == p2.get("start_time")
+
+
 def _paper_examination_dates_from_schedule(schedule: ExaminationSchedule) -> dict[int, date | None]:
     """Paper number -> timetable calendar date; None if missing or unparseable."""
     out: dict[int, date | None] = {}
