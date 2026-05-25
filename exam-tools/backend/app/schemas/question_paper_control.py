@@ -20,7 +20,13 @@ class QuestionPaperSeriesSlotResponse(BaseModel):
 
 
 class QuestionPaperPaperSlotResponse(BaseModel):
-    paper_number: int
+    paper_number: int = Field(
+        description="Canonical paper number for saves (paper 1 when papers 1 and 2 are written together).",
+    )
+    covers_papers: list[int] = Field(
+        default_factory=list,
+        description="Timetable papers covered by this row (e.g. [1, 2] when written on the same date and time).",
+    )
     examination_date: date | None = Field(
         default=None,
         description="Scheduled examination calendar date for this paper from the timetable, if present.",

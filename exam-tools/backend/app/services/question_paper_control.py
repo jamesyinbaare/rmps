@@ -7,15 +7,88 @@ from uuid import UUID
 from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models import ExaminationSchedule, Subject
+from app.models import ExaminationSchedule, QuestionPaperControl, Subject
 from app.services.exam_timetable_pdf import load_examination_or_raise, load_schedules_for_exam
 from app.services.script_control import (
     _paper_examination_dates_from_schedule,
     _paper_numbers_from_schedule,
     _subject_by_schedule_codes,
+    papers_written_together,
     subject_series_count_map,
 )
 from app.services.timetable_service import get_candidate_schedule_codes_for_exam
+
+
+def collapse_paper_dates_for_question_paper(
+    paper_numbers: set[int],
+    date_map: dict[int, date | None],
+    schedule: ExaminationSchedule | None,
+) -> dict[int, date | None]:
+    """When papers 1 and 2 are written together, expose a single paper 1 slot only."""
+    nums = set(paper_numbers)
+    if schedule is not None and papers_written_together(schedule) and 1 in nums and 2 in nums:
+        exam_date = date_map.get(1) or date_map.get(2)
+        return {1: exam_date}
+    return {pn: date_map.get(pn) for pn in sorted(nums)}
+
+
+def merged_question_paper_record(
+    key_map: dict[tuple[int, int, int], QuestionPaperControl],
+    subject_id: int,
+    series_number: int,
+    *,
+    written_together: bool,
+    paper_number: int,
+) -> QuestionPaperControl | None:
+    """Load stored counts for a slot; when 1+2 are together, prefer paper 1 then paper 2."""
+    rec = key_map.get((subject_id, paper_number, series_number))
+    if not written_together or paper_number != 1:
+        return rec
+    rec2 = key_map.get((subject_id, 2, series_number))
+    if rec is None:
+        return rec2
+    if rec2 is None:
+        return rec
+
+    def _has_counts(r: QuestionPaperControl) -> bool:
+        return (
+            r.copies_received > 0
+            or r.copies_used > 0
+            or r.copies_to_library > 0
+            or r.copies_remaining > 0
+        )
+
+    if _has_counts(rec):
+        return rec
+    if _has_counts(rec2):
+        return rec2
+    if rec2.verified_at is not None and rec.verified_at is None:
+        return rec2
+    return rec
+
+
+def canonical_question_paper_number(
+    paper_number: int,
+    schedule: ExaminationSchedule | None,
+) -> int:
+    if paper_number == 2 and schedule is not None and papers_written_together(schedule):
+        return 1
+    return paper_number
+
+
+async def schedule_for_subject(
+    session: AsyncSession,
+    exam_id: int,
+    subject: Subject,
+) -> ExaminationSchedule | None:
+    codes = {subject.code}
+    if subject.original_code:
+        codes.add(subject.original_code)
+    schedules = await load_schedules_for_exam(session, exam_id)
+    for sch in schedules:
+        if sch.subject_code in codes:
+            return sch
+    return None
 
 
 async def load_subject_paper_rows_for_exam_and_center(
@@ -60,8 +133,7 @@ async def load_subject_paper_rows_for_exam_and_center(
             continue
         sch = code_to_schedule.get(code)
         date_map = _paper_examination_dates_from_schedule(sch) if sch else {}
-        paper_nums = sorted(code_to_papers[code])
-        paper_dates = {pn: date_map.get(pn) for pn in paper_nums}
+        paper_dates = collapse_paper_dates_for_question_paper(code_to_papers[code], date_map, sch)
         if paper_dates:
             rows.append((sub, paper_dates))
     return rows

@@ -1,4 +1,9 @@
-import type { ScriptSeriesSlotResponse, ScriptSubjectRowResponse } from "@/lib/api";
+import type {
+  QuestionPaperSeriesSlotResponse,
+  QuestionPaperSubjectRowResponse,
+  ScriptSeriesSlotResponse,
+  ScriptSubjectRowResponse,
+} from "@/lib/api";
 
 /**
  * Shared visual language for inspector script-control paper blocks (Paper 1 vs 2, etc.).
@@ -258,6 +263,223 @@ export function groupUpcomingBundlesBySubjectAndDate<
 export function formatUpcomingPapersLabel<T extends { paperNumber: number }>(bundles: T[]): string {
   const nums = bundles.map((b) => b.paperNumber);
   return bundles.length === 1 ? `Paper ${nums[0]}` : `Papers ${nums.join(" & ")}`;
+}
+
+/** Question paper control — same bundle shape as script control for sorting/grouping. */
+export type QuestionPaperBundle = {
+  subjectId: number;
+  subjectCode: string;
+  subjectOriginalCode: string | null;
+  subjectName: string;
+  /** Canonical paper number for saves. */
+  paperNumber: number;
+  /** Timetable papers shown in the UI (e.g. [1, 2] when written together). */
+  coversPapers: number[];
+  examinationDate: string | null;
+  series: QuestionPaperSeriesSlotResponse[];
+};
+
+export function questionPaperBundleLabel(bundle: QuestionPaperBundle): string {
+  const papers = bundle.coversPapers.length > 0 ? bundle.coversPapers : [bundle.paperNumber];
+  return formatUpcomingPapersLabel(
+    papers.map((paperNumber) => ({ paperNumber })),
+  );
+}
+
+export type SubjectQuestionPaperBundleGroup = {
+  key: string;
+  subjectId: number;
+  subjectCode: string;
+  subjectName: string;
+  bundles: QuestionPaperBundle[];
+};
+
+export type QuestionPaperDueAndUpcoming = {
+  due: QuestionPaperBundle[];
+  upcoming: QuestionPaperBundle[];
+};
+
+export function displayQuestionPaperSubjectCode(bundle: QuestionPaperBundle): string {
+  return (bundle.subjectOriginalCode && bundle.subjectOriginalCode.trim() !== ""
+    ? bundle.subjectOriginalCode
+    : bundle.subjectCode
+  ).trim();
+}
+
+export function flattenQuestionPaperSubjectsToBundles(
+  subjects: QuestionPaperSubjectRowResponse[],
+): QuestionPaperBundle[] {
+  const out: QuestionPaperBundle[] = [];
+  for (const sub of subjects) {
+    for (const paper of sub.papers) {
+      const covers =
+        paper.covers_papers && paper.covers_papers.length > 0
+          ? [...paper.covers_papers].sort((a, b) => a - b)
+          : [paper.paper_number];
+      out.push({
+        subjectId: sub.subject_id,
+        subjectCode: sub.subject_code,
+        subjectOriginalCode: sub.subject_original_code ?? null,
+        subjectName: sub.subject_name,
+        paperNumber: paper.paper_number,
+        coversPapers: covers,
+        examinationDate: paper.examination_date ?? null,
+        series: paper.series,
+      });
+    }
+  }
+  return out;
+}
+
+function sortQuestionPaperBundlesByScheduleAscending(bundles: QuestionPaperBundle[]): QuestionPaperBundle[] {
+  return [...bundles].sort((a, b) => {
+    const ad = a.examinationDate;
+    const bd = b.examinationDate;
+    if (ad == null && bd == null) return a.paperNumber - b.paperNumber;
+    if (ad == null) return 1;
+    if (bd == null) return -1;
+    const c = ad.localeCompare(bd);
+    return c !== 0 ? c : a.paperNumber - b.paperNumber;
+  });
+}
+
+function sortQuestionPaperBundlesBySchedule(bundles: QuestionPaperBundle[]): QuestionPaperBundle[] {
+  return [...bundles].sort((a, b) => {
+    const ad = a.examinationDate;
+    const bd = b.examinationDate;
+    if (ad == null && bd == null) return b.paperNumber - a.paperNumber;
+    if (ad == null) return 1;
+    if (bd == null) return -1;
+    const c = bd.localeCompare(ad);
+    return c !== 0 ? c : b.paperNumber - a.paperNumber;
+  });
+}
+
+export function groupQuestionPaperBundlesBySubject(
+  bundles: QuestionPaperBundle[],
+): SubjectQuestionPaperBundleGroup[] {
+  const map = new Map<string, SubjectQuestionPaperBundleGroup>();
+  for (const b of bundles) {
+    const key = String(b.subjectId);
+    const existing = map.get(key);
+    if (existing) {
+      existing.bundles.push(b);
+      continue;
+    }
+    map.set(key, {
+      key,
+      subjectId: b.subjectId,
+      subjectCode: displayQuestionPaperSubjectCode(b),
+      subjectName: b.subjectName,
+      bundles: [b],
+    });
+  }
+  for (const g of map.values()) {
+    g.bundles = [...g.bundles].sort((a, b) => a.paperNumber - b.paperNumber);
+  }
+  return Array.from(map.values());
+}
+
+export function sortQuestionPaperSubjectBundleGroups(
+  groups: SubjectQuestionPaperBundleGroup[],
+): SubjectQuestionPaperBundleGroup[] {
+  return [...groups].sort((a, b) => {
+    const latestDate = (bundles: QuestionPaperBundle[]) => {
+      let latest: string | null = null;
+      for (const x of bundles) {
+        const d = x.examinationDate;
+        if (d == null) continue;
+        if (latest == null || d > latest) latest = d;
+      }
+      return latest;
+    };
+    const ad = latestDate(a.bundles);
+    const bd = latestDate(b.bundles);
+    if (ad == null && bd == null) return b.subjectCode.localeCompare(a.subjectCode);
+    if (ad == null) return 1;
+    if (bd == null) return -1;
+    const c = bd.localeCompare(ad);
+    return c !== 0 ? c : b.subjectCode.localeCompare(a.subjectCode);
+  });
+}
+
+export function sortQuestionPaperSubjectBundleGroupsAscending(
+  groups: SubjectQuestionPaperBundleGroup[],
+): SubjectQuestionPaperBundleGroup[] {
+  return [...groups].sort((a, b) => {
+    const earliestDate = (bundles: QuestionPaperBundle[]) => {
+      let earliest: string | null = null;
+      for (const x of bundles) {
+        const d = x.examinationDate;
+        if (d == null) continue;
+        if (earliest == null || d < earliest) earliest = d;
+      }
+      return earliest;
+    };
+    const ad = earliestDate(a.bundles);
+    const bd = earliestDate(b.bundles);
+    if (ad == null && bd == null) return a.subjectCode.localeCompare(b.subjectCode);
+    if (ad == null) return 1;
+    if (bd == null) return -1;
+    const c = ad.localeCompare(bd);
+    return c !== 0 ? c : a.subjectCode.localeCompare(b.subjectCode);
+  });
+}
+
+export function questionPaperAccordionId(scope: "due" | "upcoming", subjectKey: string): string {
+  return `${scope}:${subjectKey}`;
+}
+
+export function partitionQuestionPaperDueAndUpcoming(
+  subjects: QuestionPaperSubjectRowResponse[],
+  today: string,
+): QuestionPaperDueAndUpcoming {
+  const all = flattenQuestionPaperSubjectsToBundles(subjects);
+  const due: QuestionPaperBundle[] = [];
+  const upcoming: QuestionPaperBundle[] = [];
+  for (const b of all) {
+    const ed = b.examinationDate;
+    if (ed && ed > today) {
+      upcoming.push(b);
+    } else {
+      due.push(b);
+    }
+  }
+  return {
+    due: sortQuestionPaperBundlesBySchedule(due),
+    upcoming: sortQuestionPaperBundlesByScheduleAscending(upcoming),
+  };
+}
+
+export function isQuestionPaperSeriesRecorded(ser: QuestionPaperSeriesSlotResponse): boolean {
+  return (
+    ser.copies_received > 0 ||
+    ser.copies_used > 0 ||
+    ser.copies_to_library > 0 ||
+    ser.copies_remaining > 0
+  );
+}
+
+export function isQuestionPaperBundleFullyRecorded(bundle: QuestionPaperBundle): boolean {
+  return bundle.series.length > 0 && bundle.series.every((s) => isQuestionPaperSeriesRecorded(s));
+}
+
+export function questionPaperDueListHint(
+  due: QuestionPaperBundle[],
+  upcoming: QuestionPaperBundle[],
+): string | null {
+  const allDueRecorded = due.length > 0 && due.every((b) => isQuestionPaperBundleFullyRecorded(b));
+  if (due.length > 0 && !allDueRecorded) return null;
+  if (allDueRecorded && upcoming.length > 0) {
+    return "All papers due so far are recorded. Upcoming papers are listed below.";
+  }
+  if (allDueRecorded) {
+    return "All papers due so far are recorded. Expand a subject to review or edit.";
+  }
+  if (due.length === 0 && upcoming.length > 0) {
+    return "No question paper counts to record yet — every scheduled paper is still in the future.";
+  }
+  return null;
 }
 
 export function getPaperInspectorVisuals(paperNumber: number): PaperInspectorVisuals {
