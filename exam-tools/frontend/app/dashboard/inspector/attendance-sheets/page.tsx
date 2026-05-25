@@ -11,12 +11,20 @@ import {
   deleteInspectorAttendanceSheet,
   downloadInspectorAttendanceSheet,
   getInspectorAttendanceScheduledDates,
+  getInspectorSubmissionStatus,
+  inspectorScopePeriodEnd,
+  formatSubmissionDeadlineDate,
+  isInspectorScopePeriodOpen,
+  inspectorScopePeriodLabel,
   getMyInspectorPostings,
   getStaffDefaultExamination,
   listInspectorAttendanceSheets,
   uploadInspectorAttendanceSheet,
+  type AttendanceScheduledDateItem,
   type AttendanceSheet,
   type Examination,
+  type InspectorSubmissionStatus,
+  type RecordSubjectScope,
 } from "@/lib/api";
 import { inspectorMustPickWorkspaceGlobally, pickInspectorPostingId } from "@/lib/auth";
 
@@ -31,13 +39,37 @@ const btnFilePicker =
 
 const panelClass = "rounded-2xl border border-border bg-card p-4 sm:p-6";
 
-type DateGroup = { date: string; sheets: AttendanceSheet[] };
+type DateGroup = { slot: UploadSlot; sheets: AttendanceSheet[] };
 type DateStatus = {
-  date: string;
+  slot: UploadSlot;
   sheets: AttendanceSheet[];
   status: "uploaded" | "missing";
 };
 type UploadDraft = { notes: string; file: File | null };
+type UploadSlot = { date: string; scope: RecordSubjectScope };
+
+function slotKey(slot: UploadSlot): string {
+  return `${slot.date}:${slot.scope}`;
+}
+
+function slotLabel(slot: UploadSlot): string {
+  const dateLabel = formatExamDateLabel(slot.date);
+  return slot.scope === "CORE" ? `${dateLabel} · Core` : `${dateLabel} · Elective`;
+}
+
+function flattenScheduledDates(items: AttendanceScheduledDateItem[]): UploadSlot[] {
+  const out: UploadSlot[] = [];
+  for (const item of items) {
+    for (const scope of item.subject_scopes) {
+      out.push({ date: item.examination_date, scope });
+    }
+  }
+  return out.sort((a, b) => b.date.localeCompare(a.date) || a.scope.localeCompare(b.scope));
+}
+
+function uniqueDates(slots: UploadSlot[]): string[] {
+  return [...new Set(slots.map((s) => s.date))].sort((a, b) => b.localeCompare(a));
+}
 
 function isSubmissionAllowed(examinationDate: string, todayIso: string): boolean {
   return examinationDate <= todayIso;
@@ -71,48 +103,50 @@ function sortSheetsInGroup(items: AttendanceSheet[]): AttendanceSheet[] {
   return [...items].sort((a, b) => b.created_at.localeCompare(a.created_at));
 }
 
-function groupSheetsByDate(items: AttendanceSheet[]): Map<string, AttendanceSheet[]> {
+function groupSheetsBySlot(items: AttendanceSheet[]): Map<string, AttendanceSheet[]> {
   const map = new Map<string, AttendanceSheet[]>();
   for (const sheet of items) {
-    const list = map.get(sheet.examination_date) ?? [];
+    const key = `${sheet.examination_date}:${sheet.subject_scope}`;
+    const list = map.get(key) ?? [];
     list.push(sheet);
-    map.set(sheet.examination_date, list);
+    map.set(key, list);
   }
-  for (const [date, sheets] of map) {
-    map.set(date, sortSheetsInGroup(sheets));
+  for (const [key, sheets] of map) {
+    map.set(key, sortSheetsInGroup(sheets));
   }
   return map;
 }
 
 function buildDateStatuses(
-  actionableDates: string[],
-  sheetsByDate: Map<string, AttendanceSheet[]>,
+  actionableSlots: UploadSlot[],
+  sheetsBySlot: Map<string, AttendanceSheet[]>,
 ): DateStatus[] {
-  return actionableDates.map((date) => {
-    const sheets = sheetsByDate.get(date) ?? [];
+  return actionableSlots.map((slot) => {
+    const sheets = sheetsBySlot.get(slotKey(slot)) ?? [];
     return {
-      date,
+      slot,
       sheets,
       status: sheets.length > 0 ? ("uploaded" as const) : ("missing" as const),
     };
   });
 }
 
-function buildDateGroups(scheduledDates: string[], sheetsByDate: Map<string, AttendanceSheet[]>): DateGroup[] {
-  return scheduledDates.map((date) => ({
-    date,
-    sheets: sheetsByDate.get(date) ?? [],
+function buildDateGroups(actionableSlots: UploadSlot[], sheetsBySlot: Map<string, AttendanceSheet[]>): DateGroup[] {
+  return actionableSlots.map((slot) => ({
+    slot,
+    sheets: sheetsBySlot.get(slotKey(slot)) ?? [],
   }));
 }
 
 function shouldGroupDefaultOpen(
-  date: string,
+  slot: UploadSlot,
   sheets: AttendanceSheet[],
   todayIso: string,
-  focusedDate: string | null,
+  focusedKey: string | null,
 ): boolean {
-  if (focusedDate === date) return true;
-  if (date === todayIso) return true;
+  const key = slotKey(slot);
+  if (focusedKey === key) return true;
+  if (slot.date === todayIso) return true;
   if (sheets.length === 0) return true;
   return false;
 }
@@ -125,6 +159,7 @@ type AttendanceSheetFileRowProps = {
   row: AttendanceSheet;
   downloadingId: string | null;
   deletingId: string | null;
+  deleteEnabled: boolean;
   onDownload: (row: AttendanceSheet) => void;
   onDelete: (row: AttendanceSheet) => void;
 };
@@ -133,6 +168,7 @@ function AttendanceSheetFileRow({
   row,
   downloadingId,
   deletingId,
+  deleteEnabled,
   onDownload,
   onDelete,
 }: AttendanceSheetFileRowProps) {
@@ -142,7 +178,9 @@ function AttendanceSheetFileRow({
       <p className="truncate text-sm font-semibold text-foreground" title={row.original_filename}>
         {row.original_filename}
       </p>
-      <p className="mt-0.5 text-xs text-muted-foreground">Uploaded {formatUploadedAt(row.created_at)}</p>
+      <p className="mt-0.5 text-xs text-muted-foreground">
+        {row.subject_scope === "CORE" ? "Core" : "Elective"} · Uploaded {formatUploadedAt(row.created_at)}
+      </p>
       {row.notes ? (
         <p className="mt-1 line-clamp-2 text-xs text-muted-foreground">
           <span className="font-medium text-foreground/80">Note:</span> {row.notes}
@@ -152,7 +190,7 @@ function AttendanceSheetFileRow({
         <button type="button" className={btnSecondary} disabled={busy} onClick={() => onDownload(row)}>
           {downloadingId === row.id ? "…" : "Download"}
         </button>
-        <button type="button" className={btnDanger} disabled={busy} onClick={() => onDelete(row)}>
+        <button type="button" className={btnDanger} disabled={busy || !deleteEnabled} onClick={() => onDelete(row)}>
           {deletingId === row.id ? "…" : "Delete"}
         </button>
       </div>
@@ -163,14 +201,14 @@ function AttendanceSheetFileRow({
 type AttendanceDateOverviewProps = {
   statuses: DateStatus[];
   todayIso: string;
-  onSelectDate: (date: string) => void;
+  onSelectSlot: (slot: UploadSlot) => void;
 };
 
-function AttendanceDateOverview({ statuses, todayIso, onSelectDate }: AttendanceDateOverviewProps) {
+function AttendanceDateOverview({ statuses, todayIso, onSelectSlot }: AttendanceDateOverviewProps) {
   return (
     <ul className="mt-3 divide-y divide-border rounded-xl border border-border/80">
-      {statuses.map(({ date, sheets, status }) => {
-        const isToday = date === todayIso;
+      {statuses.map(({ slot, sheets, status }) => {
+        const isToday = slot.date === todayIso;
         const countLabel =
           status === "uploaded"
             ? `${sheets.length} ${sheets.length === 1 ? "file" : "files"}`
@@ -179,15 +217,15 @@ function AttendanceDateOverview({ statuses, todayIso, onSelectDate }: Attendance
           status === "uploaded" ? "bg-success" : "border-2 border-muted-foreground/50 bg-transparent";
         const countClass = status === "uploaded" ? "text-muted-foreground" : "text-destructive";
         return (
-          <li key={date}>
+          <li key={slotKey(slot)}>
             <button
               type="button"
-              onClick={() => onSelectDate(date)}
+              onClick={() => onSelectSlot(slot)}
               className="flex min-h-12 w-full items-center gap-3 px-3 py-3 text-left transition-colors hover:bg-muted/50 focus:outline-none focus-visible:bg-muted/50 focus-visible:ring-2 focus-visible:ring-ring/30"
             >
               <span className={`flex h-2.5 w-2.5 shrink-0 rounded-full ${statusDotClass}`} aria-hidden />
               <span className="min-w-0 flex-1">
-                <span className="block text-sm font-medium text-foreground">{formatExamDateLabel(date)}</span>
+                <span className="block text-sm font-medium text-foreground">{slotLabel(slot)}</span>
                 {isToday ? (
                   <span className="mt-0.5 inline-block rounded bg-primary/15 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-primary">
                     Today
@@ -206,14 +244,16 @@ function AttendanceDateOverview({ statuses, todayIso, onSelectDate }: Attendance
 type AttendanceDateGroupProps = {
   group: DateGroup;
   todayIso: string;
-  focusedDate: string | null;
+  focusedKey: string | null;
   groupRef: (el: HTMLDetailsElement | null) => void;
   draft: UploadDraft;
   uploadBusy: boolean;
+  submissionsOpen: boolean;
+  submissionDeadlineEnd: string | null;
   downloadingId: string | null;
   deletingId: string | null;
-  onDraftChange: (date: string, patch: Partial<UploadDraft>) => void;
-  onUpload: (date: string, e: FormEvent) => void;
+  onDraftChange: (key: string, patch: Partial<UploadDraft>) => void;
+  onUpload: (slot: UploadSlot, e: FormEvent) => void;
   onDownload: (row: AttendanceSheet) => void;
   onDelete: (row: AttendanceSheet) => void;
 };
@@ -221,10 +261,12 @@ type AttendanceDateGroupProps = {
 function AttendanceDateGroup({
   group,
   todayIso,
-  focusedDate,
+  focusedKey,
   groupRef,
   draft,
   uploadBusy,
+  submissionsOpen,
+  submissionDeadlineEnd,
   downloadingId,
   deletingId,
   onDraftChange,
@@ -232,27 +274,28 @@ function AttendanceDateGroup({
   onDownload,
   onDelete,
 }: AttendanceDateGroupProps) {
-  const { date, sheets } = group;
+  const { slot, sheets } = group;
+  const key = slotKey(slot);
   const detailsElRef = useRef<HTMLDetailsElement | null>(null);
-  const defaultOpen = shouldGroupDefaultOpen(date, sheets, todayIso, focusedDate);
+  const defaultOpen = shouldGroupDefaultOpen(slot, sheets, todayIso, focusedKey);
   const fileCount = sheets.length;
 
   useEffect(() => {
     if (detailsElRef.current && defaultOpen) {
       detailsElRef.current.open = true;
     }
-  }, [defaultOpen, date]);
+  }, [defaultOpen, key]);
 
   useEffect(() => {
-    if (focusedDate === date && detailsElRef.current) {
+    if (focusedKey === key && detailsElRef.current) {
       detailsElRef.current.open = true;
     }
-  }, [focusedDate, date]);
+  }, [focusedKey, key]);
   const countLabel = fileCount === 0 ? "No files" : `${fileCount} ${fileCount === 1 ? "file" : "files"}`;
-  const canSubmit = Boolean(draft.file && !uploadBusy);
-  const cameraInputId = `attendance-camera-${date}`;
-  const fileInputId = `attendance-file-${date}`;
-  const notesInputId = `attendance-notes-${date}`;
+  const canSubmit = Boolean(draft.file && !uploadBusy && submissionsOpen);
+  const cameraInputId = `attendance-camera-${key}`;
+  const fileInputId = `attendance-file-${key}`;
+  const notesInputId = `attendance-notes-${key}`;
 
   return (
     <details
@@ -264,8 +307,8 @@ function AttendanceDateGroup({
     >
       <summary className="flex min-h-11 cursor-pointer list-none flex-wrap items-center justify-between gap-2 px-4 py-3.5 text-sm font-semibold text-foreground marker:hidden sm:px-5 [&::-webkit-details-marker]:hidden">
         <span className="min-w-0">
-          {formatExamDateLabel(date)}
-          {date === todayIso ? (
+          {slotLabel(slot)}
+          {slot.date === todayIso ? (
             <span className="ml-2 rounded bg-primary/15 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-primary">
               Today
             </span>
@@ -286,6 +329,7 @@ function AttendanceDateGroup({
                 row={row}
                 downloadingId={downloadingId}
                 deletingId={deletingId}
+                deleteEnabled={submissionsOpen}
                 onDownload={onDownload}
                 onDelete={onDelete}
               />
@@ -293,8 +337,19 @@ function AttendanceDateGroup({
           </div>
         )}
 
+        {!submissionsOpen ? (
+          <p className="mt-4 text-sm text-muted-foreground">
+            {slot.scope === "CORE" ? "Core" : "Elective"} submissions are closed for this examination.
+          </p>
+        ) : (
+        <>
+        {submissionDeadlineEnd ? (
+          <p className="mt-3 text-xs font-medium text-amber-800 dark:text-amber-200">
+            Submit by {formatSubmissionDeadlineDate(submissionDeadlineEnd)}.
+          </p>
+        ) : null}
         <form
-          onSubmit={(e) => onUpload(date, e)}
+          onSubmit={(e) => onUpload(slot, e)}
           className="mt-4 flex flex-col gap-3 rounded-xl border border-dashed border-border bg-muted/10 p-3"
         >
           <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Upload for this day</p>
@@ -306,7 +361,7 @@ function AttendanceDateGroup({
               id={notesInputId}
               type="text"
               value={draft.notes}
-              onChange={(e) => onDraftChange(date, { notes: e.target.value })}
+              onChange={(e) => onDraftChange(key, { notes: e.target.value })}
               autoComplete="off"
               disabled={uploadBusy}
               className={`${formInputClass} min-h-11 text-base sm:text-sm`}
@@ -325,7 +380,7 @@ function AttendanceDateGroup({
               disabled={uploadBusy}
               onChange={(e) => {
                 const f = e.target.files?.[0] ?? null;
-                onDraftChange(date, { file: f });
+                onDraftChange(key, { file: f });
                 e.target.value = "";
               }}
             />
@@ -340,7 +395,7 @@ function AttendanceDateGroup({
               disabled={uploadBusy}
               onChange={(e) => {
                 const f = e.target.files?.[0] ?? null;
-                onDraftChange(date, { file: f });
+                onDraftChange(key, { file: f });
                 e.target.value = "";
               }}
             />
@@ -352,9 +407,11 @@ function AttendanceDateGroup({
             </p>
           ) : null}
           <button type="submit" disabled={!canSubmit} className={btnPrimary}>
-            {uploadBusy ? "Uploading…" : "Upload for this day"}
+            {uploadBusy ? "Uploading…" : "Upload"}
           </button>
         </form>
+        </>
+        )}
       </div>
     </details>
   );
@@ -367,15 +424,16 @@ export default function InspectorAttendanceSheetsPage() {
   const [exam, setExam] = useState<Examination | null>(null);
   const [postingId, setPostingId] = useState<string | null>(null);
   const [centreLabel, setCentreLabel] = useState<string>("");
-  const [scheduledDates, setScheduledDates] = useState<string[]>([]);
+  const [scheduledItems, setScheduledItems] = useState<AttendanceScheduledDateItem[]>([]);
+  const [submissionStatus, setSubmissionStatus] = useState<InspectorSubmissionStatus | null>(null);
   const [items, setItems] = useState<AttendanceSheet[]>([]);
   const [draftByDate, setDraftByDate] = useState<Record<string, UploadDraft>>({});
-  const [focusedDate, setFocusedDate] = useState<string | null>(null);
+  const [focusedKey, setFocusedKey] = useState<string | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
   const [actionSuccess, setActionSuccess] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
-  const [uploadBusyDate, setUploadBusyDate] = useState<string | null>(null);
+  const [uploadBusyKey, setUploadBusyKey] = useState<string | null>(null);
   const [downloadingId, setDownloadingId] = useState<string | null>(null);
   const [deletingId, setDeletingId] = useState<string | null>(null);
   const [pendingDeleteSheet, setPendingDeleteSheet] = useState<AttendanceSheet | null>(null);
@@ -384,25 +442,29 @@ export default function InspectorAttendanceSheetsPage() {
   const groupRefs = useRef<Record<string, HTMLDetailsElement | null>>({});
   const chooseFileRefs = useRef<Record<string, HTMLInputElement | null>>({});
 
-  const sheetsByDate = useMemo(() => groupSheetsByDate(items), [items]);
-  const actionableDates = useMemo(
-    () => scheduledDates.filter((d) => isSubmissionAllowed(d, todayIso)),
-    [scheduledDates, todayIso],
+  const uploadSlots = useMemo(() => flattenScheduledDates(scheduledItems), [scheduledItems]);
+  const scheduledDates = useMemo(() => uniqueDates(uploadSlots), [uploadSlots]);
+  const sheetsBySlot = useMemo(() => groupSheetsBySlot(items), [items]);
+  const actionableSlots = useMemo(
+    () => uploadSlots.filter((s) => isSubmissionAllowed(s.date, todayIso)),
+    [uploadSlots, todayIso],
   );
   const nextUpcomingDate = useMemo(() => {
     const upcoming = scheduledDates.filter((d) => d > todayIso).sort((a, b) => a.localeCompare(b));
     return upcoming[0];
   }, [scheduledDates, todayIso]);
   const dateStatuses = useMemo(
-    () => buildDateStatuses(actionableDates, sheetsByDate),
-    [actionableDates, sheetsByDate],
+    () => buildDateStatuses(actionableSlots, sheetsBySlot),
+    [actionableSlots, sheetsBySlot],
   );
-  const dateGroups = useMemo(() => buildDateGroups(actionableDates, sheetsByDate), [actionableDates, sheetsByDate]);
+  const dateGroups = useMemo(() => buildDateGroups(actionableSlots, sheetsBySlot), [actionableSlots, sheetsBySlot]);
 
   const totalFiles = items.length;
+  const todaySlots = actionableSlots.filter((s) => s.date === todayIso);
   const todayMissing =
-    actionableDates.includes(todayIso) && (sheetsByDate.get(todayIso)?.length ?? 0) === 0;
-  const noDueDaysYet = !loading && scheduledDates.length > 0 && actionableDates.length === 0;
+    todaySlots.length > 0 &&
+    todaySlots.some((s) => (sheetsBySlot.get(slotKey(s))?.length ?? 0) === 0);
+  const noDueDaysYet = !loading && uploadSlots.length > 0 && actionableSlots.length === 0;
 
   const getDraft = useCallback(
     (date: string): UploadDraft => draftByDate[date] ?? emptyDraft(),
@@ -425,15 +487,15 @@ export default function InspectorAttendanceSheetsPage() {
   }, []);
 
   const refreshLists = useCallback(async (examId: number, pid: string | null) => {
-    const [datesRes, listRes] = await Promise.all([
+    const [datesRes, listRes, statusRes] = await Promise.all([
       getInspectorAttendanceScheduledDates(examId, pid),
       listInspectorAttendanceSheets(examId, { postingId: pid }),
+      getInspectorSubmissionStatus(examId),
     ]);
-    const dates = Array.isArray(datesRes.dates) ? [...datesRes.dates] : [];
-    dates.sort((a, b) => b.localeCompare(a));
-    setScheduledDates(dates);
+    setScheduledItems(Array.isArray(datesRes.dates) ? datesRes.dates : []);
     setServerToday(datesRes.today ?? null);
     setItems(Array.isArray(listRes.items) ? listRes.items : []);
+    setSubmissionStatus(statusRes);
   }, []);
 
   useEffect(() => {
@@ -474,11 +536,12 @@ export default function InspectorAttendanceSheetsPage() {
     };
   }, [router, refreshLists]);
 
-  const focusDateGroup = useCallback((date: string) => {
-    setFocusedDate(date);
+  const focusSlotGroup = useCallback((slot: UploadSlot) => {
+    const key = slotKey(slot);
+    setFocusedKey(key);
     setActionError(null);
     requestAnimationFrame(() => {
-      const el = groupRefs.current[date];
+      const el = groupRefs.current[key];
       if (el) {
         el.open = true;
         el.scrollIntoView({ behavior: "smooth", block: "start" });
@@ -486,27 +549,29 @@ export default function InspectorAttendanceSheetsPage() {
     });
   }, []);
 
-  async function onUpload(date: string, e: FormEvent) {
+  async function onUpload(slot: UploadSlot, e: FormEvent) {
     e.preventDefault();
     if (!exam) return;
-    if (!isSubmissionAllowed(date, todayIso)) return;
-    const draft = getDraft(date);
+    if (!isSubmissionAllowed(slot.date, todayIso)) return;
+    const key = slotKey(slot);
+    const draft = getDraft(key);
     if (!draft.file) return;
 
-    setUploadBusyDate(date);
+    setUploadBusyKey(key);
     setActionError(null);
     setActionSuccess(null);
     try {
-      await uploadInspectorAttendanceSheet(exam.id, date, draft.file, {
+      await uploadInspectorAttendanceSheet(exam.id, slot.date, draft.file, {
         notes: draft.notes || null,
         postingId,
+        subjectScope: slot.scope,
       });
-      clearDraft(date);
-      setFocusedDate(date);
-      setActionSuccess(`Attendance sheet uploaded for ${formatExamDateLabel(date)}.`);
+      clearDraft(key);
+      setFocusedKey(key);
+      setActionSuccess(`Attendance sheet uploaded for ${slotLabel(slot)}.`);
       await refreshLists(exam.id, postingId);
       requestAnimationFrame(() => {
-        const el = groupRefs.current[date];
+        const el = groupRefs.current[key];
         if (el) {
           el.open = true;
           el.scrollIntoView({ behavior: "smooth", block: "nearest" });
@@ -515,7 +580,7 @@ export default function InspectorAttendanceSheetsPage() {
     } catch (err) {
       setActionError(err instanceof Error ? err.message : "Upload failed");
     } finally {
-      setUploadBusyDate(null);
+      setUploadBusyKey(null);
     }
   }
 
@@ -534,11 +599,13 @@ export default function InspectorAttendanceSheetsPage() {
   }
 
   function requestDelete(sheet: AttendanceSheet) {
+    if (!submissionStatus || !isInspectorScopePeriodOpen(submissionStatus, sheet.subject_scope)) return;
     setPendingDeleteSheet(sheet);
   }
 
   async function confirmDeleteSheet() {
     if (!exam || pendingDeleteSheet === null) return;
+    if (!submissionStatus || !isInspectorScopePeriodOpen(submissionStatus, pendingDeleteSheet.subject_scope)) return;
     const sheet = pendingDeleteSheet;
     setDeleteBusy(true);
     setDeletingId(sheet.id);
@@ -558,9 +625,11 @@ export default function InspectorAttendanceSheetsPage() {
   }
 
   function onStickyUploadToday() {
-    focusDateGroup(todayIso);
+    const firstToday = todaySlots[0];
+    if (!firstToday) return;
+    focusSlotGroup(firstToday);
     requestAnimationFrame(() => {
-      chooseFileRefs.current[todayIso]?.click();
+      chooseFileRefs.current[slotKey(firstToday)]?.click();
     });
   }
 
@@ -614,21 +683,43 @@ export default function InspectorAttendanceSheetsPage() {
             </section>
           ) : null}
 
-          {!loading && actionableDates.length > 0 ? (
+          {!loading && submissionStatus && !submissionStatus.core_period_open && !submissionStatus.elective_period_open ? (
+            <p className="rounded-lg border border-amber-500/40 bg-amber-500/10 px-3 py-2.5 text-sm text-foreground">
+              Core and elective submissions are closed.
+            </p>
+          ) : null}
+          {!loading && submissionStatus && submissionStatus.core_period_open && !submissionStatus.elective_period_open ? (
+            <p className="rounded-lg border border-amber-500/40 bg-amber-500/10 px-3 py-2.5 text-sm text-foreground">
+              Elective submissions are closed
+              {inspectorScopePeriodLabel(submissionStatus, "ELECTIVE")
+                ? ` (open ${inspectorScopePeriodLabel(submissionStatus, "ELECTIVE")}).`
+                : "."}
+            </p>
+          ) : null}
+          {!loading && submissionStatus && !submissionStatus.core_period_open && submissionStatus.elective_period_open ? (
+            <p className="rounded-lg border border-amber-500/40 bg-amber-500/10 px-3 py-2.5 text-sm text-foreground">
+              Core submissions are closed
+              {inspectorScopePeriodLabel(submissionStatus, "CORE")
+                ? ` (open ${inspectorScopePeriodLabel(submissionStatus, "CORE")}).`
+                : "."}
+            </p>
+          ) : null}
+
+          {!loading && actionableSlots.length > 0 ? (
             <section className={panelClass}>
               <h2 className="text-base font-semibold text-card-foreground sm:text-lg">Examination days</h2>
               <p className="mt-1 text-sm text-muted-foreground">
-                Tap a day to jump to uploads. Green dot means at least one file uploaded.
+                Tap a slot to jump to uploads. Green dot means at least one file uploaded.
               </p>
               <AttendanceDateOverview
                 statuses={dateStatuses}
                 todayIso={todayIso}
-                onSelectDate={focusDateGroup}
+                onSelectSlot={focusSlotGroup}
               />
             </section>
           ) : null}
 
-          {!loading && scheduledDates.length === 0 ? (
+          {!loading && uploadSlots.length === 0 ? (
             <section className={panelClass}>
               <p className="text-sm text-muted-foreground">
                 No scheduled examination dates are available for this centre yet. Check the timetable or contact
@@ -637,7 +728,7 @@ export default function InspectorAttendanceSheetsPage() {
             </section>
           ) : null}
 
-          {(actionableDates.length > 0 || loading) ? (
+          {(actionableSlots.length > 0 || loading) ? (
           <section className="space-y-4">
             <div className="px-1">
               <h2 className="text-base font-semibold text-card-foreground sm:text-lg">Attendance by day</h2>
@@ -648,42 +739,53 @@ export default function InspectorAttendanceSheetsPage() {
 
             {loading ? (
               <p className={`${panelClass} text-center text-sm text-muted-foreground`}>Loading…</p>
-            ) : actionableDates.length === 0 ? null : (
+            ) : actionableSlots.length === 0 ? null : (
               <div className="space-y-3">
-                {dateGroups.map((group) => (
+                {dateGroups.map((group) => {
+                  const key = slotKey(group.slot);
+                  return (
                   <AttendanceDateGroup
-                    key={group.date}
+                    key={key}
                     group={group}
                     todayIso={todayIso}
-                    focusedDate={focusedDate}
+                    focusedKey={focusedKey}
                     groupRef={(el) => {
-                      groupRefs.current[group.date] = el;
+                      groupRefs.current[key] = el;
                     }}
-                    draft={getDraft(group.date)}
-                    uploadBusy={uploadBusyDate === group.date}
+                    draft={getDraft(key)}
+                    uploadBusy={uploadBusyKey === key}
+                    submissionsOpen={isInspectorScopePeriodOpen(submissionStatus, group.slot.scope)}
+                    submissionDeadlineEnd={
+                      submissionStatus ? inspectorScopePeriodEnd(submissionStatus, group.slot.scope) : null
+                    }
                     downloadingId={downloadingId}
                     deletingId={deletingId}
                     onDraftChange={setDraft}
-                    onUpload={(date, e) => void onUpload(date, e)}
+                    onUpload={(slot, e) => void onUpload(slot, e)}
                     onDownload={(row) => void onDownload(row)}
                     onDelete={requestDelete}
                   />
-                ))}
-                {/* Hidden input for sticky CTA to trigger file picker on today */}
+                  );
+                })}
+                {todaySlots[0] ? (
                 <input
                   ref={(el) => {
-                    chooseFileRefs.current[todayIso] = el;
+                    chooseFileRefs.current[slotKey(todaySlots[0])] = el;
                   }}
                   type="file"
                   accept=".pdf,image/*"
                   className="sr-only"
                   onChange={(e) => {
                     const f = e.target.files?.[0] ?? null;
-                    if (f) setDraft(todayIso, { file: f });
+                    const slot = todaySlots[0];
+                    if (f && slot) {
+                      setDraft(slotKey(slot), { file: f });
+                      focusSlotGroup(slot);
+                    }
                     e.target.value = "";
-                    focusDateGroup(todayIso);
                   }}
                 />
+                ) : null}
               </div>
             )}
           </section>

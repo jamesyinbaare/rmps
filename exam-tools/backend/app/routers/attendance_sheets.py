@@ -17,10 +17,11 @@ from app.dependencies.auth import (
     SuperAdminOrFinanceOfficerDep,
 )
 from app.dependencies.database import DBSessionDep
-from app.models import InspectorAttendanceSheet, InspectorExamPosting, School, User
+from app.models import ExamInspectorSubjectScope, InspectorAttendanceSheet, InspectorExamPosting, School, User
 from app.schemas.attendance_sheet import (
     AttendanceCentreComplianceItem,
     AttendanceCentreComplianceListResponse,
+    AttendanceScheduledDateItem,
     AttendanceSheetAdminListResponse,
     AttendanceSheetAdminResponse,
     AttendanceSheetAdminSummaryResponse,
@@ -44,13 +45,17 @@ from app.services.attendance_sheet_files import (
 from app.services.exam_documents import ensure_storage_dir
 from app.services.exam_timetable_pdf import load_examination_or_raise
 from app.services.inspector_posting import resolve_inspector_workspace
+from app.services.inspector_submission_settings import assert_submission_period_open
 from app.services.script_control import (
     assert_script_packing_calendar_allowed,
     script_packing_today_in_configured_zone,
 )
-from app.services.timetable_dates import (
-    scheduled_examination_dates_for_exam,
-    scheduled_examination_dates_for_inspector_workspace,
+from app.services.timetable_dates import scheduled_examination_dates_for_exam
+from app.services.subject_scope import (
+    resolve_attendance_scope,
+    scheduled_date_items_for_workspace,
+    scopes_for_centre_date,
+    sheets_visible_to_posting,
 )
 
 router = APIRouter(tags=["attendance-sheets"])
@@ -72,6 +77,12 @@ def _content_disposition_attachment(filename: str) -> str:
     return f'attachment; filename="{ascii_name}"; filename*=UTF-8\'\'{encoded}'
 
 
+def _scope_str(scope: ExamInspectorSubjectScope | str) -> str:
+    if isinstance(scope, ExamInspectorSubjectScope):
+        return scope.value
+    return str(scope)
+
+
 def _sheet_to_response(row: InspectorAttendanceSheet, center: School) -> AttendanceSheetResponse:
     return AttendanceSheetResponse(
         id=row.id,
@@ -80,6 +91,7 @@ def _sheet_to_response(row: InspectorAttendanceSheet, center: School) -> Attenda
         center_id=row.center_id,
         center_code=str(center.code),
         center_name=str(center.name),
+        subject_scope=_scope_str(row.subject_scope),
         examination_date=row.examination_date,
         notes=row.notes,
         original_filename=row.original_filename,
@@ -115,6 +127,7 @@ async def _collision_index(
     examination_id: int,
     center_id: UUID,
     examination_date: date,
+    subject_scope: ExamInspectorSubjectScope,
 ) -> int:
     stmt = (
         select(func.count())
@@ -123,6 +136,7 @@ async def _collision_index(
             InspectorAttendanceSheet.examination_id == examination_id,
             InspectorAttendanceSheet.center_id == center_id,
             InspectorAttendanceSheet.examination_date == examination_date,
+            InspectorAttendanceSheet.subject_scope == subject_scope,
         )
     )
     existing = int((await session.execute(stmt)).scalar_one())
@@ -141,9 +155,15 @@ async def list_scheduled_dates(
     ),
 ) -> AttendanceSheetScheduledDatesResponse:
     ctx = await _resolve_inspector_ctx(session, examination_id, user, posting_id, jwt_posting_id)
-    dates = await scheduled_examination_dates_for_inspector_workspace(session, examination_id, ctx)
+    items = await scheduled_date_items_for_workspace(session, examination_id, ctx)
     return AttendanceSheetScheduledDatesResponse(
-        dates=dates,
+        dates=[
+            AttendanceScheduledDateItem(
+                examination_date=item.examination_date,
+                subject_scopes=list(item.subject_scopes),
+            )
+            for item in items
+        ],
         today=script_packing_today_in_configured_zone(),
     )
 
@@ -166,12 +186,15 @@ async def list_inspector_attendance_sheets(
         .where(InspectorAttendanceSheet.inspector_exam_posting_id == ctx.posting.id)
         .order_by(InspectorAttendanceSheet.examination_date.desc(), InspectorAttendanceSheet.created_at.desc())
     )
-    if examination_date is not None:
-        stmt = stmt.where(InspectorAttendanceSheet.examination_date == examination_date)
-
     result = await session.execute(stmt)
     rows = result.all()
-    items = [_sheet_to_response(sheet, center) for sheet, center in rows]
+    items = [
+        _sheet_to_response(sheet, center)
+        for sheet, center in rows
+        if sheets_visible_to_posting(ctx.subject_scope, sheet.subject_scope)
+    ]
+    if examination_date is not None:
+        items = [i for i in items if i.examination_date == examination_date]
     return AttendanceSheetListResponse(items=items, total=len(items))
 
 
@@ -183,18 +206,23 @@ async def upload_inspector_attendance_sheet(
     jwt_posting_id: InspectorJwtPostingIdDep,
     examination_date: date = Form(...),
     notes: str | None = Form(None),
+    subject_scope: str | None = Form(None, description="Required when both Core and Elective run on this date"),
     file: UploadFile = File(...),
     posting_id: UUID | None = Query(default=None),
 ) -> AttendanceSheetResponse:
     ctx = await _resolve_inspector_ctx(session, examination_id, user, posting_id, jwt_posting_id)
     assert ctx.posting is not None
 
-    allowed_dates = await scheduled_examination_dates_for_inspector_workspace(session, examination_id, ctx)
-    if examination_date not in allowed_dates:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="examination_date is not a scheduled date for this examination centre",
-        )
+    scopes_on_date = await scopes_for_centre_date(
+        session, examination_id, ctx.scope_ids, examination_date
+    )
+    resolved_scope = resolve_attendance_scope(
+        ctx.subject_scope,
+        scopes_on_date,
+        subject_scope,
+    )
+
+    await assert_submission_period_open(session, examination_id, resolved_scope)
 
     try:
         assert_script_packing_calendar_allowed(
@@ -216,6 +244,7 @@ async def upload_inspector_attendance_sheet(
         examination_id=examination_id,
         center_id=ctx.center_host.id,
         examination_date=examination_date,
+        subject_scope=resolved_scope,
     )
     display_name = build_attendance_sheet_filename(
         str(ctx.center_host.code),
@@ -239,6 +268,7 @@ async def upload_inspector_attendance_sheet(
         inspector_exam_posting_id=ctx.posting.id,
         center_id=ctx.center_host.id,
         examination_date=examination_date,
+        subject_scope=resolved_scope,
         notes=notes_clean,
         original_filename=display_name,
         stored_path=stored_name,
@@ -286,6 +316,8 @@ async def _load_sheet_for_inspector(
     sheet, center = row
     if sheet.inspector_exam_posting_id != ctx.posting.id:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Not allowed for this workspace")
+    if not sheets_visible_to_posting(ctx.subject_scope, sheet.subject_scope):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Not allowed for this workspace scope")
     return sheet, center
 
 
@@ -328,6 +360,7 @@ async def delete_inspector_attendance_sheet(
     sheet, _center = await _load_sheet_for_inspector(
         session, examination_id, sheet_id, user, posting_id, jwt_posting_id
     )
+    await assert_submission_period_open(session, examination_id, sheet.subject_scope)
     stored = sheet.stored_path
     await session.delete(sheet)
     await session.commit()
@@ -349,7 +382,10 @@ async def admin_attendance_scheduled_dates(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Examination not found") from None
     dates = await scheduled_examination_dates_for_exam(session, examination_id)
     return AttendanceSheetScheduledDatesResponse(
-        dates=dates,
+        dates=[
+            AttendanceScheduledDateItem(examination_date=d, subject_scopes=["CORE", "ELECTIVE"])
+            for d in dates
+        ],
         today=script_packing_today_in_configured_zone(),
     )
 
@@ -411,6 +447,7 @@ async def admin_attendance_compliance_centres(
             inspector_user_id=r.inspector_user_id,
             inspector_full_name=r.inspector_full_name,
             inspector_phone=r.inspector_phone,
+            subject_scope=r.subject_scope,
             file_count=r.file_count,
             upload_status=r.upload_status,
         )
@@ -428,6 +465,7 @@ async def list_admin_attendance_sheets(
     page_size: int = Query(50, ge=1, le=200),
     center_id: UUID | None = Query(default=None),
     examination_date: date | None = Query(default=None),
+    subject_scope: str | None = Query(default=None, description="Filter by CORE or ELECTIVE"),
     inspector_user_id: UUID | None = Query(default=None),
     q: str | None = Query(None, description="Search centre code/name or inspector name"),
 ) -> AttendanceSheetAdminListResponse:
@@ -441,6 +479,8 @@ async def list_admin_attendance_sheets(
         filters.append(InspectorAttendanceSheet.center_id == center_id)
     if examination_date is not None:
         filters.append(InspectorAttendanceSheet.examination_date == examination_date)
+    if subject_scope is not None:
+        filters.append(InspectorAttendanceSheet.subject_scope == subject_scope.strip().upper())
     if inspector_user_id is not None:
         filters.append(
             InspectorAttendanceSheet.inspector_exam_posting_id.in_(
@@ -519,6 +559,7 @@ async def list_admin_attendance_sheets(
                 center_id=sheet.center_id,
                 center_code=str(center.code) if center else "",
                 center_name=str(center.name) if center else "",
+                subject_scope=_scope_str(sheet.subject_scope),
                 examination_date=sheet.examination_date,
                 notes=sheet.notes,
                 original_filename=sheet.original_filename,

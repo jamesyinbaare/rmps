@@ -11,7 +11,7 @@ from sqlalchemy.orm import selectinload
 
 from app.dependencies.auth import SuperAdminOrFinanceOfficerDep
 from app.dependencies.database import DBSessionDep
-from app.models import ExamCentreOfficial, Examination, ExamOfficialDesignation, School
+from app.models import ExamCentreOfficial, ExamInspectorSubjectScope, Examination, ExamOfficialDesignation, School
 from app.schemas.admin_exam_official import AdminExamCentreOfficialListResponse, AdminExamCentreOfficialRow
 from app.services.exam_official_export import (
     build_combined_export,
@@ -40,6 +40,7 @@ def _base_official_query(
     examination_id: int,
     center_id: UUID | None,
     designation: ExamOfficialDesignation | None = None,
+    subject_scope: ExamInspectorSubjectScope | None = None,
 ):
     stmt = (
         select(ExamCentreOfficial, School)
@@ -51,6 +52,8 @@ def _base_official_query(
         stmt = stmt.where(ExamCentreOfficial.center_id == center_id)
     if designation is not None:
         stmt = stmt.where(ExamCentreOfficial.designation == designation)
+    if subject_scope is not None:
+        stmt = stmt.where(ExamCentreOfficial.subject_scope == subject_scope)
     return stmt.order_by(School.code.asc(), ExamCentreOfficial.full_name.asc())
 
 
@@ -69,6 +72,20 @@ def _designation_filter_from_query(
     )
 
 
+def _subject_scope_filter_from_query(scope: str | None) -> ExamInspectorSubjectScope | None:
+    if scope is None or not str(scope).strip():
+        return None
+    raw = str(scope).strip().upper()
+    if raw == ExamInspectorSubjectScope.CORE.value:
+        return ExamInspectorSubjectScope.CORE
+    if raw == ExamInspectorSubjectScope.ELECTIVE.value:
+        return ExamInspectorSubjectScope.ELECTIVE
+    raise HTTPException(
+        status_code=status.HTTP_400_BAD_REQUEST,
+        detail="Invalid subject_scope (expected CORE or ELECTIVE)",
+    )
+
+
 @router.get("", response_model=AdminExamCentreOfficialListResponse)
 async def admin_list_exam_centre_officials(
     session: DBSessionDep,
@@ -79,10 +96,12 @@ async def admin_list_exam_centre_officials(
         None,
         description="Filter by official designation label (e.g. External Inspector).",
     ),
+    subject_scope: str | None = Query(None, description="Filter by CORE or ELECTIVE"),
     skip: int = Query(0, ge=0),
     limit: int = Query(_DEFAULT_LIST, ge=1, le=_MAX_LIST),
 ) -> AdminExamCentreOfficialListResponse:
     des = _designation_filter_from_query(designation)
+    scope = _subject_scope_filter_from_query(subject_scope)
     ex = await _load_examination(session, examination_id)
     exam_label = examination_label(ex)
 
@@ -93,9 +112,11 @@ async def admin_list_exam_centre_officials(
         count_stmt = count_stmt.where(ExamCentreOfficial.center_id == center_id)
     if des is not None:
         count_stmt = count_stmt.where(ExamCentreOfficial.designation == des)
+    if scope is not None:
+        count_stmt = count_stmt.where(ExamCentreOfficial.subject_scope == scope)
     total = int(await session.scalar(count_stmt) or 0)
 
-    stmt = _base_official_query(examination_id, center_id, des).offset(skip).limit(limit)
+    stmt = _base_official_query(examination_id, center_id, des, scope).offset(skip).limit(limit)
     result = await session.execute(stmt)
     rows = result.all()
 
@@ -114,12 +135,14 @@ async def admin_export_exam_centre_officials(
         None,
         description="Optional: only this designation (e.g. External Inspector).",
     ),
+    subject_scope: str | None = Query(None, description="Optional: CORE or ELECTIVE"),
 ) -> Response:
     des = _designation_filter_from_query(designation)
+    scope = _subject_scope_filter_from_query(subject_scope)
     ex = await _load_examination(session, examination_id)
     exam_label = examination_label(ex)
 
-    stmt = _base_official_query(examination_id, center_id, des)
+    stmt = _base_official_query(examination_id, center_id, des, scope)
     result = await session.execute(stmt)
     pairs: list[tuple[ExamCentreOfficial, School]] = list(result.all())
     if not pairs:

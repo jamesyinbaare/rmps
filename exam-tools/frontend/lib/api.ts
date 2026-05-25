@@ -1643,6 +1643,8 @@ export type ExamOfficialDesignation =
   | "Police Officer"
   | "External Inspector";
 
+export type RecordSubjectScope = "CORE" | "ELECTIVE";
+
 export type ExamCentreOfficialResponse = {
   id: string;
   examination_id: number;
@@ -1656,6 +1658,7 @@ export type ExamCentreOfficialResponse = {
   account_number: string;
   num_days: number;
   telephone_number: string;
+  subject_scope: RecordSubjectScope;
   created_at: string;
   updated_at: string;
 };
@@ -1682,15 +1685,170 @@ export type ExamCentreOfficialUpdatePayload = {
   telephone_number?: string;
 };
 
+function examOfficialsQuery(postingId?: string | null, workingScope?: RecordSubjectScope | null): string {
+  const u = new URLSearchParams();
+  if (postingId?.trim()) u.set("posting_id", postingId.trim());
+  if (workingScope) u.set("working_scope", workingScope);
+  const s = u.toString();
+  return s ? `?${s}` : "";
+}
+
+export type InspectorSubmissionStatus = {
+  core_period_open: boolean;
+  core_submission_period_start: string | null;
+  core_submission_period_end: string | null;
+  elective_period_open: boolean;
+  elective_submission_period_start: string | null;
+  elective_submission_period_end: string | null;
+  officials_core_enabled: boolean;
+  officials_elective_enabled: boolean;
+};
+
+export function isInspectorScopePeriodOpen(
+  status: InspectorSubmissionStatus | null | undefined,
+  scope: RecordSubjectScope,
+): boolean {
+  if (!status) return false;
+  return scope === "CORE" ? status.core_period_open : status.elective_period_open;
+}
+
+export function inspectorScopePeriodEnd(
+  status: InspectorSubmissionStatus,
+  scope: RecordSubjectScope,
+): string | null {
+  return scope === "CORE" ? status.core_submission_period_end : status.elective_submission_period_end;
+}
+
+export function formatSubmissionDeadlineDate(iso: string): string {
+  return new Date(`${iso}T12:00:00`).toLocaleDateString(undefined, {
+    weekday: "short",
+    day: "numeric",
+    month: "short",
+    year: "numeric",
+  });
+}
+
+export function formatSubmissionPeriodRange(
+  status: InspectorSubmissionStatus,
+  scope: RecordSubjectScope,
+): string | null {
+  const start = scope === "CORE" ? status.core_submission_period_start : status.elective_submission_period_start;
+  const end = scope === "CORE" ? status.core_submission_period_end : status.elective_submission_period_end;
+  if (!start || !end) return null;
+  return `${formatSubmissionDeadlineDate(start)} to ${formatSubmissionDeadlineDate(end)}`;
+}
+
+export function inspectorSubmissionDeadlineReminder(
+  status: InspectorSubmissionStatus,
+  scope: RecordSubjectScope,
+): string | null {
+  if (!isInspectorScopePeriodOpen(status, scope)) return null;
+  const end = inspectorScopePeriodEnd(status, scope);
+  if (!end) return null;
+  const scopeLabel = scope === "CORE" ? "core" : "elective";
+  return `Please submit officers' bank account details for the ${scopeLabel} examination by ${formatSubmissionDeadlineDate(end)}.`;
+}
+
+/** Single human-readable notice for the inspector exam-officials page. */
+export function inspectorOfficialsSubmissionNotice(
+  status: InspectorSubmissionStatus,
+  scope: RecordSubjectScope,
+): string | null {
+  const scopeLabel = scope === "CORE" ? "core" : "elective";
+  const periodOpen = isInspectorScopePeriodOpen(status, scope);
+  const uploadsEnabled = scope === "CORE" ? status.officials_core_enabled : status.officials_elective_enabled;
+  const deadline = inspectorScopePeriodEnd(status, scope);
+  const deadlineLabel = deadline ? formatSubmissionDeadlineDate(deadline) : null;
+
+  if (!periodOpen) {
+    const start = scope === "CORE" ? status.core_submission_period_start : status.elective_submission_period_start;
+    const end = scope === "CORE" ? status.core_submission_period_end : status.elective_submission_period_end;
+    if (start && end) {
+      return `Opens ${formatSubmissionDeadlineDate(start)} · closes ${formatSubmissionDeadlineDate(end)}`;
+    }
+    return "Submissions not open yet.";
+  }
+
+  if (!uploadsEnabled) {
+    return "Bank accounts submission is currently not available.";
+  }
+
+  if (deadlineLabel) {
+    return `Please submit officers' bank account details for the ${scopeLabel} examination by ${deadlineLabel}.`;
+  }
+
+  return null;
+}
+
+export function inspectorOpenSubmissionDeadlineReminders(status: InspectorSubmissionStatus): string[] {
+  return (["CORE", "ELECTIVE"] as RecordSubjectScope[])
+    .map((scope) => inspectorSubmissionDeadlineReminder(status, scope))
+    .filter((msg): msg is string => msg != null);
+}
+
+export function inspectorScopePeriodLabel(
+  status: InspectorSubmissionStatus,
+  scope: RecordSubjectScope,
+): string | null {
+  const start = scope === "CORE" ? status.core_submission_period_start : status.elective_submission_period_start;
+  const end = scope === "CORE" ? status.core_submission_period_end : status.elective_submission_period_end;
+  if (!start || !end) return null;
+  return `${start} – ${end}`;
+}
+
+export async function getInspectorSubmissionStatus(examId: number): Promise<InspectorSubmissionStatus> {
+  return apiJson<InspectorSubmissionStatus>(`/examinations/${examId}/inspector-submission-status`);
+}
+
+export type InspectorSubmissionSettings = {
+  examination_id: number;
+  core_submission_period_start: string | null;
+  core_submission_period_end: string | null;
+  elective_submission_period_start: string | null;
+  elective_submission_period_end: string | null;
+  officials_core_enabled: boolean;
+  officials_elective_enabled: boolean;
+  updated_at: string | null;
+};
+
+export type InspectorSubmissionSettingsPut = {
+  core_submission_period_start: string | null;
+  core_submission_period_end: string | null;
+  elective_submission_period_start: string | null;
+  elective_submission_period_end: string | null;
+  officials_core_enabled: boolean;
+  officials_elective_enabled: boolean;
+};
+
+export async function getAdminInspectorSubmissionSettings(
+  examId: number,
+): Promise<InspectorSubmissionSettings> {
+  return apiJson<InspectorSubmissionSettings>(
+    `/admin/examinations/${examId}/inspector-submission-settings`,
+  );
+}
+
+export async function putAdminInspectorSubmissionSettings(
+  examId: number,
+  payload: InspectorSubmissionSettingsPut,
+): Promise<InspectorSubmissionSettings> {
+  return apiJson<InspectorSubmissionSettings>(
+    `/admin/examinations/${examId}/inspector-submission-settings`,
+    {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    },
+  );
+}
+
 export async function getExamOfficialsForMyCentre(
   examId: number,
   postingId?: string | null,
+  workingScope?: RecordSubjectScope | null,
 ): Promise<ExamCentreOfficialListResponse> {
-  const u = new URLSearchParams();
-  if (postingId?.trim()) u.set("posting_id", postingId.trim());
-  const s = u.toString();
   return apiJson<ExamCentreOfficialListResponse>(
-    `/examinations/${examId}/exam-officials/my-centre${s ? `?${s}` : ""}`,
+    `/examinations/${examId}/exam-officials/my-centre${examOfficialsQuery(postingId, workingScope)}`,
   );
 }
 
@@ -1698,12 +1856,10 @@ export async function createExamOfficial(
   examId: number,
   payload: ExamCentreOfficialCreatePayload,
   postingId?: string | null,
+  workingScope?: RecordSubjectScope | null,
 ): Promise<ExamCentreOfficialResponse> {
-  const u = new URLSearchParams();
-  if (postingId?.trim()) u.set("posting_id", postingId.trim());
-  const s = u.toString();
   return apiJson<ExamCentreOfficialResponse>(
-    `/examinations/${examId}/exam-officials/my-centre${s ? `?${s}` : ""}`,
+    `/examinations/${examId}/exam-officials/my-centre${examOfficialsQuery(postingId, workingScope)}`,
     {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -1717,12 +1873,10 @@ export async function updateExamOfficial(
   officialId: string,
   payload: ExamCentreOfficialUpdatePayload,
   postingId?: string | null,
+  workingScope?: RecordSubjectScope | null,
 ): Promise<ExamCentreOfficialResponse> {
-  const u = new URLSearchParams();
-  if (postingId?.trim()) u.set("posting_id", postingId.trim());
-  const s = u.toString();
   return apiJson<ExamCentreOfficialResponse>(
-    `/examinations/${examId}/exam-officials/my-centre/${officialId.trim()}${s ? `?${s}` : ""}`,
+    `/examinations/${examId}/exam-officials/my-centre/${officialId.trim()}${examOfficialsQuery(postingId, workingScope)}`,
     {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
@@ -1735,13 +1889,12 @@ export async function deleteExamOfficial(
   examId: number,
   officialId: string,
   postingId?: string | null,
+  workingScope?: RecordSubjectScope | null,
 ): Promise<void> {
-  const u = new URLSearchParams();
-  if (postingId?.trim()) u.set("posting_id", postingId.trim());
-  const s = u.toString();
-  await apiJson(`/examinations/${examId}/exam-officials/my-centre/${officialId.trim()}${s ? `?${s}` : ""}`, {
-    method: "DELETE",
-  });
+  await apiJson(
+    `/examinations/${examId}/exam-officials/my-centre/${officialId.trim()}${examOfficialsQuery(postingId, workingScope)}`,
+    { method: "DELETE" },
+  );
 }
 
 export type AdminExamCentreOfficialRow = {
@@ -1760,6 +1913,7 @@ export type AdminExamCentreOfficialRow = {
   account_number: string;
   num_days: number;
   telephone_number: string;
+  subject_scope: RecordSubjectScope;
   created_at: string;
   updated_at: string;
 };
@@ -1773,6 +1927,7 @@ export async function listAdminExamCentreOfficials(params: {
   examination_id: number;
   center_id?: string | null;
   designation?: string | null;
+  subject_scope?: RecordSubjectScope | null;
   skip?: number;
   limit?: number;
 }): Promise<AdminExamCentreOfficialListResponse> {
@@ -1780,6 +1935,7 @@ export async function listAdminExamCentreOfficials(params: {
   q.set("examination_id", String(params.examination_id));
   if (params.center_id) q.set("center_id", params.center_id.trim());
   if (params.designation?.trim()) q.set("designation", params.designation.trim());
+  if (params.subject_scope) q.set("subject_scope", params.subject_scope);
   if (params.skip != null) q.set("skip", String(params.skip));
   if (params.limit != null) q.set("limit", String(params.limit));
   return apiJson<AdminExamCentreOfficialListResponse>(`/admin/exam-centre-officials?${q.toString()}`);
@@ -2741,6 +2897,7 @@ export type AttendanceSheet = {
   center_id: string;
   center_code: string;
   center_name: string;
+  subject_scope: RecordSubjectScope;
   examination_date: string;
   notes: string | null;
   original_filename: string;
@@ -2754,8 +2911,13 @@ export type AttendanceSheetListResponse = {
   total: number;
 };
 
+export type AttendanceScheduledDateItem = {
+  examination_date: string;
+  subject_scopes: RecordSubjectScope[];
+};
+
 export type AttendanceSheetScheduledDatesResponse = {
-  dates: string[];
+  dates: AttendanceScheduledDateItem[];
   today: string;
 };
 
@@ -2786,6 +2948,7 @@ export type AttendanceCentreComplianceItem = {
   inspector_user_id: string;
   inspector_full_name: string;
   inspector_phone: string | null;
+  subject_scope: RecordSubjectScope;
   file_count: number;
   upload_status: "uploaded" | "missing" | "not_due";
 };
@@ -2830,13 +2993,20 @@ export async function uploadInspectorAttendanceSheet(
   examId: number,
   examinationDate: string,
   file: File,
-  options?: { notes?: string | null; postingId?: string | null },
+  options?: {
+    notes?: string | null;
+    postingId?: string | null;
+    subjectScope?: RecordSubjectScope | null;
+  },
 ): Promise<AttendanceSheet> {
   const token = getStoredToken();
   if (!token) throw new Error("Not authenticated");
 
   const formData = new FormData();
   formData.append("examination_date", examinationDate);
+  if (options?.subjectScope) {
+    formData.append("subject_scope", options.subjectScope);
+  }
   if (options?.notes != null && options.notes.trim() !== "") {
     formData.append("notes", options.notes.trim());
   }
@@ -2921,6 +3091,7 @@ export async function listAdminAttendanceSheets(
     pageSize?: number;
     centerId?: string | null;
     examinationDate?: string | null;
+    subjectScope?: RecordSubjectScope | null;
     inspectorUserId?: string | null;
     search?: string | null;
   },
@@ -2930,6 +3101,7 @@ export async function listAdminAttendanceSheets(
   if (params?.pageSize != null) q.set("page_size", String(params.pageSize));
   if (params?.centerId?.trim()) q.set("center_id", params.centerId.trim());
   if (params?.examinationDate?.trim()) q.set("examination_date", params.examinationDate.trim());
+  if (params?.subjectScope) q.set("subject_scope", params.subjectScope);
   if (params?.inspectorUserId?.trim()) q.set("inspector_user_id", params.inspectorUserId.trim());
   if (params?.search?.trim()) q.set("q", params.search.trim());
   const s = q.toString();
@@ -2952,6 +3124,7 @@ export async function downloadAdminAttendanceSheetsZip(
   examId: number,
   params: {
     centerId: string;
+    subjectScope?: RecordSubjectScope | null;
     examinationDate?: string | null;
     search?: string | null;
   },
@@ -2959,6 +3132,7 @@ export async function downloadAdminAttendanceSheetsZip(
 ): Promise<void> {
   const q = new URLSearchParams();
   q.set("center_id", params.centerId);
+  if (params.subjectScope) q.set("subject_scope", params.subjectScope);
   if (params.examinationDate?.trim()) q.set("examination_date", params.examinationDate.trim());
   if (params.search?.trim()) q.set("q", params.search.trim());
   await downloadApiFile(

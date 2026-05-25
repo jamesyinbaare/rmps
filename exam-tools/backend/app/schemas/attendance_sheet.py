@@ -6,8 +6,13 @@ from uuid import UUID
 from pydantic import BaseModel, Field
 
 
+class AttendanceScheduledDateItem(BaseModel):
+    examination_date: date
+    subject_scopes: list[str] = Field(description="CORE and/or ELECTIVE scheduled at the centre on this date")
+
+
 class AttendanceSheetScheduledDatesResponse(BaseModel):
-    dates: list[date]
+    dates: list[AttendanceScheduledDateItem]
     today: date
 
 
@@ -18,6 +23,7 @@ class AttendanceSheetResponse(BaseModel):
     center_id: UUID
     center_code: str
     center_name: str
+    subject_scope: str
     examination_date: date
     notes: str | None
     original_filename: str
@@ -60,6 +66,7 @@ class AttendanceCentreComplianceItem(BaseModel):
     inspector_user_id: UUID
     inspector_full_name: str
     inspector_phone: str | None = None
+    subject_scope: str
     file_count: int = 0
     upload_status: str  # "uploaded" | "missing" | "not_due"
 

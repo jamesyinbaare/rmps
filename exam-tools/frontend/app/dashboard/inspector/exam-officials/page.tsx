@@ -16,6 +16,9 @@ import {
   displayBankCode,
   getDistinctBankNames,
   getExamOfficialsForMyCentre,
+  getInspectorSubmissionStatus,
+  inspectorOfficialsSubmissionNotice,
+  isInspectorScopePeriodOpen,
   getMyInspectorPostings,
   getStaffDefaultExamination,
   listBankBranches,
@@ -25,7 +28,9 @@ import {
   type ExamOfficialDesignation,
   type ExamCentreOfficialResponse,
   type ExamCentreOfficialCreatePayload,
+  type InspectorSubmissionStatus,
   type MyInspectorPostingRow,
+  type RecordSubjectScope,
 } from "@/lib/api";
 import {
   OfficialAccountsExamMeta,
@@ -251,6 +256,8 @@ export default function InspectorExamOfficialsPage() {
   const [examId, setExamId] = useState<number | null>(null);
   const [postings, setPostings] = useState<MyInspectorPostingRow[]>([]);
   const [selectedPostingId, setSelectedPostingId] = useState<string | null>(null);
+  const [workingScope, setWorkingScope] = useState<RecordSubjectScope>("CORE");
+  const [submissionStatus, setSubmissionStatus] = useState<InspectorSubmissionStatus | null>(null);
   const [items, setItems] = useState<ExamCentreOfficialResponse[]>([]);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -284,24 +291,46 @@ export default function InspectorExamOfficialsPage() {
   /** Desktop table: which row’s ⋮ actions menu is open */
   const [desktopActionsMenuRowId, setDesktopActionsMenuRowId] = useState<string | null>(null);
 
+  const selectedPosting = useMemo(
+    () => postings.find((p) => p.id === selectedPostingId) ?? null,
+    [postings, selectedPostingId],
+  );
+  const postingIsAll = selectedPosting?.subject_scope === "ALL";
+  const scopePeriodOpen = isInspectorScopePeriodOpen(submissionStatus, workingScope);
+  const scopeMutationsEnabled = scopePeriodOpen;
+  const submissionNotice = useMemo(
+    () => (submissionStatus ? inspectorOfficialsSubmissionNotice(submissionStatus, workingScope) : null),
+    [submissionStatus, workingScope],
+  );
+  const scopeAddEnabled =
+    scopePeriodOpen &&
+    (workingScope === "CORE"
+      ? submissionStatus?.officials_core_enabled
+      : submissionStatus?.officials_elective_enabled);
+
   const loadList = useCallback(async () => {
     if (examId === null) return;
     if (postings.length > 0 && !selectedPostingId) return;
     setLoadError(null);
     setBusy(true);
     try {
-      const res = await getExamOfficialsForMyCentre(
-        examId,
-        postings.length > 0 ? selectedPostingId : undefined,
-      );
+      const [res, status] = await Promise.all([
+        getExamOfficialsForMyCentre(
+          examId,
+          postings.length > 0 ? selectedPostingId : undefined,
+          postingIsAll ? workingScope : undefined,
+        ),
+        getInspectorSubmissionStatus(examId),
+      ]);
       setItems(res.items);
+      setSubmissionStatus(status);
     } catch (e) {
       setLoadError(e instanceof Error ? e.message : "Failed to load exam officials");
       setItems([]);
     } finally {
       setBusy(false);
     }
-  }, [examId, postings.length, selectedPostingId]);
+  }, [examId, postings.length, selectedPostingId, postingIsAll, workingScope]);
 
   useEffect(() => {
     if (inspectorMustPickWorkspaceGlobally(postings.length)) {
@@ -335,7 +364,13 @@ export default function InspectorExamOfficialsPage() {
         const postingRes = await getMyInspectorPostings(examId);
         if (cancelled) return;
         setPostings(postingRes.items);
-        setSelectedPostingId((prev) => pickInspectorPostingId(postingRes.items, prev));
+        setSelectedPostingId((prev) => {
+          const pid = pickInspectorPostingId(postingRes.items, prev);
+          const posting = postingRes.items.find((p) => p.id === pid);
+          if (posting?.subject_scope === "CORE") setWorkingScope("CORE");
+          else if (posting?.subject_scope === "ELECTIVE") setWorkingScope("ELECTIVE");
+          return pid;
+        });
       } catch {
         if (!cancelled) {
           setPostings([]);
@@ -432,6 +467,7 @@ export default function InspectorExamOfficialsPage() {
   }
 
   function openEdit(row: ExamCentreOfficialResponse) {
+    if (!scopeMutationsEnabled) return;
     setDesktopActionsMenuRowId(null);
     setEditing(row);
     setEditBankOpen(false);
@@ -469,6 +505,10 @@ export default function InspectorExamOfficialsPage() {
     if (examId === null) return;
     if (postings.length > 0 && !selectedPostingId) {
       setFormError("Choose a workspace (centre and subject scope) first.");
+      return;
+    }
+    if (editing && !scopeMutationsEnabled) {
+      setFormError("Submissions are closed — existing records cannot be edited.");
       return;
     }
     setFormError(null);
@@ -515,6 +555,7 @@ export default function InspectorExamOfficialsPage() {
     };
 
     const postingParam = postings.length > 0 ? selectedPostingId : undefined;
+    const scopeParam = postingIsAll ? workingScope : undefined;
     setBusy(true);
     try {
       if (editing) {
@@ -530,9 +571,10 @@ export default function InspectorExamOfficialsPage() {
             telephone_number: payload.telephone_number,
           },
           postingParam,
+          scopeParam,
         );
       } else {
-        await createExamOfficial(examId, payload, postingParam);
+        await createExamOfficial(examId, payload, postingParam, scopeParam);
       }
       closeModal();
       await loadList();
@@ -544,7 +586,7 @@ export default function InspectorExamOfficialsPage() {
   }
 
   async function confirmDelete() {
-    if (examId === null || pendingDelete === null) return;
+    if (examId === null || pendingDelete === null || !scopeMutationsEnabled) return;
     if (postings.length > 0 && !selectedPostingId) return;
     setDeleteBusy(true);
     try {
@@ -552,6 +594,7 @@ export default function InspectorExamOfficialsPage() {
         examId,
         pendingDelete.id,
         postings.length > 0 ? selectedPostingId : undefined,
+        postingIsAll ? workingScope : undefined,
       );
       setPendingDelete(null);
       setDesktopActionsMenuRowId(null);
@@ -642,12 +685,37 @@ export default function InspectorExamOfficialsPage() {
                 type="button"
                 className={`${officialAccountsBtnPrimary} min-h-11 w-full`}
                 onClick={openAdd}
-                disabled={examId === null || busy || (postings.length > 0 && !selectedPostingId)}
+                disabled={examId === null || busy || (postings.length > 0 && !selectedPostingId) || !scopeAddEnabled}
               >
                 Add account record
               </button>
             }
           />
+
+          {submissionNotice ? (
+            <p className="rounded-lg border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-sm text-foreground">
+              {submissionNotice}
+            </p>
+          ) : null}
+
+          {postingIsAll ? (
+            <div className="flex gap-2">
+              {(["CORE", "ELECTIVE"] as RecordSubjectScope[]).map((scope) => (
+                <button
+                  key={scope}
+                  type="button"
+                  className={`rounded-lg border px-3 py-2 text-sm font-medium ${
+                    workingScope === scope
+                      ? "border-primary bg-primary/10 text-primary"
+                      : "border-input-border bg-background text-foreground"
+                  }`}
+                  onClick={() => setWorkingScope(scope)}
+                >
+                  {scope === "CORE" ? "Core" : "Elective"}
+                </button>
+              ))}
+            </div>
+          ) : null}
 
           <div className={officialAccountsPanelClass}>
             <OfficialAccountsPanelHeader count={items.length} busy={busy} />
@@ -669,7 +737,7 @@ export default function InspectorExamOfficialsPage() {
                   type="button"
                   className={`${officialAccountsBtnPrimary} mx-auto mt-5 w-full max-w-xs`}
                   onClick={openAdd}
-                  disabled={examId === null || busy || (postings.length > 0 && !selectedPostingId)}
+                  disabled={examId === null || busy || (postings.length > 0 && !selectedPostingId) || !scopeAddEnabled}
                 >
                   Add first account record
                 </button>
@@ -690,8 +758,8 @@ export default function InspectorExamOfficialsPage() {
                     <button
                       type="button"
                       className="min-w-0 flex-1 rounded-lg text-left focus:outline-none focus:ring-2 focus:ring-ring/30"
-                      onClick={() => openEdit(row)}
-                      disabled={busy}
+                      onClick={() => scopeMutationsEnabled && openEdit(row)}
+                      disabled={busy || !scopeMutationsEnabled}
                       aria-label={`Edit ${row.full_name}, ${row.designation}`}
                     >
                       <p className="truncate text-sm font-semibold leading-snug text-foreground">
@@ -739,16 +807,16 @@ export default function InspectorExamOfficialsPage() {
                     <button
                       type="button"
                       className={`${officialAccountsBtnSecondary} min-h-11 flex-1`}
-                      onClick={() => openEdit(row)}
-                      disabled={busy}
+                      onClick={() => scopeMutationsEnabled && openEdit(row)}
+                      disabled={busy || !scopeMutationsEnabled}
                     >
                       Edit
                     </button>
                     <button
                       type="button"
                       className={`${btnDanger} min-h-11 flex-1 border-0 bg-transparent px-3 hover:bg-destructive/10`}
-                      onClick={() => setPendingDelete(row)}
-                      disabled={busy}
+                      onClick={() => scopeMutationsEnabled && setPendingDelete(row)}
+                      disabled={busy || !scopeMutationsEnabled}
                     >
                       Delete
                     </button>
@@ -888,14 +956,16 @@ export default function InspectorExamOfficialsPage() {
                               <PopoverContent className="w-44 p-1" align="end" side="bottom" sideOffset={4}>
                                 <button
                                   type="button"
-                                  className="flex w-full items-center rounded-md px-2.5 py-2 text-left text-sm text-foreground transition-colors hover:bg-muted"
+                                  disabled={!scopeMutationsEnabled}
+                                  className="flex w-full items-center rounded-md px-2.5 py-2 text-left text-sm text-foreground transition-colors hover:bg-muted disabled:pointer-events-none disabled:opacity-40"
                                   onClick={() => openEdit(row)}
                                 >
                                   Edit
                                 </button>
                                 <button
                                   type="button"
-                                  className="flex w-full items-center rounded-md px-2.5 py-2 text-left text-sm text-destructive transition-colors hover:bg-destructive/10"
+                                  disabled={!scopeMutationsEnabled}
+                                  className="flex w-full items-center rounded-md px-2.5 py-2 text-left text-sm text-destructive transition-colors hover:bg-destructive/10 disabled:pointer-events-none disabled:opacity-40"
                                   onClick={() => {
                                     setDesktopActionsMenuRowId(null);
                                     setPendingDelete(row);
@@ -914,7 +984,7 @@ export default function InspectorExamOfficialsPage() {
               </div>
               {!busy && items.length === 0 ? (
                 <div className="border-t border-border bg-muted/15 px-3 py-4 text-center">
-                  <button type="button" className={officialAccountsBtnPrimary} onClick={openAdd} disabled={examId === null || busy || (postings.length > 0 && !selectedPostingId)}>
+                  <button type="button" className={officialAccountsBtnPrimary} onClick={openAdd} disabled={examId === null || busy || (postings.length > 0 && !selectedPostingId) || !scopeAddEnabled}>
                     Add first account record
                   </button>
                 </div>

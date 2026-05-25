@@ -1,20 +1,30 @@
 "use client";
 
-import { useRouter } from "next/navigation";
-import { useCallback, useEffect, useState } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
+import { Suspense, useCallback, useEffect, useState } from "react";
 
 import { DashboardShell } from "@/components/dashboard-shell";
+import {
+  InspectorWorkspacePicker,
+  InspectorWorkspacePickerSkeleton,
+} from "@/components/inspector-workspace-picker";
 import { RoleGuard } from "@/components/role-guard";
 import { getMyInspectorPostings, getStaffDefaultExamination, type MyInspectorPostingRow } from "@/lib/api";
-import { getStoredToken, parseJwtPayload, selectInspectorPosting } from "@/lib/auth";
-import { formInputClass, formLabelClass, primaryButtonClass } from "@/lib/form-classes";
+import {
+  getInspectorPostingIdFromToken,
+  getStoredToken,
+  parseJwtPayload,
+  selectInspectorPosting,
+} from "@/lib/auth";
+import { primaryButtonClass } from "@/lib/form-classes";
+import { inspectorWorkspacePickerCopy } from "@/lib/inspector-posting-ui";
+import { cn } from "@/lib/utils";
 
-function postingLabel(p: MyInspectorPostingRow): string {
-  return `${p.center_name} (${p.center_code}) — ${p.subject_scope}`;
-}
-
-export default function InspectorSelectWorkspacePage() {
+function InspectorSelectWorkspaceContent() {
   const router = useRouter();
+  const searchParams = useSearchParams();
+  const isSwitch = searchParams.get("switch") === "1";
+
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [postings, setPostings] = useState<MyInspectorPostingRow[]>([]);
@@ -29,7 +39,7 @@ export default function InspectorSelectWorkspacePage() {
       return;
     }
     const jwt = parseJwtPayload(token);
-    if (jwt?.inspector_posting_id) {
+    if (jwt?.inspector_posting_id && !isSwitch) {
       router.replace("/dashboard/inspector");
       return;
     }
@@ -40,19 +50,24 @@ export default function InspectorSelectWorkspacePage() {
       setPostings(res.items);
       if (res.items.length === 0) {
         setError("You have no postings for the current examination.");
-      } else if (res.items.length === 1) {
+      } else if (res.items.length === 1 && !isSwitch) {
         await selectInspectorPosting(res.items[0].id);
         router.replace("/dashboard/inspector");
         return;
       } else {
-        setSelectedId(res.items[0]?.id ?? "");
+        const jwtId = getInspectorPostingIdFromToken();
+        const initial =
+          jwtId && res.items.some((p) => p.id === jwtId)
+            ? jwtId
+            : (res.items[0]?.id ?? "");
+        setSelectedId(initial);
       }
     } catch (e) {
       setError(e instanceof Error ? e.message : "Could not load postings");
     } finally {
       setLoading(false);
     }
-  }, [router]);
+  }, [router, isSwitch]);
 
   useEffect(() => {
     void bootstrap();
@@ -72,47 +87,57 @@ export default function InspectorSelectWorkspacePage() {
     }
   }
 
+  const pageTitle = isSwitch
+    ? inspectorWorkspacePickerCopy.switchTitle
+    : inspectorWorkspacePickerCopy.selectTitle;
+  const description = isSwitch
+    ? inspectorWorkspacePickerCopy.switchDescription
+    : inspectorWorkspacePickerCopy.selectDescription;
+
   return (
     <RoleGuard expectedRole="INSPECTOR" loginHref="/login/inspector">
-      <DashboardShell title="Select workspace" staffRole="inspector">
-        {loading ? (
-          <p className="text-sm text-muted-foreground">Loading…</p>
-        ) : error && postings.length === 0 ? (
-          <p className="text-sm text-destructive">{error}</p>
-        ) : postings.length > 1 ? (
-          <div className="mx-auto max-w-lg space-y-4">
-            <p className="text-sm text-muted-foreground">
-              You have been assigned to multiple examination centres. Select your posting below, then continue.
-            </p>
-            {error ? <p className="text-sm text-destructive">{error}</p> : null}
-            <div>
-              <label htmlFor="inspector-workspace" className={formLabelClass}>
-                Posting
-              </label>
-              <select
-                id="inspector-workspace"
-                className={formInputClass}
-                value={selectedId}
-                onChange={(e) => setSelectedId(e.target.value)}
-              >
-                {postings.map((p) => (
-                  <option key={p.id} value={p.id}>
-                    {postingLabel(p)}
-                  </option>
-                ))}
-              </select>
+      <DashboardShell title={pageTitle} staffRole="inspector">
+        <div className="mx-auto max-w-lg px-0 pb-24 sm:pb-8">
+          {loading ? (
+            <InspectorWorkspacePickerSkeleton />
+          ) : error && postings.length === 0 ? (
+            <p className="text-sm text-destructive">{error}</p>
+          ) : postings.length > 1 || (isSwitch && postings.length >= 1) ? (
+            <div className="space-y-4">
+              <p className="text-sm text-muted-foreground">{description}</p>
+              {error ? <p className="text-sm text-destructive">{error}</p> : null}
+              <InspectorWorkspacePicker
+                postings={postings}
+                selectedId={selectedId}
+                onSelect={setSelectedId}
+                disabled={busy}
+                footer={
+                  <button
+                    type="button"
+                    onClick={() => void onConfirm()}
+                    disabled={busy || !selectedId}
+                    className={cn(primaryButtonClass, "min-h-11 w-full")}
+                  >
+                    {busy
+                      ? "Continuing…"
+                      : isSwitch
+                        ? inspectorWorkspacePickerCopy.confirmSwitch
+                        : inspectorWorkspacePickerCopy.continue}
+                  </button>
+                }
+              />
             </div>
-            <button
-              type="button"
-              onClick={() => void onConfirm()}
-              disabled={busy || !selectedId}
-              className={primaryButtonClass}
-            >
-              {busy ? "Continuing…" : "Continue"}
-            </button>
-          </div>
-        ) : null}
+          ) : null}
+        </div>
       </DashboardShell>
     </RoleGuard>
+  );
+}
+
+export default function InspectorSelectWorkspacePage() {
+  return (
+    <Suspense fallback={<p className="p-4 text-sm text-muted-foreground">Loading…</p>}>
+      <InspectorSelectWorkspaceContent />
+    </Suspense>
   );
 }

@@ -933,6 +933,14 @@ class ExamOfficialDesignation(enum.Enum):
     EXTERNAL_INSPECTOR = "External Inspector"
 
 
+class ExamInspectorSubjectScope(enum.Enum):
+    """Subject scope for an inspector's posting at an examination centre."""
+
+    ALL = "ALL"
+    CORE = "CORE"
+    ELECTIVE = "ELECTIVE"
+
+
 class BankBranch(Base):
     """Ghana bank branch directory (6-digit sort code); super-admin bulk upload, inspector pickers."""
 
@@ -976,6 +984,16 @@ class ExamCentreOfficial(Base):
     account_number = Column(String(13), nullable=False)
     num_days = Column(SmallInteger, nullable=False)
     telephone_number = Column(String(10), nullable=False)
+    subject_scope = Column(
+        Enum(
+            ExamInspectorSubjectScope,
+            values_callable=lambda x: [i.value for i in x],
+            native_enum=False,
+            length=16,
+        ),
+        nullable=False,
+        doc="CORE or ELECTIVE roster scope for this official.",
+    )
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
 
@@ -991,15 +1009,8 @@ class ExamCentreOfficial(Base):
             name="ck_exam_school_official_telephone_gh",
         ),
         Index("ix_exam_centre_officials_exam_center", "examination_id", "center_id"),
+        Index("ix_exam_centre_officials_exam_center_scope", "examination_id", "center_id", "subject_scope"),
     )
-
-
-class ExamInspectorSubjectScope(enum.Enum):
-    """Subject scope for an inspector's posting at an examination centre."""
-
-    ALL = "ALL"
-    CORE = "CORE"
-    ELECTIVE = "ELECTIVE"
 
 
 class InspectorExamPosting(Base):
@@ -1069,6 +1080,16 @@ class InspectorAttendanceSheet(Base):
         doc="Examination centre host school id.",
     )
     examination_date = Column(Date, nullable=False)
+    subject_scope = Column(
+        Enum(
+            ExamInspectorSubjectScope,
+            values_callable=lambda x: [i.value for i in x],
+            native_enum=False,
+            length=16,
+        ),
+        nullable=False,
+        doc="CORE or ELECTIVE scope inferred from timetable for this date.",
+    )
     notes = Column(Text, nullable=True)
     original_filename = Column(String(512), nullable=False)
     stored_path = Column(String(512), unique=True, nullable=False)
@@ -1094,7 +1115,31 @@ class InspectorAttendanceSheet(Base):
             "center_id",
             "examination_date",
         ),
+        Index(
+            "ix_inspector_attendance_sheets_exam_center_date_scope",
+            "examination_id",
+            "center_id",
+            "examination_date",
+            "subject_scope",
+        ),
     )
+
+
+class ExaminationInspectorSubmissionSettings(Base):
+    """Per examination: inspector submission window and official-upload scope toggles."""
+
+    __tablename__ = "examination_inspector_submission_settings"
+
+    examination_id = Column(Integer, ForeignKey("examinations.id", ondelete="CASCADE"), primary_key=True)
+    core_submission_period_start = Column(Date, nullable=True)
+    core_submission_period_end = Column(Date, nullable=True)
+    elective_submission_period_start = Column(Date, nullable=True)
+    elective_submission_period_end = Column(Date, nullable=True)
+    officials_core_enabled = Column(Boolean, nullable=False, default=True)
+    officials_elective_enabled = Column(Boolean, nullable=False, default=True)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+
+    examination = relationship("Examination", backref="inspector_submission_settings")
 
 
 class QuestionPaperControl(Base):
