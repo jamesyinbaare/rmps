@@ -19,6 +19,19 @@ DESIGNATION_DISPLAY_ORDER: tuple[str, ...] = (
 _RANK_BY_LABEL: dict[str, int] = {label: i for i, label in enumerate(DESIGNATION_DISPLAY_ORDER)}
 
 
+_PDF_DESIGNATION_LABELS: dict[str, str] = {
+    ExamOfficialDesignation.ASSISTANT_SUPERVISOR.value: "Asst. Supervisor",
+    ExamOfficialDesignation.POLICE_OFFICER.value: "Police",
+    ExamOfficialDesignation.EXTERNAL_INSPECTOR.value: "Ext. Inspector",
+}
+
+
+def designation_pdf_label(designation: str) -> str:
+    """Short labels for PDF table cells."""
+    label = designation.strip()
+    return _PDF_DESIGNATION_LABELS.get(label, label)
+
+
 def designation_sort_rank(designation: str) -> int:
     """Lower rank sorts first; unknown designations sort last."""
     return _RANK_BY_LABEL.get(designation.strip(), len(DESIGNATION_DISPLAY_ORDER))
