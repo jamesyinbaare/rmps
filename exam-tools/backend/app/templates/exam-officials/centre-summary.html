@@ -1,0 +1,300 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Bank account details — {{ center_code }}</title>
+    <style>
+        @page {
+            size: A4 landscape;
+            margin: 1.4cm 1.5cm 2.2cm;
+            @bottom-left {
+                content: "{{ center_code }} · {{ subject_scope_label }} · Generated {{ generated_at }}";
+                font-size: 7.5pt;
+                color: #666;
+            }
+            @bottom-right {
+                content: "Page " counter(page) " of " counter(pages);
+                font-size: 7.5pt;
+                color: #666;
+            }
+        }
+
+        * { box-sizing: border-box; }
+
+        body {
+            font-family: Helvetica, Arial, sans-serif;
+            font-size: 9pt;
+            color: #111;
+            line-height: 1.4;
+            margin: 0;
+            position: relative;
+        }
+
+        .page-body {
+            padding-bottom: 4.8cm;
+        }
+
+        .header {
+            display: table;
+            width: 100%;
+            margin-bottom: 12px;
+            padding-bottom: 8px;
+            border-bottom: 2px solid #111;
+        }
+
+        .header-logo-cell {
+            display: table-cell;
+            width: 72px;
+            vertical-align: middle;
+        }
+
+        .header-logo {
+            height: 52px;
+            width: auto;
+            display: block;
+        }
+
+        .header-text {
+            display: table-cell;
+            vertical-align: middle;
+            text-align: center;
+            padding: 0 12px;
+        }
+
+        .header-text h1 {
+            margin: 0;
+            font-size: 11.5pt;
+            font-weight: 700;
+            letter-spacing: 0.02em;
+        }
+
+        .header-text p {
+            margin: 3px 0 0;
+            font-size: 9pt;
+            color: #444;
+        }
+
+        .meta {
+            margin-bottom: 14px;
+            font-size: 8.5pt;
+            color: #333;
+        }
+
+        .meta span {
+            display: inline-block;
+            margin-right: 1.4em;
+        }
+
+        .meta strong {
+            font-weight: 600;
+            color: #111;
+        }
+
+        table.data {
+            width: 100%;
+            border-collapse: collapse;
+            font-size: 8.5pt;
+        }
+
+        table.data th,
+        table.data td {
+            border: 1px solid #ccc;
+            padding: 5px 7px;
+            text-align: left;
+            vertical-align: top;
+        }
+
+        table.data thead th {
+            background: #f0f0f0;
+            font-weight: 700;
+            font-size: 8pt;
+            color: #111;
+            border-color: #999;
+        }
+
+        table.data .c-num {
+            width: 2em;
+            text-align: center;
+            color: #555;
+        }
+
+        table.data .c-days {
+            width: 3em;
+            text-align: center;
+        }
+
+        table.data .c-account {
+            font-family: "Courier New", Courier, monospace;
+            font-size: 8pt;
+            white-space: nowrap;
+        }
+
+        .signatures {
+            position: fixed;
+            left: 0;
+            right: 0;
+            bottom: 0.45cm;
+            padding: 10px 0 0;
+            border-top: 1px solid #999;
+            background: #fff;
+            page-break-inside: avoid;
+        }
+
+        .signatures > p {
+            margin: 0 0 10px;
+            font-size: 8.5pt;
+            color: #444;
+        }
+
+        .signatures-grid {
+            display: table;
+            width: 100%;
+            border-collapse: separate;
+            border-spacing: 24px 0;
+        }
+
+        .sig-col {
+            display: table-cell;
+            width: 50%;
+            vertical-align: top;
+        }
+
+        .sig-role {
+            margin: 0 0 10px;
+            font-size: 9pt;
+            font-weight: 700;
+            text-transform: uppercase;
+            letter-spacing: 0.04em;
+        }
+
+        .sig-field {
+            margin-bottom: 10px;
+        }
+
+        .sig-label {
+            font-size: 7.5pt;
+            color: #666;
+            margin-bottom: 3px;
+        }
+
+        .sig-line {
+            border-bottom: 1px solid #111;
+            min-height: 1.25em;
+        }
+
+        .sig-prefill {
+            font-size: 9pt;
+            padding-bottom: 2px;
+        }
+
+        .sig-row {
+            display: table;
+            width: 100%;
+        }
+
+        .sig-row .sig-field {
+            display: table-cell;
+            width: 50%;
+            padding-right: 12px;
+        }
+
+        .sig-row .sig-field:last-child {
+            padding-right: 0;
+            padding-left: 12px;
+        }
+    </style>
+</head>
+<body>
+    <div class="page-body">
+    <header class="header">
+        <div class="header-logo-cell">
+            <img src="img/logo-crest-only.png" alt="" class="header-logo" />
+        </div>
+        <div class="header-text">
+            <h1>Bank account details</h1>
+            <p>{{ subject_scope_label }}</p>
+        </div>
+    </header>
+
+    <div class="meta">
+        <span><strong>Centre:</strong> {{ center_code }} — {{ center_name }}</span>
+        <span><strong>Examination:</strong> {{ subject_scope_label }}</span>
+        <span><strong>Records:</strong> {{ record_count }}</span>
+        <span><strong>Inspector:</strong> {{ inspector_name }}</span>
+    </div>
+
+    <table class="data">
+        <thead>
+            <tr>
+                <th class="c-num">#</th>
+                <th>Name</th>
+                <th>Designation</th>
+                <th>Bank</th>
+                <th>Branch</th>
+                <th>Sort code</th>
+                <th>Account number</th>
+                <th class="c-days">Days</th>
+                <th>Telephone</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for row in rows %}
+            <tr>
+                <td class="c-num">{{ loop.index }}</td>
+                <td>{{ row.full_name }}</td>
+                <td>{{ row.designation }}</td>
+                <td>{{ row.bank_name }}</td>
+                <td>{{ row.branch_name }}</td>
+                <td class="c-account">{{ row.bank_code }}</td>
+                <td class="c-account">{{ row.account_number }}</td>
+                <td class="c-days">{{ row.num_days }}</td>
+                <td>{{ row.telephone_number }}</td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+    </div>
+
+    <section class="signatures" aria-label="Signatures">
+        <p>
+            I confirm that the bank account details listed above are correct and complete for this examination centre.
+        </p>
+        <div class="signatures-grid">
+            <div class="sig-col">
+                <p class="sig-role">Inspector</p>
+                <div class="sig-field">
+                    <div class="sig-label">Name</div>
+                    <div class="sig-prefill">{{ inspector_name }}</div>
+                </div>
+                <div class="sig-row">
+                    <div class="sig-field">
+                        <div class="sig-label">Signature</div>
+                        <div class="sig-line"></div>
+                    </div>
+                    <div class="sig-field">
+                        <div class="sig-label">Date</div>
+                        <div class="sig-line"></div>
+                    </div>
+                </div>
+            </div>
+            <div class="sig-col">
+                <p class="sig-role">Supervisor</p>
+                <div class="sig-field">
+                    <div class="sig-label">Name</div>
+                    <div class="sig-line"></div>
+                </div>
+                <div class="sig-row">
+                    <div class="sig-field">
+                        <div class="sig-label">Signature</div>
+                        <div class="sig-line"></div>
+                    </div>
+                    <div class="sig-field">
+                        <div class="sig-label">Date</div>
+                        <div class="sig-line"></div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </section>
+</body>
+</html>

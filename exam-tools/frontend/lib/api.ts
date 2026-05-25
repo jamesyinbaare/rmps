@@ -1897,6 +1897,17 @@ export async function deleteExamOfficial(
   );
 }
 
+export async function downloadExamOfficialsSummaryPdf(
+  examId: number,
+  postingId?: string | null,
+  workingScope?: RecordSubjectScope | null,
+  filename?: string,
+): Promise<void> {
+  const path = `/examinations/${examId}/exam-officials/my-centre/summary.pdf${examOfficialsQuery(postingId, workingScope)}`;
+  const defaultName = "official_accounts_summary.pdf";
+  await downloadApiFile(path, filename?.trim() || defaultName);
+}
+
 export type AdminExamCentreOfficialRow = {
   id: string;
   examination_id: number;

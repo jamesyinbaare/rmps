@@ -4,7 +4,7 @@ from datetime import datetime
 from typing import cast
 from uuid import UUID
 
-from fastapi import APIRouter, HTTPException, Query, status
+from fastapi import APIRouter, HTTPException, Query, Response, status
 from sqlalchemy import select
 from sqlalchemy.orm import selectinload
 
@@ -26,6 +26,7 @@ from app.schemas.exam_official import (
 )
 from app.schemas.inspector_submission_settings import InspectorSubmissionStatusResponse
 from app.services.exam_official_account import normalize_account_for_save
+from app.services.exam_official_summary_pdf import build_exam_official_summary_pdf
 from app.services.exam_timetable_pdf import load_examination_or_raise
 from app.services.inspector_posting import InspectorWorkspaceContext, resolve_inspector_workspace
 from app.services.inspector_submission_settings import (
@@ -166,6 +167,41 @@ async def list_exam_officials(
     result = await session.execute(stmt)
     rows = result.scalars().all()
     return ExamCentreOfficialListResponse(items=[_official_to_response(r) for r in rows])
+
+
+@router.get("/examinations/{exam_id}/exam-officials/my-centre/summary.pdf")
+async def download_exam_officials_summary_pdf(
+    exam_id: int,
+    session: DBSessionDep,
+    user: InspectorDep,
+    jwt_posting_id: InspectorJwtPostingIdDep,
+    posting_id: UUID | None = Query(default=None),
+    working_scope: str | None = Query(default=None),
+) -> Response:
+    ctx = await _resolve_inspector_ctx(session, user, exam_id, posting_id, jwt_posting_id)
+    scope = resolve_working_scope(ctx.subject_scope, working_scope)
+    try:
+        examination = await load_examination_or_raise(session, exam_id)
+    except ValueError:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Examination not found") from None
+
+    try:
+        pdf_bytes, filename = await build_exam_official_summary_pdf(
+            session,
+            examination=examination,
+            ctx=ctx,
+            subject_scope=scope,
+            inspector_user=user,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+
+    safe_name = filename.replace('"', "")
+    return Response(
+        content=pdf_bytes,
+        media_type="application/pdf",
+        headers={"Content-Disposition": f'attachment; filename="{safe_name}"'},
+    )
 
 
 @router.post(

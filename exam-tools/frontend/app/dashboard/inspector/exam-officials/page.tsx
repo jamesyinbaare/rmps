@@ -13,6 +13,7 @@ import { formInputClass, formLabelClass } from "@/lib/form-classes";
 import {
   createExamOfficial,
   deleteExamOfficial,
+  downloadExamOfficialsSummaryPdf,
   displayBankCode,
   getDistinctBankNames,
   getExamOfficialsForMyCentre,
@@ -86,6 +87,14 @@ function maskAccountNumber(n: string): string {
   const t = n.trim();
   if (t.length <= 4) return t;
   return `•••••••${t.slice(-4)}`;
+}
+
+function summaryPdfFilename(centerCode: string, centerName: string, scope: RecordSubjectScope): string {
+  const part = (s: string) => {
+    const t = s.replace(/[<>:"/\\|?*\x00-\x1f]/g, "").trim();
+    return (t || "unknown").slice(0, 80);
+  };
+  return `${part(centerCode)} ${part(centerName)} ${scope} official_accounts_summary.pdf`;
 }
 
 function preventClipboardInsert(e: React.ClipboardEvent | React.DragEvent) {
@@ -261,6 +270,7 @@ export default function InspectorExamOfficialsPage() {
   const [items, setItems] = useState<ExamCentreOfficialResponse[]>([]);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [pdfDownloadBusy, setPdfDownloadBusy] = useState(false);
 
   const [modalOpen, setModalOpen] = useState(false);
   const [editing, setEditing] = useState<ExamCentreOfficialResponse | null>(null);
@@ -585,6 +595,40 @@ export default function InspectorExamOfficialsPage() {
     }
   }
 
+  const summaryPdfEnabled =
+    examId !== null &&
+    items.length > 0 &&
+    !(postings.length > 0 && !selectedPostingId) &&
+    !busy &&
+    !pdfDownloadBusy;
+
+  async function handleDownloadSummaryPdf() {
+    if (examId === null || !summaryPdfEnabled) return;
+    setLoadError(null);
+    setPdfDownloadBusy(true);
+    try {
+      const scopeForPdf: RecordSubjectScope = postingIsAll
+        ? workingScope
+        : selectedPosting?.subject_scope === "ELECTIVE"
+          ? "ELECTIVE"
+          : "CORE";
+      const filename =
+        selectedPosting != null
+          ? summaryPdfFilename(selectedPosting.center_code, selectedPosting.center_name, scopeForPdf)
+          : undefined;
+      await downloadExamOfficialsSummaryPdf(
+        examId,
+        postings.length > 0 ? selectedPostingId : undefined,
+        postingIsAll ? workingScope : undefined,
+        filename,
+      );
+    } catch (e) {
+      setLoadError(e instanceof Error ? e.message : "Failed to download summary PDF");
+    } finally {
+      setPdfDownloadBusy(false);
+    }
+  }
+
   async function confirmDelete() {
     if (examId === null || pendingDelete === null || !scopeMutationsEnabled) return;
     if (postings.length > 0 && !selectedPostingId) return;
@@ -660,6 +704,28 @@ export default function InspectorExamOfficialsPage() {
   const showAccountFields = !editing || editAccountOpen;
   const showDaysFields = !editing || editDaysOpen;
 
+  const accountActionButtons = (
+    <>
+      <button
+        type="button"
+        className={`${officialAccountsBtnSecondary} min-h-11 w-full`}
+        onClick={() => void handleDownloadSummaryPdf()}
+        disabled={!summaryPdfEnabled}
+        title={items.length === 0 ? "Add at least one account record to download the summary" : undefined}
+      >
+        {pdfDownloadBusy ? "Preparing PDF…" : "Download summary (PDF)"}
+      </button>
+      <button
+        type="button"
+        className={`${officialAccountsBtnPrimary} min-h-11 w-full`}
+        onClick={openAdd}
+        disabled={examId === null || busy || (postings.length > 0 && !selectedPostingId) || !scopeAddEnabled}
+      >
+        Add account record
+      </button>
+    </>
+  );
+
   return (
     <RoleGuard expectedRole="INSPECTOR" loginHref="/login/inspector">
       <DashboardShell title="Official account details" staffRole="inspector">
@@ -669,6 +735,17 @@ export default function InspectorExamOfficialsPage() {
               {loadError}
             </p>
           ) : null}
+
+          {/* Mobile: fixed below dashboard navbar; page content scrolls underneath */}
+          <div className="lg:hidden">
+            <div
+              className="fixed inset-x-0 top-(--staff-sticky-header-offset) z-20 flex flex-col gap-2 border-b border-border bg-background px-4 py-2.5 shadow-sm sm:px-6"
+              aria-label="Account actions"
+            >
+              {accountActionButtons}
+            </div>
+            <div className="h-[calc(2*2.75rem+0.5rem+1.25rem+1px)] shrink-0" aria-hidden />
+          </div>
 
           <OfficialAccountsPageIntro
             description="Record bank details for supervisors, assistant supervisors, invigilators, and depot keepers at your centre so allowances can be processed."
@@ -680,16 +757,7 @@ export default function InspectorExamOfficialsPage() {
                 </OfficialAccountsExamMeta>
               ) : null
             }
-            actions={
-              <button
-                type="button"
-                className={`${officialAccountsBtnPrimary} min-h-11 w-full`}
-                onClick={openAdd}
-                disabled={examId === null || busy || (postings.length > 0 && !selectedPostingId) || !scopeAddEnabled}
-              >
-                Add account record
-              </button>
-            }
+            actions={<div className="hidden lg:contents">{accountActionButtons}</div>}
           />
 
           {submissionNotice ? (
