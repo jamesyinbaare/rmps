@@ -43,7 +43,16 @@ import {
   officialAccountsBtnPrimary,
   officialAccountsBtnSecondary,
   officialAccountsPanelClass,
+  officialAccountsPanelToolbarClass,
 } from "@/lib/official-accounts-zone";
+import {
+  ALL_DESIGNATIONS_FILTER,
+  DESIGNATION_DISPLAY_ORDER,
+  filterExamOfficialRows,
+  sortExamOfficialRows,
+  type ExamOfficialSortDir,
+  type ExamOfficialSortKey,
+} from "@/lib/exam-official-designation";
 import {
   accountInputMaxLengthForEdit,
   accountValidationMessage,
@@ -300,6 +309,10 @@ export default function InspectorExamOfficialsPage() {
   const modalScrollRef = useRef<HTMLDivElement>(null);
   /** Desktop table: which row’s ⋮ actions menu is open */
   const [desktopActionsMenuRowId, setDesktopActionsMenuRowId] = useState<string | null>(null);
+  const [tableSearch, setTableSearch] = useState("");
+  const [designationFilter, setDesignationFilter] = useState(ALL_DESIGNATIONS_FILTER);
+  const [sortKey, setSortKey] = useState<ExamOfficialSortKey>("designation");
+  const [sortDir, setSortDir] = useState<ExamOfficialSortDir>("asc");
 
   const selectedPosting = useMemo(
     () => postings.find((p) => p.id === selectedPostingId) ?? null,
@@ -317,6 +330,25 @@ export default function InspectorExamOfficialsPage() {
     (workingScope === "CORE"
       ? submissionStatus?.officials_core_enabled
       : submissionStatus?.officials_elective_enabled);
+
+  const displayedDesktopItems = useMemo(() => {
+    const filtered = filterExamOfficialRows(items, {
+      search: tableSearch,
+      designationFilter,
+    });
+    return sortExamOfficialRows(filtered, sortKey, sortDir);
+  }, [items, tableSearch, designationFilter, sortKey, sortDir]);
+
+  const desktopFiltersActive =
+    designationFilter !== ALL_DESIGNATIONS_FILTER || tableSearch.trim().length > 0;
+
+  function toggleSort(key: ExamOfficialSortKey) {
+    if (sortKey === key) setSortDir((d) => (d === "asc" ? "desc" : "asc"));
+    else {
+      setSortKey(key);
+      setSortDir("asc");
+    }
+  }
 
   const loadList = useCallback(async () => {
     if (examId === null) return;
@@ -788,6 +820,46 @@ export default function InspectorExamOfficialsPage() {
           <div className={officialAccountsPanelClass}>
             <OfficialAccountsPanelHeader count={items.length} busy={busy} />
 
+            <div className={`${officialAccountsPanelToolbarClass} hidden md:flex`}>
+              <div className="min-w-0 flex-1 sm:max-w-xs">
+                <label className="sr-only" htmlFor="inspector-officials-search">
+                  Search officials
+                </label>
+                <input
+                  id="inspector-officials-search"
+                  type="search"
+                  className={formInputClass}
+                  placeholder="Search officials…"
+                  value={tableSearch}
+                  onChange={(e) => setTableSearch(e.target.value)}
+                />
+              </div>
+              <div className="min-w-0 flex-1 sm:max-w-[11rem]">
+                <label className="sr-only" htmlFor="inspector-officials-designation">
+                  Designation
+                </label>
+                <select
+                  id="inspector-officials-designation"
+                  className={formInputClass}
+                  value={designationFilter}
+                  onChange={(e) => setDesignationFilter(e.target.value)}
+                >
+                  <option value={ALL_DESIGNATIONS_FILTER}>All designations</option>
+                  {DESIGNATION_DISPLAY_ORDER.map((d) => (
+                    <option key={d} value={d}>
+                      {d}
+                    </option>
+                  ))}
+                </select>
+              </div>
+              <p className="pb-2 text-xs text-muted-foreground sm:ml-auto sm:pb-2.5">
+                {desktopFiltersActive
+                  ? `${displayedDesktopItems.length} of ${items.length} record${items.length === 1 ? "" : "s"}`
+                  : `${items.length} record${items.length === 1 ? "" : "s"}`}
+                {busy ? " · updating…" : ""}
+              </p>
+            </div>
+
           {/* Mobile cards */}
           <div className="divide-y divide-border md:hidden">
             {busy && items.length === 0 ? (
@@ -925,10 +997,18 @@ export default function InspectorExamOfficialsPage() {
                         #
                       </th>
                       <th className="px-3 py-2.5 text-left text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
-                        Name
+                        <button type="button" className="font-semibold hover:underline" onClick={() => toggleSort("name")}>
+                          Name {sortKey === "name" ? (sortDir === "asc" ? "↑" : "↓") : ""}
+                        </button>
                       </th>
                       <th className="px-3 py-2.5 text-left text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
-                        Designation
+                        <button
+                          type="button"
+                          className="font-semibold hover:underline"
+                          onClick={() => toggleSort("designation")}
+                        >
+                          Designation {sortKey === "designation" ? (sortDir === "asc" ? "↑" : "↓") : ""}
+                        </button>
                       </th>
                       <th className="max-w-40 border-l border-border/60 px-3 py-2.5 text-left text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
                         Bank
@@ -943,7 +1023,13 @@ export default function InspectorExamOfficialsPage() {
                         Account no.
                       </th>
                       <th className="w-14 border-l border-border/60 px-2 py-2.5 text-right text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
-                        Days
+                        <button
+                          type="button"
+                          className="ml-auto block font-semibold hover:underline"
+                          onClick={() => toggleSort("days")}
+                        >
+                          Days {sortKey === "days" ? (sortDir === "asc" ? "↑" : "↓") : ""}
+                        </button>
                       </th>
                       <th className="px-3 py-2.5 text-right text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
                         Phone
@@ -965,8 +1051,14 @@ export default function InspectorExamOfficialsPage() {
                           {busy ? "Loading…" : "No account records yet."}
                         </td>
                       </tr>
+                    ) : displayedDesktopItems.length === 0 ? (
+                      <tr>
+                        <td colSpan={10} className="px-3 py-10 text-center text-muted-foreground">
+                          No records match this filter. Try clearing search or designation filter.
+                        </td>
+                      </tr>
                     ) : (
-                      items.map((row, index) => (
+                      displayedDesktopItems.map((row, index) => (
                         <tr
                           key={row.id}
                           className="bg-card transition-colors hover:bg-muted/25"
