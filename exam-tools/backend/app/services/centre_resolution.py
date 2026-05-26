@@ -47,7 +47,7 @@ def membership_scope_for_inspector_scope(
     if mode == CentreStructureMode.UNIFIED:
         return ExaminationCentreMembershipScope.ALL
     if ins == ExamInspectorSubjectScope.ALL:
-        # SPLIT exams have no ALL rows; upgrade duplicates each school to CORE+ELECTIVE.
+        # SPLIT exams have no ALL rows; upgrade converts ALL memberships to CORE.
         return ExaminationCentreMembershipScope.CORE
     if ins == ExamInspectorSubjectScope.CORE:
         return ExaminationCentreMembershipScope.CORE

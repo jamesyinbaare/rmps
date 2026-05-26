@@ -108,7 +108,7 @@ export default function ExaminationCentresPage() {
     if (examinationId == null) return;
     if (
       !confirm(
-        "Upgrade this examination to SPLIT mode? Each school will get separate CORE and ELECTIVE centre memberships (same centre initially).",
+        "Upgrade this examination to SPLIT? Existing centre memberships will move to CORE. You can add ELECTIVE memberships afterward via bulk upload or each centre's detail page.",
       )
     ) {
       return;

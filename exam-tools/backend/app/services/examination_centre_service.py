@@ -4,7 +4,7 @@ from __future__ import annotations
 from uuid import UUID
 
 from fastapi import HTTPException, status
-from sqlalchemy import delete, func, select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models import (
@@ -44,34 +44,13 @@ async def upgrade_examination_to_split(session: AsyncSession, examination_id: in
         ).scalars().all()
     )
 
-    created = 0
     for m in all_memberships:
-        for scope in (
-            ExaminationCentreMembershipScope.CORE,
-            ExaminationCentreMembershipScope.ELECTIVE,
-        ):
-            session.add(
-                ExaminationCentreMembership(
-                    examination_id=examination_id,
-                    examination_centre_id=m.examination_centre_id,
-                    school_id=m.school_id,
-                    subject_scope=scope,
-                )
-            )
-            created += 1
+        m.subject_scope = ExaminationCentreMembershipScope.CORE
 
-    removed = len(all_memberships)
-    if all_memberships:
-        await session.execute(
-            delete(ExaminationCentreMembership).where(
-                ExaminationCentreMembership.examination_id == examination_id,
-                ExaminationCentreMembership.subject_scope == ExaminationCentreMembershipScope.ALL,
-            )
-        )
-
+    converted = len(all_memberships)
     exam.centre_structure_mode = CentreStructureMode.SPLIT
     await session.flush()
-    return created, removed
+    return converted, converted
 
 
 async def clone_centres_from_examination(
