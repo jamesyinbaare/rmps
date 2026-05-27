@@ -248,7 +248,7 @@ async def upload_inspector_attendance_sheet(
     collision = await _collision_index(
         session,
         examination_id=examination_id,
-        examination_centre_id=ctx.examination_centre.id,
+        center_id=ctx.examination_centre.id,
         examination_date=examination_date,
         subject_scope=resolved_scope,
     )

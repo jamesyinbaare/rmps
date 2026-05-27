@@ -164,6 +164,7 @@ function AdminExamOfficialsContent() {
         examination_id: examId,
         layout,
         center_id: centerId || null,
+        subject_scope: subjectScopeFilter || null,
         filename,
       });
     } catch (e) {

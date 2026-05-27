@@ -27,6 +27,7 @@ import {
   listAdminAttendanceComplianceCentres,
   listAdminAttendanceSheets,
   type AttendanceCentreComplianceItem,
+  type AttendanceScheduledDateItem,
   type AttendanceSheetAdmin,
   type AttendanceSheetAdminSummary,
   type AttendanceUploadStatusFilter,
@@ -93,6 +94,10 @@ function formatExamDateLabel(iso: string): string {
     month: "short",
     year: "numeric",
   });
+}
+
+function uniqueScheduledDateIsos(items: AttendanceScheduledDateItem[]): string[] {
+  return [...new Set(items.map((d) => d.examination_date))].sort((a, b) => b.localeCompare(a));
 }
 
 function formatUploadedAt(iso: string): string {
@@ -515,7 +520,7 @@ function AttendanceSheetsContent() {
       try {
         const res = await getAdminAttendanceScheduledDates(examId);
         if (cancelled) return;
-        const dates = Array.isArray(res.dates) ? res.dates.map(String) : [];
+        const dates = Array.isArray(res.dates) ? uniqueScheduledDateIsos(res.dates) : [];
         setScheduledDates(dates);
         setServerToday(res.today ?? null);
       } catch {

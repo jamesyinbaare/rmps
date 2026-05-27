@@ -222,6 +222,16 @@ class StaffCentreSchoolCandidateItem(BaseModel):
     candidate_count: int = Field(ge=0)
 
 
+class StaffCandidateWriteDestination(BaseModel):
+    """Where this school's candidates write for one centre membership scope."""
+
+    subject_scope: str = Field(description="Membership scope: ALL, CORE, or ELECTIVE.")
+    centre_id: UUID
+    centre_code: str
+    centre_name: str
+    centre_region: str = Field(description="Region of the examination centre.")
+
+
 class StaffCentreOverviewResponse(BaseModel):
     """Supervisor/inspector dashboard: centre scope stats and next timetable slots."""
 
@@ -237,8 +247,27 @@ class StaffCentreOverviewResponse(BaseModel):
     supervisor_school_is_centre_host: bool = Field(
         description="True when this account's school is the examination centre host (writes_at_center_id is null).",
     )
+    centre_structure_mode: str = Field(
+        default="UNIFIED",
+        description="UNIFIED or SPLIT — determines whether multiple write destinations per scope are expected.",
+    )
+    candidate_write_destinations: list[StaffCandidateWriteDestination] = Field(
+        default_factory=list,
+        description="Per membership scope, which examination centre this school writes at (SPLIT may list CORE and ELECTIVE separately).",
+    )
+    dashboard_viewer: str = Field(
+        default="supervisor",
+        description="supervisor or inspector — controls dashboard presentation.",
+    )
+    centre_subject_scope: str | None = Field(
+        default=None,
+        description="When dashboard_viewer is inspector: ALL, CORE, or ELECTIVE for the active workspace scope.",
+    )
     candidate_count: int = Field(ge=0, description="Candidates registered for this exam at schools in the centre scope.")
-    school_count: int = Field(ge=0, description="Schools in the examination centre (host plus schools that write there).")
+    school_count: int = Field(
+        ge=0,
+        description="Schools in centre scope with at least one registered candidate for this examination.",
+    )
     upcoming: list[StaffCentreOverviewUpcomingItem] = Field(
         default_factory=list,
         description="Future sessions from the centre timetable (candidate-linked subjects), sorted by date and time.",
@@ -260,7 +289,7 @@ class StaffCentreOverviewResponse(BaseModel):
     )
     schools_with_candidate_counts: list[StaffCentreSchoolCandidateItem] = Field(
         default_factory=list,
-        description="Ordered schools in the centre scope with total candidates per school for this examination.",
+        description="Schools in centre scope with at least one registered candidate, ordered by school code.",
     )
     inspector_posted_workspaces: list[InspectorPostedWorkspaceItem] | None = Field(
         default=None,

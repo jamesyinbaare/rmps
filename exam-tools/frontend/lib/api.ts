@@ -943,6 +943,14 @@ export type StaffCentreOverviewUpcomingItem = {
   examination_time: string;
 };
 
+export type StaffCandidateWriteDestination = {
+  subject_scope: "ALL" | "CORE" | "ELECTIVE" | string;
+  centre_id: string;
+  centre_code: string;
+  centre_name: string;
+  centre_region: string;
+};
+
 export type StaffCentreOverviewResponse = {
   examination_id: number;
   exam_type: string;
@@ -954,6 +962,12 @@ export type StaffCentreOverviewResponse = {
   examination_centre_host_code: string;
   examination_centre_host_name: string;
   supervisor_school_is_centre_host: boolean;
+  centre_structure_mode?: string;
+  candidate_write_destinations?: StaffCandidateWriteDestination[];
+  /** supervisor or inspector — controls dashboard presentation. */
+  dashboard_viewer?: "supervisor" | "inspector";
+  /** ALL, CORE, or ELECTIVE when dashboard_viewer is inspector. */
+  centre_subject_scope?: string | null;
   candidate_count: number;
   school_count: number;
   upcoming: StaffCentreOverviewUpcomingItem[];
@@ -1236,8 +1250,12 @@ export async function downloadInspectorPostingsBulkTemplate(examinationId: numbe
 export async function getStaffCentreDaySummary(
   examId: number,
   examinationDateIso: string,
+  subjectFilter?: TimetableSubjectFilter,
 ): Promise<StaffCentreDaySummaryResponse> {
   const q = new URLSearchParams({ examination_date: examinationDateIso });
+  if (subjectFilter && subjectFilter !== "ALL") {
+    q.set("subject_filter", subjectFilter);
+  }
   return apiJson<StaffCentreDaySummaryResponse>(
     `/examinations/${examId}/my-center-day-summary?${q.toString()}`,
   );
@@ -2146,6 +2164,7 @@ export async function downloadAdminExamCentreOfficialsExport(params: {
   layout: "zip" | "combined";
   center_id?: string | null;
   designation?: string | null;
+  subject_scope?: RecordSubjectScope | null;
   filename: string;
 }): Promise<void> {
   const q = new URLSearchParams();
@@ -2153,6 +2172,7 @@ export async function downloadAdminExamCentreOfficialsExport(params: {
   q.set("layout", params.layout);
   if (params.center_id) q.set("center_id", params.center_id.trim());
   if (params.designation?.trim()) q.set("designation", params.designation.trim());
+  if (params.subject_scope) q.set("subject_scope", params.subject_scope);
   await downloadApiFile(`/admin/exam-centre-officials/export?${q.toString()}`, params.filename);
 }
 

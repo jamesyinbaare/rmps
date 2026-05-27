@@ -65,6 +65,7 @@ async def build_centre_overview(
     display_school_name: str | None = None,
 ) -> StaffCentreOverviewResponse:
     """Centre-scoped stats and timetable slots for executive / staff dashboards."""
+    from app.routers.examinations import _filter_schools_with_registered_candidates
     from app.schemas.examination import TimetableEntry
 
     exam_id = exam.id
@@ -77,7 +78,6 @@ async def build_centre_overview(
             select(School).where(School.id.in_(scope_ids)).order_by(School.code)
         )
         ordered_scope_schools = list(ordered_result.scalars().all())
-    school_count = len(scope_ids)
 
     candidate_count = 0
     cand_by_school: dict[UUID, int] = {}
@@ -97,6 +97,12 @@ async def build_centre_overview(
         )
         cand_by_school_rows = await session.execute(cand_by_school_stmt)
         cand_by_school = {row[0]: int(row[1]) for row in cand_by_school_rows.all()}
+
+    schools_with_candidates = _filter_schools_with_registered_candidates(
+        ordered_scope_schools,
+        cand_by_school,
+    )
+    school_count = len(schools_with_candidates)
 
     entries = await _staff_center_filtered_timetable_entries(session, exam_id, scope_ids)
 
@@ -131,6 +137,10 @@ async def build_centre_overview(
 
     sup_code = display_school_code if display_school_code is not None else str(centre.code)
     sup_name = display_school_name if display_school_name is not None else str(centre.name)
+    centre_mode = exam.centre_structure_mode
+    centre_structure_mode = (
+        centre_mode.value if hasattr(centre_mode, "value") else str(centre_mode)
+    )
 
     return StaffCentreOverviewResponse(
         examination_id=exam.id,
@@ -143,6 +153,8 @@ async def build_centre_overview(
         examination_centre_host_code=str(centre.code),
         examination_centre_host_name=str(centre.name),
         supervisor_school_is_centre_host=True,
+        centre_structure_mode=centre_structure_mode,
+        candidate_write_destinations=[],
         candidate_count=candidate_count,
         school_count=school_count,
         upcoming=[
@@ -175,7 +187,7 @@ async def build_centre_overview(
                 school_name=s.name,
                 candidate_count=cand_by_school.get(s.id, 0),
             )
-            for s in ordered_scope_schools
+            for s in schools_with_candidates
         ],
         inspector_posted_workspaces=None,
     )

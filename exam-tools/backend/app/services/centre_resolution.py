@@ -17,6 +17,14 @@ from app.models import (
     ExaminationCentreMembershipScope,
     School,
 )
+from app.schemas.timetable import TimetableDownloadFilter
+from app.schemas.examination import StaffCandidateWriteDestination
+
+_MEMBERSHIP_SCOPE_SORT = (
+    ExaminationCentreMembershipScope.ALL,
+    ExaminationCentreMembershipScope.CORE,
+    ExaminationCentreMembershipScope.ELECTIVE,
+)
 
 
 def _normalize_membership_scope(
@@ -33,6 +41,11 @@ def _normalize_inspector_scope(
     if isinstance(scope, ExamInspectorSubjectScope):
         return scope
     return ExamInspectorSubjectScope(scope)
+
+
+def school_code_matches_centre_code(school_code: str, centre_code: str) -> bool:
+    """True when the school's code is the examination centre code (this school hosts the centre)."""
+    return school_code.strip().upper() == centre_code.strip().upper()
 
 
 def membership_scope_for_inspector_scope(
@@ -116,6 +129,175 @@ async def resolve_centre_for_school(
     )
 
 
+def inspector_scope_from_membership_scopes(
+    mode: CentreStructureMode | str,
+    membership_scopes: set[ExaminationCentreMembershipScope],
+) -> ExamInspectorSubjectScope:
+    """Map a school's centre membership rows to an effective inspector subject scope."""
+    if not membership_scopes:
+        raise ValueError("School has no examination centre membership for this examination")
+    if isinstance(mode, str):
+        mode = CentreStructureMode(mode)
+    if mode == CentreStructureMode.UNIFIED:
+        return ExamInspectorSubjectScope.ALL
+    has_core = ExaminationCentreMembershipScope.CORE in membership_scopes
+    has_elective = ExaminationCentreMembershipScope.ELECTIVE in membership_scopes
+    if has_core and has_elective:
+        return ExamInspectorSubjectScope.ALL
+    if has_elective:
+        return ExamInspectorSubjectScope.ELECTIVE
+    if has_core:
+        return ExamInspectorSubjectScope.CORE
+    if ExaminationCentreMembershipScope.ALL in membership_scopes:
+        return ExamInspectorSubjectScope.ALL
+    raise ValueError("School has no examination centre membership for this examination")
+
+
+def consolidate_write_destinations_by_centre(
+    destinations: list[StaffCandidateWriteDestination],
+) -> list[StaffCandidateWriteDestination]:
+    """When CORE and ELECTIVE memberships share a centre, return one ALL row for that centre."""
+    if len(destinations) <= 1:
+        return destinations
+
+    by_centre: dict[UUID, list[StaffCandidateWriteDestination]] = {}
+    for d in destinations:
+        by_centre.setdefault(d.centre_id, []).append(d)
+
+    consolidated: list[StaffCandidateWriteDestination] = []
+    for group in sorted(by_centre.values(), key=lambda g: g[0].centre_code):
+        scopes = {d.subject_scope.upper() for d in group}
+        first = group[0]
+        if "ALL" in scopes or ("CORE" in scopes and "ELECTIVE" in scopes):
+            consolidated.append(
+                StaffCandidateWriteDestination(
+                    subject_scope=ExaminationCentreMembershipScope.ALL.value,
+                    centre_id=first.centre_id,
+                    centre_code=first.centre_code,
+                    centre_name=first.centre_name,
+                    centre_region=first.centre_region,
+                )
+            )
+        else:
+            order = {s.value: i for i, s in enumerate(_MEMBERSHIP_SCOPE_SORT)}
+            consolidated.extend(
+                sorted(group, key=lambda d: order.get(d.subject_scope, 99))
+            )
+
+    order = {s.value: i for i, s in enumerate(_MEMBERSHIP_SCOPE_SORT)}
+    return sorted(consolidated, key=lambda d: order.get(d.subject_scope, 99))
+
+
+async def list_candidate_write_destinations_for_school(
+    session: AsyncSession,
+    examination_id: int,
+    school_id: UUID,
+) -> list[StaffCandidateWriteDestination]:
+    """Each examination-centre membership row for this school (ALL, CORE, and/or ELECTIVE)."""
+    stmt = (
+        select(ExaminationCentreMembership, ExaminationCentre)
+        .join(
+            ExaminationCentre,
+            ExaminationCentre.id == ExaminationCentreMembership.examination_centre_id,
+        )
+        .where(
+            ExaminationCentreMembership.examination_id == examination_id,
+            ExaminationCentreMembership.school_id == school_id,
+        )
+    )
+    result = await session.execute(stmt)
+    rows = result.all()
+    if not rows:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="No examination centre membership for this school",
+        )
+
+    by_scope: dict[ExaminationCentreMembershipScope, StaffCandidateWriteDestination] = {}
+    for mem, centre in rows:
+        scope = _normalize_membership_scope(mem.subject_scope)
+        region = centre.region.value if centre.region is not None else "—"
+        by_scope[scope] = StaffCandidateWriteDestination(
+            subject_scope=scope.value,
+            centre_id=centre.id,
+            centre_code=str(centre.code),
+            centre_name=str(centre.name),
+            centre_region=region,
+        )
+
+    order = {s: i for i, s in enumerate(_MEMBERSHIP_SCOPE_SORT)}
+    per_scope = sorted(by_scope.values(), key=lambda d: order.get(ExaminationCentreMembershipScope(d.subject_scope), 99))
+    return consolidate_write_destinations_by_centre(per_scope)
+
+
+async def list_candidate_write_destinations_per_scope_for_school(
+    session: AsyncSession,
+    examination_id: int,
+    school_id: UUID,
+) -> list[StaffCandidateWriteDestination]:
+    """Per membership scope write destinations (before consolidating CORE+ELECTIVE at the same centre)."""
+    stmt = (
+        select(ExaminationCentreMembership, ExaminationCentre)
+        .join(
+            ExaminationCentre,
+            ExaminationCentre.id == ExaminationCentreMembership.examination_centre_id,
+        )
+        .where(
+            ExaminationCentreMembership.examination_id == examination_id,
+            ExaminationCentreMembership.school_id == school_id,
+        )
+    )
+    result = await session.execute(stmt)
+    rows = result.all()
+    if not rows:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="No examination centre membership for this school",
+        )
+
+    by_scope: dict[ExaminationCentreMembershipScope, StaffCandidateWriteDestination] = {}
+    for mem, centre in rows:
+        scope = _normalize_membership_scope(mem.subject_scope)
+        region = centre.region.value if centre.region is not None else "—"
+        by_scope[scope] = StaffCandidateWriteDestination(
+            subject_scope=scope.value,
+            centre_id=centre.id,
+            centre_code=str(centre.code),
+            centre_name=str(centre.name),
+            centre_region=region,
+        )
+
+    order = {s: i for i, s in enumerate(_MEMBERSHIP_SCOPE_SORT)}
+    return sorted(by_scope.values(), key=lambda d: order.get(ExaminationCentreMembershipScope(d.subject_scope), 99))
+
+
+async def inspector_scope_for_member_school(
+    session: AsyncSession,
+    examination_id: int,
+    school_id: UUID,
+) -> ExamInspectorSubjectScope:
+    """Effective inspector scope for a supervisor or school-linked inspector."""
+    exam = await get_examination_or_404(session, examination_id)
+    stmt = select(ExaminationCentreMembership.subject_scope).where(
+        ExaminationCentreMembership.examination_id == examination_id,
+        ExaminationCentreMembership.school_id == school_id,
+    )
+    result = await session.execute(stmt)
+    raw_scopes = {row[0] for row in result.all()}
+    membership_scopes: set[ExaminationCentreMembershipScope] = set()
+    for s in raw_scopes:
+        membership_scopes.add(_normalize_membership_scope(s))
+    if not membership_scopes:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="No examination centre membership for this school",
+        )
+    try:
+        return inspector_scope_from_membership_scopes(exam.centre_structure_mode, membership_scopes)
+    except ValueError as e:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e)) from e
+
+
 async def resolve_centre_for_user_school(
     session: AsyncSession,
     examination_id: int,
@@ -159,6 +341,103 @@ async def centre_scope_school_ids(
     return {row[0] for row in result.all()}
 
 
+async def centre_scope_school_ids_for_host_overview(
+    session: AsyncSession,
+    centre: ExaminationCentre,
+) -> set[UUID]:
+    """All schools writing at this centre (host dashboard): union of scopes on SPLIT, not intersection."""
+    exam = await get_examination_or_404(session, centre.examination_id)
+    mode = exam.centre_structure_mode
+    if isinstance(mode, str):
+        mode = CentreStructureMode(mode)
+    if mode == CentreStructureMode.UNIFIED:
+        return await centre_scope_school_ids(
+            session, centre, membership_scope=ExaminationCentreMembershipScope.ALL
+        )
+    core_ids = await centre_scope_school_ids(
+        session, centre, membership_scope=ExaminationCentreMembershipScope.CORE
+    )
+    elect_ids = await centre_scope_school_ids(
+        session, centre, membership_scope=ExaminationCentreMembershipScope.ELECTIVE
+    )
+    return core_ids | elect_ids
+
+
+def membership_scope_for_timetable_filter(
+    subject_filter: TimetableDownloadFilter,
+) -> ExaminationCentreMembershipScope | None:
+    """Map timetable subject filter to centre membership scope (SPLIT exams)."""
+    if subject_filter == TimetableDownloadFilter.CORE_ONLY:
+        return ExaminationCentreMembershipScope.CORE
+    if subject_filter == TimetableDownloadFilter.ELECTIVE_ONLY:
+        return ExaminationCentreMembershipScope.ELECTIVE
+    return None
+
+
+async def school_membership_scopes_at_centre(
+    session: AsyncSession,
+    examination_id: int,
+    school_id: UUID,
+    centre_id: UUID,
+) -> set[ExaminationCentreMembershipScope]:
+    stmt = select(ExaminationCentreMembership.subject_scope).where(
+        ExaminationCentreMembership.examination_id == examination_id,
+        ExaminationCentreMembership.school_id == school_id,
+        ExaminationCentreMembership.examination_centre_id == centre_id,
+    )
+    result = await session.execute(stmt)
+    scopes: set[ExaminationCentreMembershipScope] = set()
+    for row in result.all():
+        scopes.add(_normalize_membership_scope(row[0]))
+    return scopes
+
+
+def timetable_filters_for_memberships(
+    memberships: set[ExaminationCentreMembershipScope],
+    requested: TimetableDownloadFilter,
+) -> list[TimetableDownloadFilter]:
+    """
+    Which timetable subject filters apply for a school at a centre.
+
+    When requested is ALL on SPLIT exams, only include core and/or elective papers
+    that match this school's membership at this centre (not every subject they sit nationally).
+    """
+    if ExaminationCentreMembershipScope.ALL in memberships:
+        has_core = True
+        has_elective = True
+    else:
+        has_core = ExaminationCentreMembershipScope.CORE in memberships
+        has_elective = ExaminationCentreMembershipScope.ELECTIVE in memberships
+
+    if requested == TimetableDownloadFilter.CORE_ONLY:
+        return [TimetableDownloadFilter.CORE_ONLY] if has_core else []
+    if requested == TimetableDownloadFilter.ELECTIVE_ONLY:
+        return [TimetableDownloadFilter.ELECTIVE_ONLY] if has_elective else []
+    filters: list[TimetableDownloadFilter] = []
+    if has_core:
+        filters.append(TimetableDownloadFilter.CORE_ONLY)
+    if has_elective:
+        filters.append(TimetableDownloadFilter.ELECTIVE_ONLY)
+    return filters
+
+
+async def scope_ids_for_centre_subject_filter(
+    session: AsyncSession,
+    centre: ExaminationCentre,
+    scope_ids: set[UUID],
+    *,
+    subject_filter: TimetableDownloadFilter,
+) -> set[UUID]:
+    """On SPLIT exams, limit schools to those with the matching membership at this centre."""
+    mem_scope = membership_scope_for_timetable_filter(subject_filter)
+    if mem_scope is None:
+        return scope_ids
+    membership_ids = await centre_scope_school_ids(
+        session, centre, membership_scope=mem_scope
+    )
+    return scope_ids & membership_ids
+
+
 async def centre_scope_school_ids_for_inspector_scope(
     session: AsyncSession,
     centre: ExaminationCentre,
@@ -177,7 +456,10 @@ async def centre_scope_school_ids_for_inspector_scope(
         elect_ids = await centre_scope_school_ids(
             session, centre, membership_scope=ExaminationCentreMembershipScope.ELECTIVE
         )
-        return core_ids & elect_ids
+        # For inspectors assigned to BOTH CORE and ELECTIVE at this centre,
+        # include schools that write only CORE or only ELECTIVE (union), not only
+        # schools that appear in both scopes (intersection).
+        return core_ids | elect_ids
     return await centre_scope_school_ids(session, centre, membership_scope=mem_scope)
 
 

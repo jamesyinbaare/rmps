@@ -13,9 +13,11 @@ from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models import (
+    CentreStructureMode,
     Examination,
     ExaminationCandidate,
     ExaminationCandidateSubject,
+    ExaminationCentre,
     ExaminationSchedule,
     Programme,
     School,
@@ -262,6 +264,71 @@ async def get_candidate_schedule_codes_for_exam(
     for (code,) in result.all():
         if code:
             out.add(str(code).strip())
+    return out
+
+
+async def get_candidate_schedule_codes_for_centre_scope(
+    session: AsyncSession,
+    exam_id: int,
+    scope_school_ids: set[UUID],
+    centre: ExaminationCentre,
+    *,
+    subject_filter: TimetableDownloadFilter = TimetableDownloadFilter.ALL,
+    programme_id: int | None = None,
+    filter_school_id: UUID | None = None,
+) -> set[str]:
+    """
+    Candidate-linked schedule codes limited by each school's membership at this centre.
+
+    On SPLIT exams a school that writes core at centre A does not contribute elective
+    papers when building the timetable for centre A (even when subject_filter is ALL).
+    """
+    from app.services.centre_resolution import (
+        get_examination_or_404,
+        school_membership_scopes_at_centre,
+        timetable_filters_for_memberships,
+    )
+
+    exam = await get_examination_or_404(session, exam_id)
+    mode = exam.centre_structure_mode
+    if isinstance(mode, str):
+        mode = CentreStructureMode(mode)
+
+    school_ids = set(scope_school_ids)
+    if filter_school_id is not None:
+        if filter_school_id not in school_ids:
+            return set()
+        school_ids = {filter_school_id}
+
+    if mode != CentreStructureMode.SPLIT:
+        codes = await get_candidate_schedule_codes_for_exam(
+            session,
+            exam_id,
+            school_ids,
+            programme_id=programme_id,
+        )
+        return await filter_schedule_codes_by_subject_type(session, codes, subject_filter)
+
+    out: set[str] = set()
+    for school_id in school_ids:
+        memberships = await school_membership_scopes_at_centre(
+            session, exam_id, school_id, centre.id
+        )
+        if not memberships:
+            continue
+        filters_to_apply = timetable_filters_for_memberships(memberships, subject_filter)
+        if not filters_to_apply:
+            continue
+        school_codes = await get_candidate_schedule_codes_for_exam(
+            session,
+            exam_id,
+            {school_id},
+            programme_id=programme_id,
+        )
+        if not school_codes:
+            continue
+        for filt in filters_to_apply:
+            out |= await filter_schedule_codes_by_subject_type(session, school_codes, filt)
     return out
 
 
