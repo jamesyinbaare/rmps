@@ -33,6 +33,15 @@ def normalize_record_subject_scope(
     raise ValueError("subject_scope must be CORE or ELECTIVE")
 
 
+def opposite_record_scope(scope: ExamInspectorSubjectScope) -> ExamInspectorSubjectScope:
+    """CORE ↔ ELECTIVE for officials roster import/copy."""
+    if scope == ExamInspectorSubjectScope.CORE:
+        return ExamInspectorSubjectScope.ELECTIVE
+    if scope == ExamInspectorSubjectScope.ELECTIVE:
+        return ExamInspectorSubjectScope.CORE
+    raise ValueError("opposite_record_scope requires CORE or ELECTIVE")
+
+
 def resolve_working_scope(
     posting_scope: ExamInspectorSubjectScope,
     requested: ExamInspectorSubjectScope | str | None,

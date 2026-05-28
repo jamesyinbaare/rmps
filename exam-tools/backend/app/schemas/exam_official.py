@@ -84,6 +84,34 @@ class ExamCentreOfficialCreate(BaseModel):
         return s
 
 
+class ExamOfficialImportPreviewRow(BaseModel):
+    source_official: ExamCentreOfficialResponse
+    duplicate_in_destination: bool
+    importable: bool
+
+
+class ExamOfficialImportPreviewResponse(BaseModel):
+    source_scope: str
+    destination_scope: str
+    items: list[ExamOfficialImportPreviewRow]
+
+
+class ExamOfficialImportItem(BaseModel):
+    source_official_id: UUID
+    num_days: int = Field(..., ge=1, le=32767)
+
+
+class ExamOfficialImportRequest(BaseModel):
+    items: list[ExamOfficialImportItem] = Field(..., min_length=1)
+
+
+class ExamOfficialImportResponse(BaseModel):
+    created: list[ExamCentreOfficialResponse]
+    requested: int
+    created_count: int
+    skipped_duplicates: int
+
+
 class ExamCentreOfficialUpdate(BaseModel):
     full_name: str | None = Field(None, min_length=1, max_length=255)
     designation: ExamOfficialDesignationApi | None = None

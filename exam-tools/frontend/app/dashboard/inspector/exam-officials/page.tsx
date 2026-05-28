@@ -1,10 +1,15 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { createPortal } from "react-dom";
 import { useRouter } from "next/navigation";
 
 import { DashboardShell } from "@/components/dashboard-shell";
+import { DiscardChangesConfirmModal } from "@/components/discard-changes-confirm-modal";
+import {
+  ImportScopeModalHeader,
+  scopeDisplayLabel,
+} from "@/components/inspector-exam-officials-import-header";
+import { OfficialModal, FormSection, officialModalFooterClass } from "@/components/official-modal";
 import { TypeToDeleteConfirmModal } from "@/components/type-to-delete-confirm-modal";
 import { SearchableCombobox } from "@/components/searchable-combobox";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
@@ -17,7 +22,9 @@ import {
   displayBankCode,
   getDistinctBankNames,
   getExamOfficialsForMyCentre,
+  getExamOfficialsImportPreview,
   getInspectorSubmissionStatus,
+  importExamOfficialsFromOtherScope,
   inspectorOfficialsSubmissionNotice,
   isInspectorScopePeriodOpen,
   getMyInspectorPostings,
@@ -29,6 +36,7 @@ import {
   type ExamOfficialDesignation,
   type ExamCentreOfficialResponse,
   type ExamCentreOfficialCreatePayload,
+  type ExamOfficialImportPreviewRow,
   type InspectorSubmissionStatus,
   type MyInspectorPostingRow,
   type RecordSubjectScope,
@@ -61,6 +69,16 @@ import {
   resolveBankKind,
   splitAbsaAccountForDisplay,
 } from "@/lib/exam-official-account";
+import {
+  accountFormIsDirty,
+  importDisabledHint,
+  importModalIsDirty,
+  importSelectionSummary,
+  snapshotAccountForm,
+  snapshotImportModal,
+  type AccountFormSnapshot,
+  type ImportModalSnapshot,
+} from "@/lib/inspector-exam-official-modal-state";
 
 const btnPrimary =
   "inline-flex min-h-11 w-full min-w-[44px] items-center justify-center rounded-lg bg-primary px-3 text-sm font-medium text-primary-foreground transition-colors hover:bg-primary-hover focus:outline-none focus:ring-2 focus:ring-ring/30 disabled:pointer-events-none disabled:opacity-50 sm:min-h-10 sm:w-auto";
@@ -110,162 +128,6 @@ function preventClipboardInsert(e: React.ClipboardEvent | React.DragEvent) {
   e.preventDefault();
 }
 
-function OfficialModal({
-  title,
-  subtitle,
-  titleId,
-  subtitleId,
-  onClose,
-  children,
-  footer,
-  formError,
-  scrollRef,
-  focusNameOnMount = true,
-}: {
-  title: string;
-  subtitle?: string | null;
-  titleId: string;
-  subtitleId?: string;
-  onClose: () => void;
-  children: React.ReactNode;
-  footer: React.ReactNode;
-  formError?: string | null;
-  scrollRef?: React.RefObject<HTMLDivElement | null>;
-  focusNameOnMount?: boolean;
-}) {
-  const [keyboardInset, setKeyboardInset] = useState(0);
-
-  useEffect(() => {
-    function onKey(e: KeyboardEvent) {
-      if (e.key === "Escape") {
-        e.preventDefault();
-        onClose();
-      }
-    }
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [onClose]);
-
-  useEffect(() => {
-    if (!focusNameOnMount) return;
-    const t = window.setTimeout(() => {
-      const el = document.getElementById("eo-name");
-      if (el && typeof el.focus === "function") el.focus();
-    }, 50);
-    return () => window.clearTimeout(t);
-  }, [focusNameOnMount]);
-
-  useEffect(() => {
-    const prev = document.body.style.overflow;
-    document.body.style.overflow = "hidden";
-    return () => {
-      document.body.style.overflow = prev;
-    };
-  }, []);
-
-  useEffect(() => {
-    const vv = window.visualViewport;
-    if (!vv) return;
-
-    function update() {
-      if (!vv) return;
-      setKeyboardInset(Math.max(0, window.innerHeight - vv.height - vv.offsetTop));
-    }
-
-    update();
-    vv.addEventListener("resize", update);
-    vv.addEventListener("scroll", update);
-    return () => {
-      vv.removeEventListener("resize", update);
-      vv.removeEventListener("scroll", update);
-    };
-  }, []);
-
-  const sheet = (
-    <>
-      <button type="button" aria-label="Close dialog" className="absolute inset-0 bg-foreground/40" onClick={onClose} />
-      <div
-        role="dialog"
-        aria-modal="true"
-        aria-labelledby={titleId}
-        aria-describedby={subtitle ? subtitleId : undefined}
-        className="relative z-10 flex min-h-0 w-full max-w-lg flex-col overflow-hidden rounded-t-2xl border border-border bg-card shadow-lg max-sm:max-h-[min(90dvh,90svh)] sm:max-h-[min(90vh,920px)] sm:max-w-2xl sm:rounded-2xl"
-      >
-        <div className="shrink-0 border-b border-border">
-          <div
-            className="mx-auto mt-2 h-1 w-10 shrink-0 rounded-full bg-muted-foreground/35 sm:hidden"
-            aria-hidden
-          />
-          <div className="flex items-start justify-between gap-4 px-4 pb-4 pt-3 sm:px-5 sm:pt-4">
-          <div className="min-w-0 flex-1">
-            <h2 id={titleId} className="text-lg font-semibold text-card-foreground">
-              {title}
-            </h2>
-            {subtitle ? (
-              <p id={subtitleId} className="mt-1 text-sm text-muted-foreground">
-                {subtitle}
-              </p>
-            ) : null}
-          </div>
-          <button
-            type="button"
-            onClick={onClose}
-            className="hidden shrink-0 rounded-lg px-2 py-1 text-sm text-muted-foreground hover:bg-muted focus:outline-none focus:ring-2 focus:ring-ring/30 sm:inline"
-          >
-            Close
-          </button>
-        </div>
-        </div>
-        <div
-          ref={scrollRef}
-          className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-4 py-4 sm:px-5"
-        >
-          {formError ? (
-            <p
-              role="alert"
-              className="sticky top-0 z-10 mb-3 rounded-lg border border-destructive/40 bg-destructive/10 px-3 py-2 text-sm text-destructive shadow-sm"
-            >
-              {formError}
-            </p>
-          ) : null}
-          {children}
-        </div>
-        <div
-          className="shrink-0 border-t border-border bg-card px-4 pt-3 sm:px-5"
-          style={{
-            paddingBottom: `max(1.25rem, calc(env(safe-area-inset-bottom, 0px) + ${keyboardInset}px))`,
-          }}
-        >
-          {footer}
-        </div>
-      </div>
-    </>
-  );
-
-  return createPortal(
-    <div className="fixed inset-0 z-[100] flex items-end justify-center sm:items-center sm:p-4">{sheet}</div>,
-    document.body,
-  );
-}
-
-function FormSection({
-  title,
-  description,
-  children,
-}: {
-  title: string;
-  description?: string;
-  children: React.ReactNode;
-}) {
-  return (
-    <fieldset className="space-y-3 border-0 p-0 md:col-span-2">
-      <legend className="text-sm font-semibold text-foreground">{title}</legend>
-      {description ? <p className="text-xs text-muted-foreground">{description}</p> : null}
-      <div className="space-y-4 md:grid md:grid-cols-2 md:gap-x-4 md:gap-y-4 md:space-y-0">{children}</div>
-    </fieldset>
-  );
-}
-
 export default function InspectorExamOfficialsPage() {
   const FORM_ID = "exam-official-form";
   const router = useRouter();
@@ -313,6 +175,22 @@ export default function InspectorExamOfficialsPage() {
   const [designationFilter, setDesignationFilter] = useState(ALL_DESIGNATIONS_FILTER);
   const [sortKey, setSortKey] = useState<ExamOfficialSortKey>("designation");
   const [sortDir, setSortDir] = useState<ExamOfficialSortDir>("asc");
+
+  const [importModalOpen, setImportModalOpen] = useState(false);
+  const [importPreviewLoading, setImportPreviewLoading] = useState(false);
+  const [importPreviewItems, setImportPreviewItems] = useState<ExamOfficialImportPreviewRow[]>([]);
+  const [importSourceScope, setImportSourceScope] = useState<RecordSubjectScope | null>(null);
+  const [importDestinationScope, setImportDestinationScope] = useState<RecordSubjectScope | null>(null);
+  const [importSelectedIds, setImportSelectedIds] = useState<Set<string>>(new Set());
+  const [importNumDaysById, setImportNumDaysById] = useState<Record<string, string>>({});
+  const [importBusy, setImportBusy] = useState(false);
+  const [importError, setImportError] = useState<string | null>(null);
+  const [importSuccessMessage, setImportSuccessMessage] = useState<string | null>(null);
+  const [saveSuccessMessage, setSaveSuccessMessage] = useState<string | null>(null);
+  const [accountFormBaseline, setAccountFormBaseline] = useState<AccountFormSnapshot | null>(null);
+  const [importModalBaseline, setImportModalBaseline] = useState<ImportModalSnapshot | null>(null);
+  const [discardConfirmTarget, setDiscardConfirmTarget] = useState<"account" | "import" | null>(null);
+  const importDaysInputRefs = useRef<Record<string, HTMLInputElement | null>>({});
 
   const selectedPosting = useMemo(
     () => postings.find((p) => p.id === selectedPostingId) ?? null,
@@ -435,6 +313,61 @@ export default function InspectorExamOfficialsPage() {
   }, [modalOpen, editing?.id]);
 
   useEffect(() => {
+    setSaveSuccessMessage(null);
+    setImportSuccessMessage(null);
+  }, [workingScope, selectedPostingId, examId]);
+
+  function buildAccountFormSnapshot(): AccountFormSnapshot {
+    return snapshotAccountForm({
+      fullName,
+      designation,
+      telephone,
+      accountNumber,
+      accountConfirm,
+      numDays,
+      numDaysConfirm,
+      selectedBankName,
+      selectedBranchId,
+      editBankOpen,
+      editAccountOpen,
+      editDaysOpen,
+    });
+  }
+
+  const accountFormDirty = useMemo(
+    () => accountFormIsDirty(buildAccountFormSnapshot(), accountFormBaseline),
+    [
+      fullName,
+      designation,
+      telephone,
+      accountNumber,
+      accountConfirm,
+      numDays,
+      numDaysConfirm,
+      selectedBankName,
+      selectedBranchId,
+      editBankOpen,
+      editAccountOpen,
+      editDaysOpen,
+      accountFormBaseline,
+    ],
+  );
+
+  const importFormDirty = useMemo(
+    () => importModalIsDirty(importSelectedIds, importNumDaysById, importModalBaseline),
+    [importSelectedIds, importNumDaysById, importModalBaseline],
+  );
+
+  useEffect(() => {
+    if (!modalOpen) {
+      setAccountFormBaseline(null);
+      return;
+    }
+    const t = window.setTimeout(() => setAccountFormBaseline(buildAccountFormSnapshot()), 0);
+    return () => window.clearTimeout(t);
+  }, [modalOpen, editing?.id]);
+
+  useEffect(() => {
     const t = setTimeout(() => {
       if (!bankNameQuery.trim()) {
         setBankNameSuggestions([]);
@@ -540,6 +473,30 @@ export default function InspectorExamOfficialsPage() {
     setModalOpen(false);
     setEditing(null);
     setFormError(null);
+    setAccountFormBaseline(null);
+  }
+
+  function requestCloseAccountModal() {
+    if (accountFormDirty) {
+      setDiscardConfirmTarget("account");
+      return;
+    }
+    closeModal();
+  }
+
+  function requestCloseImportModal() {
+    if (importFormDirty) {
+      setDiscardConfirmTarget("import");
+      return;
+    }
+    closeImportModal();
+  }
+
+  function confirmDiscardChanges() {
+    const target = discardConfirmTarget;
+    setDiscardConfirmTarget(null);
+    if (target === "account") closeModal();
+    else if (target === "import") closeImportModal();
   }
 
   async function onSubmit(e: React.FormEvent) {
@@ -618,6 +575,11 @@ export default function InspectorExamOfficialsPage() {
       } else {
         await createExamOfficial(examId, payload, postingParam, scopeParam);
       }
+      setSaveSuccessMessage(
+        editing
+          ? `Updated account details for ${payload.full_name}.`
+          : `Added account details for ${payload.full_name}.`,
+      );
       closeModal();
       await loadList();
     } catch (err) {
@@ -633,6 +595,165 @@ export default function InspectorExamOfficialsPage() {
     !(postings.length > 0 && !selectedPostingId) &&
     !busy &&
     !pdfDownloadBusy;
+
+  const importablePreviewItems = useMemo(
+    () => importPreviewItems.filter((row) => row.importable),
+    [importPreviewItems],
+  );
+
+  function parseImportNumDays(value: string): number | null {
+    const n = parseInt(value.trim(), 10);
+    if (Number.isNaN(n) || n < 1) return null;
+    return n;
+  }
+
+  const importSelectionValid = useMemo(() => {
+    if (importSelectedIds.size === 0) return false;
+    for (const id of importSelectedIds) {
+      if (parseImportNumDays(importNumDaysById[id] ?? "") === null) return false;
+    }
+    return true;
+  }, [importSelectedIds, importNumDaysById]);
+
+  const importDuplicateItems = useMemo(
+    () => importPreviewItems.filter((row) => !row.importable),
+    [importPreviewItems],
+  );
+
+  const importSummary = useMemo(
+    () => importSelectionSummary(importSelectedIds, importNumDaysById, parseImportNumDays),
+    [importSelectedIds, importNumDaysById],
+  );
+
+  const importFooterHint = useMemo(
+    () => importDisabledHint(importSummary.officialCount, importSummary.allDaysValid),
+    [importSummary],
+  );
+
+  const importScopeParam = postingIsAll ? workingScope : undefined;
+
+  async function openImportModal() {
+    if (examId === null) return;
+    if (postings.length > 0 && !selectedPostingId) {
+      setLoadError("Choose a workspace (centre and subject scope) first.");
+      return;
+    }
+    setImportModalOpen(true);
+    setImportError(null);
+    setImportPreviewItems([]);
+    setImportSelectedIds(new Set());
+    setImportNumDaysById({});
+    setImportPreviewLoading(true);
+    try {
+      const preview = await getExamOfficialsImportPreview(
+        examId,
+        postings.length > 0 ? selectedPostingId : undefined,
+        importScopeParam,
+      );
+      setImportPreviewItems(preview.items);
+      setImportSourceScope(preview.source_scope);
+      setImportDestinationScope(preview.destination_scope);
+      setImportSelectedIds(new Set());
+      setImportModalBaseline(snapshotImportModal(new Set(), {}));
+    } catch (e) {
+      setImportError(e instanceof Error ? e.message : "Failed to load import preview");
+    } finally {
+      setImportPreviewLoading(false);
+    }
+  }
+
+  function closeImportModal() {
+    setImportModalOpen(false);
+    setImportError(null);
+    setImportPreviewItems([]);
+    setImportSelectedIds(new Set());
+    setImportNumDaysById({});
+    setImportModalBaseline(null);
+    importDaysInputRefs.current = {};
+  }
+
+  function goToSourceScopeAccounts() {
+    if (importSourceScope && postingIsAll) {
+      setWorkingScope(importSourceScope);
+    }
+    closeImportModal();
+  }
+
+  function toggleImportSelection(id: string, importable: boolean) {
+    if (!importable) return;
+    setImportSelectedIds((prev) => {
+      const next = new Set(prev);
+      const wasSelected = next.has(id);
+      if (wasSelected) {
+        next.delete(id);
+      } else {
+        next.add(id);
+        requestAnimationFrame(() => {
+          importDaysInputRefs.current[id]?.focus();
+        });
+      }
+      return next;
+    });
+    setImportNumDaysById((prev) => {
+      if (prev[id] !== undefined) return prev;
+      return { ...prev, [id]: "" };
+    });
+  }
+
+  function setImportSelectAllImportable(checked: boolean) {
+    if (checked) {
+      const ids = importablePreviewItems.map((row) => row.source_official.id);
+      setImportSelectedIds(new Set(ids));
+      setImportNumDaysById((prev) => {
+        const next = { ...prev };
+        for (const id of ids) {
+          if (next[id] === undefined) next[id] = "";
+        }
+        return next;
+      });
+    } else {
+      setImportSelectedIds(new Set());
+    }
+  }
+
+  async function confirmImport() {
+    if (examId === null || !importSelectionValid) return;
+    if (postings.length > 0 && !selectedPostingId) return;
+    const items = [...importSelectedIds].map((id) => ({
+      source_official_id: id,
+      num_days: parseImportNumDays(importNumDaysById[id] ?? "")!,
+    }));
+    setImportBusy(true);
+    setImportError(null);
+    try {
+      const result = await importExamOfficialsFromOtherScope(
+        examId,
+        { items },
+        postings.length > 0 ? selectedPostingId : undefined,
+        importScopeParam,
+      );
+      closeImportModal();
+      await loadList();
+      const parts: string[] = [];
+      if (result.created_count > 0) {
+        parts.push(
+          `Imported ${result.created_count} record${result.created_count === 1 ? "" : "s"} into ${importDestinationScope ?? workingScope}.`,
+        );
+      } else {
+        parts.push("No records were imported.");
+      }
+      if (result.skipped_duplicates > 0) {
+        parts.push(
+          `${result.skipped_duplicates} skipped as duplicate${result.skipped_duplicates === 1 ? "" : "s"}.`,
+        );
+      }
+      setImportSuccessMessage(parts.join(" "));
+    } catch (e) {
+      setImportError(e instanceof Error ? e.message : "Import failed");
+    } finally {
+      setImportBusy(false);
+    }
+  }
 
   async function handleDownloadSummaryPdf() {
     if (examId === null || !summaryPdfEnabled) return;
@@ -736,6 +857,28 @@ export default function InspectorExamOfficialsPage() {
   const showAccountFields = !editing || editAccountOpen;
   const showDaysFields = !editing || editDaysOpen;
 
+  const importEnabled =
+    examId !== null &&
+    !(postings.length > 0 && !selectedPostingId) &&
+    !busy &&
+    !importBusy &&
+    scopeAddEnabled;
+
+  const importSourceScopeLabel = useMemo((): string | null => {
+    if (postingIsAll) {
+      return workingScope === "CORE" ? "Elective" : "Core";
+    }
+    if (selectedPosting?.subject_scope === "CORE") return "Elective";
+    if (selectedPosting?.subject_scope === "ELECTIVE") return "Core";
+    return null;
+  }, [postingIsAll, workingScope, selectedPosting?.subject_scope]);
+
+  const importButtonLabel = importSourceScopeLabel
+    ? `Copy account from ${importSourceScopeLabel}`
+    : "Copy account from another roster";
+
+  const scopeLabel = scopeDisplayLabel;
+
   const accountActionButtons = (
     <>
       <button
@@ -746,6 +889,21 @@ export default function InspectorExamOfficialsPage() {
         title={items.length === 0 ? "Add at least one account record to download the summary" : undefined}
       >
         {pdfDownloadBusy ? "Preparing PDF…" : "Download summary (PDF)"}
+      </button>
+      <button
+        type="button"
+        className={`${officialAccountsBtnSecondary} min-h-11 w-full`}
+        onClick={() => void openImportModal()}
+        disabled={!importEnabled}
+        title={
+          !scopeAddEnabled
+            ? "Copying is unavailable while submissions are closed for this scope"
+            : importSourceScopeLabel
+              ? `Copy account details from your ${importSourceScopeLabel} roster`
+              : undefined
+        }
+      >
+        {importButtonLabel}
       </button>
       <button
         type="button"
@@ -791,6 +949,24 @@ export default function InspectorExamOfficialsPage() {
             }
             actions={<div className="hidden lg:contents">{accountActionButtons}</div>}
           />
+
+          {saveSuccessMessage ? (
+            <p
+              className="rounded-lg border border-success/40 bg-success/10 px-3 py-2 text-sm text-foreground"
+              role="status"
+            >
+              {saveSuccessMessage}
+            </p>
+          ) : null}
+
+          {importSuccessMessage ? (
+            <p
+              className="rounded-lg border border-success/40 bg-success/10 px-3 py-2 text-sm text-foreground"
+              role="status"
+            >
+              {importSuccessMessage}
+            </p>
+          ) : null}
 
           {submissionNotice ? (
             <p className="rounded-lg border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-sm text-foreground">
@@ -1155,16 +1331,24 @@ export default function InspectorExamOfficialsPage() {
 
         {modalOpen ? (
           <OfficialModal
-            title={editing ? "Update account details" : "Add — account details"}
+            title={editing ? "Edit account details" : "Add account details"}
             subtitle={modalSubtitle}
             titleId="exam-official-modal-title"
             subtitleId="exam-official-modal-subtitle"
-            onClose={closeModal}
+            onRequestClose={requestCloseAccountModal}
             formError={formError}
             scrollRef={modalScrollRef}
             focusNameOnMount={!editing}
             footer={
-              <div className="flex w-full min-w-0 flex-col-reverse gap-3 sm:flex-row sm:justify-end sm:gap-2">
+              <div className={officialModalFooterClass()}>
+                <button
+                  type="button"
+                  className={btnSecondary}
+                  onClick={requestCloseAccountModal}
+                  disabled={busy}
+                >
+                  Cancel
+                </button>
                 <button
                   type="submit"
                   form={FORM_ID}
@@ -1172,14 +1356,6 @@ export default function InspectorExamOfficialsPage() {
                   disabled={busy}
                 >
                   {busy ? "Saving…" : editing ? "Save changes" : "Add"}
-                </button>
-                <button
-                  type="button"
-                  className={`${btnSecondary} sm:order-first`}
-                  onClick={closeModal}
-                  disabled={busy}
-                >
-                  Cancel
                 </button>
               </div>
             }
@@ -1222,6 +1398,26 @@ export default function InspectorExamOfficialsPage() {
                   ))}
                 </select>
               </div>
+              <div className="md:col-span-2">
+                <label className={formLabelClass} htmlFor="eo-phone">
+                  Phone number
+                </label>
+                <input
+                  id="eo-phone"
+                  className={formInputClass}
+                  inputMode="tel"
+                  value={telephone}
+                  onChange={(e) => setTelephone(e.target.value.trim())}
+                  placeholder="e.g. 0241234567"
+                  enterKeyHint="next"
+                />
+                <p className="mt-1 text-xs text-muted-foreground">{PHONE_HINT}</p>
+                {telephone.trim().length > 0 ? (
+                  <p className={`mt-0.5 text-xs ${phoneOk ? "text-success" : "text-destructive"}`}>
+                    {phoneOk ? "Looks valid." : "Enter a valid 10-digit phone number."}
+                  </p>
+                ) : null}
+              </div>
               </FormSection>
               <FormSection
                 title="Bank account details"
@@ -1229,6 +1425,9 @@ export default function InspectorExamOfficialsPage() {
               >
               {editing && !editBankOpen ? (
                 <div className="md:col-span-2 space-y-2 rounded-lg border border-border bg-muted/20 px-3 py-3">
+                  <p className="text-xs text-muted-foreground">
+                    Bank and branch are hidden until you choose to update them.
+                  </p>
                   <p className="text-sm text-foreground">
                     <span className="font-medium">{selectedBankName}</span>
                     {selectedBranchLabel ? (
@@ -1314,6 +1513,9 @@ export default function InspectorExamOfficialsPage() {
               ) : null}
               {editing && !editAccountOpen ? (
                 <div className="md:col-span-2 space-y-2 rounded-lg border border-border bg-muted/20 px-3 py-3">
+                  <p className="text-xs text-muted-foreground">
+                    Account number is hidden until you choose to update it.
+                  </p>
                   <p className="font-mono text-sm text-foreground">{maskAccountNumber(accountNumber)}</p>
                   <button
                     type="button"
@@ -1378,9 +1580,12 @@ export default function InspectorExamOfficialsPage() {
                 </>
               ) : null}
               </FormSection>
-              <FormSection title="Days and contact">
+              <FormSection title="Days on duty">
               {editing && !editDaysOpen ? (
                 <div className="md:col-span-2 space-y-2 rounded-lg border border-border bg-muted/20 px-3 py-3">
+                  <p className="text-xs text-muted-foreground">
+                    Days on duty are hidden until you choose to update them.
+                  </p>
                   <p className="text-sm text-foreground">
                     <span className="font-medium tabular-nums">{numDays}</span> days on duty
                   </p>
@@ -1438,29 +1643,242 @@ export default function InspectorExamOfficialsPage() {
               </div>
                 </>
               ) : null}
-              <div className="md:col-span-2">
-                <label className={formLabelClass} htmlFor="eo-phone">
-                  Phone number
-                </label>
-                <input
-                  id="eo-phone"
-                  className={formInputClass}
-                  inputMode="tel"
-                  value={telephone}
-                  onChange={(e) => setTelephone(e.target.value.trim())}
-                  placeholder="e.g. 0241234567"
-                  enterKeyHint="done"
-                />
-                <p className="mt-1 text-xs text-muted-foreground">{PHONE_HINT}</p>
-                {telephone.trim().length > 0 ? (
-                  <p className={`mt-0.5 text-xs ${phoneOk ? "text-success" : "text-destructive"}`}>
-                    {phoneOk ? "Looks valid." : "Enter a valid 10-digit phone number."}
-                  </p>
-                ) : null}
-              </div>
               </FormSection>
             </form>
           </OfficialModal>
+        ) : null}
+
+        {importModalOpen ? (
+          <OfficialModal
+            size="wide"
+            header={
+              <ImportScopeModalHeader
+                sourceScope={importSourceScope}
+                destinationScope={importDestinationScope}
+                subtitleId="import-officials-modal-subtitle"
+              />
+            }
+            titleId="import-officials-modal-title"
+            subtitleId="import-officials-modal-subtitle"
+            onRequestClose={requestCloseImportModal}
+            formError={importError}
+            focusNameOnMount={false}
+            initialFocusSelector="#import-select-all"
+            footer={
+              <div className="flex w-full min-w-0 flex-col gap-3">
+                {importFooterHint ? (
+                  <p
+                    id="import-footer-hint"
+                    className="text-center text-xs text-muted-foreground sm:text-left"
+                    role="status"
+                  >
+                    {importFooterHint}
+                  </p>
+                ) : importSummary.officialCount > 0 ? (
+                  <p className="text-center text-xs text-muted-foreground sm:text-left" role="status">
+                    {importSummary.officialCount} official
+                    {importSummary.officialCount === 1 ? "" : "s"} · {importSummary.totalDays} total day
+                    {importSummary.totalDays === 1 ? "" : "s"}
+                  </p>
+                ) : null}
+                <div className={officialModalFooterClass()}>
+                  <button
+                    type="button"
+                    className={btnSecondary}
+                    onClick={requestCloseImportModal}
+                    disabled={importBusy}
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="button"
+                    className={`${officialAccountsBtnPrimary} min-h-11 w-full shrink-0 sm:min-h-10 sm:w-auto`}
+                    disabled={importBusy || importPreviewLoading || !importSelectionValid}
+                    onClick={() => void confirmImport()}
+                    aria-describedby={importFooterHint ? "import-footer-hint" : undefined}
+                  >
+                    {importBusy
+                      ? "Adding…"
+                      : importDestinationScope
+                        ? `Add to ${scopeLabel(importDestinationScope)} (${importSelectedIds.size})`
+                        : `Add selected (${importSelectedIds.size})`}
+                  </button>
+                </div>
+              </div>
+            }
+          >
+            {importPreviewLoading ? (
+              <p className="text-sm text-muted-foreground">
+                {importSourceScope
+                  ? `Loading your ${scopeLabel(importSourceScope)} officials…`
+                  : "Loading officials…"}
+              </p>
+            ) : importPreviewItems.length === 0 ? (
+              <div className="space-y-3">
+                <p className="text-sm text-muted-foreground">
+                  {importSourceScope
+                    ? `No account records in ${scopeLabel(importSourceScope)} yet—you can add them there first, then copy them here.`
+                    : "No account records available to copy."}
+                </p>
+                {importSourceScope && postingIsAll ? (
+                  <button
+                    type="button"
+                    className={btnSecondary}
+                    onClick={goToSourceScopeAccounts}
+                  >
+                    Go to {scopeLabel(importSourceScope)} accounts
+                  </button>
+                ) : null}
+              </div>
+            ) : (
+              <div className="space-y-4">
+                {importablePreviewItems.length > 0 ? (
+                  <section aria-labelledby="import-ready-heading">
+                    <h3
+                      id="import-ready-heading"
+                      className="mb-2 text-sm font-semibold text-foreground"
+                    >
+                      Ready to add ({importablePreviewItems.length})
+                    </h3>
+                    <label className="mb-2 flex items-center gap-2 text-sm text-foreground">
+                      <input
+                        id="import-select-all"
+                        type="checkbox"
+                        className="h-4 w-4 rounded border-input-border"
+                        checked={
+                          importablePreviewItems.length > 0 &&
+                          importablePreviewItems.every((row) =>
+                            importSelectedIds.has(row.source_official.id),
+                          )
+                        }
+                        disabled={importablePreviewItems.length === 0 || importBusy}
+                        onChange={(e) => setImportSelectAllImportable(e.target.checked)}
+                      />
+                      <span>Select all</span>
+                    </label>
+                    <ul className="max-h-[min(40vh,320px)] space-y-2 overflow-y-auto overscroll-contain">
+                      {importablePreviewItems.map((row) => {
+                        const o = row.source_official;
+                        const checked = importSelectedIds.has(o.id);
+                        const daysValue = importNumDaysById[o.id] ?? "";
+                        const daysValid = !checked || parseImportNumDays(daysValue) !== null;
+                        return (
+                          <li
+                            key={o.id}
+                            className="cursor-pointer rounded-lg border border-border bg-card px-3 py-2.5 transition-colors hover:bg-muted/30"
+                            onClick={(e) => {
+                              const t = e.target as HTMLElement;
+                              if (t.closest("input, label, button, a")) return;
+                              toggleImportSelection(o.id, row.importable);
+                            }}
+                          >
+                            <div className="flex items-start gap-3">
+                              <input
+                                type="checkbox"
+                                className="mt-0.5 h-4 w-4 shrink-0 rounded border-input-border md:mt-2"
+                                checked={checked}
+                                disabled={importBusy}
+                                onChange={() => toggleImportSelection(o.id, row.importable)}
+                                onClick={(e) => e.stopPropagation()}
+                                aria-label={`Select ${o.full_name}`}
+                              />
+                              <div className="flex min-w-0 flex-1 flex-col gap-2.5 md:flex-row md:items-center md:gap-6">
+                                <div className="min-w-0 flex-1">
+                                  <span className="block text-sm font-medium text-foreground">
+                                    {o.full_name}
+                                    <span className="font-normal text-muted-foreground"> · </span>
+                                    {o.designation}
+                                  </span>
+                                  <span className="mt-0.5 block truncate text-xs text-muted-foreground">
+                                    {o.bank_name} · {maskAccountNumber(o.account_number)} ·{" "}
+                                    {o.telephone_number}
+                                  </span>
+                                </div>
+                                {checked ? (
+                                  <div
+                                    className="w-full shrink-0 md:w-36"
+                                    onClick={(e) => e.stopPropagation()}
+                                  >
+                                    <label
+                                      className={formLabelClass}
+                                      htmlFor={`import-days-${o.id}`}
+                                    >
+                                      Number of days
+                                    </label>
+                                    <input
+                                      ref={(el) => {
+                                        importDaysInputRefs.current[o.id] = el;
+                                      }}
+                                      id={`import-days-${o.id}`}
+                                      type="text"
+                                      inputMode="numeric"
+                                      className={formInputClass}
+                                      value={daysValue}
+                                      placeholder="Required"
+                                      disabled={importBusy}
+                                      onChange={(e) =>
+                                        setImportNumDaysById((prev) => ({
+                                          ...prev,
+                                          [o.id]: e.target.value.replace(/\D/g, ""),
+                                        }))
+                                      }
+                                      aria-invalid={!daysValid}
+                                    />
+                                  </div>
+                                ) : null}
+                              </div>
+                            </div>
+                          </li>
+                        );
+                      })}
+                    </ul>
+                  </section>
+                ) : null}
+                {importDuplicateItems.length > 0 ? (
+                  <section aria-labelledby="import-duplicate-heading">
+                    <h3
+                      id="import-duplicate-heading"
+                      className="mb-2 text-sm font-semibold text-muted-foreground"
+                    >
+                      Already on{" "}
+                      {importDestinationScope
+                        ? scopeLabel(importDestinationScope)
+                        : "this scope"}{" "}
+                      ({importDuplicateItems.length})
+                    </h3>
+                    <ul className="max-h-[min(30vh,240px)] space-y-2 overflow-y-auto overscroll-contain">
+                      {importDuplicateItems.map((row) => {
+                        const o = row.source_official;
+                        return (
+                          <li
+                            key={o.id}
+                            className="rounded-lg border border-border bg-muted/30 px-3 py-2.5 opacity-80"
+                          >
+                            <span className="block text-sm font-medium text-foreground">
+                              {o.full_name}
+                              <span className="font-normal text-muted-foreground"> · </span>
+                              {o.designation}
+                            </span>
+                            <span className="mt-0.5 block truncate text-xs text-muted-foreground">
+                              {o.bank_name} · {maskAccountNumber(o.account_number)} ·{" "}
+                              {o.telephone_number}
+                            </span>
+                          </li>
+                        );
+                      })}
+                    </ul>
+                  </section>
+                ) : null}
+              </div>
+            )}
+          </OfficialModal>
+        ) : null}
+
+        {discardConfirmTarget ? (
+          <DiscardChangesConfirmModal
+            onCancel={() => setDiscardConfirmTarget(null)}
+            onConfirm={confirmDiscardChanges}
+          />
         ) : null}
 
         {pendingDelete ? (
