@@ -330,6 +330,10 @@ class ExecutivePostedInspectorItem(BaseModel):
 class ExecutiveCentreDetailResponse(BaseModel):
     overview: StaffCentreOverviewResponse
     posted_inspectors: list[ExecutivePostedInspectorItem] = Field(default_factory=list)
+    posted_inspector_posting_count: int = Field(
+        0,
+        description="Inspector postings before identity merge (CORE+ELECTIVE pairs count as two).",
+    )
 
 
 class StaffDepotOverviewResponse(BaseModel):

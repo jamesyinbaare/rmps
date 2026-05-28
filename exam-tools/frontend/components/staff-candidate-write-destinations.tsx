@@ -1,16 +1,13 @@
+import { SubjectScopeBadge } from "@/components/subject-scope-badge";
 import type { StaffCandidateWriteDestination, StaffCentreOverviewResponse } from "@/lib/api";
+import { subjectScopeLabel } from "@/lib/subject-scope-display";
 
 export function membershipScopeLabel(scope: string): string {
-  switch (scope.toUpperCase()) {
-    case "CORE":
-      return "Core subjects";
-    case "ELECTIVE":
-      return "Elective subjects";
-    case "ALL":
-      return "All subjects";
-    default:
-      return scope;
-  }
+  const label = subjectScopeLabel(scope);
+  if (label === "Core") return "Core subjects";
+  if (label === "Elective") return "Elective subjects";
+  if (label === "All subjects") return "All subjects";
+  return label;
 }
 
 function normalizeSchoolCode(code: string): string {
@@ -151,9 +148,7 @@ export function StaffCandidateWriteDestinations({
           key={`${d.subject_scope}-${d.centre_id}`}
           className="rounded-lg border border-primary/25 bg-background/60 px-3 py-2.5"
         >
-          <p className="text-xs font-semibold uppercase tracking-wide text-primary">
-            {membershipScopeLabel(d.subject_scope)}
-          </p>
+          <SubjectScopeBadge scope={d.subject_scope} className="uppercase" />
           <p className="mt-1 font-semibold leading-snug text-foreground">{d.centre_name}</p>
           <p className="mt-0.5 text-sm text-muted-foreground">
             Centre code{" "}

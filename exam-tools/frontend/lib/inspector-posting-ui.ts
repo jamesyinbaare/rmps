@@ -1,24 +1,21 @@
 import type { MyInspectorPostingRow } from "@/lib/api";
+import {
+  normalizeSubjectScope,
+  subjectScopeBadgeClass,
+  type SubjectScope,
+} from "@/lib/subject-scope-display";
 import { cn } from "@/lib/utils";
 
-export type InspectorPostingScope = "ALL" | "CORE" | "ELECTIVE";
-
-export const INSPECTOR_SCOPE_STYLES: Record<InspectorPostingScope, string> = {
-  ALL: "bg-primary/10 text-primary",
-  CORE: "bg-info/15 text-info",
-  ELECTIVE: "bg-violet-500/15 text-violet-700 dark:text-violet-400",
-};
+export type InspectorPostingScope = SubjectScope;
 
 export const INSPECTOR_SCOPE_TEXT_STYLES: Record<InspectorPostingScope, string> = {
-  ALL: "text-primary",
-  CORE: "text-info",
-  ELECTIVE: "text-violet-700 dark:text-violet-400",
+  ALL: "text-secondary-foreground",
+  CORE: "text-primary",
+  ELECTIVE: "text-amber-700 dark:text-amber-300",
 };
 
 export function normalizePostingScope(scope: string): InspectorPostingScope {
-  const u = scope.toUpperCase();
-  if (u === "CORE" || u === "ELECTIVE" || u === "ALL") return u;
-  return "ALL";
+  return normalizeSubjectScope(scope);
 }
 
 export function postingScopeLabel(scope: string): string {
@@ -47,8 +44,8 @@ export const inspectorWorkspacePickerCopy = {
 
 export function scopeBadgeClassName(scope: string): string {
   return cn(
-    "inline-flex shrink-0 rounded-md px-2 py-0.5 text-xs font-semibold tracking-wide",
-    INSPECTOR_SCOPE_STYLES[normalizePostingScope(scope)] ?? "bg-muted text-muted-foreground",
+    "inline-flex shrink-0 rounded-md px-2 py-0.5 text-xs font-semibold tracking-wide shadow-sm",
+    subjectScopeBadgeClass(scope),
   );
 }
 

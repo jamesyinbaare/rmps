@@ -24,18 +24,11 @@ function AnimatedStatFigure({
   );
 }
 
-export function executiveScopeLabel(scope: string): string {
-  if (scope === "ALL") return "All subjects";
-  if (scope === "CORE") return "Core";
-  if (scope === "ELECTIVE") return "Elective";
-  return scope;
-}
-
-export function executiveScopeBadgeClass(scope: string): string {
-  if (scope === "CORE") return "bg-primary/15 text-primary";
-  if (scope === "ELECTIVE") return "bg-success/15 text-success";
-  return "bg-secondary/25 text-secondary-foreground";
-}
+export {
+  normalizeSubjectScope as executiveNormalizeScope,
+  subjectScopeBadgeClass as executiveScopeBadgeClass,
+  subjectScopeLabel as executiveScopeLabel,
+} from "@/lib/subject-scope-display";
 
 export function ExecutiveStatTile({
   label,

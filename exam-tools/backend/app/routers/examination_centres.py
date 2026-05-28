@@ -227,6 +227,8 @@ async def get_examination_centre_detail(
         )
         .order_by(User.full_name.asc(), InspectorExamPosting.id.asc())
     )
+    from app.services.inspector_posting_display import merge_centre_posted_inspectors
+
     posted_inspectors: list[PostedInspectorAtCentreRow] = []
     for posting, insp_user in (await session.execute(pst_stmt)).all():
         st_scope = posting.subject_scope
@@ -244,10 +246,13 @@ async def get_examination_centre_detail(
                 subject_scope=scope_str,
             )
         )
+    raw_posting_count = len(posted_inspectors)
+    posted_inspectors = merge_centre_posted_inspectors(posted_inspectors)
     return ExaminationCentreDetailResponse(
         centre=ExaminationCentreResponse(**data),
         memberships=memberships,
         posted_inspectors=posted_inspectors,
+        posted_inspector_posting_count=raw_posting_count,
     )
 
 

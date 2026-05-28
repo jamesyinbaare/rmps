@@ -5,6 +5,7 @@ import { useParams, useRouter, useSearchParams } from "next/navigation";
 import { useCallback, useEffect, useMemo, useState } from "react";
 
 import { SchoolSearchCombobox } from "@/components/school-search-combobox";
+import { SubjectScopeBadge, SubjectScopeLegend } from "@/components/subject-scope-badge";
 import {
   apiJson,
   deleteExaminationCentre,
@@ -20,6 +21,10 @@ import {
 } from "@/lib/api";
 import { formInputClass, formLabelClass } from "@/lib/form-classes";
 import { REGION_OPTIONS, ZONE_OPTIONS } from "@/lib/school-enums";
+import {
+  inspectorPostingCountLabel,
+  mergeAndSortPostedInspectors,
+} from "@/lib/subject-scope-display";
 
 const inputFocusRing =
   "focus:border-primary focus:outline-none focus:ring-2 focus:ring-ring/30";
@@ -144,6 +149,11 @@ export default function ExaminationCentreDetailPage() {
   }, [load]);
 
   const centre = data?.centre;
+  const sortedPostedInspectors = useMemo(
+    () => (data?.posted_inspectors ? mergeAndSortPostedInspectors(data.posted_inspectors) : []),
+    [data?.posted_inspectors],
+  );
+  const rawInspectorPostingCount = data?.posted_inspector_posting_count ?? data?.posted_inspectors.length ?? 0;
 
   const onSaveCentre = async () => {
     if (examFilterId == null || !id) return;
@@ -506,7 +516,9 @@ export default function ExaminationCentreDetailPage() {
                           <tr key={`${m.school_code}-${m.subject_scope}-${idx}`} className="border-b border-border last:border-0">
                             <td className="px-3 py-2 font-mono text-xs">{m.school_code}</td>
                             <td className="max-w-[200px] truncate px-3 py-2">{m.school_name ?? "—"}</td>
-                            <td className="px-3 py-2">{m.subject_scope}</td>
+                            <td className="px-3 py-2">
+                              <SubjectScopeBadge scope={m.subject_scope} />
+                            </td>
                             <td className="px-3 py-2 text-right">
                               <button
                                 type="button"
@@ -525,7 +537,9 @@ export default function ExaminationCentreDetailPage() {
                           >
                             <td className="px-3 py-2 font-mono text-xs">{m.school_code}</td>
                             <td className="max-w-[200px] truncate px-3 py-2">{m.school_name}</td>
-                            <td className="px-3 py-2">{m.subject_scope}</td>
+                            <td className="px-3 py-2">
+                              <SubjectScopeBadge scope={m.subject_scope} />
+                            </td>
                           </tr>
                         ))}
                   </tbody>
@@ -561,10 +575,12 @@ export default function ExaminationCentreDetailPage() {
 
           <section className="rounded-2xl border border-border bg-card p-5">
             <h3 className="text-lg font-semibold text-card-foreground">Inspectors at this centre</h3>
+            {sortedPostedInspectors.length > 0 ? <SubjectScopeLegend className="mt-2" /> : null}
             <p className="mt-1 text-sm text-muted-foreground">
-              Posted for this examination ({data.posted_inspectors.length} total).
+              Posted for this examination (
+              {inspectorPostingCountLabel(sortedPostedInspectors.length, rawInspectorPostingCount)}).
             </p>
-            {data.posted_inspectors.length > 0 ? (
+            {sortedPostedInspectors.length > 0 ? (
               <div className="mt-4 overflow-x-auto rounded-lg border border-border">
                 <table className="w-full min-w-[520px] text-left text-sm">
                   <thead className="border-b border-border bg-muted/40 text-muted-foreground">
@@ -575,11 +591,13 @@ export default function ExaminationCentreDetailPage() {
                     </tr>
                   </thead>
                   <tbody>
-                    {data.posted_inspectors.map((row) => (
+                    {sortedPostedInspectors.map((row) => (
                       <tr key={row.posting_id} className="border-b border-border last:border-0">
                         <td className="px-3 py-2">{row.inspector_full_name}</td>
                         <td className="px-3 py-2 font-mono text-xs">{row.inspector_phone ?? "—"}</td>
-                        <td className="px-3 py-2">{row.subject_scope}</td>
+                        <td className="px-3 py-2">
+                          <SubjectScopeBadge scope={row.subject_scope} />
+                        </td>
                       </tr>
                     ))}
                   </tbody>

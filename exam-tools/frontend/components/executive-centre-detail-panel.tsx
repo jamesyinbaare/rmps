@@ -2,13 +2,10 @@
 
 import { Building2, GraduationCap, Phone, Users } from "lucide-react";
 
-import {
-  ExecutiveSectionHeading,
-  ExecutiveStatTile,
-  executiveScopeBadgeClass,
-  executiveScopeLabel,
-} from "@/components/executive-ui";
+import { ExecutiveSectionHeading, ExecutiveStatTile } from "@/components/executive-ui";
+import { SubjectScopeBadge, SubjectScopeLegend } from "@/components/subject-scope-badge";
 import type { ExecutiveCentreDetailResponse, ExecutivePostedInspectorItem } from "@/lib/api";
+import { subjectScopeCardAccentClass, subjectScopeCardBorderClass } from "@/lib/subject-scope-display";
 import { cn } from "@/lib/utils";
 
 const summaryToggleClass =
@@ -22,17 +19,17 @@ function truncateEnd(text: string, max = 36): string {
 
 function InspectorMobileCard({ insp }: { insp: ExecutivePostedInspectorItem }) {
   return (
-    <li className="overflow-hidden rounded-xl border border-primary/20 bg-linear-to-br from-primary/5 to-card shadow-sm">
-      <div className="border-l-4 border-primary px-4 py-3.5">
+    <li
+      className={cn(
+        "overflow-hidden rounded-xl border shadow-sm",
+        subjectScopeCardAccentClass(insp.subject_scope),
+      )}
+    >
+      <div className={cn("border-l-4 px-4 py-3.5", subjectScopeCardBorderClass(insp.subject_scope))}>
         <p className="font-semibold text-foreground">{insp.inspector_full_name}</p>
-        <span
-          className={cn(
-            "mt-2 inline-flex rounded-full px-2.5 py-0.5 text-[11px] font-semibold uppercase tracking-wide",
-            executiveScopeBadgeClass(insp.subject_scope),
-          )}
-        >
-          {executiveScopeLabel(insp.subject_scope)}
-        </span>
+        <div className="mt-2">
+          <SubjectScopeBadge scope={insp.subject_scope} />
+        </div>
         {insp.inspector_phone_number ? (
           <a
             href={`tel:${insp.inspector_phone_number}`}
@@ -55,7 +52,7 @@ type Props = {
 };
 
 export function ExecutiveCentreDetailPanel({ detail, onClose }: Props) {
-  const { overview, posted_inspectors } = detail;
+  const { overview, posted_inspectors: inspectors } = detail;
   const region =
     overview.examination_centre_region !== "—" ? overview.examination_centre_region : null;
 
@@ -114,14 +111,15 @@ export function ExecutiveCentreDetailPanel({ detail, onClose }: Props) {
         <ExecutiveSectionHeading icon={Users} accentClass="bg-primary" as="h4">
           Inspectors
         </ExecutiveSectionHeading>
-        {posted_inspectors.length === 0 ? (
+        {inspectors.length > 0 ? <SubjectScopeLegend className="mt-3" /> : null}
+        {inspectors.length === 0 ? (
           <p className="mt-3 rounded-lg border border-dashed border-border bg-muted/30 px-3 py-4 text-sm text-muted-foreground">
             No inspectors at this centre.
           </p>
         ) : (
           <>
             <ul className="mt-3 space-y-3 md:hidden">
-              {posted_inspectors.map((insp) => (
+              {inspectors.map((insp) => (
                 <InspectorMobileCard key={insp.posting_id} insp={insp} />
               ))}
             </ul>
@@ -141,10 +139,10 @@ export function ExecutiveCentreDetailPanel({ detail, onClose }: Props) {
                   </tr>
                 </thead>
                 <tbody>
-                  {posted_inspectors.map((insp) => (
+                  {inspectors.map((insp) => (
                     <tr
                       key={insp.posting_id}
-                      className="border-b border-border/70 last:border-b-0 even:bg-primary/[0.03]"
+                      className="border-b border-border/70 last:border-b-0 even:bg-primary/3"
                     >
                       <td className="px-3 py-2.5 align-top font-medium text-foreground">
                         {insp.inspector_full_name}
@@ -163,14 +161,7 @@ export function ExecutiveCentreDetailPanel({ detail, onClose }: Props) {
                         )}
                       </td>
                       <td className="px-3 py-2.5 align-top">
-                        <span
-                          className={cn(
-                            "inline-flex rounded-full px-2 py-0.5 text-xs font-semibold",
-                            executiveScopeBadgeClass(insp.subject_scope),
-                          )}
-                        >
-                          {executiveScopeLabel(insp.subject_scope)}
-                        </span>
+                        <SubjectScopeBadge scope={insp.subject_scope} />
                       </td>
                     </tr>
                   ))}
@@ -197,7 +188,7 @@ export function ExecutiveCentreDetailPanel({ detail, onClose }: Props) {
                   key={s.school_id}
                   className={cn(
                     "flex items-start justify-between gap-3 px-4 py-3",
-                    i % 2 === 1 && "bg-success/[0.04]",
+                    i % 2 === 1 && "bg-success/4",
                   )}
                 >
                   <div className="min-w-0">
@@ -230,7 +221,7 @@ export function ExecutiveCentreDetailPanel({ detail, onClose }: Props) {
                       key={s.school_id}
                       className={cn(
                         "border-b border-border/70 last:border-b-0",
-                        i % 2 === 1 && "bg-success/[0.04]",
+                        i % 2 === 1 && "bg-success/4",
                       )}
                     >
                       <td className="px-3 py-2.5 align-top">

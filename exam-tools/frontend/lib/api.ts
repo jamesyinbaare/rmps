@@ -92,6 +92,7 @@ export type PerExamCentreDetailResponse = {
   centre: PerExamCentreItem;
   memberships: PerExamCentreMembership[];
   posted_inspectors: PostedInspectorAtCentreRow[];
+  posted_inspector_posting_count?: number;
 };
 
 export async function getExaminationCentreDetail(
@@ -1301,6 +1302,7 @@ export type ExecutivePostedInspectorItem = {
 export type ExecutiveCentreDetailResponse = {
   overview: StaffCentreOverviewResponse;
   posted_inspectors: ExecutivePostedInspectorItem[];
+  posted_inspector_posting_count?: number;
 };
 
 export async function getExecutiveCentreDetail(
