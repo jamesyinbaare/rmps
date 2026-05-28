@@ -8,7 +8,12 @@ from sqlalchemy import func, select
 
 from app.dependencies.auth import DepotKeeperDep, InspectorDep, InspectorJwtPostingIdDep, SuperAdminDep
 from app.dependencies.database import DBSessionDep
-from app.models import ExamInspectorSubjectScope, QuestionPaperControl, School, Subject
+from app.models import (
+    ExamInspectorSubjectScope,
+    ExaminationCentre,
+    QuestionPaperControl,
+    Subject,
+)
 from app.schemas.question_paper_control import (
     MyCenterQuestionPaperControlResponse,
     QuestionPaperControlAdminListResponse,
@@ -22,7 +27,6 @@ from app.schemas.question_paper_control import (
 )
 from app.services.depot_scope import (
     assert_center_in_depot,
-    depot_center_host_ids,
     require_depot_id_for_depot_keeper,
 )
 from app.services.exam_timetable_pdf import load_examination_or_raise
@@ -45,6 +49,12 @@ from app.services.script_control import (
     script_packing_today_in_configured_zone,
     subject_series_count_map,
 )
+from app.services.centre_resolution import (
+    centre_scope_school_ids_for_inspector_scope,
+    get_examination_centre_or_404,
+)
+from app.services.depot_scope import depot_examination_centre_ids
+from app.services.inspector_posting import representative_school_for_centre
 from app.services.timetable_service import center_scope_school_ids
 
 router = APIRouter(tags=["question-paper-control"])
@@ -79,7 +89,7 @@ async def _inspector_question_paper_workspace(
 async def _build_center_question_paper_grid(
     session: DBSessionDep,
     exam_id: int,
-    center_host: School,
+    centre: ExaminationCentre,
     scope_ids: set[UUID],
     subject_scope: ExamInspectorSubjectScope,
 ) -> MyCenterQuestionPaperControlResponse:
@@ -88,7 +98,7 @@ async def _build_center_question_paper_grid(
     rows = filter_subject_rows_for_scope(rows, subject_scope)
     q_stmt = select(QuestionPaperControl).where(
         QuestionPaperControl.examination_id == exam_id,
-        QuestionPaperControl.center_id == center_host.id,
+        QuestionPaperControl.examination_centre_id == centre.id,
     )
     q_result = await session.execute(q_stmt)
     stored = list(q_result.scalars().all())
@@ -156,9 +166,9 @@ async def _build_center_question_paper_grid(
         exam_type=exam.exam_type,
         exam_series=exam.exam_series,
         year=exam.year,
-        center_id=center_host.id,
-        center_code=center_host.code,
-        center_name=center_host.name,
+        center_id=centre.id,
+        center_code=centre.code,
+        center_name=centre.name,
         subjects=subjects_out,
     )
 
@@ -181,7 +191,7 @@ async def get_my_center_question_paper_control(
 
     try:
         return await _build_center_question_paper_grid(
-            session, exam_id, ctx.center_host, ctx.scope_ids, ctx.subject_scope
+            session, exam_id, ctx.examination_centre, ctx.scope_ids, ctx.subject_scope
         )
     except ValueError:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Examination not found") from None
@@ -204,20 +214,20 @@ async def get_depot_center_question_paper_control(
     except ValueError as e:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e)) from None
 
-    allowed_centers = await depot_center_host_ids(session, depot_id)
+    allowed_centers = await depot_examination_centre_ids(session, depot_id, exam_id)
     try:
         await assert_center_in_depot(center_id, allowed_centers)
     except ValueError as e:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e)) from None
 
-    center_host = await session.get(School, center_id)
-    if center_host is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Centre school not found")
-
-    scope_ids = await center_scope_school_ids(session, center_host)
+    centre = await get_examination_centre_or_404(session, exam_id, center_id)
+    rep = await representative_school_for_centre(session, centre)
+    if rep is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Centre has no schools")
+    scope_ids = await center_scope_school_ids(session, rep, exam_id)
     try:
         return await _build_center_question_paper_grid(
-            session, exam_id, center_host, scope_ids, ExamInspectorSubjectScope.ALL
+            session, exam_id, centre, scope_ids, ExamInspectorSubjectScope.ALL
         )
     except ValueError:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Examination not found") from None
@@ -241,22 +251,23 @@ async def verify_depot_center_question_paper_slot(
     except ValueError as e:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e)) from None
 
-    allowed_centers = await depot_center_host_ids(session, depot_id)
+    allowed_centers = await depot_examination_centre_ids(session, depot_id, exam_id)
     try:
         await assert_center_in_depot(center_id, allowed_centers)
     except ValueError as e:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e)) from None
 
-    center_host = await session.get(School, center_id)
-    if center_host is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Centre school not found")
+    centre = await get_examination_centre_or_404(session, exam_id, center_id)
+    rep = await representative_school_for_centre(session, centre)
+    if rep is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Centre has no schools")
 
     try:
         await load_examination_or_raise(session, exam_id)
     except ValueError:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Examination not found") from None
 
-    scope_ids = await center_scope_school_ids(session, center_host)
+    scope_ids = await center_scope_school_ids(session, rep, exam_id)
     allowed = await valid_question_paper_triples(session, exam_id, scope_ids)
     sub = await session.get(Subject, body.subject_id)
     if sub is None:
@@ -272,7 +283,7 @@ async def verify_depot_center_question_paper_slot(
     written_together = papers_written_together(sch)
     q_stmt = select(QuestionPaperControl).where(
         QuestionPaperControl.examination_id == exam_id,
-        QuestionPaperControl.center_id == center_host.id,
+        QuestionPaperControl.examination_centre_id == centre.id,
         QuestionPaperControl.subject_id == body.subject_id,
         QuestionPaperControl.series_number == body.series_number,
     )
@@ -337,7 +348,7 @@ async def upsert_my_center_question_paper_slot(
 
     await assert_subject_allowed_for_workspace(session, ctx, body.subject_id)
 
-    center_host, scope_ids = ctx.center_host, ctx.scope_ids
+    centre, scope_ids = ctx.examination_centre, ctx.scope_ids
 
     sub = await session.get(Subject, body.subject_id)
     if sub is None:
@@ -361,7 +372,7 @@ async def upsert_my_center_question_paper_slot(
 
     stmt = select(QuestionPaperControl).where(
         QuestionPaperControl.examination_id == exam_id,
-        QuestionPaperControl.center_id == center_host.id,
+        QuestionPaperControl.examination_centre_id == centre.id,
         QuestionPaperControl.subject_id == body.subject_id,
         QuestionPaperControl.paper_number == canon_pn,
         QuestionPaperControl.series_number == body.series_number,
@@ -378,7 +389,7 @@ async def upsert_my_center_question_paper_slot(
     if row is None:
         row = QuestionPaperControl(
             examination_id=exam_id,
-            center_id=center_host.id,
+            examination_centre_id=centre.id,
             subject_id=body.subject_id,
             paper_number=canon_pn,
             series_number=body.series_number,
@@ -397,7 +408,7 @@ async def upsert_my_center_question_paper_slot(
     if written_together and canon_pn == 1:
         dup_stmt = select(QuestionPaperControl).where(
             QuestionPaperControl.examination_id == exam_id,
-            QuestionPaperControl.center_id == center_host.id,
+            QuestionPaperControl.examination_centre_id == centre.id,
             QuestionPaperControl.subject_id == body.subject_id,
             QuestionPaperControl.paper_number == 2,
             QuestionPaperControl.series_number == body.series_number,
@@ -436,7 +447,7 @@ async def list_question_paper_control_records(
 ) -> QuestionPaperControlAdminListResponse:
     stmt = select(QuestionPaperControl).order_by(
         QuestionPaperControl.examination_id.desc(),
-        QuestionPaperControl.center_id,
+        QuestionPaperControl.examination_centre_id,
         QuestionPaperControl.subject_id,
         QuestionPaperControl.paper_number,
         QuestionPaperControl.series_number,
@@ -444,13 +455,13 @@ async def list_question_paper_control_records(
     if examination_id is not None:
         stmt = stmt.where(QuestionPaperControl.examination_id == examination_id)
     if center_id is not None:
-        stmt = stmt.where(QuestionPaperControl.center_id == center_id)
+        stmt = stmt.where(QuestionPaperControl.examination_centre_id == center_id)
 
     count_stmt = select(func.count()).select_from(QuestionPaperControl)
     if examination_id is not None:
         count_stmt = count_stmt.where(QuestionPaperControl.examination_id == examination_id)
     if center_id is not None:
-        count_stmt = count_stmt.where(QuestionPaperControl.center_id == center_id)
+        count_stmt = count_stmt.where(QuestionPaperControl.examination_centre_id == center_id)
     total = int((await session.execute(count_stmt)).scalar_one())
 
     stmt = stmt.offset(skip).limit(limit)
@@ -459,23 +470,23 @@ async def list_question_paper_control_records(
     if not rows:
         return QuestionPaperControlAdminListResponse(items=[], total=total)
 
-    center_ids = {r.center_id for r in rows}
+    centre_ids = {r.examination_centre_id for r in rows}
     subject_ids = {r.subject_id for r in rows}
-    sch_stmt = select(School).where(School.id.in_(center_ids))
+    centre_stmt = select(ExaminationCentre).where(ExaminationCentre.id.in_(centre_ids))
     sub_stmt = select(Subject).where(Subject.id.in_(subject_ids))
-    schools = {s.id: s for s in (await session.execute(sch_stmt)).scalars().all()}
+    centres = {c.id: c for c in (await session.execute(centre_stmt)).scalars().all()}
     subjects = {s.id: s for s in (await session.execute(sub_stmt)).scalars().all()}
 
     items: list[QuestionPaperControlAdminRow] = []
     for r in rows:
-        sch = schools.get(r.center_id)
+        centre = centres.get(r.examination_centre_id)
         sub = subjects.get(r.subject_id)
         items.append(
             QuestionPaperControlAdminRow(
                 question_paper_control_id=r.id,
                 examination_id=r.examination_id,
-                center_id=r.center_id,
-                center_code=sch.code if sch else "",
+                center_id=r.examination_centre_id,
+                center_code=centre.code if centre else "",
                 subject_id=r.subject_id,
                 subject_code=sub.code if sub else "",
                 subject_name=sub.name if sub else "",

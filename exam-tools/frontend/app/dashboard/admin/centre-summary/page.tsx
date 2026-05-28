@@ -23,12 +23,13 @@ import {
   downloadFinanceCentreSchoolSummaryExport,
   getFinanceCentreInvigilatorSummaryForCentre,
   getFinanceCentreSchoolSummary,
+  listExaminationCentres,
   schoolSummaryExportFilename,
   type AdminExamCentreOfficialRow,
   type Examination,
-  type ExaminationCenterListResponse,
   type FinanceCentreDayInvigilatorRow,
   type FinanceCentreSchoolSummaryResponse,
+  type PerExamCentreItem,
   type TimetableSubjectFilter,
 } from "@/lib/api";
 import { formInputClass, formLabelClass } from "@/lib/form-classes";
@@ -461,7 +462,7 @@ function AdminCentreSummaryContent() {
 
   const [exams, setExams] = useState<Examination[]>([]);
   const [examId, setExamId] = useState<number | null>(null);
-  const [centers, setCenters] = useState<ExaminationCenterListResponse["items"]>([]);
+  const [centers, setCenters] = useState<PerExamCentreItem[]>([]);
   const [centerId, setCenterId] = useState("");
   const [subjectFilter, setSubjectFilter] = useState<TimetableSubjectFilter>("ALL");
   const [summary, setSummary] = useState<FinanceCentreSchoolSummaryResponse | null>(null);
@@ -494,12 +495,17 @@ function AdminCentreSummaryContent() {
   }, []);
 
   useEffect(() => {
+    if (examId == null) {
+      setCenters([]);
+      return;
+    }
     let cancelled = false;
     void (async () => {
       try {
-        const data = await apiJson<ExaminationCenterListResponse>("/schools/examination-centers?skip=0&limit=500");
+        const data = await listExaminationCentres(examId);
         if (cancelled) return;
         setCenters(data.items);
+        setCenterId((cur) => (cur && data.items.some((c) => c.id === cur) ? cur : ""));
       } catch {
         if (!cancelled) setCenters([]);
       }
@@ -507,7 +513,7 @@ function AdminCentreSummaryContent() {
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [examId]);
 
   useEffect(() => {
     if (exams.length === 0) return;
@@ -541,8 +547,8 @@ function AdminCentreSummaryContent() {
   const centerOptions = useMemo(
     () =>
       centers.map((c) => ({
-        value: c.school.id,
-        label: `${c.school.code} — ${c.school.name}`,
+        value: c.id,
+        label: `${c.code} — ${c.name}`,
       })),
     [centers],
   );

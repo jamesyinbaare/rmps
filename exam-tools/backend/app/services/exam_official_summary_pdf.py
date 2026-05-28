@@ -189,14 +189,14 @@ async def load_officials_for_summary(
     session: AsyncSession,
     *,
     examination_id: int,
-    center_id: Any,
+    examination_centre_id: Any,
     subject_scope: ExamInspectorSubjectScope,
 ) -> list[ExamCentreOfficial]:
     stmt = (
         select(ExamCentreOfficial)
         .where(
             ExamCentreOfficial.examination_id == examination_id,
-            ExamCentreOfficial.center_id == center_id,
+            ExamCentreOfficial.examination_centre_id == examination_centre_id,
             ExamCentreOfficial.subject_scope == subject_scope,
         )
         .options(selectinload(ExamCentreOfficial.bank_branch))
@@ -217,7 +217,7 @@ async def build_exam_official_summary_pdf(
     rows = await load_officials_for_summary(
         session,
         examination_id=examination.id,
-        center_id=ctx.center_host.id,
+        examination_centre_id=ctx.examination_centre.id,
         subject_scope=subject_scope,
     )
     if not rows:
@@ -225,7 +225,7 @@ async def build_exam_official_summary_pdf(
 
     rows = sort_officials_by_designation_then_name(rows)
 
-    center = ctx.center_host
+    center = ctx.examination_centre
     center_code = cast(str, center.code)
     center_name = cast(str, center.name)
     scope_label = examination_scope_label(examination, subject_scope)

@@ -6,9 +6,10 @@ import { useEffect, useState } from "react";
 
 import {
   apiJson,
+  getAdminActiveExamination,
+  listExaminationCentres,
   type AdminDepotKeeperListResponse,
   type AdminDepotListResponse,
-  type ExaminationCenterListResponse,
   type InspectorListResponse,
   type SchoolListResponse,
 } from "@/lib/api";
@@ -62,9 +63,17 @@ export default function AdminDashboardPage() {
 
       setError(null);
       try {
-        const [schoolsRes, centresRes, inspectorsRes, depotsRes, keepersRes] = await Promise.all([
+        const activeExam = await getAdminActiveExamination().catch(() => ({
+          active_examination_id: null as number | null,
+        }));
+        const centresPromise =
+          activeExam.active_examination_id != null
+            ? listExaminationCentres(activeExam.active_examination_id).then((r) => r.total)
+            : Promise.resolve(0);
+
+        const [schoolsRes, centresTotal, inspectorsRes, depotsRes, keepersRes] = await Promise.all([
           apiJson<SchoolListResponse>("/schools?skip=0&limit=1"),
-          apiJson<ExaminationCenterListResponse>("/schools/examination-centers?skip=0&limit=1"),
+          centresPromise,
           apiJson<InspectorListResponse>("/inspectors?skip=0&limit=1&sort=full_name&order=asc"),
           apiJson<AdminDepotListResponse>("/depots?skip=0&limit=1"),
           apiJson<AdminDepotKeeperListResponse>("/depots/keepers?skip=0&limit=1"),
@@ -72,7 +81,7 @@ export default function AdminDashboardPage() {
         if (cancelled) return;
         setSummary({
           schools: schoolsRes.total,
-          centres: centresRes.total,
+          centres: centresTotal,
           inspectors: inspectorsRes.total,
           depots: depotsRes.total,
           depotKeepers: keepersRes.total,

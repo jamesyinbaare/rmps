@@ -320,6 +320,21 @@ school_programmes = Table(
 )
 
 
+class CentreStructureMode(enum.Enum):
+    """How schools are assigned to examination centres for an examination."""
+
+    UNIFIED = "UNIFIED"
+    SPLIT = "SPLIT"
+
+
+class ExaminationCentreMembershipScope(enum.Enum):
+    """Subject scope for a school's membership in an examination centre."""
+
+    ALL = "ALL"
+    CORE = "CORE"
+    ELECTIVE = "ELECTIVE"
+
+
 class Examination(Base):
     """Certificate examination instance (timetable container)."""
 
@@ -330,6 +345,16 @@ class Examination(Base):
     exam_series = Column(String(20), nullable=True)
     year = Column(Integer, nullable=False)
     description = Column(Text, nullable=True)
+    centre_structure_mode = Column(
+        Enum(
+            CentreStructureMode,
+            values_callable=lambda x: [i.value for i in x],
+            native_enum=False,
+            length=16,
+        ),
+        nullable=False,
+        server_default=CentreStructureMode.UNIFIED.value,
+    )
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
 
@@ -359,6 +384,83 @@ class Examination(Base):
         back_populates="examination",
         cascade="all, delete-orphan",
         order_by="ExaminerGroup.name",
+    )
+    examination_centres = relationship(
+        "ExaminationCentre",
+        back_populates="examination",
+        cascade="all, delete-orphan",
+        order_by="ExaminationCentre.code",
+    )
+
+
+class ExaminationCentre(Base):
+    """Examination centre cluster (not a school); scoped per examination."""
+
+    __tablename__ = "examination_centres"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    examination_id = Column(Integer, ForeignKey("examinations.id", ondelete="CASCADE"), nullable=False, index=True)
+    code = Column(String(32), nullable=False)
+    name = Column(String(255), nullable=False)
+    region = Column(Enum(Region), nullable=True)
+    zone = Column(Enum(Zone), nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+
+    examination = relationship("Examination", back_populates="examination_centres")
+    memberships = relationship(
+        "ExaminationCentreMembership",
+        back_populates="examination_centre",
+        cascade="all, delete-orphan",
+    )
+
+    __table_args__ = (
+        UniqueConstraint("examination_id", "code", name="uq_examination_centres_exam_code"),
+    )
+
+
+class ExaminationCentreMembership(Base):
+    """Links a school to an examination centre for a subject scope (ALL, CORE, or ELECTIVE)."""
+
+    __tablename__ = "examination_centre_memberships"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    examination_id = Column(Integer, ForeignKey("examinations.id", ondelete="CASCADE"), nullable=False, index=True)
+    examination_centre_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("examination_centres.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    school_id = Column(UUID(as_uuid=True), ForeignKey("schools.id", ondelete="CASCADE"), nullable=False, index=True)
+    subject_scope = Column(
+        Enum(
+            ExaminationCentreMembershipScope,
+            values_callable=lambda x: [i.value for i in x],
+            native_enum=False,
+            length=16,
+        ),
+        nullable=False,
+    )
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+
+    examination = relationship("Examination", backref="centre_memberships")
+    examination_centre = relationship("ExaminationCentre", back_populates="memberships")
+    school = relationship("School", backref="examination_centre_memberships")
+
+    __table_args__ = (
+        UniqueConstraint(
+            "examination_centre_id",
+            "school_id",
+            "subject_scope",
+            name="uq_exam_centre_membership_centre_school_scope",
+        ),
+        UniqueConstraint(
+            "examination_id",
+            "school_id",
+            "subject_scope",
+            name="uq_exam_centre_membership_exam_school_scope",
+        ),
     )
 
 
@@ -963,12 +1065,11 @@ class ExamCentreOfficial(Base):
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     examination_id = Column(Integer, ForeignKey("examinations.id", ondelete="CASCADE"), nullable=False, index=True)
-    center_id = Column(
+    examination_centre_id = Column(
         UUID(as_uuid=True),
-        ForeignKey("schools.id", ondelete="CASCADE"),
+        ForeignKey("examination_centres.id", ondelete="CASCADE"),
         nullable=False,
         index=True,
-        doc="Examination centre host school id.",
     )
     full_name = Column(String(255), nullable=False)
     designation = Column(
@@ -998,7 +1099,11 @@ class ExamCentreOfficial(Base):
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
 
     examination = relationship("Examination", backref="exam_centre_officials")
-    center = relationship("School", foreign_keys=[center_id], backref="exam_centre_officials")
+    examination_centre = relationship(
+        "ExaminationCentre",
+        foreign_keys=[examination_centre_id],
+        backref="exam_centre_officials",
+    )
     bank_branch = relationship("BankBranch", back_populates="exam_officials")
 
     __table_args__ = (
@@ -1008,8 +1113,17 @@ class ExamCentreOfficial(Base):
             "length(telephone_number) = 10 AND telephone_number ~ '^[0-9]{10}$'",
             name="ck_exam_school_official_telephone_gh",
         ),
-        Index("ix_exam_centre_officials_exam_center", "examination_id", "center_id"),
-        Index("ix_exam_centre_officials_exam_center_scope", "examination_id", "center_id", "subject_scope"),
+        Index(
+            "ix_exam_centre_officials_exam_centre",
+            "examination_id",
+            "examination_centre_id",
+        ),
+        Index(
+            "ix_exam_centre_officials_exam_centre_scope",
+            "examination_id",
+            "examination_centre_id",
+            "subject_scope",
+        ),
     )
 
 
@@ -1021,12 +1135,11 @@ class InspectorExamPosting(Base):
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     examination_id = Column(Integer, ForeignKey("examinations.id", ondelete="CASCADE"), nullable=False, index=True)
     inspector_user_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
-    center_id = Column(
+    examination_centre_id = Column(
         UUID(as_uuid=True),
-        ForeignKey("schools.id", ondelete="CASCADE"),
+        ForeignKey("examination_centres.id", ondelete="CASCADE"),
         nullable=False,
         index=True,
-        doc="Examination centre host school id.",
     )
     subject_scope = Column(
         Enum(
@@ -1044,17 +1157,21 @@ class InspectorExamPosting(Base):
 
     examination = relationship("Examination", backref="inspector_exam_postings")
     inspector_user = relationship("User", foreign_keys=[inspector_user_id], backref="inspector_exam_postings")
-    center = relationship("School", foreign_keys=[center_id], backref="inspector_exam_postings_as_center")
+    examination_centre = relationship(
+        "ExaminationCentre",
+        foreign_keys=[examination_centre_id],
+        backref="inspector_exam_postings",
+    )
     created_by = relationship("User", foreign_keys=[created_by_user_id])
 
     __table_args__ = (
         Index("ix_inspector_exam_postings_exam_inspector", "examination_id", "inspector_user_id"),
         UniqueConstraint(
             "examination_id",
-            "center_id",
+            "examination_centre_id",
             "inspector_user_id",
             "subject_scope",
-            name="uq_inspector_postings_exam_center_inspector_scope",
+            name="uq_inspector_postings_exam_centre_inspector_scope",
         ),
     )
 
@@ -1072,12 +1189,11 @@ class InspectorAttendanceSheet(Base):
         nullable=False,
         index=True,
     )
-    center_id = Column(
+    examination_centre_id = Column(
         UUID(as_uuid=True),
-        ForeignKey("schools.id", ondelete="CASCADE"),
+        ForeignKey("examination_centres.id", ondelete="CASCADE"),
         nullable=False,
         index=True,
-        doc="Examination centre host school id.",
     )
     examination_date = Column(Date, nullable=False)
     subject_scope = Column(
@@ -1100,7 +1216,11 @@ class InspectorAttendanceSheet(Base):
 
     examination = relationship("Examination", backref="inspector_attendance_sheets")
     inspector_exam_posting = relationship("InspectorExamPosting", backref="attendance_sheets")
-    center = relationship("School", foreign_keys=[center_id], backref="inspector_attendance_sheets_as_center")
+    examination_centre = relationship(
+        "ExaminationCentre",
+        foreign_keys=[examination_centre_id],
+        backref="inspector_attendance_sheets",
+    )
     uploaded_by = relationship("User", foreign_keys=[uploaded_by_id])
 
     __table_args__ = (
@@ -1110,15 +1230,15 @@ class InspectorAttendanceSheet(Base):
             "inspector_exam_posting_id",
         ),
         Index(
-            "ix_inspector_attendance_sheets_exam_center_date",
+            "ix_inspector_attendance_sheets_exam_centre_date",
             "examination_id",
-            "center_id",
+            "examination_centre_id",
             "examination_date",
         ),
         Index(
-            "ix_inspector_attendance_sheets_exam_center_date_scope",
+            "ix_inspector_attendance_sheets_exam_centre_date_scope",
             "examination_id",
-            "center_id",
+            "examination_centre_id",
             "examination_date",
             "subject_scope",
         ),
@@ -1143,18 +1263,17 @@ class ExaminationInspectorSubmissionSettings(Base):
 
 
 class QuestionPaperControl(Base):
-    """Per examination centre (host school), subject, paper, and series: question paper stock counts."""
+    """Per examination centre, subject, paper, and series: question paper stock counts."""
 
     __tablename__ = "question_paper_control"
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     examination_id = Column(Integer, ForeignKey("examinations.id", ondelete="CASCADE"), nullable=False, index=True)
-    center_id = Column(
+    examination_centre_id = Column(
         UUID(as_uuid=True),
-        ForeignKey("schools.id", ondelete="CASCADE"),
+        ForeignKey("examination_centres.id", ondelete="CASCADE"),
         nullable=False,
         index=True,
-        doc="Examination centre host school id (schools.writes_at_center_id IS NULL).",
     )
     subject_id = Column(Integer, ForeignKey("subjects.id", ondelete="RESTRICT"), nullable=False, index=True)
     paper_number = Column(SmallInteger, nullable=False)
@@ -1170,7 +1289,11 @@ class QuestionPaperControl(Base):
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
 
     examination = relationship("Examination", backref="question_paper_controls")
-    center = relationship("School", foreign_keys=[center_id], backref="question_paper_controls")
+    examination_centre = relationship(
+        "ExaminationCentre",
+        foreign_keys=[examination_centre_id],
+        backref="question_paper_controls",
+    )
     subject = relationship("Subject", backref="question_paper_controls")
     updated_by = relationship("User", foreign_keys=[updated_by_id])
     verified_by = relationship("User", foreign_keys=[verified_by_id])
@@ -1178,11 +1301,11 @@ class QuestionPaperControl(Base):
     __table_args__ = (
         UniqueConstraint(
             "examination_id",
-            "center_id",
+            "examination_centre_id",
             "subject_id",
             "paper_number",
             "series_number",
-            name="uq_question_paper_control_exam_center_subject_paper_series",
+            name="uq_question_paper_control_exam_centre_subject_paper_series",
         ),
         CheckConstraint("series_number >= 1 AND series_number <= 32767", name="ck_question_paper_control_series"),
         CheckConstraint("paper_number >= 1", name="ck_question_paper_control_paper"),

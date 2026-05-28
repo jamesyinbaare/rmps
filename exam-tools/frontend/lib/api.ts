@@ -46,6 +46,194 @@ export type ExaminationCenterListResponse = {
   total: number;
 };
 
+/** Per-examination centre (first-class entity; ``center_id`` in postings is this id). */
+export type PerExamCentreItem = {
+  id: string;
+  examination_id: number;
+  code: string;
+  name: string;
+  region: string | null;
+  zone: string | null;
+  hosted_school_count: number;
+  created_at: string;
+  updated_at: string;
+};
+
+export type PerExamCentreListResponse = {
+  items: PerExamCentreItem[];
+  total: number;
+  centre_structure_mode: "UNIFIED" | "SPLIT";
+};
+
+export async function listExaminationCentres(
+  examinationId: number,
+  q?: string,
+): Promise<PerExamCentreListResponse> {
+  const qs = q?.trim() ? `?q=${encodeURIComponent(q.trim())}` : "";
+  return apiJson<PerExamCentreListResponse>(`/examinations/${examinationId}/centres${qs}`);
+}
+
+export async function upgradeExaminationCentresToSplit(
+  examinationId: number,
+): Promise<{ examination_id: number; centre_structure_mode: string; memberships_created: number; memberships_removed: number }> {
+  return apiJson(`/examinations/${examinationId}/centres/upgrade-to-split`, {
+    method: "POST",
+  });
+}
+
+export type PerExamCentreMembership = {
+  school_id: string;
+  school_code: string;
+  school_name: string;
+  subject_scope: "ALL" | "CORE" | "ELECTIVE";
+};
+
+export type PerExamCentreDetailResponse = {
+  centre: PerExamCentreItem;
+  memberships: PerExamCentreMembership[];
+  posted_inspectors: PostedInspectorAtCentreRow[];
+};
+
+export async function getExaminationCentreDetail(
+  examinationId: number,
+  centreId: string,
+): Promise<PerExamCentreDetailResponse> {
+  return apiJson<PerExamCentreDetailResponse>(
+    `/examinations/${examinationId}/centres/${encodeURIComponent(centreId)}`,
+  );
+}
+
+export type PerExamCentreCreatePayload = {
+  code: string;
+  name: string;
+  region?: string | null;
+  zone?: string | null;
+};
+
+export type PerExamCentreUpdatePayload = {
+  code?: string;
+  name?: string;
+  region?: string | null;
+  zone?: string | null;
+};
+
+export type PerExamCentreMembershipAssign = {
+  school_code: string;
+  subject_scope: "ALL" | "CORE" | "ELECTIVE";
+};
+
+export async function createExaminationCentre(
+  examinationId: number,
+  body: PerExamCentreCreatePayload,
+): Promise<PerExamCentreItem> {
+  return apiJson<PerExamCentreItem>(`/examinations/${examinationId}/centres`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+}
+
+export async function updateExaminationCentre(
+  examinationId: number,
+  centreId: string,
+  body: PerExamCentreUpdatePayload,
+): Promise<PerExamCentreItem> {
+  return apiJson<PerExamCentreItem>(
+    `/examinations/${examinationId}/centres/${encodeURIComponent(centreId)}`,
+    {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    },
+  );
+}
+
+export async function deleteExaminationCentre(
+  examinationId: number,
+  centreId: string,
+): Promise<void> {
+  const res = await apiFetch(
+    `/examinations/${examinationId}/centres/${encodeURIComponent(centreId)}`,
+    { method: "DELETE" },
+  );
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    const detail =
+      typeof err === "object" && err !== null && "detail" in err
+        ? String((err as { detail: unknown }).detail)
+        : res.statusText;
+    throw new Error(detail || "Delete failed");
+  }
+}
+
+export async function setExaminationCentreMemberships(
+  examinationId: number,
+  centreId: string,
+  assignments: PerExamCentreMembershipAssign[],
+): Promise<PerExamCentreDetailResponse> {
+  return apiJson<PerExamCentreDetailResponse>(
+    `/examinations/${examinationId}/centres/${encodeURIComponent(centreId)}/memberships`,
+    {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ assignments }),
+    },
+  );
+}
+
+export async function cloneExaminationCentresFrom(
+  examinationId: number,
+  sourceExaminationId: number,
+): Promise<PerExamCentreListResponse> {
+  return apiJson<PerExamCentreListResponse>(
+    `/examinations/${examinationId}/centres/clone-from/${sourceExaminationId}`,
+    { method: "POST" },
+  );
+}
+
+export type ExaminationCentreMembershipScopeApi = "ALL" | "CORE" | "ELECTIVE";
+
+export type ExaminationCentreBulkUploadError = {
+  row_number: number;
+  error_message: string;
+};
+
+export type ExaminationCentreBulkUploadResponse = {
+  examination_id: number;
+  subject_scope: ExaminationCentreMembershipScopeApi;
+  total_rows: number;
+  centres_created: number;
+  memberships_added: number;
+  memberships_skipped: number;
+  failed: number;
+  errors: ExaminationCentreBulkUploadError[];
+};
+
+export async function downloadExaminationCentresBulkTemplate(
+  examinationId: number,
+  subjectScope: ExaminationCentreMembershipScopeApi,
+): Promise<void> {
+  const q = new URLSearchParams({ subject_scope: subjectScope });
+  await downloadApiFile(
+    `/examinations/${examinationId}/centres/bulk-upload/template?${q.toString()}`,
+    "examination_centres_bulk_template.xlsx",
+  );
+}
+
+export async function uploadExaminationCentresBulk(
+  examinationId: number,
+  file: File,
+  subjectScope: ExaminationCentreMembershipScopeApi,
+): Promise<ExaminationCentreBulkUploadResponse> {
+  const body = new FormData();
+  body.append("file", file);
+  const q = new URLSearchParams({ subject_scope: subjectScope });
+  return apiJson<ExaminationCentreBulkUploadResponse>(
+    `/examinations/${examinationId}/centres/bulk-upload?${q.toString()}`,
+    { method: "POST", body },
+  );
+}
+
 export type InspectorSchoolRow = {
   id: string;
   full_name: string;
@@ -511,6 +699,7 @@ export type Examination = {
   exam_series: string | null;
   year: number;
   description: string | null;
+  centre_structure_mode?: "UNIFIED" | "SPLIT";
   created_at: string;
   updated_at: string;
 };
@@ -754,6 +943,14 @@ export type StaffCentreOverviewUpcomingItem = {
   examination_time: string;
 };
 
+export type StaffCandidateWriteDestination = {
+  subject_scope: "ALL" | "CORE" | "ELECTIVE" | string;
+  centre_id: string;
+  centre_code: string;
+  centre_name: string;
+  centre_region: string;
+};
+
 export type StaffCentreOverviewResponse = {
   examination_id: number;
   exam_type: string;
@@ -765,6 +962,12 @@ export type StaffCentreOverviewResponse = {
   examination_centre_host_code: string;
   examination_centre_host_name: string;
   supervisor_school_is_centre_host: boolean;
+  centre_structure_mode?: string;
+  candidate_write_destinations?: StaffCandidateWriteDestination[];
+  /** supervisor or inspector — controls dashboard presentation. */
+  dashboard_viewer?: "supervisor" | "inspector";
+  /** ALL, CORE, or ELECTIVE when dashboard_viewer is inspector. */
+  centre_subject_scope?: string | null;
   candidate_count: number;
   school_count: number;
   upcoming: StaffCentreOverviewUpcomingItem[];
@@ -1047,8 +1250,12 @@ export async function downloadInspectorPostingsBulkTemplate(examinationId: numbe
 export async function getStaffCentreDaySummary(
   examId: number,
   examinationDateIso: string,
+  subjectFilter?: TimetableSubjectFilter,
 ): Promise<StaffCentreDaySummaryResponse> {
   const q = new URLSearchParams({ examination_date: examinationDateIso });
+  if (subjectFilter && subjectFilter !== "ALL") {
+    q.set("subject_filter", subjectFilter);
+  }
   return apiJson<StaffCentreDaySummaryResponse>(
     `/examinations/${examId}/my-center-day-summary?${q.toString()}`,
   );
@@ -1957,6 +2164,7 @@ export async function downloadAdminExamCentreOfficialsExport(params: {
   layout: "zip" | "combined";
   center_id?: string | null;
   designation?: string | null;
+  subject_scope?: RecordSubjectScope | null;
   filename: string;
 }): Promise<void> {
   const q = new URLSearchParams();
@@ -1964,6 +2172,7 @@ export async function downloadAdminExamCentreOfficialsExport(params: {
   q.set("layout", params.layout);
   if (params.center_id) q.set("center_id", params.center_id.trim());
   if (params.designation?.trim()) q.set("designation", params.designation.trim());
+  if (params.subject_scope) q.set("subject_scope", params.subject_scope);
   await downloadApiFile(`/admin/exam-centre-officials/export?${q.toString()}`, params.filename);
 }
 

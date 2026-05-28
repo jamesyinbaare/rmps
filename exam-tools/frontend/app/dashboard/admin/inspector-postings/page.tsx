@@ -14,7 +14,9 @@ import {
   downloadInspectorPostingsBulkTemplate,
   type AdminInspectorExamPostingRow,
   type Examination,
-  type ExaminationCenterListResponse,
+  listExaminationCentres,
+  type PerExamCentreItem,
+  type PerExamCentreListResponse,
   type ExamInspectorSubjectScopeApi,
   listInspectors,
   type InspectorPostingBulkUploadResponse,
@@ -220,15 +222,15 @@ function formatExamLabel(ex: Examination): string {
   return `${ex.year}${ex.exam_series ? ` ${ex.exam_series}` : ""} — ${ex.exam_type}`;
 }
 
-function filterCentreItems(items: ExaminationCenterListResponse["items"], q: string) {
+function filterCentreItems(items: PerExamCentreItem[], q: string) {
   const t = q.trim().toLowerCase();
   if (!t) return items.slice(0, 45);
   return items
     .filter(
       (c) =>
-        c.school.name.toLowerCase().includes(t) ||
-        c.school.code.toLowerCase().includes(t) ||
-        c.school.region.toLowerCase().includes(t),
+        c.name.toLowerCase().includes(t) ||
+        c.code.toLowerCase().includes(t) ||
+        (c.region ?? "").toLowerCase().includes(t),
     )
     .slice(0, 60);
 }
@@ -244,7 +246,7 @@ export default function AdminInspectorPostingsPage() {
   const [exams, setExams] = useState<Examination[]>([]);
   const [examId, setExamId] = useState<number | null>(null);
   const [rows, setRows] = useState<AdminInspectorExamPostingRow[]>([]);
-  const [centres, setCentres] = useState<ExaminationCenterListResponse | null>(null);
+  const [centres, setCentres] = useState<PerExamCentreListResponse | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [loadingPostings, setLoadingPostings] = useState(true);
   const [submitting, setSubmitting] = useState(false);
@@ -305,15 +307,17 @@ export default function AdminInspectorPostingsPage() {
   }, []);
 
   const loadCentres = useCallback(async () => {
+    if (examId == null) {
+      setCentres(null);
+      return;
+    }
     try {
-      const cenRes = await apiJson<ExaminationCenterListResponse>(
-        "/schools/examination-centers?skip=0&limit=500",
-      );
+      const cenRes = await listExaminationCentres(examId);
       setCentres(cenRes);
     } catch (e) {
       setLoadError(e instanceof Error ? e.message : "Failed to load examination centres");
     }
-  }, []);
+  }, [examId]);
 
   const reloadPostings = useCallback(async () => {
     if (examId == null) {
@@ -354,7 +358,7 @@ export default function AdminInspectorPostingsPage() {
     const cid = searchParams.get("centerId")?.trim() ?? "";
     const items = centres.items;
     const validCenter =
-      cid && items.some((x) => x.school.id === cid) ? cid : (items[0]?.school.id ?? "");
+      cid && items.some((x) => x.id === cid) ? cid : (items[0]?.id ?? "");
     setFormError(null);
     setInspectorQuery("");
     setInspId("");
@@ -404,14 +408,8 @@ export default function AdminInspectorPostingsPage() {
     [centres, centreFilterEdit],
   );
 
-  const centrePickerItems = useMemo(
-    () =>
-      (createOpen ? filteredCentresCreate : filteredCentresEdit).map((c) => ({
-        id: c.school.id,
-        school: c.school,
-      })),
-    [createOpen, filteredCentresCreate, filteredCentresEdit],
-  );
+  const centrePickerItemsCreate = useMemo(() => filteredCentresCreate, [filteredCentresCreate]);
+  const centrePickerItemsEdit = useMemo(() => filteredCentresEdit, [filteredCentresEdit]);
 
   const selectedInspectorLabel = useMemo(() => {
     if (!inspId) return null;
@@ -422,8 +420,8 @@ export default function AdminInspectorPostingsPage() {
 
   const selectedCentreLabel = useMemo(() => {
     if (!centerId || !centres) return null;
-    const c = centres.items.find((x) => x.school.id === centerId);
-    return c ? `${c.school.name} (${c.school.code})` : null;
+    const c = centres.items.find((x) => x.id === centerId);
+    return c ? `${c.name} (${c.code})` : null;
   }, [centerId, centres]);
 
   const filterInspectorLabel = useMemo(() => {
@@ -462,9 +460,9 @@ export default function AdminInspectorPostingsPage() {
     setCentreFilterCreate("");
     const items = centres?.items ?? [];
     const cid =
-      presetCenterId && items.some((x) => x.school.id === presetCenterId)
+      presetCenterId && items.some((x) => x.id === presetCenterId)
         ? presetCenterId
-        : (items[0]?.school.id ?? "");
+        : (items[0]?.id ?? "");
     setCenterId(cid);
     setScope("ALL");
     setNotes("");
@@ -894,12 +892,12 @@ export default function AdminInspectorPostingsPage() {
               searchPlaceholder="Name, code, or region"
               searchValue={centreFilterCreate}
               onSearchChange={setCentreFilterCreate}
-              items={centrePickerItems}
+              items={centrePickerItemsCreate}
               selectedId={centerId}
               onSelect={setCenterId}
               renderItem={(c) => ({
-                primary: c.school.name,
-                secondary: `${c.school.code} · ${c.school.region}`,
+                primary: c.name,
+                secondary: `${c.code} · ${c.region ?? "—"}`,
               })}
               selectedLabel={selectedCentreLabel}
               emptyMessage="No centres match. Try another search."
@@ -973,12 +971,12 @@ export default function AdminInspectorPostingsPage() {
               searchPlaceholder="Name, code, or region"
               searchValue={centreFilterEdit}
               onSearchChange={setCentreFilterEdit}
-              items={centrePickerItems}
+              items={centrePickerItemsEdit}
               selectedId={centerId}
               onSelect={setCenterId}
               renderItem={(c) => ({
-                primary: c.school.name,
-                secondary: `${c.school.code} · ${c.school.region}`,
+                primary: c.name,
+                secondary: `${c.code} · ${c.region ?? "—"}`,
               })}
               selectedLabel={selectedCentreLabel}
               emptyMessage="No centres match. Try another search."

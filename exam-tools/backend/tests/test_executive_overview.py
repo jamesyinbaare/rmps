@@ -64,16 +64,16 @@ async def test_load_posted_inspectors_for_centre_maps_fields() -> None:
 
 
 @pytest.mark.asyncio
-async def test_build_executive_centre_detail_rejects_satellite() -> None:
+async def test_build_executive_centre_detail_rejects_unknown_centre() -> None:
     from app.services.executive_overview import build_executive_centre_detail
 
-    satellite = _school(writes_at_center_id=uuid4())
+    centre_id = uuid4()
     session = AsyncMock()
-    session.get = AsyncMock(return_value=satellite)
+    session.get = AsyncMock(return_value=None)
 
     with patch(
         "app.services.executive_overview.load_examination_or_raise",
         new_callable=AsyncMock,
     ):
-        with pytest.raises(ValueError, match="not an examination centre host"):
-            await build_executive_centre_detail(session, 1, satellite.id)
+        with pytest.raises(ValueError, match="Examination centre not found"):
+            await build_executive_centre_detail(session, 1, centre_id)

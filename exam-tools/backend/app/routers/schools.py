@@ -130,6 +130,8 @@ async def list_schools(
     "/examination-centers",
     response_model=ExaminationCenterListResponse,
     summary="List examination centres (schools with no writes_at_center)",
+    deprecated=True,
+    description="Deprecated: use GET /examinations/{examination_id}/centres for per-examination centres.",
 )
 async def list_examination_centers(
     session: DBSessionDep,
@@ -182,6 +184,8 @@ async def list_examination_centers(
     "/examination-centers/{center_id}",
     response_model=ExaminationCenterDetailResponse,
     summary="Examination centre detail (host school and schools that write there)",
+    deprecated=True,
+    description="Deprecated: use GET /examinations/{examination_id}/centres/{centre_id}.",
 )
 async def get_examination_center_detail(
     center_id: UUID,
@@ -218,7 +222,7 @@ async def get_examination_center_detail(
     if examination_id is None:
         posted_here = (
             select(InspectorExamPosting.inspector_user_id)
-            .where(InspectorExamPosting.center_id == center_id)
+            .where(InspectorExamPosting.examination_centre_id == center_id)
             .distinct()
         )
         insp_stmt = (
@@ -249,7 +253,7 @@ async def get_examination_center_detail(
             .join(User, User.id == InspectorExamPosting.inspector_user_id)
             .where(
                 InspectorExamPosting.examination_id == examination_id,
-                InspectorExamPosting.center_id == center_id,
+                InspectorExamPosting.examination_centre_id == center_id,
             )
             .order_by(User.full_name.asc(), InspectorExamPosting.id.asc())
         )

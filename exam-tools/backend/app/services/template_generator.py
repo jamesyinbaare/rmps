@@ -187,3 +187,18 @@ async def generate_schedule_template(
 
     output.seek(0)
     return output.getvalue()
+
+
+def generate_examination_centres_bulk_template(subject_scope: str = "CORE") -> bytes:
+    """Excel template for examination centre + membership bulk upload (two columns only)."""
+    data = {
+        "centre_code": ["H001", "H001"],
+        "school_code": ["H001", "S002"],
+    }
+    df = pd.DataFrame(data)
+
+    output = io.BytesIO()
+    with pd.ExcelWriter(output, engine="openpyxl") as writer:
+        df.to_excel(writer, index=False, sheet_name="Centres")
+    output.seek(0)
+    return output.getvalue()

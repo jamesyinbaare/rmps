@@ -94,7 +94,7 @@ def _official_to_response(row: ExamCentreOfficial) -> ExamCentreOfficialResponse
     return ExamCentreOfficialResponse(
         id=row.id,
         examination_id=row.examination_id,
-        center_id=row.center_id,
+        center_id=row.examination_centre_id,
         full_name=cast(str, row.full_name),
         designation=des_str,
         bank_branch_id=row.bank_branch_id,
@@ -158,7 +158,7 @@ async def list_exam_officials(
         select(ExamCentreOfficial)
         .where(
             ExamCentreOfficial.examination_id == exam_id,
-            ExamCentreOfficial.center_id == ctx.center_host.id,
+            ExamCentreOfficial.examination_centre_id == ctx.examination_centre.id,
             ExamCentreOfficial.subject_scope == scope,
         )
         .options(selectinload(ExamCentreOfficial.bank_branch))
@@ -236,7 +236,7 @@ async def create_exam_official(
     stored_account = _normalize_account_or_400(body.account_number, bb, for_update=False)
     row = ExamCentreOfficial(
         examination_id=exam_id,
-        center_id=ctx.center_host.id,
+        examination_centre_id=ctx.examination_centre.id,
         full_name=body.full_name,
         designation=des,
         bank_branch_id=body.bank_branch_id,
@@ -282,7 +282,7 @@ async def update_exam_official(
         .where(
             ExamCentreOfficial.id == official_id,
             ExamCentreOfficial.examination_id == exam_id,
-            ExamCentreOfficial.center_id == ctx.center_host.id,
+            ExamCentreOfficial.examination_centre_id == ctx.examination_centre.id,
             ExamCentreOfficial.subject_scope == scope,
         )
         .options(selectinload(ExamCentreOfficial.bank_branch))
@@ -348,7 +348,7 @@ async def delete_exam_official(
     stmt = select(ExamCentreOfficial).where(
         ExamCentreOfficial.id == official_id,
         ExamCentreOfficial.examination_id == exam_id,
-        ExamCentreOfficial.center_id == ctx.center_host.id,
+        ExamCentreOfficial.examination_centre_id == ctx.examination_centre.id,
         ExamCentreOfficial.subject_scope == scope,
     )
     row = (await session.execute(stmt)).scalar_one_or_none()

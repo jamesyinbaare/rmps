@@ -10,6 +10,65 @@ import { cn } from "@/lib/utils";
 const inputFocusRing =
   "focus:border-primary focus:outline-none focus:ring-2 focus:ring-ring/30";
 
+/** Shared motion + hover tint for logout controls in the header. */
+const logoutControlClass = cn(
+  "group transition-[color,background-color,transform,box-shadow] duration-200 ease-out motion-reduce:transition-none",
+  "[&_svg]:transition-[transform,color] [&_svg]:duration-200 [&_svg]:ease-out motion-reduce:[&_svg]:transition-none",
+  "hover:[&_svg]:translate-x-0.5 hover:[&_svg]:text-destructive",
+  "active:scale-95 motion-reduce:active:scale-100",
+  inputFocusRing,
+);
+
+function HeaderLogoutIconButton({
+  onLogout,
+  className,
+}: {
+  onLogout: () => void;
+  className?: string;
+}) {
+  return (
+    <Button
+      type="button"
+      variant="ghost"
+      size="icon"
+      className={cn(
+        logoutControlClass,
+        "text-muted-foreground hover:bg-destructive/10 hover:text-destructive",
+        className,
+      )}
+      onClick={onLogout}
+      aria-label="Log out"
+    >
+      <LogOut className="size-4 shrink-0" aria-hidden />
+    </Button>
+  );
+}
+
+function HeaderLogoutLabeledButton({
+  onLogout,
+  className,
+}: {
+  onLogout: () => void;
+  className?: string;
+}) {
+  return (
+    <Button
+      type="button"
+      variant="outline"
+      className={cn(
+        logoutControlClass,
+        "min-h-11 gap-2 px-3 sm:px-4",
+        "text-foreground hover:border-destructive/35 hover:bg-destructive/8 hover:text-destructive",
+        className,
+      )}
+      onClick={onLogout}
+    >
+      <LogOut className="size-4 shrink-0" aria-hidden />
+      Log out
+    </Button>
+  );
+}
+
 export type DashboardStickyHeaderSidebar = {
   id: string;
   open: boolean;
@@ -91,37 +150,11 @@ export function DashboardStickyHeader({
               Home
             </Link>
           </Button>
-          {executiveMobileOnly ? (
-            <>
-              <Button
-                type="button"
-                variant="ghost"
-                size="icon"
-                className={cn("min-h-10 min-w-10 shrink-0 lg:hidden", inputFocusRing)}
-                onClick={onLogout}
-                aria-label="Log out"
-              >
-                <LogOut className="size-4 shrink-0" aria-hidden />
-              </Button>
-              <Button
-                type="button"
-                className={cn("hidden min-h-11 gap-2 px-3 sm:px-4 lg:inline-flex", inputFocusRing)}
-                onClick={onLogout}
-              >
-                <LogOut className="size-4 shrink-0" aria-hidden />
-                Log out
-              </Button>
-            </>
-          ) : (
-            <Button
-              type="button"
-              className={cn("min-h-11 gap-2 px-3 sm:px-4", inputFocusRing)}
-              onClick={onLogout}
-            >
-              <LogOut className="size-4 shrink-0" aria-hidden />
-              Log out
-            </Button>
-          )}
+          <HeaderLogoutIconButton onLogout={onLogout} className="shrink-0 lg:hidden" />
+          <HeaderLogoutLabeledButton
+            onLogout={onLogout}
+            className={cn("hidden lg:inline-flex", executiveMobileOnly && "max-lg:hidden")}
+          />
         </div>
       </div>
     </header>
@@ -155,10 +188,8 @@ export function DashboardSimpleHeader({
               Home
             </Link>
           </Button>
-          <Button type="button" className={cn("min-h-11 gap-2 px-4", inputFocusRing)} onClick={onLogout}>
-            <LogOut className="size-4 shrink-0" aria-hidden />
-            Log out
-          </Button>
+          <HeaderLogoutIconButton onLogout={onLogout} className="shrink-0 sm:hidden" />
+          <HeaderLogoutLabeledButton onLogout={onLogout} className="hidden min-h-11 px-4 sm:inline-flex" />
         </div>
       </div>
     </header>

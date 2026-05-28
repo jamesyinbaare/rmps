@@ -8,9 +8,10 @@ import {
   displayBankCode,
   downloadAdminExamCentreOfficialsExport,
   listAdminExamCentreOfficials,
+  listExaminationCentres,
   type AdminExamCentreOfficialRow,
   type Examination,
-  type ExaminationCenterListResponse,
+  type PerExamCentreItem,
 } from "@/lib/api";
 import { formInputClass, formLabelClass } from "@/lib/form-classes";
 
@@ -32,7 +33,7 @@ function exportFilenameBase(exam: Examination | null): string {
 function ExternalInspectorsContent() {
   const [exams, setExams] = useState<Examination[]>([]);
   const [examId, setExamId] = useState<number | null>(null);
-  const [centers, setCenters] = useState<ExaminationCenterListResponse["items"]>([]);
+  const [centers, setCenters] = useState<PerExamCentreItem[]>([]);
   const [centerId, setCenterId] = useState<string>("");
   const [items, setItems] = useState<AdminExamCentreOfficialRow[]>([]);
   const [total, setTotal] = useState(0);
@@ -59,12 +60,17 @@ function ExternalInspectorsContent() {
   }, []);
 
   useEffect(() => {
+    if (examId == null) {
+      setCenters([]);
+      return;
+    }
     let cancelled = false;
     void (async () => {
       try {
-        const data = await apiJson<ExaminationCenterListResponse>("/schools/examination-centers?skip=0&limit=500");
+        const data = await listExaminationCentres(examId);
         if (cancelled) return;
         setCenters(data.items);
+        setCenterId((cur) => (cur && data.items.some((c) => c.id === cur) ? cur : ""));
       } catch {
         if (!cancelled) setCenters([]);
       }
@@ -72,7 +78,7 @@ function ExternalInspectorsContent() {
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [examId]);
 
   const selectedExam = useMemo(() => exams.find((e) => e.id === examId) ?? null, [exams, examId]);
 
@@ -175,8 +181,8 @@ function ExternalInspectorsContent() {
           >
             <option value="">All centres</option>
             {centers.map((c) => (
-              <option key={c.school.id} value={c.school.id}>
-                {c.school.code} — {c.school.name}
+              <option key={c.id} value={c.id}>
+                {c.code} — {c.name}
               </option>
             ))}
           </select>

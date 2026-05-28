@@ -29,6 +29,51 @@ import {
   type StaffCentreOverviewUpcomingItem,
   type StaffDepotOverviewResponse,
 } from "@/lib/api";
+
+type SplitCentreDaySummaries = {
+  core: StaffCentreDaySummaryResponse;
+  elective: StaffCentreDaySummaryResponse;
+};
+
+function usesSplitCentreDaySummary(overview: StaffCentreOverviewResponse | null): boolean {
+  if (!overview || overview.centre_structure_mode !== "SPLIT") return false;
+  if (overview.dashboard_viewer === "inspector") {
+    const scope = overview.centre_subject_scope;
+    return !scope || scope === "ALL";
+  }
+  return overview.supervisor_school_is_centre_host;
+}
+
+async function fetchCentreDaySummaryForDate(
+  examId: number,
+  dateKey: string,
+  split: boolean,
+): Promise<StaffCentreDaySummaryResponse | SplitCentreDaySummaries> {
+  if (split) {
+    const [core, elective] = await Promise.all([
+      getStaffCentreDaySummary(examId, dateKey, "CORE_ONLY"),
+      getStaffCentreDaySummary(examId, dateKey, "ELECTIVE_ONLY"),
+    ]);
+    return { core, elective };
+  }
+  return getStaffCentreDaySummary(examId, dateKey);
+}
+
+function isSplitCentreDaySummaries(
+  data: StaffCentreDaySummaryResponse | SplitCentreDaySummaries,
+): data is SplitCentreDaySummaries {
+  return "core" in data && "elective" in data;
+}
+
+function daySummaryReadyForDate(
+  dateKey: string,
+  single: StaffCentreDaySummaryResponse | null,
+  split: SplitCentreDaySummaries | null,
+): boolean {
+  if (single?.examination_date === dateKey) return true;
+  if (split?.core.examination_date === dateKey) return true;
+  return false;
+}
 import {
   getCachedExaminations,
   getCachedNationalOverview,
@@ -37,6 +82,12 @@ import {
 } from "@/lib/executive-overview-cache";
 import { resolveExecutiveExamId, writeExecutiveSelectedExamId } from "@/lib/executive-selected-examination";
 import { parseMonitoringExamIdFromUrl } from "@/lib/monitoring-access";
+import {
+  centreSubjectScopePhrase,
+  externalWriteDestinations,
+  shouldShowWhereCandidatesWrite,
+  StaffCandidateWriteDestinations,
+} from "@/components/staff-candidate-write-destinations";
 import { cn } from "@/lib/utils";
 
 const statCardClass =
@@ -465,9 +516,65 @@ function NationalDaySummaryCompact({ summary }: { summary: StaffCentreDaySummary
   );
 }
 
+function CentreDaySummaryDetails({
+  single,
+  split,
+  embedded = false,
+  sectionTitle = "Details",
+  statsFirst = false,
+  statsProminent = false,
+  hideTopStats = false,
+}: {
+  single: StaffCentreDaySummaryResponse | null;
+  split: SplitCentreDaySummaries | null;
+  embedded?: boolean;
+  sectionTitle?: string;
+  statsFirst?: boolean;
+  statsProminent?: boolean;
+  hideTopStats?: boolean;
+}) {
+  const tableProps = { embedded, statsFirst, statsProminent, hideTopStats };
+  if (split) {
+    const hasCore = split.core.slots.length > 0 || split.core.schools.length > 0;
+    const hasElective = split.elective.slots.length > 0 || split.elective.schools.length > 0;
+    if (!hasCore && !hasElective) {
+      return (
+        <p className="text-sm text-muted-foreground">
+          No timetable slots on this date for your centre scope.
+        </p>
+      );
+    }
+    return (
+      <div className="space-y-8">
+        {hasCore ? (
+          <CentreDaySummaryTable
+            summary={split.core}
+            sectionTitle="Core schedule details"
+            {...tableProps}
+          />
+        ) : null}
+        {hasElective ? (
+          <CentreDaySummaryTable
+            summary={split.elective}
+            sectionTitle="Elective schedule details"
+            {...tableProps}
+          />
+        ) : null}
+      </div>
+    );
+  }
+  if (single) {
+    return (
+      <CentreDaySummaryTable summary={single} sectionTitle={sectionTitle} {...tableProps} />
+    );
+  }
+  return null;
+}
+
 function TodayAtCentrePanel({
   items,
   summary,
+  summarySplit,
   summaryLoading,
   summaryError,
   sessionScope = "centre",
@@ -477,6 +584,7 @@ function TodayAtCentrePanel({
 }: {
   items: StaffCentreOverviewUpcomingItem[];
   summary: StaffCentreDaySummaryResponse | null;
+  summarySplit?: SplitCentreDaySummaries | null;
   summaryLoading: boolean;
   summaryError: string | null;
   /** Wording for the timetable subtitle (depot = schools in depot; national = all candidate schools). */
@@ -539,16 +647,16 @@ function TodayAtCentrePanel({
             {summaryError}
           </p>
         ) : null}
-        {!summaryLoading && !summaryError && summary ? (
+        {!summaryLoading && !summaryError && (summary || summarySplit) ? (
           <>
             {!hideSchoolNameBadges ? (
-              summary.schools.length > 0 ? (
+              (summary?.schools.length ?? 0) > 0 ? (
                 <div className="mb-5">
                   <p className="text-[11px] font-bold uppercase tracking-wider text-muted-foreground">
                     Schools writing today
                   </p>
                   <ul className="mt-2 flex flex-wrap gap-2" aria-label="Schools with candidates today">
-                    {summary.schools.map((s) => (
+                    {summary!.schools.map((s) => (
                       <li
                         key={s.id}
                         className="inline-flex max-w-full rounded-full border border-primary/25 bg-primary/10 px-3 py-1.5 text-sm font-bold text-foreground"
@@ -561,18 +669,19 @@ function TodayAtCentrePanel({
                     ))}
                   </ul>
                 </div>
-              ) : summary.slots.length > 0 ? (
+              ) : (summary?.slots.length ?? 0) > 0 ? (
                 <p className="mb-5 text-sm font-medium text-muted-foreground">
                   No per-school breakdown yet — no registered candidates today for these papers.
                 </p>
               ) : null
             ) : null}
             <div className={hideSchoolNameBadges ? "" : "border-t border-border pt-5"}>
-              {compactSlotSummary ? (
+              {compactSlotSummary && summary ? (
                 <NationalDaySummaryCompact summary={summary} />
               ) : (
-                <CentreDaySummaryTable
-                  summary={summary}
+                <CentreDaySummaryDetails
+                  single={summary}
+                  split={summarySplit ?? null}
                   embedded
                   statsFirst={!hideCandidateInvigilatorCards}
                   statsProminent={!hideCandidateInvigilatorCards}
@@ -790,6 +899,83 @@ function CentreDaySummaryTable({
   );
 }
 
+function CentreStaffStatCards({ overview }: { overview: StaffCentreOverviewResponse }) {
+  const isInspector = overview.dashboard_viewer === "inspector";
+  const scopePhrase = centreSubjectScopePhrase(overview.centre_subject_scope);
+  const scopeSuffix =
+    isInspector && overview.centre_subject_scope ? ` (${scopePhrase})` : "";
+
+  if (isInspector) {
+    return (
+      <ul className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+        <li className={statCardClass}>
+          <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+            Candidates at centre{scopeSuffix}
+          </p>
+          <p className="mt-2 tabular-nums text-3xl font-semibold text-card-foreground">
+            {overview.candidate_count.toLocaleString()}
+          </p>
+          <p className="mt-2 text-sm text-muted-foreground">
+            Registered candidates at schools writing at{" "}
+            <span className="font-medium text-foreground">{overview.examination_centre_host_name}</span>
+            {scopeSuffix ? ` for ${scopePhrase}` : " this centre"}.
+          </p>
+        </li>
+        <li className={statCardClass}>
+          <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+            Schools at centre{scopeSuffix}
+          </p>
+          <p className="mt-2 tabular-nums text-3xl font-semibold text-card-foreground">
+            {overview.school_count.toLocaleString()}
+          </p>
+          <p className="mt-2 text-sm text-muted-foreground">
+            Schools with candidates writing at this centre
+            {scopeSuffix ? ` for ${scopePhrase}` : ""}.
+          </p>
+        </li>
+      </ul>
+    );
+  }
+
+  /** Host = school code matches centre code (API); hide “where you write” when writing at own centre only. */
+  const writesAtOwnCentre = overview.supervisor_school_is_centre_host;
+
+  return (
+    <ul className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+      <li className={statCardClass}>
+        <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+          {writesAtOwnCentre ? "Candidates at centre" : "Your candidates"}
+        </p>
+        <p className="mt-2 tabular-nums text-3xl font-semibold text-card-foreground">
+          {overview.candidate_count.toLocaleString()}
+        </p>
+        <p className="mt-2 text-sm text-muted-foreground">
+          {writesAtOwnCentre
+            ? "Registered candidates at this centre."
+            : `Registered candidates at ${overview.supervisor_school_name} for this examination.`}
+        </p>
+      </li>
+      {writesAtOwnCentre ? (
+        <li className={statCardClass}>
+          <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Schools at centre</p>
+          <p className="mt-2 tabular-nums text-3xl font-semibold text-card-foreground">
+            {overview.school_count.toLocaleString()}
+          </p>
+          <p className="mt-2 text-sm text-muted-foreground">Schools that write at this centre.</p>
+        </li>
+      ) : (
+        <li className={satelliteWritesCardClass}>
+          <p className="text-xs font-semibold uppercase tracking-wide text-primary">Where your candidates write</p>
+          <StaffCandidateWriteDestinations
+            className="mt-2"
+            destinations={externalWriteDestinations(overview)}
+          />
+        </li>
+      )}
+    </ul>
+  );
+}
+
 export type StaffDashboardControlledExam = {
   exams: Examination[];
   examId: number | null;
@@ -843,10 +1029,12 @@ export function StaffDashboardOverview({
   const [error, setError] = useState<string | null>(null);
   const [expandedDateKey, setExpandedDateKey] = useState<string | null>(null);
   const [daySummary, setDaySummary] = useState<StaffCentreDaySummaryResponse | null>(null);
+  const [daySummarySplit, setDaySummarySplit] = useState<SplitCentreDaySummaries | null>(null);
   const [daySummaryLoading, setDaySummaryLoading] = useState(false);
   const [daySummaryError, setDaySummaryError] = useState<string | null>(null);
   const [showAllUpcomingDates, setShowAllUpcomingDates] = useState(false);
   const [todaySummary, setTodaySummary] = useState<StaffCentreDaySummaryResponse | null>(null);
+  const [todaySummarySplit, setTodaySummarySplit] = useState<SplitCentreDaySummaries | null>(null);
   const [todaySummaryLoading, setTodaySummaryLoading] = useState(false);
   const [todaySummaryError, setTodaySummaryError] = useState<string | null>(null);
   const [depotLearnMoreOpen, setDepotLearnMoreOpen] = useState(false);
@@ -1018,8 +1206,10 @@ export function StaffDashboardOverview({
     // eslint-disable-next-line react-hooks/set-state-in-effect
     setExpandedDateKey(null);
     setDaySummary(null);
+    setDaySummarySplit(null);
     setDaySummaryError(null);
     setTodaySummary(null);
+    setTodaySummarySplit(null);
     setTodaySummaryError(null);
     setShowAllUpcomingDates(false);
     setDepotLearnMoreOpen(false);
@@ -1030,10 +1220,17 @@ export function StaffDashboardOverview({
       ? overview.sessions_today[0].examination_date
       : null;
 
+  const centreOverview =
+    variant === "centre" && overview && "centre_structure_mode" in overview
+      ? (overview as StaffCentreOverviewResponse)
+      : null;
+  const splitCentreDaySummary = usesSplitCentreDaySummary(centreOverview);
+
   useEffect(() => {
     if (examId == null || todayDateKey == null) {
       // eslint-disable-next-line react-hooks/set-state-in-effect
       setTodaySummary(null);
+      setTodaySummarySplit(null);
       setTodaySummaryLoading(false);
       setTodaySummaryError(null);
       return;
@@ -1041,34 +1238,59 @@ export function StaffDashboardOverview({
     let cancelled = false;
     setTodaySummaryLoading(true);
     setTodaySummaryError(null);
-    const fetchSummary =
-      variant === "depot"
-        ? getStaffDepotDaySummary(examId, todayDateKey)
-        : variant === "national"
-          ? getStaffNationalDaySummary(examId, todayDateKey)
-          : getStaffCentreDaySummary(examId, todayDateKey);
-    void fetchSummary
-      .then((data) => {
-        if (!cancelled) setTodaySummary(data);
-      })
-      .catch((e) => {
+    const run = async () => {
+      try {
+        if (variant === "depot") {
+          const data = await getStaffDepotDaySummary(examId, todayDateKey);
+          if (!cancelled) {
+            setTodaySummary(data);
+            setTodaySummarySplit(null);
+          }
+        } else if (variant === "national") {
+          const data = await getStaffNationalDaySummary(examId, todayDateKey);
+          if (!cancelled) {
+            setTodaySummary(data);
+            setTodaySummarySplit(null);
+          }
+        } else {
+          const data = await fetchCentreDaySummaryForDate(
+            examId,
+            todayDateKey,
+            splitCentreDaySummary,
+          );
+          if (!cancelled) {
+            if (isSplitCentreDaySummaries(data)) {
+              setTodaySummarySplit(data);
+              setTodaySummary(null);
+            } else {
+              setTodaySummary(data);
+              setTodaySummarySplit(null);
+            }
+          }
+        }
+      } catch (e) {
         if (!cancelled) {
           setTodaySummary(null);
-          setTodaySummaryError(e instanceof Error ? e.message : "Could not load today’s breakdown");
+          setTodaySummarySplit(null);
+          setTodaySummaryError(
+            e instanceof Error ? e.message : "Could not load today’s breakdown",
+          );
         }
-      })
-      .finally(() => {
+      } finally {
         if (!cancelled) setTodaySummaryLoading(false);
-      });
+      }
+    };
+    void run();
     return () => {
       cancelled = true;
     };
-  }, [examId, todayDateKey, variant]);
+  }, [examId, todayDateKey, variant, splitCentreDaySummary]);
 
   useEffect(() => {
     if (examId == null || expandedDateKey == null) {
       // eslint-disable-next-line react-hooks/set-state-in-effect
       setDaySummary(null);
+      setDaySummarySplit(null);
       setDaySummaryLoading(false);
       setDaySummaryError(null);
       return;
@@ -1076,29 +1298,51 @@ export function StaffDashboardOverview({
     let cancelled = false;
     setDaySummaryLoading(true);
     setDaySummaryError(null);
-    const fetchExpanded =
-      variant === "depot"
-        ? getStaffDepotDaySummary(examId, expandedDateKey)
-        : variant === "national"
-          ? getStaffNationalDaySummary(examId, expandedDateKey)
-          : getStaffCentreDaySummary(examId, expandedDateKey);
-    void fetchExpanded
-      .then((data) => {
-        if (!cancelled) setDaySummary(data);
-      })
-      .catch((e) => {
+    const run = async () => {
+      try {
+        if (variant === "depot") {
+          const data = await getStaffDepotDaySummary(examId, expandedDateKey);
+          if (!cancelled) {
+            setDaySummary(data);
+            setDaySummarySplit(null);
+          }
+        } else if (variant === "national") {
+          const data = await getStaffNationalDaySummary(examId, expandedDateKey);
+          if (!cancelled) {
+            setDaySummary(data);
+            setDaySummarySplit(null);
+          }
+        } else {
+          const data = await fetchCentreDaySummaryForDate(
+            examId,
+            expandedDateKey,
+            splitCentreDaySummary,
+          );
+          if (!cancelled) {
+            if (isSplitCentreDaySummaries(data)) {
+              setDaySummarySplit(data);
+              setDaySummary(null);
+            } else {
+              setDaySummary(data);
+              setDaySummarySplit(null);
+            }
+          }
+        }
+      } catch (e) {
         if (!cancelled) {
           setDaySummary(null);
+          setDaySummarySplit(null);
           setDaySummaryError(e instanceof Error ? e.message : "Could not load day summary");
         }
-      })
-      .finally(() => {
+      } finally {
         if (!cancelled) setDaySummaryLoading(false);
-      });
+      }
+    };
+    void run();
     return () => {
       cancelled = true;
     };
-  }, [examId, expandedDateKey, variant]);
+  }, [examId, expandedDateKey, variant, splitCentreDaySummary]);
 
   const executiveMobileNational = mobileFirst && variant === "national";
 
@@ -1166,8 +1410,7 @@ export function StaffDashboardOverview({
                   expandedDateKey === group.dateKey &&
                   !daySummaryLoading &&
                   !daySummaryError &&
-                  daySummary != null &&
-                  daySummary.examination_date === group.dateKey;
+                  daySummaryReadyForDate(group.dateKey, daySummary, daySummarySplit);
                 return (
                   <article
                     key={group.dateKey}
@@ -1267,8 +1510,7 @@ export function StaffDashboardOverview({
                           ) : null}
                           {!daySummaryLoading &&
                           !daySummaryError &&
-                          daySummary &&
-                          daySummary.examination_date === group.dateKey ? (
+                          daySummaryReadyForDate(group.dateKey, daySummary, daySummarySplit) ? (
                             <>
                               <div className="mb-3 flex min-w-0 items-baseline justify-between gap-2 border-b border-border/60 pb-2 sm:hidden">
                                 <time
@@ -1282,10 +1524,14 @@ export function StaffDashboardOverview({
                                   {cardSlots.length} {sessionLabel}
                                 </span>
                               </div>
-                              {variant === "national" ? (
+                              {variant === "national" && daySummary ? (
                                 <NationalUpcomingDayDetailsSummary summary={daySummary} />
                               ) : (
-                                <CentreDaySummaryTable summary={daySummary} sectionTitle="Details" />
+                                <CentreDaySummaryDetails
+                                  single={daySummary}
+                                  split={daySummarySplit}
+                                  sectionTitle="Details"
+                                />
                               )}
                             </>
                           ) : null}
@@ -1428,6 +1674,7 @@ export function StaffDashboardOverview({
               <TodayAtCentrePanel
                 items={overview.sessions_today ?? []}
                 summary={todaySummary}
+                summarySplit={todaySummarySplit}
                 summaryLoading={todaySummaryLoading}
                 summaryError={todaySummaryError}
                 sessionScope={sessionScope}
@@ -1548,50 +1795,14 @@ export function StaffDashboardOverview({
                   </ul>
                 )
               ) : (
-                <ul className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-                  <li className={statCardClass}>
-                    <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
-                      Candidates at centre
-                    </p>
-                    <p className="mt-2 tabular-nums text-3xl font-semibold text-card-foreground">
-                      {overview.candidate_count.toLocaleString()}
-                    </p>
-                    <p className="mt-2 text-sm text-muted-foreground">
-                      Registered candidates at this centre.
-                    </p>
-                  </li>
-                  {overview.supervisor_school_is_centre_host ? (
-                    <li className={statCardClass}>
-                      <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Schools at centre</p>
-                      <p className="mt-2 tabular-nums text-3xl font-semibold text-card-foreground">
-                        {overview.school_count.toLocaleString()}
-                      </p>
-                      <p className="mt-2 text-sm text-muted-foreground">Schools that write at this centre.</p>
-                    </li>
-                  ) : (
-                    <li className={satelliteWritesCardClass}>
-                      <p className="text-xs font-semibold uppercase tracking-wide text-primary">
-                        Where your school writes
-                      </p>
-                      <p className="mt-2 line-clamp-3 text-xl font-bold leading-snug text-foreground">
-                        {overview.examination_centre_host_name}
-                      </p>
-                      <p className="mt-2 text-sm text-foreground/85">
-                        Examination centre code{" "}
-                        <span className="font-mono font-semibold tabular-nums text-primary">
-                          {overview.examination_centre_host_code}
-                        </span>
-                        . Your candidates will write their examinations here.
-                      </p>
-                    </li>
-                  )}
-                </ul>
+                <CentreStaffStatCards overview={overview as StaffCentreOverviewResponse} />
               )}
 
               {!executiveMobileNational ? (
                 <TodayAtCentrePanel
                   items={overview.sessions_today ?? []}
                   summary={todaySummary}
+                  summarySplit={todaySummarySplit}
                   summaryLoading={todaySummaryLoading}
                   summaryError={todaySummaryError}
                   sessionScope={sessionScope}

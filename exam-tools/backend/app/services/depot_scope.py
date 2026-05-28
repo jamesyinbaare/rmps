@@ -7,6 +7,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models import School, User, UserRole
+from app.services.centre_resolution import resolve_centre_for_user_school
 from app.services.timetable_service import center_scope_school_ids, resolve_center_host_school
 
 
@@ -25,21 +26,46 @@ async def depot_school_ids(session: AsyncSession, depot_id: UUID) -> set[UUID]:
 
 
 async def depot_center_host_ids(session: AsyncSession, depot_id: UUID) -> set[UUID]:
-    """Distinct examination centre host school ids for all schools in the depot."""
+    """Deprecated: use ``depot_examination_centre_ids`` with an examination id."""
     stmt = select(School).where(School.depot_id == depot_id)
     result = await session.execute(stmt)
     schools = list(result.scalars().all())
     hosts: set[UUID] = set()
     for sch in schools:
-        host = await resolve_center_host_school(session, sch)
-        hosts.add(host.id)
+        if sch.writes_at_center_id is None:
+            hosts.add(sch.id)
+        elif sch.writes_at_center_id is not None:
+            hosts.add(sch.writes_at_center_id)
     return hosts
 
 
-async def script_scope_for_school(session: AsyncSession, school: School) -> set[UUID]:
-    """Centre scope (host + satellites) used for script packing rows for this school."""
-    host = await resolve_center_host_school(session, school)
-    return await center_scope_school_ids(session, host)
+async def depot_examination_centre_ids(
+    session: AsyncSession,
+    depot_id: UUID,
+    examination_id: int,
+) -> set[UUID]:
+    """Distinct examination centre ids for all schools in the depot for this examination."""
+    stmt = select(School).where(School.depot_id == depot_id)
+    result = await session.execute(stmt)
+    schools = list(result.scalars().all())
+    centres: set[UUID] = set()
+    for sch in schools:
+        try:
+            centre = await resolve_centre_for_user_school(session, examination_id, sch)
+            centres.add(centre.id)
+        except Exception:
+            continue
+    return centres
+
+
+async def script_scope_for_school(
+    session: AsyncSession,
+    school: School,
+    examination_id: int,
+) -> set[UUID]:
+    """Centre scope used for script packing rows for this school."""
+    host = await resolve_center_host_school(session, school, examination_id)
+    return await center_scope_school_ids(session, host, examination_id)
 
 
 async def assert_school_in_depot(school_id: UUID, depot_school_ids_set: set[UUID]) -> None:

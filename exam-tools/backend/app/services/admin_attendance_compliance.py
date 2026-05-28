@@ -12,15 +12,14 @@ from sqlalchemy.orm import joinedload
 
 from app.models import (
     ExamInspectorSubjectScope,
+    ExaminationCentre,
     InspectorAttendanceSheet,
     InspectorExamPosting,
-    School,
     User,
 )
-from app.services.inspector_posting import assert_centre_host_school
+from app.services.centre_resolution import centre_scope_school_ids_for_inspector_scope
 from app.services.script_control import script_packing_today_in_configured_zone
 from app.services.subject_scope import scopes_for_centre_date
-from app.services.timetable_service import center_scope_school_ids
 
 UploadStatusFilter = str  # "all" | "uploaded" | "missing"
 
@@ -58,7 +57,7 @@ async def _upload_counts_by_center_and_scope(
 ) -> dict[tuple[UUID, str], int]:
     stmt = (
         select(
-            InspectorAttendanceSheet.center_id,
+            InspectorAttendanceSheet.examination_centre_id,
             InspectorAttendanceSheet.subject_scope,
             func.count(InspectorAttendanceSheet.id),
         )
@@ -66,7 +65,10 @@ async def _upload_counts_by_center_and_scope(
             InspectorAttendanceSheet.examination_id == examination_id,
             InspectorAttendanceSheet.examination_date == examination_date,
         )
-        .group_by(InspectorAttendanceSheet.center_id, InspectorAttendanceSheet.subject_scope)
+        .group_by(
+            InspectorAttendanceSheet.examination_centre_id,
+            InspectorAttendanceSheet.subject_scope,
+        )
     )
     result = await session.execute(stmt)
     out: dict[tuple[UUID, str], int] = {}
@@ -100,7 +102,7 @@ async def expected_centres_for_examination_date(
         select(InspectorExamPosting)
         .where(InspectorExamPosting.examination_id == examination_id)
         .options(
-            joinedload(InspectorExamPosting.center),
+            joinedload(InspectorExamPosting.examination_centre),
             joinedload(InspectorExamPosting.inspector_user),
         )
     )
@@ -111,13 +113,14 @@ async def expected_centres_for_examination_date(
     by_key: dict[tuple[UUID, str], ExpectedCentreRow] = {}
 
     for posting in postings:
-        center = posting.center
+        center = posting.examination_centre
         if center is None:
             continue
-        cid = posting.center_id
+        cid = posting.examination_centre_id
         if cid not in scope_cache:
-            host = await assert_centre_host_school(session, cid)
-            scope_ids = await center_scope_school_ids(session, host)
+            scope_ids = await centre_scope_school_ids_for_inspector_scope(
+                session, center, posting.subject_scope
+            )
             scope_cache[cid] = await scopes_for_centre_date(
                 session, examination_id, scope_ids, examination_date
             )
@@ -189,13 +192,13 @@ def _upload_count_base(
         filters.append(InspectorAttendanceSheet.examination_date == examination_date)
     if subject_scope is not None:
         filters.append(InspectorAttendanceSheet.subject_scope == subject_scope)
-    base = select(InspectorAttendanceSheet).join(InspectorAttendanceSheet.center)
+    base = select(InspectorAttendanceSheet).join(InspectorAttendanceSheet.examination_centre)
     if search_pattern is not None:
         base = base.join(InspectorAttendanceSheet.inspector_exam_posting).join(
             InspectorExamPosting.inspector_user
         ).where(
-            School.code.ilike(search_pattern)
-            | School.name.ilike(search_pattern)
+            ExaminationCentre.code.ilike(search_pattern)
+            | ExaminationCentre.name.ilike(search_pattern)
             | User.full_name.ilike(search_pattern)
         )
     return base.where(*filters)
@@ -214,7 +217,10 @@ async def admin_attendance_summary(
         (await session.execute(select(func.count()).select_from(base.subquery()))).scalar_one()
     )
     distinct_pairs = (
-        select(InspectorAttendanceSheet.center_id, InspectorAttendanceSheet.subject_scope)
+        select(
+            InspectorAttendanceSheet.examination_centre_id,
+            InspectorAttendanceSheet.subject_scope,
+        )
         .select_from(base.subquery())
         .distinct()
     )

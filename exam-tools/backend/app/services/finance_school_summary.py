@@ -9,8 +9,13 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from app.models import ExamCentreOfficial, ExamInspectorSubjectScope, Examination, ExamOfficialDesignation, School
-from app.schemas.timetable import TimetableDownloadFilter
+from app.models import (
+    ExamCentreOfficial,
+    ExamInspectorSubjectScope,
+    Examination,
+    ExaminationCentre,
+    ExamOfficialDesignation,
+)
 from app.schemas.admin_exam_official import AdminExamCentreOfficialRow
 from app.schemas.examination import (
     FinanceCentreInvigilatorSummaryItem,
@@ -68,21 +73,21 @@ def invigilator_days_declared(officials: list[ExamCentreOfficial]) -> int:
 
 
 def officials_to_admin_rows(
-    pairs: list[tuple[ExamCentreOfficial, School]],
+    pairs: list[tuple[ExamCentreOfficial, ExaminationCentre]],
     examination_id: int,
     exam_label: str,
 ) -> list[AdminExamCentreOfficialRow]:
     items: list[AdminExamCentreOfficialRow] = []
-    for off, school in pairs:
+    for off, centre in pairs:
         bb = off.bank_branch
         items.append(
             AdminExamCentreOfficialRow(
                 id=off.id,
                 examination_id=examination_id,
                 examination_label=exam_label,
-                center_id=school.id,
-                center_code=cast(str, school.code),
-                center_name=cast(str, school.name),
+                center_id=centre.id,
+                center_code=cast(str, centre.code),
+                center_name=cast(str, centre.name),
                 full_name=cast(str, off.full_name),
                 designation=designation_str(off.designation),
                 bank_branch_id=off.bank_branch_id,
@@ -107,16 +112,19 @@ def officials_to_admin_rows(
 async def load_officials_for_centre(
     session: AsyncSession,
     examination_id: int,
-    center_id: UUID,
+    centre_id: UUID,
     *,
     subject_filter: TimetableDownloadFilter = TimetableDownloadFilter.ALL,
-) -> list[tuple[ExamCentreOfficial, School]]:
+) -> list[tuple[ExamCentreOfficial, ExaminationCentre]]:
     stmt = (
-        select(ExamCentreOfficial, School)
-        .join(School, School.id == ExamCentreOfficial.center_id)
+        select(ExamCentreOfficial, ExaminationCentre)
+        .join(
+            ExaminationCentre,
+            ExaminationCentre.id == ExamCentreOfficial.examination_centre_id,
+        )
         .where(
             ExamCentreOfficial.examination_id == examination_id,
-            ExamCentreOfficial.center_id == center_id,
+            ExamCentreOfficial.examination_centre_id == centre_id,
         )
         .options(selectinload(ExamCentreOfficial.bank_branch))
         .order_by(ExamCentreOfficial.full_name.asc())
@@ -131,7 +139,7 @@ async def load_officials_for_centre(
 
 def build_school_summary_response(
     *,
-    center_host: School,
+    centre: ExaminationCentre,
     subject_filter: TimetableDownloadFilter,
     invigilator_item: FinanceCentreInvigilatorSummaryItem,
     officials: list[ExamCentreOfficial],
@@ -140,9 +148,9 @@ def build_school_summary_response(
     expected = expected_invigilations_total(invigilator_item)
     declared = invigilator_days_declared(officials)
     return FinanceCentreSchoolSummaryResponse(
-        center_id=center_host.id,
-        center_code=str(center_host.code),
-        center_name=str(center_host.name),
+        center_id=centre.id,
+        center_code=str(centre.code),
+        center_name=str(centre.name),
         subject_filter=subject_filter,
         expected_invigilations_total=expected,
         invigilator_days_declared=declared,
@@ -155,7 +163,7 @@ def build_school_summary_response(
 async def build_finance_centre_school_summary(
     session: AsyncSession,
     exam: Examination,
-    center_host: School,
+    centre: ExaminationCentre,
     subject_filter: TimetableDownloadFilter,
     *,
     build_invigilator_item,
@@ -163,13 +171,13 @@ async def build_finance_centre_school_summary(
     """``build_invigilator_item`` is injected to avoid circular imports from examinations router."""
     exam_label = examination_label(exam)
     pairs = await load_officials_for_centre(
-        session, exam.id, center_host.id, subject_filter=subject_filter
+        session, exam.id, centre.id, subject_filter=subject_filter
     )
-    officials = [off for off, _school in pairs]
+    officials = [off for off, _centre in pairs]
     official_rows = officials_to_admin_rows(pairs, exam.id, exam_label)
-    invigilator_item = await build_invigilator_item(session, exam.id, center_host, subject_filter)
+    invigilator_item = await build_invigilator_item(session, exam.id, centre, subject_filter)
     return build_school_summary_response(
-        center_host=center_host,
+        centre=centre,
         subject_filter=subject_filter,
         invigilator_item=invigilator_item,
         officials=officials,

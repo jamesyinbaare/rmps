@@ -93,7 +93,7 @@ async def test_validate_overlap_rejects_duplicate_core_same_centre_when_existing
     existing = MagicMock()
     existing.id = uuid4()
     existing.subject_scope = "CORE"
-    existing.center_id = c
+    existing.examination_centre_id = c
 
     with patch(
         "app.services.inspector_posting.load_postings_for_inspector_exam",
@@ -106,7 +106,7 @@ async def test_validate_overlap_rejects_duplicate_core_same_centre_when_existing
                 session,
                 examination_id=1,
                 inspector_user_id=uuid4(),
-                center_id=c,
+                examination_centre_id=c,
                 subject_scope=ExamInspectorSubjectScope.CORE,
             )
         assert ei.value.status_code == 400
@@ -118,7 +118,7 @@ async def test_validate_overlap_allows_duplicate_core_different_centre() -> None
     existing = MagicMock()
     existing.id = uuid4()
     existing.subject_scope = ExamInspectorSubjectScope.CORE
-    existing.center_id = c1
+    existing.examination_centre_id = c1
 
     with patch(
         "app.services.inspector_posting.load_postings_for_inspector_exam",
@@ -130,7 +130,7 @@ async def test_validate_overlap_allows_duplicate_core_different_centre() -> None
             session,
             examination_id=1,
             inspector_user_id=uuid4(),
-            center_id=c2,
+            examination_centre_id=c2,
             subject_scope=ExamInspectorSubjectScope.CORE,
         )
 
@@ -141,7 +141,7 @@ async def test_validate_overlap_allows_core_and_elective_different_centres() -> 
     existing = MagicMock()
     existing.id = uuid4()
     existing.subject_scope = ExamInspectorSubjectScope.CORE
-    existing.center_id = c1
+    existing.examination_centre_id = c1
 
     with patch(
         "app.services.inspector_posting.load_postings_for_inspector_exam",
@@ -153,7 +153,7 @@ async def test_validate_overlap_allows_core_and_elective_different_centres() -> 
             session,
             examination_id=1,
             inspector_user_id=uuid4(),
-            center_id=c2,
+            examination_centre_id=c2,
             subject_scope=ExamInspectorSubjectScope.ELECTIVE,
         )
 
@@ -164,7 +164,7 @@ async def test_validate_overlap_allows_core_when_existing_all_different_centre()
     existing = MagicMock()
     existing.id = uuid4()
     existing.subject_scope = ExamInspectorSubjectScope.ALL
-    existing.center_id = c1
+    existing.examination_centre_id = c1
 
     with patch(
         "app.services.inspector_posting.load_postings_for_inspector_exam",
@@ -176,7 +176,7 @@ async def test_validate_overlap_allows_core_when_existing_all_different_centre()
             session,
             examination_id=1,
             inspector_user_id=uuid4(),
-            center_id=c2,
+            examination_centre_id=c2,
             subject_scope=ExamInspectorSubjectScope.CORE,
         )
 
@@ -187,7 +187,7 @@ async def test_validate_overlap_rejects_core_when_existing_all_same_centre() -> 
     existing = MagicMock()
     existing.id = uuid4()
     existing.subject_scope = ExamInspectorSubjectScope.ALL
-    existing.center_id = c
+    existing.examination_centre_id = c
 
     with patch(
         "app.services.inspector_posting.load_postings_for_inspector_exam",
@@ -200,7 +200,7 @@ async def test_validate_overlap_rejects_core_when_existing_all_same_centre() -> 
                 session,
                 examination_id=1,
                 inspector_user_id=uuid4(),
-                center_id=c,
+                examination_centre_id=c,
                 subject_scope=ExamInspectorSubjectScope.CORE,
             )
 
