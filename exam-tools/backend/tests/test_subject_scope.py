@@ -13,6 +13,17 @@ from app.services.inspector_submission_settings import (
 )
 
 
+def test_opposite_record_scope() -> None:
+    assert (
+        subject_scope.opposite_record_scope(ExamInspectorSubjectScope.CORE)
+        == ExamInspectorSubjectScope.ELECTIVE
+    )
+    assert (
+        subject_scope.opposite_record_scope(ExamInspectorSubjectScope.ELECTIVE)
+        == ExamInspectorSubjectScope.CORE
+    )
+
+
 def test_resolve_working_scope_core_posting() -> None:
     assert (
         subject_scope.resolve_working_scope(ExamInspectorSubjectScope.CORE, None)

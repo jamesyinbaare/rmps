@@ -23,6 +23,15 @@ from app.schemas.exam_official import (
     ExamCentreOfficialListResponse,
     ExamCentreOfficialResponse,
     ExamCentreOfficialUpdate,
+    ExamOfficialImportPreviewResponse,
+    ExamOfficialImportPreviewRow,
+    ExamOfficialImportRequest,
+    ExamOfficialImportResponse,
+)
+from app.services.exam_official_scope_import import (
+    build_import_preview_rows,
+    import_officials_from_source_scope,
+    load_import_source_and_destination,
 )
 from app.schemas.inspector_submission_settings import InspectorSubmissionStatusResponse
 from app.services.exam_official_account import normalize_account_for_save
@@ -167,6 +176,83 @@ async def list_exam_officials(
     result = await session.execute(stmt)
     rows = result.scalars().all()
     return ExamCentreOfficialListResponse(items=[_official_to_response(r) for r in rows])
+
+
+@router.get(
+    "/examinations/{exam_id}/exam-officials/my-centre/import-preview",
+    response_model=ExamOfficialImportPreviewResponse,
+)
+async def preview_exam_officials_scope_import(
+    exam_id: int,
+    session: DBSessionDep,
+    user: InspectorDep,
+    jwt_posting_id: InspectorJwtPostingIdDep,
+    posting_id: UUID | None = Query(default=None),
+    working_scope: str | None = Query(default=None),
+) -> ExamOfficialImportPreviewResponse:
+    ctx = await _resolve_inspector_ctx(session, user, exam_id, posting_id, jwt_posting_id)
+    destination_scope = resolve_working_scope(ctx.subject_scope, working_scope)
+    try:
+        await load_examination_or_raise(session, exam_id)
+    except ValueError:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Examination not found") from None
+
+    source_scope, source_rows, destination_rows = await load_import_source_and_destination(
+        session,
+        examination_id=exam_id,
+        examination_centre_id=ctx.examination_centre.id,
+        destination_scope=destination_scope,
+    )
+    preview_items = build_import_preview_rows(
+        source_rows,
+        destination_rows,
+        to_response=_official_to_response,
+    )
+    return ExamOfficialImportPreviewResponse(
+        source_scope=_scope_str(source_scope),
+        destination_scope=_scope_str(destination_scope),
+        items=[ExamOfficialImportPreviewRow(**item) for item in preview_items],
+    )
+
+
+@router.post(
+    "/examinations/{exam_id}/exam-officials/my-centre/import",
+    response_model=ExamOfficialImportResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+async def import_exam_officials_from_other_scope(
+    exam_id: int,
+    session: DBSessionDep,
+    user: InspectorDep,
+    body: ExamOfficialImportRequest,
+    jwt_posting_id: InspectorJwtPostingIdDep,
+    posting_id: UUID | None = Query(default=None),
+    working_scope: str | None = Query(default=None),
+) -> ExamOfficialImportResponse:
+    ctx = await _resolve_inspector_ctx(session, user, exam_id, posting_id, jwt_posting_id)
+    destination_scope = resolve_working_scope(ctx.subject_scope, working_scope)
+    try:
+        await load_examination_or_raise(session, exam_id)
+    except ValueError:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Examination not found") from None
+
+    await assert_submission_period_open(session, exam_id, destination_scope)
+    await assert_officials_scope_enabled(session, exam_id, destination_scope)
+
+    import_items = [(item.source_official_id, item.num_days) for item in body.items]
+    created_rows, requested, skipped = await import_officials_from_source_scope(
+        session,
+        examination_id=exam_id,
+        examination_centre_id=ctx.examination_centre.id,
+        destination_scope=destination_scope,
+        import_items=import_items,
+    )
+    return ExamOfficialImportResponse(
+        created=[_official_to_response(r) for r in created_rows],
+        requested=requested,
+        created_count=len(created_rows),
+        skipped_duplicates=skipped,
+    )
 
 
 @router.get("/examinations/{exam_id}/exam-officials/my-centre/summary.pdf")

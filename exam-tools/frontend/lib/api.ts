@@ -4,7 +4,6 @@ import {
   getStoredToken,
   parseErrorMessage,
   throwIfUnauthorized,
-  useDetailedApiNetworkErrors,
 } from "@/lib/auth";
 
 async function assertAuthedResponse(res: Response): Promise<void> {
@@ -606,9 +605,6 @@ export async function apiFetch(path: string, init: RequestInit = {}): Promise<Re
     });
   } catch (e) {
     if (e instanceof TypeError) {
-      if (useDetailedApiNetworkErrors()) {
-        console.error("API fetch failed:", url, e);
-      }
       throw new Error(apiNetworkErrorMessage());
     }
     throw e;
@@ -1894,6 +1890,34 @@ export type ExamCentreOfficialUpdatePayload = {
   telephone_number?: string;
 };
 
+export type ExamOfficialImportPreviewRow = {
+  source_official: ExamCentreOfficialResponse;
+  duplicate_in_destination: boolean;
+  importable: boolean;
+};
+
+export type ExamOfficialImportPreviewResponse = {
+  source_scope: RecordSubjectScope;
+  destination_scope: RecordSubjectScope;
+  items: ExamOfficialImportPreviewRow[];
+};
+
+export type ExamOfficialImportItemPayload = {
+  source_official_id: string;
+  num_days: number;
+};
+
+export type ExamOfficialImportRequestPayload = {
+  items: ExamOfficialImportItemPayload[];
+};
+
+export type ExamOfficialImportResponse = {
+  created: ExamCentreOfficialResponse[];
+  requested: number;
+  created_count: number;
+  skipped_duplicates: number;
+};
+
 function examOfficialsQuery(postingId?: string | null, workingScope?: RecordSubjectScope | null): string {
   const u = new URLSearchParams();
   if (postingId?.trim()) u.set("posting_id", postingId.trim());
@@ -2103,6 +2127,32 @@ export async function deleteExamOfficial(
   await apiJson(
     `/examinations/${examId}/exam-officials/my-centre/${officialId.trim()}${examOfficialsQuery(postingId, workingScope)}`,
     { method: "DELETE" },
+  );
+}
+
+export async function getExamOfficialsImportPreview(
+  examId: number,
+  postingId?: string | null,
+  workingScope?: RecordSubjectScope | null,
+): Promise<ExamOfficialImportPreviewResponse> {
+  return apiJson<ExamOfficialImportPreviewResponse>(
+    `/examinations/${examId}/exam-officials/my-centre/import-preview${examOfficialsQuery(postingId, workingScope)}`,
+  );
+}
+
+export async function importExamOfficialsFromOtherScope(
+  examId: number,
+  payload: ExamOfficialImportRequestPayload,
+  postingId?: string | null,
+  workingScope?: RecordSubjectScope | null,
+): Promise<ExamOfficialImportResponse> {
+  return apiJson<ExamOfficialImportResponse>(
+    `/examinations/${examId}/exam-officials/my-centre/import${examOfficialsQuery(postingId, workingScope)}`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    },
   );
 }
 
