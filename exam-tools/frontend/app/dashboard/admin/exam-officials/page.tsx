@@ -5,6 +5,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 
 import { RoleGuard } from "@/components/role-guard";
 import { SearchableCombobox } from "@/components/searchable-combobox";
+import { SubjectScopeBadge, SubjectScopeLegend } from "@/components/subject-scope-badge";
 import {
   apiJson,
   displayBankCode,
@@ -256,6 +257,8 @@ function AdminExamOfficialsContent() {
         <OfficialAccountsPanelHeader count={total} busy={busy} />
 
         <div className="overflow-x-auto">
+        <SubjectScopeLegend className="mb-3 px-1" />
+
         <table className="w-full min-w-[56rem] border-collapse text-sm">
           <thead>
             <tr className="border-b border-border/60 bg-muted/30 text-left">
@@ -313,8 +316,8 @@ function AdminExamOfficialsContent() {
                 </td>
                 <td className="px-3 py-2 font-medium">{row.full_name}</td>
                 <td className="px-3 py-2">{row.designation}</td>
-                <td className="px-3 py-2 text-xs text-muted-foreground">
-                  {row.subject_scope === "CORE" ? "Core" : "Elective"}
+                <td className="px-3 py-2">
+                  <SubjectScopeBadge scope={row.subject_scope} />
                 </td>
                 <td className="max-w-[10rem] truncate px-3 py-2" title={row.bank_name}>
                   {row.bank_name}

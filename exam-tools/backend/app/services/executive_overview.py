@@ -366,5 +366,12 @@ async def build_executive_centre_detail(
         display_school_code=str(centre.code),
         display_school_name=str(centre.name),
     )
-    inspectors = await load_posted_inspectors_for_centre(session, exam_id, centre_id)
-    return ExecutiveCentreDetailResponse(overview=overview, posted_inspectors=inspectors)
+    from app.services.inspector_posting_display import merge_executive_posted_inspectors
+
+    raw_inspectors = await load_posted_inspectors_for_centre(session, exam_id, centre_id)
+    merged_inspectors = merge_executive_posted_inspectors(raw_inspectors)
+    return ExecutiveCentreDetailResponse(
+        overview=overview,
+        posted_inspectors=merged_inspectors,
+        posted_inspector_posting_count=len(raw_inspectors),
+    )

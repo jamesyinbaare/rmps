@@ -274,6 +274,9 @@ async def get_examination_center_detail(
                     subject_scope=scope_str,
                 )
             )
+        from app.services.inspector_posting_display import merge_centre_posted_inspectors
+
+        posted_rows = merge_centre_posted_inspectors(posted_rows)
     return ExaminationCenterDetailResponse(
         center=school_to_response(school),
         hosted_schools=hosted_schools,

@@ -17,6 +17,7 @@ import { useCallback, useEffect, useId, useMemo, useRef, useState } from "react"
 import { RoleGuard } from "@/components/role-guard";
 import { SearchableCombobox } from "@/components/searchable-combobox";
 import { OfficialAccountsPageIntro } from "@/components/official-accounts-page-intro";
+import { SubjectScopeBadge, SubjectScopeLegend } from "@/components/subject-scope-badge";
 import {
   apiJson,
   displayBankCode,
@@ -66,6 +67,9 @@ type SortKey = "name" | "designation" | "days";
 type SortDir = "asc" | "desc";
 
 const filterFieldClass = "flex min-w-0 flex-col gap-1.5";
+/** Toolbar selects: no extra mt — gap-1.5 on the field handles label spacing. */
+const filterSelectClass =
+  "block w-full min-h-11 rounded-lg border border-input-border bg-input px-3 text-base text-foreground shadow-sm focus:border-primary focus:outline-none focus:ring-2 focus:ring-ring/30";
 
 const statCardClass =
   "flex h-36 flex-col items-center justify-center rounded-xl border border-border bg-card p-2 text-center lg:h-full lg:min-h-36";
@@ -655,14 +659,14 @@ function AdminCentreSummaryContent() {
       <OfficialAccountsPageIntro description="Invigilator reconciliation and official account export by centre." />
 
       <div className={officialAccountsPanelClass}>
-        <div className="grid grid-cols-1 gap-3 border-b border-border bg-muted/20 px-4 py-3 sm:px-5 lg:grid-cols-[1fr_10rem_1fr_auto] lg:items-end">
+        <div className="grid grid-cols-1 gap-3 border-b border-border bg-muted/20 px-4 py-3 sm:px-5 sm:grid-cols-2 lg:grid-cols-[minmax(0,1.4fr)_minmax(0,11rem)_minmax(0,1.4fr)_auto] lg:items-end lg:gap-4">
           <div className={filterFieldClass}>
             <label className={formLabelClass} htmlFor="centre-summary-exam">
               Examination
             </label>
             <select
               id="centre-summary-exam"
-              className={formInputClass}
+              className={filterSelectClass}
               value={examId ?? ""}
               onChange={(e) => setExamId(e.target.value ? Number(e.target.value) : null)}
               disabled={exams.length === 0}
@@ -680,7 +684,7 @@ function AdminCentreSummaryContent() {
             </label>
             <select
               id="centre-summary-scope"
-              className={formInputClass}
+              className={filterSelectClass}
               value={subjectFilter}
               onChange={(e) => setSubjectFilter(e.target.value as TimetableSubjectFilter)}
               disabled={exams.length === 0}
@@ -692,8 +696,8 @@ function AdminCentreSummaryContent() {
               ))}
             </select>
           </div>
-          <div className={filterFieldClass}>
-            <p className={formLabelClass}>Centre</p>
+          <div className={cn(filterFieldClass, "sm:col-span-2 lg:col-span-1")}>
+            <span className={formLabelClass}>Centre</span>
             <SearchableCombobox
               options={centerOptions}
               value={centerId}
@@ -706,7 +710,9 @@ function AdminCentreSummaryContent() {
               disabled={centers.length === 0}
             />
           </div>
-          <div className="flex items-end pb-0.5">{exportControl}</div>
+          <div className="flex min-h-11 items-center sm:col-span-2 lg:col-span-1 lg:justify-end">
+            {exportControl}
+          </div>
         </div>
 
         {examListError ? (
@@ -753,6 +759,8 @@ function AdminCentreSummaryContent() {
               centerId={centerId.trim()}
               subjectFilter={subjectFilter}
             />
+
+            <SubjectScopeLegend className="border-t border-border/60 px-4 py-3 sm:px-5" />
 
             <div className="flex flex-col gap-2 border-t border-border/60 px-4 py-2 sm:flex-row sm:items-end sm:gap-3 sm:px-5">
               <div className="min-w-0 flex-1 sm:max-w-xs">
@@ -873,8 +881,8 @@ function AdminCentreSummaryContent() {
                         <td className="px-2 py-2 text-center text-xs tabular-nums text-muted-foreground">{index + 1}</td>
                         <td className="px-3 py-2 font-medium">{row.full_name}</td>
                         <td className="px-3 py-2">{row.designation}</td>
-                        <td className="px-3 py-2 text-xs text-muted-foreground">
-                          {row.subject_scope === "CORE" ? "Core" : "Elective"}
+                        <td className="px-3 py-2">
+                          <SubjectScopeBadge scope={row.subject_scope} />
                         </td>
                         <td className="max-w-40 truncate border-l border-border/60 px-3 py-2" title={row.bank_name}>
                           {row.bank_name}

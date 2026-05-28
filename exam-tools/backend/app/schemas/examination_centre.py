@@ -41,6 +41,10 @@ class ExaminationCentreDetailResponse(BaseModel):
     centre: ExaminationCentreResponse
     memberships: list[ExaminationCentreMembershipItem]
     posted_inspectors: list[PostedInspectorAtCentreRow] = []
+    posted_inspector_posting_count: int = Field(
+        0,
+        description="Inspector postings before identity merge (CORE+ELECTIVE pairs count as two).",
+    )
 
 
 class ExaminationCentreCreate(BaseModel):

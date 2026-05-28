@@ -17,6 +17,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { DataTable } from "@/components/data-table";
 import { RoleGuard } from "@/components/role-guard";
+import { SubjectScopeBadge } from "@/components/subject-scope-badge";
 import {
   apiJson,
   downloadAdminAttendanceSheet,
@@ -34,6 +35,7 @@ import {
   type Examination,
   type RecordSubjectScope,
 } from "@/lib/api";
+import { subjectScopeLabel } from "@/lib/subject-scope-display";
 import { cn } from "@/lib/utils";
 
 const btnSecondary =
@@ -74,7 +76,7 @@ function centreGroupKey(centerId: string, subjectScope: RecordSubjectScope): str
 }
 
 function scopeShortLabel(scope: RecordSubjectScope): string {
-  return scope === "CORE" ? "Core" : "Elective";
+  return subjectScopeLabel(scope);
 }
 
 function localTodayIso(): string {
@@ -794,9 +796,7 @@ function AttendanceSheetsContent() {
         id: "subject_scope",
         accessorFn: (row) => row.subject_scope,
         header: "Scope",
-        cell: ({ row }) => (
-          <span className="whitespace-nowrap text-sm">{scopeShortLabel(row.original.subject_scope)}</span>
-        ),
+        cell: ({ row }) => <SubjectScopeBadge scope={row.original.subject_scope} />,
       },
       {
         id: "examination_date",

@@ -22,6 +22,7 @@ import {
   type InspectorPostingBulkUploadResponse,
   type InspectorSchoolRow,
 } from "@/lib/api";
+import { SubjectScopeBadge, SubjectScopeLegend } from "@/components/subject-scope-badge";
 import { formInputClass, formLabelClass } from "@/lib/form-classes";
 import { cn } from "@/lib/utils";
 
@@ -41,11 +42,6 @@ const btnGhost =
   "inline-flex min-h-9 items-center justify-center rounded-md px-2.5 text-sm font-medium text-primary transition-colors hover:bg-primary/10 focus:outline-none focus:ring-2 focus:ring-ring/30 disabled:opacity-50";
 
 const SCOPES: ExamInspectorSubjectScopeApi[] = ["ALL", "CORE", "ELECTIVE"];
-const SCOPE_STYLES: Record<ExamInspectorSubjectScopeApi, string> = {
-  ALL: "bg-primary/10 text-primary",
-  CORE: "bg-info/15 text-info",
-  ELECTIVE: "bg-warning/15 text-warning",
-};
 const RELATED_LINKS = [
   { href: "/dashboard/admin/inspectors", label: "Inspectors" },
   { href: "/dashboard/admin/examination-centres", label: "Centres" },
@@ -109,20 +105,6 @@ function Modal({
         <div className="mt-5">{children}</div>
       </div>
     </div>
-  );
-}
-
-function ScopeBadge({ scope }: { scope: string }) {
-  const key = scope as ExamInspectorSubjectScopeApi;
-  return (
-    <span
-      className={cn(
-        "inline-flex rounded-md px-2 py-0.5 text-xs font-semibold tracking-wide",
-        SCOPE_STYLES[key] ?? "bg-muted text-muted-foreground",
-      )}
-    >
-      {scope}
-    </span>
   );
 }
 
@@ -678,6 +660,8 @@ export default function AdminInspectorPostingsPage() {
           />
         </div>
 
+        <SubjectScopeLegend className="border-b border-border px-4 py-3 sm:px-5" />
+
         <div className="flex flex-wrap items-center justify-between gap-2 border-b border-border px-4 py-3 sm:px-5">
           <p className="text-sm font-medium text-foreground">Postings</p>
           <p className="text-xs tabular-nums text-muted-foreground" aria-live="polite">
@@ -738,7 +722,7 @@ export default function AdminInspectorPostingsPage() {
                       <span className="mt-0.5 block font-mono text-xs text-muted-foreground">{r.center_code}</span>
                     </td>
                     <td className="px-4 py-3 sm:px-5">
-                      <ScopeBadge scope={r.subject_scope} />
+                      <SubjectScopeBadge scope={r.subject_scope} />
                     </td>
                     <td
                       className="hidden max-w-[12rem] truncate px-4 py-3 text-muted-foreground sm:table-cell sm:px-5"
@@ -1036,7 +1020,7 @@ export default function AdminInspectorPostingsPage() {
           <div className="space-y-3 text-sm text-foreground">
             <p>
               Remove <span className="font-medium">{deleteRow.center_name}</span> (
-              <ScopeBadge scope={deleteRow.subject_scope} />) from this examination?
+              <SubjectScopeBadge scope={deleteRow.subject_scope} />) from this examination?
             </p>
             <p className="text-muted-foreground">This cannot be undone.</p>
           </div>
