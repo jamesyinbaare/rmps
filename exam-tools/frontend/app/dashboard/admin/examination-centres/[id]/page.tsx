@@ -30,6 +30,32 @@ type DraftMembershipRow = PerExamCentreMembershipAssign & {
   school_name?: string;
 };
 
+const inspectorScopeOrder: Record<string, number> = {
+  ALL: 0,
+  CORE: 1,
+  ELECTIVE: 2,
+};
+
+function normalizeScope(scope: string): "ALL" | "CORE" | "ELECTIVE" {
+  const normalized = scope.toUpperCase();
+  if (normalized === "CORE" || normalized === "ELECTIVE" || normalized === "ALL") {
+    return normalized;
+  }
+  return "ALL";
+}
+
+function makeInspectorMergeKey(row: {
+  inspector_user_id: string;
+  inspector_full_name: string;
+  inspector_phone: string | null;
+}): string {
+  const normalizedName = row.inspector_full_name.trim().toLowerCase();
+  const normalizedPhone = (row.inspector_phone ?? "").replace(/\D/g, "");
+  // Group primarily by human identity so CORE/ELECTIVE postings collapse to one row.
+  if (normalizedName || normalizedPhone) return `np:${normalizedName}|${normalizedPhone}`;
+  return row.inspector_user_id ? `u:${row.inspector_user_id}` : "unknown-inspector";
+}
+
 function membershipsToDraft(rows: PerExamCentreMembership[]): DraftMembershipRow[] {
   return rows.map((m) => ({
     school_code: m.school_code,
@@ -144,6 +170,46 @@ export default function ExaminationCentreDetailPage() {
   }, [load]);
 
   const centre = data?.centre;
+  const sortedPostedInspectors = useMemo(() => {
+    if (!data?.posted_inspectors) return [];
+    const byInspector = new Map<string, (typeof data.posted_inspectors)[number]>();
+    for (const row of data.posted_inspectors) {
+      const key = makeInspectorMergeKey(row);
+      const scope = normalizeScope(row.subject_scope);
+      const existing = byInspector.get(key);
+      if (!existing) {
+        byInspector.set(key, { ...row, subject_scope: scope });
+        continue;
+      }
+
+      const existingScope = normalizeScope(existing.subject_scope);
+      const mergedScope =
+        existingScope === "ALL" ||
+        scope === "ALL" ||
+        (existingScope === "CORE" && scope === "ELECTIVE") ||
+        (existingScope === "ELECTIVE" && scope === "CORE")
+          ? "ALL"
+          : existingScope;
+
+      byInspector.set(key, {
+        ...existing,
+        posting_id: existing.posting_id.localeCompare(row.posting_id) <= 0 ? existing.posting_id : row.posting_id,
+        inspector_phone: existing.inspector_phone ?? row.inspector_phone,
+        subject_scope: mergedScope,
+      });
+    }
+
+    return [...byInspector.values()].sort((a, b) => {
+      const scopeRankA = inspectorScopeOrder[normalizeScope(a.subject_scope)] ?? 99;
+      const scopeRankB = inspectorScopeOrder[normalizeScope(b.subject_scope)] ?? 99;
+      if (scopeRankA !== scopeRankB) return scopeRankA - scopeRankB;
+
+      const nameCmp = a.inspector_full_name.localeCompare(b.inspector_full_name);
+      if (nameCmp !== 0) return nameCmp;
+
+      return a.posting_id.localeCompare(b.posting_id);
+    });
+  }, [data?.posted_inspectors]);
 
   const onSaveCentre = async () => {
     if (examFilterId == null || !id) return;
@@ -562,7 +628,7 @@ export default function ExaminationCentreDetailPage() {
           <section className="rounded-2xl border border-border bg-card p-5">
             <h3 className="text-lg font-semibold text-card-foreground">Inspectors at this centre</h3>
             <p className="mt-1 text-sm text-muted-foreground">
-              Posted for this examination ({data.posted_inspectors.length} total).
+              Posted for this examination ({sortedPostedInspectors.length} total).
             </p>
             {data.posted_inspectors.length > 0 ? (
               <div className="mt-4 overflow-x-auto rounded-lg border border-border">
@@ -575,7 +641,7 @@ export default function ExaminationCentreDetailPage() {
                     </tr>
                   </thead>
                   <tbody>
-                    {data.posted_inspectors.map((row) => (
+                    {sortedPostedInspectors.map((row) => (
                       <tr key={row.posting_id} className="border-b border-border last:border-0">
                         <td className="px-3 py-2">{row.inspector_full_name}</td>
                         <td className="px-3 py-2 font-mono text-xs">{row.inspector_phone ?? "—"}</td>

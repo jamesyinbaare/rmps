@@ -1,5 +1,6 @@
 "use client";
 
+import { useMemo } from "react";
 import { Building2, GraduationCap, Phone, Users } from "lucide-react";
 
 import {
@@ -13,6 +14,25 @@ import { cn } from "@/lib/utils";
 
 const summaryToggleClass =
   "inline-flex min-h-11 shrink-0 items-center justify-center rounded-lg border border-primary-foreground/25 bg-primary-foreground/10 px-4 text-sm font-medium text-primary-foreground transition-colors hover:bg-primary-foreground/20 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-foreground/50 focus-visible:ring-offset-2 focus-visible:ring-offset-transparent";
+
+const inspectorScopeOrder: Record<string, number> = {
+  ALL: 0,
+  CORE: 1,
+  ELECTIVE: 2,
+};
+
+function normalizeScope(scope: string): "ALL" | "CORE" | "ELECTIVE" {
+  const normalized = scope.toUpperCase();
+  if (normalized === "CORE" || normalized === "ELECTIVE" || normalized === "ALL") return normalized;
+  return "ALL";
+}
+
+function inspectorMergeKey(insp: ExecutivePostedInspectorItem): string {
+  const normalizedName = insp.inspector_full_name.trim().toLowerCase();
+  const normalizedPhone = (insp.inspector_phone_number ?? "").replace(/\D/g, "");
+  if (normalizedName || normalizedPhone) return `np:${normalizedName}|${normalizedPhone}`;
+  return `id:${insp.posting_id}`;
+}
 
 function truncateEnd(text: string, max = 36): string {
   const t = text.trim();
@@ -58,6 +78,43 @@ export function ExecutiveCentreDetailPanel({ detail, onClose }: Props) {
   const { overview, posted_inspectors } = detail;
   const region =
     overview.examination_centre_region !== "—" ? overview.examination_centre_region : null;
+  const mergedInspectors = useMemo(() => {
+    const grouped = new Map<string, ExecutivePostedInspectorItem>();
+    for (const insp of posted_inspectors) {
+      const key = inspectorMergeKey(insp);
+      const existing = grouped.get(key);
+      if (!existing) {
+        grouped.set(key, { ...insp, subject_scope: normalizeScope(insp.subject_scope) });
+        continue;
+      }
+      const existingScope = normalizeScope(existing.subject_scope);
+      const nextScope = normalizeScope(insp.subject_scope);
+      const mergedScope =
+        existingScope === "ALL" ||
+        nextScope === "ALL" ||
+        (existingScope === "CORE" && nextScope === "ELECTIVE") ||
+        (existingScope === "ELECTIVE" && nextScope === "CORE")
+          ? "ALL"
+          : existingScope;
+
+      grouped.set(key, {
+        ...existing,
+        posting_id: existing.posting_id.localeCompare(insp.posting_id) <= 0 ? existing.posting_id : insp.posting_id,
+        inspector_phone_number: existing.inspector_phone_number ?? insp.inspector_phone_number,
+        subject_scope: mergedScope,
+      });
+    }
+
+    return [...grouped.values()].sort((a, b) => {
+      const scopeCmp =
+        (inspectorScopeOrder[normalizeScope(a.subject_scope)] ?? 99) -
+        (inspectorScopeOrder[normalizeScope(b.subject_scope)] ?? 99);
+      if (scopeCmp !== 0) return scopeCmp;
+      const nameCmp = a.inspector_full_name.localeCompare(b.inspector_full_name);
+      if (nameCmp !== 0) return nameCmp;
+      return a.posting_id.localeCompare(b.posting_id);
+    });
+  }, [posted_inspectors]);
 
   return (
     <section aria-labelledby="executive-centre-detail-heading">
@@ -114,14 +171,14 @@ export function ExecutiveCentreDetailPanel({ detail, onClose }: Props) {
         <ExecutiveSectionHeading icon={Users} accentClass="bg-primary" as="h4">
           Inspectors
         </ExecutiveSectionHeading>
-        {posted_inspectors.length === 0 ? (
+        {mergedInspectors.length === 0 ? (
           <p className="mt-3 rounded-lg border border-dashed border-border bg-muted/30 px-3 py-4 text-sm text-muted-foreground">
             No inspectors at this centre.
           </p>
         ) : (
           <>
             <ul className="mt-3 space-y-3 md:hidden">
-              {posted_inspectors.map((insp) => (
+              {mergedInspectors.map((insp) => (
                 <InspectorMobileCard key={insp.posting_id} insp={insp} />
               ))}
             </ul>
@@ -141,7 +198,7 @@ export function ExecutiveCentreDetailPanel({ detail, onClose }: Props) {
                   </tr>
                 </thead>
                 <tbody>
-                  {posted_inspectors.map((insp) => (
+                  {mergedInspectors.map((insp) => (
                     <tr
                       key={insp.posting_id}
                       className="border-b border-border/70 last:border-b-0 even:bg-primary/[0.03]"
