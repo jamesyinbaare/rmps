@@ -27,6 +27,8 @@ export type OfficialModalProps = {
   mobileFillHeight?: boolean;
   /** Animate tighter header padding on mobile when custom header compacts. */
   headerCompact?: boolean;
+  /** Fixed strip below the header (e.g. search); does not scroll with modal body. */
+  toolbar?: ReactNode;
 };
 
 export function OfficialModal({
@@ -45,6 +47,7 @@ export function OfficialModal({
   size = "default",
   mobileFillHeight = false,
   headerCompact = false,
+  toolbar,
 }: OfficialModalProps) {
   const dialogRef = useRef<HTMLDivElement>(null);
   const [keyboardInset, setKeyboardInset] = useState(0);
@@ -190,6 +193,18 @@ export function OfficialModal({
             </button>
           </div>
         </div>
+        {toolbar ? (
+          <div
+            className={cn(
+              "shrink-0 border-b border-border bg-card px-4 sm:px-5",
+              "max-sm:transition-[padding] max-sm:duration-300 max-sm:ease-[cubic-bezier(0.4,0,0.2,1)] motion-reduce:max-sm:transition-none",
+              headerCompact ? "max-sm:py-2" : "max-sm:py-3",
+              "py-3",
+            )}
+          >
+            {toolbar}
+          </div>
+        ) : null}
         <div
           ref={scrollRef}
           className={cn(
