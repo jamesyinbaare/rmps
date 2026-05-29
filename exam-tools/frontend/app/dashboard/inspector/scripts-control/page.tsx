@@ -44,6 +44,7 @@ import {
   type ScriptSeriesSlotResponse,
 } from "@/lib/api";
 import { inspectorMustPickWorkspaceGlobally, pickInspectorPostingId } from "@/lib/auth";
+import { cn } from "@/lib/utils";
 
 const btnPrimary =
   "inline-flex min-h-10 items-center justify-center rounded-lg bg-primary px-3 text-sm font-medium text-primary-foreground transition-colors hover:bg-primary-hover focus:outline-none focus:ring-2 focus:ring-ring/30";
@@ -170,6 +171,24 @@ function workspaceOptionLabel(p: MyInspectorPostingRow): string {
   return `${p.center_name} (${p.center_code}) — ${p.subject_scope}`;
 }
 
+function seriesSlotKey(subjectId: number, paperNumber: number, seriesNumber: number) {
+  return `${subjectId}-${paperNumber}-${seriesNumber}`;
+}
+
+function seriesPackingSummaryHint(
+  packing: ScriptSeriesPackingResponse | null | undefined,
+  paperNumber: number,
+  anyEnvelopeVerified: boolean,
+): string {
+  if (anyEnvelopeVerified) return "Confirmed";
+  if (packing?.no_scripts) return "No scripts";
+  if (packing) {
+    const total = packing.envelopes.reduce((s, e) => s + e.booklet_count, 0);
+    return `${packing.envelopes.length} env · ${total} total`;
+  }
+  return "Tap to expand";
+}
+
 export default function InspectorScriptsControlPage() {
   const router = useRouter();
   const [exams, setExams] = useState<Examination[]>([]);
@@ -183,11 +202,23 @@ export default function InspectorScriptsControlPage() {
   const [busy, setBusy] = useState(false);
   const [showUpcoming, setShowUpcoming] = useState(true);
   const [openAccordionId, setOpenAccordionId] = useState<string | null>(null);
+  const [openSeriesKey, setOpenSeriesKey] = useState<string | null>(null);
   const subjectAccordionRefs = useRef<Record<string, HTMLDetailsElement | null>>({});
+  const [isLgUp, setIsLgUp] = useState(
+    () =>
+      typeof window !== "undefined" && window.matchMedia("(min-width: 1024px)").matches,
+  );
 
   const [editing, setEditing] = useState<EditingState | null>(null);
   const [draft, setDraft] = useState<Draft>(emptyDraft());
   const [formError, setFormError] = useState<string | null>(null);
+
+  useEffect(() => {
+    const mq = window.matchMedia("(min-width: 1024px)");
+    const sync = () => setIsLgUp(mq.matches);
+    mq.addEventListener("change", sync);
+    return () => mq.removeEventListener("change", sync);
+  }, []);
 
   const loadData = useCallback(async () => {
     if (examId === null || selectedSchoolId.trim() === "") return;
@@ -202,6 +233,7 @@ export default function InspectorScriptsControlPage() {
       setLoadError(e instanceof Error ? e.message : "Failed to load script control data");
       setData(null);
       setOpenAccordionId(null);
+      setOpenSeriesKey(null);
     } finally {
       setBusy(false);
     }
@@ -273,6 +305,7 @@ export default function InspectorScriptsControlPage() {
     seriesNumber: number,
     packing: ScriptSeriesPackingResponse | null,
   ) {
+    setOpenSeriesKey(seriesSlotKey(subjectId, paperNumber, seriesNumber));
     setEditing({ subjectId, paperNumber, seriesNumber });
     setFormError(null);
     setDraft(initialDraftForEdit(packing));
@@ -281,6 +314,21 @@ export default function InspectorScriptsControlPage() {
   function closeEdit() {
     setEditing(null);
     setFormError(null);
+  }
+
+  function toggleSeriesAccordion(key: string) {
+    if (openSeriesKey === key) {
+      if (
+        editing !== null &&
+        seriesSlotKey(editing.subjectId, editing.paperNumber, editing.seriesNumber) === key
+      ) {
+        closeEdit();
+      }
+      setOpenSeriesKey(null);
+      return;
+    }
+    if (editing !== null) closeEdit();
+    setOpenSeriesKey(key);
   }
 
   async function onSave() {
@@ -305,6 +353,7 @@ export default function InspectorScriptsControlPage() {
         );
         await loadData();
         closeEdit();
+        setOpenSeriesKey(null);
       } catch (e) {
         setFormError(e instanceof Error ? e.message : "Save failed");
       } finally {
@@ -348,6 +397,7 @@ export default function InspectorScriptsControlPage() {
       }, postings.length > 0 ? selectedPostingId! : undefined);
       await loadData();
       closeEdit();
+      setOpenSeriesKey(null);
     } catch (e) {
       setFormError(e instanceof Error ? e.message : "Save failed");
     } finally {
@@ -369,6 +419,7 @@ export default function InspectorScriptsControlPage() {
       });
       await loadData();
       closeEdit();
+      setOpenSeriesKey(null);
     } catch (e) {
       setFormError(e instanceof Error ? e.message : "Delete failed");
     } finally {
@@ -472,18 +523,18 @@ export default function InspectorScriptsControlPage() {
         ? consecutiveEnvelopeNumbersMessage(paperNumber, toSave.map((e) => e.envelope_number))
         : null;
     const paperVisuals = getPaperInspectorVisuals(paperNumber);
-    return (
-      <li key={slot.series_number} className={paperVisuals.seriesRowClass}>
+    const key = seriesSlotKey(subjectId, paperNumber, slot.series_number);
+    const seriesOpen = isLgUp || openSeriesKey === key;
+    const mobileOpen = !isLgUp && openSeriesKey === key;
+    const summaryHint = seriesPackingSummaryHint(packing, paperNumber, anyEnvelopeVerified);
+    const summaryAction = seriesOpen ? "Tap to collapse" : summaryHint;
+
+    const seriesBodyInner = (
+      <>
         <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
           <div>
-            <span
-              className={seriesInspectorBadgeClass}
-              title="Packing series for this paper"
-            >
-              Series {slot.series_number}
-            </span>
             {!isEditing ? (
-              <p className="mt-1 text-xs text-muted-foreground">
+              <p className="mt-1 text-xs text-muted-foreground max-lg:mt-0">
                 {packing?.no_scripts ? (
                   noScriptsSeriesSummary(paperNumber)
                 ) : packing ? (
@@ -658,6 +709,44 @@ export default function InspectorScriptsControlPage() {
             </div>
           </div>
         ) : null}
+      </>
+    );
+
+    return (
+      <li key={slot.series_number} className={paperVisuals.seriesRowClass}>
+        <div className="hidden lg:block">
+          <span className={seriesInspectorBadgeClass} title="Packing series for this paper">
+            Series {slot.series_number}
+          </span>
+          {seriesBodyInner}
+        </div>
+
+        <div className="w-full overflow-hidden rounded-lg border border-border/70 bg-background/40 lg:hidden">
+          <button
+            type="button"
+            className="flex min-h-11 w-full cursor-pointer items-center justify-between gap-2 px-3 py-2 text-left focus:outline-none focus:ring-2 focus:ring-ring/30 focus:ring-inset"
+            onClick={() => toggleSeriesAccordion(key)}
+            aria-expanded={mobileOpen}
+          >
+            <span className={seriesInspectorBadgeClass} title="Packing series for this paper">
+              Series {slot.series_number}
+            </span>
+            <span className="shrink-0 text-right text-xs font-normal text-muted-foreground transition-opacity duration-300 ease-[cubic-bezier(0.4,0,0.2,1)] motion-reduce:transition-none">
+              {summaryAction}
+            </span>
+          </button>
+          <div
+            className={cn(
+              "grid transition-[grid-template-rows,opacity] duration-300 ease-[cubic-bezier(0.4,0,0.2,1)] motion-reduce:transition-none",
+              mobileOpen ? "grid-rows-[1fr] opacity-100" : "grid-rows-[0fr] opacity-0",
+            )}
+            aria-hidden={!mobileOpen}
+          >
+            <div className={cn("min-h-0 overflow-hidden", !mobileOpen && "pointer-events-none")}>
+              <div className="border-t border-border/70 px-3 pb-3 pt-2">{seriesBodyInner}</div>
+            </div>
+          </div>
+        </div>
       </li>
     );
   }
@@ -810,6 +899,7 @@ export default function InspectorScriptsControlPage() {
                   setSelectedSchoolId(e.target.value);
                   setData(null);
                   setOpenAccordionId(null);
+                  setOpenSeriesKey(null);
                   closeEdit();
                 }}
               >

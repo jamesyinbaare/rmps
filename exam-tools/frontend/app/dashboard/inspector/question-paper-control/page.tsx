@@ -33,6 +33,7 @@ import {
   type QuestionPaperSeriesSlotResponse,
 } from "@/lib/api";
 import { inspectorMustPickWorkspaceGlobally, pickInspectorPostingId } from "@/lib/auth";
+import { cn } from "@/lib/utils";
 
 const btnPrimary =
   "inline-flex min-h-10 items-center justify-center rounded-lg bg-primary px-3 text-sm font-medium text-primary-foreground transition-colors hover:bg-primary-hover focus:outline-none focus:ring-2 focus:ring-ring/30 disabled:pointer-events-none disabled:opacity-50";
@@ -295,6 +296,7 @@ export default function InspectorQuestionPaperControlPage() {
         postings.length > 0 ? selectedPostingId! : undefined,
       );
       await loadData();
+      setOpenSeriesKey(null);
     } catch (e) {
       setSlotErrors((prev) => ({
         ...prev,
@@ -469,26 +471,32 @@ export default function InspectorQuestionPaperControlPage() {
         </div>
 
         {/* Mobile: collapsible; label lives only in the summary row */}
-        <details
-          className="w-full rounded-lg border border-border/70 bg-background/40 lg:hidden"
-          open={mobileOpen}
-        >
-          <summary
-            className="flex min-h-11 cursor-pointer list-none items-center justify-between gap-2 px-3 py-2 marker:hidden [&::-webkit-details-marker]:hidden"
-            onClick={(e) => {
-              e.preventDefault();
-              toggleSeriesAccordion(key);
-            }}
+        <div className="w-full overflow-hidden rounded-lg border border-border/70 bg-background/40 lg:hidden">
+          <button
+            type="button"
+            className="flex min-h-11 w-full cursor-pointer items-center justify-between gap-2 px-3 py-2 text-left focus:outline-none focus:ring-2 focus:ring-ring/30 focus:ring-inset"
+            onClick={() => toggleSeriesAccordion(key)}
+            aria-expanded={mobileOpen}
           >
             <span className={seriesInspectorBadgeClass} title="Question paper series">
               Series {slot.series_number}
             </span>
-            <span className="shrink-0 text-right text-xs font-normal text-muted-foreground">
+            <span className="shrink-0 text-right text-xs font-normal text-muted-foreground transition-opacity duration-300 ease-[cubic-bezier(0.4,0,0.2,1)] motion-reduce:transition-none">
               {summaryAction}
             </span>
-          </summary>
-          {mobileOpen ? <div className="border-t border-border/70 px-3 pb-3 pt-2">{seriesBody}</div> : null}
-        </details>
+          </button>
+          <div
+            className={cn(
+              "grid transition-[grid-template-rows,opacity] duration-300 ease-[cubic-bezier(0.4,0,0.2,1)] motion-reduce:transition-none",
+              mobileOpen ? "grid-rows-[1fr] opacity-100" : "grid-rows-[0fr] opacity-0",
+            )}
+            aria-hidden={!mobileOpen}
+          >
+            <div className={cn("min-h-0 overflow-hidden", !mobileOpen && "pointer-events-none")}>
+              <div className="border-t border-border/70 px-3 pb-3 pt-2">{seriesBody}</div>
+            </div>
+          </div>
+        </div>
       </li>
     );
   }

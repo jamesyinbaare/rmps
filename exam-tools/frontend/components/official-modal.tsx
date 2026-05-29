@@ -23,6 +23,10 @@ export type OfficialModalProps = {
   focusNameOnMount?: boolean;
   initialFocusSelector?: string;
   size?: "default" | "wide";
+  /** Keep a stable sheet height on mobile (avoids jump when content shrinks, e.g. filtering). */
+  mobileFillHeight?: boolean;
+  /** Animate tighter header padding on mobile when custom header compacts. */
+  headerCompact?: boolean;
 };
 
 export function OfficialModal({
@@ -39,6 +43,8 @@ export function OfficialModal({
   focusNameOnMount = true,
   initialFocusSelector,
   size = "default",
+  mobileFillHeight = false,
+  headerCompact = false,
 }: OfficialModalProps) {
   const dialogRef = useRef<HTMLDivElement>(null);
   const [keyboardInset, setKeyboardInset] = useState(0);
@@ -141,16 +147,23 @@ export function OfficialModal({
         className={cn(
           "relative z-10 flex min-h-0 w-full max-w-lg flex-col overflow-hidden rounded-t-2xl border border-border bg-card shadow-lg",
           "max-sm:max-h-[min(90dvh,90svh)] sm:max-h-[min(90vh,920px)] sm:rounded-2xl",
+          mobileFillHeight && "max-sm:h-[min(90dvh,90svh)]",
           "max-sm:transition-transform max-sm:duration-300 max-sm:ease-out motion-reduce:max-sm:transition-none",
           size === "wide" ? "sm:max-w-3xl" : "sm:max-w-2xl",
         )}
       >
-        <div className="shrink-0 border-b border-border">
+        <div className="shrink-0 overflow-hidden border-b border-border">
           <div
             className="mx-auto mt-2 h-1 w-10 shrink-0 rounded-full bg-muted-foreground/35 sm:hidden"
             aria-hidden
           />
-          <div className="flex items-start justify-between gap-3 px-4 pb-4 pt-3 sm:px-5 sm:pt-4">
+          <div
+            className={cn(
+              "flex items-start justify-between gap-3 px-4 pt-3 sm:px-5 sm:pb-4 sm:pt-4",
+              "max-sm:transition-[padding-bottom] max-sm:duration-300 max-sm:ease-[cubic-bezier(0.4,0,0.2,1)] motion-reduce:max-sm:transition-none",
+              headerCompact ? "max-sm:pb-2" : "max-sm:pb-4",
+            )}
+          >
             <div className="min-w-0 flex-1">
               {header ? (
                 <div id={titleId}>{header}</div>
@@ -179,7 +192,12 @@ export function OfficialModal({
         </div>
         <div
           ref={scrollRef}
-          className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-4 py-4 sm:px-5"
+          className={cn(
+            "min-h-0 flex-1 overflow-y-auto overscroll-contain px-4 pb-4 sm:px-5 sm:py-4",
+            "max-sm:transition-[padding-top] max-sm:duration-300 max-sm:ease-[cubic-bezier(0.4,0,0.2,1)] motion-reduce:max-sm:transition-none",
+            headerCompact ? "max-sm:pt-2" : "max-sm:pt-4",
+            mobileFillHeight && "flex flex-col",
+          )}
         >
           {formError ? (
             <p
