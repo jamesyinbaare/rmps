@@ -214,12 +214,6 @@ function ExternalInspectorsContent() {
         </p>
       ) : null}
 
-      {items.length > 0 ? (
-        <p className="text-xs text-muted-foreground">
-          Select an allowance amount to see how it was calculated.
-        </p>
-      ) : null}
-
       <div className="overflow-x-auto rounded-xl border border-border">
         <table className="w-full min-w-[56rem] border-collapse text-sm">
           <thead>

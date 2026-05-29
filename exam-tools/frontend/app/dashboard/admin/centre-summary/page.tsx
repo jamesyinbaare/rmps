@@ -797,7 +797,6 @@ function AdminCentreSummaryContent() {
               <p className="pb-2 text-xs text-muted-foreground sm:ml-auto sm:max-w-xs sm:text-right sm:pb-2.5">
                 {filteredOfficials.length} official{filteredOfficials.length === 1 ? "" : "s"}
                 {busy ? " · updating…" : ""}
-                {filteredOfficials.length > 0 ? " · Select an allowance amount to see how it was calculated." : ""}
               </p>
             </div>
 

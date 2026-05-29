@@ -17,6 +17,7 @@ import {
   type PerExamCentreItem,
   type RecordSubjectScope,
 } from "@/lib/api";
+import { OfficialAllowanceBreakdownCell } from "@/components/official-allowance-breakdown";
 import { OfficialAccountsPageIntro } from "@/components/official-accounts-page-intro";
 import { OfficialAccountsPanelHeader } from "@/components/official-accounts-panel-header";
 import { formInputClass, formLabelClass } from "@/lib/form-classes";
@@ -27,7 +28,7 @@ import {
   officialAccountsPanelFooterClass,
   officialAccountsPanelToolbarClass,
 } from "@/lib/official-accounts-zone";
-import { formatGhsAmount } from "@/lib/format-ghs";
+import { cn } from "@/lib/utils";
 
 const PAGE_SIZE = 50;
 
@@ -260,7 +261,7 @@ function AdminExamOfficialsContent() {
         <div className="overflow-x-auto">
         <SubjectScopeLegend className="mb-3 px-1" />
 
-        <table className="w-full min-w-[56rem] border-collapse text-sm">
+        <table className="w-full min-w-[52rem] border-collapse text-sm">
           <thead>
             <tr className="border-b border-border/60 bg-muted/30 text-left">
               <th colSpan={4} className="px-3 py-2 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
@@ -278,11 +279,8 @@ function AdminExamOfficialsContent() {
               >
                 Contact & duty
               </th>
-              <th
-                colSpan={4}
-                className="border-l border-border/60 px-3 py-2 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground"
-              >
-                Allowance (computed)
+              <th className="border-l border-border/60 px-3 py-2 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
+                Allowance
               </th>
             </tr>
             <tr className="border-b border-border bg-muted/50 text-left">
@@ -296,30 +294,32 @@ function AdminExamOfficialsContent() {
               <th className="px-3 py-2.5 font-semibold">Account no.</th>
               <th className="border-l border-border/60 px-3 py-2.5 font-semibold">Days</th>
               <th className="px-3 py-2.5 font-semibold">Phone</th>
-              <th className="border-l border-border/60 px-3 py-2.5 font-semibold">Daily rate</th>
-              <th className="px-3 py-2.5 font-semibold">Commuting / day</th>
-              <th className="px-3 py-2.5 font-semibold">Airtime</th>
-              <th className="px-3 py-2.5 font-semibold">Total</th>
+              <th className="border-l border-border/60 px-3 py-2.5 font-semibold">Total allowance</th>
             </tr>
           </thead>
           <tbody className="divide-y divide-border/70">
             {busy && items.length === 0 ? (
               <tr>
-                <td colSpan={14} className="px-4 py-12 text-center">
+                <td colSpan={11} className="px-4 py-12 text-center">
                   <p className="text-sm font-medium text-muted-foreground">Loading records…</p>
                 </td>
               </tr>
             ) : null}
             {!busy && items.length === 0 ? (
               <tr>
-                <td colSpan={14} className="px-4 py-12 text-center">
+                <td colSpan={11} className="px-4 py-12 text-center">
                   <p className="text-sm font-medium text-foreground">No records match this filter</p>
                   <p className="mt-1 text-xs text-muted-foreground">Try another centre or examination.</p>
                 </td>
               </tr>
             ) : null}
-            {items.map((row) => (
-              <tr key={row.id} className="hover:bg-muted/30">
+            {items.map((row) => {
+              const isInvigilator = row.designation === "Invigilator";
+              return (
+              <tr
+                key={row.id}
+                className={cn("hover:bg-muted/30", isInvigilator && "bg-success/5")}
+              >
                 <td className="px-3 py-2 text-xs text-muted-foreground" title={row.center_name}>
                   <span className="font-mono text-foreground">{row.center_code}</span>
                   <br />
@@ -330,26 +330,33 @@ function AdminExamOfficialsContent() {
                 <td className="px-3 py-2">
                   <SubjectScopeBadge scope={row.subject_scope} />
                 </td>
-                <td className="max-w-[10rem] truncate px-3 py-2" title={row.bank_name}>
+                <td className="max-w-40 truncate px-3 py-2" title={row.bank_name}>
                   {row.bank_name}
                 </td>
-                <td className="max-w-[10rem] truncate px-3 py-2" title={row.branch_name}>
+                <td className="max-w-40 truncate px-3 py-2" title={row.branch_name}>
                   {row.branch_name}
                 </td>
                 <td className="px-3 py-2 font-mono text-xs">{displayBankCode(row.bank_code)}</td>
                 <td className="px-3 py-2 font-mono text-xs tabular-nums">{row.account_number}</td>
-                <td className="px-3 py-2 tabular-nums">{row.num_days}</td>
-                <td className="px-3 py-2 tabular-nums">{row.telephone_number}</td>
-                <td className="border-l border-border/60 px-3 py-2 tabular-nums text-xs">
-                  {formatGhsAmount(row.daily_rate_ghs)}
+                <td
+                  className={cn(
+                    "border-l border-border/60 px-3 py-2 tabular-nums",
+                    isInvigilator && "font-semibold",
+                  )}
+                >
+                  {row.num_days}
                 </td>
-                <td className="px-3 py-2 tabular-nums text-xs">{formatGhsAmount(row.commuting_allowance_ghs)}</td>
-                <td className="px-3 py-2 tabular-nums text-xs">{formatGhsAmount(row.airtime_ghs)}</td>
-                <td className="px-3 py-2 tabular-nums text-xs font-medium">
-                  {formatGhsAmount(row.total_payable_ghs)}
+                <td className="px-3 py-2 tabular-nums">{row.telephone_number}</td>
+                <td className="border-l border-border/60 px-3 py-2">
+                  <OfficialAllowanceBreakdownCell
+                    row={row}
+                    examinationId={examId}
+                    officialName={row.full_name}
+                  />
                 </td>
               </tr>
-            ))}
+            );
+            })}
           </tbody>
         </table>
         </div>
