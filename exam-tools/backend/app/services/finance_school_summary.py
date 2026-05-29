@@ -23,6 +23,8 @@ from app.schemas.examination import (
     FinanceCentreSchoolSummaryRoleCounts,
 )
 from app.schemas.timetable import TimetableDownloadFilter
+from app.models import ExaminationDesignationRate
+from app.services.exam_official_compensation import compensation_for_official
 from app.services.exam_official_export import designation_str, examination_label
 
 
@@ -76,10 +78,14 @@ def officials_to_admin_rows(
     pairs: list[tuple[ExamCentreOfficial, ExaminationCentre]],
     examination_id: int,
     exam_label: str,
+    *,
+    rates_by_designation: dict[ExamOfficialDesignation, ExaminationDesignationRate] | None = None,
 ) -> list[AdminExamCentreOfficialRow]:
+    rates = rates_by_designation or {}
     items: list[AdminExamCentreOfficialRow] = []
     for off, centre in pairs:
         bb = off.bank_branch
+        comp = compensation_for_official(off, rates)
         items.append(
             AdminExamCentreOfficialRow(
                 id=off.id,
@@ -104,6 +110,10 @@ def officials_to_admin_rows(
                 ),
                 created_at=cast(datetime, off.created_at),
                 updated_at=cast(datetime, off.updated_at),
+                daily_rate_ghs=comp.daily_rate_ghs,
+                commuting_allowance_ghs=comp.commuting_allowance_ghs,
+                airtime_ghs=comp.airtime_ghs,
+                total_payable_ghs=comp.total_payable_ghs,
             )
         )
     return items
@@ -173,8 +183,11 @@ async def build_finance_centre_school_summary(
     pairs = await load_officials_for_centre(
         session, exam.id, centre.id, subject_filter=subject_filter
     )
+    from app.services.exam_official_compensation import load_designation_rates_map
+
     officials = [off for off, _centre in pairs]
-    official_rows = officials_to_admin_rows(pairs, exam.id, exam_label)
+    rates_map = await load_designation_rates_map(session, exam.id)
+    official_rows = officials_to_admin_rows(pairs, exam.id, exam_label, rates_by_designation=rates_map)
     invigilator_item = await build_invigilator_item(session, exam.id, centre, subject_filter)
     return build_school_summary_response(
         centre=centre,

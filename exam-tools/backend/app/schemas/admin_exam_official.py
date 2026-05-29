@@ -1,6 +1,7 @@
 """Admin listing of exam centre officials across all centres."""
 
 from datetime import datetime
+from decimal import Decimal
 from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, field_validator
@@ -29,6 +30,10 @@ class AdminExamCentreOfficialRow(BaseModel):
     subject_scope: str
     created_at: datetime
     updated_at: datetime
+    daily_rate_ghs: Decimal | None = None
+    commuting_allowance_ghs: Decimal | None = None
+    airtime_ghs: Decimal | None = None
+    total_payable_ghs: Decimal | None = None
 
     @field_validator("bank_code", mode="before")
     @classmethod

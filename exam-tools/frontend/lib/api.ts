@@ -2186,7 +2186,46 @@ export type AdminExamCentreOfficialRow = {
   subject_scope: RecordSubjectScope;
   created_at: string;
   updated_at: string;
+  daily_rate_ghs?: string | null;
+  commuting_allowance_ghs?: string | null;
+  airtime_ghs?: string | null;
+  total_payable_ghs?: string | null;
 };
+
+export type ExaminationDesignationRateRow = {
+  designation: string;
+  daily_rate_ghs: string | null;
+  commuting_allowance_ghs: string | null;
+  airtime_ghs: string | null;
+};
+
+export type ExaminationDesignationRatesResponse = {
+  examination_id: number;
+  items: ExaminationDesignationRateRow[];
+};
+
+export type ExaminationDesignationRateItemUpdate = {
+  designation: string;
+  daily_rate_ghs?: string | null;
+  commuting_allowance_ghs?: string | null;
+  airtime_ghs?: string | null;
+};
+
+export async function getExaminationDesignationRates(
+  examId: number,
+): Promise<ExaminationDesignationRatesResponse> {
+  return apiJson<ExaminationDesignationRatesResponse>(`/admin/examinations/${examId}/designation-rates`);
+}
+
+export async function putExaminationDesignationRates(
+  examId: number,
+  items: ExaminationDesignationRateItemUpdate[],
+): Promise<ExaminationDesignationRatesResponse> {
+  return apiJson<ExaminationDesignationRatesResponse>(`/admin/examinations/${examId}/designation-rates`, {
+    method: "PUT",
+    body: JSON.stringify({ items }),
+  });
+}
 
 export type AdminExamCentreOfficialListResponse = {
   items: AdminExamCentreOfficialRow[];

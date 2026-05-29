@@ -41,6 +41,7 @@ import {
   officialAccountsPanelClass,
 } from "@/lib/official-accounts-zone";
 import { cn } from "@/lib/utils";
+import { OfficialAllowanceBreakdownCell } from "@/components/official-allowance-breakdown";
 
 const SUBJECT_SCOPE_OPTIONS: { value: TimetableSubjectFilter; label: string }[] = [
   { value: "ALL", label: "All subjects" },
@@ -793,14 +794,15 @@ function AdminCentreSummaryContent() {
                   ))}
                 </select>
               </div>
-              <p className="pb-2 text-xs text-muted-foreground sm:ml-auto sm:pb-2.5">
+              <p className="pb-2 text-xs text-muted-foreground sm:ml-auto sm:max-w-xs sm:text-right sm:pb-2.5">
                 {filteredOfficials.length} official{filteredOfficials.length === 1 ? "" : "s"}
                 {busy ? " · updating…" : ""}
+                {filteredOfficials.length > 0 ? " · Select an allowance amount to see how it was calculated." : ""}
               </p>
             </div>
 
             <div className="max-h-[min(32rem,60vh)] overflow-auto">
-              <table className="w-full min-w-3xl border-collapse text-sm">
+              <table className="w-full min-w-[52rem] border-collapse text-sm">
                 <thead className="sticky top-0 z-[1] bg-muted/95 backdrop-blur-sm">
                   <tr className="border-b border-border/60 text-left">
                     <th
@@ -817,6 +819,9 @@ function AdminCentreSummaryContent() {
                     </th>
                     <th colSpan={2} className="border-l border-border/60 px-3 py-2 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
                       Contact & duty
+                    </th>
+                    <th className="border-l border-border/60 px-3 py-2 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
+                      Allowance
                     </th>
                   </tr>
                   <tr className="border-b border-border bg-muted/50 text-left">
@@ -845,12 +850,13 @@ function AdminCentreSummaryContent() {
                       </button>
                     </th>
                     <th className="px-3 py-2.5 font-semibold">Phone</th>
+                    <th className="border-l border-border/60 px-3 py-2.5 font-semibold">Total allowance</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-border/70">
                   {!busy && filteredOfficials.length === 0 ? (
                     <tr>
-                      <td colSpan={10} className="px-4 py-12 text-center">
+                      <td colSpan={11} className="px-4 py-12 text-center">
                         <p className="text-sm font-medium text-foreground">
                           {officials.length === 0
                             ? "No officials recorded for this centre"
@@ -901,6 +907,13 @@ function AdminCentreSummaryContent() {
                           {row.num_days}
                         </td>
                         <td className="px-3 py-2 tabular-nums">{row.telephone_number}</td>
+                        <td className="border-l border-border/60 px-3 py-2">
+                          <OfficialAllowanceBreakdownCell
+                            row={row}
+                            examinationId={examId}
+                            officialName={row.full_name}
+                          />
+                        </td>
                       </tr>
                     );
                   })}

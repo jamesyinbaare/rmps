@@ -16,6 +16,7 @@ from app.dependencies.database import get_sessionmanager, initialize_db
 from app.initial_data import ensure_super_admin_user
 from app.routers import (
     admin_exam_officials,
+    admin_examination_designation_rates,
     admin_inspector_postings,
     admin_inspector_submission_settings,
     admin_sms_deliveries,
@@ -205,6 +206,7 @@ app.include_router(question_paper_control.router)
 app.include_router(bank_branches.router)
 app.include_router(exam_officials.router)
 app.include_router(admin_exam_officials.router)
+app.include_router(admin_examination_designation_rates.router)
 app.include_router(admin_inspector_postings.router)
 app.include_router(admin_inspector_submission_settings.router)
 app.include_router(admin_sms_deliveries.router)

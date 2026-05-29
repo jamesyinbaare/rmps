@@ -28,6 +28,7 @@ const BANK_DIRECTORY_HREF = "/dashboard/admin/bank-directory";
 const EXTERNAL_INSPECTORS_HREF = "/dashboard/admin/external-inspectors";
 const FINANCE_CENTRE_SUMMARY_HREF = "/dashboard/admin/finance-centre-summary";
 const CENTRE_SUMMARY_HREF = "/dashboard/admin/centre-summary";
+const OFFICIAL_RATES_HREF = "/dashboard/admin/official-rates";
 
 const nav = [
   { href: "/dashboard/admin", label: "Overview" },
@@ -74,6 +75,7 @@ const ATTENDANCE_SHEETS_HREF = "/dashboard/admin/attendance-sheets";
 const FINANCE_OFFICER_NAV: NavEntry[] = [
   { type: "heading", label: "Finance" },
   { type: "link", href: OFFICIAL_ACCOUNTS_ADMIN_HREF, label: "Official account details" },
+  { type: "link", href: OFFICIAL_RATES_HREF, label: "Allowance rates" },
   { type: "link", href: EXTERNAL_INSPECTORS_HREF, label: "External inspectors" },
   { type: "link", href: FINANCE_CENTRE_SUMMARY_HREF, label: "Centre invigilator summary" },
   { type: "link", href: CENTRE_SUMMARY_HREF, label: "Centre summary" },
@@ -123,6 +125,7 @@ export function AdminDashboardShell({ children }: Props) {
         { type: "heading", label: "Finance" },
         { type: "link", href: bankItem.href, label: bankItem.label },
         { type: "link", href: OFFICIAL_ACCOUNTS_ADMIN_HREF, label: "Official account details" },
+        { type: "link", href: OFFICIAL_RATES_HREF, label: "Allowance rates" },
         { type: "link", href: EXTERNAL_INSPECTORS_HREF, label: "External inspectors" },
         { type: "link", href: FINANCE_CENTRE_SUMMARY_HREF, label: "Centre invigilator summary" },
         { type: "link", href: CENTRE_SUMMARY_HREF, label: "Centre summary" },

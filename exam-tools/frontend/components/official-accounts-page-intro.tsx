@@ -6,10 +6,12 @@ type Props = {
   description: string;
   actions?: React.ReactNode;
   meta?: React.ReactNode;
+  /** When set, replaces the default bank-account privacy notice. */
+  footerNote?: React.ReactNode;
 };
 
 /** Page lead — pairs with the shell sticky title; no duplicate H1. */
-export function OfficialAccountsPageIntro({ description, actions, meta }: Props) {
+export function OfficialAccountsPageIntro({ description, actions, meta, footerNote }: Props) {
   return (
     <div className="space-y-4">
       <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between lg:gap-6">
@@ -23,14 +25,16 @@ export function OfficialAccountsPageIntro({ description, actions, meta }: Props)
           {meta ? <div className="flex flex-wrap items-center gap-2">{meta}</div> : null}
         </div>
       </div>
-      <p
-        className={cn(
-          "flex items-start gap-2.5 rounded-xl border border-border/70 bg-card px-3.5 py-3 text-xs leading-relaxed text-muted-foreground shadow-sm",
-        )}
-      >
-        <ShieldCheck className="mt-0.5 size-4 shrink-0 text-success" aria-hidden />
-        <span>Account numbers are stored and used for processing official allowances only.</span>
-      </p>
+      {footerNote ?? (
+        <p
+          className={cn(
+            "flex items-start gap-2.5 rounded-xl border border-border/70 bg-card px-3.5 py-3 text-xs leading-relaxed text-muted-foreground shadow-sm",
+          )}
+        >
+          <ShieldCheck className="mt-0.5 size-4 shrink-0 text-success" aria-hidden />
+          <span>Account numbers are stored and used for processing official allowances only.</span>
+        </p>
+      )}
     </div>
   );
 }

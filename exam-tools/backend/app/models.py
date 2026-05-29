@@ -14,6 +14,7 @@ from sqlalchemy import (
     ForeignKey,
     Index,
     Integer,
+    Numeric,
     SmallInteger,
     String,
     Table,
@@ -1123,6 +1124,51 @@ class ExamCentreOfficial(Base):
             "examination_id",
             "examination_centre_id",
             "subject_scope",
+        ),
+    )
+
+
+class ExaminationDesignationRate(Base):
+    """Per-examination allowance rates by official designation (finance officer)."""
+
+    __tablename__ = "examination_designation_rates"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    examination_id = Column(Integer, ForeignKey("examinations.id", ondelete="CASCADE"), nullable=False, index=True)
+    designation = Column(
+        Enum(
+            ExamOfficialDesignation,
+            values_callable=lambda x: [i.value for i in x],
+            native_enum=False,
+            length=64,
+        ),
+        nullable=False,
+    )
+    daily_rate_ghs = Column(Numeric(12, 2), nullable=True)
+    commuting_allowance_ghs = Column(
+        Numeric(12, 2),
+        nullable=True,
+        doc="Commuting allowance per day (GHS); multiplied by roster num_days in totals.",
+    )
+    airtime_ghs = Column(Numeric(12, 2), nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+
+    examination = relationship("Examination", backref="designation_rates")
+
+    __table_args__ = (
+        UniqueConstraint("examination_id", "designation", name="uq_examination_designation_rates_exam_designation"),
+        CheckConstraint(
+            "daily_rate_ghs IS NULL OR daily_rate_ghs >= 0",
+            name="ck_examination_designation_rates_daily_nonneg",
+        ),
+        CheckConstraint(
+            "commuting_allowance_ghs IS NULL OR commuting_allowance_ghs >= 0",
+            name="ck_examination_designation_rates_commuting_nonneg",
+        ),
+        CheckConstraint(
+            "airtime_ghs IS NULL OR airtime_ghs >= 0",
+            name="ck_examination_designation_rates_airtime_nonneg",
         ),
     )
 

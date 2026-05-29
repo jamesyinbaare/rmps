@@ -27,6 +27,7 @@ from app.services.exam_official_export import (
     group_officials_by_centre,
     safe_filename_part,
 )
+from app.services.exam_official_compensation import load_designation_rates_map
 from app.services.finance_school_summary import officials_to_admin_rows
 
 router = APIRouter(prefix="/admin/exam-centre-officials", tags=["admin-exam-officials"])
@@ -129,7 +130,8 @@ async def admin_list_exam_centre_officials(
     result = await session.execute(stmt)
     rows = result.all()
 
-    items = officials_to_admin_rows(list(rows), examination_id, exam_label)
+    rates_map = await load_designation_rates_map(session, examination_id)
+    items = officials_to_admin_rows(list(rows), examination_id, exam_label, rates_by_designation=rates_map)
     return AdminExamCentreOfficialListResponse(items=items, total=total)
 
 
@@ -163,10 +165,12 @@ async def admin_export_exam_centre_officials(
     ordered = group_officials_by_centre(pairs)
     exam_part = safe_filename_part(f"exam_{examination_id}_{exam_label}")
 
+    rates_map = await load_designation_rates_map(session, examination_id)
+
     if layout == "zip":
-        payload, filename, media = build_zip_export(ordered, exam_label, exam_part)
+        payload, filename, media = build_zip_export(ordered, exam_label, exam_part, rates_by_designation=rates_map)
     else:
-        payload, filename, media = build_combined_export(ordered, ex)
+        payload, filename, media = build_combined_export(ordered, ex, rates_by_designation=rates_map)
 
     return Response(
         content=payload,
