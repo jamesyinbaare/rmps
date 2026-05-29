@@ -57,6 +57,7 @@ import {
   ALL_DESIGNATIONS_FILTER,
   DESIGNATION_DISPLAY_ORDER,
   filterExamOfficialRows,
+  matchesExamOfficialSearch,
   sortExamOfficialRows,
   type ExamOfficialSortDir,
   type ExamOfficialSortKey,
@@ -189,6 +190,7 @@ export default function InspectorExamOfficialsPage() {
   const [saveSuccessMessage, setSaveSuccessMessage] = useState<string | null>(null);
   const [accountFormBaseline, setAccountFormBaseline] = useState<AccountFormSnapshot | null>(null);
   const [importModalBaseline, setImportModalBaseline] = useState<ImportModalSnapshot | null>(null);
+  const [importSearch, setImportSearch] = useState("");
   const [discardConfirmTarget, setDiscardConfirmTarget] = useState<"account" | "import" | null>(null);
   const importDaysInputRefs = useRef<Record<string, HTMLInputElement | null>>({});
 
@@ -596,9 +598,15 @@ export default function InspectorExamOfficialsPage() {
     !busy &&
     !pdfDownloadBusy;
 
+  const importSearchFilteredItems = useMemo(() => {
+    const q = importSearch.trim();
+    if (!q) return importPreviewItems;
+    return importPreviewItems.filter((row) => matchesExamOfficialSearch(row.source_official, q));
+  }, [importPreviewItems, importSearch]);
+
   const importablePreviewItems = useMemo(
-    () => importPreviewItems.filter((row) => row.importable),
-    [importPreviewItems],
+    () => importSearchFilteredItems.filter((row) => row.importable),
+    [importSearchFilteredItems],
   );
 
   function parseImportNumDays(value: string): number | null {
@@ -616,9 +624,14 @@ export default function InspectorExamOfficialsPage() {
   }, [importSelectedIds, importNumDaysById]);
 
   const importDuplicateItems = useMemo(
-    () => importPreviewItems.filter((row) => !row.importable),
-    [importPreviewItems],
+    () => importSearchFilteredItems.filter((row) => !row.importable),
+    [importSearchFilteredItems],
   );
+
+  const importHeaderCompact =
+    importSearch.trim().length > 0 ||
+    importSelectedIds.size > 0 ||
+    Object.values(importNumDaysById).some((v) => v.trim().length > 0);
 
   const importSummary = useMemo(
     () => importSelectionSummary(importSelectedIds, importNumDaysById, parseImportNumDays),
@@ -643,6 +656,7 @@ export default function InspectorExamOfficialsPage() {
     setImportPreviewItems([]);
     setImportSelectedIds(new Set());
     setImportNumDaysById({});
+    setImportSearch("");
     setImportPreviewLoading(true);
     try {
       const preview = await getExamOfficialsImportPreview(
@@ -668,6 +682,7 @@ export default function InspectorExamOfficialsPage() {
     setImportPreviewItems([]);
     setImportSelectedIds(new Set());
     setImportNumDaysById({});
+    setImportSearch("");
     setImportModalBaseline(null);
     importDaysInputRefs.current = {};
   }
@@ -1651,11 +1666,14 @@ export default function InspectorExamOfficialsPage() {
         {importModalOpen ? (
           <OfficialModal
             size="wide"
+            mobileFillHeight
+            headerCompact={importHeaderCompact}
             header={
               <ImportScopeModalHeader
                 sourceScope={importSourceScope}
                 destinationScope={importDestinationScope}
                 subtitleId="import-officials-modal-subtitle"
+                compact={importHeaderCompact}
               />
             }
             titleId="import-officials-modal-title"
@@ -1731,7 +1749,26 @@ export default function InspectorExamOfficialsPage() {
                 ) : null}
               </div>
             ) : (
-              <div className="space-y-4">
+              <div className="flex min-h-0 flex-1 flex-col gap-4">
+                <div className="shrink-0">
+                  <label className="sr-only" htmlFor="import-officials-search">
+                    Search officials
+                  </label>
+                  <input
+                    id="import-officials-search"
+                    type="search"
+                    className={formInputClass}
+                    placeholder="Search by name, phone, or account…"
+                    value={importSearch}
+                    onChange={(e) => setImportSearch(e.target.value)}
+                    enterKeyHint="search"
+                    disabled={importBusy}
+                  />
+                </div>
+                <div className="min-h-[min(40vh,320px)] flex-1 space-y-4">
+                {importSearchFilteredItems.length === 0 ? (
+                  <p className="text-sm text-muted-foreground">No officials match your search.</p>
+                ) : null}
                 {importablePreviewItems.length > 0 ? (
                   <section aria-labelledby="import-ready-heading">
                     <h3
@@ -1869,6 +1906,7 @@ export default function InspectorExamOfficialsPage() {
                     </ul>
                   </section>
                 ) : null}
+                </div>
               </div>
             )}
           </OfficialModal>
