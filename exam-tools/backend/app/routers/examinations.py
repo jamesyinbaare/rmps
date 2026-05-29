@@ -2937,8 +2937,11 @@ async def export_finance_centre_school_summary(
         ("Variance (declared − expected)", summary.variance),
         ("Subject scope", scope_label),
     ]
+    from app.services.exam_official_compensation import load_designation_rates_map
+
     exam_label = examination_label(ex)
-    wb = workbook_for_centre(centre, exam_label, pairs, preamble_rows=preamble)
+    rates_map = await load_designation_rates_map(session, exam_id)
+    wb = workbook_for_centre(centre, exam_label, pairs, preamble_rows=preamble, rates_by_designation=rates_map)
     payload = workbook_bytes(wb)
     filename = school_summary_export_filename(
         summary.center_code,

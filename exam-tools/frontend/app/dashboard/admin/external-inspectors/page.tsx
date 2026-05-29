@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 
+import { OfficialAllowanceBreakdownCell } from "@/components/official-allowance-breakdown";
 import { RoleGuard } from "@/components/role-guard";
 import {
   apiJson,
@@ -213,8 +214,14 @@ function ExternalInspectorsContent() {
         </p>
       ) : null}
 
+      {items.length > 0 ? (
+        <p className="text-xs text-muted-foreground">
+          Select an allowance amount to see how it was calculated.
+        </p>
+      ) : null}
+
       <div className="overflow-x-auto rounded-xl border border-border">
-        <table className="w-full min-w-[52rem] border-collapse text-sm">
+        <table className="w-full min-w-[56rem] border-collapse text-sm">
           <thead>
             <tr className="border-b border-border/60 bg-muted/30 text-left">
               <th colSpan={2} className="px-3 py-2 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
@@ -232,6 +239,9 @@ function ExternalInspectorsContent() {
               >
                 Contact & duty
               </th>
+              <th className="border-l border-border/60 px-3 py-2 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
+                Allowance
+              </th>
             </tr>
             <tr className="border-b border-border bg-muted/50 text-left">
               <th className="px-3 py-2.5 font-semibold">Centre</th>
@@ -242,19 +252,20 @@ function ExternalInspectorsContent() {
               <th className="px-3 py-2.5 font-semibold">Account no.</th>
               <th className="border-l border-border/60 px-3 py-2.5 font-semibold">Days</th>
               <th className="px-3 py-2.5 font-semibold">Phone</th>
+              <th className="border-l border-border/60 px-3 py-2.5 font-semibold">Total allowance</th>
             </tr>
           </thead>
           <tbody className="divide-y divide-border/70">
             {busy && items.length === 0 ? (
               <tr>
-                <td colSpan={8} className="px-3 py-8 text-center text-muted-foreground">
+                <td colSpan={9} className="px-3 py-8 text-center text-muted-foreground">
                   Loading…
                 </td>
               </tr>
             ) : null}
             {!busy && items.length === 0 ? (
               <tr>
-                <td colSpan={8} className="px-3 py-8 text-center text-muted-foreground">
+                <td colSpan={9} className="px-3 py-8 text-center text-muted-foreground">
                   No external inspectors for this filter.
                 </td>
               </tr>
@@ -277,6 +288,13 @@ function ExternalInspectorsContent() {
                 <td className="px-3 py-2 font-mono text-xs tabular-nums">{row.account_number}</td>
                 <td className="px-3 py-2 tabular-nums">{row.num_days}</td>
                 <td className="px-3 py-2 tabular-nums">{row.telephone_number}</td>
+                <td className="border-l border-border/60 px-3 py-2">
+                  <OfficialAllowanceBreakdownCell
+                    row={row}
+                    examinationId={examId}
+                    officialName={row.full_name}
+                  />
+                </td>
               </tr>
             ))}
           </tbody>

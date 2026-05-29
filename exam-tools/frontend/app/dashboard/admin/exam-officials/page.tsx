@@ -27,6 +27,7 @@ import {
   officialAccountsPanelFooterClass,
   officialAccountsPanelToolbarClass,
 } from "@/lib/official-accounts-zone";
+import { formatGhsAmount } from "@/lib/format-ghs";
 
 const PAGE_SIZE = 50;
 
@@ -277,6 +278,12 @@ function AdminExamOfficialsContent() {
               >
                 Contact & duty
               </th>
+              <th
+                colSpan={4}
+                className="border-l border-border/60 px-3 py-2 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground"
+              >
+                Allowance (computed)
+              </th>
             </tr>
             <tr className="border-b border-border bg-muted/50 text-left">
               <th className="px-3 py-2.5 font-semibold">Centre</th>
@@ -289,19 +296,23 @@ function AdminExamOfficialsContent() {
               <th className="px-3 py-2.5 font-semibold">Account no.</th>
               <th className="border-l border-border/60 px-3 py-2.5 font-semibold">Days</th>
               <th className="px-3 py-2.5 font-semibold">Phone</th>
+              <th className="border-l border-border/60 px-3 py-2.5 font-semibold">Daily rate</th>
+              <th className="px-3 py-2.5 font-semibold">Commuting / day</th>
+              <th className="px-3 py-2.5 font-semibold">Airtime</th>
+              <th className="px-3 py-2.5 font-semibold">Total</th>
             </tr>
           </thead>
           <tbody className="divide-y divide-border/70">
             {busy && items.length === 0 ? (
               <tr>
-                <td colSpan={10} className="px-4 py-12 text-center">
+                <td colSpan={14} className="px-4 py-12 text-center">
                   <p className="text-sm font-medium text-muted-foreground">Loading records…</p>
                 </td>
               </tr>
             ) : null}
             {!busy && items.length === 0 ? (
               <tr>
-                <td colSpan={10} className="px-4 py-12 text-center">
+                <td colSpan={14} className="px-4 py-12 text-center">
                   <p className="text-sm font-medium text-foreground">No records match this filter</p>
                   <p className="mt-1 text-xs text-muted-foreground">Try another centre or examination.</p>
                 </td>
@@ -329,6 +340,14 @@ function AdminExamOfficialsContent() {
                 <td className="px-3 py-2 font-mono text-xs tabular-nums">{row.account_number}</td>
                 <td className="px-3 py-2 tabular-nums">{row.num_days}</td>
                 <td className="px-3 py-2 tabular-nums">{row.telephone_number}</td>
+                <td className="border-l border-border/60 px-3 py-2 tabular-nums text-xs">
+                  {formatGhsAmount(row.daily_rate_ghs)}
+                </td>
+                <td className="px-3 py-2 tabular-nums text-xs">{formatGhsAmount(row.commuting_allowance_ghs)}</td>
+                <td className="px-3 py-2 tabular-nums text-xs">{formatGhsAmount(row.airtime_ghs)}</td>
+                <td className="px-3 py-2 tabular-nums text-xs font-medium">
+                  {formatGhsAmount(row.total_payable_ghs)}
+                </td>
               </tr>
             ))}
           </tbody>

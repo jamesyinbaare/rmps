@@ -12,7 +12,15 @@ from openpyxl import Workbook
 from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
 from openpyxl.utils import get_column_letter
 
-from app.models import ExamCentreOfficial, ExamInspectorSubjectScope, Examination, ExaminationCentre
+from app.models import (
+    ExamCentreOfficial,
+    ExamInspectorSubjectScope,
+    ExamOfficialDesignation,
+    Examination,
+    ExaminationCentre,
+    ExaminationDesignationRate,
+)
+from app.services.exam_official_compensation import compensation_export_values
 
 HEADER_LABELS = [
     "Centre code",
@@ -26,9 +34,13 @@ HEADER_LABELS = [
     "Account",
     "Days",
     "Phone",
+    "Daily rate (GHS)",
+    "Commuting per day (GHS)",
+    "Airtime (GHS)",
+    "Total payable (GHS)",
 ]
 
-COLUMN_WIDTHS = [12, 28, 26, 18, 22, 26, 12, 16, 6, 14]
+COLUMN_WIDTHS = [12, 28, 26, 18, 22, 26, 12, 16, 6, 14, 14, 14, 14, 14, 16]
 
 EXCEL_TEXT_FORMAT = "@"
 DAYS_NUMBER_FORMAT = "0"
@@ -83,16 +95,16 @@ def _grid_border(*, header_bottom: bool = False) -> Border:
 
 def _header_alignment(column: int) -> Alignment:
     if column in (DAYS_COLUMN, PHONE_COLUMN):
-        return Alignment(horizontal="center", vertical="center", wrap_text=True)
-    return Alignment(horizontal="left", vertical="center", wrap_text=True)
+        return Alignment(horizontal="center", vertical="center", wrap_text=False)
+    return Alignment(horizontal="left", vertical="center", wrap_text=False)
 
 
 def _data_alignment(column: int) -> Alignment:
     if column == DAYS_COLUMN:
         return Alignment(horizontal="center", vertical="center", wrap_text=False)
     if column == PHONE_COLUMN:
-        return Alignment(horizontal="center", vertical="top", wrap_text=False)
-    return Alignment(horizontal="left", vertical="top", wrap_text=True)
+        return Alignment(horizontal="center", vertical="center", wrap_text=False)
+    return Alignment(horizontal="left", vertical="center", wrap_text=False)
 
 
 def style_title_row(ws: object, row: int, ncols: int, title: str, *, merge: bool) -> None:
@@ -101,7 +113,7 @@ def style_title_row(ws: object, row: int, ncols: int, title: str, *, merge: bool
     cell = ws.cell(row=row, column=1, value=title)
     cell.fill = _FILL_TITLE
     cell.font = _FONT_TITLE
-    cell.alignment = Alignment(horizontal="left", vertical="center", wrap_text=True)
+    cell.alignment = Alignment(horizontal="left", vertical="center", wrap_text=False)
     ws.row_dimensions[row].height = 32
 
 
@@ -177,9 +189,16 @@ def apply_sheet_finish(ws: object, header_row: int, ncols: int, *, autofilter: b
     ws.print_title_rows = f"${header_row}:${header_row}"
 
 
-def data_values(off: ExamCentreOfficial, centre: ExaminationCentre) -> tuple[str | int, ...]:
+def data_values(
+    off: ExamCentreOfficial,
+    centre: ExaminationCentre,
+    *,
+    rates_by_designation: dict[ExamOfficialDesignation, ExaminationDesignationRate] | None = None,
+) -> tuple[str | int, ...]:
     bb = off.bank_branch
     scope = off.subject_scope.value if isinstance(off.subject_scope, ExamInspectorSubjectScope) else str(off.subject_scope)
+    rates = rates_by_designation or {}
+    comp_vals = compensation_export_values(off, rates)
     return (
         centre.code,
         centre.name,
@@ -192,6 +211,7 @@ def data_values(off: ExamCentreOfficial, centre: ExaminationCentre) -> tuple[str
         off.account_number,
         int(off.num_days),
         off.telephone_number,
+        *comp_vals,
     )
 
 
@@ -204,6 +224,7 @@ def write_centre_block(
     *,
     merge_title: bool,
     preamble_rows: list[tuple[str, str | int]] | None = None,
+    rates_by_designation: dict[ExamOfficialDesignation, ExaminationDesignationRate] | None = None,
 ) -> tuple[int, int]:
     """Write optional preamble, title, headers, and data rows; return (next_row, header_row)."""
     ncols = len(HEADER_LABELS)
@@ -222,7 +243,7 @@ def write_centre_block(
     style_header_row(ws, r, ncols)
     r += 1
     for data_idx, (off, sch) in enumerate(pairs):
-        vals = data_values(off, sch)
+        vals = data_values(off, sch, rates_by_designation=rates_by_designation)
         for i, v in enumerate(vals, start=1):
             write_export_cell(ws, r, i, v)
         is_invigilator = designation_str(off.designation) == "Invigilator"
@@ -237,6 +258,7 @@ def workbook_for_centre(
     pairs: list[tuple[ExamCentreOfficial, ExaminationCentre]],
     *,
     preamble_rows: list[tuple[str, str | int]] | None = None,
+    rates_by_designation: dict[ExamOfficialDesignation, ExaminationDesignationRate] | None = None,
 ) -> Workbook:
     wb = Workbook()
     ws = wb.active
@@ -244,7 +266,14 @@ def workbook_for_centre(
     ws.title = "Officials"
     ncols = len(HEADER_LABELS)
     _, header_row = write_centre_block(
-        ws, 1, centre, exam_label, pairs, merge_title=True, preamble_rows=preamble_rows
+        ws,
+        1,
+        centre,
+        exam_label,
+        pairs,
+        merge_title=True,
+        preamble_rows=preamble_rows,
+        rates_by_designation=rates_by_designation,
     )
     set_col_widths(ws, COLUMN_WIDTHS)
     apply_sheet_finish(ws, header_row, ncols, autofilter=True)
@@ -261,12 +290,14 @@ def build_zip_export(
     ordered_groups: list[tuple[UUID, list[tuple[ExamCentreOfficial, ExaminationCentre]]]],
     exam_label: str,
     zip_basename: str,
+    *,
+    rates_by_designation: dict[ExamOfficialDesignation, ExaminationDesignationRate] | None = None,
 ) -> tuple[bytes, str, str]:
     buf = io.BytesIO()
     with zipfile.ZipFile(buf, mode="w", compression=zipfile.ZIP_DEFLATED) as zf:
         for _cid, plist in ordered_groups:
             centre = plist[0][1]
-            wb = workbook_for_centre(centre, exam_label, plist)
+            wb = workbook_for_centre(centre, exam_label, plist, rates_by_designation=rates_by_designation)
             fname = f"{safe_filename_part(cast(str, centre.code))}-{safe_filename_part(cast(str, centre.name))}.xlsx"
             zf.writestr(fname, workbook_bytes(wb))
     return buf.getvalue(), f"{zip_basename}.zip", "application/zip"
@@ -275,6 +306,8 @@ def build_zip_export(
 def build_combined_export(
     ordered_groups: list[tuple[UUID, list[tuple[ExamCentreOfficial, ExaminationCentre]]]],
     exam: Examination,
+    *,
+    rates_by_designation: dict[ExamOfficialDesignation, ExaminationDesignationRate] | None = None,
 ) -> tuple[bytes, str, str]:
     wb = Workbook()
     ws = wb.active
@@ -294,7 +327,9 @@ def build_combined_export(
     first_header_row: int | None = None
     for _cid, plist in ordered_groups:
         centre = plist[0][1]
-        r, header_row = write_centre_block(ws, r, centre, exam_label, plist, merge_title=True)
+        r, header_row = write_centre_block(
+            ws, r, centre, exam_label, plist, merge_title=True, rates_by_designation=rates_by_designation
+        )
         if first_header_row is None:
             first_header_row = header_row
         r += 2
