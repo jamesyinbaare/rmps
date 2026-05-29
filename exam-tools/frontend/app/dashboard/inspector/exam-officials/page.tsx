@@ -191,6 +191,7 @@ export default function InspectorExamOfficialsPage() {
   const [accountFormBaseline, setAccountFormBaseline] = useState<AccountFormSnapshot | null>(null);
   const [importModalBaseline, setImportModalBaseline] = useState<ImportModalSnapshot | null>(null);
   const [importSearch, setImportSearch] = useState("");
+  const [importSearchFocused, setImportSearchFocused] = useState(false);
   const [discardConfirmTarget, setDiscardConfirmTarget] = useState<"account" | "import" | null>(null);
   const importDaysInputRefs = useRef<Record<string, HTMLInputElement | null>>({});
 
@@ -629,6 +630,7 @@ export default function InspectorExamOfficialsPage() {
   );
 
   const importHeaderCompact =
+    importSearchFocused ||
     importSearch.trim().length > 0 ||
     importSelectedIds.size > 0 ||
     Object.values(importNumDaysById).some((v) => v.trim().length > 0);
@@ -657,6 +659,7 @@ export default function InspectorExamOfficialsPage() {
     setImportSelectedIds(new Set());
     setImportNumDaysById({});
     setImportSearch("");
+    setImportSearchFocused(false);
     setImportPreviewLoading(true);
     try {
       const preview = await getExamOfficialsImportPreview(
@@ -683,6 +686,7 @@ export default function InspectorExamOfficialsPage() {
     setImportSelectedIds(new Set());
     setImportNumDaysById({});
     setImportSearch("");
+    setImportSearchFocused(false);
     setImportModalBaseline(null);
     importDaysInputRefs.current = {};
   }
@@ -1668,6 +1672,27 @@ export default function InspectorExamOfficialsPage() {
             size="wide"
             mobileFillHeight
             headerCompact={importHeaderCompact}
+            toolbar={
+              importPreviewLoading || importPreviewItems.length === 0 ? null : (
+                <>
+                  <label className="sr-only" htmlFor="import-officials-search">
+                    Search officials
+                  </label>
+                  <input
+                    id="import-officials-search"
+                    type="search"
+                    className={formInputClass}
+                    placeholder="Search by name, phone, or account…"
+                    value={importSearch}
+                    onChange={(e) => setImportSearch(e.target.value)}
+                    onFocus={() => setImportSearchFocused(true)}
+                    onBlur={() => setImportSearchFocused(false)}
+                    enterKeyHint="search"
+                    disabled={importBusy}
+                  />
+                </>
+              )
+            }
             header={
               <ImportScopeModalHeader
                 sourceScope={importSourceScope}
@@ -1749,23 +1774,7 @@ export default function InspectorExamOfficialsPage() {
                 ) : null}
               </div>
             ) : (
-              <div className="flex min-h-0 flex-1 flex-col gap-4">
-                <div className="shrink-0">
-                  <label className="sr-only" htmlFor="import-officials-search">
-                    Search officials
-                  </label>
-                  <input
-                    id="import-officials-search"
-                    type="search"
-                    className={formInputClass}
-                    placeholder="Search by name, phone, or account…"
-                    value={importSearch}
-                    onChange={(e) => setImportSearch(e.target.value)}
-                    enterKeyHint="search"
-                    disabled={importBusy}
-                  />
-                </div>
-                <div className="min-h-[min(40vh,320px)] flex-1 space-y-4">
+              <div className="space-y-4">
                 {importSearchFilteredItems.length === 0 ? (
                   <p className="text-sm text-muted-foreground">No officials match your search.</p>
                 ) : null}
@@ -1793,7 +1802,7 @@ export default function InspectorExamOfficialsPage() {
                       />
                       <span>Select all</span>
                     </label>
-                    <ul className="max-h-[min(40vh,320px)] space-y-2 overflow-y-auto overscroll-contain">
+                    <ul className="space-y-2">
                       {importablePreviewItems.map((row) => {
                         const o = row.source_official;
                         const checked = importSelectedIds.has(o.id);
@@ -1883,7 +1892,7 @@ export default function InspectorExamOfficialsPage() {
                         : "this scope"}{" "}
                       ({importDuplicateItems.length})
                     </h3>
-                    <ul className="max-h-[min(30vh,240px)] space-y-2 overflow-y-auto overscroll-contain">
+                    <ul className="space-y-2">
                       {importDuplicateItems.map((row) => {
                         const o = row.source_official;
                         return (
@@ -1906,7 +1915,6 @@ export default function InspectorExamOfficialsPage() {
                     </ul>
                   </section>
                 ) : null}
-                </div>
               </div>
             )}
           </OfficialModal>
