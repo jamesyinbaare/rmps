@@ -27,6 +27,7 @@ const inputFocusRing =
 const BANK_DIRECTORY_HREF = "/dashboard/admin/bank-directory";
 const FINANCE_CENTRE_SUMMARY_HREF = "/dashboard/admin/finance-centre-summary";
 const CENTRE_SUMMARY_HREF = "/dashboard/admin/centre-summary";
+const OFFICIAL_STATISTICS_HREF = "/dashboard/admin/official-statistics";
 const OFFICIAL_RATES_HREF = "/dashboard/admin/official-rates";
 
 const nav = [
@@ -126,6 +127,7 @@ export function AdminDashboardShell({ children }: Props) {
         { type: "link", href: OFFICIAL_RATES_HREF, label: "Allowance rates" },
         { type: "link", href: FINANCE_CENTRE_SUMMARY_HREF, label: "Centre invigilator summary" },
         { type: "link", href: CENTRE_SUMMARY_HREF, label: "Centre analysis" },
+        { type: "link", href: OFFICIAL_STATISTICS_HREF, label: "Official statistics" },
         { type: "link", href: ATTENDANCE_SHEETS_HREF, label: "Attendance sheets" },
       ];
     }
@@ -139,7 +141,10 @@ export function AdminDashboardShell({ children }: Props) {
   const onExecutiveCentresPage = pathname === EXECUTIVE_CENTRES_HREF;
   const onCentreSummaryPage =
     pathname === CENTRE_SUMMARY_HREF || pathname.startsWith(`${CENTRE_SUMMARY_HREF}/`);
-  const onOfficialAccountsPage = isOfficialAccountsPath(pathname) && !onCentreSummaryPage;
+  const onOfficialStatisticsPage =
+    pathname === OFFICIAL_STATISTICS_HREF || pathname.startsWith(`${OFFICIAL_STATISTICS_HREF}/`);
+  const onOfficialAccountsPage =
+    isOfficialAccountsPath(pathname) && !onCentreSummaryPage && !onOfficialStatisticsPage;
 
   function logout() {
     clearAuth();
@@ -260,7 +265,9 @@ export function AdminDashboardShell({ children }: Props) {
       <div className="lg:pl-64">
         <DashboardStickyHeader
           title={
-            onCentreSummaryPage
+            onOfficialStatisticsPage
+              ? "Official statistics"
+              : onCentreSummaryPage
               ? "Centre analysis"
               : onOfficialAccountsPage
                 ? "Official account details"
@@ -296,6 +303,7 @@ export function AdminDashboardShell({ children }: Props) {
           className={cn(
             "mx-auto px-4 py-6 sm:px-6",
             pathname === ATTENDANCE_SHEETS_HREF || pathname.startsWith(`${ATTENDANCE_SHEETS_HREF}/`)
+              || onOfficialStatisticsPage
               ? "max-w-[1600px]"
               : "max-w-6xl",
             isExecutiveViewer && "pb-[calc(5rem+env(safe-area-inset-bottom))] lg:pb-6",

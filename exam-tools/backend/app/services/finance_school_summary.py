@@ -70,6 +70,10 @@ def build_role_counts(officials: list[ExamCentreOfficial]) -> FinanceCentreSchoo
     return counts
 
 
+def invigilator_headcount(officials: list[ExamCentreOfficial]) -> int:
+    return sum(1 for off in officials if off.designation == ExamOfficialDesignation.INVIGILATOR)
+
+
 def invigilator_days_declared(officials: list[ExamCentreOfficial]) -> int:
     return sum(int(off.num_days) for off in officials if off.designation == ExamOfficialDesignation.INVIGILATOR)
 

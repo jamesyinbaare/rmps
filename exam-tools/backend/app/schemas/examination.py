@@ -440,6 +440,44 @@ class FinanceCentreSchoolSummaryResponse(BaseModel):
     officials: list[AdminExamCentreOfficialRow] = Field(default_factory=list)
 
 
+class FinanceCentreOfficialStatisticsRow(BaseModel):
+    center_id: UUID
+    center_code: str
+    center_name: str
+    invigilator_count: int = Field(0, ge=0)
+    invigilator_days: int = Field(0, ge=0)
+    expected_invigilator_days: int = Field(0, ge=0)
+    invigilator_variance: int = 0
+    external_inspector: int = Field(0, ge=0)
+    supervisor: int = Field(0, ge=0)
+    assistant_supervisor: int = Field(0, ge=0)
+    police_officer: int = Field(0, ge=0)
+    depot_keeper: int = Field(0, ge=0)
+    total_officials: int = Field(0, ge=0)
+
+
+class FinanceCentreOfficialStatisticsResponse(BaseModel):
+    examination_id: int
+    subject_filter: str
+    centres: list[FinanceCentreOfficialStatisticsRow] = Field(default_factory=list)
+    totals: FinanceCentreOfficialStatisticsRow
+
+
+class FinanceCentreOfficialStatisticsShellResponse(BaseModel):
+    """Centre list for progressive official statistics loading."""
+
+    examination_id: int
+    subject_filter: str
+    centres: list[FinanceCentreShellCentre] = Field(default_factory=list)
+
+
+class FinanceCentreOfficialStatisticsExportBody(BaseModel):
+    """Pre-computed statistics for Excel export (no server-side recalculation)."""
+
+    exam_label: str = Field(..., min_length=1)
+    summary: FinanceCentreOfficialStatisticsResponse
+
+
 class ExaminationScriptSeriesConfigRow(BaseModel):
     subject_id: int
     subject_code: str

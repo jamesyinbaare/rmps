@@ -2,12 +2,14 @@ import { cn } from "@/lib/utils";
 
 export const OFFICIAL_ACCOUNTS_ADMIN_HREF = "/dashboard/admin/exam-officials";
 export const OFFICIAL_ACCOUNTS_CENTRE_SUMMARY_HREF = "/dashboard/admin/centre-summary";
+export const OFFICIAL_ACCOUNTS_STATISTICS_HREF = "/dashboard/admin/official-statistics";
 export const OFFICIAL_ACCOUNTS_INSPECTOR_HREF = "/dashboard/inspector/exam-officials";
 export const OFFICIAL_ACCOUNTS_INSPECTOR_ATTENDANCE_HREF = "/dashboard/inspector/attendance-sheets";
 
 export const OFFICIAL_ACCOUNTS_PATHS = [
   OFFICIAL_ACCOUNTS_ADMIN_HREF,
   OFFICIAL_ACCOUNTS_CENTRE_SUMMARY_HREF,
+  OFFICIAL_ACCOUNTS_STATISTICS_HREF,
   OFFICIAL_ACCOUNTS_INSPECTOR_HREF,
   OFFICIAL_ACCOUNTS_INSPECTOR_ATTENDANCE_HREF,
 ] as const;

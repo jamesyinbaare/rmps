@@ -646,6 +646,24 @@ export async function downloadApiFile(path: string, filename: string): Promise<v
   URL.revokeObjectURL(url);
 }
 
+export async function downloadApiFilePost(
+  path: string,
+  filename: string,
+  body: unknown,
+): Promise<void> {
+  const res = await apiFetch(path, {
+    method: "POST",
+    body: JSON.stringify(body),
+  });
+  const blob = await res.blob();
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename;
+  a.click();
+  URL.revokeObjectURL(url);
+}
+
 export type ExamDocument = {
   id: string;
   title: string;
@@ -2339,6 +2357,35 @@ export type FinanceCentreSchoolSummaryResponse = {
   officials: AdminExamCentreOfficialRow[];
 };
 
+export type FinanceCentreOfficialStatisticsRow = {
+  center_id: string;
+  center_code: string;
+  center_name: string;
+  invigilator_count: number;
+  invigilator_days: number;
+  expected_invigilator_days: number;
+  invigilator_variance: number;
+  external_inspector: number;
+  supervisor: number;
+  assistant_supervisor: number;
+  police_officer: number;
+  depot_keeper: number;
+  total_officials: number;
+};
+
+export type FinanceCentreOfficialStatisticsResponse = {
+  examination_id: number;
+  subject_filter: TimetableSubjectFilter;
+  centres: FinanceCentreOfficialStatisticsRow[];
+  totals: FinanceCentreOfficialStatisticsRow;
+};
+
+export type FinanceCentreOfficialStatisticsShellResponse = {
+  examination_id: number;
+  subject_filter: TimetableSubjectFilter;
+  centres: { center_id: string; center_code: string; center_name: string }[];
+};
+
 function centreSchoolSummaryQuery(params: {
   centerId: string;
   subject_filter?: TimetableSubjectFilter;
@@ -2381,6 +2428,79 @@ export async function downloadFinanceCentreSchoolSummaryExport(params: {
       subject_filter: params.subject_filter,
     })}`,
     params.filename,
+  );
+}
+
+export function officialStatisticsExportFilename(
+  examLabel: string,
+  subjectFilter: TimetableSubjectFilter,
+): string {
+  const suffix =
+    subjectFilter === "CORE_ONLY" ? "CORE" : subjectFilter === "ELECTIVE_ONLY" ? "ELECTIVE" : "ALL";
+  return `${examLabel} official-statistics ${suffix}.xlsx`;
+}
+
+const FINANCE_CENTRE_FETCH_CONCURRENCY = 5;
+
+export async function getFinanceCentreOfficialStatistics(params: {
+  examId: number;
+  subject_filter: TimetableSubjectFilter;
+}): Promise<FinanceCentreOfficialStatisticsResponse> {
+  return apiJson<FinanceCentreOfficialStatisticsResponse>(
+    `/examinations/${params.examId}/finance/centre-official-statistics${financeSummaryQuery(params.subject_filter)}`,
+  );
+}
+
+export async function getFinanceCentreOfficialStatisticsShell(params: {
+  examId: number;
+  subject_filter: TimetableSubjectFilter;
+}): Promise<FinanceCentreOfficialStatisticsShellResponse> {
+  return apiJson<FinanceCentreOfficialStatisticsShellResponse>(
+    `/examinations/${params.examId}/finance/centre-official-statistics/shell${financeSummaryQuery(params.subject_filter)}`,
+  );
+}
+
+export async function getFinanceCentreOfficialStatisticsForCentre(params: {
+  examId: number;
+  center_host_id: string;
+  subject_filter: TimetableSubjectFilter;
+}): Promise<FinanceCentreOfficialStatisticsRow> {
+  return apiJson<FinanceCentreOfficialStatisticsRow>(
+    `/examinations/${params.examId}/finance/centre-official-statistics/centres/${params.center_host_id}${financeSummaryQuery(params.subject_filter)}`,
+  );
+}
+
+/** Load shell first, then one bulk statistics request; populate rows when calculation completes. */
+export async function loadFinanceCentreOfficialStatisticsProgressive(
+  params: {
+    examId: number;
+    subject_filter: TimetableSubjectFilter;
+  },
+  callbacks: {
+    onShellLoaded?: (shell: FinanceCentreOfficialStatisticsShellResponse) => void;
+    onCalculating?: () => void;
+  },
+): Promise<FinanceCentreOfficialStatisticsResponse> {
+  const shell = await getFinanceCentreOfficialStatisticsShell(params);
+  callbacks.onShellLoaded?.(shell);
+  callbacks.onCalculating?.();
+  return getFinanceCentreOfficialStatistics(params);
+}
+
+export async function downloadFinanceCentreOfficialStatisticsExport(params: {
+  examId: number;
+  subject_filter: TimetableSubjectFilter;
+  filename: string;
+  examLabel: string;
+  summary: FinanceCentreOfficialStatisticsResponse;
+}): Promise<void> {
+  await downloadApiFilePost(
+    `/examinations/${params.examId}/finance/centre-official-statistics/export`,
+    params.filename,
+    {
+      exam_label: params.examLabel,
+      summary: params.summary,
+    },
   );
 }
 
@@ -2429,8 +2549,6 @@ export async function getFinanceCentreInvigilatorSummary(params: {
     `/examinations/${params.examId}/finance/centre-invigilator-summary${suffix}`,
   );
 }
-
-const FINANCE_CENTRE_FETCH_CONCURRENCY = 5;
 
 /** Load shell first, then fetch each centre’s day counts with limited parallelism. */
 export async function loadFinanceCentreInvigilatorSummaryProgressive(
