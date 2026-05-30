@@ -35,7 +35,11 @@ from app.schemas.attendance_sheet import (
     AttendanceSheetResponse,
     AttendanceSheetScheduledDatesResponse,
 )
-from app.services.admin_attendance_compliance import admin_attendance_summary, list_compliance_centres
+from app.services.admin_attendance_compliance import (
+    admin_attendance_summary,
+    list_compliance_centres,
+    list_centres_with_uploads,
+)
 from app.services.admin_attendance_zip import (
     attendance_zip_download_filename,
     build_attendance_sheets_zip_bytes,
@@ -443,6 +447,44 @@ async def admin_attendance_compliance_centres(
         examination_id,
         examination_date,
         upload_status=upload_status,
+        search=q,
+    )
+    items = [
+        AttendanceCentreComplianceItem(
+            center_id=r.center_id,
+            center_code=r.center_code,
+            center_name=r.center_name,
+            inspector_user_id=r.inspector_user_id,
+            inspector_full_name=r.inspector_full_name,
+            inspector_phone=r.inspector_phone,
+            subject_scope=r.subject_scope,
+            file_count=r.file_count,
+            upload_status=r.upload_status,
+        )
+        for r in rows
+    ]
+    return AttendanceCentreComplianceListResponse(items=items, total=len(items))
+
+
+@admin_router.get("/upload-centres", response_model=AttendanceCentreComplianceListResponse)
+async def admin_attendance_upload_centres(
+    examination_id: int,
+    session: DBSessionDep,
+    _staff: SuperAdminOrFinanceOfficerDep,
+    examination_date: date | None = Query(default=None),
+    subject_scope: str | None = Query(default=None, description="Filter by CORE or ELECTIVE"),
+    q: str | None = Query(None, description="Search centre code/name or inspector name"),
+) -> AttendanceCentreComplianceListResponse:
+    try:
+        await load_examination_or_raise(session, examination_id)
+    except ValueError:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Examination not found") from None
+
+    rows = await list_centres_with_uploads(
+        session,
+        examination_id,
+        examination_date=examination_date,
+        subject_scope=subject_scope,
         search=q,
     )
     items = [

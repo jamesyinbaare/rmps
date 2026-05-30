@@ -3410,6 +3410,24 @@ export async function getAdminAttendanceSheetSummary(
   );
 }
 
+export async function listAdminAttendanceUploadCentres(
+  examId: number,
+  params?: {
+    examinationDate?: string | null;
+    subjectScope?: RecordSubjectScope | null;
+    search?: string | null;
+  },
+): Promise<AttendanceCentreComplianceListResponse> {
+  const q = new URLSearchParams();
+  if (params?.examinationDate?.trim()) q.set("examination_date", params.examinationDate.trim());
+  if (params?.subjectScope) q.set("subject_scope", params.subjectScope);
+  if (params?.search?.trim()) q.set("q", params.search.trim());
+  const s = q.toString();
+  return apiJson<AttendanceCentreComplianceListResponse>(
+    `/admin/examinations/${examId}/attendance-sheets/upload-centres${s ? `?${s}` : ""}`,
+  );
+}
+
 export async function listAdminAttendanceComplianceCentres(
   examId: number,
   params: {

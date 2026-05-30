@@ -8,7 +8,7 @@ from uuid import UUID
 
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.orm import joinedload
+from sqlalchemy.orm import contains_eager, joinedload
 
 from app.models import (
     ExamInspectorSubjectScope,
@@ -160,6 +160,115 @@ def _matches_search(row: ExpectedCentreRow, pattern: str | None) -> bool:
         or row.center_name.lower().find(q) >= 0
         or row.inspector_full_name.lower().find(q) >= 0
     )
+
+
+def _upload_list_filters(
+    examination_id: int,
+    examination_date: date | None,
+    subject_scope: str | None,
+    search_pattern: str | None,
+) -> list:
+    filters = [InspectorAttendanceSheet.examination_id == examination_id]
+    if examination_date is not None:
+        filters.append(InspectorAttendanceSheet.examination_date == examination_date)
+    if subject_scope is not None:
+        filters.append(InspectorAttendanceSheet.subject_scope == subject_scope.strip().upper())
+    if search_pattern is not None:
+        filters.append(
+            ExaminationCentre.code.ilike(search_pattern)
+            | ExaminationCentre.name.ilike(search_pattern)
+            | User.full_name.ilike(search_pattern)
+        )
+    return filters
+
+
+async def list_centres_with_uploads(
+    session: AsyncSession,
+    examination_id: int,
+    *,
+    examination_date: date | None = None,
+    subject_scope: str | None = None,
+    search: str | None = None,
+) -> list[ExpectedCentreRow]:
+    """Distinct (centre, scope) slots that have at least one uploaded attendance sheet."""
+    search_pattern = None
+    if search and search.strip():
+        search_pattern = f"%{search.strip()}%"
+    filters = _upload_list_filters(examination_id, examination_date, subject_scope, search_pattern)
+
+    agg_stmt = (
+        select(
+            InspectorAttendanceSheet.examination_centre_id,
+            InspectorAttendanceSheet.subject_scope,
+            ExaminationCentre.code,
+            ExaminationCentre.name,
+            func.count(InspectorAttendanceSheet.id).label("file_count"),
+        )
+        .select_from(InspectorAttendanceSheet)
+        .join(InspectorAttendanceSheet.examination_centre)
+        .join(InspectorAttendanceSheet.inspector_exam_posting)
+        .join(InspectorExamPosting.inspector_user)
+        .where(*filters)
+        .group_by(
+            InspectorAttendanceSheet.examination_centre_id,
+            InspectorAttendanceSheet.subject_scope,
+            ExaminationCentre.code,
+            ExaminationCentre.name,
+        )
+        .order_by(ExaminationCentre.code.asc(), InspectorAttendanceSheet.subject_scope.asc())
+    )
+    agg_rows = (await session.execute(agg_stmt)).all()
+    if not agg_rows:
+        return []
+
+    by_key: dict[tuple[UUID, str], tuple[int, str, str]] = {}
+    for center_id, scope, code, name, file_count in agg_rows:
+        by_key[(center_id, _scope_str(scope))] = (int(file_count), str(code), str(name))
+
+    sheet_stmt = (
+        select(InspectorAttendanceSheet)
+        .join(InspectorAttendanceSheet.examination_centre)
+        .join(InspectorAttendanceSheet.inspector_exam_posting)
+        .join(InspectorExamPosting.inspector_user)
+        .where(*filters)
+        .options(
+            contains_eager(InspectorAttendanceSheet.inspector_exam_posting).contains_eager(
+                InspectorExamPosting.inspector_user
+            ),
+        )
+        .order_by(
+            InspectorAttendanceSheet.created_at.desc(),
+            InspectorAttendanceSheet.id.desc(),
+        )
+    )
+    sheets = list((await session.execute(sheet_stmt)).scalars().unique().all())
+
+    seen: set[tuple[UUID, str]] = set()
+    out: list[ExpectedCentreRow] = []
+    for sheet in sheets:
+        scope_label = _scope_str(sheet.subject_scope)
+        key = (sheet.examination_centre_id, scope_label)
+        if key in seen or key not in by_key:
+            continue
+        seen.add(key)
+        file_count, code, name = by_key[key]
+        posting = sheet.inspector_exam_posting
+        insp = posting.inspector_user if posting else None
+        out.append(
+            ExpectedCentreRow(
+                center_id=key[0],
+                center_code=code,
+                center_name=name,
+                inspector_user_id=posting.inspector_user_id if posting else sheet.uploaded_by_id or key[0],
+                inspector_full_name=insp.full_name if insp else "—",
+                inspector_phone=insp.phone_number if insp else None,
+                subject_scope=scope_label,
+                file_count=file_count,
+                upload_status="uploaded",
+            )
+        )
+    out.sort(key=lambda r: (r.center_code, r.subject_scope))
+    return out
 
 
 async def list_compliance_centres(
