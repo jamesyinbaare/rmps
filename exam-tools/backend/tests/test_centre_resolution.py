@@ -370,9 +370,16 @@ async def test_scope_ids_for_centre_subject_filter_limits_to_membership() -> Non
         return set()
 
     session = AsyncMock()
-    with patch(
-        "app.services.centre_resolution.centre_scope_school_ids",
-        fake_centre_scope,
+    with (
+        patch(
+            "app.services.centre_resolution.get_examination_or_404",
+            new_callable=AsyncMock,
+            return_value=MagicMock(centre_structure_mode=CentreStructureMode.SPLIT),
+        ),
+        patch(
+            "app.services.centre_resolution.centre_scope_school_ids",
+            fake_centre_scope,
+        ),
     ):
         core_result = await scope_ids_for_centre_subject_filter(
             session,
@@ -389,6 +396,41 @@ async def test_scope_ids_for_centre_subject_filter_limits_to_membership() -> Non
 
     assert core_result == {core_only, both}
     assert elect_result == {elective_only, both}
+
+
+@pytest.mark.asyncio
+async def test_scope_ids_for_centre_subject_filter_unified_keeps_all_schools() -> None:
+    from unittest.mock import AsyncMock, MagicMock, patch
+    from uuid import uuid4
+
+    from app.schemas.timetable import TimetableDownloadFilter
+    from app.services.centre_resolution import scope_ids_for_centre_subject_filter
+
+    centre = MagicMock()
+    centre.examination_id = 1
+    scope_ids = {uuid4(), uuid4()}
+
+    session = AsyncMock()
+    with patch(
+        "app.services.centre_resolution.get_examination_or_404",
+        new_callable=AsyncMock,
+        return_value=MagicMock(centre_structure_mode=CentreStructureMode.UNIFIED),
+    ):
+        core_result = await scope_ids_for_centre_subject_filter(
+            session,
+            centre,
+            scope_ids,
+            subject_filter=TimetableDownloadFilter.CORE_ONLY,
+        )
+        elect_result = await scope_ids_for_centre_subject_filter(
+            session,
+            centre,
+            scope_ids,
+            subject_filter=TimetableDownloadFilter.ELECTIVE_ONLY,
+        )
+
+    assert core_result == scope_ids
+    assert elect_result == scope_ids
 
 
 @pytest.mark.asyncio
