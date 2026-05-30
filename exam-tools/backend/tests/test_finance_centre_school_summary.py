@@ -87,6 +87,17 @@ def test_build_role_counts() -> None:
     assert counts.assistant_supervisor == 1
 
 
+def test_invigilator_headcount_in_school_summary() -> None:
+    from app.services.finance_school_summary import invigilator_headcount
+
+    officials = [
+        _official(ExamOfficialDesignation.INVIGILATOR),
+        _official(ExamOfficialDesignation.INVIGILATOR),
+        _official(ExamOfficialDesignation.SUPERVISOR),
+    ]
+    assert invigilator_headcount(officials) == 2
+
+
 def test_invigilator_days_declared_only_invigilators() -> None:
     officials = [
         _official(ExamOfficialDesignation.INVIGILATOR, 3),

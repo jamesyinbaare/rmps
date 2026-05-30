@@ -61,6 +61,10 @@ from app.schemas.examination import (
     ExaminationScriptSeriesConfigRow,
     ExaminationUpdate,
     FinanceCentreDayInvigilatorRow,
+    FinanceCentreOfficialStatisticsExportBody,
+    FinanceCentreOfficialStatisticsResponse,
+    FinanceCentreOfficialStatisticsRow,
+    FinanceCentreOfficialStatisticsShellResponse,
     FinanceCentreInvigilatorSummaryItem,
     FinanceCentreInvigilatorSummaryResponse,
     FinanceCentreInvigilatorSummaryShellResponse,
@@ -2968,6 +2972,140 @@ async def export_finance_centre_school_summary(
         content=payload,
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
+@router.get(
+    "/{exam_id}/finance/centre-official-statistics/shell",
+    response_model=FinanceCentreOfficialStatisticsShellResponse,
+)
+async def get_finance_centre_official_statistics_shell(
+    exam_id: int,
+    session: DBSessionDep,
+    _: SuperAdminDep,
+    subject_filter: TimetableDownloadFilter = Query(
+        ...,
+        description="Subject scope for centre list and official counts.",
+    ),
+) -> FinanceCentreOfficialStatisticsShellResponse:
+    """Centre list only; load per-centre statistics separately."""
+    from app.services.finance_official_statistics import build_official_statistics_shell
+
+    try:
+        await load_examination_or_raise(session, exam_id)
+    except ValueError:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Examination not found") from None
+
+    return await build_official_statistics_shell(session, exam_id, subject_filter)
+
+
+@router.get(
+    "/{exam_id}/finance/centre-official-statistics/centres/{center_host_id}",
+    response_model=FinanceCentreOfficialStatisticsRow,
+)
+async def get_finance_centre_official_statistics_for_centre(
+    exam_id: int,
+    center_host_id: UUID,
+    session: DBSessionDep,
+    _: SuperAdminDep,
+    subject_filter: TimetableDownloadFilter = Query(
+        ...,
+        description="Subject scope for official counts at this centre.",
+    ),
+) -> FinanceCentreOfficialStatisticsRow:
+    """Official statistics for one examination centre."""
+    from app.services.finance_official_statistics import build_statistics_row_for_centre
+
+    try:
+        await load_examination_or_raise(session, exam_id)
+    except ValueError:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Examination not found") from None
+
+    hosts = await _finance_centre_hosts(session, exam_id, center_host_id)
+    return await build_statistics_row_for_centre(
+        session,
+        exam_id,
+        hosts[0],
+        subject_filter,
+        build_invigilator_item=_build_finance_centre_invigilator_item,
+    )
+
+
+@router.get(
+    "/{exam_id}/finance/centre-official-statistics",
+    response_model=FinanceCentreOfficialStatisticsResponse,
+)
+async def get_finance_centre_official_statistics(
+    exam_id: int,
+    session: DBSessionDep,
+    _: SuperAdminDep,
+    subject_filter: TimetableDownloadFilter = Query(
+        TimetableDownloadFilter.ALL,
+        description="Subject scope for official counts: all, core only, or electives only.",
+    ),
+) -> FinanceCentreOfficialStatisticsResponse:
+    """Per-centre headcounts for all examination official roles (super admin only)."""
+    from app.services.finance_official_statistics import build_finance_centre_official_statistics
+
+    try:
+        await load_examination_or_raise(session, exam_id)
+    except ValueError:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Examination not found") from None
+
+    return await build_finance_centre_official_statistics(
+        session,
+        exam_id,
+        subject_filter,
+        build_invigilator_item=_build_finance_centre_invigilator_item,
+    )
+
+
+@router.post("/{exam_id}/finance/centre-official-statistics/export")
+async def export_finance_centre_official_statistics(
+    exam_id: int,
+    body: FinanceCentreOfficialStatisticsExportBody,
+    session: DBSessionDep,
+    _: SuperAdminDep,
+) -> StreamingResponse:
+    """Export pre-loaded official statistics to Excel without recalculating."""
+    from app.schemas.timetable import TimetableDownloadFilter
+    from app.services.finance_official_statistics_export import (
+        official_statistics_export_filename,
+        official_statistics_workbook_bytes,
+    )
+
+    try:
+        await load_examination_or_raise(session, exam_id)
+    except ValueError:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Examination not found") from None
+
+    if body.summary.examination_id != exam_id:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Summary examination_id does not match path",
+        )
+
+    try:
+        subject_filter = TimetableDownloadFilter(body.summary.subject_filter)
+    except ValueError:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid subject_filter in summary",
+        ) from None
+
+    payload = official_statistics_workbook_bytes(
+        body.summary.centres,
+        totals=body.summary.totals,
+        exam_label=body.exam_label,
+        subject_filter=subject_filter,
+    )
+    filename = official_statistics_export_filename(body.exam_label, subject_filter)
+    from app.utils.content_disposition import content_disposition_attachment
+
+    return StreamingResponse(
+        iter([payload]),
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": content_disposition_attachment(filename)},
     )
 
 
