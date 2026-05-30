@@ -64,12 +64,26 @@ export type PerExamCentreListResponse = {
   centre_structure_mode: "UNIFIED" | "SPLIT";
 };
 
+export type ListExaminationCentresOptions = {
+  q?: string;
+  subject_filter?: TimetableSubjectFilter;
+};
+
 export async function listExaminationCentres(
   examinationId: number,
-  q?: string,
+  options?: string | ListExaminationCentresOptions,
 ): Promise<PerExamCentreListResponse> {
-  const qs = q?.trim() ? `?q=${encodeURIComponent(q.trim())}` : "";
-  return apiJson<PerExamCentreListResponse>(`/examinations/${examinationId}/centres${qs}`);
+  const opts: ListExaminationCentresOptions =
+    typeof options === "string" ? { q: options } : (options ?? {});
+  const params = new URLSearchParams();
+  if (opts.q?.trim()) params.set("q", opts.q.trim());
+  if (opts.subject_filter && opts.subject_filter !== "ALL") {
+    params.set("subject_filter", opts.subject_filter);
+  }
+  const qs = params.toString();
+  return apiJson<PerExamCentreListResponse>(
+    `/examinations/${examinationId}/centres${qs ? `?${qs}` : ""}`,
+  );
 }
 
 export async function upgradeExaminationCentresToSplit(
@@ -2232,19 +2246,28 @@ export type AdminExamCentreOfficialListResponse = {
   total: number;
 };
 
+export type AdminExamCentreOfficialsExportLayout = "zip" | "combined" | "single_sheet";
+
 export async function listAdminExamCentreOfficials(params: {
   examination_id: number;
   center_id?: string | null;
   designation?: string | null;
+  designations?: string[];
   subject_scope?: RecordSubjectScope | null;
+  region?: string | null;
   skip?: number;
   limit?: number;
 }): Promise<AdminExamCentreOfficialListResponse> {
   const q = new URLSearchParams();
   q.set("examination_id", String(params.examination_id));
   if (params.center_id) q.set("center_id", params.center_id.trim());
-  if (params.designation?.trim()) q.set("designation", params.designation.trim());
+  if (params.designations?.length) {
+    for (const d of params.designations) q.append("designations", d);
+  } else if (params.designation?.trim()) {
+    q.set("designation", params.designation.trim());
+  }
   if (params.subject_scope) q.set("subject_scope", params.subject_scope);
+  if (params.region?.trim()) q.set("region", params.region.trim());
   if (params.skip != null) q.set("skip", String(params.skip));
   if (params.limit != null) q.set("limit", String(params.limit));
   return apiJson<AdminExamCentreOfficialListResponse>(`/admin/exam-centre-officials?${q.toString()}`);
@@ -2252,18 +2275,27 @@ export async function listAdminExamCentreOfficials(params: {
 
 export async function downloadAdminExamCentreOfficialsExport(params: {
   examination_id: number;
-  layout: "zip" | "combined";
+  layout: AdminExamCentreOfficialsExportLayout;
   center_id?: string | null;
   designation?: string | null;
+  designations?: string[];
+  export_slug?: string;
   subject_scope?: RecordSubjectScope | null;
+  region?: string | null;
   filename: string;
 }): Promise<void> {
   const q = new URLSearchParams();
   q.set("examination_id", String(params.examination_id));
   q.set("layout", params.layout);
   if (params.center_id) q.set("center_id", params.center_id.trim());
-  if (params.designation?.trim()) q.set("designation", params.designation.trim());
+  if (params.designations?.length) {
+    for (const d of params.designations) q.append("designations", d);
+  } else if (params.designation?.trim()) {
+    q.set("designation", params.designation.trim());
+  }
+  if (params.export_slug?.trim()) q.set("export_slug", params.export_slug.trim());
   if (params.subject_scope) q.set("subject_scope", params.subject_scope);
+  if (params.region?.trim()) q.set("region", params.region.trim());
   await downloadApiFile(`/admin/exam-centre-officials/export?${q.toString()}`, params.filename);
 }
 
@@ -3375,6 +3407,24 @@ export async function getAdminAttendanceSheetSummary(
   const s = q.toString();
   return apiJson<AttendanceSheetAdminSummary>(
     `/admin/examinations/${examId}/attendance-sheets/summary${s ? `?${s}` : ""}`,
+  );
+}
+
+export async function listAdminAttendanceUploadCentres(
+  examId: number,
+  params?: {
+    examinationDate?: string | null;
+    subjectScope?: RecordSubjectScope | null;
+    search?: string | null;
+  },
+): Promise<AttendanceCentreComplianceListResponse> {
+  const q = new URLSearchParams();
+  if (params?.examinationDate?.trim()) q.set("examination_date", params.examinationDate.trim());
+  if (params?.subjectScope) q.set("subject_scope", params.subjectScope);
+  if (params?.search?.trim()) q.set("q", params.search.trim());
+  const s = q.toString();
+  return apiJson<AttendanceCentreComplianceListResponse>(
+    `/admin/examinations/${examId}/attendance-sheets/upload-centres${s ? `?${s}` : ""}`,
   );
 }
 

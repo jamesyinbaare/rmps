@@ -41,7 +41,13 @@ from app.services.examination_centre_bulk_upload import (
 )
 from app.services.template_generator import generate_examination_centres_bulk_template
 from app.schemas.school import PostedInspectorAtCentreRow
-from app.services.centre_resolution import get_examination_centre_or_404, hosted_school_count
+from app.schemas.timetable import TimetableDownloadFilter
+from app.services.centre_resolution import (
+    get_examination_centre_or_404,
+    hosted_school_count,
+    list_centres_for_examination,
+    membership_scope_for_timetable_filter,
+)
 from app.services.exam_timetable_pdf import load_examination_or_raise
 from app.services.examination_centre_service import (
     centre_to_response,
@@ -59,26 +65,59 @@ def _normalize_mode(mode: CentreStructureMode | str) -> CentreStructureMode:
     return CentreStructureMode(mode)
 
 
+def _apply_centre_search_q(
+    centres: list[ExaminationCentre],
+    q: str | None,
+) -> list[ExaminationCentre]:
+    if not q or not q.strip():
+        return centres
+    pattern = q.strip().lower()
+    return [
+        c
+        for c in centres
+        if pattern in str(c.code).lower() or pattern in str(c.name).lower()
+    ]
+
+
 @router.get("/{examination_id}/centres", response_model=ExaminationCentreListResponse)
 async def list_examination_centres(
     examination_id: int,
     session: DBSessionDep,
     _admin: SuperAdminOrFinanceOfficerDep,
     q: str | None = Query(None, description="Search code or name"),
+    subject_filter: TimetableDownloadFilter = Query(
+        TimetableDownloadFilter.ALL,
+        description="On SPLIT exams, limit centres to those with matching membership scope.",
+    ),
 ) -> ExaminationCentreListResponse:
     try:
         exam = await load_examination_or_raise(session, examination_id)
     except ValueError:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Examination not found") from None
 
-    stmt = select(ExaminationCentre).where(ExaminationCentre.examination_id == examination_id)
-    if q and q.strip():
-        pattern = f"%{q.strip()}%"
-        stmt = stmt.where(
-            ExaminationCentre.code.ilike(pattern) | ExaminationCentre.name.ilike(pattern)
+    mode = _normalize_mode(exam.centre_structure_mode)
+    mem_scope = membership_scope_for_timetable_filter(subject_filter)
+    if (
+        mode == CentreStructureMode.SPLIT
+        and subject_filter != TimetableDownloadFilter.ALL
+        and mem_scope is not None
+    ):
+        centres = await list_centres_for_examination(
+            session, examination_id, membership_scope=mem_scope
         )
-    stmt = stmt.order_by(ExaminationCentre.code)
-    centres = list((await session.execute(stmt)).scalars().all())
+        centres = _apply_centre_search_q(centres, q)
+    else:
+        stmt = select(ExaminationCentre).where(
+            ExaminationCentre.examination_id == examination_id
+        )
+        if q and q.strip():
+            pattern = f"%{q.strip()}%"
+            stmt = stmt.where(
+                ExaminationCentre.code.ilike(pattern)
+                | ExaminationCentre.name.ilike(pattern)
+            )
+        stmt = stmt.order_by(ExaminationCentre.code)
+        centres = list((await session.execute(stmt)).scalars().all())
     items: list[ExaminationCentreResponse] = []
     for c in centres:
         data = await centre_to_response(session, c)

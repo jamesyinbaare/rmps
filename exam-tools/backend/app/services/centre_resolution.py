@@ -374,6 +374,26 @@ def membership_scope_for_timetable_filter(
     return None
 
 
+async def centre_has_membership_for_subject_filter(
+    session: AsyncSession,
+    centre: ExaminationCentre,
+    *,
+    subject_filter: TimetableDownloadFilter,
+) -> bool:
+    """True when this centre has at least one school membership for the SPLIT scope filter."""
+    exam = await get_examination_or_404(session, centre.examination_id)
+    mode = exam.centre_structure_mode
+    if isinstance(mode, str):
+        mode = CentreStructureMode(mode)
+    if mode != CentreStructureMode.SPLIT or subject_filter == TimetableDownloadFilter.ALL:
+        return True
+    mem_scope = membership_scope_for_timetable_filter(subject_filter)
+    if mem_scope is None:
+        return True
+    count = await hosted_school_count(session, centre, membership_scope=mem_scope)
+    return count > 0
+
+
 async def school_membership_scopes_at_centre(
     session: AsyncSession,
     examination_id: int,

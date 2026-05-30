@@ -100,6 +100,7 @@ from app.services.exam_timetable_pdf import (
     schedules_to_entries,
 )
 from app.services.centre_resolution import (
+    centre_has_membership_for_subject_filter,
     centre_scope_school_ids,
     centre_scope_school_ids_for_host_overview,
     get_examination_centre_or_404,
@@ -2879,10 +2880,18 @@ async def get_finance_centre_school_summary(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Examination not found") from None
 
     hosts = await _finance_centre_hosts(session, exam_id, center_id)
+    centre = hosts[0]
+    if not await centre_has_membership_for_subject_filter(
+        session, centre, subject_filter=subject_filter
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Examination centre has no schools for this subject scope",
+        )
     return await build_finance_centre_school_summary(
         session,
         ex,
-        hosts[0],
+        centre,
         subject_filter,
         build_invigilator_item=_build_finance_centre_invigilator_item,
     )
@@ -2919,6 +2928,13 @@ async def export_finance_centre_school_summary(
 
     hosts = await _finance_centre_hosts(session, exam_id, center_id)
     centre = hosts[0]
+    if not await centre_has_membership_for_subject_filter(
+        session, centre, subject_filter=subject_filter
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Examination centre has no schools for this subject scope",
+        )
     summary = await build_finance_centre_school_summary(
         session,
         ex,

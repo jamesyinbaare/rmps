@@ -142,6 +142,8 @@
   --primary-hover: var(--ghana-forest-green);
   --primary-foreground: var(--ghana-white);
   --ring: var(--ghana-green);
+  /* Sticky header + main top padding (main bottom cancelled via -mb-6 on page shell) */
+  --official-accounts-chrome-top: 6rem;
 }
 
 .dark [data-zone="official-accounts"] {
