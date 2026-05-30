@@ -389,3 +389,80 @@ async def test_scope_ids_for_centre_subject_filter_limits_to_membership() -> Non
 
     assert core_result == {core_only, both}
     assert elect_result == {elective_only, both}
+
+
+@pytest.mark.asyncio
+async def test_list_centres_for_examination_filters_by_membership_scope() -> None:
+    from unittest.mock import AsyncMock, MagicMock
+
+    from app.services.centre_resolution import list_centres_for_examination
+
+    core_centre = MagicMock()
+    core_centre.memberships = [
+        MagicMock(subject_scope=ExaminationCentreMembershipScope.CORE),
+    ]
+    elect_centre = MagicMock()
+    elect_centre.memberships = [
+        MagicMock(subject_scope=ExaminationCentreMembershipScope.ELECTIVE),
+    ]
+    both_centre = MagicMock()
+    both_centre.memberships = [
+        MagicMock(subject_scope=ExaminationCentreMembershipScope.CORE),
+        MagicMock(subject_scope=ExaminationCentreMembershipScope.ELECTIVE),
+    ]
+
+    mock_result = MagicMock()
+    mock_result.scalars.return_value.all.return_value = [
+        core_centre,
+        elect_centre,
+        both_centre,
+    ]
+    session = AsyncMock()
+    session.execute.return_value = mock_result
+
+    core_only = await list_centres_for_examination(
+        session, 1, membership_scope=ExaminationCentreMembershipScope.CORE
+    )
+    elect_only = await list_centres_for_examination(
+        session, 1, membership_scope=ExaminationCentreMembershipScope.ELECTIVE
+    )
+    all_centres = await list_centres_for_examination(session, 1)
+
+    assert core_only == [core_centre, both_centre]
+    assert elect_only == [elect_centre, both_centre]
+    assert all_centres == [core_centre, elect_centre, both_centre]
+
+
+@pytest.mark.asyncio
+async def test_centre_has_membership_for_subject_filter_unified_always_true() -> None:
+    from unittest.mock import AsyncMock, MagicMock, patch
+
+    from app.schemas.timetable import TimetableDownloadFilter
+    from app.services.centre_resolution import centre_has_membership_for_subject_filter
+
+    centre = MagicMock(examination_id=1)
+    exam = SimpleNamespace(centre_structure_mode=CentreStructureMode.UNIFIED)
+    session = AsyncMock()
+
+    with patch(
+        "app.services.centre_resolution.get_examination_or_404",
+        AsyncMock(return_value=exam),
+    ):
+        assert await centre_has_membership_for_subject_filter(
+            session,
+            centre,
+            subject_filter=TimetableDownloadFilter.CORE_ONLY,
+        )
+
+
+def test_apply_centre_search_q_filters_code_and_name() -> None:
+    from unittest.mock import MagicMock
+
+    from app.routers.examination_centres import _apply_centre_search_q
+
+    c1 = MagicMock(code="ABC01", name="Alpha Centre")
+    c2 = MagicMock(code="XYZ99", name="Beta Host")
+    assert _apply_centre_search_q([c1, c2], None) == [c1, c2]
+    assert _apply_centre_search_q([c1, c2], "abc") == [c1]
+    assert _apply_centre_search_q([c1, c2], "beta") == [c2]
+    assert _apply_centre_search_q([c1, c2], "   ") == [c1, c2]

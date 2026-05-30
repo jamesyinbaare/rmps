@@ -88,6 +88,37 @@ def safe_filename_part(s: str) -> str:
     return (t or "export")[:80]
 
 
+def sheet_name_part(s: str) -> str:
+    """Sanitize for Excel worksheet tab (keep spaces; drop forbidden characters)."""
+    t = s.strip()
+    for ch in (":", "\\", "/", "?", "*", "[", "]"):
+        t = t.replace(ch, "_")
+    return t
+
+
+def centre_sheet_title(centre: ExaminationCentre, used: set[str]) -> str:
+    """Excel sheet name: centre code and name (max 31 chars, unique within workbook)."""
+    code = sheet_name_part(cast(str, centre.code)) or "Centre"
+    name = sheet_name_part(cast(str, centre.name))
+    if name:
+        sep = " - "
+        room = 31 - len(code) - len(sep)
+        base = f"{code}{sep}{name[:room]}" if room >= 1 else code[:31]
+    else:
+        base = code[:31]
+    title = base
+    if title in used:
+        n = 2
+        while True:
+            suffix = f"_{n}"
+            title = f"{base[: 31 - len(suffix)]}{suffix}"
+            if title not in used:
+                break
+            n += 1
+    used.add(title)
+    return title
+
+
 def _grid_border(*, header_bottom: bool = False) -> Border:
     bottom = _SIDE_HEADER_BOTTOM if header_bottom else _SIDE_THIN
     return Border(left=_SIDE_THIN, right=_SIDE_THIN, top=_SIDE_THIN, bottom=bottom)
@@ -303,45 +334,84 @@ def build_zip_export(
     return buf.getvalue(), f"{zip_basename}.zip", "application/zip"
 
 
+def build_single_sheet_export(
+    pairs: list[tuple[ExamCentreOfficial, ExaminationCentre]],
+    exam: Examination,
+    *,
+    sheet_title: str,
+    file_base: str,
+    rates_by_designation: dict[ExamOfficialDesignation, ExaminationDesignationRate] | None = None,
+) -> tuple[bytes, str, str]:
+    """One workbook with a single worksheet listing all officials (all centres)."""
+    wb = Workbook()
+    ws = wb.active
+    assert ws is not None
+    tab = sheet_name_part(sheet_title)[:31] or "Officials"
+    ws.title = tab
+    exam_label = examination_label(exam)
+    ncols = len(HEADER_LABELS)
+    style_title_row(ws, 1, ncols, f"{sheet_title} · {exam_label}", merge=True)
+    r = 3
+    for i, h in enumerate(HEADER_LABELS, start=1):
+        ws.cell(row=r, column=i, value=h)
+    header_row = r
+    style_header_row(ws, r, ncols)
+    r += 1
+    sorted_pairs = sorted(pairs, key=lambda p: (str(p[1].code), str(p[0].full_name)))
+    for data_idx, (off, centre) in enumerate(sorted_pairs):
+        vals = data_values(off, centre, rates_by_designation=rates_by_designation)
+        for i, v in enumerate(vals, start=1):
+            write_export_cell(ws, r, i, v)
+        is_invigilator = designation_str(off.designation) == "Invigilator"
+        style_data_row(ws, r, ncols, stripe=data_idx % 2 == 1, highlight=is_invigilator)
+        r += 1
+    set_col_widths(ws, COLUMN_WIDTHS)
+    apply_sheet_finish(ws, header_row, ncols, autofilter=True)
+    return (
+        workbook_bytes(wb),
+        f"{file_base}.xlsx",
+        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    )
+
+
 def build_combined_export(
     ordered_groups: list[tuple[UUID, list[tuple[ExamCentreOfficial, ExaminationCentre]]]],
     exam: Examination,
     *,
     rates_by_designation: dict[ExamOfficialDesignation, ExaminationDesignationRate] | None = None,
+    file_base: str | None = None,
 ) -> tuple[bytes, str, str]:
+    """Single workbook with one worksheet per examination centre."""
     wb = Workbook()
-    ws = wb.active
-    assert ws is not None
-    ws.title = "All centres"
-    ncols = len(HEADER_LABELS)
-    r = 1
-    style_title_row(
-        ws,
-        r,
-        ncols,
-        f"Examination officials · {examination_label(exam)} (all centres)",
-        merge=True,
-    )
-    r += 2
     exam_label = examination_label(exam)
-    first_header_row: int | None = None
-    for _cid, plist in ordered_groups:
+    ncols = len(HEADER_LABELS)
+    used_titles: set[str] = set()
+    for idx, (_cid, plist) in enumerate(ordered_groups):
         centre = plist[0][1]
-        r, header_row = write_centre_block(
-            ws, r, centre, exam_label, plist, merge_title=True, rates_by_designation=rates_by_designation
+        title = centre_sheet_title(centre, used_titles)
+        if idx == 0:
+            ws = wb.active
+            assert ws is not None
+            ws.title = title
+        else:
+            ws = wb.create_sheet(title=title)
+        _, header_row = write_centre_block(
+            ws,
+            1,
+            centre,
+            exam_label,
+            plist,
+            merge_title=True,
+            rates_by_designation=rates_by_designation,
         )
-        if first_header_row is None:
-            first_header_row = header_row
-        r += 2
-    set_col_widths(ws, COLUMN_WIDTHS)
-    if first_header_row is not None:
-        apply_sheet_finish(ws, first_header_row, ncols, autofilter=False)
+        set_col_widths(ws, COLUMN_WIDTHS)
+        apply_sheet_finish(ws, header_row, ncols, autofilter=True)
     xbuf = io.BytesIO()
     wb.save(xbuf)
-    exam_part = safe_filename_part(f"exam_{exam.id}_{exam_label}")
+    base = file_base or safe_filename_part(f"exam_{exam.id}_{exam_label}_officials_all_centres")
     return (
         xbuf.getvalue(),
-        f"{exam_part}_officials_all_centres.xlsx",
+        f"{base}.xlsx",
         "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
     )
 

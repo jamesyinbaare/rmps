@@ -17,7 +17,7 @@ import { useCallback, useEffect, useId, useMemo, useRef, useState } from "react"
 import { RoleGuard } from "@/components/role-guard";
 import { SearchableCombobox } from "@/components/searchable-combobox";
 import { OfficialAccountsPageIntro } from "@/components/official-accounts-page-intro";
-import { SubjectScopeBadge, SubjectScopeLegend } from "@/components/subject-scope-badge";
+import { SubjectScopeBadge, SubjectScopeLegend, timetableFilterBadgeScope } from "@/components/subject-scope-badge";
 import {
   apiJson,
   displayBankCode,
@@ -41,12 +41,16 @@ import {
   officialAccountsPanelClass,
 } from "@/lib/official-accounts-zone";
 import { cn } from "@/lib/utils";
+import { subjectScopeBadgeClass } from "@/lib/subject-scope-display";
 import { OfficialAllowanceBreakdownCell } from "@/components/official-allowance-breakdown";
+import { REGION_OPTIONS } from "@/lib/school-enums";
 
-const SUBJECT_SCOPE_OPTIONS: { value: TimetableSubjectFilter; label: string }[] = [
-  { value: "ALL", label: "All subjects" },
-  { value: "CORE_ONLY", label: "Core only" },
-  { value: "ELECTIVE_ONLY", label: "Elective only" },
+const DEFAULT_SUBJECT_FILTER: TimetableSubjectFilter = "CORE_ONLY";
+
+const SUBJECT_SCOPE_OPTIONS: { value: TimetableSubjectFilter; label: string; hint: string }[] = [
+  { value: "CORE_ONLY", label: "Core", hint: "Core subjects only" },
+  { value: "ELECTIVE_ONLY", label: "Elective", hint: "Elective subjects only" },
+  { value: "ALL", label: "All", hint: "Include core and elective examination days" },
 ];
 
 const ROLE_CARDS: {
@@ -67,10 +71,13 @@ type InvigilationTone = "over" | "match" | "under";
 type SortKey = "name" | "designation" | "days";
 type SortDir = "asc" | "desc";
 
+const filterToolbarClass =
+  "space-y-4 border-b border-border bg-muted/20 px-4 py-4 sm:px-5";
+const filterToolbarSectionClass = "flex flex-col gap-3 sm:flex-row sm:items-end sm:gap-4";
 const filterFieldClass = "flex min-w-0 flex-col gap-1.5";
-/** Toolbar selects: no extra mt — gap-1.5 on the field handles label spacing. */
+/** Toolbar selects — text-sm to match compact controls. */
 const filterSelectClass =
-  "block w-full min-h-11 rounded-lg border border-input-border bg-input px-3 text-base text-foreground shadow-sm focus:border-primary focus:outline-none focus:ring-2 focus:ring-ring/30";
+  "block w-full min-h-10 rounded-lg border border-input-border bg-input px-3 text-sm text-foreground shadow-sm focus:border-primary focus:outline-none focus:ring-2 focus:ring-ring/30";
 
 const statCardClass =
   "flex h-36 flex-col items-center justify-center rounded-xl border border-border bg-card p-2 text-center lg:h-full lg:min-h-36";
@@ -154,6 +161,61 @@ function formatExamDayLabel(isoDate: string): string {
 
 function subjectScopeLabel(filter: TimetableSubjectFilter): string {
   return SUBJECT_SCOPE_OPTIONS.find((o) => o.value === filter)?.label ?? filter;
+}
+
+function SubjectScopeToggle({
+  value,
+  onChange,
+  disabled = false,
+}: {
+  value: TimetableSubjectFilter;
+  onChange: (value: TimetableSubjectFilter) => void;
+  disabled?: boolean;
+}) {
+  return (
+    <div
+      className={cn(filterFieldClass, "w-fit shrink-0")}
+      title="Choose which subject types to include in centre totals and official lists."
+    >
+      <span className={formLabelClass}>Subject scope</span>
+      <div
+        className="inline-flex min-h-10 shrink-0 rounded-lg border border-input-border bg-muted/30 p-0.5 shadow-sm"
+        role="radiogroup"
+        aria-label="Subject scope"
+      >
+        {SUBJECT_SCOPE_OPTIONS.map((opt) => {
+          const id = `centre-summary-scope-${opt.value}`;
+          const checked = value === opt.value;
+          const badgeScope = timetableFilterBadgeScope(opt.value);
+          return (
+            <label
+              key={opt.value}
+              htmlFor={id}
+              title={opt.hint}
+              className={cn(
+                "flex shrink-0 cursor-pointer items-center justify-center whitespace-nowrap rounded-md px-2.5 text-sm font-medium transition-colors",
+                checked
+                  ? cn("shadow-sm ring-1 ring-success/30", subjectScopeBadgeClass(badgeScope))
+                  : "text-muted-foreground hover:bg-muted/60 hover:text-foreground",
+              )}
+            >
+              <input
+                id={id}
+                type="radio"
+                name="centre-summary-scope"
+                className="sr-only"
+                value={opt.value}
+                checked={checked}
+                onChange={() => onChange(opt.value)}
+                disabled={disabled}
+              />
+              {opt.label}
+            </label>
+          );
+        })}
+      </div>
+    </div>
+  );
 }
 
 function ExpectedByDayModal({
@@ -469,7 +531,8 @@ function AdminCentreSummaryContent() {
   const [examId, setExamId] = useState<number | null>(null);
   const [centers, setCenters] = useState<PerExamCentreItem[]>([]);
   const [centerId, setCenterId] = useState("");
-  const [subjectFilter, setSubjectFilter] = useState<TimetableSubjectFilter>("ALL");
+  const [subjectFilter, setSubjectFilter] = useState<TimetableSubjectFilter>(DEFAULT_SUBJECT_FILTER);
+  const [regionFilter, setRegionFilter] = useState("");
   const [summary, setSummary] = useState<FinanceCentreSchoolSummaryResponse | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [examListError, setExamListError] = useState<string | null>(null);
@@ -507,7 +570,7 @@ function AdminCentreSummaryContent() {
     let cancelled = false;
     void (async () => {
       try {
-        const data = await listExaminationCentres(examId);
+        const data = await listExaminationCentres(examId, { subject_filter: subjectFilter });
         if (cancelled) return;
         setCenters(data.items);
         setCenterId((cur) => (cur && data.items.some((c) => c.id === cur) ? cur : ""));
@@ -518,7 +581,7 @@ function AdminCentreSummaryContent() {
     return () => {
       cancelled = true;
     };
-  }, [examId]);
+  }, [examId, subjectFilter]);
 
   useEffect(() => {
     if (exams.length === 0) return;
@@ -534,6 +597,8 @@ function AdminCentreSummaryContent() {
     if (cid) setCenterId(cid);
     const st = sp.get("st");
     if (st === "ALL" || st === "CORE_ONLY" || st === "ELECTIVE_ONLY") setSubjectFilter(st);
+    const reg = sp.get("region")?.trim() ?? "";
+    if (reg && REGION_OPTIONS.some((r) => r.value === reg)) setRegionFilter(reg);
     setUrlHydrated(true);
   }, [exams, searchParams]);
 
@@ -542,20 +607,46 @@ function AdminCentreSummaryContent() {
     const p = new URLSearchParams();
     if (examId != null) p.set("exam", String(examId));
     if (centerId.trim()) p.set("centerId", centerId.trim());
-    if (subjectFilter !== "ALL") p.set("st", subjectFilter);
+    if (subjectFilter !== DEFAULT_SUBJECT_FILTER) p.set("st", subjectFilter);
+    if (regionFilter) p.set("region", regionFilter);
     const next = p.toString();
     const cur = searchParams.toString();
     if (next === cur) return;
     router.replace(next ? `${pathname}?${next}` : pathname, { scroll: false });
-  }, [urlHydrated, examId, centerId, subjectFilter, pathname, router, searchParams]);
+  }, [urlHydrated, examId, centerId, subjectFilter, regionFilter, pathname, router, searchParams]);
+
+  const regionSelectOptions = useMemo(() => {
+    const present = new Set(
+      centers.map((c) => c.region).filter((r): r is string => Boolean(r?.trim())),
+    );
+    return REGION_OPTIONS.filter((r) => present.has(r.value));
+  }, [centers]);
+
+  const filteredCenters = useMemo(() => {
+    if (!regionFilter) return centers;
+    return centers.filter((c) => c.region === regionFilter);
+  }, [centers, regionFilter]);
+
+  useEffect(() => {
+    if (!regionFilter || regionSelectOptions.length === 0) return;
+    if (!regionSelectOptions.some((r) => r.value === regionFilter)) {
+      setRegionFilter("");
+    }
+  }, [regionFilter, regionSelectOptions]);
+
+  useEffect(() => {
+    setCenterId((cur) =>
+      cur && filteredCenters.some((c) => c.id === cur) ? cur : "",
+    );
+  }, [filteredCenters]);
 
   const centerOptions = useMemo(
     () =>
-      centers.map((c) => ({
+      filteredCenters.map((c) => ({
         value: c.id,
         label: `${c.code} — ${c.name}`,
       })),
-    [centers],
+    [filteredCenters],
   );
 
   const fetchSummary = useCallback(async () => {
@@ -573,7 +664,7 @@ function AdminCentreSummaryContent() {
       });
       setSummary(data);
     } catch (e) {
-      setLoadError(e instanceof Error ? e.message : "Failed to load centre summary");
+      setLoadError(e instanceof Error ? e.message : "Failed to load Centre analysis");
     } finally {
       setBusy(false);
     }
@@ -660,59 +751,78 @@ function AdminCentreSummaryContent() {
       <OfficialAccountsPageIntro description="Invigilator reconciliation and official account export by centre." />
 
       <div className={officialAccountsPanelClass}>
-        <div className="grid grid-cols-1 gap-3 border-b border-border bg-muted/20 px-4 py-3 sm:px-5 sm:grid-cols-2 lg:grid-cols-[minmax(0,1.4fr)_minmax(0,11rem)_minmax(0,1.4fr)_auto] lg:items-end lg:gap-4">
-          <div className={filterFieldClass}>
-            <label className={formLabelClass} htmlFor="centre-summary-exam">
-              Examination
-            </label>
-            <select
-              id="centre-summary-exam"
-              className={filterSelectClass}
-              value={examId ?? ""}
-              onChange={(e) => setExamId(e.target.value ? Number(e.target.value) : null)}
-              disabled={exams.length === 0}
-            >
-              {exams.map((ex) => (
-                <option key={ex.id} value={ex.id}>
-                  {formatExamLabel(ex)}
-                </option>
-              ))}
-            </select>
-          </div>
-          <div className={filterFieldClass}>
-            <label className={formLabelClass} htmlFor="centre-summary-scope">
-              Scope
-            </label>
-            <select
-              id="centre-summary-scope"
-              className={filterSelectClass}
+        <div className={filterToolbarClass}>
+          <div className={filterToolbarSectionClass}>
+            <div className={cn(filterFieldClass, "min-w-0 flex-1 sm:max-w-md")}>
+              <label className={formLabelClass} htmlFor="centre-summary-exam">
+                Examination
+              </label>
+              <select
+                id="centre-summary-exam"
+                className={filterSelectClass}
+                value={examId ?? ""}
+                onChange={(e) => setExamId(e.target.value ? Number(e.target.value) : null)}
+                disabled={exams.length === 0}
+              >
+                {exams.map((ex) => (
+                  <option key={ex.id} value={ex.id}>
+                    {formatExamLabel(ex)}
+                  </option>
+                ))}
+              </select>
+            </div>
+            <SubjectScopeToggle
               value={subjectFilter}
-              onChange={(e) => setSubjectFilter(e.target.value as TimetableSubjectFilter)}
+              onChange={setSubjectFilter}
               disabled={exams.length === 0}
-            >
-              {SUBJECT_SCOPE_OPTIONS.map((o) => (
-                <option key={o.value} value={o.value}>
-                  {o.label}
-                </option>
-              ))}
-            </select>
-          </div>
-          <div className={cn(filterFieldClass, "sm:col-span-2 lg:col-span-1")}>
-            <span className={formLabelClass}>Centre</span>
-            <SearchableCombobox
-              options={centerOptions}
-              value={centerId}
-              onChange={setCenterId}
-              placeholder="Select centre…"
-              searchPlaceholder="Code or name…"
-              emptyText={centers.length ? "No match." : "No centres."}
-              widthClass="w-full min-w-0"
-              showAllOption={false}
-              disabled={centers.length === 0}
             />
           </div>
-          <div className="flex min-h-11 items-center sm:col-span-2 lg:col-span-1 lg:justify-end">
-            {exportControl}
+
+          <div className={cn(filterToolbarSectionClass, "border-t border-border/60 pt-4")}>
+            <div className={cn(filterFieldClass, "w-full sm:w-40 sm:shrink-0")}>
+              <label className={formLabelClass} htmlFor="centre-summary-region">
+                Region
+              </label>
+              <select
+                id="centre-summary-region"
+                className={filterSelectClass}
+                value={regionFilter}
+                onChange={(e) => setRegionFilter(e.target.value)}
+                disabled={centers.length === 0 || regionSelectOptions.length === 0}
+              >
+                <option value="">All regions</option>
+                {regionSelectOptions.map((r) => (
+                  <option key={r.value} value={r.value}>
+                    {r.label}
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            <div className={cn(filterFieldClass, "min-w-0 flex-1")}>
+              <span className={formLabelClass}>Examination centre</span>
+              <SearchableCombobox
+                options={centerOptions}
+                value={centerId}
+                onChange={setCenterId}
+                placeholder="Select centre…"
+                searchPlaceholder="Code or name…"
+                emptyText={
+                  filteredCenters.length
+                    ? "No match."
+                    : regionFilter
+                      ? "No centres in this region."
+                      : subjectFilter !== "ALL"
+                        ? "No centres for this scope."
+                        : "No centres."
+                }
+                widthClass="w-full min-w-0"
+                showAllOption={false}
+                disabled={filteredCenters.length === 0}
+              />
+            </div>
+
+            <div className="w-full shrink-0 sm:w-auto">{exportControl}</div>
           </div>
         </div>
 
@@ -743,7 +853,9 @@ function AdminCentreSummaryContent() {
           <div className="flex flex-col items-center gap-3 px-4 py-14 text-center sm:px-5">
             <Building2 className="size-10 text-muted-foreground/50" aria-hidden />
             <p className="text-sm font-medium text-foreground">Choose an examination centre</p>
-            <p className="max-w-sm text-xs text-muted-foreground">Pick exam, scope, and centre above.</p>
+            <p className="max-w-sm text-xs text-muted-foreground">
+              Pick an examination, subject scope, and centre above.
+            </p>
           </div>
         ) : null}
 
