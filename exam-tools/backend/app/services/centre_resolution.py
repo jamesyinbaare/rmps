@@ -452,6 +452,13 @@ async def scope_ids_for_centre_subject_filter(
     mem_scope = membership_scope_for_timetable_filter(subject_filter)
     if mem_scope is None:
         return scope_ids
+    exam = await get_examination_or_404(session, centre.examination_id)
+    mode = exam.centre_structure_mode
+    if isinstance(mode, str):
+        mode = CentreStructureMode(mode)
+    if mode != CentreStructureMode.SPLIT:
+        # UNIFIED exams store ALL memberships; core/elective is by subject type only.
+        return scope_ids
     membership_ids = await centre_scope_school_ids(
         session, centre, membership_scope=mem_scope
     )

@@ -22,8 +22,6 @@ import {
   apiJson,
   displayBankCode,
   downloadFinanceCentreSchoolSummaryExport,
-  getFinanceCentreInvigilatorSummaryForCentre,
-  getFinanceCentreSchoolSummary,
   listExaminationCentres,
   schoolSummaryExportFilename,
   type AdminExamCentreOfficialRow,
@@ -33,6 +31,12 @@ import {
   type PerExamCentreItem,
   type TimetableSubjectFilter,
 } from "@/lib/api";
+import {
+  getCachedCentreInvigilatorDays,
+  getCachedCentreSchoolSummary,
+  peekCachedCentreInvigilatorDays,
+  peekCachedCentreSchoolSummary,
+} from "@/lib/finance-statistics-cache";
 import { formInputClass, formLabelClass } from "@/lib/form-classes";
 import {
   OFFICIAL_ACCOUNTS_ADMIN_HREF,
@@ -366,16 +370,17 @@ function ExpectedByDayBreakdown({
   const [loadError, setLoadError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
 
-  const loadDays = useCallback(async () => {
+  const loadDays = useCallback(async (options?: { revalidate?: boolean }) => {
     setLoading(true);
     setLoadError(null);
     try {
-      const item = await getFinanceCentreInvigilatorSummaryForCentre({
+      const result = await getCachedCentreInvigilatorDays({
         examId,
-        center_host_id: centerId,
+        centerId,
         subject_filter: subjectFilter,
+        revalidate: options?.revalidate,
       });
-      setDays(item.days);
+      setDays(result.data);
     } catch (e) {
       setLoadError(e instanceof Error ? e.message : "Failed to load daily breakdown");
       setDays(null);
@@ -385,7 +390,8 @@ function ExpectedByDayBreakdown({
   }, [examId, centerId, subjectFilter]);
 
   useEffect(() => {
-    setDays(null);
+    const cached = peekCachedCentreInvigilatorDays(examId, centerId, subjectFilter);
+    setDays(cached);
     setLoadError(null);
   }, [examId, centerId, subjectFilter]);
 
@@ -411,7 +417,7 @@ function ExpectedByDayBreakdown({
         days={days}
         loading={loading}
         loadError={loadError}
-        onRetry={() => void loadDays()}
+        onRetry={() => void loadDays({ revalidate: true })}
       />
     </>
   );
@@ -649,7 +655,7 @@ function AdminCentreSummaryContent() {
     [filteredCenters],
   );
 
-  const fetchSummary = useCallback(async () => {
+  const fetchSummary = useCallback(async (options?: { revalidate?: boolean }) => {
     if (examId === null || !centerId.trim()) {
       setSummary(null);
       return;
@@ -657,17 +663,28 @@ function AdminCentreSummaryContent() {
     setBusy(true);
     setLoadError(null);
     try {
-      const data = await getFinanceCentreSchoolSummary({
+      const result = await getCachedCentreSchoolSummary({
         examId,
         centerId: centerId.trim(),
         subject_filter: subjectFilter,
+        revalidate: options?.revalidate,
+        onUpdate: (data) => setSummary(data),
       });
-      setSummary(data);
+      setSummary(result.data);
     } catch (e) {
       setLoadError(e instanceof Error ? e.message : "Failed to load Centre analysis");
     } finally {
       setBusy(false);
     }
+  }, [examId, centerId, subjectFilter]);
+
+  useEffect(() => {
+    if (examId === null || !centerId.trim()) {
+      setSummary(null);
+      return;
+    }
+    const cached = peekCachedCentreSchoolSummary(examId, centerId.trim(), subjectFilter);
+    if (cached) setSummary(cached);
   }, [examId, centerId, subjectFilter]);
 
   useEffect(() => {

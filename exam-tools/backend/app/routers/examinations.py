@@ -2707,25 +2707,36 @@ async def _build_finance_centre_invigilator_item(
     centre: ExaminationCentre,
     subject_filter: TimetableDownloadFilter,
 ) -> FinanceCentreInvigilatorSummaryItem:
-    center_host = await representative_school_for_centre(session, centre)
-    if center_host is None:
-        return FinanceCentreInvigilatorSummaryItem(
-            center_id=centre.id,
-            center_code=str(centre.code),
-            center_name=str(centre.name),
-            days=[],
-        )
-    scope_ids = await center_scope_school_ids(session, center_host, exam_id)
-    ordered_schools = await schools_in_center_scope_ordered(session, center_host, exam_id)
+    empty = FinanceCentreInvigilatorSummaryItem(
+        center_id=centre.id,
+        center_code=str(centre.code),
+        center_name=str(centre.name),
+        days=[],
+    )
+
+    exam = await load_examination_or_raise(session, exam_id)
+    mode = exam.centre_structure_mode
+    if isinstance(mode, str):
+        mode = CentreStructureMode(mode)
+
+    all_scope_ids = await centre_scope_school_ids_for_host_overview(session, centre)
+    scope_ids = await scope_ids_for_centre_subject_filter(
+        session,
+        centre,
+        all_scope_ids,
+        subject_filter=subject_filter,
+    )
     if not scope_ids:
-        return FinanceCentreInvigilatorSummaryItem(
-            center_id=centre.id,
-            center_code=str(centre.code),
-            center_name=str(centre.name),
-            days=[],
-        )
+        return empty
+
+    ordered_schools = await _schools_with_ids_ordered_by_code(session, scope_ids)
+    exam_centre = centre if mode == CentreStructureMode.SPLIT else None
     entries = await _staff_center_filtered_timetable_entries(
-        session, exam_id, scope_ids, subject_filter=subject_filter
+        session,
+        exam_id,
+        scope_ids,
+        subject_filter=subject_filter,
+        exam_centre=exam_centre,
     )
     dates_sorted = sorted({e.examination_date for e in entries})
     day_rows: list[FinanceCentreDayInvigilatorRow] = []
@@ -2737,6 +2748,7 @@ async def _build_finance_centre_invigilator_item(
             scope_ids,
             ordered_schools,
             subject_filter=subject_filter,
+            preloaded_entries=entries,
         )
         day_rows.append(
             FinanceCentreDayInvigilatorRow(
@@ -2781,12 +2793,14 @@ async def get_finance_centre_invigilator_summary_shell(
     ),
 ) -> FinanceCentreInvigilatorSummaryShellResponse:
     """Centre names and column dates only; load per-centre invigilator counts separately."""
+    from app.services.finance_official_statistics import list_centres_for_official_statistics
+
     try:
         await load_examination_or_raise(session, exam_id)
     except ValueError:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Examination not found") from None
 
-    centres = await _finance_centre_hosts(session, exam_id, None)
+    centres = await list_centres_for_official_statistics(session, exam_id, subject_filter)
     examination_dates = await _finance_examination_dates_for_filter(session, exam_id, subject_filter)
     return FinanceCentreInvigilatorSummaryShellResponse(
         examination_id=exam_id,

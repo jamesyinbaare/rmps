@@ -12,13 +12,16 @@ import { RoleGuard } from "@/components/role-guard";
 import {
   apiJson,
   downloadFinanceCentreOfficialStatisticsExport,
-  loadFinanceCentreOfficialStatisticsProgressive,
   officialStatisticsExportFilename,
   type Examination,
   type FinanceCentreOfficialStatisticsResponse,
   type FinanceCentreOfficialStatisticsRow,
   type TimetableSubjectFilter,
 } from "@/lib/api";
+import {
+  loadOfficialStatisticsWithProgress,
+  peekCachedOfficialStatistics,
+} from "@/lib/finance-statistics-cache";
 import { formInputClass, formLabelClass } from "@/lib/form-classes";
 import {
   OFFICIAL_ACCOUNTS_CENTRE_SUMMARY_HREF,
@@ -222,6 +225,18 @@ function OfficialStatisticsContent() {
 
   useEffect(() => {
     loadRunRef.current += 1;
+    if (examId !== null && isSubjectScopeSelected(subjectFilter)) {
+      const cached = peekCachedOfficialStatistics(examId, subjectFilter);
+      if (cached) {
+        setCentreRows(cached.centres.map(rowToLoaded));
+        setLoadedSummary(cached);
+        setSummaryActive(true);
+        setStatsBusy(false);
+        setShellBusy(false);
+        setSummaryError(null);
+        return;
+      }
+    }
     setSummaryActive(false);
     setCentreRows([]);
     setLoadedSummary(null);
@@ -229,19 +244,32 @@ function OfficialStatisticsContent() {
     setSummaryError(null);
   }, [examId, subjectFilter]);
 
-  const loadSummary = useCallback(async () => {
+  const loadSummary = useCallback(async (options?: { revalidate?: boolean }) => {
     if (examId === null || !isSubjectScopeSelected(subjectFilter)) return;
     const runId = ++loadRunRef.current;
-    setShellBusy(true);
+    const revalidate = options?.revalidate === true;
+    setShellBusy(!revalidate);
     setStatsBusy(false);
     setSummaryError(null);
-    setSummaryActive(false);
-    setCentreRows([]);
-    setLoadedSummary(null);
+    if (revalidate) {
+      setCentreRows([]);
+      setLoadedSummary(null);
+      setSummaryActive(false);
+    }
 
     try {
-      const summary = await loadFinanceCentreOfficialStatisticsProgressive(
-        { examId, subject_filter: subjectFilter },
+      const result = await loadOfficialStatisticsWithProgress(
+        {
+          examId,
+          subject_filter: subjectFilter,
+          revalidate,
+          onUpdate: (data) => {
+            if (loadRunRef.current !== runId) return;
+            setCentreRows(data.centres.map(rowToLoaded));
+            setLoadedSummary(data);
+            setStatsBusy(false);
+          },
+        },
         {
           onShellLoaded: (shell) => {
             if (loadRunRef.current !== runId) return;
@@ -257,9 +285,11 @@ function OfficialStatisticsContent() {
         },
       );
       if (loadRunRef.current !== runId) return;
-      setCentreRows(summary.centres.map(rowToLoaded));
-      setLoadedSummary(summary);
-      setStatsBusy(false);
+      setCentreRows(result.data.centres.map(rowToLoaded));
+      setLoadedSummary(result.data);
+      setSummaryActive(true);
+      setShellBusy(false);
+      setStatsBusy(result.isRevalidating);
     } catch (e) {
       if (loadRunRef.current !== runId) return;
       setSummaryError(e instanceof Error ? e.message : "Failed to load statistics");
@@ -524,7 +554,7 @@ function OfficialStatisticsContent() {
               type="button"
               className={cn(officialAccountsBtnSecondary, "gap-2 min-h-10")}
               disabled={!canLoad}
-              onClick={() => void loadSummary()}
+              onClick={() => void loadSummary({ revalidate: summaryActive })}
               aria-busy={shellBusy || statsBusy}
             >
               {shellBusy || statsBusy ? <Loader2 className="size-4 animate-spin" aria-hidden /> : null}
