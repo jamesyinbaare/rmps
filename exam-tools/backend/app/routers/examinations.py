@@ -520,6 +520,7 @@ async def get_examination_script_series_config(
             subject_id=s.id,
             subject_code=s.code,
             subject_name=s.name,
+            subject_type=s.subject_type.value,
             series_count=cmap.get(s.id, 1),
         )
         for s in subjects
@@ -581,6 +582,7 @@ async def put_examination_script_series_config(
             subject_id=s.id,
             subject_code=s.code,
             subject_name=s.name,
+            subject_type=s.subject_type.value,
             series_count=cmap.get(s.id, 1),
         )
         for s in scheduled

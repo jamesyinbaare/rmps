@@ -33,6 +33,8 @@ from app.schemas.script_control import (
     MySchoolScriptControlResponse,
     ScriptControlAdminListResponse,
     ScriptControlAdminRow,
+    ScriptControlSchoolStatusCounts,
+    ScriptControlSchoolStatusListResponse,
     ScriptControlSubjectSeriesCountRow,
     ScriptEnvelopeItem,
     ScriptPaperSlotResponse,
@@ -58,6 +60,10 @@ from app.services.script_control_export import (
     compute_max_series,
     sanitize_export_filename_part,
     script_control_export_excel_bytes,
+)
+from app.services.script_control_school_status import (
+    SchoolStatusFilter,
+    build_script_control_school_status_rows,
 )
 from app.services.script_control import (
     assert_packing_school_in_scope,
@@ -160,9 +166,12 @@ async def _sync_script_series_envelopes(
     session: DBSessionDep,
     row: ScriptPackingSeries,
     items: list[ScriptEnvelopeItem],
+    *,
+    admin_override: bool = False,
 ) -> None:
     by_number = {e.envelope_number: e for e in row.envelopes}
     wanted_numbers = {item.envelope_number for item in items}
+    changed = False
     for item in items:
         existing = by_number.get(item.envelope_number)
         if existing is not None:
@@ -173,6 +182,10 @@ async def _sync_script_series_envelopes(
                     )
                 )
                 existing.booklet_count = item.booklet_count
+                if admin_override:
+                    existing.verified_at = None
+                    existing.verified_by_id = None
+                changed = True
         else:
             session.add(
                 ScriptEnvelope(
@@ -181,9 +194,95 @@ async def _sync_script_series_envelopes(
                     booklet_count=item.booklet_count,
                 )
             )
+            changed = True
     for env in list(row.envelopes):
         if env.envelope_number not in wanted_numbers:
             await session.delete(env)
+            changed = True
+    if admin_override and changed:
+        row.verified_at = None
+        row.verified_by_id = None
+
+
+async def _sync_irregular_script_series_envelopes(
+    session: DBSessionDep,
+    row: IrregularScriptPackingSeries,
+    items: list[ScriptEnvelopeItem],
+    *,
+    admin_override: bool = False,
+) -> None:
+    by_number = {e.envelope_number: e for e in row.envelopes}
+    wanted_numbers = {item.envelope_number for item in items}
+    changed = False
+    for item in items:
+        existing = by_number.get(item.envelope_number)
+        if existing is not None:
+            if existing.booklet_count != item.booklet_count:
+                existing.booklet_count = item.booklet_count
+                if admin_override:
+                    existing.verified_at = None
+                    existing.verified_by_id = None
+                changed = True
+        else:
+            session.add(
+                IrregularScriptEnvelope(
+                    packing_series_id=row.id,
+                    envelope_number=item.envelope_number,
+                    booklet_count=item.booklet_count,
+                )
+            )
+            changed = True
+    for env in list(row.envelopes):
+        if env.envelope_number not in wanted_numbers:
+            await session.delete(env)
+            changed = True
+    if admin_override and changed:
+        row.verified_at = None
+        row.verified_by_id = None
+
+
+def _assert_inspector_series_editable(row: ScriptPackingSeries) -> None:
+    if row.verified_at is not None:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="This series has been fully verified by the depot keeper and can no longer be edited.",
+        )
+    for e in row.envelopes:
+        if e.verified_at is not None:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="One or more envelopes have been verified by the depot keeper; this series can no longer be edited.",
+            )
+
+
+def _assert_inspector_irregular_series_editable(row: IrregularScriptPackingSeries) -> None:
+    if row.verified_at is not None:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="This irregular-script series has been fully verified by the depot keeper and can no longer be edited.",
+        )
+    for e in row.envelopes:
+        if e.verified_at is not None:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="One or more irregular-script envelopes have been verified by the depot keeper; this series can no longer be edited.",
+            )
+
+
+async def _admin_packing_school_and_scope(
+    session: DBSessionDep,
+    exam_id: int,
+    school_id: UUID,
+) -> tuple[School, set[UUID]]:
+    try:
+        await load_examination_or_raise(session, exam_id)
+    except ValueError:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Examination not found") from None
+    packing_school = await session.get(School, school_id)
+    if packing_school is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="School not found")
+    scope_ids = await script_scope_for_school(session, packing_school, exam_id)
+    return packing_school, scope_ids
 
 
 def _missing_envelopes_consecutive_prefix(nums_sorted: list[int]) -> list[int]:
@@ -556,17 +655,7 @@ async def upsert_my_school_script_series(
     row = result.scalar_one_or_none()
 
     if row is not None:
-        if row.verified_at is not None:
-            raise HTTPException(
-                status_code=status.HTTP_409_CONFLICT,
-                detail="This series has been fully verified by the depot keeper and can no longer be edited.",
-            )
-        for e in row.envelopes:
-            if e.verified_at is not None:
-                raise HTTPException(
-                    status_code=status.HTTP_409_CONFLICT,
-                    detail="One or more envelopes have been verified by the depot keeper; this series can no longer be edited.",
-                )
+        _assert_inspector_series_editable(row)
 
     if row is None:
         row = ScriptPackingSeries(
@@ -997,17 +1086,7 @@ async def upsert_my_school_irregular_script_series(
     row = result.scalar_one_or_none()
 
     if row is not None:
-        if row.verified_at is not None:
-            raise HTTPException(
-                status_code=status.HTTP_409_CONFLICT,
-                detail="This irregular-script series has been fully verified by the depot keeper and can no longer be edited.",
-            )
-        for e in row.envelopes:
-            if e.verified_at is not None:
-                raise HTTPException(
-                    status_code=status.HTTP_409_CONFLICT,
-                    detail="One or more irregular-script envelopes have been verified by the depot keeper; this series can no longer be edited.",
-                )
+        _assert_inspector_irregular_series_editable(row)
 
     if row is None:
         row = IrregularScriptPackingSeries(
@@ -1031,23 +1110,7 @@ async def upsert_my_school_irregular_script_series(
         await session.flush()
     else:
         row.updated_by_id = user.id
-        by_number = {e.envelope_number: e for e in row.envelopes}
-        wanted_numbers = {item.envelope_number for item in items}
-        for item in items:
-            existing = by_number.get(item.envelope_number)
-            if existing is not None:
-                existing.booklet_count = item.booklet_count
-            else:
-                session.add(
-                    IrregularScriptEnvelope(
-                        packing_series_id=row.id,
-                        envelope_number=item.envelope_number,
-                        booklet_count=item.booklet_count,
-                    )
-                )
-        for env in list(row.envelopes):
-            if env.envelope_number not in wanted_numbers:
-                await session.delete(env)
+        await _sync_irregular_script_series_envelopes(session, row, items)
         await session.flush()
 
     await session.commit()
@@ -1124,6 +1187,312 @@ async def delete_my_school_irregular_script_series(
                 status_code=status.HTTP_409_CONFLICT,
                 detail="One or more irregular-script envelopes have been verified by the depot keeper; this series cannot be deleted.",
             )
+    await session.delete(row)
+    await session.commit()
+
+
+@router.get(
+    "/examinations/{exam_id}/script-control/admin/school",
+    response_model=MySchoolScriptControlResponse,
+)
+async def get_admin_school_script_control(
+    exam_id: int,
+    session: DBSessionDep,
+    _: SuperAdminOrTestAdminOfficerDep,
+    school_id: UUID = Query(..., description="School to view or edit script packing for."),
+) -> MySchoolScriptControlResponse:
+    packing_school, scope_ids = await _admin_packing_school_and_scope(session, exam_id, school_id)
+    try:
+        return await _build_my_school_script_grid(
+            session, exam_id, packing_school, scope_ids, ExamInspectorSubjectScope.ALL
+        )
+    except ValueError:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Examination not found") from None
+
+
+@router.put(
+    "/examinations/{exam_id}/script-control/admin/school/series",
+    response_model=ScriptSeriesPackingResponse,
+)
+async def upsert_admin_school_script_series(
+    exam_id: int,
+    body: ScriptSeriesUpsertRequest,
+    session: DBSessionDep,
+    user: SuperAdminOrTestAdminOfficerDep,
+    school_id: UUID = Query(..., description="School to edit script packing for."),
+) -> ScriptSeriesPackingResponse:
+    packing_school, scope_ids = await _admin_packing_school_and_scope(session, exam_id, school_id)
+
+    allowed = await valid_script_packing_triples(session, exam_id, scope_ids, packing_school.id)
+    if (body.subject_id, body.paper_number, body.series_number) not in allowed:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Subject, paper, or series is not allowed for script packing (check timetable, registrations, and admin series configuration)",
+        )
+
+    no_scripts = body.no_scripts or _detect_no_scripts_from_envelopes(body.envelopes)
+    if no_scripts:
+        if _positive_envelope_counts_present(body.envelopes):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Cannot set no scripts when envelope counts are present.",
+            )
+        items: list[ScriptEnvelopeItem] = []
+    else:
+        cap = script_envelope_cap(body.paper_number)
+        items = _envelopes_for_script_upsert(body.envelopes, paper_number=body.paper_number, irregular=False)
+        if not items:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Enter a count for envelope 1, or enter 0 if there are no scripts for this series.",
+            )
+        items_word = _packing_items_word(body.paper_number, irregular=False)
+        for env in items:
+            if env.booklet_count > cap:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail=(
+                        f"Envelope {env.envelope_number}: at most {cap} {items_word} for paper {body.paper_number}."
+                    ),
+                )
+
+    stmt = (
+        select(ScriptPackingSeries)
+        .where(
+            ScriptPackingSeries.examination_id == exam_id,
+            ScriptPackingSeries.school_id == packing_school.id,
+            ScriptPackingSeries.subject_id == body.subject_id,
+            ScriptPackingSeries.paper_number == body.paper_number,
+            ScriptPackingSeries.series_number == body.series_number,
+        )
+        .options(selectinload(ScriptPackingSeries.envelopes))
+    )
+    result = await session.execute(stmt)
+    row = result.scalar_one_or_none()
+
+    if row is None:
+        row = ScriptPackingSeries(
+            examination_id=exam_id,
+            school_id=packing_school.id,
+            subject_id=body.subject_id,
+            paper_number=body.paper_number,
+            series_number=body.series_number,
+            updated_by_id=user.id,
+            no_scripts=no_scripts,
+        )
+        session.add(row)
+        await session.flush()
+        if not no_scripts:
+            for item in items:
+                session.add(
+                    ScriptEnvelope(
+                        packing_series_id=row.id,
+                        envelope_number=item.envelope_number,
+                        booklet_count=item.booklet_count,
+                    )
+                )
+            await session.flush()
+    else:
+        row.updated_by_id = user.id
+        row.no_scripts = no_scripts
+        if no_scripts:
+            row.verified_at = None
+            row.verified_by_id = None
+            for env in list(row.envelopes):
+                if env.verified_at is not None:
+                    env.verified_at = None
+                    env.verified_by_id = None
+                await session.delete(env)
+            await session.flush()
+        else:
+            await _sync_script_series_envelopes(session, row, items, admin_override=True)
+            await session.flush()
+
+    await session.commit()
+    await session.refresh(row, attribute_names=["envelopes"])
+    stmt2 = (
+        select(ScriptPackingSeries)
+        .where(ScriptPackingSeries.id == row.id)
+        .options(selectinload(ScriptPackingSeries.envelopes))
+    )
+    row2 = (await session.execute(stmt2)).scalar_one()
+    return _packing_to_response(row2)
+
+
+@router.delete(
+    "/examinations/{exam_id}/script-control/admin/school/series",
+    status_code=status.HTTP_204_NO_CONTENT,
+)
+async def delete_admin_school_script_series(
+    exam_id: int,
+    session: DBSessionDep,
+    _: SuperAdminOrTestAdminOfficerDep,
+    school_id: UUID = Query(..., description="School to edit script packing for."),
+    subject_id: int = Query(...),
+    paper_number: int = Query(..., ge=1),
+    series_number: int = Query(..., ge=1, le=32767),
+) -> None:
+    packing_school, _scope_ids = await _admin_packing_school_and_scope(session, exam_id, school_id)
+
+    stmt = (
+        select(ScriptPackingSeries)
+        .where(
+            ScriptPackingSeries.examination_id == exam_id,
+            ScriptPackingSeries.school_id == packing_school.id,
+            ScriptPackingSeries.subject_id == subject_id,
+            ScriptPackingSeries.paper_number == paper_number,
+            ScriptPackingSeries.series_number == series_number,
+        )
+        .options(selectinload(ScriptPackingSeries.envelopes))
+    )
+    result = await session.execute(stmt)
+    row = result.scalar_one_or_none()
+    if row is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Packing record not found")
+    await session.delete(row)
+    await session.commit()
+
+
+@router.get(
+    "/examinations/{exam_id}/irregular-script-control/admin/school",
+    response_model=MySchoolScriptControlResponse,
+)
+async def get_admin_school_irregular_script_control(
+    exam_id: int,
+    session: DBSessionDep,
+    _: SuperAdminOrTestAdminOfficerDep,
+    school_id: UUID = Query(..., description="School to view or edit irregular script packing for."),
+) -> MySchoolScriptControlResponse:
+    packing_school, scope_ids = await _admin_packing_school_and_scope(session, exam_id, school_id)
+    try:
+        return await _build_my_school_irregular_script_grid(
+            session, exam_id, packing_school, scope_ids, ExamInspectorSubjectScope.ALL
+        )
+    except ValueError:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Examination not found") from None
+
+
+@router.put(
+    "/examinations/{exam_id}/irregular-script-control/admin/school/series",
+    response_model=ScriptSeriesPackingResponse,
+)
+async def upsert_admin_school_irregular_script_series(
+    exam_id: int,
+    body: ScriptSeriesUpsertRequest,
+    session: DBSessionDep,
+    user: SuperAdminOrTestAdminOfficerDep,
+    school_id: UUID = Query(..., description="School to edit irregular script packing for."),
+) -> ScriptSeriesPackingResponse:
+    if body.no_scripts:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="no_scripts applies to regular worked scripts only.",
+        )
+
+    packing_school, scope_ids = await _admin_packing_school_and_scope(session, exam_id, school_id)
+
+    allowed = await valid_script_packing_triples(session, exam_id, scope_ids, packing_school.id)
+    if (body.subject_id, body.paper_number, body.series_number) not in allowed:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Subject, paper, or series is not allowed for irregular script packing (check timetable, registrations, and admin series configuration)",
+        )
+
+    cap = script_envelope_cap(body.paper_number)
+    items = _envelopes_for_script_upsert(body.envelopes, paper_number=body.paper_number, irregular=True)
+    if not items:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Enter a count for envelope 1.",
+        )
+    items_word = _packing_items_word(body.paper_number, irregular=True)
+    for env in items:
+        if env.booklet_count > cap:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Envelope {env.envelope_number}: at most {cap} {items_word} for paper {body.paper_number}.",
+            )
+
+    stmt = (
+        select(IrregularScriptPackingSeries)
+        .where(
+            IrregularScriptPackingSeries.examination_id == exam_id,
+            IrregularScriptPackingSeries.school_id == packing_school.id,
+            IrregularScriptPackingSeries.subject_id == body.subject_id,
+            IrregularScriptPackingSeries.paper_number == body.paper_number,
+            IrregularScriptPackingSeries.series_number == body.series_number,
+        )
+        .options(selectinload(IrregularScriptPackingSeries.envelopes))
+    )
+    result = await session.execute(stmt)
+    row = result.scalar_one_or_none()
+
+    if row is None:
+        row = IrregularScriptPackingSeries(
+            examination_id=exam_id,
+            school_id=packing_school.id,
+            subject_id=body.subject_id,
+            paper_number=body.paper_number,
+            series_number=body.series_number,
+            updated_by_id=user.id,
+        )
+        session.add(row)
+        await session.flush()
+        for item in items:
+            session.add(
+                IrregularScriptEnvelope(
+                    packing_series_id=row.id,
+                    envelope_number=item.envelope_number,
+                    booklet_count=item.booklet_count,
+                )
+            )
+        await session.flush()
+    else:
+        row.updated_by_id = user.id
+        await _sync_irregular_script_series_envelopes(session, row, items, admin_override=True)
+        await session.flush()
+
+    await session.commit()
+    await session.refresh(row, attribute_names=["envelopes"])
+    stmt2 = (
+        select(IrregularScriptPackingSeries)
+        .where(IrregularScriptPackingSeries.id == row.id)
+        .options(selectinload(IrregularScriptPackingSeries.envelopes))
+    )
+    row2 = (await session.execute(stmt2)).scalar_one()
+    return _irregular_packing_to_response(row2)
+
+
+@router.delete(
+    "/examinations/{exam_id}/irregular-script-control/admin/school/series",
+    status_code=status.HTTP_204_NO_CONTENT,
+)
+async def delete_admin_school_irregular_script_series(
+    exam_id: int,
+    session: DBSessionDep,
+    _: SuperAdminOrTestAdminOfficerDep,
+    school_id: UUID = Query(..., description="School to edit irregular script packing for."),
+    subject_id: int = Query(...),
+    paper_number: int = Query(..., ge=1),
+    series_number: int = Query(..., ge=1, le=32767),
+) -> None:
+    packing_school, _scope_ids = await _admin_packing_school_and_scope(session, exam_id, school_id)
+
+    stmt = (
+        select(IrregularScriptPackingSeries)
+        .where(
+            IrregularScriptPackingSeries.examination_id == exam_id,
+            IrregularScriptPackingSeries.school_id == packing_school.id,
+            IrregularScriptPackingSeries.subject_id == subject_id,
+            IrregularScriptPackingSeries.paper_number == paper_number,
+            IrregularScriptPackingSeries.series_number == series_number,
+        )
+        .options(selectinload(IrregularScriptPackingSeries.envelopes))
+    )
+    result = await session.execute(stmt)
+    row = result.scalar_one_or_none()
+    if row is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Irregular-script packing record not found")
     await session.delete(row)
     await session.commit()
 
@@ -1322,6 +1691,114 @@ async def export_script_control_records_excel(
         iter([body]),
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
+async def _subject_series_counts_for_exam(session: DBSessionDep, examination_id: int) -> list[ScriptControlSubjectSeriesCountRow]:
+    subjects_ordered = await ordered_subjects_on_examination_timetable(session, examination_id)
+    cmap = await subject_series_count_map(session, examination_id)
+    return [
+        ScriptControlSubjectSeriesCountRow(
+            subject_id=s.id,
+            subject_code=s.code,
+            subject_name=s.name,
+            series_count=cmap.get(s.id, 1),
+        )
+        for s in subjects_ordered
+    ]
+
+
+@router.get("/script-control/school-status", response_model=ScriptControlSchoolStatusListResponse)
+async def list_script_control_school_status(
+    session: DBSessionDep,
+    _: SuperAdminOrTestAdminOfficerDep,
+    examination_id: int = Query(...),
+    subject_id: int = Query(...),
+    paper_number: int = Query(..., ge=1),
+    region: Region | None = Query(default=None),
+    zone: Zone | None = Query(default=None),
+    school_q: str | None = Query(default=None, description="Case-insensitive search on school code or name."),
+    status: SchoolStatusFilter = Query(default="all"),
+    skip: int = Query(default=0, ge=0),
+    limit: int = Query(default=100, ge=1, le=500),
+) -> ScriptControlSchoolStatusListResponse:
+    try:
+        await load_examination_or_raise(session, examination_id)
+    except ValueError:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Examination not found") from None
+
+    sub = await session.get(Subject, subject_id)
+    if sub is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Subject not found")
+
+    rows, status_counts = await build_script_control_school_status_rows(
+        session,
+        examination_id=examination_id,
+        subject_id=subject_id,
+        paper_number=paper_number,
+        irregular=False,
+        region=region,
+        zone=zone,
+        school_q=school_q,
+        status_filter=status,
+    )
+    total = len(rows)
+    page = rows[skip : skip + limit]
+    subject_series_counts = await _subject_series_counts_for_exam(session, examination_id)
+    return ScriptControlSchoolStatusListResponse(
+        items=page,
+        total=total,
+        skip=skip,
+        limit=limit,
+        status_counts=status_counts,
+        subject_series_counts=subject_series_counts,
+    )
+
+
+@router.get("/irregular-script-control/school-status", response_model=ScriptControlSchoolStatusListResponse)
+async def list_irregular_script_control_school_status(
+    session: DBSessionDep,
+    _: SuperAdminOrTestAdminOfficerDep,
+    examination_id: int = Query(...),
+    subject_id: int = Query(...),
+    paper_number: int = Query(..., ge=1),
+    region: Region | None = Query(default=None),
+    zone: Zone | None = Query(default=None),
+    school_q: str | None = Query(default=None, description="Case-insensitive search on school code or name."),
+    status: SchoolStatusFilter = Query(default="all"),
+    skip: int = Query(default=0, ge=0),
+    limit: int = Query(default=100, ge=1, le=500),
+) -> ScriptControlSchoolStatusListResponse:
+    try:
+        await load_examination_or_raise(session, examination_id)
+    except ValueError:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Examination not found") from None
+
+    sub = await session.get(Subject, subject_id)
+    if sub is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Subject not found")
+
+    rows, status_counts = await build_script_control_school_status_rows(
+        session,
+        examination_id=examination_id,
+        subject_id=subject_id,
+        paper_number=paper_number,
+        irregular=True,
+        region=region,
+        zone=zone,
+        school_q=school_q,
+        status_filter=status,
+    )
+    total = len(rows)
+    page = rows[skip : skip + limit]
+    subject_series_counts = await _subject_series_counts_for_exam(session, examination_id)
+    return ScriptControlSchoolStatusListResponse(
+        items=page,
+        total=total,
+        skip=skip,
+        limit=limit,
+        status_counts=status_counts,
+        subject_series_counts=subject_series_counts,
     )
 
 

@@ -24,7 +24,7 @@ async def create_test_admin_officer(
     session: DBSessionDep,
     _admin: SuperAdminDep,
 ) -> TestAdminOfficerCreatedResponse:
-    """Email/password sign-in via ``POST /auth/super-admin/login``; read-only script monitoring APIs."""
+    """Email/password sign-in via ``POST /auth/super-admin/login``; worked-scripts monitoring and correction APIs."""
     email_str = str(data.email).strip()
 
     dup = await session.execute(select(User).where(User.email == email_str))

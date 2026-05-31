@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import date
+from typing import Literal
 from uuid import UUID
 
 from pydantic import BaseModel, Field, field_validator
@@ -165,3 +166,47 @@ class ScriptControlAdminListResponse(BaseModel):
             "Keys are `{examination_id}:{school_uuid}:{subject_id}` (UUID as string)."
         ),
     )
+
+
+ScriptControlSchoolOverallStatus = Literal["missing", "partial", "complete", "verified"]
+
+
+class ScriptControlSchoolStatusCounts(BaseModel):
+    missing: int = 0
+    partial: int = 0
+    complete: int = 0
+    verified: int = 0
+    total: int = 0
+
+
+class ScriptControlSchoolStatusRow(BaseModel):
+    school_id: UUID
+    school_code: str
+    school_name: str = ""
+    region: str = ""
+    zone: str = ""
+    examination_id: int
+    subject_id: int
+    subject_code: str
+    subject_original_code: str | None = None
+    subject_name: str
+    paper_number: int
+    registered_candidates: int = 0
+    expected_series: int = Field(ge=1)
+    recorded_series: int = Field(ge=0)
+    verified_series: int = Field(ge=0)
+    total_booklets: int = Field(ge=0)
+    overall_status: ScriptControlSchoolOverallStatus
+    series_items: list[ScriptControlAdminRow] = Field(
+        default_factory=list,
+        description="Packing rows for this school/subject/paper; absent series numbers are unrecorded.",
+    )
+
+
+class ScriptControlSchoolStatusListResponse(BaseModel):
+    items: list[ScriptControlSchoolStatusRow]
+    total: int
+    skip: int
+    limit: int
+    status_counts: ScriptControlSchoolStatusCounts
+    subject_series_counts: list[ScriptControlSubjectSeriesCountRow] = Field(default_factory=list)

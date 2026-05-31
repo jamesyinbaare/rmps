@@ -750,6 +750,7 @@ export type ExaminationScriptSeriesConfigRow = {
   subject_id: number;
   subject_code: string;
   subject_name: string;
+  subject_type: SubjectTypeEnum;
   series_count: number;
 };
 
@@ -1663,6 +1664,90 @@ export type ScriptControlAdminListResponse = {
   registered_candidates_by_school_subject?: Record<string, number>;
 };
 
+export type ScriptControlSchoolOverallStatus = "missing" | "partial" | "complete" | "verified";
+
+export type ScriptControlSchoolStatusCounts = {
+  missing: number;
+  partial: number;
+  complete: number;
+  verified: number;
+  total: number;
+};
+
+export type ScriptControlSchoolStatusRow = {
+  school_id: string;
+  school_code: string;
+  school_name: string;
+  region: string;
+  zone: string;
+  examination_id: number;
+  subject_id: number;
+  subject_code: string;
+  subject_original_code?: string | null;
+  subject_name: string;
+  paper_number: number;
+  registered_candidates: number;
+  expected_series: number;
+  recorded_series: number;
+  verified_series: number;
+  total_booklets: number;
+  overall_status: ScriptControlSchoolOverallStatus;
+  series_items: ScriptControlAdminRow[];
+};
+
+export type ScriptControlSchoolStatusListResponse = {
+  items: ScriptControlSchoolStatusRow[];
+  total: number;
+  skip: number;
+  limit: number;
+  status_counts: ScriptControlSchoolStatusCounts;
+  subject_series_counts: ScriptControlSubjectSeriesCountRow[];
+};
+
+export type ScriptControlSchoolStatusParams = {
+  examination_id: number;
+  subject_id: number;
+  paper_number: number;
+  region?: string;
+  zone?: string;
+  school_q?: string;
+  status?: ScriptControlSchoolOverallStatus | "all";
+  skip?: number;
+  limit?: number;
+};
+
+export async function getScriptControlSchoolStatus(
+  params: ScriptControlSchoolStatusParams,
+): Promise<ScriptControlSchoolStatusListResponse> {
+  const q = new URLSearchParams();
+  q.set("examination_id", String(params.examination_id));
+  q.set("subject_id", String(params.subject_id));
+  q.set("paper_number", String(params.paper_number));
+  if (params.region?.trim()) q.set("region", params.region.trim());
+  if (params.zone?.trim()) q.set("zone", params.zone.trim());
+  if (params.school_q?.trim()) q.set("school_q", params.school_q.trim());
+  if (params.status && params.status !== "all") q.set("status", params.status);
+  q.set("skip", String(params.skip ?? 0));
+  q.set("limit", String(params.limit ?? 100));
+  return apiJson<ScriptControlSchoolStatusListResponse>(`/script-control/school-status?${q}`);
+}
+
+export async function getIrregularScriptControlSchoolStatus(
+  params: ScriptControlSchoolStatusParams,
+): Promise<ScriptControlSchoolStatusListResponse> {
+  const q = new URLSearchParams();
+  q.set("examination_id", String(params.examination_id));
+  q.set("subject_id", String(params.subject_id));
+  q.set("paper_number", String(params.paper_number));
+  if (params.region?.trim()) q.set("region", params.region.trim());
+  if (params.zone?.trim()) q.set("zone", params.zone.trim());
+  if (params.school_q?.trim()) q.set("school_q", params.school_q.trim());
+  if (params.status && params.status !== "all") q.set("status", params.status);
+  q.set("skip", String(params.skip ?? 0));
+  q.set("limit", String(params.limit ?? 100));
+  return apiJson<ScriptControlSchoolStatusListResponse>(`/irregular-script-control/school-status?${q}`);
+}
+
 export type ScriptControlAdminRecordsParams = {
   examination_id?: number;
   school_id?: string;
@@ -1868,6 +1953,99 @@ export async function deleteIrregularScriptSeries(
   });
   if (params.posting_id?.trim()) q.set("posting_id", params.posting_id.trim());
   await apiJson(`/examinations/${examId}/irregular-script-control/my-school/series?${q}`, {
+    method: "DELETE",
+  });
+}
+
+/** Admin / test admin officer: full school grid for complete & correct. */
+export async function getAdminSchoolScriptControl(
+  examId: number,
+  schoolId: string,
+): Promise<MySchoolScriptControlResponse> {
+  const q = new URLSearchParams({ school_id: schoolId.trim() });
+  return apiJson<MySchoolScriptControlResponse>(
+    `/examinations/${examId}/script-control/admin/school?${q}`,
+  );
+}
+
+export async function getAdminSchoolIrregularScriptControl(
+  examId: number,
+  schoolId: string,
+): Promise<MySchoolScriptControlResponse> {
+  const q = new URLSearchParams({ school_id: schoolId.trim() });
+  return apiJson<MySchoolScriptControlResponse>(
+    `/examinations/${examId}/irregular-script-control/admin/school?${q}`,
+  );
+}
+
+export async function upsertAdminScriptSeries(
+  examId: number,
+  schoolId: string,
+  payload: ScriptSeriesUpsertPayload,
+): Promise<ScriptSeriesPackingResponse> {
+  const q = new URLSearchParams({ school_id: schoolId.trim() });
+  return apiJson<ScriptSeriesPackingResponse>(
+    `/examinations/${examId}/script-control/admin/school/series?${q}`,
+    {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    },
+  );
+}
+
+export async function upsertAdminIrregularScriptSeries(
+  examId: number,
+  schoolId: string,
+  payload: ScriptSeriesUpsertPayload,
+): Promise<ScriptSeriesPackingResponse> {
+  const q = new URLSearchParams({ school_id: schoolId.trim() });
+  return apiJson<ScriptSeriesPackingResponse>(
+    `/examinations/${examId}/irregular-script-control/admin/school/series?${q}`,
+    {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    },
+  );
+}
+
+export async function deleteAdminScriptSeries(
+  examId: number,
+  params: {
+    school_id: string;
+    subject_id: number;
+    paper_number: number;
+    series_number: number;
+  },
+): Promise<void> {
+  const q = new URLSearchParams({
+    school_id: params.school_id.trim(),
+    subject_id: String(params.subject_id),
+    paper_number: String(params.paper_number),
+    series_number: String(params.series_number),
+  });
+  await apiJson(`/examinations/${examId}/script-control/admin/school/series?${q}`, {
+    method: "DELETE",
+  });
+}
+
+export async function deleteAdminIrregularScriptSeries(
+  examId: number,
+  params: {
+    school_id: string;
+    subject_id: number;
+    paper_number: number;
+    series_number: number;
+  },
+): Promise<void> {
+  const q = new URLSearchParams({
+    school_id: params.school_id.trim(),
+    subject_id: String(params.subject_id),
+    paper_number: String(params.paper_number),
+    series_number: String(params.series_number),
+  });
+  await apiJson(`/examinations/${examId}/irregular-script-control/admin/school/series?${q}`, {
     method: "DELETE",
   });
 }
