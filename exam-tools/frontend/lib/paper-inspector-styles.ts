@@ -229,6 +229,35 @@ export type PaperInspectorVisuals = {
   editDividerClass: string;
 };
 
+/** Sticky edit context bar — left accent for P1, success for P2. */
+export function paperEditContextBarClass(paperNumber: number): string {
+  if (paperNumber === 1) {
+    return "border-l-4 border-l-accent bg-gradient-to-r from-accent/[0.08] via-card to-card";
+  }
+  if (paperNumber === 2) {
+    return "border-l-4 border-l-success bg-gradient-to-r from-success/[0.08] via-card to-card";
+  }
+  return "border-l-4 border-l-muted-foreground/35";
+}
+
+/** Active segment in Paper 1 / Paper 2 toggle on the edit context bar. */
+export function paperEditToggleActiveClass(paper: 1 | 2): string {
+  return paper === 1
+    ? "bg-accent/15 font-semibold text-accent ring-1 ring-inset ring-accent/35"
+    : "bg-success/15 font-semibold text-success ring-1 ring-inset ring-success/35";
+}
+
+/** Series list / panel shell tint for the active paper. */
+export function paperEditPanelClass(paperNumber: number): string {
+  if (paperNumber === 1) {
+    return "border border-border border-l-4 border-l-accent bg-gradient-to-b from-accent/[0.05] to-card";
+  }
+  if (paperNumber === 2) {
+    return "border border-border border-l-4 border-l-success bg-gradient-to-b from-success/[0.05] to-card";
+  }
+  return "border border-border border-l-4 border-l-muted-foreground/35 bg-card";
+}
+
 /** Distinct from paper P1/P2 badges — warm secondary (gold) tint so series stands out. */
 export const seriesInspectorBadgeClass =
   "inline-flex shrink-0 items-center rounded-md border border-secondary/50 bg-secondary/25 px-2.5 py-1 text-xs font-semibold tabular-nums text-secondary-foreground shadow-sm";

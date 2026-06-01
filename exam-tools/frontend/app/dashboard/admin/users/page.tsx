@@ -397,7 +397,7 @@ export default function AdminUsersPage() {
       <div>
         <h2 className="text-xl font-semibold text-foreground">Users</h2>
         <p className="mt-1 max-w-3xl text-sm text-muted-foreground">
-          Create accounts for inspectors, depot keepers, test admin officers (read-only worked-scripts monitoring),
+          Create accounts for inspectors, depot keepers, test admin officers (worked-scripts monitoring and correction),
           executive viewers (national monitoring dashboard), and finance officers (official accounts and centre
           invigilator summaries).
           For full lists, search, edits, and bulk upload, use{" "}

@@ -26,6 +26,8 @@ type Props = {
   ariaDescribedBy?: string;
   /** Ghana brand strip and warm panel tint (executive centre detail). */
   brand?: boolean;
+  /** When true, skip auto-focusing the first focusable element on open. */
+  disableAutoFocus?: boolean;
 };
 
 export function BottomSheet({
@@ -36,6 +38,7 @@ export function BottomSheet({
   footer,
   ariaDescribedBy,
   brand = false,
+  disableAutoFocus = false,
 }: Props) {
   const titleId = useId();
   const panelRef = useRef<HTMLDivElement>(null);
@@ -81,7 +84,7 @@ export function BottomSheet({
   }, [open, onOpenChange]);
 
   useEffect(() => {
-    if (!open) return;
+    if (!open || disableAutoFocus) return;
     const t = window.setTimeout(() => {
       const panel = panelRef.current;
       if (!panel) return;
@@ -91,7 +94,7 @@ export function BottomSheet({
       focusable?.focus();
     }, 50);
     return () => window.clearTimeout(t);
-  }, [open]);
+  }, [disableAutoFocus, open]);
 
   const finishDrag = useCallback(
     (offset: number, velocity: number) => {
