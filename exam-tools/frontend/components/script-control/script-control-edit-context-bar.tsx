@@ -4,9 +4,20 @@ import Link from "next/link";
 import { ChevronRight } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
+import { ScriptControlSchoolIdentity } from "@/components/script-control/script-control-school-identity";
 import { displaySubjectCode } from "@/lib/script-control-completion";
-import type { ExaminationScriptSeriesConfigRow, MySchoolScriptControlResponse } from "@/lib/api";
+import type { MySchoolScriptControlResponse } from "@/lib/api";
+import {
+  getPaperInspectorVisuals,
+  paperEditContextBarClass,
+  paperEditToggleActiveClass,
+} from "@/lib/paper-inspector-styles";
 import { cn } from "@/lib/utils";
+
+const PAPER_OPTIONS = [
+  { value: 1 as const, label: "Paper 1" },
+  { value: 2 as const, label: "Paper 2" },
+];
 
 type Props = {
   data: MySchoolScriptControlResponse;
@@ -14,13 +25,16 @@ type Props = {
   paperNumber: number;
   recordedSeries: number;
   totalSeries: number;
-  queueMode?: boolean;
-  canQueueNavigate?: boolean;
-  queueBusy?: boolean;
-  onNextSchool?: () => void;
+  onNextSeries?: () => void;
+  canNextSeries?: boolean;
+  actionBusy?: boolean;
   viewBackHref: string;
   saveNotice?: string | null;
+  schoolName?: string | null;
   className?: string;
+  onFindSchool?: () => void;
+  onChangeSubject?: () => void;
+  onPaperChange?: (paper: 1 | 2) => void;
 };
 
 export function ScriptControlEditContextBar({
@@ -29,37 +43,89 @@ export function ScriptControlEditContextBar({
   paperNumber,
   recordedSeries,
   totalSeries,
-  queueMode,
-  canQueueNavigate,
-  queueBusy,
-  onNextSchool,
+  onNextSeries,
+  canNextSeries,
+  actionBusy,
   viewBackHref,
   saveNotice,
+  schoolName,
   className,
+  onFindSchool,
+  onChangeSubject,
+  onPaperChange,
 }: Props) {
   const pct = totalSeries > 0 ? Math.round((recordedSeries / totalSeries) * 100) : 0;
+  const paperVisuals = getPaperInspectorVisuals(paperNumber);
+  const progressBarClass =
+    paperNumber === 1 ? "bg-accent" : paperNumber === 2 ? "bg-success" : "bg-primary";
 
   return (
     <div
       className={cn(
-        "rounded-xl border border-border bg-card px-4 py-3 lg:sticky lg:top-[var(--staff-sticky-header-offset,4.5rem)] lg:z-10",
+        "sticky top-[var(--staff-sticky-header-offset,4.5rem)] z-10 rounded-xl border border-border px-4 py-3 lg:top-[var(--staff-sticky-header-offset,4.5rem)]",
+        paperEditContextBarClass(paperNumber),
         className,
       )}
     >
       <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
         <div className="min-w-0 flex-1">
-          <div className="flex flex-wrap items-center gap-x-1.5 gap-y-1 text-sm">
-            <span className="font-mono font-semibold text-foreground">{data.school_code}</span>
+          <ScriptControlSchoolIdentity
+            schoolCode={data.school_code}
+            schoolName={schoolName}
+            onChangeSchool={onFindSchool}
+            nameClamp={2}
+            className="mb-2"
+          />
+          <div className="flex flex-wrap items-center gap-x-1.5 gap-y-2 text-sm">
+            {onChangeSubject ? (
+              <button
+                type="button"
+                className="font-medium text-foreground underline decoration-primary/40 underline-offset-2 hover:text-primary lg:no-underline lg:hover:text-foreground"
+                onClick={onChangeSubject}
+              >
+                {displaySubjectCode(subject)}
+              </button>
+            ) : (
+              <span className="font-medium text-foreground">{displaySubjectCode(subject)}</span>
+            )}
             <ChevronRight className="size-3.5 shrink-0 text-muted-foreground" aria-hidden />
-            <span className="font-medium text-foreground">{displaySubjectCode(subject)}</span>
-            <ChevronRight className="size-3.5 shrink-0 text-muted-foreground" aria-hidden />
-            <span className="text-muted-foreground">Paper {paperNumber}</span>
+            {onPaperChange ? (
+              <div
+                className={cn(
+                  "flex gap-0.5 rounded-lg border p-0.5",
+                  paperNumber === 1 ? "border-accent/30 bg-accent/5" : "border-success/30 bg-success/5",
+                )}
+                role="group"
+                aria-label="Switch paper"
+              >
+                {PAPER_OPTIONS.map((opt) => (
+                  <button
+                    key={opt.value}
+                    type="button"
+                    className={cn(
+                      "min-h-9 rounded-md px-2.5 text-xs font-medium transition-colors sm:px-3 sm:text-sm",
+                      paperNumber === opt.value
+                        ? paperEditToggleActiveClass(opt.value)
+                        : "text-muted-foreground hover:text-foreground",
+                    )}
+                    aria-pressed={paperNumber === opt.value}
+                    onClick={() => {
+                      if (paperNumber !== opt.value) onPaperChange(opt.value);
+                    }}
+                  >
+                    {opt.label}
+                  </button>
+                ))}
+              </div>
+            ) : (
+              <span className={paperVisuals.badgeClass}>Paper {paperNumber}</span>
+            )}
           </div>
           <p className="mt-0.5 truncate text-xs text-muted-foreground">{subject.subject_name}</p>
           <div className="mt-2 flex items-center gap-3">
             <div className="h-1.5 min-w-[120px] flex-1 max-w-xs overflow-hidden rounded-full bg-muted">
               <div
-                className="h-full rounded-full bg-primary transition-all"
+                className={cn("h-full rounded-full transition-all", progressBarClass)}
                 style={{ width: `${pct}%` }}
                 role="progressbar"
                 aria-valuenow={recordedSeries}
@@ -76,12 +142,9 @@ export function ScriptControlEditContextBar({
 
         <div className="flex flex-wrap items-center gap-2 lg:justify-end">
           {saveNotice ? <span className="text-sm text-muted-foreground">{saveNotice}</span> : null}
-          {queueMode ? (
-            <span className="rounded-full bg-primary/10 px-2 py-0.5 text-xs font-medium text-primary">Queue</span>
-          ) : null}
-          {canQueueNavigate && onNextSchool ? (
-            <Button type="button" size="sm" variant="outline" disabled={queueBusy} onClick={onNextSchool}>
-              Next school
+          {canNextSeries && onNextSeries ? (
+            <Button type="button" size="sm" variant="default" disabled={actionBusy} onClick={onNextSeries}>
+              Next series
             </Button>
           ) : null}
           <Button type="button" size="sm" variant="ghost" asChild>

@@ -77,7 +77,7 @@ function ScriptControlShellInner({ children }: { children: ReactNode }) {
         if (cancelled) return;
         setExamId(ex.id);
         const extra: Record<string, string | undefined> = {};
-        for (const key of ["subject", "paper", "school", "status", "region", "zone", "school_q", "page", "limit", "queue", "detail", "subject_type"]) {
+        for (const key of ["subject", "paper", "school", "status", "region", "zone", "school_q", "page", "limit", "detail", "subject_type"]) {
           const v = searchParams.get(key);
           if (v) extra[key] = v;
         }
@@ -97,7 +97,7 @@ function ScriptControlShellInner({ children }: { children: ReactNode }) {
   const syncSharedParams = useCallback(
     (nextExam: number | null, nextType: ScriptControlRecordType) => {
       const extra: Record<string, string | undefined> = {};
-      for (const key of ["subject", "paper", "school", "status", "region", "zone", "school_q", "page", "limit", "queue", "detail", "subject_type"]) {
+      for (const key of ["subject", "paper", "school", "status", "region", "zone", "school_q", "page", "limit", "detail", "subject_type"]) {
         const v = searchParams.get(key);
         if (v) extra[key] = v;
       }
@@ -130,7 +130,7 @@ function ScriptControlShellInner({ children }: { children: ReactNode }) {
         exam: examId,
         type: recordType,
         extra: Object.fromEntries(
-          ["school", "subject", "region", "zone", "queue", "paper", "status", "subject_type"].map((k) => [
+          ["school", "subject", "region", "zone", "paper", "status", "subject_type"].map((k) => [
             k,
             searchParams.get(k) ?? undefined,
           ]),
@@ -145,7 +145,7 @@ function ScriptControlShellInner({ children }: { children: ReactNode }) {
         <h2 className="text-xl font-semibold text-foreground">Worked scripts control</h2>
         <p className="mt-1 max-w-3xl text-sm text-muted-foreground">
           {isEditMode
-            ? "Edit mode — enter or correct envelope counts for a school. Changes to verified series clear depot verification."
+            ? "Enter or correct envelope counts for a school."
             : "View mode — monitor packed scripts nationally by subject and paper, including schools that have not submitted."}
         </p>
       </div>

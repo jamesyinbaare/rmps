@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 
 import {
   ScriptControlEditSeriesNav,
@@ -8,8 +8,11 @@ import {
   seriesNavKey,
   type SeriesNavItem,
 } from "@/components/script-control/script-control-edit-series-nav";
+import { ScriptControlMobileSeriesEditor } from "@/components/script-control/script-control-mobile-series-editor";
+import { ScriptControlMobileSeriesList } from "@/components/script-control/script-control-mobile-series-list";
+import { ScriptControlSchoolIdentity } from "@/components/script-control/script-control-school-identity";
 import { displaySubjectCode } from "@/lib/script-control-completion";
-import { getPaperInspectorVisuals, isPaperBundleFullyRecorded } from "@/lib/paper-inspector-styles";
+import { getPaperInspectorVisuals } from "@/lib/paper-inspector-styles";
 import {
   ScriptControlSeriesBlock,
   emptyDraft,
@@ -33,6 +36,15 @@ type Props = {
   onFormError: (msg: string | null) => void;
   handlers: SeriesEditHandlers;
   paperFilter?: number | null;
+  schoolDisplayName?: string | null;
+  /** Mobile: highlight row after save (nav key). */
+  highlightedSeriesKey?: string | null;
+  /** Mobile: open editor for this nav key after save. */
+  mobileOpenSeriesKey?: string | null;
+  onMobileOpenHandled?: () => void;
+  successFlashKey?: string | null;
+  canSaveAndNext?: boolean;
+  onBeforeSave?: (advanceSeries: boolean) => void;
 };
 
 export function ScriptControlSubjectEditor({
@@ -48,9 +60,18 @@ export function ScriptControlSubjectEditor({
   onFormError,
   handlers,
   paperFilter,
+  schoolDisplayName,
+  highlightedSeriesKey,
+  mobileOpenSeriesKey,
+  onMobileOpenHandled,
+  successFlashKey,
+  canSaveAndNext,
+  onBeforeSave,
 }: Props) {
   const subject = data.subjects.find((s) => s.subject_id === subjectId);
   const [desktopSeriesKey, setDesktopSeriesKey] = useState<string | null>(null);
+  const [mobileSeriesKey, setMobileSeriesKey] = useState<string | null>(null);
+  const listRef = useRef<HTMLDivElement>(null);
 
   const papers =
     subject && paperFilter != null && Number.isFinite(paperFilter)
@@ -65,16 +86,23 @@ export function ScriptControlSubjectEditor({
   useEffect(() => {
     if (navItems.length === 0) {
       setDesktopSeriesKey(null);
+      setMobileSeriesKey(null);
       return;
     }
+    const defaultKey = pickDefaultSeriesKey(navItems);
     setDesktopSeriesKey((cur) => {
       if (cur && navItems.some((it) => seriesNavKey(it.paperNumber, it.slot.series_number) === cur)) return cur;
-      return pickDefaultSeriesKey(navItems);
+      return defaultKey;
+    });
+    setMobileSeriesKey((cur) => {
+      if (cur && navItems.some((it) => seriesNavKey(it.paperNumber, it.slot.series_number) === cur)) return cur;
+      return defaultKey;
     });
   }, [navItems]);
 
   useEffect(() => {
     if (!desktopSeriesKey || navItems.length === 0) return;
+    if (typeof window !== "undefined" && !window.matchMedia("(min-width: 1024px)").matches) return;
     const item = navItems.find(
       (it) => seriesNavKey(it.paperNumber, it.slot.series_number) === desktopSeriesKey,
     );
@@ -82,6 +110,35 @@ export function ScriptControlSubjectEditor({
     onOpenEdit(subjectId, item.paperNumber, item.slot.series_number, item.slot.packing);
     // Open edit when the selected series changes, not when edit is closed after save.
   }, [desktopSeriesKey]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  useEffect(() => {
+    if (!mobileOpenSeriesKey || navItems.length === 0) return;
+    const item = navItems.find(
+      (it) => seriesNavKey(it.paperNumber, it.slot.series_number) === mobileOpenSeriesKey,
+    );
+    if (!item) {
+      onMobileOpenHandled?.();
+      return;
+    }
+    setMobileSeriesKey(mobileOpenSeriesKey);
+    setDesktopSeriesKey(mobileOpenSeriesKey);
+    onOpenEdit(subjectId, item.paperNumber, item.slot.series_number, item.slot.packing);
+    onMobileOpenHandled?.();
+    requestAnimationFrame(() => {
+      listRef.current
+        ?.querySelector(`[data-series-key="${mobileOpenSeriesKey}"]`)
+        ?.scrollIntoView({ block: "nearest", behavior: "smooth" });
+    });
+  }, [mobileOpenSeriesKey, navItems, onMobileOpenHandled, onOpenEdit, subjectId]);
+
+  useEffect(() => {
+    if (!highlightedSeriesKey) return;
+    requestAnimationFrame(() => {
+      listRef.current
+        ?.querySelector(`[data-series-key="${highlightedSeriesKey}"]`)
+        ?.scrollIntoView({ block: "nearest", behavior: "smooth" });
+    });
+  }, [highlightedSeriesKey, navItems]);
 
   if (!subject) {
     return (
@@ -103,8 +160,14 @@ export function ScriptControlSubjectEditor({
     (it) => seriesNavKey(it.paperNumber, it.slot.series_number) === desktopSeriesKey,
   );
 
+  const mobileEditingItem = editingKey
+    ? navItems.find((it) => seriesSlotKey(subjectId, it.paperNumber, it.slot.series_number) === editingKey)
+    : null;
+
   function selectSeries(paperNumber: number, seriesNumber: number) {
-    setDesktopSeriesKey(seriesNavKey(paperNumber, seriesNumber));
+    const key = seriesNavKey(paperNumber, seriesNumber);
+    setDesktopSeriesKey(key);
+    setMobileSeriesKey(key);
     const item = navItems.find(
       (it) => it.paperNumber === paperNumber && it.slot.series_number === seriesNumber,
     );
@@ -113,60 +176,59 @@ export function ScriptControlSubjectEditor({
     }
   }
 
+  function selectMobileSeries(paperNumber: number, seriesNumber: number) {
+    selectSeries(paperNumber, seriesNumber);
+  }
+
+  const mobilePaperNumber = paperFilter ?? navItems[0]?.paperNumber ?? 1;
+  const mobilePaperVisuals = getPaperInspectorVisuals(mobilePaperNumber);
+
   return (
     <div className="space-y-4">
-      {/* Mobile: stacked series list */}
-      <div className="lg:hidden space-y-4">
+      {/* Mobile: series list + full-screen editor */}
+      <div className="space-y-4 lg:hidden">
         <div>
-          <h3 className="text-lg font-semibold text-foreground">
-            {displaySubjectCode(subject)} — {subject.subject_name}
-          </h3>
-          <p className="text-sm text-muted-foreground">{data.school_code}</p>
+          <div className="flex flex-wrap items-center gap-2">
+            <h3 className="text-lg font-semibold text-foreground">
+              {displaySubjectCode(subject)} — {subject.subject_name}
+            </h3>
+            <span className={mobilePaperVisuals.badgeClass}>Paper {mobilePaperNumber}</span>
+          </div>
+          <ScriptControlSchoolIdentity
+            schoolCode={data.school_code}
+            schoolName={schoolDisplayName}
+            nameClamp={1}
+            className="mt-1"
+          />
         </div>
-        {papers.map((paper) => {
-          const v = getPaperInspectorVisuals(paper.paper_number);
-          const bundle = {
-            subjectId: subject.subject_id,
-            subjectCode: subject.subject_code,
-            subjectOriginalCode: subject.subject_original_code ?? null,
-            subjectName: subject.subject_name,
-            paperNumber: paper.paper_number,
-            examinationDate: paper.examination_date,
-            series: paper.series,
-          };
-          const recorded = isPaperBundleFullyRecorded(bundle);
-          return (
-            <div key={paper.paper_number} className={v.cardClass}>
-              <div className="mb-3 flex flex-wrap items-center gap-2">
-                <span className={v.badgeClass}>{v.badgeShortLabel}</span>
-                <span className="font-bold">Paper {paper.paper_number}</span>
-                {recorded ? (
-                  <span className="rounded-full bg-muted px-2 py-0.5 text-xs text-muted-foreground">Recorded</span>
-                ) : null}
-              </div>
-              <ul className="space-y-4">
-                {paper.series.map((slot) => (
-                  <ScriptControlSeriesBlock
-                    key={slot.series_number}
-                    data={data}
-                    subjectId={subjectId}
-                    paperNumber={paper.paper_number}
-                    slot={slot}
-                    recordType={recordType}
-                    editingKey={editingKey}
-                    draft={draft}
-                    formError={formError}
-                    onOpenEdit={onOpenEdit}
-                    onCloseEdit={onCloseEdit}
-                    onDraftChange={onDraftChange}
-                    onFormError={onFormError}
-                    handlers={handlers}
-                  />
-                ))}
-              </ul>
-            </div>
-          );
-        })}
+        <div ref={listRef}>
+          <ScriptControlMobileSeriesList
+            items={navItems}
+            paperNumber={mobilePaperNumber}
+            selectedKey={mobileSeriesKey}
+            highlightedKey={highlightedSeriesKey}
+            successFlashKey={successFlashKey}
+            onSelect={selectMobileSeries}
+          />
+        </div>
+        {mobileEditingItem ? (
+          <ScriptControlMobileSeriesEditor
+            open={editingKey === seriesSlotKey(subjectId, mobileEditingItem.paperNumber, mobileEditingItem.slot.series_number)}
+            data={data}
+            subjectId={subjectId}
+            paperNumber={mobileEditingItem.paperNumber}
+            slot={mobileEditingItem.slot}
+            recordType={recordType}
+            draft={draft}
+            formError={formError}
+            canSaveAndNext={canSaveAndNext}
+            onBeforeSave={onBeforeSave}
+            onDraftChange={onDraftChange}
+            onFormError={onFormError}
+            onCloseEdit={onCloseEdit}
+            handlers={handlers}
+          />
+        ) : null}
       </div>
 
       {/* Desktop: series nav + focused panel */}

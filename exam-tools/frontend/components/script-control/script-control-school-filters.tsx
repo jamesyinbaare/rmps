@@ -13,14 +13,14 @@ import { cn } from "@/lib/utils";
 
 type BaseProps = {
   region: string;
-  zone: string;
   onRegionChange: (value: string) => void;
-  onZoneChange: (value: string) => void;
   className?: string;
 };
 
 type ViewSchoolFilterProps = BaseProps & {
   mode: "view";
+  zone: string;
+  onZoneChange: (value: string) => void;
   schoolSearch: string;
   schoolPickerOpen: boolean;
   onSchoolPickerOpenChange: (open: boolean) => void;
@@ -37,27 +37,33 @@ type EditSchoolFilterProps = BaseProps & {
 
 export type ScriptControlSchoolFiltersProps = ViewSchoolFilterProps | EditSchoolFilterProps;
 
+function RegionField({ region, onRegionChange }: Pick<BaseProps, "region" | "onRegionChange">) {
+  return (
+    <div>
+      <label className="mb-1.5 block text-xs font-medium uppercase tracking-wide text-muted-foreground">
+        Region
+      </label>
+      <SearchableCombobox
+        options={REGION_OPTIONS.map((r) => ({ value: r.value, label: r.label }))}
+        value={region}
+        onChange={onRegionChange}
+        placeholder="All regions"
+        searchPlaceholder="Search region…"
+        widthClass="w-full"
+      />
+    </div>
+  );
+}
+
 function RegionZoneFields({
   region,
   zone,
   onRegionChange,
   onZoneChange,
-}: Pick<BaseProps, "region" | "zone" | "onRegionChange" | "onZoneChange">) {
+}: Pick<BaseProps, "region" | "onRegionChange"> & { zone: string; onZoneChange: (value: string) => void }) {
   return (
     <>
-      <div>
-        <label className="mb-1.5 block text-xs font-medium uppercase tracking-wide text-muted-foreground">
-          Region
-        </label>
-        <SearchableCombobox
-          options={REGION_OPTIONS.map((r) => ({ value: r.value, label: r.label }))}
-          value={region}
-          onChange={onRegionChange}
-          placeholder="All regions"
-          searchPlaceholder="Search region…"
-          widthClass="w-full"
-        />
-      </div>
+      <RegionField region={region} onRegionChange={onRegionChange} />
       <div>
         <label className="mb-1.5 block text-xs font-medium uppercase tracking-wide text-muted-foreground">
           Zone
@@ -123,7 +129,7 @@ export function ScriptControlSchoolFilters(props: ScriptControlSchoolFiltersProp
   const hasAdvanced =
     props.mode === "view"
       ? Boolean(props.region.trim() || props.zone.trim() || props.schoolSearch.trim())
-      : Boolean(props.region.trim() || props.zone.trim());
+      : Boolean(props.region.trim());
   const [open, setOpen] = useState(hasAdvanced);
 
   return (
@@ -141,12 +147,16 @@ export function ScriptControlSchoolFilters(props: ScriptControlSchoolFiltersProp
       </button>
       {open ? (
         <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-          <RegionZoneFields
-            region={props.region}
-            zone={props.zone}
-            onRegionChange={props.onRegionChange}
-            onZoneChange={props.onZoneChange}
-          />
+          {props.mode === "view" ? (
+            <RegionZoneFields
+              region={props.region}
+              zone={props.zone}
+              onRegionChange={props.onRegionChange}
+              onZoneChange={props.onZoneChange}
+            />
+          ) : (
+            <RegionField region={props.region} onRegionChange={props.onRegionChange} />
+          )}
           {props.mode === "view" ? <ViewSchoolSearch {...props} /> : null}
         </div>
       ) : null}

@@ -1,27 +1,19 @@
 "use client";
 
-import { useEffect, useRef } from "react";
-
-import { formInputClass, formLabelClass } from "@/lib/form-classes";
+import { ScriptControlEnvelopeFields } from "@/components/script-control/script-control-envelope-fields";
 import { getPaperInspectorVisuals, seriesInspectorBadgeClass } from "@/lib/paper-inspector-styles";
 import {
-  consecutiveEnvelopeNumbersMessage,
-  draftIsNoScripts,
   emptyDraft,
-  envelopesToPersist,
   initialDraftForEdit,
-  isConsecutiveFromOne,
   maxBookletsForPaper,
   seriesSlotKey,
   type ScriptControlDraft,
 } from "@/lib/script-control-editor";
 import {
-  noScriptsEnvelope1Hint,
-  noScriptsSeriesEditHint,
   noScriptsSeriesSummary,
-  packingCountFieldLabel,
   packingItemPlural,
 } from "@/lib/script-packing-terms";
+import { validateSeriesDraftForSave } from "@/lib/script-control-series-save";
 import type {
   MySchoolScriptControlResponse,
   ScriptSeriesPackingResponse,
@@ -94,70 +86,13 @@ export function ScriptControlSeriesBlock({
   const cap = maxBookletsForPaper(data, paperNumber);
   const paperVisuals = getPaperInspectorVisuals(paperNumber);
   const anyVerified = Boolean(packing?.envelopes?.some((e) => e.verified));
-  const firstCountRef = useRef<HTMLInputElement>(null);
-
-  useEffect(() => {
-    if (!isPanel || !isEditing) return;
-    const t = window.setTimeout(() => {
-      firstCountRef.current?.focus();
-      firstCountRef.current?.select();
-    }, 0);
-    return () => window.clearTimeout(t);
-  }, [isEditing, isPanel, key]);
-
-  const toSave = isEditing ? envelopesToPersist(draft) : [];
-  const editingNoScripts = isEditing && recordType === "regular" && draftIsNoScripts(draft);
-  const orderError =
-    isEditing && !editingNoScripts && toSave.length > 0 && !isConsecutiveFromOne(toSave.map((e) => e.envelope_number))
-      ? consecutiveEnvelopeNumbersMessage(paperNumber, toSave.map((e) => e.envelope_number))
-      : null;
-
-  function addEnvelope() {
-    if (draftIsNoScripts(draft)) return;
-    const next =
-      draft.envelopes.length === 0 ? 1 : Math.max(...draft.envelopes.map((e) => e.envelope_number)) + 1;
-    onDraftChange({ envelopes: [...draft.envelopes, { envelope_number: next, booklet_count: null }] });
-  }
-
-  function removeEnvelope(idx: number) {
-    const env = draft.envelopes[idx];
-    if (env?.envelope_number === 1 && draft.envelopes.length === 1) return;
-    onDraftChange({ envelopes: draft.envelopes.filter((_, i) => i !== idx) });
-  }
-
-  function updateEnvelope(idx: number, booklet_count: number | null) {
-    const updated = draft.envelopes.map((e, i) => {
-      if (i !== idx) return e;
-      return { ...e, booklet_count: booklet_count === null ? null : Math.max(0, booklet_count) };
-    });
-    const env1 = updated.find((e) => e.envelope_number === 1);
-    if (env1?.booklet_count === 0) onDraftChange({ envelopes: [env1] });
-    else onDraftChange({ envelopes: updated });
-  }
 
   async function handleSave() {
     onFormError(null);
-    if (recordType === "regular" && draftIsNoScripts(draft)) {
-      await handlers.onSave(subjectId, paperNumber, slot.series_number, draft, {
-        hadVerified: anyVerified,
-        hadEnvelopes: Boolean(packing?.envelopes?.length),
-      });
+    const validationError = validateSeriesDraftForSave(draft, recordType, paperNumber, cap);
+    if (validationError) {
+      onFormError(validationError);
       return;
-    }
-    const persisted = envelopesToPersist(draft);
-    if (persisted.length === 0) {
-      onFormError("Enter a count for envelope 1, or enter 0 if there is nothing to pack.");
-      return;
-    }
-    if (!isConsecutiveFromOne(persisted.map((e) => e.envelope_number))) {
-      onFormError(consecutiveEnvelopeNumbersMessage(paperNumber, persisted.map((e) => e.envelope_number)));
-      return;
-    }
-    for (const env of persisted) {
-      if (env.booklet_count > cap) {
-        onFormError(`Envelope ${env.envelope_number}: at most ${cap} ${packingItemPlural(paperNumber)}.`);
-        return;
-      }
     }
     await handlers.onSave(subjectId, paperNumber, slot.series_number, draft, {
       hadVerified: anyVerified,
@@ -255,59 +190,16 @@ export function ScriptControlSeriesBlock({
       ) : null}
       {isEditing ? (
         <div className={cn("mt-3 space-y-4 border-t pt-4", paperVisuals.editDividerClass, isPanel && "border-border")}>
-          {(formError || orderError) && <p className="text-sm text-destructive">{formError ?? orderError}</p>}
-          <div className="flex items-center justify-between gap-2">
-            <span className={formLabelClass}>Envelopes</span>
-            <button type="button" className={btnSecondary} disabled={draftIsNoScripts(draft)} onClick={addEnvelope}>
-              Add envelope
-            </button>
-          </div>
-          <p className="text-xs text-muted-foreground">
-            Up to {cap} per envelope. {recordType === "regular" ? noScriptsEnvelope1Hint(paperNumber) : ""}
-          </p>
-          <div className="overflow-x-auto rounded-lg border border-border">
-            <table className="w-full min-w-[280px] text-sm">
-              <thead className="border-b border-border bg-muted/40 text-left text-xs text-muted-foreground">
-                <tr>
-                  <th className="px-3 py-2 font-medium">Envelope</th>
-                  <th className="px-3 py-2 font-medium">{packingCountFieldLabel(paperNumber)}</th>
-                  <th className="px-3 py-2 w-24" />
-                </tr>
-              </thead>
-              <tbody>
-                {draft.envelopes.map((env, idx) => (
-                  <tr key={env.envelope_number} className="border-b border-border/60 last:border-0">
-                    <td className="px-3 py-2 font-medium tabular-nums">{env.envelope_number}</td>
-                    <td className="px-3 py-2">
-                      <input
-                        ref={idx === 0 ? firstCountRef : undefined}
-                        type="number"
-                        min={0}
-                        inputMode="numeric"
-                        className={cn(formInputClass, "max-w-[140px]")}
-                        value={env.booklet_count === null ? "" : env.booklet_count}
-                        onChange={(e) => {
-                          const v = e.target.value;
-                          updateEnvelope(idx, v === "" ? null : parseInt(v, 10));
-                        }}
-                      />
-                    </td>
-                    <td className="px-3 py-2">
-                      {env.envelope_number === 1 && draft.envelopes.length === 1 ? null : (
-                        <button type="button" className={cn(btnDanger, "min-h-9 px-2 text-xs")} onClick={() => removeEnvelope(idx)}>
-                          Remove
-                        </button>
-                      )}
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-          {recordType === "regular" &&
-          draft.envelopes.some((e) => e.envelope_number === 1 && e.booklet_count === 0) ? (
-            <p className="text-sm text-primary">{noScriptsSeriesEditHint(paperNumber)}</p>
-          ) : null}
+          {formError && <p className="text-sm text-destructive">{formError}</p>}
+          <ScriptControlEnvelopeFields
+            draft={draft}
+            paperNumber={paperNumber}
+            recordType={recordType}
+            cap={cap}
+            layout="table"
+            autoFocus={isPanel && isEditing}
+            onDraftChange={onDraftChange}
+          />
           <div className="flex gap-2 pt-1">
             <button type="button" className={btnPrimary} disabled={handlers.busy} onClick={() => void handleSave()}>
               Save

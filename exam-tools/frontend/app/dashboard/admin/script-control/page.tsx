@@ -295,14 +295,6 @@ export default function AdminScriptControlViewPage() {
 
   const total = listResponse?.total ?? 0;
   const sc = listResponse?.status_counts;
-  const firstQueueSchool = viewRows.find(
-    (r) => r.overall_status === "missing" || r.overall_status === "partial",
-  );
-
-  const queueHref =
-    firstQueueSchool && listParams
-      ? editHrefForSchool(firstQueueSchool.school_id, { queue: "1" })
-      : null;
 
   return (
     <div className="space-y-4">
@@ -402,11 +394,6 @@ export default function AdminScriptControlViewPage() {
         ) : null}
 
         <div className="flex flex-wrap items-center gap-2">
-          {queueHref && (statusFilter === "missing" || statusFilter === "partial" || statusFilter === "all") ? (
-            <Button type="button" asChild>
-              <Link href={queueHref}>Start queue</Link>
-            </Button>
-          ) : null}
           <Button
             type="button"
             variant="outline"
