@@ -56,7 +56,7 @@ type Props = {
   exportDisabledReason?: string;
   exportBusy: string | null;
   exportFootnote?: string;
-  onExport: (layout: ExportMenuOption["layout"]) => void;
+  onExport: (key: string) => void;
   busy: boolean;
   total: number;
   clientFilteredCount?: number;

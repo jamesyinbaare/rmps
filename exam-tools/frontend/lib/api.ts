@@ -2495,6 +2495,30 @@ export async function downloadAdminExamCentreOfficialsExport(params: {
   await downloadApiFile(`/admin/exam-centre-officials/export?${q.toString()}`, params.filename);
 }
 
+export async function downloadAdminExamCentreOfficialsBogExport(params: {
+  examination_id: number;
+  center_id?: string | null;
+  designation?: string | null;
+  designations?: string[];
+  export_slug?: string;
+  subject_scope?: RecordSubjectScope | null;
+  region?: string | null;
+  filename: string;
+}): Promise<void> {
+  const q = new URLSearchParams();
+  q.set("examination_id", String(params.examination_id));
+  if (params.center_id) q.set("center_id", params.center_id.trim());
+  if (params.designations?.length) {
+    for (const d of params.designations) q.append("designations", d);
+  } else if (params.designation?.trim()) {
+    q.set("designation", params.designation.trim());
+  }
+  if (params.export_slug?.trim()) q.set("export_slug", params.export_slug.trim());
+  if (params.subject_scope) q.set("subject_scope", params.subject_scope);
+  if (params.region?.trim()) q.set("region", params.region.trim());
+  await downloadApiFile(`/admin/exam-centre-officials/bog-export?${q.toString()}`, params.filename);
+}
+
 export type FinanceCentreDayInvigilatorRow = {
   examination_date: string;
   unique_candidates: number;
@@ -2584,6 +2608,26 @@ export function schoolSummaryExportFilename(
   return `${centerCode} ${centerName} ${suffix}.xlsx`;
 }
 
+export function centreBogExportFilename(
+  centerCode: string,
+  centerName: string,
+  subjectFilter: TimetableSubjectFilter,
+): string {
+  const suffix =
+    subjectFilter === "CORE_ONLY" ? "CORE" : subjectFilter === "ELECTIVE_ONLY" ? "ELECTIVE" : "ALL";
+  return `${centerCode} ${centerName} BoG ${suffix}.xlsx`;
+}
+
+export function examOfficialsBogExportFilename(
+  examLabel: string,
+  slug: string,
+  centerSuffix?: string,
+): string {
+  const base = examLabel.replace(/[^\w\-]+/g, "_").replace(/_+/g, "_").slice(0, 80) || "exam";
+  const part = centerSuffix ? `${base}${centerSuffix}_bog_${slug}` : `${base}_bog_${slug}`;
+  return `${part}.xlsx`;
+}
+
 export async function getFinanceCentreSchoolSummary(params: {
   examId: number;
   centerId: string;
@@ -2602,6 +2646,21 @@ export async function downloadFinanceCentreSchoolSummaryExport(params: {
 }): Promise<void> {
   await downloadApiFile(
     `/examinations/${params.examId}/finance/centre-school-summary/export${centreSchoolSummaryQuery({
+      centerId: params.centerId,
+      subject_filter: params.subject_filter,
+    })}`,
+    params.filename,
+  );
+}
+
+export async function downloadFinanceCentreSchoolSummaryBogExport(params: {
+  examId: number;
+  centerId: string;
+  subject_filter?: TimetableSubjectFilter;
+  filename: string;
+}): Promise<void> {
+  await downloadApiFile(
+    `/examinations/${params.examId}/finance/centre-school-summary/bog-export${centreSchoolSummaryQuery({
       centerId: params.centerId,
       subject_filter: params.subject_filter,
     })}`,

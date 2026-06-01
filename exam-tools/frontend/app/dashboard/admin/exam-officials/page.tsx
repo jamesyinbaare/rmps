@@ -9,6 +9,8 @@ import { RoleGuard } from "@/components/role-guard";
 import {
   apiJson,
   downloadAdminExamCentreOfficialsExport,
+  downloadAdminExamCentreOfficialsBogExport,
+  examOfficialsBogExportFilename,
   listAdminExamCentreOfficials,
   listExaminationCentres,
   type AdminExamCentreOfficialRow,
@@ -530,33 +532,47 @@ function AdminExamOfficialsContent() {
     [activeSection],
   );
 
-  async function onExport(section: SectionConfig, layout: AdminExamCentreOfficialsExportLayout) {
+  async function onExport(section: SectionConfig, exportKey: string) {
     if (examId === null) return;
     const st = sectionState[section.id];
-    const busyKey = `${section.id}:${layout}`;
+    const busyKey = `${section.id}:${exportKey}`;
     setExportBusy(busyKey);
     setLoadError(null);
     const base = exportFilenameBase(selectedExam);
     const suffix = st.centerId.trim() ? `_center_${st.centerId.trim().slice(0, 8)}` : "";
     const slug =
-      layout === "zip"
+      exportKey === "zip"
         ? `${section.exportSlug}_by_centre`
-        : layout === "combined"
+        : exportKey === "combined"
           ? `${section.exportSlug}_all_centres`
           : section.exportSlug;
-    const filename =
-      layout === "zip" ? `${base}${suffix}_${slug}.zip` : `${base}${suffix}_${slug}.xlsx`;
     try {
-      await downloadAdminExamCentreOfficialsExport({
-        examination_id: examId,
-        layout,
-        designations: section.designations,
-        export_slug: slug,
-        center_id: st.centerId || null,
-        subject_scope: st.subjectScopeFilter,
-        region: st.regionFilter || null,
-        filename,
-      });
+      if (exportKey === "bog") {
+        const filename = examOfficialsBogExportFilename(base, slug, suffix || undefined);
+        await downloadAdminExamCentreOfficialsBogExport({
+          examination_id: examId,
+          designations: section.designations,
+          export_slug: slug,
+          center_id: st.centerId || null,
+          subject_scope: st.subjectScopeFilter,
+          region: st.regionFilter || null,
+          filename,
+        });
+      } else {
+        const layout = exportKey as AdminExamCentreOfficialsExportLayout;
+        const filename =
+          layout === "zip" ? `${base}${suffix}_${slug}.zip` : `${base}${suffix}_${slug}.xlsx`;
+        await downloadAdminExamCentreOfficialsExport({
+          examination_id: examId,
+          layout,
+          designations: section.designations,
+          export_slug: slug,
+          center_id: st.centerId || null,
+          subject_scope: st.subjectScopeFilter,
+          region: st.regionFilter || null,
+          filename,
+        });
+      }
     } catch (e) {
       setLoadError(e instanceof Error ? e.message : "Export failed");
     } finally {
@@ -588,14 +604,14 @@ function AdminExamOfficialsContent() {
 
   const exportOptions = useMemo(() => {
     const opts: {
-      layout: AdminExamCentreOfficialsExportLayout;
+      key: string;
       label: string;
       description?: string;
       primary?: boolean;
     }[] = [];
     if (activeConfig.exportLayouts.includes("combined")) {
       opts.push({
-        layout: "combined",
+        key: "combined",
         label: "Single workbook",
         description: "All centres in one Excel file",
         primary: true,
@@ -603,7 +619,7 @@ function AdminExamOfficialsContent() {
     }
     if (activeConfig.exportLayouts.includes("zip")) {
       opts.push({
-        layout: "zip",
+        key: "zip",
         label: "Zip per centre",
         description: "One file per examination centre",
         primary: !activeConfig.exportLayouts.includes("combined"),
@@ -611,11 +627,16 @@ function AdminExamOfficialsContent() {
     }
     if (activeConfig.exportLayouts.includes("single_sheet")) {
       opts.push({
-        layout: "single_sheet",
+        key: "single_sheet",
         label: "Export Excel",
         primary: true,
       });
     }
+    opts.push({
+      key: "bog",
+      label: "BoG payment file",
+      description: "Bank of Ghana format with serial numbers and grand total",
+    });
     return opts;
   }, [activeConfig.exportLayouts]);
 
@@ -690,7 +711,7 @@ function AdminExamOfficialsContent() {
             exportDisabledReason={exportDisabledReason}
             exportBusy={exportBusy}
             exportFootnote={activeConfig.tabHelper}
-            onExport={(layout) => void onExport(activeConfig, layout)}
+            onExport={(key) => void onExport(activeConfig, key)}
             busy={activeSt.busy}
             total={activeSt.total}
             clientFilteredCount={

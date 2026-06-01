@@ -4,7 +4,6 @@ import { ChevronDown, Download } from "lucide-react";
 import { useState } from "react";
 
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
-import type { AdminExamCentreOfficialsExportLayout } from "@/lib/api";
 import {
   officialAccountsBtnPrimary,
   officialAccountsBtnPrimaryToolbar,
@@ -14,7 +13,7 @@ import {
 import { cn } from "@/lib/utils";
 
 export type ExportMenuOption = {
-  layout: AdminExamCentreOfficialsExportLayout;
+  key: string;
   label: string;
   description?: string;
   primary?: boolean;
@@ -28,7 +27,7 @@ type Props = {
   disabledReason?: string;
   exportBusy: string | null;
   sectionId: string;
-  onExport: (layout: AdminExamCentreOfficialsExportLayout) => void;
+  onExport: (key: string) => void;
   /** Use standard toolbar button sizing (command bar). */
   toolbar?: boolean;
   hideSummary?: boolean;
@@ -65,14 +64,12 @@ export function OfficialAccountsExportMenu({
   const btnPrimary = toolbar ? officialAccountsBtnPrimaryToolbar : officialAccountsBtnPrimary;
   const btnSecondary = toolbar ? officialAccountsBtnSecondaryToolbar : officialAccountsBtnSecondary;
 
-  const busyLayout = exportBusy?.startsWith(`${sectionId}:`)
-    ? (exportBusy.split(":")[1] as AdminExamCentreOfficialsExportLayout)
-    : null;
+  const busyKey = exportBusy?.startsWith(`${sectionId}:`) ? exportBusy.split(":")[1] : null;
 
   if (options.length === 0) return null;
 
   if (options.length === 1 && primary) {
-    const busy = busyLayout === primary.layout;
+    const busy = busyKey === primary.key;
     return (
       <div className={cn("flex flex-col gap-1", toolbar ? "items-stretch" : "items-stretch sm:items-end")}>
         <button
@@ -80,7 +77,7 @@ export function OfficialAccountsExportMenu({
           className={cn(btnPrimary, "inline-flex items-center justify-center gap-2")}
           disabled={disabled || !!exportBusy}
           title={disabled ? disabledReason : footnote}
-          onClick={() => onExport(primary.layout)}
+          onClick={() => onExport(primary.key)}
         >
           <Download className="size-4 shrink-0" aria-hidden />
           {busy ? "Preparing export…" : primary.label}
@@ -93,7 +90,7 @@ export function OfficialAccountsExportMenu({
     );
   }
 
-  const primaryBusy = busyLayout === primary?.layout;
+  const primaryBusy = busyKey === primary?.key;
 
   return (
     <div className={cn("flex flex-col gap-1", toolbar ? "items-stretch" : "items-stretch sm:items-end")}>
@@ -104,7 +101,7 @@ export function OfficialAccountsExportMenu({
             className={cn(btnPrimary, "inline-flex items-center justify-center gap-2")}
             disabled={disabled || !!exportBusy}
             title={disabled ? disabledReason : footnote}
-            onClick={() => onExport(primary.layout)}
+            onClick={() => onExport(primary.key)}
           >
             <Download className="size-4 shrink-0" aria-hidden />
             {primaryBusy ? "Preparing export…" : primary.label}
@@ -132,16 +129,16 @@ export function OfficialAccountsExportMenu({
               </p>
               <ul className="flex flex-col gap-0.5">
                 {secondary.map((opt) => {
-                  const busy = busyLayout === opt.layout;
+                  const busy = busyKey === opt.key;
                   return (
-                    <li key={opt.layout}>
+                    <li key={opt.key}>
                       <button
                         type="button"
                         className="flex w-full flex-col rounded-md px-2 py-2 text-left text-sm transition-colors hover:bg-muted disabled:opacity-50"
                         disabled={disabled || !!exportBusy}
                         onClick={() => {
                           setOpen(false);
-                          onExport(opt.layout);
+                          onExport(opt.key);
                         }}
                       >
                         <span className="font-medium">{busy ? "Preparing…" : opt.label}</span>

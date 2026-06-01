@@ -2991,6 +2991,64 @@ async def export_finance_centre_school_summary(
     )
 
 
+@router.get("/{exam_id}/finance/centre-school-summary/bog-export")
+async def export_finance_centre_school_summary_bog(
+    exam_id: int,
+    session: DBSessionDep,
+    _: SuperAdminOrFinanceOfficerDep,
+    center_id: UUID = Query(..., description="Examination centre host school id"),
+    subject_filter: TimetableDownloadFilter = Query(
+        TimetableDownloadFilter.ALL,
+        description="Subject scope suffix for export filename.",
+    ),
+) -> Response:
+    """Export BoG payment file for one examination centre."""
+    from app.services.exam_official_bog_export import (
+        bog_workbook_bytes,
+        centre_bog_export_filename,
+    )
+    from app.services.exam_official_compensation import load_designation_rates_map
+    from app.services.exam_official_export import examination_label
+    from app.services.finance_school_summary import load_officials_for_centre
+
+    try:
+        ex = await load_examination_or_raise(session, exam_id)
+    except ValueError:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Examination not found") from None
+
+    hosts = await _finance_centre_hosts(session, exam_id, center_id)
+    centre = hosts[0]
+    if not await centre_has_membership_for_subject_filter(
+        session, centre, subject_filter=subject_filter
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Examination centre has no schools for this subject scope",
+        )
+
+    pairs = await load_officials_for_centre(
+        session, exam_id, center_id, subject_filter=subject_filter
+    )
+    if not pairs:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="No exam officials found for this centre (and filter, if any).",
+        )
+
+    rates_map = await load_designation_rates_map(session, exam_id)
+    exam_label = examination_label(ex)
+    centre_code = str(centre.code)
+    centre_name = str(centre.name)
+    title = f"BoG payment — {centre_code} {centre_name} · {exam_label}"
+    payload = bog_workbook_bytes(pairs, rates_map, title=title)
+    filename = centre_bog_export_filename(centre_code, centre_name, subject_filter)
+    return Response(
+        content=payload,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
 @router.get(
     "/{exam_id}/finance/centre-official-statistics/shell",
     response_model=FinanceCentreOfficialStatisticsShellResponse,
@@ -2998,7 +3056,7 @@ async def export_finance_centre_school_summary(
 async def get_finance_centre_official_statistics_shell(
     exam_id: int,
     session: DBSessionDep,
-    _: SuperAdminDep,
+    _: SuperAdminOrFinanceOfficerDep,
     subject_filter: TimetableDownloadFilter = Query(
         ...,
         description="Subject scope for centre list and official counts.",
@@ -3023,7 +3081,7 @@ async def get_finance_centre_official_statistics_for_centre(
     exam_id: int,
     center_host_id: UUID,
     session: DBSessionDep,
-    _: SuperAdminDep,
+    _: SuperAdminOrFinanceOfficerDep,
     subject_filter: TimetableDownloadFilter = Query(
         ...,
         description="Subject scope for official counts at this centre.",
@@ -3054,13 +3112,13 @@ async def get_finance_centre_official_statistics_for_centre(
 async def get_finance_centre_official_statistics(
     exam_id: int,
     session: DBSessionDep,
-    _: SuperAdminDep,
+    _: SuperAdminOrFinanceOfficerDep,
     subject_filter: TimetableDownloadFilter = Query(
         TimetableDownloadFilter.ALL,
         description="Subject scope for official counts: all, core only, or electives only.",
     ),
 ) -> FinanceCentreOfficialStatisticsResponse:
-    """Per-centre headcounts for all examination official roles (super admin only)."""
+    """Per-centre headcounts for all examination official roles (finance and super admin)."""
     from app.services.finance_official_statistics import build_finance_centre_official_statistics
 
     try:
@@ -3081,7 +3139,7 @@ async def export_finance_centre_official_statistics(
     exam_id: int,
     body: FinanceCentreOfficialStatisticsExportBody,
     session: DBSessionDep,
-    _: SuperAdminDep,
+    _: SuperAdminOrFinanceOfficerDep,
 ) -> StreamingResponse:
     """Export pre-loaded official statistics to Excel without recalculating."""
     from app.schemas.timetable import TimetableDownloadFilter

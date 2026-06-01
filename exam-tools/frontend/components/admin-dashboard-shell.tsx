@@ -15,20 +15,26 @@ import {
 import { clearAuth, getMe, type UserMe } from "@/lib/auth";
 import { OfficialAccountsNavLink } from "@/components/official-accounts-nav-link";
 import {
+  ACCOUNT_DETAILS_BY_CENTRE_LABEL,
+  BANK_ACCOUNTS_LABEL,
   isOfficialAccountsHref,
   isOfficialAccountsPath,
   OFFICIAL_ACCOUNTS_ADMIN_HREF,
 } from "@/lib/official-accounts-zone";
+import {
+  ATTENDANCE_SHEETS_HREF,
+  CENTRE_SUMMARY_HREF,
+  FINANCE_CENTRE_SUMMARY_HREF,
+  FINANCE_HOME_HREF,
+  OFFICIAL_RATES_HREF,
+  OFFICIAL_STATISTICS_HREF,
+} from "@/lib/finance-nav";
 import { cn } from "@/lib/utils";
 
 const inputFocusRing =
   "focus:border-primary focus:outline-none focus:ring-2 focus:ring-ring/30";
 
 const BANK_DIRECTORY_HREF = "/dashboard/admin/bank-directory";
-const FINANCE_CENTRE_SUMMARY_HREF = "/dashboard/admin/finance-centre-summary";
-const CENTRE_SUMMARY_HREF = "/dashboard/admin/centre-summary";
-const OFFICIAL_STATISTICS_HREF = "/dashboard/admin/official-statistics";
-const OFFICIAL_RATES_HREF = "/dashboard/admin/official-rates";
 
 const nav = [
   { href: "/dashboard/admin", label: "Overview" },
@@ -70,16 +76,71 @@ type NavLinkItem = { type: "link"; href: string; label: string };
 type NavHeadingItem = { type: "heading"; label: string };
 type NavEntry = NavLinkItem | NavHeadingItem;
 
-const ATTENDANCE_SHEETS_HREF = "/dashboard/admin/attendance-sheets";
+const FINANCE_NAV_OVERVIEW: NavEntry[] = [
+  { type: "link", href: FINANCE_HOME_HREF, label: "Overview" },
+];
 
-const FINANCE_OFFICER_NAV: NavEntry[] = [
-  { type: "heading", label: "Finance" },
-  { type: "link", href: OFFICIAL_ACCOUNTS_ADMIN_HREF, label: "Official account details" },
+const FINANCE_NAV_SETUP: NavEntry[] = [
+  { type: "heading", label: "Setup" },
   { type: "link", href: OFFICIAL_RATES_HREF, label: "Allowance rates" },
-  { type: "link", href: FINANCE_CENTRE_SUMMARY_HREF, label: "Centre invigilator summary" },
-  { type: "link", href: CENTRE_SUMMARY_HREF, label: "Centre analysis" },
+];
+
+const FINANCE_NAV_ACCOUNT_DETAILS: NavEntry[] = [
+  { type: "heading", label: "Account details" },
+  { type: "link", href: OFFICIAL_ACCOUNTS_ADMIN_HREF, label: BANK_ACCOUNTS_LABEL },
+  { type: "link", href: CENTRE_SUMMARY_HREF, label: ACCOUNT_DETAILS_BY_CENTRE_LABEL },
+];
+
+const FINANCE_NAV_REPORTING: NavEntry[] = [
+  { type: "heading", label: "Centre reporting" },
+  { type: "link", href: OFFICIAL_STATISTICS_HREF, label: "Centre overview" },
+  { type: "link", href: FINANCE_CENTRE_SUMMARY_HREF, label: "Invigilator by day" },
+];
+
+const FINANCE_NAV_COMPLIANCE: NavEntry[] = [
+  { type: "heading", label: "Compliance" },
   { type: "link", href: ATTENDANCE_SHEETS_HREF, label: "Attendance sheets" },
 ];
+
+const FINANCE_OFFICER_NAV: NavEntry[] = [
+  ...FINANCE_NAV_OVERVIEW,
+  ...FINANCE_NAV_SETUP,
+  ...FINANCE_NAV_ACCOUNT_DETAILS,
+  ...FINANCE_NAV_REPORTING,
+  ...FINANCE_NAV_COMPLIANCE,
+];
+
+function superAdminFinanceNav(bankDirectory: NavLinkItem): NavEntry[] {
+  return [
+    { type: "heading", label: "Finance" },
+    bankDirectory,
+    ...FINANCE_NAV_SETUP,
+    ...FINANCE_NAV_ACCOUNT_DETAILS,
+    ...FINANCE_NAV_REPORTING,
+    ...FINANCE_NAV_COMPLIANCE,
+  ];
+}
+
+const FINANCE_PAGE_TITLES: [href: string, title: string][] = [
+  [FINANCE_HOME_HREF, "Overview"],
+  [OFFICIAL_RATES_HREF, "Allowance rates"],
+  [OFFICIAL_ACCOUNTS_ADMIN_HREF, BANK_ACCOUNTS_LABEL],
+  [CENTRE_SUMMARY_HREF, ACCOUNT_DETAILS_BY_CENTRE_LABEL],
+  [OFFICIAL_STATISTICS_HREF, "Centre overview"],
+  [FINANCE_CENTRE_SUMMARY_HREF, "Invigilator by day"],
+  [ATTENDANCE_SHEETS_HREF, "Attendance sheets"],
+];
+
+function financePageStickyTitle(pathname: string): string | null {
+  for (const [href, title] of FINANCE_PAGE_TITLES) {
+    if (href === FINANCE_HOME_HREF) {
+      if (pathname === href) return title;
+      continue;
+    }
+    if (pathname === href || pathname.startsWith(`${href}/`)) return title;
+  }
+  return null;
+}
 
 function toLinkItem(item: { href: string; label: string }): NavLinkItem {
   return { type: "link", href: item.href, label: item.label };
@@ -121,14 +182,7 @@ export function AdminDashboardShell({ children }: Props) {
       if (!bankItem) return nav.map(toLinkItem);
       return [
         ...withoutBank.map(toLinkItem),
-        { type: "heading", label: "Finance" },
-        { type: "link", href: bankItem.href, label: bankItem.label },
-        { type: "link", href: OFFICIAL_ACCOUNTS_ADMIN_HREF, label: "Official account details" },
-        { type: "link", href: OFFICIAL_RATES_HREF, label: "Allowance rates" },
-        { type: "link", href: FINANCE_CENTRE_SUMMARY_HREF, label: "Centre invigilator summary" },
-        { type: "link", href: CENTRE_SUMMARY_HREF, label: "Centre analysis" },
-        { type: "link", href: OFFICIAL_STATISTICS_HREF, label: "Official statistics" },
-        { type: "link", href: ATTENDANCE_SHEETS_HREF, label: "Attendance sheets" },
+        ...superAdminFinanceNav(toLinkItem(bankItem)),
       ];
     }
     return nav.map(toLinkItem);
@@ -265,19 +319,19 @@ export function AdminDashboardShell({ children }: Props) {
       <div className="lg:pl-64">
         <DashboardStickyHeader
           title={
-            onOfficialStatisticsPage
-              ? "Official statistics"
+            isFinanceOfficer
+              ? (financePageStickyTitle(pathname) ?? "Finance")
+              : onOfficialStatisticsPage
+              ? "Centre overview"
               : onCentreSummaryPage
-              ? "Centre analysis"
+              ? ACCOUNT_DETAILS_BY_CENTRE_LABEL
               : onOfficialAccountsPage
-                ? "Official account details"
+                ? BANK_ACCOUNTS_LABEL
                 : isTopLevelOfficer
                   ? isExecutiveViewer
                     ? executiveStickyTitle!
                     : "Exam monitoring"
-                  : isFinanceOfficer
-                    ? "Finance"
-                    : "Staff dashboard"
+                  : "Staff dashboard"
           }
           subtitle={
             me

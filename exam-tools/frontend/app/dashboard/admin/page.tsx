@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 
+import { FinanceOfficerHome } from "@/components/finance-officer-home";
 import {
   apiJson,
   getAdminActiveExamination,
@@ -44,8 +45,9 @@ export default function AdminDashboardPage() {
     let cancelled = false;
 
     (async () => {
+      let user: UserMe | null = null;
       try {
-        const user = await getMe();
+        user = await getMe();
         if (cancelled) return;
         setMe(user);
         if (user.role === "TEST_ADMIN_OFFICER") {
@@ -53,12 +55,12 @@ export default function AdminDashboardPage() {
           return;
         }
         if (user.role === "FINANCE_OFFICER") {
-          router.replace("/dashboard/admin/exam-officials");
           return;
         }
       } catch {
         if (cancelled) return;
         setMe(null);
+        return;
       }
 
       setError(null);
@@ -109,12 +111,24 @@ export default function AdminDashboardPage() {
     return n.toLocaleString();
   }
 
-  if (me?.role === "TEST_ADMIN_OFFICER" || me?.role === "FINANCE_OFFICER") {
+  if (me === null) {
+    return (
+      <div className="flex min-h-[40vh] items-center justify-center">
+        <p className="text-sm text-muted-foreground">Loading…</p>
+      </div>
+    );
+  }
+
+  if (me.role === "TEST_ADMIN_OFFICER") {
     return (
       <div className="flex min-h-[40vh] items-center justify-center">
         <p className="text-sm text-muted-foreground">Redirecting…</p>
       </div>
     );
+  }
+
+  if (me.role === "FINANCE_OFFICER") {
+    return <FinanceOfficerHome />;
   }
 
   return (

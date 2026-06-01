@@ -459,12 +459,11 @@ function OfficialStatisticsContent() {
   return (
     <div className="space-y-6">
       <OfficialAccountsPageIntro
-        description="How many officials were recorded at each examination centre for allowances — invigilators, supervisors, inspectors, police, and depot keepers. Super admins only."
+        description="Compare official headcounts across every examination centre for an exam. See how many invigilators, supervisors, inspectors, police, and depot keepers were recorded at each centre, and highlight where declared invigilator days differ from expected."
         footerNote={
           <p className="text-xs leading-relaxed text-muted-foreground">
-            Choose a subject scope, then load the summary. Use Core or Elective to show centres that hosted
-            that part of the exam. Row totals are headcounts by role; difference is declared invigilator days
-            minus expected (highlighted when they do not match).
+            Choose a subject scope, then load the summary. Core or Elective limits centres to those that hosted
+            that part of the exam. Open a centre code to drill down into allowances and bank accounts in Bank accounts by Centre.
           </p>
         }
         actions={
@@ -670,7 +669,7 @@ function OfficialStatisticsContent() {
 
 export default function OfficialStatisticsPage() {
   return (
-    <RoleGuard allowedRoles={["SUPER_ADMIN"]} loginHref="/login/admin">
+    <RoleGuard allowedRoles={["SUPER_ADMIN", "FINANCE_OFFICER"]} loginHref="/login/admin">
       <OfficialStatisticsContent />
     </RoleGuard>
   );
