@@ -108,7 +108,7 @@ export function OfficialAccountsFiltersPopover({
               className="text-sm font-medium text-primary underline-offset-2 hover:underline"
               onClick={() => setOpen(false)}
             >
-              Open Centre analysis →
+              Open bank accounts by centre →
             </Link>
           ) : null}
           {activeFilterCount > 0 ? (

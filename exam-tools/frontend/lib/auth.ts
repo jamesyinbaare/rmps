@@ -136,7 +136,7 @@ export type TokenResponse = {
 function dashboardPathForLoginRole(role: TokenResponse["role"]): string {
   if (role === "SUPER_ADMIN" || role === 0) return "/dashboard/admin";
   if (role === "TEST_ADMIN_OFFICER" || role === 5) return "/dashboard/admin/monitoring";
-  if (role === "FINANCE_OFFICER" || role === 6) return "/dashboard/admin/exam-officials";
+  if (role === "FINANCE_OFFICER" || role === 6) return "/dashboard/admin";
   if (role === "EXECUTIVE_VIEWER" || role === 7) return "/dashboard/admin/monitoring";
   if (role === "SUPERVISOR" || role === 10) return "/dashboard/supervisor";
   if (role === "INSPECTOR" || role === 20) return "/dashboard/inspector";
@@ -152,7 +152,7 @@ export function dashboardPathForRole(role: string): string {
     case "EXECUTIVE_VIEWER":
       return "/dashboard/admin/monitoring";
     case "FINANCE_OFFICER":
-      return "/dashboard/admin/exam-officials";
+      return "/dashboard/admin";
     case "SUPERVISOR":
       return "/dashboard/supervisor";
     case "INSPECTOR":

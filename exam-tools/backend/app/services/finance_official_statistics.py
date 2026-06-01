@@ -1,4 +1,4 @@
-"""Per-centre examination official statistics for super-admin reporting."""
+"""Per-centre examination official statistics for finance and super-admin reporting."""
 
 from collections import defaultdict
 from uuid import UUID

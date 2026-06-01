@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { ClipboardList, Landmark } from "lucide-react";
 
+import { BANK_ACCOUNTS_LABEL } from "@/lib/official-accounts-zone";
 import { cn } from "@/lib/utils";
 
 type Props = {
@@ -37,7 +38,7 @@ export function OfficialAccountsNavLink({ href, active, onNavigate }: Props) {
         <Landmark className="size-3.5" aria-hidden />
       </span>
       <span className="min-w-0 flex-1 py-0.5">
-        <span className="block text-sm font-medium leading-snug text-foreground">Account details</span>
+        <span className="block text-sm font-medium leading-snug text-foreground">{BANK_ACCOUNTS_LABEL}</span>
         <span className="mt-0.5 block text-xs leading-snug text-muted-foreground">Allowances & bank info</span>
       </span>
     </Link>

@@ -305,3 +305,53 @@ async def admin_export_exam_centre_officials(
         media_type=media,
         headers={"Content-Disposition": f'attachment; filename="{filename}"'},
     )
+
+@router.get("/bog-export")
+async def admin_export_exam_centre_officials_bog(
+    session: DBSessionDep,
+    _admin: SuperAdminOrFinanceOfficerDep,
+    examination_id: int = Query(..., description="Examination id"),
+    center_id: UUID | None = Query(None, description="Optional: only this centre"),
+    designation: str | None = Query(
+        None,
+        description="Optional: only this designation (e.g. External Inspector).",
+    ),
+    designations: list[str] | None = Query(
+        None,
+        description="Optional: one or more designation labels (repeat param).",
+    ),
+    export_slug: str | None = Query(
+        None,
+        description="Filename suffix segment (e.g. supervisors, invigilators_all_centres).",
+    ),
+    subject_scope: str | None = Query(None, description="Optional: CORE or ELECTIVE"),
+    region: str | None = Query(None, description="Optional: examination centre region"),
+) -> Response:
+    from app.services.exam_official_bog_export import bog_workbook_bytes, exam_bog_export_filename
+
+    des_list = _designations_filter_from_query(designation, designations)
+    scope = _subject_scope_filter_from_query(subject_scope)
+    reg = _region_filter_from_query(region)
+    ex = await _load_examination(session, examination_id)
+    exam_label = examination_label(ex)
+
+    stmt = _base_official_query(examination_id, center_id, des_list, scope, reg)
+    result = await session.execute(stmt)
+    pairs: list[tuple[ExamCentreOfficial, ExaminationCentre]] = list(result.all())
+    if not pairs:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="No exam officials found for this examination (and filter, if any).",
+        )
+
+    slug = safe_filename_part(export_slug or "officials")
+    exam_part = safe_filename_part(f"exam_{examination_id}_{exam_label}")
+    rates_map = await load_designation_rates_map(session, examination_id)
+    title = f"BoG payment — {exam_label}"
+    payload = bog_workbook_bytes(pairs, rates_map, title=title)
+    filename = exam_bog_export_filename(exam_part, slug)
+    return Response(
+        content=payload,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )

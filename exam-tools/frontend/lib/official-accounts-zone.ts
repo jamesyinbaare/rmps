@@ -2,6 +2,8 @@ import { cn } from "@/lib/utils";
 
 export const OFFICIAL_ACCOUNTS_ADMIN_HREF = "/dashboard/admin/exam-officials";
 export const OFFICIAL_ACCOUNTS_CENTRE_SUMMARY_HREF = "/dashboard/admin/centre-summary";
+export const BANK_ACCOUNTS_LABEL = "Bank Accounts";
+export const ACCOUNT_DETAILS_BY_CENTRE_LABEL = "Bank accounts by Centre";
 export const OFFICIAL_ACCOUNTS_STATISTICS_HREF = "/dashboard/admin/official-statistics";
 export const OFFICIAL_ACCOUNTS_INSPECTOR_HREF = "/dashboard/inspector/exam-officials";
 export const OFFICIAL_ACCOUNTS_INSPECTOR_ATTENDANCE_HREF = "/dashboard/inspector/attendance-sheets";
@@ -18,7 +20,7 @@ export const OFFICIAL_ACCOUNTS_ZONE_ATTR = {
   "data-zone": "official-accounts",
 } as const;
 
-/** Nav card for the main account-details entry only (not Centre analysis or other finance links). */
+/** Nav card for the main bank-accounts entry only (not bank accounts by centre or other finance links). */
 export function isOfficialAccountsHref(href: string): boolean {
   return href === OFFICIAL_ACCOUNTS_ADMIN_HREF || href === OFFICIAL_ACCOUNTS_INSPECTOR_HREF;
 }

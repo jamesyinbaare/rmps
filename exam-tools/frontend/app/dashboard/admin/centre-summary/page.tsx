@@ -22,6 +22,8 @@ import {
   apiJson,
   displayBankCode,
   downloadFinanceCentreSchoolSummaryExport,
+  downloadFinanceCentreSchoolSummaryBogExport,
+  centreBogExportFilename,
   listExaminationCentres,
   schoolSummaryExportFilename,
   type AdminExamCentreOfficialRow,
@@ -40,6 +42,7 @@ import {
 import { formInputClass, formLabelClass } from "@/lib/form-classes";
 import {
   OFFICIAL_ACCOUNTS_ADMIN_HREF,
+  BANK_ACCOUNTS_LABEL,
   officialAccountsBtnPrimary,
   officialAccountsBtnSecondary,
   officialAccountsPanelClass,
@@ -499,10 +502,12 @@ function sortOfficials(rows: AdminExamCentreOfficialRow[], key: SortKey, dir: So
 function ExportButton({
   disabled,
   busy,
+  label,
   onClick,
 }: {
   disabled: boolean;
   busy: boolean;
+  label: string;
   onClick: () => void;
 }) {
   return (
@@ -521,7 +526,7 @@ function ExportButton({
       ) : (
         <>
           <Download className="mr-2 size-4" aria-hidden />
-          Export Excel
+          {label}
         </>
       )}
     </button>
@@ -544,6 +549,7 @@ function AdminCentreSummaryContent() {
   const [examListError, setExamListError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [exportBusy, setExportBusy] = useState(false);
+  const [exportBogBusy, setExportBogBusy] = useState(false);
   const [urlHydrated, setUrlHydrated] = useState(false);
 
   const [tableSearch, setTableSearch] = useState("");
@@ -672,7 +678,7 @@ function AdminCentreSummaryContent() {
       });
       setSummary(result.data);
     } catch (e) {
-      setLoadError(e instanceof Error ? e.message : "Failed to load Centre analysis");
+      setLoadError(e instanceof Error ? e.message : "Failed to load bank accounts by centre");
     } finally {
       setBusy(false);
     }
@@ -711,6 +717,29 @@ function AdminCentreSummaryContent() {
       setLoadError(e instanceof Error ? e.message : "Export failed");
     } finally {
       setExportBusy(false);
+    }
+  }
+
+  async function onExportBog() {
+    if (examId === null || !summary || !centerId.trim()) return;
+    setExportBogBusy(true);
+    setLoadError(null);
+    const filename = centreBogExportFilename(
+      summary.center_code,
+      summary.center_name,
+      subjectFilter,
+    );
+    try {
+      await downloadFinanceCentreSchoolSummaryBogExport({
+        examId,
+        centerId: centerId.trim(),
+        subject_filter: subjectFilter,
+        filename,
+      });
+    } catch (e) {
+      setLoadError(e instanceof Error ? e.message : "BoG export failed");
+    } finally {
+      setExportBogBusy(false);
     }
   }
 
@@ -759,13 +788,27 @@ function AdminCentreSummaryContent() {
     }
   }
 
+  const exportDisabled = !summary || !canLoad || exportBusy || exportBogBusy;
   const exportControl = (
-    <ExportButton disabled={!summary || !canLoad} busy={exportBusy} onClick={() => void onExport()} />
+    <div className="flex w-full flex-col gap-2 sm:w-auto sm:flex-row">
+      <ExportButton
+        disabled={exportDisabled}
+        busy={exportBusy}
+        label="Export Excel"
+        onClick={() => void onExport()}
+      />
+      <ExportButton
+        disabled={exportDisabled}
+        busy={exportBogBusy}
+        label="Export BoG"
+        onClick={() => void onExportBog()}
+      />
+    </div>
   );
 
   return (
     <div className="space-y-4">
-      <OfficialAccountsPageIntro description="Invigilator reconciliation and official account export by centre." />
+      <OfficialAccountsPageIntro description="View official account and allowance details for one examination centre — every official recorded there, their role, invigilator days, and bank details. Use this to reconcile counts and export payment data for a single centre." />
 
       <div className={officialAccountsPanelClass}>
         <div className={filterToolbarClass}>
@@ -995,7 +1038,7 @@ function AdminCentreSummaryContent() {
                             <>
                               Account details are entered by the inspector at the centre.{" "}
                               <Link href={examOfficialsHref} className="font-medium text-primary hover:underline">
-                                Open official account details
+                                Open {BANK_ACCOUNTS_LABEL}
                               </Link>
                             </>
                           ) : (
