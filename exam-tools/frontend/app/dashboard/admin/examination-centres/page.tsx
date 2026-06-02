@@ -8,6 +8,7 @@ import {
   apiJson,
   cloneExaminationCentresFrom,
   createExaminationCentre,
+  downloadCentreLocationsCsv,
   downloadExaminationCentresBulkTemplate,
   getAdminActiveExamination,
   listExaminationCentres,
@@ -54,6 +55,7 @@ export default function ExaminationCentresPage() {
   const [bulkBusy, setBulkBusy] = useState(false);
   const [bulkResult, setBulkResult] = useState<ExaminationCentreBulkUploadResponse | null>(null);
   const [bulkError, setBulkError] = useState<string | null>(null);
+  const [exportingLocations, setExportingLocations] = useState(false);
 
   useEffect(() => {
     const t = setTimeout(() => setDebouncedSearch(searchInput.trim()), 300);
@@ -218,6 +220,24 @@ export default function ExaminationCentresPage() {
     }
   };
 
+  const onExportLocationsCsv = async () => {
+    setExportingLocations(true);
+    setLoadError(null);
+    try {
+      const blob = await downloadCentreLocationsCsv();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = "centre_locations.csv";
+      a.click();
+      URL.revokeObjectURL(url);
+    } catch (e) {
+      setLoadError(e instanceof Error ? e.message : "Export failed");
+    } finally {
+      setExportingLocations(false);
+    }
+  };
+
   const onBulkUpload = async () => {
     if (examinationId == null || !bulkFile) return;
     setBulkBusy(true);
@@ -279,6 +299,14 @@ export default function ExaminationCentresPage() {
               {upgrading ? "Upgrading…" : "Upgrade to SPLIT"}
             </button>
           ) : null}
+          <button
+            type="button"
+            disabled={exportingLocations}
+            onClick={() => void onExportLocationsCsv()}
+            className={`min-h-11 rounded-lg border border-input-border px-4 text-sm font-medium hover:bg-muted disabled:opacity-50 ${inputFocusRing}`}
+          >
+            {exportingLocations ? "Exporting…" : "Export GPS (CSV)"}
+          </button>
         </div>
       </div>
 
@@ -587,19 +615,20 @@ export default function ExaminationCentresPage() {
               <th className="px-3 py-3 font-medium">Region</th>
               <th className="px-3 py-3 font-medium">Zone</th>
               <th className="px-3 py-3 font-medium">Schools</th>
+              <th className="px-3 py-3 font-medium">GPS</th>
               <th className="px-3 py-3 font-medium text-right">Actions</th>
             </tr>
           </thead>
           <tbody>
             {loading ? (
               <tr>
-                <td colSpan={6} className="px-3 py-8 text-center text-muted-foreground">
+                <td colSpan={7} className="px-3 py-8 text-center text-muted-foreground">
                   Loading…
                 </td>
               </tr>
             ) : items.length === 0 ? (
               <tr>
-                <td colSpan={6} className="px-3 py-8 text-center text-muted-foreground">
+                <td colSpan={7} className="px-3 py-8 text-center text-muted-foreground">
                   No examination centres match your search.
                 </td>
               </tr>
@@ -611,6 +640,17 @@ export default function ExaminationCentresPage() {
                   <td className="px-3 py-3 text-muted-foreground">{c.region ?? "—"}</td>
                   <td className="px-3 py-3">{c.zone ?? "—"}</td>
                   <td className="px-3 py-3 tabular-nums">{c.hosted_school_count}</td>
+                  <td className="px-3 py-3">
+                    {c.has_location ? (
+                      <span className="inline-flex rounded-full bg-success/15 px-2 py-0.5 text-xs font-medium text-success">
+                        Recorded
+                      </span>
+                    ) : (
+                      <span className="inline-flex rounded-full bg-muted px-2 py-0.5 text-xs font-medium text-muted-foreground">
+                        Missing
+                      </span>
+                    )}
+                  </td>
                   <td className="px-3 py-3 text-right">
                     {examinationId != null ? (
                       <Link

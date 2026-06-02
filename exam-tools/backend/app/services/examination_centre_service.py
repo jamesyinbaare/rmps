@@ -17,6 +17,7 @@ from app.models import (
     School,
     Zone,
 )
+from app.services.centre_location_service import location_for_examination_centre
 from app.services.centre_resolution import hosted_school_count
 
 
@@ -156,6 +157,7 @@ def parse_region_zone(
 
 async def centre_to_response(session: AsyncSession, centre: ExaminationCentre) -> dict:
     count = await hosted_school_count(session, centre)
+    loc_dict = await location_for_examination_centre(session, centre)
     return {
         "id": centre.id,
         "examination_id": centre.examination_id,
@@ -164,6 +166,8 @@ async def centre_to_response(session: AsyncSession, centre: ExaminationCentre) -
         "region": centre.region.value if centre.region is not None else None,
         "zone": centre.zone.value if centre.zone is not None else None,
         "hosted_school_count": count,
+        "has_location": loc_dict is not None,
+        "location": loc_dict,
         "created_at": centre.created_at,
         "updated_at": centre.updated_at,
     }

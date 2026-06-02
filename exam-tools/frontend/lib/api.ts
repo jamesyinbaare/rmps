@@ -45,6 +45,26 @@ export type ExaminationCenterListResponse = {
   total: number;
 };
 
+export type CentreLocationSourceApi = "INSPECTOR_GPS" | "ADMIN_MANUAL";
+
+export type CentreLocation = {
+  centre_code: string;
+  latitude: number;
+  longitude: number;
+  accuracy_m: number | null;
+  source: CentreLocationSourceApi;
+  captured_at: string;
+  captured_by_user_id: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
+export type CentreLocationUpdatePayload = {
+  latitude: number;
+  longitude: number;
+  accuracy_m?: number | null;
+};
+
 /** Per-examination centre (first-class entity; ``center_id`` in postings is this id). */
 export type PerExamCentreItem = {
   id: string;
@@ -54,6 +74,8 @@ export type PerExamCentreItem = {
   region: string | null;
   zone: string | null;
   hosted_school_count: number;
+  has_location: boolean;
+  location: CentreLocation | null;
   created_at: string;
   updated_at: string;
 };
@@ -115,6 +137,69 @@ export async function getExaminationCentreDetail(
   return apiJson<PerExamCentreDetailResponse>(
     `/examinations/${examinationId}/centres/${encodeURIComponent(centreId)}`,
   );
+}
+
+export async function getExaminationCentreLocation(
+  examinationId: number,
+  centreId: string,
+): Promise<CentreLocation> {
+  return apiJson<CentreLocation>(
+    `/examinations/${examinationId}/centres/${encodeURIComponent(centreId)}/location`,
+  );
+}
+
+export async function upsertExaminationCentreLocation(
+  examinationId: number,
+  centreId: string,
+  body: CentreLocationUpdatePayload,
+  options?: { replace?: boolean },
+): Promise<CentreLocation> {
+  const qs = options?.replace ? "?replace=true" : "";
+  return apiJson<CentreLocation>(
+    `/examinations/${examinationId}/centres/${encodeURIComponent(centreId)}/location${qs}`,
+    { method: "PUT", body: JSON.stringify(body) },
+  );
+}
+
+export type CentreLocationListResponse = {
+  items: CentreLocation[];
+  total: number;
+};
+
+export async function listCentreLocations(
+  offset = 0,
+  limit = 2000,
+): Promise<CentreLocationListResponse> {
+  const params = new URLSearchParams({
+    offset: String(offset),
+    limit: String(limit),
+  });
+  return apiJson<CentreLocationListResponse>(`/centre-locations?${params}`);
+}
+
+export async function upsertCentreLocationByCode(
+  centreCode: string,
+  body: CentreLocationUpdatePayload,
+): Promise<CentreLocation> {
+  return apiJson<CentreLocation>(
+    `/centre-locations/${encodeURIComponent(centreCode.trim().toUpperCase())}`,
+    { method: "PUT", body: JSON.stringify(body) },
+  );
+}
+
+export async function deleteCentreLocationByCode(centreCode: string): Promise<void> {
+  const res = await apiFetch(
+    `/centre-locations/${encodeURIComponent(centreCode.trim().toUpperCase())}`,
+    { method: "DELETE" },
+  );
+  await assertAuthedResponse(res);
+}
+
+/** Download CSV of all centre locations (admin route planning export). */
+export async function downloadCentreLocationsCsv(): Promise<Blob> {
+  const res = await apiFetch("/centre-locations/export.csv");
+  await assertAuthedResponse(res);
+  return res.blob();
 }
 
 export type PerExamCentreCreatePayload = {
@@ -1030,6 +1115,7 @@ export type MyInspectorPostingRow = {
   center_code: string;
   center_name: string;
   subject_scope: string;
+  has_location: boolean;
 };
 
 export type MyInspectorPostingsResponse = {

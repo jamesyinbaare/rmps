@@ -28,6 +28,7 @@ from app.routers import (
     documents,
     exam_officials,
     examination_candidates,
+    centre_locations,
     examination_centres,
     examinations,
     examiner_groups,
@@ -197,6 +198,8 @@ app.include_router(programmes.router)
 app.include_router(subjects.router)
 app.include_router(examinations.router)
 app.include_router(examination_centres.router)
+app.include_router(centre_locations.exam_router)
+app.include_router(centre_locations.admin_router)
 app.include_router(examiners.router)
 app.include_router(examiner_groups.router)
 app.include_router(examination_candidates.router)

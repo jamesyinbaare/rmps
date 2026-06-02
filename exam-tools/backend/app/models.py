@@ -1360,3 +1360,42 @@ class QuestionPaperControl(Base):
         CheckConstraint("copies_to_library >= 0", name="ck_question_paper_control_library"),
         CheckConstraint("copies_remaining >= 0", name="ck_question_paper_control_remaining"),
     )
+
+
+class CentreLocationSource(enum.Enum):
+    """How a centre_locations row was recorded."""
+
+    INSPECTOR_GPS = "INSPECTOR_GPS"
+    ADMIN_MANUAL = "ADMIN_MANUAL"
+
+
+class CentreLocation(Base):
+    """GPS coordinates for an examination centre, keyed by stable centre code (cross-examination)."""
+
+    __tablename__ = "centre_locations"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    centre_code = Column(String(32), nullable=False, unique=True, index=True)
+    latitude = Column(Numeric(9, 6), nullable=False)
+    longitude = Column(Numeric(9, 6), nullable=False)
+    accuracy_m = Column(Float, nullable=True)
+    source = Column(
+        Enum(
+            CentreLocationSource,
+            values_callable=lambda x: [i.value for i in x],
+            native_enum=False,
+            length=16,
+        ),
+        nullable=False,
+    )
+    captured_at = Column(DateTime, nullable=False)
+    captured_by_user_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True, index=True)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+
+    captured_by = relationship("User", foreign_keys=[captured_by_user_id])
+
+    __table_args__ = (
+        CheckConstraint("latitude >= -90 AND latitude <= 90", name="ck_centre_locations_latitude"),
+        CheckConstraint("longitude >= -180 AND longitude <= 180", name="ck_centre_locations_longitude"),
+    )

@@ -103,6 +103,7 @@ from app.services.exam_timetable_pdf import (
     load_schedules_for_exam,
     schedules_to_entries,
 )
+from app.services.centre_location_service import get_locations_by_codes, normalize_centre_code
 from app.services.centre_resolution import (
     centre_has_membership_for_subject_filter,
     centre_scope_school_ids,
@@ -2376,7 +2377,8 @@ async def get_my_inspector_postings(
     postings = await load_postings_for_inspector_exam(
         session, examination_id=exam_id, inspector_user_id=user.id
     )
-    rows: list[MyInspectorPostingRow] = []
+    centres_by_posting: list[tuple] = []
+    codes: list[str] = []
     for p in postings:
         cen = await session.get(ExaminationCentre, p.examination_centre_id)
         if cen is None:
@@ -2386,6 +2388,13 @@ async def get_my_inspector_postings(
             scope_str = st_scope.value
         else:
             scope_str = str(st_scope)
+        centres_by_posting.append((p, cen, scope_str))
+        codes.append(str(cen.code))
+
+    loc_by_code = await get_locations_by_codes(session, codes)
+    rows: list[MyInspectorPostingRow] = []
+    for p, cen, scope_str in centres_by_posting:
+        key = normalize_centre_code(str(cen.code))
         rows.append(
             MyInspectorPostingRow(
                 id=p.id,
@@ -2393,6 +2402,7 @@ async def get_my_inspector_postings(
                 center_code=cen.code,
                 center_name=cen.name,
                 subject_scope=scope_str,
+                has_location=key in loc_by_code,
             )
         )
     return MyInspectorPostingsResponse(items=rows)
