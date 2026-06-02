@@ -3,12 +3,6 @@
 import { useCallback, useEffect, useState } from "react";
 
 import { BottomSheet } from "@/components/bottom-sheet";
-import {
-  ScriptControlStatusTabs,
-  statusFilterEmptyMessage,
-  type ScriptControlStatusFilter,
-} from "@/components/script-control/script-control-status-tabs";
-import { STATUS_BADGE } from "@/components/script-control/script-control-view-table";
 import { SearchableCombobox } from "@/components/searchable-combobox";
 import {
   getIrregularScriptControlSchoolStatus,
@@ -44,22 +38,12 @@ type Props = {
 function SchoolResultRow({
   row,
   active,
-  subtitle,
   onSelect,
 }: {
   row: ScriptControlSchoolStatusRow;
   active?: boolean;
-  subtitle?: string;
   onSelect: () => void;
 }) {
-  const code = row.school_code;
-  const name = row.school_name;
-  const status = row.overall_status;
-  const progress =
-    "recorded_series" in row && "expected_series" in row
-      ? `${row.recorded_series}/${row.expected_series} series`
-      : null;
-
   return (
     <li>
       <button
@@ -71,17 +55,8 @@ function SchoolResultRow({
         onClick={onSelect}
       >
         <span className="min-w-0 flex-1">
-          <span className="block font-mono text-sm font-semibold">{code}</span>
-          <span className="block truncate text-xs text-muted-foreground">{name}</span>
-          {subtitle ? <span className="block text-xs text-primary">{subtitle}</span> : null}
-        </span>
-        <span className="flex shrink-0 flex-col items-end gap-1">
-          {status ? (
-            <span className={cn("rounded-full px-2 py-0.5 text-[10px] font-medium capitalize", STATUS_BADGE[status])}>
-              {status}
-            </span>
-          ) : null}
-          {progress ? <span className="text-xs tabular-nums text-muted-foreground">{progress}</span> : null}
+          <span className="block font-mono text-sm font-semibold">{row.school_code}</span>
+          <span className="block truncate text-xs text-muted-foreground">{row.school_name}</span>
         </span>
       </button>
     </li>
@@ -102,17 +77,20 @@ export function ScriptControlMobileSchoolPicker({
 }: Props) {
   const [search, setSearch] = useState("");
   const debouncedSearch = useDebounced(search, 350);
-  const [statusFilter, setStatusFilter] = useState<ScriptControlStatusFilter>("all");
   const isSearching = debouncedSearch.trim().length >= 2;
-  const effectiveStatus: ScriptControlStatusFilter = isSearching ? "all" : statusFilter;
+  const hasRegion = region.trim().length > 0;
+  const shouldFetch = hasRegion || isSearching;
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [items, setItems] = useState<ScriptControlSchoolStatusRow[]>([]);
-  const [counts, setCounts] = useState<Awaited<ReturnType<typeof getScriptControlSchoolStatus>>["status_counts"] | null>(
-    null,
-  );
 
   const fetchSchools = useCallback(async () => {
+    if (!shouldFetch) {
+      setItems([]);
+      setError(null);
+      setLoading(false);
+      return;
+    }
     setLoading(true);
     setError(null);
     try {
@@ -120,26 +98,24 @@ export function ScriptControlMobileSchoolPicker({
         examination_id: examId,
         subject_id: subjectId,
         paper_number: paperNumber,
-        region: region.trim() || undefined,
+        region: hasRegion ? region.trim() : undefined,
         school_q: isSearching ? debouncedSearch.trim() : undefined,
-        status: effectiveStatus,
+        status: "all" as const,
         skip: 0,
-        limit: isSearching ? 500 : 100,
+        limit: 500,
       };
       const res =
         recordType === "regular"
           ? await getScriptControlSchoolStatus(params)
           : await getIrregularScriptControlSchoolStatus(params);
       setItems(res.items);
-      setCounts(res.status_counts);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Failed to load schools");
       setItems([]);
-      setCounts(null);
     } finally {
       setLoading(false);
     }
-  }, [debouncedSearch, effectiveStatus, examId, isSearching, paperNumber, recordType, region, statusFilter, subjectId]);
+  }, [debouncedSearch, examId, hasRegion, isSearching, paperNumber, recordType, region, shouldFetch, subjectId]);
 
   useEffect(() => {
     if (!open) return;
@@ -167,7 +143,7 @@ export function ScriptControlMobileSchoolPicker({
         <div>
           <h2 className="text-lg font-semibold text-foreground">Find school</h2>
           <p className="text-sm text-muted-foreground">
-            Schools registered for this subject and paper only.
+            Choose a region or search by code or name to list schools for this subject and paper.
           </p>
         </div>
 
@@ -182,6 +158,7 @@ export function ScriptControlMobileSchoolPicker({
             placeholder="All regions"
             searchPlaceholder="Search region…"
             widthClass="w-full"
+            showAllOption={false}
           />
         </div>
 
@@ -194,14 +171,6 @@ export function ScriptControlMobileSchoolPicker({
           autoComplete="off"
         />
 
-        {isSearching ? (
-          <p className="text-xs text-muted-foreground">
-            Showing all schools matching your search for this subject and paper.
-          </p>
-        ) : (
-          <ScriptControlStatusTabs active={statusFilter} counts={counts} onChange={setStatusFilter} />
-        )}
-
         {error ? (
           <p className="rounded-lg border border-destructive/40 bg-destructive/10 px-3 py-2 text-sm text-destructive">
             {error}
@@ -209,14 +178,17 @@ export function ScriptControlMobileSchoolPicker({
         ) : null}
 
         <div>
-          <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-            {loading ? "Loading…" : `${items.length} school${items.length === 1 ? "" : "s"}`}
-          </p>
-          {!loading && items.length === 0 ? (
+          {!shouldFetch ? (
+            <p className="rounded-xl border border-dashed border-border bg-muted/20 px-4 py-6 text-center text-sm text-muted-foreground">
+              Select a region or type at least 2 characters to search.
+            </p>
+          ) : loading ? (
+            <p className="text-sm text-muted-foreground">Loading…</p>
+          ) : items.length === 0 ? (
             <p className="rounded-xl border border-border bg-muted/20 px-4 py-6 text-center text-sm text-muted-foreground">
               {isSearching
                 ? "No schools match your search for this subject and paper."
-                : statusFilterEmptyMessage(statusFilter)}
+                : "No schools in this region for this subject and paper."}
             </p>
           ) : (
             <ul className="divide-y divide-border rounded-xl border border-border">
