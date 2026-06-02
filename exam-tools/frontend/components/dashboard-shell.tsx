@@ -153,6 +153,7 @@ export function DashboardShell({ title, children, staffRole }: Props) {
   const irregularScriptsHref = `${staffBase}/irregular-scripts-control`;
   const questionPaperHref = `${staffBase}/question-paper-control`;
   const examOfficialsHref = `${staffBase}/exam-officials`;
+  const centreLocationHref = `${staffBase}/centre-location`;
   const examinationNoticeHref = `${staffBase}/examination-notice`;
 
   const changeCentreNavItem = showInspectorChangeCentre
@@ -207,6 +208,11 @@ export function DashboardShell({ title, children, staffRole }: Props) {
     },
     ...(staffRole === "inspector"
       ? [
+          {
+            href: centreLocationHref,
+            label: "Centre location",
+            active: pathname.startsWith(centreLocationHref),
+          },
           {
             href: examOfficialsHref,
             label: "Official account details",

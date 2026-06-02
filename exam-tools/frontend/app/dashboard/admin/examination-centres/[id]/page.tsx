@@ -8,11 +8,13 @@ import { SchoolSearchCombobox } from "@/components/school-search-combobox";
 import { SubjectScopeBadge, SubjectScopeLegend } from "@/components/subject-scope-badge";
 import {
   apiJson,
+  deleteCentreLocationByCode,
   deleteExaminationCentre,
   getExaminationCentreDetail,
   listExaminationCentres,
   setExaminationCentreMemberships,
   updateExaminationCentre,
+  upsertCentreLocationByCode,
   type Examination,
   type PerExamCentreDetailResponse,
   type PerExamCentreMembershipAssign,
@@ -82,6 +84,11 @@ export default function ExaminationCentreDetailPage() {
   const [newScope, setNewScope] = useState<"ALL" | "CORE" | "ELECTIVE">("ALL");
   const [savingMemberships, setSavingMemberships] = useState(false);
 
+  const [editLat, setEditLat] = useState("");
+  const [editLng, setEditLng] = useState("");
+  const [savingLocation, setSavingLocation] = useState(false);
+  const [clearingLocation, setClearingLocation] = useState(false);
+
   useEffect(() => {
     let cancelled = false;
     void (async () => {
@@ -135,6 +142,14 @@ export default function ExaminationCentreDetailPage() {
       }
       if (!editingMemberships) {
         setDraftAssignments(membershipsToDraft(res.memberships));
+      }
+      const loc = res.centre.location;
+      if (loc) {
+        setEditLat(String(loc.latitude));
+        setEditLng(String(loc.longitude));
+      } else {
+        setEditLat("");
+        setEditLng("");
       }
     } catch (e) {
       setData(null);
@@ -242,6 +257,46 @@ export default function ExaminationCentreDetailPage() {
   };
 
   const displayMemberships = editingMemberships ? draftAssignments : data?.memberships ?? [];
+
+  const onSaveLocation = async () => {
+    if (!centre) return;
+    const lat = Number(editLat);
+    const lng = Number(editLng);
+    if (!Number.isFinite(lat) || !Number.isFinite(lng)) {
+      setError("Enter valid latitude and longitude");
+      return;
+    }
+    setSavingLocation(true);
+    setError(null);
+    try {
+      await upsertCentreLocationByCode(centre.code, {
+        latitude: lat,
+        longitude: lng,
+      });
+      await load();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Failed to save location");
+    } finally {
+      setSavingLocation(false);
+    }
+  };
+
+  const onClearLocation = async () => {
+    if (!centre) return;
+    if (!confirm(`Remove GPS for centre code ${centre.code}? This affects all examinations using this code.`)) {
+      return;
+    }
+    setClearingLocation(true);
+    setError(null);
+    try {
+      await deleteCentreLocationByCode(centre.code);
+      await load();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Failed to clear location");
+    } finally {
+      setClearingLocation(false);
+    }
+  };
 
   return (
     <div className="space-y-6">
@@ -433,6 +488,84 @@ export default function ExaminationCentreDetailPage() {
                 </div>
               </dl>
             )}
+          </section>
+
+          <section className="rounded-2xl border border-border bg-card p-5">
+            <h3 className="text-sm font-medium uppercase tracking-wide text-muted-foreground">
+              GPS location
+            </h3>
+            <p className="mt-1 text-xs text-muted-foreground">
+              Stored by centre code <span className="font-mono">{centre.code}</span> — applies across all
+              examinations using this code.
+            </p>
+            {centre.location ? (
+              <p className="mt-2 text-sm text-foreground">
+                Last recorded:{" "}
+                {new Date(centre.location.captured_at).toLocaleString(undefined, {
+                  dateStyle: "medium",
+                  timeStyle: "short",
+                })}{" "}
+                ({centre.location.source === "ADMIN_MANUAL" ? "admin" : "inspector GPS"})
+              </p>
+            ) : null}
+            <div className="mt-4 grid gap-4 sm:grid-cols-2">
+              <div>
+                <label htmlFor="edit-lat" className={formLabelClass}>
+                  Latitude
+                </label>
+                <input
+                  id="edit-lat"
+                  type="number"
+                  step="any"
+                  className={formInputClass}
+                  value={editLat}
+                  onChange={(e) => setEditLat(e.target.value)}
+                />
+              </div>
+              <div>
+                <label htmlFor="edit-lng" className={formLabelClass}>
+                  Longitude
+                </label>
+                <input
+                  id="edit-lng"
+                  type="number"
+                  step="any"
+                  className={formInputClass}
+                  value={editLng}
+                  onChange={(e) => setEditLng(e.target.value)}
+                />
+              </div>
+            </div>
+            <div className="mt-4 flex flex-wrap gap-2">
+              <button
+                type="button"
+                disabled={savingLocation}
+                onClick={() => void onSaveLocation()}
+                className={`min-h-11 rounded-lg bg-primary px-4 text-sm font-medium text-primary-foreground hover:bg-primary-hover disabled:opacity-50 ${inputFocusRing}`}
+              >
+                {savingLocation ? "Saving…" : centre.has_location ? "Update location" : "Save location"}
+              </button>
+              {centre.has_location ? (
+                <button
+                  type="button"
+                  disabled={clearingLocation}
+                  onClick={() => void onClearLocation()}
+                  className={`min-h-11 rounded-lg border border-destructive/50 px-4 text-sm font-medium text-destructive hover:bg-destructive/10 disabled:opacity-50 ${inputFocusRing}`}
+                >
+                  {clearingLocation ? "Clearing…" : "Clear GPS"}
+                </button>
+              ) : null}
+              {centre.location ? (
+                <a
+                  href={`https://www.google.com/maps?q=${centre.location.latitude},${centre.location.longitude}`}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className={`inline-flex min-h-11 items-center rounded-lg border border-input-border px-4 text-sm font-medium hover:bg-muted ${inputFocusRing}`}
+                >
+                  Open in maps
+                </a>
+              ) : null}
+            </div>
           </section>
 
           <section className="rounded-2xl border border-border bg-card p-5">

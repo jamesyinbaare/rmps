@@ -7,6 +7,7 @@ from uuid import UUID
 from pydantic import BaseModel, Field
 
 from app.models import CentreStructureMode, ExaminationCentreMembershipScope
+from app.schemas.centre_location import CentreLocationResponse
 from app.schemas.school import PostedInspectorAtCentreRow
 
 
@@ -18,6 +19,8 @@ class ExaminationCentreResponse(BaseModel):
     region: str | None = None
     zone: str | None = None
     hosted_school_count: int = 0
+    has_location: bool = False
+    location: CentreLocationResponse | None = None
     created_at: datetime
     updated_at: datetime
 

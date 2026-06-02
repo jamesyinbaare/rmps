@@ -52,6 +52,10 @@ class MyInspectorPostingRow(BaseModel):
     center_code: str
     center_name: str
     subject_scope: str
+    has_location: bool = Field(
+        False,
+        description="Whether centre_locations has a pin for this centre code.",
+    )
 
 
 class MyInspectorPostingsResponse(BaseModel):
