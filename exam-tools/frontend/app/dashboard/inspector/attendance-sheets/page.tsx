@@ -1,5 +1,6 @@
 "use client";
 
+import { CheckCircle } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 import { useRouter } from "next/navigation";
 
@@ -26,7 +27,7 @@ import {
   type InspectorSubmissionStatus,
   type RecordSubjectScope,
 } from "@/lib/api";
-import { inspectorMustPickWorkspaceGlobally, pickInspectorPostingId } from "@/lib/auth";
+import { getMe, inspectorMustPickWorkspaceGlobally, pickInspectorPostingId } from "@/lib/auth";
 
 const btnPrimary =
   "inline-flex min-h-11 w-full items-center justify-center rounded-lg bg-primary px-4 text-sm font-medium text-primary-foreground transition-colors hover:bg-primary-hover focus:outline-none focus:ring-2 focus:ring-ring/30 disabled:pointer-events-none disabled:opacity-50";
@@ -38,6 +39,41 @@ const btnFilePicker =
   "inline-flex min-h-11 w-full cursor-pointer items-center justify-center rounded-lg border border-input-border bg-muted/40 px-4 text-sm font-medium text-foreground transition-colors hover:bg-muted focus-within:outline-none focus-within:ring-2 focus-within:ring-ring/30 disabled:pointer-events-none disabled:opacity-50";
 
 const panelClass = "rounded-2xl border border-border bg-card p-4 sm:p-6";
+
+const UPLOAD_SUCCESS_DISMISS_MS = 2500;
+
+function UploadSuccessModal({ open, onDismiss }: { open: boolean; onDismiss: () => void }) {
+  useEffect(() => {
+    if (!open) return;
+    const timer = window.setTimeout(onDismiss, UPLOAD_SUCCESS_DISMISS_MS);
+    return () => window.clearTimeout(timer);
+  }, [open, onDismiss]);
+
+  if (!open) return null;
+
+  return (
+    <div className="fixed inset-0 z-[110] flex items-center justify-center p-4">
+      <button
+        type="button"
+        aria-label="Dismiss"
+        className="absolute inset-0 bg-foreground/40"
+        onClick={onDismiss}
+      />
+      <div
+        role="status"
+        aria-live="polite"
+        aria-modal="true"
+        className="relative z-10 w-full max-w-sm rounded-2xl border border-success/30 bg-card p-6 text-center shadow-lg"
+      >
+        <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-full bg-success/15 text-success">
+          <CheckCircle className="h-7 w-7" aria-hidden />
+        </div>
+        <h2 className="mt-4 text-lg font-semibold text-card-foreground">Uploaded successfully</h2>
+        <p className="mt-1.5 text-sm text-muted-foreground">Your attendance sheet has been saved.</p>
+      </div>
+    </div>
+  );
+}
 
 type DateGroup = { slot: UploadSlot; sheets: AttendanceSheet[] };
 type DateStatus = {
@@ -157,6 +193,7 @@ function emptyDraft(): UploadDraft {
 
 type AttendanceSheetFileRowProps = {
   row: AttendanceSheet;
+  currentUserId: string | null;
   downloadingId: string | null;
   deletingId: string | null;
   deleteEnabled: boolean;
@@ -166,6 +203,7 @@ type AttendanceSheetFileRowProps = {
 
 function AttendanceSheetFileRow({
   row,
+  currentUserId,
   downloadingId,
   deletingId,
   deleteEnabled,
@@ -180,6 +218,9 @@ function AttendanceSheetFileRow({
       </p>
       <p className="mt-0.5 text-xs text-muted-foreground">
         {row.subject_scope === "CORE" ? "Core" : "Elective"} · Uploaded {formatUploadedAt(row.created_at)}
+        {currentUserId && row.uploaded_by_id && row.uploaded_by_id !== currentUserId
+          ? " · Uploaded by another inspector"
+          : null}
       </p>
       {row.notes ? (
         <p className="mt-1 line-clamp-2 text-xs text-muted-foreground">
@@ -250,6 +291,7 @@ type AttendanceDateGroupProps = {
   uploadBusy: boolean;
   submissionsOpen: boolean;
   submissionDeadlineEnd: string | null;
+  currentUserId: string | null;
   downloadingId: string | null;
   deletingId: string | null;
   onDraftChange: (key: string, patch: Partial<UploadDraft>) => void;
@@ -267,6 +309,7 @@ function AttendanceDateGroup({
   uploadBusy,
   submissionsOpen,
   submissionDeadlineEnd,
+  currentUserId,
   downloadingId,
   deletingId,
   onDraftChange,
@@ -327,6 +370,7 @@ function AttendanceDateGroup({
               <AttendanceSheetFileRow
                 key={row.id}
                 row={row}
+                currentUserId={currentUserId}
                 downloadingId={downloadingId}
                 deletingId={deletingId}
                 deleteEnabled={submissionsOpen}
@@ -432,15 +476,19 @@ export default function InspectorAttendanceSheetsPage() {
   const [loadError, setLoadError] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
   const [actionSuccess, setActionSuccess] = useState<string | null>(null);
+  const [uploadSuccessOpen, setUploadSuccessOpen] = useState(false);
   const [loading, setLoading] = useState(true);
   const [uploadBusyKey, setUploadBusyKey] = useState<string | null>(null);
   const [downloadingId, setDownloadingId] = useState<string | null>(null);
   const [deletingId, setDeletingId] = useState<string | null>(null);
   const [pendingDeleteSheet, setPendingDeleteSheet] = useState<AttendanceSheet | null>(null);
   const [deleteBusy, setDeleteBusy] = useState(false);
+  const [currentUserId, setCurrentUserId] = useState<string | null>(null);
 
   const groupRefs = useRef<Record<string, HTMLDetailsElement | null>>({});
   const chooseFileRefs = useRef<Record<string, HTMLInputElement | null>>({});
+
+  const dismissUploadSuccess = useCallback(() => setUploadSuccessOpen(false), []);
 
   const uploadSlots = useMemo(() => flattenScheduledDates(scheduledItems), [scheduledItems]);
   const scheduledDates = useMemo(() => uniqueDates(uploadSlots), [uploadSlots]);
@@ -504,7 +552,8 @@ export default function InspectorAttendanceSheetsPage() {
       setLoading(true);
       setLoadError(null);
       try {
-        const defaultExam = await getStaffDefaultExamination();
+        const [defaultExam, me] = await Promise.all([getStaffDefaultExamination(), getMe()]);
+        if (!cancelled) setCurrentUserId(me.id);
         const postingsRes = await getMyInspectorPostings(defaultExam.id);
         const postingItems = Array.isArray(postingsRes.items) ? postingsRes.items : [];
         if (inspectorMustPickWorkspaceGlobally(postingItems.length)) {
@@ -568,7 +617,7 @@ export default function InspectorAttendanceSheetsPage() {
       });
       clearDraft(key);
       setFocusedKey(key);
-      setActionSuccess(`Attendance sheet uploaded for ${slotLabel(slot)}.`);
+      setUploadSuccessOpen(true);
       await refreshLists(exam.id, postingId);
       requestAnimationFrame(() => {
         const el = groupRefs.current[key];
@@ -758,6 +807,7 @@ export default function InspectorAttendanceSheetsPage() {
                     submissionDeadlineEnd={
                       submissionStatus ? inspectorScopePeriodEnd(submissionStatus, group.slot.scope) : null
                     }
+                    currentUserId={currentUserId}
                     downloadingId={downloadingId}
                     deletingId={deletingId}
                     onDraftChange={setDraft}
@@ -801,6 +851,8 @@ export default function InspectorAttendanceSheetsPage() {
             </div>
           </div>
         ) : null}
+
+        <UploadSuccessModal open={uploadSuccessOpen} onDismiss={dismissUploadSuccess} />
 
         {pendingDeleteSheet ? (
           <TypeToDeleteConfirmModal

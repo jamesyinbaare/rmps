@@ -9,7 +9,7 @@ from uuid import UUID
 from fastapi import HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models import ExamInspectorSubjectScope
+from app.models import ExamInspectorSubjectScope, InspectorAttendanceSheet
 from app.schemas.timetable import TimetableDownloadFilter
 from app.services.inspector_posting import InspectorWorkspaceContext
 from app.services.timetable_dates import staff_center_filtered_timetable_entries
@@ -109,6 +109,17 @@ def sheets_visible_to_posting(
     if posting_scope == ExamInspectorSubjectScope.ALL:
         return True
     return posting_scope == sheet_scope
+
+
+def attendance_sheet_accessible_in_workspace(
+    ctx: InspectorWorkspaceContext,
+    sheet: InspectorAttendanceSheet,
+) -> bool:
+    """Whether an attendance sheet at the workspace centre is visible to this posting."""
+    return (
+        sheet.examination_centre_id == ctx.examination_centre.id
+        and sheets_visible_to_posting(ctx.subject_scope, sheet.subject_scope)
+    )
 
 
 async def _codes_on_centre_date(
