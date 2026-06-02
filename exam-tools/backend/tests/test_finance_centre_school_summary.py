@@ -2,13 +2,13 @@
 
 import io
 from datetime import date, datetime, timezone
-from unittest.mock import MagicMock
-from uuid import uuid4
+from unittest.mock import AsyncMock, MagicMock
+from uuid import UUID, uuid4
 
 import pytest
 from openpyxl import load_workbook
 
-from app.models import ExamOfficialDesignation
+from app.models import ExamInspectorSubjectScope, ExamOfficialDesignation
 from app.schemas.examination import (
     FinanceCentreDayInvigilatorRow,
     FinanceCentreInvigilatorSummaryItem,
@@ -21,13 +21,16 @@ from app.services.exam_official_export import (
     HEADER_LABELS,
     workbook_for_centre,
 )
+from app.schemas.timetable import TimetableDownloadFilter
 from app.services.finance_school_summary import (
     build_role_counts,
     expected_invigilations_total,
     invigilator_days_declared,
+    load_assigned_inspectors_for_centre,
     school_summary_export_filename,
     subject_filter_filename_suffix,
 )
+from app.services.subject_scope import posting_matches_timetable_filter
 
 
 def _official(designation: ExamOfficialDesignation, num_days: int = 1) -> MagicMock:
@@ -96,6 +99,180 @@ def test_invigilator_headcount_in_school_summary() -> None:
         _official(ExamOfficialDesignation.SUPERVISOR),
     ]
     assert invigilator_headcount(officials) == 2
+
+
+def _posting_user(
+    *,
+    user_id: UUID,
+    full_name: str,
+    phone: str | None,
+    scope: ExamInspectorSubjectScope,
+) -> tuple[MagicMock, MagicMock]:
+    posting = MagicMock()
+    posting.inspector_user_id = user_id
+    posting.subject_scope = scope
+    user = MagicMock()
+    user.full_name = full_name
+    user.phone_number = phone
+    return posting, user
+
+
+@pytest.mark.asyncio
+async def test_load_assigned_inspectors_core_only() -> None:
+    uid_core = uuid4()
+    uid_elec = uuid4()
+    session = AsyncMock()
+    session.execute = AsyncMock(
+        return_value=MagicMock(
+            all=MagicMock(
+                return_value=[
+                    _posting_user(
+                        user_id=uid_core,
+                        full_name="Core Inspector",
+                        phone="0241111111",
+                        scope=ExamInspectorSubjectScope.CORE,
+                    ),
+                ]
+            )
+        )
+    )
+
+    result = await load_assigned_inspectors_for_centre(
+        session,
+        1,
+        uuid4(),
+        subject_filter=TimetableDownloadFilter.CORE_ONLY,
+    )
+
+    assert len(result) == 1
+    assert result[0].inspector_id == uid_core
+    assert result[0].full_name == "Core Inspector"
+    assert result[0].phone == "0241111111"
+    assert uid_elec not in {r.inspector_id for r in result}
+
+
+@pytest.mark.asyncio
+async def test_load_assigned_inspectors_elective_only() -> None:
+    uid_elec = uuid4()
+    session = AsyncMock()
+    session.execute = AsyncMock(
+        return_value=MagicMock(
+            all=MagicMock(
+                return_value=[
+                    _posting_user(
+                        user_id=uid_elec,
+                        full_name="Elective Inspector",
+                        phone="0242222222",
+                        scope=ExamInspectorSubjectScope.ELECTIVE,
+                    ),
+                ]
+            )
+        )
+    )
+
+    result = await load_assigned_inspectors_for_centre(
+        session,
+        1,
+        uuid4(),
+        subject_filter=TimetableDownloadFilter.ELECTIVE_ONLY,
+    )
+
+    assert len(result) == 1
+    assert result[0].inspector_id == uid_elec
+
+
+@pytest.mark.asyncio
+async def test_load_assigned_inspectors_all_dedupes_by_user() -> None:
+    uid = uuid4()
+    session = AsyncMock()
+    session.execute = AsyncMock(
+        return_value=MagicMock(
+            all=MagicMock(
+                return_value=[
+                    _posting_user(
+                        user_id=uid,
+                        full_name="Both Scopes",
+                        phone="0243333333",
+                        scope=ExamInspectorSubjectScope.CORE,
+                    ),
+                    _posting_user(
+                        user_id=uid,
+                        full_name="Both Scopes",
+                        phone="0243333333",
+                        scope=ExamInspectorSubjectScope.ELECTIVE,
+                    ),
+                ]
+            )
+        )
+    )
+
+    result = await load_assigned_inspectors_for_centre(
+        session,
+        1,
+        uuid4(),
+        subject_filter=TimetableDownloadFilter.ALL,
+    )
+
+    assert len(result) == 1
+    assert result[0].inspector_id == uid
+
+
+def test_posting_matches_timetable_filter() -> None:
+    assert posting_matches_timetable_filter(
+        ExamInspectorSubjectScope.ALL, TimetableDownloadFilter.CORE_ONLY
+    )
+    assert posting_matches_timetable_filter(
+        ExamInspectorSubjectScope.CORE, TimetableDownloadFilter.CORE_ONLY
+    )
+    assert not posting_matches_timetable_filter(
+        ExamInspectorSubjectScope.ELECTIVE, TimetableDownloadFilter.CORE_ONLY
+    )
+    assert posting_matches_timetable_filter(
+        ExamInspectorSubjectScope.ALL, TimetableDownloadFilter.ELECTIVE_ONLY
+    )
+    assert posting_matches_timetable_filter(
+        ExamInspectorSubjectScope.ELECTIVE, TimetableDownloadFilter.ALL
+    )
+
+
+@pytest.mark.asyncio
+async def test_load_assigned_inspectors_includes_all_scope_for_core() -> None:
+    uid = uuid4()
+    session = AsyncMock()
+    session.execute = AsyncMock(
+        return_value=MagicMock(
+            all=MagicMock(
+                return_value=[
+                    _posting_user(
+                        user_id=uid,
+                        full_name="All Scope",
+                        phone="0240000000",
+                        scope=ExamInspectorSubjectScope.ALL,
+                    ),
+                ]
+            )
+        )
+    )
+
+    result = await load_assigned_inspectors_for_centre(
+        session,
+        1,
+        uuid4(),
+        subject_filter=TimetableDownloadFilter.CORE_ONLY,
+    )
+
+    assert len(result) == 1
+    assert result[0].full_name == "All Scope"
+
+
+@pytest.mark.asyncio
+async def test_load_assigned_inspectors_empty() -> None:
+    session = AsyncMock()
+    session.execute = AsyncMock(return_value=MagicMock(all=MagicMock(return_value=[])))
+
+    result = await load_assigned_inspectors_for_centre(session, 1, uuid4())
+
+    assert result == []
 
 
 def test_invigilator_days_declared_only_invigilators() -> None:

@@ -24,6 +24,8 @@ export type SearchableComboboxProps = {
   /** Fired when the user types in the search box (for server-backed lists). */
   onSearchChange?: (query: string) => void;
   disabled?: boolean;
+  /** Extra classes on the trigger button (e.g. compact toolbar height). */
+  triggerClassName?: string;
 };
 
 export function SearchableCombobox({
@@ -39,6 +41,7 @@ export function SearchableCombobox({
   allOptionLabel = "All",
   onSearchChange,
   disabled = false,
+  triggerClassName,
 }: SearchableComboboxProps) {
   const [open, setOpen] = useState(false);
   const selected = options.find((o) => o.value === value);
@@ -51,8 +54,9 @@ export function SearchableCombobox({
           aria-expanded={open}
           disabled={disabled}
           className={cn(
-            "h-auto min-h-11 min-w-0 max-w-full items-center justify-between gap-2 py-2.5 font-normal whitespace-normal sm:min-h-10",
+            "h-auto min-h-11 min-w-0 max-w-full items-center justify-between gap-2 py-2.5 text-sm font-normal whitespace-normal sm:min-h-10",
             widthClass,
+            triggerClassName,
           )}
         >
           <span className="min-w-0 flex-1 break-words text-left leading-snug">

@@ -2458,6 +2458,8 @@ export async function listAdminExamCentreOfficials(params: {
   region?: string | null;
   skip?: number;
   limit?: number;
+  sort_by?: "center_code" | "full_name" | "num_days";
+  sort_dir?: "asc" | "desc";
 }): Promise<AdminExamCentreOfficialListResponse> {
   const q = new URLSearchParams();
   q.set("examination_id", String(params.examination_id));
@@ -2471,6 +2473,8 @@ export async function listAdminExamCentreOfficials(params: {
   if (params.region?.trim()) q.set("region", params.region.trim());
   if (params.skip != null) q.set("skip", String(params.skip));
   if (params.limit != null) q.set("limit", String(params.limit));
+  if (params.sort_by) q.set("sort_by", params.sort_by);
+  if (params.sort_dir) q.set("sort_dir", params.sort_dir);
   return apiJson<AdminExamCentreOfficialListResponse>(`/admin/exam-centre-officials?${q.toString()}`);
 }
 
@@ -2552,6 +2556,12 @@ export type FinanceCentreSchoolSummaryRoleCounts = {
   assistant_supervisor: number;
 };
 
+export type AssignedInspectorAtCentre = {
+  inspector_id: string;
+  full_name: string;
+  phone: string | null;
+};
+
 export type FinanceCentreSchoolSummaryResponse = {
   center_id: string;
   center_code: string;
@@ -2562,6 +2572,7 @@ export type FinanceCentreSchoolSummaryResponse = {
   variance: number;
   role_counts: FinanceCentreSchoolSummaryRoleCounts;
   officials: AdminExamCentreOfficialRow[];
+  assigned_inspectors: AssignedInspectorAtCentre[];
 };
 
 export type FinanceCentreOfficialStatisticsRow = {
@@ -2599,7 +2610,7 @@ function centreSchoolSummaryQuery(params: {
 }): string {
   const q = new URLSearchParams();
   q.set("center_id", params.centerId.trim());
-  if (params.subject_filter != null) q.set("subject_filter", params.subject_filter);
+  q.set("subject_filter", params.subject_filter ?? "ALL");
   return `?${q.toString()}`;
 }
 

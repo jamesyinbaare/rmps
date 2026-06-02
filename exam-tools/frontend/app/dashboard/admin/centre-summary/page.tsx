@@ -2,22 +2,16 @@
 
 import Link from "next/link";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
-import {
-  AlertCircle,
-  Building2,
-  CheckCircle2,
-  Download,
-  CalendarDays,
-  Loader2,
-  MinusCircle,
-  X,
-} from "lucide-react";
-import { useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
+import { Building2, Download, Loader2 } from "lucide-react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 
 import { RoleGuard } from "@/components/role-guard";
 import { SearchableCombobox } from "@/components/searchable-combobox";
+import { InvigilatorSummaryCard } from "@/components/centre-invigilator-summary-card";
+import { OfficialRolesPanel } from "@/components/centre-official-roles-panel";
 import { OfficialAccountsPageIntro } from "@/components/official-accounts-page-intro";
-import { SubjectScopeBadge, SubjectScopeLegend, timetableFilterBadgeScope } from "@/components/subject-scope-badge";
+import { OfficialAccountsPagination } from "@/components/official-accounts-pagination";
+import { SubjectScopeBadge, timetableFilterBadgeScope } from "@/components/subject-scope-badge";
 import {
   apiJson,
   displayBankCode,
@@ -28,18 +22,12 @@ import {
   schoolSummaryExportFilename,
   type AdminExamCentreOfficialRow,
   type Examination,
-  type FinanceCentreDayInvigilatorRow,
   type FinanceCentreSchoolSummaryResponse,
   type PerExamCentreItem,
   type TimetableSubjectFilter,
 } from "@/lib/api";
-import {
-  getCachedCentreInvigilatorDays,
-  getCachedCentreSchoolSummary,
-  peekCachedCentreInvigilatorDays,
-  peekCachedCentreSchoolSummary,
-} from "@/lib/finance-statistics-cache";
-import { formInputClass, formLabelClass } from "@/lib/form-classes";
+import { getCachedCentreSchoolSummary, peekCachedCentreSchoolSummary } from "@/lib/finance-statistics-cache";
+import { formInputClass } from "@/lib/form-classes";
 import {
   OFFICIAL_ACCOUNTS_ADMIN_HREF,
   BANK_ACCOUNTS_LABEL,
@@ -60,92 +48,32 @@ const SUBJECT_SCOPE_OPTIONS: { value: TimetableSubjectFilter; label: string; hin
   { value: "ALL", label: "All", hint: "Include core and elective examination days" },
 ];
 
-const ROLE_CARDS: {
-  key: keyof FinanceCentreSchoolSummaryResponse["role_counts"];
-  shortLabel: string;
-  fullLabel: string;
-}[] = [
-  { key: "external_inspector", shortLabel: "Ext. insp.", fullLabel: "External Inspector" },
-  { key: "police_officer", shortLabel: "Police", fullLabel: "Police Officer" },
-  { key: "supervisor", shortLabel: "Supervisor", fullLabel: "Supervisor" },
-  { key: "depot_keeper", shortLabel: "Depot", fullLabel: "Depot Keeper" },
-  { key: "assistant_supervisor", shortLabel: "Asst. sup.", fullLabel: "Assistant Supervisor" },
-];
-
 const ALL_DESIGNATIONS = "__all__";
+const DEFAULT_CENTRE_PAGE_SIZE = 25;
+const CENTRE_PAGE_SIZE_OPTIONS = [25, 50, 100, 200, 500, 1000] as const;
 
-type InvigilationTone = "over" | "match" | "under";
 type SortKey = "name" | "designation" | "days";
 type SortDir = "asc" | "desc";
 
 const filterToolbarClass =
-  "space-y-4 border-b border-border bg-muted/20 px-4 py-4 sm:px-5";
-const filterToolbarSectionClass = "flex flex-col gap-3 sm:flex-row sm:items-end sm:gap-4";
-const filterFieldClass = "flex min-w-0 flex-col gap-1.5";
-/** Toolbar selects — text-sm to match compact controls. */
+  "border-b border-border bg-muted/20 px-3 py-2.5 sm:px-4";
+const filterToolbarRowClass = "flex flex-wrap items-end gap-x-3 gap-y-2";
+const filterFieldClass = "flex min-w-0 flex-col gap-0.5";
+const filterLabelClass = "text-[11px] font-medium leading-none text-muted-foreground";
 const filterSelectClass =
-  "block w-full min-h-10 rounded-lg border border-input-border bg-input px-3 text-sm text-foreground shadow-sm focus:border-primary focus:outline-none focus:ring-2 focus:ring-ring/30";
-
-const statCardClass =
-  "flex h-36 flex-col items-center justify-center rounded-xl border border-border bg-card p-2 text-center lg:h-full lg:min-h-36";
+  "block w-full min-h-8 rounded-md border border-input-border bg-input px-2.5 text-xs text-foreground shadow-sm focus:border-primary focus:outline-none focus:ring-2 focus:ring-ring/30";
 
 function formatExamLabel(ex: Examination): string {
   return `${ex.year}${ex.exam_series ? ` ${ex.exam_series}` : ""} — ${ex.exam_type}`;
 }
 
-function invigilationTone(declared: number, expected: number): InvigilationTone {
-  if (declared > expected) return "over";
-  if (declared < expected) return "under";
-  return "match";
-}
-
-function invigilatorCardStyles(tone: InvigilationTone) {
-  switch (tone) {
-    case "over":
-      return {
-        card: "border-destructive/45 bg-destructive/5 ring-1 ring-destructive/15",
-        declared: "text-destructive",
-        badge: "bg-destructive/15 text-destructive",
-        Icon: AlertCircle,
-        badgeText: "Over",
-        captionText: "Over expected",
-      };
-    case "match":
-      return {
-        card: "border-success/45 bg-success/5 ring-1 ring-success/15",
-        declared: "text-success",
-        badge: "bg-success/15 text-success",
-        Icon: CheckCircle2,
-        badgeText: "Match",
-        captionText: "Matches expected",
-      };
-    case "under":
-      return {
-        card: "border-amber-500/40 bg-amber-500/5 ring-1 ring-amber-500/15 dark:border-amber-400/40",
-        declared: "text-amber-700 dark:text-amber-400",
-        badge: "bg-amber-500/15 text-amber-800 dark:text-amber-300",
-        Icon: MinusCircle,
-        badgeText: "Short",
-        captionText: "Below expected",
-      };
-  }
-}
-
-function varianceDetail(variance: number): string {
-  if (variance === 0) return "0 difference";
-  if (variance > 0) return `+${variance} over`;
-  return `${Math.abs(variance)} short`;
-}
-
 function SummarySkeleton() {
   return (
     <div className="space-y-4 px-4 py-4 sm:px-5" role="status" aria-label="Loading summary">
-      <div className="flex flex-col gap-3 lg:flex-row">
-        <div className="h-36 w-full animate-pulse rounded-xl bg-muted/50 lg:max-w-sm" />
-        <div className="grid flex-1 grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-6">
-          {Array.from({ length: 6 }).map((_, i) => (
-            <div key={i} className="h-20 animate-pulse rounded-xl bg-muted/40" />
-          ))}
+      <div className="rounded-xl border border-border/70 bg-muted/30 p-3 dark:bg-muted/20">
+        <div className="grid gap-3 lg:grid-cols-[minmax(18rem,2fr)_minmax(0,3fr)] lg:items-stretch">
+          <div className="min-h-44 animate-pulse rounded-xl bg-card shadow-md" />
+          <div className="min-h-36 animate-pulse rounded-xl bg-card shadow-md" />
         </div>
       </div>
       <div className="space-y-2">
@@ -155,19 +83,6 @@ function SummarySkeleton() {
       </div>
     </div>
   );
-}
-
-function formatExamDayLabel(isoDate: string): string {
-  return new Date(`${isoDate}T12:00:00`).toLocaleDateString(undefined, {
-    weekday: "short",
-    day: "numeric",
-    month: "short",
-    year: "numeric",
-  });
-}
-
-function subjectScopeLabel(filter: TimetableSubjectFilter): string {
-  return SUBJECT_SCOPE_OPTIONS.find((o) => o.value === filter)?.label ?? filter;
 }
 
 function SubjectScopeToggle({
@@ -184,9 +99,9 @@ function SubjectScopeToggle({
       className={cn(filterFieldClass, "w-fit shrink-0")}
       title="Choose which subject types to include in centre totals and official lists."
     >
-      <span className={formLabelClass}>Subject scope</span>
+      <span className={filterLabelClass}>Scope</span>
       <div
-        className="inline-flex min-h-10 shrink-0 rounded-lg border border-input-border bg-muted/30 p-0.5 shadow-sm"
+        className="inline-flex min-h-8 shrink-0 rounded-md border border-input-border bg-muted/30 p-0.5"
         role="radiogroup"
         aria-label="Subject scope"
       >
@@ -200,7 +115,7 @@ function SubjectScopeToggle({
               htmlFor={id}
               title={opt.hint}
               className={cn(
-                "flex shrink-0 cursor-pointer items-center justify-center whitespace-nowrap rounded-md px-2.5 text-sm font-medium transition-colors",
+                "flex shrink-0 cursor-pointer items-center justify-center whitespace-nowrap rounded px-2 text-xs font-medium transition-colors",
                 checked
                   ? cn("shadow-sm ring-1 ring-success/30", subjectScopeBadgeClass(badgeScope))
                   : "text-muted-foreground hover:bg-muted/60 hover:text-foreground",
@@ -225,266 +140,53 @@ function SubjectScopeToggle({
   );
 }
 
-function ExpectedByDayModal({
-  open,
-  onClose,
-  centreLabel,
-  subjectFilter,
-  days,
-  loading,
-  loadError,
-  onRetry,
-}: {
-  open: boolean;
-  onClose: () => void;
-  centreLabel: string;
-  subjectFilter: TimetableSubjectFilter;
-  days: FinanceCentreDayInvigilatorRow[] | null;
-  loading: boolean;
-  loadError: string | null;
-  onRetry: () => void;
-}) {
-  const titleId = useId();
-  const dialogRef = useRef<HTMLDivElement>(null);
-  const dayTotal = days?.reduce((s, d) => s + d.invigilators_required, 0) ?? null;
-
-  useEffect(() => {
-    if (!open) return;
-    dialogRef.current?.focus();
-    function onKeyDown(e: KeyboardEvent) {
-      if (e.key === "Escape") {
-        e.preventDefault();
-        onClose();
-      }
-    }
-    window.addEventListener("keydown", onKeyDown);
-    return () => window.removeEventListener("keydown", onKeyDown);
-  }, [open, onClose]);
-
-  if (!open) return null;
-
-  return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 sm:p-6">
-      <button
-        type="button"
-        aria-label="Close"
-        className="absolute inset-0 bg-foreground/50 backdrop-blur-[2px]"
-        onClick={onClose}
-      />
-      <div
-        ref={dialogRef}
-        role="dialog"
-        aria-modal="true"
-        aria-labelledby={titleId}
-        tabIndex={-1}
-        className="relative z-10 flex w-full max-w-xl flex-col overflow-hidden rounded-2xl border border-border/80 bg-card shadow-2xl outline-none"
-      >
-        <div className="flex items-start gap-3 border-b border-border/70 bg-muted/25 px-4 py-3.5 sm:px-5">
-          <div className="flex size-9 shrink-0 items-center justify-center rounded-lg bg-primary/10 text-primary">
-            <CalendarDays className="size-4" aria-hidden />
-          </div>
-          <div className="min-w-0 flex-1 pr-6">
-            <h2 id={titleId} className="text-sm font-semibold text-foreground">
-              Expected by exam day
-            </h2>
-            <p className="mt-0.5 truncate text-xs text-muted-foreground" title={centreLabel}>
-              {centreLabel}
-            </p>
-            <p className="text-xs text-muted-foreground">{subjectScopeLabel(subjectFilter)}</p>
-          </div>
-          <button
-            type="button"
-            aria-label="Close dialog"
-            onClick={onClose}
-            className="absolute right-3 top-3 rounded-lg p-1.5 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
-          >
-            <X className="size-4" aria-hidden />
-          </button>
-        </div>
-
-        <div className="max-h-[min(24rem,55vh)] overflow-y-auto px-4 py-3 sm:px-5">
-          {loading ? (
-            <p className="flex items-center justify-center gap-2 py-10 text-sm text-muted-foreground">
-              <Loader2 className="size-4 animate-spin" aria-hidden />
-              Loading breakdown…
-            </p>
-          ) : null}
-          {loadError ? (
-            <div className="flex flex-col items-center gap-3 py-8 text-center">
-              <p className="text-sm text-destructive">{loadError}</p>
-              <button type="button" className={officialAccountsBtnSecondary} onClick={onRetry}>
-                Retry
-              </button>
-            </div>
-          ) : null}
-          {!loading && !loadError && days?.length === 0 ? (
-            <p className="py-10 text-center text-sm text-muted-foreground">
-              No examination dates in scope for this centre.
-            </p>
-          ) : null}
-          {!loading && !loadError && days && days.length > 0 ? (
-            <table className="w-full text-sm">
-              <thead>
-                <tr className="border-b border-border text-left text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
-                  <th className="pb-2 pr-3 font-semibold">Date</th>
-                  <th className="pb-2 pr-3 text-right font-semibold tabular-nums">Candidates</th>
-                  <th className="pb-2 text-right font-semibold tabular-nums">Required</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-border/50">
-                {days.map((d) => (
-                  <tr key={d.examination_date} className="hover:bg-muted/30">
-                    <td className="py-2.5 pr-3 text-foreground">{formatExamDayLabel(d.examination_date)}</td>
-                    <td className="py-2.5 pr-3 text-right tabular-nums text-muted-foreground">
-                      {d.unique_candidates}
-                    </td>
-                    <td className="py-2.5 text-right tabular-nums font-medium">{d.invigilators_required}</td>
-                  </tr>
-                ))}
-              </tbody>
-              <tfoot>
-                <tr className="border-t border-border bg-muted/20 font-semibold">
-                  <td className="py-2.5 pr-3">Total expected</td>
-                  <td className="py-2.5 pr-3" />
-                  <td className="py-2.5 text-right tabular-nums">{dayTotal}</td>
-                </tr>
-              </tfoot>
-            </table>
-          ) : null}
-        </div>
-      </div>
-    </div>
-  );
-}
-
-function ExpectedByDayBreakdown({
-  examId,
-  centerId,
-  subjectFilter,
-  centreLabel,
-}: {
-  examId: number;
-  centerId: string;
-  subjectFilter: TimetableSubjectFilter;
-  centreLabel: string;
-}) {
-  const [open, setOpen] = useState(false);
-  const [days, setDays] = useState<FinanceCentreDayInvigilatorRow[] | null>(null);
-  const [loadError, setLoadError] = useState<string | null>(null);
-  const [loading, setLoading] = useState(false);
-
-  const loadDays = useCallback(async (options?: { revalidate?: boolean }) => {
-    setLoading(true);
-    setLoadError(null);
-    try {
-      const result = await getCachedCentreInvigilatorDays({
-        examId,
-        centerId,
-        subject_filter: subjectFilter,
-        revalidate: options?.revalidate,
-      });
-      setDays(result.data);
-    } catch (e) {
-      setLoadError(e instanceof Error ? e.message : "Failed to load daily breakdown");
-      setDays(null);
-    } finally {
-      setLoading(false);
-    }
-  }, [examId, centerId, subjectFilter]);
-
-  useEffect(() => {
-    const cached = peekCachedCentreInvigilatorDays(examId, centerId, subjectFilter);
-    setDays(cached);
-    setLoadError(null);
-  }, [examId, centerId, subjectFilter]);
-
-  useEffect(() => {
-    if (!open) return;
-    void loadDays();
-  }, [open, loadDays]);
-
-  return (
-    <>
-      <button
-        type="button"
-        className="mt-1 text-left text-xs font-medium text-primary underline-offset-2 hover:underline"
-        onClick={() => setOpen(true)}
-      >
-        Expected by exam day
-      </button>
-      <ExpectedByDayModal
-        open={open}
-        onClose={() => setOpen(false)}
-        centreLabel={centreLabel}
-        subjectFilter={subjectFilter}
-        days={days}
-        loading={loading}
-        loadError={loadError}
-        onRetry={() => void loadDays({ revalidate: true })}
-      />
-    </>
-  );
-}
-
-
 function SummaryCardsRow({
   summary,
   examId,
   centerId,
   subjectFilter,
+  designationFilter,
+  onDesignationFilterChange,
+  refreshing = false,
 }: {
   summary: FinanceCentreSchoolSummaryResponse;
   examId: number;
   centerId: string;
   subjectFilter: TimetableSubjectFilter;
+  designationFilter: string;
+  onDesignationFilterChange: (value: string) => void;
+  refreshing?: boolean;
 }) {
-  const declared = summary.invigilator_days_declared;
-  const expected = summary.expected_invigilations_total;
-  const tone = invigilationTone(declared, expected);
-  const styles = invigilatorCardStyles(tone);
-  const Icon = styles.Icon;
+  const inspectorsInScope =
+    summary.subject_filter === subjectFilter ? (summary.assigned_inspectors ?? []) : [];
+
+  const activeDesignation =
+    designationFilter === ALL_DESIGNATIONS ? undefined : designationFilter;
 
   return (
     <div className="px-4 py-3 sm:px-5">
-      <div className="grid grid-cols-3 gap-2 sm:grid-cols-3 lg:grid-cols-[minmax(18rem,2.25fr)_repeat(5,minmax(4.5rem,1fr))] lg:grid-rows-1">
-        <div
-          className={cn(
-            "col-span-3 flex h-36 flex-col justify-between rounded-xl border p-4 sm:p-5 lg:col-span-1 lg:h-full lg:min-h-36",
-            styles.card,
-          )}
-        >
-          <div className="flex items-start justify-between gap-2">
-            <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Invigilator days</p>
-            <span
-              className={cn(
-                "inline-flex shrink-0 items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide",
-                styles.badge,
-              )}
-            >
-              <Icon className="size-3" aria-hidden />
-              {styles.badgeText}
-            </span>
-          </div>
-          <p className="mt-2 text-3xl font-bold leading-none tracking-tight tabular-nums">
-            <span className={styles.declared}>{declared}</span>
-            <span className="mx-1 font-normal text-muted-foreground">/</span>
-            <span className="text-foreground">{expected}</span>
-          </p>
-          <p className={cn("text-xs font-medium", styles.declared)}>{varianceDetail(summary.variance)}</p>
-          <ExpectedByDayBreakdown
-            examId={examId}
-            centerId={centerId}
-            subjectFilter={subjectFilter}
-            centreLabel={`${summary.center_code} — ${summary.center_name}`}
-          />
+      <div className="rounded-xl border border-border/70 bg-muted/30 p-3 shadow-inner dark:bg-muted/20 sm:p-3.5">
+        <div className="grid gap-3 lg:grid-cols-[minmax(18rem,2fr)_minmax(0,3fr)] lg:items-stretch">
+        <InvigilatorSummaryCard
+          summary={summary}
+          examId={examId}
+          centerId={centerId}
+          subjectFilter={subjectFilter}
+          refreshing={refreshing}
+          assignedInspectors={inspectorsInScope}
+          inspectorsRefreshing={refreshing || summary.subject_filter !== subjectFilter}
+        />
+        <OfficialRolesPanel
+          roleCounts={summary.role_counts}
+          subjectFilter={subjectFilter}
+          activeDesignation={activeDesignation}
+          onRoleClick={(designation) =>
+            onDesignationFilterChange(
+              designationFilter === designation ? ALL_DESIGNATIONS : designation,
+            )
+          }
+        />
         </div>
-
-        {ROLE_CARDS.map(({ key, shortLabel, fullLabel }) => (
-          <div key={key} title={fullLabel} className={statCardClass}>
-            <p className="line-clamp-2 text-[10px] font-medium leading-tight text-muted-foreground">{shortLabel}</p>
-            <p className="mt-1 text-2xl font-semibold tabular-nums text-foreground">{summary.role_counts[key]}</p>
-          </div>
-        ))}
       </div>
     </div>
   );
@@ -513,7 +215,10 @@ function ExportButton({
   return (
     <button
       type="button"
-      className={cn(officialAccountsBtnPrimary, "w-full sm:w-auto")}
+      className={cn(
+        officialAccountsBtnPrimary,
+        "min-h-8 px-3 py-1.5 text-xs sm:w-auto [&_svg]:size-3.5",
+      )}
       disabled={disabled || busy}
       title={disabled ? "Select a centre to export" : undefined}
       onClick={onClick}
@@ -556,6 +261,12 @@ function AdminCentreSummaryContent() {
   const [designationFilter, setDesignationFilter] = useState(ALL_DESIGNATIONS);
   const [sortKey, setSortKey] = useState<SortKey>("name");
   const [sortDir, setSortDir] = useState<SortDir>("asc");
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(DEFAULT_CENTRE_PAGE_SIZE);
+
+  useEffect(() => {
+    setPage(1);
+  }, [tableSearch, designationFilter, sortKey, sortDir, centerId, subjectFilter, examId]);
 
   useEffect(() => {
     let cancelled = false;
@@ -775,6 +486,16 @@ function AdminCentreSummaryContent() {
     return sortOfficials(rows, sortKey, sortDir);
   }, [officials, tableSearch, designationFilter, sortKey, sortDir]);
 
+  const paginatedOfficials = useMemo(() => {
+    const start = (page - 1) * pageSize;
+    return filteredOfficials.slice(start, start + pageSize);
+  }, [filteredOfficials, page, pageSize]);
+
+  useEffect(() => {
+    const totalPages = Math.max(1, Math.ceil(filteredOfficials.length / pageSize));
+    if (page > totalPages) setPage(totalPages);
+  }, [filteredOfficials.length, page, pageSize]);
+
   const examOfficialsHref =
     examId != null && centerId.trim()
       ? `${OFFICIAL_ACCOUNTS_ADMIN_HREF}?exam=${examId}&centerId=${encodeURIComponent(centerId.trim())}`
@@ -790,7 +511,7 @@ function AdminCentreSummaryContent() {
 
   const exportDisabled = !summary || !canLoad || exportBusy || exportBogBusy;
   const exportControl = (
-    <div className="flex w-full flex-col gap-2 sm:w-auto sm:flex-row">
+    <div className="flex flex-row gap-1.5">
       <ExportButton
         disabled={exportDisabled}
         busy={exportBusy}
@@ -807,14 +528,14 @@ function AdminCentreSummaryContent() {
   );
 
   return (
-    <div className="space-y-4">
-      <OfficialAccountsPageIntro description="View official account and allowance details for one examination centre — every official recorded there, their role, invigilator days, and bank details. Use this to reconcile counts and export payment data for a single centre." />
+    <div className="space-y-3">
+      <OfficialAccountsPageIntro description="Bank accounts and allowances for one examination centre." />
 
       <div className={officialAccountsPanelClass}>
         <div className={filterToolbarClass}>
-          <div className={filterToolbarSectionClass}>
-            <div className={cn(filterFieldClass, "min-w-0 flex-1 sm:max-w-md")}>
-              <label className={formLabelClass} htmlFor="centre-summary-exam">
+          <div className={filterToolbarRowClass}>
+            <div className={cn(filterFieldClass, "min-w-[10rem] flex-1 sm:max-w-xs")}>
+              <label className={filterLabelClass} htmlFor="centre-summary-exam">
                 Examination
               </label>
               <select
@@ -836,11 +557,8 @@ function AdminCentreSummaryContent() {
               onChange={setSubjectFilter}
               disabled={exams.length === 0}
             />
-          </div>
-
-          <div className={cn(filterToolbarSectionClass, "border-t border-border/60 pt-4")}>
-            <div className={cn(filterFieldClass, "w-full sm:w-40 sm:shrink-0")}>
-              <label className={formLabelClass} htmlFor="centre-summary-region">
+            <div className={cn(filterFieldClass, "w-28 shrink-0 sm:w-32")}>
+              <label className={filterLabelClass} htmlFor="centre-summary-region">
                 Region
               </label>
               <select
@@ -850,7 +568,7 @@ function AdminCentreSummaryContent() {
                 onChange={(e) => setRegionFilter(e.target.value)}
                 disabled={centers.length === 0 || regionSelectOptions.length === 0}
               >
-                <option value="">All regions</option>
+                <option value="">All</option>
                 {regionSelectOptions.map((r) => (
                   <option key={r.value} value={r.value}>
                     {r.label}
@@ -858,9 +576,8 @@ function AdminCentreSummaryContent() {
                 ))}
               </select>
             </div>
-
-            <div className={cn(filterFieldClass, "min-w-0 flex-1")}>
-              <span className={formLabelClass}>Examination centre</span>
+            <div className={cn(filterFieldClass, "min-w-[12rem] flex-1 sm:min-w-[14rem]")}>
+              <span className={filterLabelClass}>Centre</span>
               <SearchableCombobox
                 options={centerOptions}
                 value={centerId}
@@ -877,12 +594,12 @@ function AdminCentreSummaryContent() {
                         : "No centres."
                 }
                 widthClass="w-full min-w-0"
+                triggerClassName="min-h-8 rounded-md px-2.5 text-xs"
                 showAllOption={false}
                 disabled={filteredCenters.length === 0}
               />
             </div>
-
-            <div className="w-full shrink-0 sm:w-auto">{exportControl}</div>
+            <div className="ml-auto shrink-0 pb-0.5">{exportControl}</div>
           </div>
         </div>
 
@@ -910,8 +627,8 @@ function AdminCentreSummaryContent() {
         ) : null}
 
         {!canLoad ? (
-          <div className="flex flex-col items-center gap-3 px-4 py-14 text-center sm:px-5">
-            <Building2 className="size-10 text-muted-foreground/50" aria-hidden />
+          <div className="flex flex-col items-center gap-2 px-4 py-8 text-center sm:px-5">
+            <Building2 className="size-8 text-muted-foreground/50" aria-hidden />
             <p className="text-sm font-medium text-foreground">Choose an examination centre</p>
             <p className="max-w-sm text-xs text-muted-foreground">
               Pick an examination, subject scope, and centre above.
@@ -931,11 +648,12 @@ function AdminCentreSummaryContent() {
               examId={examId!}
               centerId={centerId.trim()}
               subjectFilter={subjectFilter}
+              designationFilter={designationFilter}
+              onDesignationFilterChange={setDesignationFilter}
+              refreshing={refreshing}
             />
 
-            <SubjectScopeLegend className="border-t border-border/60 px-4 py-3 sm:px-5" />
-
-            <div className="flex flex-col gap-2 border-t border-border/60 px-4 py-2 sm:flex-row sm:items-end sm:gap-3 sm:px-5">
+            <div className="flex flex-col gap-2 border-t border-border/60 px-3 py-2 sm:flex-row sm:items-end sm:gap-2 sm:px-4">
               <div className="min-w-0 flex-1 sm:max-w-xs">
                 <label className="sr-only" htmlFor="centre-summary-search">
                   Search officials
@@ -968,6 +686,9 @@ function AdminCentreSummaryContent() {
               </div>
               <p className="pb-2 text-xs text-muted-foreground sm:ml-auto sm:max-w-xs sm:text-right sm:pb-2.5">
                 {filteredOfficials.length} official{filteredOfficials.length === 1 ? "" : "s"}
+                {filteredOfficials.length > pageSize
+                  ? ` · page ${page} of ${Math.max(1, Math.ceil(filteredOfficials.length / pageSize))}`
+                  : ""}
                 {busy ? " · updating…" : ""}
               </p>
             </div>
@@ -1048,14 +769,15 @@ function AdminCentreSummaryContent() {
                       </td>
                     </tr>
                   ) : null}
-                  {filteredOfficials.map((row, index) => {
+                  {paginatedOfficials.map((row, index) => {
                     const isInvigilator = row.designation === "Invigilator";
+                    const rowNumber = (page - 1) * pageSize + index + 1;
                     return (
                       <tr
                         key={row.id}
                         className={cn("hover:bg-muted/30", isInvigilator && "bg-success/5")}
                       >
-                        <td className="px-2 py-2 text-center text-xs tabular-nums text-muted-foreground">{index + 1}</td>
+                        <td className="px-2 py-2 text-center text-xs tabular-nums text-muted-foreground">{rowNumber}</td>
                         <td className="px-3 py-2 font-medium">{row.full_name}</td>
                         <td className="px-3 py-2">{row.designation}</td>
                         <td className="px-3 py-2">
@@ -1091,6 +813,19 @@ function AdminCentreSummaryContent() {
                 </tbody>
               </table>
             </div>
+            <OfficialAccountsPagination
+              page={page}
+              pageSize={pageSize}
+              total={filteredOfficials.length}
+              busy={busy}
+              pageSizeOptions={[...CENTRE_PAGE_SIZE_OPTIONS]}
+              recordLabel="official"
+              onPageChange={setPage}
+              onPageSizeChange={(size) => {
+                setPageSize(size);
+                setPage(1);
+              }}
+            />
           </div>
         ) : null}
       </div>

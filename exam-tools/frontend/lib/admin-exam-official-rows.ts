@@ -1,7 +1,13 @@
 import type { AdminExamCentreOfficialRow } from "@/lib/api";
 
-export type AdminOfficialSortKey = "center_code" | "full_name" | "total_payable";
+export type AdminOfficialSortKey = "center_code" | "full_name" | "num_days" | "total_payable";
 export type AdminOfficialSortDir = "asc" | "desc";
+
+export type AdminOfficialServerSortBy = "center_code" | "full_name" | "num_days";
+
+export function isServerSideAdminOfficialSort(key: AdminOfficialSortKey): key is AdminOfficialServerSortBy {
+  return key !== "total_payable";
+}
 
 function parsePayable(value: string | null | undefined): number {
   if (value == null || value === "") return -1;
@@ -33,6 +39,13 @@ export function sortAdminOfficialRows(
   const mul = dir === "asc" ? 1 : -1;
   return [...rows].sort((a, b) => {
     if (key === "center_code") {
+      const code = a.center_code.localeCompare(b.center_code) * mul;
+      if (code !== 0) return code;
+      return a.full_name.localeCompare(b.full_name) * mul;
+    }
+    if (key === "num_days") {
+      const diff = (a.num_days - b.num_days) * mul;
+      if (diff !== 0) return diff;
       const code = a.center_code.localeCompare(b.center_code) * mul;
       if (code !== 0) return code;
       return a.full_name.localeCompare(b.full_name) * mul;

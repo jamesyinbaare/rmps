@@ -36,7 +36,7 @@ from app.services.finance_school_summary import officials_to_admin_rows
 
 router = APIRouter(prefix="/admin/exam-centre-officials", tags=["admin-exam-officials"])
 
-_MAX_LIST = 500
+_MAX_LIST = 1000
 _DEFAULT_LIST = 100
 
 
@@ -129,12 +129,29 @@ def _apply_designation_filter(stmt, designations: list[ExamOfficialDesignation] 
     return stmt.where(ExamCentreOfficial.designation.in_(designations))
 
 
+def _official_order_by(
+    sort_by: Literal["center_code", "full_name", "num_days"],
+    sort_dir: Literal["asc", "desc"],
+):
+    centre_code = ExaminationCentre.code.asc() if sort_dir == "asc" else ExaminationCentre.code.desc()
+    full_name = ExamCentreOfficial.full_name.asc() if sort_dir == "asc" else ExamCentreOfficial.full_name.desc()
+    num_days = ExamCentreOfficial.num_days.asc() if sort_dir == "asc" else ExamCentreOfficial.num_days.desc()
+
+    if sort_by == "full_name":
+        return full_name, centre_code
+    if sort_by == "num_days":
+        return num_days, centre_code, full_name
+    return centre_code, full_name
+
+
 def _base_official_query(
     examination_id: int,
     center_id: UUID | None,
     designations: list[ExamOfficialDesignation] | None = None,
     subject_scope: ExamInspectorSubjectScope | None = None,
     region: Region | None = None,
+    sort_by: Literal["center_code", "full_name", "num_days"] = "center_code",
+    sort_dir: Literal["asc", "desc"] = "asc",
 ):
     stmt = (
         select(ExamCentreOfficial, ExaminationCentre)
@@ -152,7 +169,7 @@ def _base_official_query(
         stmt = stmt.where(ExamCentreOfficial.subject_scope == subject_scope)
     if region is not None:
         stmt = stmt.where(_centre_region_matches(region, examination_id))
-    return stmt.order_by(ExaminationCentre.code.asc(), ExamCentreOfficial.full_name.asc())
+    return stmt.order_by(*_official_order_by(sort_by, sort_dir))
 
 
 def _official_count_stmt(
@@ -213,6 +230,11 @@ async def admin_list_exam_centre_officials(
     region: str | None = Query(None, description="Filter by examination centre region"),
     skip: int = Query(0, ge=0),
     limit: int = Query(_DEFAULT_LIST, ge=1, le=_MAX_LIST),
+    sort_by: Literal["center_code", "full_name", "num_days"] = Query(
+        "center_code",
+        description="Sort field for paginated results.",
+    ),
+    sort_dir: Literal["asc", "desc"] = Query("asc", description="Sort direction."),
 ) -> AdminExamCentreOfficialListResponse:
     des_list = _designations_filter_from_query(designation, designations)
     scope = _subject_scope_filter_from_query(subject_scope)
@@ -223,7 +245,9 @@ async def admin_list_exam_centre_officials(
     count_stmt = _official_count_stmt(examination_id, center_id, des_list, scope, reg)
     total = int(await session.scalar(count_stmt) or 0)
 
-    stmt = _base_official_query(examination_id, center_id, des_list, scope, reg).offset(skip).limit(limit)
+    stmt = _base_official_query(
+        examination_id, center_id, des_list, scope, reg, sort_by=sort_by, sort_dir=sort_dir
+    ).offset(skip).limit(limit)
     result = await session.execute(stmt)
     rows = result.all()
 

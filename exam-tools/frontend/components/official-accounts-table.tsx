@@ -3,6 +3,7 @@
 import { ChevronDown, ChevronRight, Info } from "lucide-react";
 import { useMemo, useState } from "react";
 
+import { OfficialAccountsPagination } from "@/components/official-accounts-pagination";
 import { SubjectScopeBadge, SubjectScopeLegend } from "@/components/subject-scope-badge";
 import { OfficialAllowanceBreakdownCell } from "@/components/official-allowance-breakdown";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
@@ -13,8 +14,6 @@ import {
   type AdminOfficialSortKey,
 } from "@/lib/admin-exam-official-rows";
 import {
-  officialAccountsBtnSecondary,
-  officialAccountsPanelFooterClass,
   officialAccountsTableLayoutClass,
   officialAccountsTableScrollClass,
 } from "@/lib/official-accounts-zone";
@@ -37,7 +36,9 @@ type Props = {
   page: number;
   total: number;
   pageSize: number;
+  pageSizeOptions?: number[];
   onPageChange: (page: number) => void;
+  onPageSizeChange: (pageSize: number) => void;
   searchQuery?: string;
   sortKey: AdminOfficialSortKey;
   sortDir: AdminOfficialSortDir;
@@ -233,7 +234,9 @@ export function OfficialAccountsTable({
   page,
   total,
   pageSize,
+  pageSizeOptions = [50, 100, 200, 500, 1000],
   onPageChange,
+  onPageSizeChange,
   searchQuery = "",
   sortKey,
   sortDir,
@@ -243,7 +246,6 @@ export function OfficialAccountsTable({
 }: Props) {
   const colSpan = showDesignationColumn ? COL_SPAN_ALL : COL_SPAN_NO_DESIGNATION;
   const centreColSpan = showDesignationColumn ? 4 : 3;
-  const totalPages = Math.max(1, Math.ceil(total / pageSize));
   const displayCount = clientFilteredCount ?? items.length;
 
   const grouped = useMemo(
@@ -349,7 +351,15 @@ export function OfficialAccountsTable({
               <th className="bg-muted/50 px-3 py-2.5 font-semibold">Branch</th>
               <th className="bg-muted/50 px-3 py-2.5 font-semibold">Code</th>
               <th className="bg-muted/50 px-3 py-2.5 font-semibold">Account no.</th>
-              <th className="border-l border-border/60 bg-muted/50 px-3 py-2.5 font-semibold">Days</th>
+              <th className="border-l border-border/60 bg-muted/50 px-3 py-2.5 align-bottom">
+                <SortableHeader
+                  label="Days"
+                  sortKey="num_days"
+                  activeKey={sortKey}
+                  sortDir={sortDir}
+                  onSort={handleSort}
+                />
+              </th>
               <th className="bg-muted/50 px-3 py-2.5 font-semibold">Phone</th>
               <th className="border-l border-border/60 bg-muted/50 px-3 py-2.5">
                 <SortableHeader
@@ -439,43 +449,15 @@ export function OfficialAccountsTable({
         </div>
       </div>
 
-      {total > 0 ? (
-        <div className={cn(officialAccountsPanelFooterClass, "shrink-0")}>
-          <p className="text-muted-foreground">
-            {total > pageSize ? (
-              <>
-                Page {page} of {totalPages.toLocaleString()} · Showing{" "}
-                {(page - 1) * pageSize + 1}–{Math.min(page * pageSize, total)} of{" "}
-                {total.toLocaleString()}
-              </>
-            ) : (
-              <>
-                {total.toLocaleString()} record{total === 1 ? "" : "s"}
-              </>
-            )}
-          </p>
-          {total > pageSize ? (
-            <div className="flex gap-2">
-              <button
-                type="button"
-                className={officialAccountsBtnSecondary}
-                disabled={page <= 1 || busy}
-                onClick={() => onPageChange(Math.max(1, page - 1))}
-              >
-                Previous
-              </button>
-              <button
-                type="button"
-                className={officialAccountsBtnSecondary}
-                disabled={page >= totalPages || busy}
-                onClick={() => onPageChange(Math.min(totalPages, page + 1))}
-              >
-                Next
-              </button>
-            </div>
-          ) : null}
-        </div>
-      ) : null}
+      <OfficialAccountsPagination
+        page={page}
+        pageSize={pageSize}
+        total={total}
+        busy={busy}
+        pageSizeOptions={pageSizeOptions}
+        onPageChange={onPageChange}
+        onPageSizeChange={onPageSizeChange}
+      />
     </div>
   );
 }
