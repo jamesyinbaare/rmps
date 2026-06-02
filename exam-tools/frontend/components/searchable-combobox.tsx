@@ -50,10 +50,15 @@ export function SearchableCombobox({
           role="combobox"
           aria-expanded={open}
           disabled={disabled}
-          className={cn("h-11 min-h-11 justify-between font-normal sm:h-10 sm:min-h-10", widthClass)}
+          className={cn(
+            "h-auto min-h-11 min-w-0 max-w-full items-center justify-between gap-2 py-2.5 font-normal whitespace-normal sm:min-h-10",
+            widthClass,
+          )}
         >
-          <span className="truncate">{selected ? selected.label : placeholder}</span>
-          <ChevronsUpDown className="ml-2 size-4 shrink-0 opacity-50" />
+          <span className="min-w-0 flex-1 break-words text-left leading-snug">
+            {selected ? selected.label : placeholder}
+          </span>
+          <ChevronsUpDown className="size-4 shrink-0 self-center opacity-50" />
         </Button>
       </PopoverTrigger>
       <PopoverContent
@@ -96,7 +101,7 @@ export function SearchableCombobox({
                   }}
                 >
                   <Check className={cn("mr-2 size-4", value === opt.value ? "opacity-100" : "opacity-0")} />
-                  <span className="truncate">{opt.label}</span>
+                  <span className="min-w-0 break-words">{opt.label}</span>
                 </CommandItem>
               ))}
             </CommandGroup>

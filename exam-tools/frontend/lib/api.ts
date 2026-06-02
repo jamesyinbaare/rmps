@@ -1619,6 +1619,7 @@ export type MySchoolScriptControlResponse = {
   year: number;
   school_id: string;
   school_code: string;
+  school_name?: string;
   /** Maximum for papers other than 1 and 2; default when paper-specific caps match this. */
   scripts_per_envelope: number;
   /** Effective max scannables per envelope for paper 1. */

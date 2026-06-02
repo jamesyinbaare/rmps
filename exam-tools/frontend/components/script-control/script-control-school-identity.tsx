@@ -14,8 +14,8 @@ type Props = {
   centreName?: string | null;
   postedInspectors?: ExecutivePostedInspectorItem[];
   onChangeSchool?: () => void;
-  /** Max lines for school name before ellipsis. */
-  nameClamp?: 1 | 2;
+  /** When false, only the school name is shown (code omitted to avoid repetition). */
+  showCode?: boolean;
   showChangeButton?: boolean;
   className?: string;
 };
@@ -27,40 +27,75 @@ export function ScriptControlSchoolIdentity({
   centreName,
   postedInspectors,
   onChangeSchool,
-  nameClamp = 2,
+  showCode = true,
   showChangeButton = false,
   className,
 }: Props) {
-  const displayName = schoolName?.trim();
+  const displayName = schoolName?.trim() || null;
   const [sheetOpen, setSheetOpen] = useState(false);
-
-  const clampClass = nameClamp === 1 ? "line-clamp-1" : "line-clamp-2";
+  const canChangeSchool = Boolean(onChangeSchool);
 
   function handleChangeSchool() {
     setSheetOpen(false);
     onChangeSchool?.();
   }
 
+  const codeClassName =
+    "font-mono text-sm font-semibold text-foreground max-lg:text-base";
+
   return (
     <>
       <div className={cn("min-w-0", className)}>
         <div className="flex items-start justify-between gap-2">
           <div className="min-w-0 flex-1">
-            <p className="font-mono text-sm font-semibold text-foreground">{schoolCode}</p>
+            {showCode ? (
+              canChangeSchool ? (
+                <button
+                  type="button"
+                  className={cn(
+                    codeClassName,
+                    "max-w-full truncate text-left text-primary underline decoration-primary/40 underline-offset-2 hover:text-primary-hover",
+                  )}
+                  onClick={onChangeSchool}
+                >
+                  {schoolCode}
+                  <span className="sr-only">. Tap to find or change school.</span>
+                </button>
+              ) : (
+                <p className={cn(codeClassName, "truncate")}>{schoolCode}</p>
+              )
+            ) : null}
             {displayName ? (
               <button
                 type="button"
-                className="mt-0.5 w-full text-left text-sm text-muted-foreground hover:text-foreground"
+                className={cn(
+                  "block w-full min-w-0 max-w-full truncate text-left text-sm text-muted-foreground hover:text-foreground",
+                  showCode ? "mt-0.5" : "mt-0",
+                )}
                 onClick={() => setSheetOpen(true)}
                 title={displayName}
               >
-                <span className={cn("block leading-snug", clampClass)}>{displayName}</span>
+                {displayName}
                 <span className="sr-only">. Tap to read full school name.</span>
               </button>
+            ) : showCode && canChangeSchool ? (
+              <p className="mt-0.5 text-xs text-muted-foreground max-lg:text-sm">
+                Tap the school code to find or change school.
+              </p>
+            ) : !showCode && canChangeSchool ? (
+              <p className="text-xs text-muted-foreground max-lg:text-sm">
+                Tap the school name for details or change school.
+              </p>
             ) : null}
           </div>
-          {showChangeButton && onChangeSchool ? (
-            <Button type="button" size="sm" variant="outline" className="shrink-0" onClick={onChangeSchool}>
+          {showChangeButton && canChangeSchool ? (
+            <Button
+              type="button"
+              size="sm"
+              variant="outline"
+              className="hidden shrink-0 lg:inline-flex"
+              onClick={onChangeSchool}
+            >
               Change
             </Button>
           ) : null}
@@ -76,7 +111,7 @@ export function ScriptControlSchoolIdentity({
           centreCode={centreCode}
           centreName={centreName}
           postedInspectors={postedInspectors}
-          onChangeSchool={onChangeSchool ? handleChangeSchool : undefined}
+          onChangeSchool={canChangeSchool ? handleChangeSchool : undefined}
         />
       ) : null}
     </>

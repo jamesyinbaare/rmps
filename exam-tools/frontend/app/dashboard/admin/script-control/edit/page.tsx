@@ -323,14 +323,38 @@ export default function AdminScriptControlEditPage() {
     };
   }, [debouncedSchoolSearch, examId, hasPaper, hasSubject, paperNumber, recordType, region, subjectId]);
 
+  const resolvedSchoolDisplay = useMemo(() => {
+    if (!schoolId.trim() || examId === null || !hasSubject || !hasPaper) {
+      return { code: null as string | null, name: null as string | null, comboboxLabel: null as string | null };
+    }
+
+    const fromData = data?.school_id === schoolId;
+    let code: string | null = null;
+    let name: string | null = null;
+
+    if (fromData && data.school_code?.trim()) code = data.school_code.trim();
+    if (fromData && data.school_name?.trim()) name = data.school_name.trim();
+
+    const recent = readRecentSchools(examId, subjectId, paperNumber).find((s) => s.schoolId === schoolId);
+    if (!code && recent?.schoolCode?.trim()) code = recent.schoolCode.trim();
+    if (!name && recent?.schoolName?.trim()) name = recent.schoolName.trim();
+
+    const fromSearch = schoolOptions.find((s) => String(s.id) === schoolId);
+    if (!code && fromSearch?.code?.trim()) code = fromSearch.code.trim();
+    if (!name && fromSearch?.name?.trim()) name = fromSearch.name.trim();
+
+    const comboboxLabel = code && name ? `${code} — ${name}` : code || name || null;
+
+    return { code, name, comboboxLabel };
+  }, [data, examId, hasPaper, hasSubject, paperNumber, schoolId, schoolOptions, subjectId]);
+
   const schoolComboboxOptions = useMemo(() => {
     const opts = schoolOptions.map((s) => ({ value: s.id, label: `${s.code} — ${s.name}` }));
-    if (schoolId && data?.school_id === schoolId) {
-      const label = data.school_code;
-      if (!opts.some((o) => o.value === schoolId)) opts.unshift({ value: schoolId, label });
+    if (schoolId && resolvedSchoolDisplay.comboboxLabel && !opts.some((o) => o.value === schoolId)) {
+      opts.unshift({ value: schoolId, label: resolvedSchoolDisplay.comboboxLabel });
     }
     return opts;
-  }, [data, schoolId, schoolOptions]);
+  }, [resolvedSchoolDisplay.comboboxLabel, schoolId, schoolOptions]);
 
   const selectedSubject = useMemo(
     () => (data && hasSubject ? data.subjects.find((s) => s.subject_id === subjectId) : null),
@@ -500,28 +524,27 @@ export default function AdminScriptControlEditPage() {
     };
   }, [selectedSubject, seriesConfig, subjectId]);
 
-  const selectedSchoolName = useMemo(() => {
-    if (!schoolId.trim() || examId === null || !hasSubject || !hasPaper) return null;
-    const fromRecent = readRecentSchools(examId, subjectId, paperNumber).find(
-      (s) => s.schoolId === schoolId,
-    )?.schoolName;
-    if (fromRecent?.trim()) return fromRecent.trim();
-    const fromSearch = schoolOptions.find((s) => String(s.id) === schoolId);
-    return fromSearch?.name?.trim() ?? null;
-  }, [examId, hasPaper, hasSubject, paperNumber, schoolId, schoolOptions, subjectId]);
-
   const filterSummary = useMemo(() => {
     const typeLabel =
       SCRIPT_CONTROL_SUBJECT_TYPE_OPTIONS.find((o) => o.value === subjectTypeFilter)?.label ?? "All types";
     const subjectLabel = selectedSubjectMeta
       ? displaySubjectCode(selectedSubjectMeta)
       : subjectIdStr || "Subject";
+    const { code, name } = resolvedSchoolDisplay;
     const schoolLabel =
-      data?.school_code && selectedSchoolName
-        ? `${data.school_code} · ${selectedSchoolName}`
-        : (data?.school_code ?? schoolId) || "School";
+      code && name
+        ? `${code} · ${name}`
+        : code || name || (schoolId.trim() && busy ? "Loading…" : "School");
     return `${typeLabel} · ${subjectLabel} · Paper ${paperNumberStr || "?"} · ${schoolLabel}`;
-  }, [data?.school_code, paperNumberStr, schoolId, selectedSchoolName, selectedSubjectMeta, subjectIdStr, subjectTypeFilter]);
+  }, [
+    busy,
+    paperNumberStr,
+    resolvedSchoolDisplay,
+    schoolId,
+    selectedSubjectMeta,
+    subjectIdStr,
+    subjectTypeFilter,
+  ]);
 
   function FilterSegment<T extends string>({
     label,
@@ -561,8 +584,8 @@ export default function AdminScriptControlEditPage() {
   }
 
   return (
-    <div className="space-y-4">
-      <div className="rounded-xl border border-border bg-card p-4 space-y-4">
+    <div className="min-w-0 max-w-full space-y-4 overflow-x-clip">
+      <div className="min-w-0 space-y-4 rounded-xl border border-border bg-card p-4">
         {filtersComplete && !filtersExpanded ? (
           <div className="flex w-full items-center justify-between gap-3 rounded-lg border border-border bg-muted/20 px-3 py-2.5 lg:hidden">
             <button
@@ -597,7 +620,7 @@ export default function AdminScriptControlEditPage() {
               });
             }}
           />
-          <div className="min-w-[220px]">
+          <div className="min-w-0 w-full lg:min-w-[220px]">
             <label className="mb-1.5 block text-xs font-medium uppercase tracking-wide text-muted-foreground">
               Subject <span className="text-destructive">*</span>
             </label>
@@ -626,7 +649,7 @@ export default function AdminScriptControlEditPage() {
               patchParams({ paper: v });
             }}
           />
-          <div>
+          <div className="min-w-0 w-full">
             <label className="mb-1.5 block text-xs font-medium uppercase tracking-wide text-muted-foreground">
               School <span className="text-destructive">*</span>
             </label>
@@ -656,7 +679,7 @@ export default function AdminScriptControlEditPage() {
         </div>
 
         {/* Mobile / tablet: segmented type + combobox grid */}
-        <div className="space-y-3 lg:hidden">
+        <div className="min-w-0 space-y-3 lg:hidden">
           <FilterSegment
             label="Subject type"
             options={SCRIPT_CONTROL_SUBJECT_TYPE_OPTIONS}
@@ -669,8 +692,8 @@ export default function AdminScriptControlEditPage() {
               });
             }}
           />
-          <div className="grid gap-3 sm:grid-cols-2">
-          <div>
+          <div className="grid min-w-0 gap-3 sm:grid-cols-2">
+          <div className="min-w-0 w-full">
             <label className="mb-1.5 block text-xs font-medium uppercase tracking-wide text-muted-foreground">
               Subject <span className="text-destructive">*</span>
             </label>
@@ -687,7 +710,7 @@ export default function AdminScriptControlEditPage() {
               showAllOption={false}
             />
           </div>
-          <div>
+          <div className="min-w-0 w-full">
             <FilterSegment
               label="Paper"
               options={[
@@ -708,8 +731,9 @@ export default function AdminScriptControlEditPage() {
             {schoolId.trim() ? (
               <div className="rounded-lg border border-border bg-muted/20 px-3 py-2.5">
                 <ScriptControlSchoolIdentity
-                  schoolCode={data?.school_code ?? schoolId}
-                  schoolName={selectedSchoolName}
+                  schoolCode={resolvedSchoolDisplay.code ?? ""}
+                  schoolName={resolvedSchoolDisplay.name ?? data?.school_name}
+                  showCode={Boolean(resolvedSchoolDisplay.code)}
                   centreCode={data?.examination_centre_code}
                   centreName={data?.examination_centre_name}
                   postedInspectors={data?.posted_inspectors ?? []}
@@ -764,7 +788,7 @@ export default function AdminScriptControlEditPage() {
       ) : !schoolId.trim() ? null : busy && !data ? (
         <p className="text-sm text-muted-foreground">Loading…</p>
       ) : data && selectedSubjectMeta && hasPaper ? (
-        <div className="space-y-4">
+        <div className="min-w-0 max-w-full space-y-4">
           <ScriptControlEditContextBar
             data={data}
             subject={selectedSubjectMeta}
@@ -776,7 +800,7 @@ export default function AdminScriptControlEditPage() {
             onNextSeries={goToNextSeries}
             viewBackHref={viewBackHref}
             saveNotice={saveNotice}
-            schoolName={selectedSchoolName}
+            schoolName={resolvedSchoolDisplay.name}
             onFindSchool={openSchoolPicker}
             onChangeSubject={openSubjectPicker}
             onPaperChange={(n) => {
@@ -798,7 +822,6 @@ export default function AdminScriptControlEditPage() {
               onFormError={setFormError}
               handlers={handlers}
               paperFilter={hasPaper ? paperNumber : null}
-              schoolDisplayName={selectedSchoolName}
               highlightedSeriesKey={highlightedSeriesKey}
               successFlashKey={successFlashKey}
               mobileOpenSeriesKey={mobileOpenSeriesKey}

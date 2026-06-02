@@ -140,7 +140,7 @@ function ScriptControlShellInner({ children }: { children: ReactNode }) {
   );
 
   return (
-    <div className="space-y-6">
+    <div className="min-w-0 max-w-full space-y-6">
       <div>
         <h2 className="text-xl font-semibold text-foreground">Worked scripts control</h2>
         <p className="mt-1 max-w-3xl text-sm text-muted-foreground">

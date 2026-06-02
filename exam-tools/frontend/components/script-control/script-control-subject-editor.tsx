@@ -10,7 +10,6 @@ import {
 } from "@/components/script-control/script-control-edit-series-nav";
 import { ScriptControlMobileSeriesEditor } from "@/components/script-control/script-control-mobile-series-editor";
 import { ScriptControlMobileSeriesList } from "@/components/script-control/script-control-mobile-series-list";
-import { ScriptControlSchoolIdentity } from "@/components/script-control/script-control-school-identity";
 import { displaySubjectCode } from "@/lib/script-control-completion";
 import { getPaperInspectorVisuals } from "@/lib/paper-inspector-styles";
 import {
@@ -36,7 +35,6 @@ type Props = {
   onFormError: (msg: string | null) => void;
   handlers: SeriesEditHandlers;
   paperFilter?: number | null;
-  schoolDisplayName?: string | null;
   /** Mobile: highlight row after save (nav key). */
   highlightedSeriesKey?: string | null;
   /** Mobile: open editor for this nav key after save. */
@@ -60,7 +58,6 @@ export function ScriptControlSubjectEditor({
   onFormError,
   handlers,
   paperFilter,
-  schoolDisplayName,
   highlightedSeriesKey,
   mobileOpenSeriesKey,
   onMobileOpenHandled,
@@ -184,25 +181,14 @@ export function ScriptControlSubjectEditor({
   const mobilePaperVisuals = getPaperInspectorVisuals(mobilePaperNumber);
 
   return (
-    <div className="space-y-4">
+    <div className="min-w-0 max-w-full space-y-4">
       {/* Mobile: series list + full-screen editor */}
-      <div className="space-y-4 lg:hidden">
-        <div>
-          <div className="flex flex-wrap items-center gap-2">
-            <h3 className="text-lg font-semibold text-foreground">
-              {displaySubjectCode(subject)} — {subject.subject_name}
-            </h3>
-            <span className={mobilePaperVisuals.badgeClass}>Paper {mobilePaperNumber}</span>
-          </div>
-          <ScriptControlSchoolIdentity
-            schoolCode={data.school_code}
-            schoolName={schoolDisplayName}
-            centreCode={data.examination_centre_code}
-            centreName={data.examination_centre_name}
-            postedInspectors={data.posted_inspectors ?? []}
-            nameClamp={1}
-            className="mt-1"
-          />
+      <div className="min-w-0 space-y-4 lg:hidden">
+        <div className="flex min-w-0 flex-wrap items-center gap-2">
+          <h3 className="min-w-0 flex-1 text-lg font-semibold leading-snug text-foreground line-clamp-2">
+            {displaySubjectCode(subject)} — {subject.subject_name}
+          </h3>
+          <span className={mobilePaperVisuals.badgeClass}>Paper {mobilePaperNumber}</span>
         </div>
         <div ref={listRef}>
           <ScriptControlMobileSeriesList

@@ -229,15 +229,26 @@ export type PaperInspectorVisuals = {
   editDividerClass: string;
 };
 
-/** Sticky edit context bar — left accent for P1, success for P2. */
+/** Sticky edit context bar frame — left accent for P1, success for P2. */
 export function paperEditContextBarClass(paperNumber: number): string {
   if (paperNumber === 1) {
-    return "border-l-4 border-l-accent bg-gradient-to-r from-accent/[0.08] via-card to-card";
+    return "border-l-4 border-l-accent";
   }
   if (paperNumber === 2) {
-    return "border-l-4 border-l-success bg-gradient-to-r from-success/[0.08] via-card to-card";
+    return "border-l-4 border-l-success";
   }
   return "border-l-4 border-l-muted-foreground/35";
+}
+
+/** Decorative tint over opaque bg-card on the edit context bar (no scroll bleed-through). */
+export function paperEditContextBarTintClass(paperNumber: number): string {
+  if (paperNumber === 1) {
+    return "bg-gradient-to-r from-accent/[0.08] via-accent/[0.03] to-transparent";
+  }
+  if (paperNumber === 2) {
+    return "bg-gradient-to-r from-success/[0.08] via-success/[0.03] to-transparent";
+  }
+  return "";
 }
 
 /** Active segment in Paper 1 / Paper 2 toggle on the edit context bar. */
