@@ -23,6 +23,7 @@ import {
 import { OfficialAccountsRoleTabs } from "@/components/official-accounts-role-tabs";
 import {
   countDistinctCentres,
+  isServerSideAdminOfficialSort,
   matchesAdminOfficialSearch,
   sortAdminOfficialRows,
   type AdminOfficialSortDir,
@@ -38,7 +39,8 @@ import {
 import { REGION_OPTIONS } from "@/lib/school-enums";
 import { cn } from "@/lib/utils";
 
-const PAGE_SIZE = 100;
+const DEFAULT_PAGE_SIZE = 50;
+const PAGE_SIZE_OPTIONS = [50, 100, 200, 500, 1000] as const;
 
 type SectionId = "invigilators" | "supervisors" | "inspectors_depot" | "police";
 
@@ -133,6 +135,7 @@ type SectionState = {
   searchQuery: string;
   sortKey: AdminOfficialSortKey;
   sortDir: AdminOfficialSortDir;
+  pageSize: number;
   groupByCentre: boolean;
   /** Set after a successful fetch; used to avoid refetching unchanged tab data. */
   loadedQueryKey: string;
@@ -140,9 +143,12 @@ type SectionState = {
 
 function sectionQueryKey(
   examId: number,
-  filters: Pick<SectionState, "regionFilter" | "centerId" | "subjectScopeFilter">,
+  state: Pick<
+    SectionState,
+    "regionFilter" | "centerId" | "subjectScopeFilter" | "pageSize" | "sortKey" | "sortDir"
+  >,
 ): string {
-  return `${examId}:${filters.regionFilter}:${filters.centerId}:${filters.subjectScopeFilter}`;
+  return `${examId}:${state.regionFilter}:${state.centerId}:${state.subjectScopeFilter}:${state.pageSize}:${state.sortKey}:${state.sortDir}`;
 }
 
 function emptySectionState(): SectionState {
@@ -157,6 +163,7 @@ function emptySectionState(): SectionState {
     searchQuery: "",
     sortKey: "center_code",
     sortDir: "asc",
+    pageSize: DEFAULT_PAGE_SIZE,
     groupByCentre: false,
     loadedQueryKey: "",
   };
@@ -390,10 +397,11 @@ function AdminExamOfficialsContent() {
   }, [patchActiveSection]);
 
   const fetchSection = useCallback(
-    async (sectionId: SectionId, page: number, filters: Pick<SectionState, "regionFilter" | "centerId" | "subjectScopeFilter">) => {
+    async (sectionId: SectionId, page: number) => {
       if (examId === null) return;
       const config = OFFICIAL_ACCOUNT_SECTIONS.find((s) => s.id === sectionId);
       if (!config) return;
+      const st = sectionStateRef.current[sectionId];
 
       setLoadError(null);
       setSectionState((prev) => ({
@@ -401,18 +409,22 @@ function AdminExamOfficialsContent() {
         [sectionId]: { ...prev[sectionId], busy: true },
       }));
 
-      const skip = (page - 1) * PAGE_SIZE;
+      const skip = (page - 1) * st.pageSize;
+      const serverSort = isServerSideAdminOfficialSort(st.sortKey)
+        ? { sort_by: st.sortKey, sort_dir: st.sortDir }
+        : { sort_by: "center_code" as const, sort_dir: "asc" as const };
       try {
         const res = await listAdminExamCentreOfficials({
           examination_id: examId,
-          center_id: filters.centerId || null,
+          center_id: st.centerId || null,
           designations: config.designations,
-          subject_scope: filters.subjectScopeFilter,
-          region: filters.regionFilter || null,
+          subject_scope: st.subjectScopeFilter,
+          region: st.regionFilter || null,
           skip,
-          limit: PAGE_SIZE,
+          limit: st.pageSize,
+          ...serverSort,
         });
-        const queryKey = sectionQueryKey(examId, filters);
+        const queryKey = sectionQueryKey(examId, st);
         setSectionState((prev) => ({
           ...prev,
           [sectionId]: {
@@ -441,17 +453,12 @@ function AdminExamOfficialsContent() {
       if (examId == null) return;
       const st = sectionStateRef.current[activeSection];
       const targetPage = page ?? st.page;
-      const filters = {
-        regionFilter: st.regionFilter,
-        centerId: st.centerId,
-        subjectScopeFilter: st.subjectScopeFilter,
-      };
-      const key = sectionQueryKey(examId, filters);
+      const key = sectionQueryKey(examId, st);
       if (!force) {
         if (st.busy) return;
         if (st.loadedQueryKey === key && st.page === targetPage) return;
       }
-      void fetchSection(activeSection, targetPage, filters);
+      void fetchSection(activeSection, targetPage);
     },
     [examId, activeSection, fetchSection],
   );
@@ -489,6 +496,9 @@ function AdminExamOfficialsContent() {
     activeSt.regionFilter,
     activeSt.centerId,
     activeSt.subjectScopeFilter,
+    activeSt.pageSize,
+    activeSt.sortKey,
+    activeSt.sortDir,
     examId,
     urlHydrated,
     loadActiveSection,
@@ -496,18 +506,20 @@ function AdminExamOfficialsContent() {
 
   const setSectionPage = useCallback(
     (sectionId: SectionId, page: number) => {
-      const st = sectionStateRef.current[sectionId];
       setSectionState((prev) => ({
         ...prev,
         [sectionId]: { ...prev[sectionId], page },
       }));
-      void fetchSection(sectionId, page, {
-        regionFilter: st.regionFilter,
-        centerId: st.centerId,
-        subjectScopeFilter: st.subjectScopeFilter,
-      });
+      void fetchSection(sectionId, page);
     },
     [fetchSection],
+  );
+
+  const handlePageSizeChange = useCallback(
+    (pageSize: number) => {
+      patchActiveSection({ pageSize, page: 1 });
+    },
+    [patchActiveSection],
   );
 
   const handleSortChange = useCallback(
@@ -520,12 +532,13 @@ function AdminExamOfficialsContent() {
             [activeSection]: {
               ...cur,
               sortDir: cur.sortDir === "asc" ? "desc" : "asc",
+              page: 1,
             },
           };
         }
         return {
           ...prev,
-          [activeSection]: { ...cur, sortKey: key, sortDir: "asc" },
+          [activeSection]: { ...cur, sortKey: key, sortDir: "asc", page: 1 },
         };
       });
     },
@@ -584,17 +597,19 @@ function AdminExamOfficialsContent() {
 
   const displayItems = useMemo(() => {
     let rows = activeSt.items.filter((r) => matchesAdminOfficialSearch(r, activeSt.searchQuery));
-    rows = sortAdminOfficialRows(rows, activeSt.sortKey, activeSt.sortDir);
+    if (activeSt.sortKey === "total_payable") {
+      rows = sortAdminOfficialRows(rows, activeSt.sortKey, activeSt.sortDir);
+    }
     return rows;
   }, [activeSt.items, activeSt.searchQuery, activeSt.sortKey, activeSt.sortDir]);
 
   const exportCentreCount = useMemo(() => {
     if (activeSt.centerId.trim()) return 1;
-    if (activeSt.total <= PAGE_SIZE && activeSt.items.length === activeSt.total) {
+    if (activeSt.total <= activeSt.pageSize && activeSt.items.length === activeSt.total) {
       return countDistinctCentres(activeSt.items);
     }
     return null;
-  }, [activeSt.centerId, activeSt.total, activeSt.items]);
+  }, [activeSt.centerId, activeSt.total, activeSt.items, activeSt.pageSize]);
 
   const exportDisabledReason = useMemo(() => {
     if (examId === null) return "Select an examination";
@@ -689,7 +704,7 @@ function AdminExamOfficialsContent() {
             searchQuery={activeSt.searchQuery}
             onSearchQueryChange={(q) => patchActiveSection({ searchQuery: q }, { resetPage: false })}
             searchDisabled={activeSt.busy && activeSt.items.length === 0}
-            searchLimitedToPage={activeSt.total > PAGE_SIZE}
+            searchLimitedToPage={activeSt.total > activeSt.pageSize}
             regionFilter={activeSt.regionFilter}
             onRegionChange={(region) => patchActiveSection({ regionFilter: region })}
             centerId={activeSt.centerId}
@@ -738,8 +753,10 @@ function AdminExamOfficialsContent() {
               hasActiveFilters={hasActiveFilters}
               page={activeSt.page}
               total={activeSt.total}
-              pageSize={PAGE_SIZE}
+              pageSize={activeSt.pageSize}
+              pageSizeOptions={[...PAGE_SIZE_OPTIONS]}
               onPageChange={(p) => setSectionPage(activeConfig.id, p)}
+              onPageSizeChange={handlePageSizeChange}
               searchQuery={activeSt.searchQuery}
               sortKey={activeSt.sortKey}
               sortDir={activeSt.sortDir}

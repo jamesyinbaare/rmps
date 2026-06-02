@@ -10,6 +10,7 @@ import { SearchableCombobox } from "@/components/searchable-combobox";
 import { InvigilatorSummaryCard } from "@/components/centre-invigilator-summary-card";
 import { OfficialRolesPanel } from "@/components/centre-official-roles-panel";
 import { OfficialAccountsPageIntro } from "@/components/official-accounts-page-intro";
+import { OfficialAccountsPagination } from "@/components/official-accounts-pagination";
 import { SubjectScopeBadge, timetableFilterBadgeScope } from "@/components/subject-scope-badge";
 import {
   apiJson,
@@ -48,6 +49,8 @@ const SUBJECT_SCOPE_OPTIONS: { value: TimetableSubjectFilter; label: string; hin
 ];
 
 const ALL_DESIGNATIONS = "__all__";
+const DEFAULT_CENTRE_PAGE_SIZE = 25;
+const CENTRE_PAGE_SIZE_OPTIONS = [25, 50, 100, 200, 500, 1000] as const;
 
 type SortKey = "name" | "designation" | "days";
 type SortDir = "asc" | "desc";
@@ -258,6 +261,12 @@ function AdminCentreSummaryContent() {
   const [designationFilter, setDesignationFilter] = useState(ALL_DESIGNATIONS);
   const [sortKey, setSortKey] = useState<SortKey>("name");
   const [sortDir, setSortDir] = useState<SortDir>("asc");
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(DEFAULT_CENTRE_PAGE_SIZE);
+
+  useEffect(() => {
+    setPage(1);
+  }, [tableSearch, designationFilter, sortKey, sortDir, centerId, subjectFilter, examId]);
 
   useEffect(() => {
     let cancelled = false;
@@ -477,6 +486,16 @@ function AdminCentreSummaryContent() {
     return sortOfficials(rows, sortKey, sortDir);
   }, [officials, tableSearch, designationFilter, sortKey, sortDir]);
 
+  const paginatedOfficials = useMemo(() => {
+    const start = (page - 1) * pageSize;
+    return filteredOfficials.slice(start, start + pageSize);
+  }, [filteredOfficials, page, pageSize]);
+
+  useEffect(() => {
+    const totalPages = Math.max(1, Math.ceil(filteredOfficials.length / pageSize));
+    if (page > totalPages) setPage(totalPages);
+  }, [filteredOfficials.length, page, pageSize]);
+
   const examOfficialsHref =
     examId != null && centerId.trim()
       ? `${OFFICIAL_ACCOUNTS_ADMIN_HREF}?exam=${examId}&centerId=${encodeURIComponent(centerId.trim())}`
@@ -667,6 +686,9 @@ function AdminCentreSummaryContent() {
               </div>
               <p className="pb-2 text-xs text-muted-foreground sm:ml-auto sm:max-w-xs sm:text-right sm:pb-2.5">
                 {filteredOfficials.length} official{filteredOfficials.length === 1 ? "" : "s"}
+                {filteredOfficials.length > pageSize
+                  ? ` · page ${page} of ${Math.max(1, Math.ceil(filteredOfficials.length / pageSize))}`
+                  : ""}
                 {busy ? " · updating…" : ""}
               </p>
             </div>
@@ -747,14 +769,15 @@ function AdminCentreSummaryContent() {
                       </td>
                     </tr>
                   ) : null}
-                  {filteredOfficials.map((row, index) => {
+                  {paginatedOfficials.map((row, index) => {
                     const isInvigilator = row.designation === "Invigilator";
+                    const rowNumber = (page - 1) * pageSize + index + 1;
                     return (
                       <tr
                         key={row.id}
                         className={cn("hover:bg-muted/30", isInvigilator && "bg-success/5")}
                       >
-                        <td className="px-2 py-2 text-center text-xs tabular-nums text-muted-foreground">{index + 1}</td>
+                        <td className="px-2 py-2 text-center text-xs tabular-nums text-muted-foreground">{rowNumber}</td>
                         <td className="px-3 py-2 font-medium">{row.full_name}</td>
                         <td className="px-3 py-2">{row.designation}</td>
                         <td className="px-3 py-2">
@@ -790,6 +813,19 @@ function AdminCentreSummaryContent() {
                 </tbody>
               </table>
             </div>
+            <OfficialAccountsPagination
+              page={page}
+              pageSize={pageSize}
+              total={filteredOfficials.length}
+              busy={busy}
+              pageSizeOptions={[...CENTRE_PAGE_SIZE_OPTIONS]}
+              recordLabel="official"
+              onPageChange={setPage}
+              onPageSizeChange={(size) => {
+                setPageSize(size);
+                setPage(1);
+              }}
+            />
           </div>
         ) : null}
       </div>
