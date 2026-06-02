@@ -2552,6 +2552,12 @@ export type FinanceCentreSchoolSummaryRoleCounts = {
   assistant_supervisor: number;
 };
 
+export type AssignedInspectorAtCentre = {
+  inspector_id: string;
+  full_name: string;
+  phone: string | null;
+};
+
 export type FinanceCentreSchoolSummaryResponse = {
   center_id: string;
   center_code: string;
@@ -2562,6 +2568,7 @@ export type FinanceCentreSchoolSummaryResponse = {
   variance: number;
   role_counts: FinanceCentreSchoolSummaryRoleCounts;
   officials: AdminExamCentreOfficialRow[];
+  assigned_inspectors: AssignedInspectorAtCentre[];
 };
 
 export type FinanceCentreOfficialStatisticsRow = {
@@ -2599,7 +2606,7 @@ function centreSchoolSummaryQuery(params: {
 }): string {
   const q = new URLSearchParams();
   q.set("center_id", params.centerId.trim());
-  if (params.subject_filter != null) q.set("subject_filter", params.subject_filter);
+  q.set("subject_filter", params.subject_filter ?? "ALL");
   return `?${q.toString()}`;
 }
 

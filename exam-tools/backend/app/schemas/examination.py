@@ -428,6 +428,14 @@ class FinanceCentreSchoolSummaryRoleCounts(BaseModel):
     assistant_supervisor: int = Field(0, ge=0)
 
 
+class AssignedInspectorAtCentre(BaseModel):
+    """Inspector posted to this centre for the examination (from ``inspector_exam_postings`` only)."""
+
+    inspector_id: UUID
+    full_name: str
+    phone: str | None = None
+
+
 class FinanceCentreSchoolSummaryResponse(BaseModel):
     center_id: UUID
     center_code: str
@@ -438,6 +446,7 @@ class FinanceCentreSchoolSummaryResponse(BaseModel):
     variance: int
     role_counts: FinanceCentreSchoolSummaryRoleCounts
     officials: list[AdminExamCentreOfficialRow] = Field(default_factory=list)
+    assigned_inspectors: list[AssignedInspectorAtCentre] = Field(default_factory=list)
 
 
 class FinanceCentreOfficialStatisticsRow(BaseModel):

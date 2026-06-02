@@ -82,6 +82,26 @@ def posting_allows_record_scope(
     return posting_scope == record_scope
 
 
+def posting_matches_timetable_filter(
+    posting_scope: ExamInspectorSubjectScope | str,
+    subject_filter: TimetableDownloadFilter,
+) -> bool:
+    """Whether an inspector posting counts for a finance/timetable subject-scope filter."""
+    if subject_filter == TimetableDownloadFilter.ALL:
+        return True
+    if isinstance(posting_scope, str):
+        scope = ExamInspectorSubjectScope(posting_scope)
+    else:
+        scope = posting_scope
+    if scope == ExamInspectorSubjectScope.ALL:
+        return True
+    if subject_filter == TimetableDownloadFilter.CORE_ONLY:
+        return scope == ExamInspectorSubjectScope.CORE
+    if subject_filter == TimetableDownloadFilter.ELECTIVE_ONLY:
+        return scope == ExamInspectorSubjectScope.ELECTIVE
+    return True
+
+
 def sheets_visible_to_posting(
     posting_scope: ExamInspectorSubjectScope,
     sheet_scope: ExamInspectorSubjectScope,

@@ -15,9 +15,12 @@ from app.models import (
     Examination,
     ExaminationCentre,
     ExamOfficialDesignation,
+    InspectorExamPosting,
+    User,
 )
 from app.schemas.admin_exam_official import AdminExamCentreOfficialRow
 from app.schemas.examination import (
+    AssignedInspectorAtCentre,
     FinanceCentreInvigilatorSummaryItem,
     FinanceCentreSchoolSummaryResponse,
     FinanceCentreSchoolSummaryRoleCounts,
@@ -26,6 +29,7 @@ from app.schemas.timetable import TimetableDownloadFilter
 from app.models import ExaminationDesignationRate
 from app.services.exam_official_compensation import compensation_for_official
 from app.services.exam_official_export import designation_str, examination_label
+from app.services.subject_scope import posting_matches_timetable_filter
 
 
 def subject_filter_filename_suffix(subject_filter: TimetableDownloadFilter) -> str:
@@ -151,6 +155,55 @@ async def load_officials_for_centre(
     return list(result.all())
 
 
+async def load_assigned_inspectors_for_centre(
+    session: AsyncSession,
+    examination_id: int,
+    centre_id: UUID,
+    *,
+    subject_filter: TimetableDownloadFilter = TimetableDownloadFilter.ALL,
+) -> list[AssignedInspectorAtCentre]:
+    """Inspectors posted to this centre for the exam, joined via ``inspector_exam_postings`` only."""
+    stmt = (
+        select(InspectorExamPosting, User)
+        .join(User, User.id == InspectorExamPosting.inspector_user_id)
+        .where(
+            InspectorExamPosting.examination_id == examination_id,
+            InspectorExamPosting.examination_centre_id == centre_id,
+        )
+        .order_by(User.full_name.asc(), InspectorExamPosting.id.asc())
+    )
+    if subject_filter == TimetableDownloadFilter.CORE_ONLY:
+        stmt = stmt.where(
+            InspectorExamPosting.subject_scope.in_(
+                (ExamInspectorSubjectScope.CORE, ExamInspectorSubjectScope.ALL)
+            )
+        )
+    elif subject_filter == TimetableDownloadFilter.ELECTIVE_ONLY:
+        stmt = stmt.where(
+            InspectorExamPosting.subject_scope.in_(
+                (ExamInspectorSubjectScope.ELECTIVE, ExamInspectorSubjectScope.ALL)
+            )
+        )
+
+    rows = list((await session.execute(stmt)).all())
+    by_user: dict[UUID, AssignedInspectorAtCentre] = {}
+    for posting, user in rows:
+        scope = posting.subject_scope
+        if isinstance(scope, str):
+            scope = ExamInspectorSubjectScope(scope)
+        if not posting_matches_timetable_filter(scope, subject_filter):
+            continue
+        uid = posting.inspector_user_id
+        if uid in by_user:
+            continue
+        by_user[uid] = AssignedInspectorAtCentre(
+            inspector_id=uid,
+            full_name=cast(str, user.full_name),
+            phone=cast(str | None, user.phone_number),
+        )
+    return sorted(by_user.values(), key=lambda item: item.full_name.casefold())
+
+
 def build_school_summary_response(
     *,
     centre: ExaminationCentre,
@@ -158,6 +211,7 @@ def build_school_summary_response(
     invigilator_item: FinanceCentreInvigilatorSummaryItem,
     officials: list[ExamCentreOfficial],
     official_rows: list[AdminExamCentreOfficialRow],
+    assigned_inspectors: list[AssignedInspectorAtCentre],
 ) -> FinanceCentreSchoolSummaryResponse:
     expected = expected_invigilations_total(invigilator_item)
     declared = invigilator_days_declared(officials)
@@ -171,6 +225,7 @@ def build_school_summary_response(
         variance=declared - expected,
         role_counts=build_role_counts(officials),
         officials=official_rows,
+        assigned_inspectors=assigned_inspectors,
     )
 
 
@@ -193,10 +248,14 @@ async def build_finance_centre_school_summary(
     rates_map = await load_designation_rates_map(session, exam.id)
     official_rows = officials_to_admin_rows(pairs, exam.id, exam_label, rates_by_designation=rates_map)
     invigilator_item = await build_invigilator_item(session, exam.id, centre, subject_filter)
+    assigned_inspectors = await load_assigned_inspectors_for_centre(
+        session, exam.id, centre.id, subject_filter=subject_filter
+    )
     return build_school_summary_response(
         centre=centre,
         subject_filter=subject_filter,
         invigilator_item=invigilator_item,
         officials=officials,
         official_rows=official_rows,
+        assigned_inspectors=assigned_inspectors,
     )
