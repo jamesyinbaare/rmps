@@ -13,28 +13,22 @@ import {
   executiveUserDisplayName,
 } from "@/lib/executive-selected-examination";
 import { clearAuth, getMe, type UserMe } from "@/lib/auth";
-import { OfficialAccountsNavLink } from "@/components/official-accounts-nav-link";
-import {
-  ACCOUNT_DETAILS_BY_CENTRE_LABEL,
-  BANK_ACCOUNTS_LABEL,
-  isOfficialAccountsHref,
-  isOfficialAccountsPath,
-  OFFICIAL_ACCOUNTS_ADMIN_HREF,
-} from "@/lib/official-accounts-zone";
+import { FinanceNavSection } from "@/components/finance-nav-section";
+import { FinanceSidebar } from "@/components/finance-sidebar";
+import { isOfficialAccountsPath } from "@/lib/official-accounts-zone";
 import {
   ATTENDANCE_SHEETS_HREF,
+  BANK_DIRECTORY_HREF,
+  BANK_DIRECTORY_NAV_ITEM,
   CENTRE_SUMMARY_HREF,
   FINANCE_CENTRE_SUMMARY_HREF,
-  FINANCE_HOME_HREF,
-  OFFICIAL_RATES_HREF,
+  financePageStickyTitle,
   OFFICIAL_STATISTICS_HREF,
 } from "@/lib/finance-nav";
 import { cn } from "@/lib/utils";
 
 const inputFocusRing =
   "focus:border-primary focus:outline-none focus:ring-2 focus:ring-ring/30";
-
-const BANK_DIRECTORY_HREF = "/dashboard/admin/bank-directory";
 
 const nav = [
   { href: "/dashboard/admin", label: "Overview" },
@@ -76,72 +70,6 @@ type NavLinkItem = { type: "link"; href: string; label: string };
 type NavHeadingItem = { type: "heading"; label: string };
 type NavEntry = NavLinkItem | NavHeadingItem;
 
-const FINANCE_NAV_OVERVIEW: NavEntry[] = [
-  { type: "link", href: FINANCE_HOME_HREF, label: "Overview" },
-];
-
-const FINANCE_NAV_SETUP: NavEntry[] = [
-  { type: "heading", label: "Setup" },
-  { type: "link", href: OFFICIAL_RATES_HREF, label: "Allowance rates" },
-];
-
-const FINANCE_NAV_ACCOUNT_DETAILS: NavEntry[] = [
-  { type: "heading", label: "Account details" },
-  { type: "link", href: OFFICIAL_ACCOUNTS_ADMIN_HREF, label: BANK_ACCOUNTS_LABEL },
-  { type: "link", href: CENTRE_SUMMARY_HREF, label: ACCOUNT_DETAILS_BY_CENTRE_LABEL },
-];
-
-const FINANCE_NAV_REPORTING: NavEntry[] = [
-  { type: "heading", label: "Centre reporting" },
-  { type: "link", href: OFFICIAL_STATISTICS_HREF, label: "Centre overview" },
-  { type: "link", href: FINANCE_CENTRE_SUMMARY_HREF, label: "Invigilator by day" },
-];
-
-const FINANCE_NAV_COMPLIANCE: NavEntry[] = [
-  { type: "heading", label: "Compliance" },
-  { type: "link", href: ATTENDANCE_SHEETS_HREF, label: "Attendance sheets" },
-];
-
-const FINANCE_OFFICER_NAV: NavEntry[] = [
-  ...FINANCE_NAV_OVERVIEW,
-  ...FINANCE_NAV_SETUP,
-  ...FINANCE_NAV_ACCOUNT_DETAILS,
-  ...FINANCE_NAV_REPORTING,
-  ...FINANCE_NAV_COMPLIANCE,
-];
-
-function superAdminFinanceNav(bankDirectory: NavLinkItem): NavEntry[] {
-  return [
-    { type: "heading", label: "Finance" },
-    bankDirectory,
-    ...FINANCE_NAV_SETUP,
-    ...FINANCE_NAV_ACCOUNT_DETAILS,
-    ...FINANCE_NAV_REPORTING,
-    ...FINANCE_NAV_COMPLIANCE,
-  ];
-}
-
-const FINANCE_PAGE_TITLES: [href: string, title: string][] = [
-  [FINANCE_HOME_HREF, "Overview"],
-  [OFFICIAL_RATES_HREF, "Allowance rates"],
-  [OFFICIAL_ACCOUNTS_ADMIN_HREF, BANK_ACCOUNTS_LABEL],
-  [CENTRE_SUMMARY_HREF, ACCOUNT_DETAILS_BY_CENTRE_LABEL],
-  [OFFICIAL_STATISTICS_HREF, "Centre overview"],
-  [FINANCE_CENTRE_SUMMARY_HREF, "Invigilator by day"],
-  [ATTENDANCE_SHEETS_HREF, "Attendance sheets"],
-];
-
-function financePageStickyTitle(pathname: string): string | null {
-  for (const [href, title] of FINANCE_PAGE_TITLES) {
-    if (href === FINANCE_HOME_HREF) {
-      if (pathname === href) return title;
-      continue;
-    }
-    if (pathname === href || pathname.startsWith(`${href}/`)) return title;
-  }
-  return null;
-}
-
 function toLinkItem(item: { href: string; label: string }): NavLinkItem {
   return { type: "link", href: item.href, label: item.label };
 }
@@ -174,16 +102,10 @@ export function AdminDashboardShell({ children }: Props) {
       return EXECUTIVE_VIEWER_NAV;
     }
     if (me.role === "FINANCE_OFFICER") {
-      return FINANCE_OFFICER_NAV;
+      return null;
     }
     if (me.role === "SUPER_ADMIN") {
-      const bankItem = nav.find((n) => n.href === BANK_DIRECTORY_HREF);
-      const withoutBank = nav.filter((n) => n.href !== BANK_DIRECTORY_HREF);
-      if (!bankItem) return nav.map(toLinkItem);
-      return [
-        ...withoutBank.map(toLinkItem),
-        ...superAdminFinanceNav(toLinkItem(bankItem)),
-      ];
+      return nav.filter((n) => n.href !== BANK_DIRECTORY_HREF).map(toLinkItem);
     }
     return nav.map(toLinkItem);
   }, [me]);
@@ -192,13 +114,17 @@ export function AdminDashboardShell({ children }: Props) {
   const isExecutiveViewer = me?.role === "EXECUTIVE_VIEWER";
   const isTopLevelOfficer = isMonitoringOfficer || isExecutiveViewer;
   const isFinanceOfficer = me?.role === "FINANCE_OFFICER";
+  const isSuperAdmin = me?.role === "SUPER_ADMIN";
   const onExecutiveCentresPage = pathname === EXECUTIVE_CENTRES_HREF;
   const onCentreSummaryPage =
     pathname === CENTRE_SUMMARY_HREF || pathname.startsWith(`${CENTRE_SUMMARY_HREF}/`);
+  const onFinanceCentreSummaryPage =
+    pathname === FINANCE_CENTRE_SUMMARY_HREF || pathname.startsWith(`${FINANCE_CENTRE_SUMMARY_HREF}/`);
   const onOfficialStatisticsPage =
     pathname === OFFICIAL_STATISTICS_HREF || pathname.startsWith(`${OFFICIAL_STATISTICS_HREF}/`);
-  const onOfficialAccountsPage =
-    isOfficialAccountsPath(pathname) && !onCentreSummaryPage && !onOfficialStatisticsPage;
+  const financeTitle = financePageStickyTitle(pathname);
+  const showFinanceNavAccent =
+    (isFinanceOfficer || isSuperAdmin) && isOfficialAccountsPath(pathname);
 
   function logout() {
     clearAuth();
@@ -242,11 +168,21 @@ export function AdminDashboardShell({ children }: Props) {
         )}
       >
         <div className="flex h-full flex-col">
-          <div className="border-b border-border p-4">
+          <div
+            className={cn(
+              "border-b border-border p-4",
+              isFinanceOfficer && "bg-gradient-to-br from-success/10 via-card to-card",
+            )}
+          >
             <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
               Exam tools
             </p>
-            <p className="mt-1 text-sm font-semibold text-card-foreground">
+            <p
+              className={cn(
+                "mt-1 text-sm font-semibold",
+                isFinanceOfficer ? "text-success" : "text-card-foreground",
+              )}
+            >
               {isExecutiveViewer
                 ? me
                   ? executiveUserDisplayName(me)
@@ -258,80 +194,85 @@ export function AdminDashboardShell({ children }: Props) {
                     : "Administration"}
             </p>
           </div>
-          <nav
-            className="flex min-h-0 flex-1 flex-col gap-1 overflow-y-auto overscroll-contain p-3 pb-6"
-            aria-label="Dashboard sections"
-          >
-            {visibleNavEntries === null ? (
-              <p className="px-3 text-sm text-muted-foreground">Loading…</p>
+          {isFinanceOfficer ? (
+            me ? (
+              <FinanceSidebar pathname={pathname} onNavigate={() => setSidebarOpen(false)} />
             ) : (
-              visibleNavEntries.map((entry) => {
-                if (entry.type === "heading") {
+              <p className="px-3 text-sm text-muted-foreground">Loading…</p>
+            )
+          ) : (
+            <nav
+              className="flex min-h-0 flex-1 flex-col gap-1 overflow-y-auto overscroll-contain p-3 pb-6"
+              aria-label="Dashboard sections"
+            >
+              {visibleNavEntries === null ? (
+                <p className="px-3 text-sm text-muted-foreground">Loading…</p>
+              ) : (
+                visibleNavEntries.map((entry) => {
+                  if (entry.type === "heading") {
+                    return (
+                      <div
+                        key={`heading-${entry.label}`}
+                        className="mt-4 border-t border-border px-3 pt-4"
+                      >
+                        <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                          {entry.label}
+                        </p>
+                      </div>
+                    );
+                  }
+                  const active = navLinkActive(entry.href);
+                  const linkHref =
+                    isExecutiveViewer && entry.type === "link"
+                      ? executiveMonitoringHref(entry.href, executiveExamIdFromUrl)
+                      : entry.href;
                   return (
-                    <div
-                      key={`heading-${entry.label}`}
-                      className="mt-4 border-t border-border px-3 pt-4"
-                    >
-                      <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
-                        {entry.label}
-                      </p>
-                    </div>
-                  );
-                }
-                const active = navLinkActive(entry.href);
-                if (isOfficialAccountsHref(entry.href)) {
-                  return (
-                    <OfficialAccountsNavLink
+                    <Link
                       key={entry.href}
-                      href={entry.href}
-                      active={active}
-                      onNavigate={() => setSidebarOpen(false)}
-                    />
+                      href={linkHref}
+                      onClick={() => setSidebarOpen(false)}
+                      aria-current={active ? "page" : undefined}
+                      className={cn(
+                        "rounded-lg px-3 py-2.5 text-sm font-medium transition-colors",
+                        active
+                          ? "bg-primary text-primary-foreground"
+                          : "text-card-foreground hover:bg-muted",
+                        inputFocusRing,
+                      )}
+                    >
+                      {entry.label}
+                    </Link>
                   );
-                }
-                const linkHref =
-                  isExecutiveViewer && entry.type === "link"
-                    ? executiveMonitoringHref(entry.href, executiveExamIdFromUrl)
-                    : entry.href;
-                return (
-                  <Link
-                    key={entry.href}
-                    href={linkHref}
-                    onClick={() => setSidebarOpen(false)}
-                    aria-current={active ? "page" : undefined}
-                    className={cn(
-                      "rounded-lg px-3 py-2.5 text-sm font-medium transition-colors",
-                      active
-                        ? "bg-primary text-primary-foreground"
-                        : "text-card-foreground hover:bg-muted",
-                      inputFocusRing,
-                    )}
-                  >
-                    {entry.label}
-                  </Link>
-                );
-              })
-            )}
-          </nav>
+                })
+              )}
+              {isSuperAdmin ? (
+                <div className="mt-4 border-t border-border pt-4">
+                  <p className="mb-2 px-2 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
+                    Finance
+                  </p>
+                  <FinanceNavSection
+                    pathname={pathname}
+                    onNavigate={() => setSidebarOpen(false)}
+                    prependItems={[BANK_DIRECTORY_NAV_ITEM]}
+                  />
+                </div>
+              ) : null}
+            </nav>
+          )}
         </div>
       </aside>
 
       <div className="lg:pl-64">
         <DashboardStickyHeader
           title={
-            isFinanceOfficer
-              ? (financePageStickyTitle(pathname) ?? "Finance")
-              : onOfficialStatisticsPage
-              ? "Centre overview"
-              : onCentreSummaryPage
-              ? ACCOUNT_DETAILS_BY_CENTRE_LABEL
-              : onOfficialAccountsPage
-                ? BANK_ACCOUNTS_LABEL
-                : isTopLevelOfficer
-                  ? isExecutiveViewer
-                    ? executiveStickyTitle!
-                    : "Exam monitoring"
-                  : "Staff dashboard"
+            financeTitle ??
+            (isFinanceOfficer
+              ? "Finance"
+              : isTopLevelOfficer
+                ? isExecutiveViewer
+                  ? executiveStickyTitle!
+                  : "Exam monitoring"
+                : "Staff dashboard")
           }
           subtitle={
             me
@@ -340,6 +281,7 @@ export function AdminDashboardShell({ children }: Props) {
                 : `${me.full_name}${me.email ? ` · ${me.email}` : ""}`
               : null
           }
+          accent={showFinanceNavAccent ? "official-accounts" : undefined}
           onLogout={logout}
           executiveMobileOnly={isExecutiveViewer}
           sidebar={
@@ -358,6 +300,8 @@ export function AdminDashboardShell({ children }: Props) {
             "mx-auto px-4 py-6 sm:px-6",
             pathname === ATTENDANCE_SHEETS_HREF || pathname.startsWith(`${ATTENDANCE_SHEETS_HREF}/`)
               || onOfficialStatisticsPage
+              || onCentreSummaryPage
+              || onFinanceCentreSummaryPage
               ? "max-w-[1600px]"
               : "max-w-6xl",
             isExecutiveViewer && "pb-[calc(5rem+env(safe-area-inset-bottom))] lg:pb-6",
