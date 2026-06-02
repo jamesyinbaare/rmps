@@ -199,9 +199,15 @@ type Props = {
   examId: number | null;
   /** Dedicated centres route: skip duplicate page title (shell already shows Centres). */
   standalone?: boolean;
+  /** Override helper text when standalone (e.g. Test Admin inspectors browse). */
+  standaloneHint?: string;
 };
 
-export function ExecutiveCentresSection({ examId, standalone = false }: Props) {
+export function ExecutiveCentresSection({
+  examId,
+  standalone = false,
+  standaloneHint,
+}: Props) {
   const [centres, setCentres] = useState<ExecutiveCentreListItem[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -365,7 +371,7 @@ export function ExecutiveCentresSection({ examId, standalone = false }: Props) {
     >
       {standalone ? (
         <p className="text-sm text-muted-foreground">
-          Tap a centre for schools and inspector contacts.
+          {standaloneHint ?? "Tap a centre for schools and inspector contacts."}
         </p>
       ) : (
         <>
@@ -380,17 +386,6 @@ export function ExecutiveCentresSection({ examId, standalone = false }: Props) {
 
       <div className="flex flex-col gap-3 rounded-xl border border-primary/15 bg-linear-to-br from-primary/5 via-card to-success/5 p-4 shadow-sm">
         <label className="flex min-w-0 flex-col gap-1.5">
-          <span className="text-xs font-semibold text-primary">Search</span>
-          <input
-            type="search"
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-            placeholder="Code or name…"
-            className={executiveFormInputClass}
-            enterKeyHint="search"
-          />
-        </label>
-        <label className="flex min-w-0 flex-col gap-1.5">
           <span className="text-xs font-semibold text-success">Region</span>
           <select
             value={regionFilter}
@@ -404,6 +399,17 @@ export function ExecutiveCentresSection({ examId, standalone = false }: Props) {
               </option>
             ))}
           </select>
+        </label>
+        <label className="flex min-w-0 flex-col gap-1.5">
+          <span className="text-xs font-semibold text-primary">Search</span>
+          <input
+            type="search"
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            placeholder="Code or name…"
+            className={executiveFormInputClass}
+            enterKeyHint="search"
+          />
         </label>
       </div>
 

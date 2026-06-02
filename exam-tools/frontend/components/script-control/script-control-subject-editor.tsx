@@ -197,6 +197,9 @@ export function ScriptControlSubjectEditor({
           <ScriptControlSchoolIdentity
             schoolCode={data.school_code}
             schoolName={schoolDisplayName}
+            centreCode={data.examination_centre_code}
+            centreName={data.examination_centre_name}
+            postedInspectors={data.posted_inspectors ?? []}
             nameClamp={1}
             className="mt-1"
           />

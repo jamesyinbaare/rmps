@@ -72,6 +72,9 @@ export function ScriptControlEditContextBar({
           <ScriptControlSchoolIdentity
             schoolCode={data.school_code}
             schoolName={schoolName}
+            centreCode={data.examination_centre_code}
+            centreName={data.examination_centre_name}
+            postedInspectors={data.posted_inspectors ?? []}
             onChangeSchool={onFindSchool}
             nameClamp={2}
             className="mb-2"

@@ -43,6 +43,7 @@ from app.schemas.script_control import (
     ScriptSeriesUpsertRequest,
     ScriptSubjectRowResponse,
 )
+from app.services.centre_resolution import resolve_centre_for_user_school
 from app.services.depot_scope import (
     assert_school_in_depot,
     depot_school_ids,
@@ -50,6 +51,7 @@ from app.services.depot_scope import (
     script_scope_for_school,
 )
 from app.services.exam_timetable_pdf import load_examination_or_raise
+from app.services.executive_overview import load_posted_inspectors_for_centre
 from app.services.inspector_posting import (
     assert_subject_allowed_for_workspace,
     filter_subject_rows_for_scope,
@@ -283,6 +285,32 @@ async def _admin_packing_school_and_scope(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="School not found")
     scope_ids = await script_scope_for_school(session, packing_school, exam_id)
     return packing_school, scope_ids
+
+
+async def _enrich_admin_school_script_response_with_centre_inspectors(
+    session: DBSessionDep,
+    exam_id: int,
+    packing_school: School,
+    grid: MySchoolScriptControlResponse,
+) -> MySchoolScriptControlResponse:
+    """Attach examination centre and posted inspectors for admin school drill-down."""
+    from app.services.inspector_posting_display import merge_executive_posted_inspectors
+
+    try:
+        centre = await resolve_centre_for_user_school(session, exam_id, packing_school)
+    except (HTTPException, ValueError):
+        return grid
+
+    raw_inspectors = await load_posted_inspectors_for_centre(session, exam_id, centre.id)
+    merged_inspectors = merge_executive_posted_inspectors(raw_inspectors)
+    return grid.model_copy(
+        update={
+            "examination_centre_id": centre.id,
+            "examination_centre_code": str(centre.code),
+            "examination_centre_name": str(centre.name),
+            "posted_inspectors": merged_inspectors,
+        }
+    )
 
 
 def _missing_envelopes_consecutive_prefix(nums_sorted: list[int]) -> list[int]:
@@ -1203,8 +1231,11 @@ async def get_admin_school_script_control(
 ) -> MySchoolScriptControlResponse:
     packing_school, scope_ids = await _admin_packing_school_and_scope(session, exam_id, school_id)
     try:
-        return await _build_my_school_script_grid(
+        grid = await _build_my_school_script_grid(
             session, exam_id, packing_school, scope_ids, ExamInspectorSubjectScope.ALL
+        )
+        return await _enrich_admin_school_script_response_with_centre_inspectors(
+            session, exam_id, packing_school, grid
         )
     except ValueError:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Examination not found") from None
@@ -1365,8 +1396,11 @@ async def get_admin_school_irregular_script_control(
 ) -> MySchoolScriptControlResponse:
     packing_school, scope_ids = await _admin_packing_school_and_scope(session, exam_id, school_id)
     try:
-        return await _build_my_school_irregular_script_grid(
+        grid = await _build_my_school_irregular_script_grid(
             session, exam_id, packing_school, scope_ids, ExamInspectorSubjectScope.ALL
+        )
+        return await _enrich_admin_school_script_response_with_centre_inspectors(
+            session, exam_id, packing_school, grid
         )
     except ValueError:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Examination not found") from None
@@ -1740,7 +1774,7 @@ async def list_script_control_school_status(
         region=region,
         zone=zone,
         school_q=school_q,
-        status_filter=status,
+        status_filter="all" if (school_q and school_q.strip()) else status,
     )
     total = len(rows)
     page = rows[skip : skip + limit]
@@ -1787,7 +1821,7 @@ async def list_irregular_script_control_school_status(
         region=region,
         zone=zone,
         school_q=school_q,
-        status_filter=status,
+        status_filter="all" if (school_q and school_q.strip()) else status,
     )
     total = len(rows)
     page = rows[skip : skip + limit]

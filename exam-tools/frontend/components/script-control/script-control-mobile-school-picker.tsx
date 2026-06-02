@@ -16,11 +16,7 @@ import {
   type ScriptControlSchoolStatusRow,
 } from "@/lib/api";
 import { REGION_OPTIONS } from "@/lib/school-enums";
-import {
-  pushRecentSchool,
-  readRecentSchools,
-  type RecentSchoolEntry,
-} from "@/lib/script-control-recent-schools";
+import type { RecentSchoolEntry } from "@/lib/script-control-recent-schools";
 import { cn } from "@/lib/utils";
 
 function useDebounced<T>(value: T, ms: number): T {
@@ -51,14 +47,14 @@ function SchoolResultRow({
   subtitle,
   onSelect,
 }: {
-  row: ScriptControlSchoolStatusRow | RecentSchoolEntry;
+  row: ScriptControlSchoolStatusRow;
   active?: boolean;
   subtitle?: string;
   onSelect: () => void;
 }) {
-  const code = "school_code" in row ? row.school_code : row.schoolCode;
-  const name = "school_name" in row ? row.school_name : row.schoolName;
-  const status = "overall_status" in row ? row.overall_status : null;
+  const code = row.school_code;
+  const name = row.school_name;
+  const status = row.overall_status;
   const progress =
     "recorded_series" in row && "expected_series" in row
       ? `${row.recorded_series}/${row.expected_series} series`
@@ -106,19 +102,15 @@ export function ScriptControlMobileSchoolPicker({
 }: Props) {
   const [search, setSearch] = useState("");
   const debouncedSearch = useDebounced(search, 350);
-  const [statusFilter, setStatusFilter] = useState<ScriptControlStatusFilter>("missing");
+  const [statusFilter, setStatusFilter] = useState<ScriptControlStatusFilter>("all");
+  const isSearching = debouncedSearch.trim().length >= 2;
+  const effectiveStatus: ScriptControlStatusFilter = isSearching ? "all" : statusFilter;
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [items, setItems] = useState<ScriptControlSchoolStatusRow[]>([]);
   const [counts, setCounts] = useState<Awaited<ReturnType<typeof getScriptControlSchoolStatus>>["status_counts"] | null>(
     null,
   );
-  const [recent, setRecent] = useState<RecentSchoolEntry[]>([]);
-
-  useEffect(() => {
-    if (!open) return;
-    setRecent(readRecentSchools(examId, subjectId, paperNumber));
-  }, [open, examId, subjectId, paperNumber]);
 
   const fetchSchools = useCallback(async () => {
     setLoading(true);
@@ -129,10 +121,10 @@ export function ScriptControlMobileSchoolPicker({
         subject_id: subjectId,
         paper_number: paperNumber,
         region: region.trim() || undefined,
-        school_q: debouncedSearch.trim().length >= 2 ? debouncedSearch.trim() : undefined,
-        status: statusFilter,
+        school_q: isSearching ? debouncedSearch.trim() : undefined,
+        status: effectiveStatus,
         skip: 0,
-        limit: 100,
+        limit: isSearching ? 500 : 100,
       };
       const res =
         recordType === "regular"
@@ -147,7 +139,7 @@ export function ScriptControlMobileSchoolPicker({
     } finally {
       setLoading(false);
     }
-  }, [debouncedSearch, examId, paperNumber, recordType, region, statusFilter, subjectId]);
+  }, [debouncedSearch, effectiveStatus, examId, isSearching, paperNumber, recordType, region, statusFilter, subjectId]);
 
   useEffect(() => {
     if (!open) return;
@@ -160,14 +152,7 @@ export function ScriptControlMobileSchoolPicker({
       schoolCode: row.school_code,
       schoolName: row.school_name,
     };
-    pushRecentSchool(examId, subjectId, paperNumber, entry);
     onSelectSchool(row.school_id, entry);
-    onOpenChange(false);
-  }
-
-  function selectRecent(entry: RecentSchoolEntry) {
-    pushRecentSchool(examId, subjectId, paperNumber, entry);
-    onSelectSchool(entry.schoolId, entry);
     onOpenChange(false);
   }
 
@@ -209,28 +194,18 @@ export function ScriptControlMobileSchoolPicker({
           autoComplete="off"
         />
 
-        <ScriptControlStatusTabs active={statusFilter} counts={counts} onChange={setStatusFilter} />
+        {isSearching ? (
+          <p className="text-xs text-muted-foreground">
+            Showing all schools matching your search for this subject and paper.
+          </p>
+        ) : (
+          <ScriptControlStatusTabs active={statusFilter} counts={counts} onChange={setStatusFilter} />
+        )}
 
         {error ? (
           <p className="rounded-lg border border-destructive/40 bg-destructive/10 px-3 py-2 text-sm text-destructive">
             {error}
           </p>
-        ) : null}
-
-        {recent.length > 0 ? (
-          <div>
-            <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">Recent</p>
-            <ul className="divide-y divide-border rounded-xl border border-border">
-              {recent.map((entry) => (
-                <SchoolResultRow
-                  key={entry.schoolId}
-                  row={entry}
-                  active={entry.schoolId === currentSchoolId}
-                  onSelect={() => selectRecent(entry)}
-                />
-              ))}
-            </ul>
-          </div>
         ) : null}
 
         <div>
@@ -239,7 +214,9 @@ export function ScriptControlMobileSchoolPicker({
           </p>
           {!loading && items.length === 0 ? (
             <p className="rounded-xl border border-border bg-muted/20 px-4 py-6 text-center text-sm text-muted-foreground">
-              {statusFilterEmptyMessage(statusFilter)}
+              {isSearching
+                ? "No schools match your search for this subject and paper."
+                : statusFilterEmptyMessage(statusFilter)}
             </p>
           ) : (
             <ul className="divide-y divide-border rounded-xl border border-border">

@@ -1626,6 +1626,10 @@ export type MySchoolScriptControlResponse = {
   /** Effective max answer booklets per envelope for paper 2. */
   scripts_per_envelope_paper_2: number;
   subjects: ScriptSubjectRowResponse[];
+  examination_centre_id?: string | null;
+  examination_centre_code?: string | null;
+  examination_centre_name?: string | null;
+  posted_inspectors?: ExecutivePostedInspectorItem[];
 };
 
 /** Super-admin list of script packing rows (one API row per subject/paper/series). */

@@ -9,8 +9,10 @@ import { ExecutiveBottomTabNav } from "@/components/executive-bottom-tab-nav";
 import {
   EXECUTIVE_CENTRES_HREF,
   EXECUTIVE_MONITORING_HREF,
+  TEST_ADMIN_INSPECTORS_HREF,
   executiveMonitoringHref,
   executiveUserDisplayName,
+  monitoringExamScopedHref,
 } from "@/lib/executive-selected-examination";
 import { clearAuth, getMe, type UserMe } from "@/lib/auth";
 import { FinanceNavSection } from "@/components/finance-nav-section";
@@ -44,6 +46,7 @@ const nav = [
   { href: BANK_DIRECTORY_HREF, label: "Bank directory" },
   { href: "/dashboard/admin/timetable", label: "Examination timetable" },
   { href: "/dashboard/admin/monitoring", label: "Exam overview" },
+  { href: "/dashboard/admin/monitoring/inspectors", label: "Inspectors" },
   { href: "/dashboard/admin/script-control", label: "Worked scripts control" },
   { href: "/dashboard/admin/allocation-examiners", label: "Examiners" },
   { href: "/dashboard/admin/scripts-allocation", label: "Scripts allocation" },
@@ -56,6 +59,7 @@ const EXAMINERS_HREF = "/dashboard/admin/allocation-examiners";
 const MONITORING_HREF = "/dashboard/admin/monitoring";
 const TEST_ADMIN_OFFICER_NAV_HREFS = [
   MONITORING_HREF,
+  TEST_ADMIN_INSPECTORS_HREF,
   SCRIPT_CONTROL_HREF,
   EXAMINERS_HREF,
   SCRIPTS_ALLOCATION_HREF,
@@ -105,7 +109,9 @@ export function AdminDashboardShell({ children }: Props) {
       return null;
     }
     if (me.role === "SUPER_ADMIN") {
-      return nav.filter((n) => n.href !== BANK_DIRECTORY_HREF).map(toLinkItem);
+      return nav
+        .filter((n) => n.href !== BANK_DIRECTORY_HREF && n.href !== TEST_ADMIN_INSPECTORS_HREF)
+        .map(toLinkItem);
     }
     return nav.map(toLinkItem);
   }, [me]);
@@ -116,6 +122,7 @@ export function AdminDashboardShell({ children }: Props) {
   const isFinanceOfficer = me?.role === "FINANCE_OFFICER";
   const isSuperAdmin = me?.role === "SUPER_ADMIN";
   const onExecutiveCentresPage = pathname === EXECUTIVE_CENTRES_HREF;
+  const onTestAdminInspectorsPage = pathname === TEST_ADMIN_INSPECTORS_HREF;
   const onCentreSummaryPage =
     pathname === CENTRE_SUMMARY_HREF || pathname.startsWith(`${CENTRE_SUMMARY_HREF}/`);
   const onFinanceCentreSummaryPage =
@@ -137,13 +144,22 @@ export function AdminDashboardShell({ children }: Props) {
       : "Home"
     : null;
 
+  const testAdminStickyTitle = isMonitoringOfficer
+    ? onTestAdminInspectorsPage
+      ? "Inspectors"
+      : "Exam monitoring"
+    : null;
+
   function navLinkActive(href: string): boolean {
     if (href === "/dashboard/admin") return pathname === href;
-    if (isExecutiveViewer && href === EXECUTIVE_MONITORING_HREF) {
-      return pathname === EXECUTIVE_MONITORING_HREF;
+    if (href === MONITORING_HREF || href === EXECUTIVE_MONITORING_HREF) {
+      return pathname === href;
     }
     if (isExecutiveViewer && href === EXECUTIVE_CENTRES_HREF) {
       return pathname === EXECUTIVE_CENTRES_HREF;
+    }
+    if (isMonitoringOfficer && href === TEST_ADMIN_INSPECTORS_HREF) {
+      return pathname === TEST_ADMIN_INSPECTORS_HREF;
     }
     return pathname === href || pathname.startsWith(`${href}/`);
   }
@@ -223,7 +239,9 @@ export function AdminDashboardShell({ children }: Props) {
                   }
                   const active = navLinkActive(entry.href);
                   const linkHref =
-                    isExecutiveViewer && entry.type === "link"
+                    entry.type === "link" &&
+                    (isExecutiveViewer || isMonitoringOfficer) &&
+                    monitoringExamScopedHref(entry.href)
                       ? executiveMonitoringHref(entry.href, executiveExamIdFromUrl)
                       : entry.href;
                   return (
@@ -271,7 +289,7 @@ export function AdminDashboardShell({ children }: Props) {
               : isTopLevelOfficer
                 ? isExecutiveViewer
                   ? executiveStickyTitle!
-                  : "Exam monitoring"
+                  : testAdminStickyTitle!
                 : "Staff dashboard")
           }
           subtitle={
