@@ -192,14 +192,14 @@ export function DashboardShell({ title, children, staffRole }: Props) {
         }`}
       >
         <div className="flex h-full flex-col">
-          <div className="border-b border-border px-3 py-2.5">
-            <p className="text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
+          <div className="border-b border-border p-3">
+            <p className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
               Exam tools
             </p>
-            <p className="mt-0.5 text-[13px] font-semibold leading-tight text-card-foreground">{roleLabel}</p>
+            <p className="mt-0.5 text-sm font-semibold leading-snug text-card-foreground">{roleLabel}</p>
           </div>
           <nav
-            className="flex min-h-0 flex-1 flex-col overflow-y-auto overscroll-contain p-2.5 pb-4"
+            className="flex min-h-0 flex-1 flex-col overflow-y-auto overscroll-contain p-3 pb-5"
             aria-label="Dashboard sections"
           >
             <div className="flex flex-col lg:min-h-full lg:flex-1">
