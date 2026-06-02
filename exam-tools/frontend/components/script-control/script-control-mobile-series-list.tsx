@@ -67,7 +67,7 @@ export function ScriptControlMobileSeriesList({
   }
 
   return (
-    <nav className={cn("rounded-xl", paperEditPanelClass(paperNumber))} aria-label="Series">
+    <nav className={cn("min-w-0 max-w-full overflow-hidden rounded-xl", paperEditPanelClass(paperNumber))} aria-label="Series">
       <div className="border-b border-border/80 px-4 py-2.5">
         <div className="flex flex-wrap items-center gap-2">
           <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Series</p>

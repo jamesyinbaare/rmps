@@ -89,9 +89,14 @@ function ViewSchoolSearch(props: ViewSchoolFilterProps) {
       </label>
       <Popover open={props.schoolPickerOpen} onOpenChange={props.onSchoolPickerOpenChange}>
         <PopoverTrigger asChild>
-          <Button variant="outline" className="w-full justify-between font-normal">
-            <span className="truncate">{props.schoolSearch || "Filter by school name…"}</span>
-            <ChevronDown className="ml-2 size-4 opacity-50" />
+          <Button
+            variant="outline"
+            className="h-auto min-h-11 w-full max-w-full items-center justify-between gap-2 py-2.5 font-normal whitespace-normal"
+          >
+            <span className="min-w-0 flex-1 break-words text-left leading-snug">
+              {props.schoolSearch || "Filter by school name…"}
+            </span>
+            <ChevronDown className="size-4 shrink-0 opacity-50" />
           </Button>
         </PopoverTrigger>
         <PopoverContent className="w-[min(100vw-2rem,380px)] p-0" align="start">
@@ -113,7 +118,7 @@ function ViewSchoolSearch(props: ViewSchoolFilterProps) {
                     onSelect={() => props.onSelectSchool(s.code, `${s.code} — ${s.name}`)}
                   >
                     <span className="font-mono text-xs">{s.code}</span>
-                    <span className="ml-2 truncate text-muted-foreground">{s.name}</span>
+                    <span className="ml-2 min-w-0 break-words text-muted-foreground">{s.name}</span>
                   </CommandItem>
                 ))}
               </CommandGroup>

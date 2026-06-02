@@ -68,6 +68,7 @@ class MySchoolScriptControlResponse(BaseModel):
     year: int
     school_id: UUID = Field(description="School selected for packing; matches query parameter school_id.")
     school_code: str
+    school_name: str = Field(default="", description="School display name.")
     scripts_per_envelope: int = Field(
         ge=1,
         description="Configured maximum for papers other than 1 and 2, and default when paper-specific caps are unset.",

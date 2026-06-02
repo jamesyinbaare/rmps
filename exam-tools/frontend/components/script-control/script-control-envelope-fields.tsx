@@ -120,10 +120,12 @@ export function ScriptControlEnvelopeFields({
           {draft.envelopes.map((env, idx) => (
             <li
               key={env.envelope_number}
-              className="rounded-xl border border-border bg-card px-3 py-2.5 shadow-sm"
+              className="min-w-0 overflow-hidden rounded-xl border border-border bg-card px-3 py-2.5 shadow-sm"
             >
-              <div className="flex items-center gap-2">
-                <span className="w-16 shrink-0 text-sm font-semibold tabular-nums">Env {env.envelope_number}</span>
+              <div className="flex min-w-0 items-center gap-1.5 sm:gap-2">
+                <span className="w-12 shrink-0 text-sm font-semibold tabular-nums sm:w-16">
+                  Env {env.envelope_number}
+                </span>
                 <button
                   type="button"
                   className={stepperBtn}
@@ -142,7 +144,7 @@ export function ScriptControlEnvelopeFields({
                   max={cap}
                   inputMode="numeric"
                   enterKeyHint={idx < draft.envelopes.length - 1 ? "next" : "done"}
-                  className={cn(formInputClass, "mt-0 min-h-11 flex-1 text-center text-base tabular-nums")}
+                  className={cn(formInputClass, "mt-0 min-h-11 min-w-0 flex-1 text-center text-base tabular-nums")}
                   value={env.booklet_count === null ? "" : env.booklet_count}
                   onChange={(e) => {
                     const v = e.target.value;
@@ -169,14 +171,20 @@ export function ScriptControlEnvelopeFields({
                 ) : (
                   <button
                     type="button"
-                    className={cn(btnDanger, "min-h-9 shrink-0 px-2 text-xs")}
+                    className={cn(btnDanger, "min-h-9 shrink-0 px-2 text-xs max-sm:px-1.5")}
                     onClick={() => removeEnvelope(idx)}
+                    aria-label={`Remove envelope ${env.envelope_number}`}
                   >
-                    Remove
+                    <span className="max-sm:sr-only">Remove</span>
+                    <span className="sm:hidden" aria-hidden>
+                      ×
+                    </span>
                   </button>
                 )}
               </div>
-              <p className="mt-1 pl-16 text-[11px] text-muted-foreground">{packingCountFieldLabel(paperNumber)}</p>
+              <p className="mt-1 pl-12 text-[11px] text-muted-foreground sm:pl-16">
+                {packingCountFieldLabel(paperNumber)}
+              </p>
             </li>
           ))}
         </ul>

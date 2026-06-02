@@ -10,6 +10,7 @@ import type { MySchoolScriptControlResponse } from "@/lib/api";
 import {
   getPaperInspectorVisuals,
   paperEditContextBarClass,
+  paperEditContextBarTintClass,
   paperEditToggleActiveClass,
 } from "@/lib/paper-inspector-styles";
 import { cn } from "@/lib/utils";
@@ -59,24 +60,28 @@ export function ScriptControlEditContextBar({
   const progressBarClass =
     paperNumber === 1 ? "bg-accent" : paperNumber === 2 ? "bg-success" : "bg-primary";
 
+  const tintClass = paperEditContextBarTintClass(paperNumber);
+
   return (
     <div
       className={cn(
-        "sticky top-[var(--staff-sticky-header-offset,4.5rem)] z-10 rounded-xl border border-border px-4 py-3 lg:top-[var(--staff-sticky-header-offset,4.5rem)]",
+        "sticky top-[var(--staff-sticky-header-offset,4.5rem)] z-20 isolate min-w-0 max-w-full overflow-hidden rounded-xl border border-border bg-card px-4 py-3 shadow-sm lg:top-[var(--staff-sticky-header-offset,4.5rem)]",
         paperEditContextBarClass(paperNumber),
         className,
       )}
     >
-      <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+      {tintClass ? (
+        <div aria-hidden className={cn("pointer-events-none absolute inset-0 rounded-xl", tintClass)} />
+      ) : null}
+      <div className="relative flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
         <div className="min-w-0 flex-1">
           <ScriptControlSchoolIdentity
             schoolCode={data.school_code}
-            schoolName={schoolName}
+            schoolName={schoolName ?? data.school_name}
             centreCode={data.examination_centre_code}
             centreName={data.examination_centre_name}
             postedInspectors={data.posted_inspectors ?? []}
             onChangeSchool={onFindSchool}
-            nameClamp={2}
             className="mb-2"
           />
           <div className="flex flex-wrap items-center gap-x-1.5 gap-y-2 text-sm">
@@ -125,8 +130,8 @@ export function ScriptControlEditContextBar({
             )}
           </div>
           <p className="mt-0.5 truncate text-xs text-muted-foreground">{subject.subject_name}</p>
-          <div className="mt-2 flex items-center gap-3">
-            <div className="h-1.5 min-w-[120px] flex-1 max-w-xs overflow-hidden rounded-full bg-muted">
+          <div className="mt-2 flex min-w-0 items-center gap-3">
+            <div className="h-1.5 min-w-0 flex-1 overflow-hidden rounded-full bg-muted">
               <div
                 className={cn("h-full rounded-full transition-all", progressBarClass)}
                 style={{ width: `${pct}%` }}
