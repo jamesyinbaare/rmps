@@ -7,9 +7,9 @@ import { BANK_ACCOUNTS_LABEL } from "@/lib/official-accounts-zone";
 import { cn } from "@/lib/utils";
 
 const cardLinkClass =
-  "group flex gap-2 rounded-lg border p-2 transition-[border-color,box-shadow,background-color] focus:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-offset-card";
+  "group flex gap-2.5 rounded-lg border p-2.5 transition-[border-color,box-shadow,background-color] focus:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-offset-card";
 
-const cardIconClass = "flex size-7 shrink-0 items-center justify-center rounded-md transition-colors";
+const cardIconClass = "flex size-8 shrink-0 items-center justify-center rounded-lg transition-colors";
 
 type Props = {
   href: string;
@@ -40,11 +40,11 @@ export function OfficialAccountsNavLink({ href, active, onNavigate }: Props) {
             : "bg-muted/80 text-muted-foreground group-hover:bg-success/10 group-hover:text-success",
         )}
       >
-        <Landmark className="size-3" aria-hidden />
+        <Landmark className="size-3.5" aria-hidden />
       </span>
       <span className="min-w-0 flex-1">
-        <span className="block text-[13px] font-medium leading-tight text-foreground">{BANK_ACCOUNTS_LABEL}</span>
-        <span className="mt-0.5 block text-[11px] leading-tight text-muted-foreground">Allowances & bank info</span>
+        <span className="block text-sm font-medium leading-snug text-foreground">{BANK_ACCOUNTS_LABEL}</span>
+        <span className="mt-0.5 block text-xs leading-snug text-muted-foreground">Allowances & bank info</span>
       </span>
     </Link>
   );
@@ -79,11 +79,11 @@ export function AllowancesSubNavLink({ href, active, onNavigate }: SubNavProps) 
             : "bg-muted/80 text-muted-foreground group-hover:bg-success/10 group-hover:text-success",
         )}
       >
-        <ClipboardList className="size-3" aria-hidden />
+        <ClipboardList className="size-3.5" aria-hidden />
       </span>
       <span className="min-w-0 flex-1">
-        <span className="block text-[13px] font-medium leading-tight text-foreground">Attendance sheets</span>
-        <span className="mt-0.5 block text-[11px] leading-tight text-muted-foreground">Upload centre attendance</span>
+        <span className="block text-sm font-medium leading-snug text-foreground">Attendance sheets</span>
+        <span className="mt-0.5 block text-xs leading-snug text-muted-foreground">Upload centre attendance</span>
       </span>
     </Link>
   );
@@ -112,11 +112,11 @@ export function CentreLocationNavLink({ href, active, onNavigate }: SubNavProps)
             : "bg-muted/80 text-muted-foreground group-hover:bg-primary/10 group-hover:text-primary",
         )}
       >
-        <MapPin className="size-3" aria-hidden />
+        <MapPin className="size-3.5" aria-hidden />
       </span>
       <span className="min-w-0 flex-1">
-        <span className="block text-[13px] font-medium leading-tight text-foreground">Centre location</span>
-        <span className="mt-0.5 block text-[11px] leading-tight text-muted-foreground">
+        <span className="block text-sm font-medium leading-snug text-foreground">Centre location</span>
+        <span className="mt-0.5 block text-xs leading-snug text-muted-foreground">
           Save where you are for routes
         </span>
       </span>
@@ -132,8 +132,8 @@ export function OfficialAccountsNavSection({
   title?: string;
 }) {
   return (
-    <div className="mt-3 space-y-1.5 border-t border-border pt-3">
-      <p className="px-0.5 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
+    <div className="mt-3.5 space-y-2 border-t border-border pt-3.5">
+      <p className="px-0.5 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
         {title}
       </p>
       {children}
