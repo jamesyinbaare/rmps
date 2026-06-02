@@ -4,11 +4,15 @@ import { useState } from "react";
 
 import { ScriptControlSchoolNameSheet } from "@/components/script-control/script-control-school-name-sheet";
 import { Button } from "@/components/ui/button";
+import type { ExecutivePostedInspectorItem } from "@/lib/api";
 import { cn } from "@/lib/utils";
 
 type Props = {
   schoolCode: string;
   schoolName?: string | null;
+  centreCode?: string | null;
+  centreName?: string | null;
+  postedInspectors?: ExecutivePostedInspectorItem[];
   onChangeSchool?: () => void;
   /** Max lines for school name before ellipsis. */
   nameClamp?: 1 | 2;
@@ -19,6 +23,9 @@ type Props = {
 export function ScriptControlSchoolIdentity({
   schoolCode,
   schoolName,
+  centreCode,
+  centreName,
+  postedInspectors,
   onChangeSchool,
   nameClamp = 2,
   showChangeButton = false,
@@ -66,6 +73,9 @@ export function ScriptControlSchoolIdentity({
           onOpenChange={setSheetOpen}
           schoolCode={schoolCode}
           schoolName={displayName}
+          centreCode={centreCode}
+          centreName={centreName}
+          postedInspectors={postedInspectors}
           onChangeSchool={onChangeSchool ? handleChangeSchool : undefined}
         />
       ) : null}

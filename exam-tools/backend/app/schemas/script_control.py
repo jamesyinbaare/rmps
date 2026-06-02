@@ -6,6 +6,8 @@ from uuid import UUID
 
 from pydantic import BaseModel, Field, field_validator
 
+from app.schemas.examination import ExecutivePostedInspectorItem
+
 
 class ScriptEnvelopeItem(BaseModel):
     envelope_number: int = Field(ge=1)
@@ -79,6 +81,22 @@ class MySchoolScriptControlResponse(BaseModel):
         description="Effective maximum answer booklets per envelope for paper 2.",
     )
     subjects: list[ScriptSubjectRowResponse]
+    examination_centre_id: UUID | None = Field(
+        default=None,
+        description="Examination centre where this school's worked scripts are recorded (admin drill-down).",
+    )
+    examination_centre_code: str | None = Field(
+        default=None,
+        description="Examination centre code for the school's script packing centre.",
+    )
+    examination_centre_name: str | None = Field(
+        default=None,
+        description="Examination centre name for the school's script packing centre.",
+    )
+    posted_inspectors: list[ExecutivePostedInspectorItem] = Field(
+        default_factory=list,
+        description="Inspectors posted at the script packing centre (admin drill-down).",
+    )
 
 
 class ScriptControlSlotKeyRequest(BaseModel):

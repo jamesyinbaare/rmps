@@ -26,16 +26,15 @@ import {
   getAdminSchoolIrregularScriptControl,
   getAdminSchoolScriptControl,
   getExaminationScriptSeriesConfig,
+  getIrregularScriptControlSchoolStatus,
+  getScriptControlSchoolStatus,
   upsertAdminIrregularScriptSeries,
   upsertAdminScriptSeries,
   type ExaminationScriptSeriesConfigRow,
   type MySchoolScriptControlResponse,
-  type School,
-  type SchoolListResponse,
   type ScriptControlSchoolOverallStatus,
   type ScriptSeriesPackingResponse,
 } from "@/lib/api";
-import { apiJson } from "@/lib/api";
 import { displaySubjectCode } from "@/lib/script-control-completion";
 import { draftIsNoScripts, envelopesToPersist, type ScriptControlDraft } from "@/lib/script-control-editor";
 import { findNextSeriesKey } from "@/lib/script-control-queue";
@@ -50,6 +49,8 @@ import {
   SCRIPT_CONTROL_SUBJECT_TYPE_OPTIONS,
 } from "@/lib/script-control-subjects";
 import { cn } from "@/lib/utils";
+
+type SchoolSearchOption = { id: string; code: string; name: string };
 
 function buildNavItems(
   schoolData: MySchoolScriptControlResponse,
@@ -99,7 +100,7 @@ export default function AdminScriptControlEditPage() {
   const [seriesConfig, setSeriesConfig] = useState<ExaminationScriptSeriesConfigRow[]>([]);
   const [schoolSearch, setSchoolSearch] = useState("");
   const debouncedSchoolSearch = useDebounced(schoolSearch, 350);
-  const [schoolOptions, setSchoolOptions] = useState<School[]>([]);
+  const [schoolOptions, setSchoolOptions] = useState<SchoolSearchOption[]>([]);
   const [schoolSearchLoading, setSchoolSearchLoading] = useState(false);
 
   const [data, setData] = useState<MySchoolScriptControlResponse | null>(null);
@@ -279,14 +280,38 @@ export default function AdminScriptControlEditPage() {
       setSchoolOptions([]);
       return;
     }
+    if (examId === null || !hasSubject || !hasPaper) {
+      setSchoolOptions([]);
+      return;
+    }
     let cancelled = false;
     setSchoolSearchLoading(true);
-    const q = new URLSearchParams({ skip: "0", limit: "30", q: debouncedSchoolSearch.trim() });
-    if (region.trim()) q.set("region", region.trim());
+    const query = debouncedSchoolSearch.trim();
     (async () => {
       try {
-        const res = await apiJson<SchoolListResponse>(`/schools?${q}`);
-        if (!cancelled) setSchoolOptions(res.items);
+        const params = {
+          examination_id: examId,
+          subject_id: subjectId,
+          paper_number: paperNumber,
+          region: region.trim() || undefined,
+          school_q: query,
+          status: "all" as const,
+          skip: 0,
+          limit: 500,
+        };
+        const res =
+          recordType === "regular"
+            ? await getScriptControlSchoolStatus(params)
+            : await getIrregularScriptControlSchoolStatus(params);
+        if (!cancelled) {
+          setSchoolOptions(
+            res.items.map((row) => ({
+              id: row.school_id,
+              code: row.school_code,
+              name: row.school_name,
+            })),
+          );
+        }
       } catch {
         if (!cancelled) setSchoolOptions([]);
       } finally {
@@ -296,7 +321,7 @@ export default function AdminScriptControlEditPage() {
     return () => {
       cancelled = true;
     };
-  }, [debouncedSchoolSearch, region]);
+  }, [debouncedSchoolSearch, examId, hasPaper, hasSubject, paperNumber, recordType, region, subjectId]);
 
   const schoolComboboxOptions = useMemo(() => {
     const opts = schoolOptions.map((s) => ({ value: s.id, label: `${s.code} — ${s.name}` }));
@@ -685,6 +710,9 @@ export default function AdminScriptControlEditPage() {
                 <ScriptControlSchoolIdentity
                   schoolCode={data?.school_code ?? schoolId}
                   schoolName={selectedSchoolName}
+                  centreCode={data?.examination_centre_code}
+                  centreName={data?.examination_centre_name}
+                  postedInspectors={data?.posted_inspectors ?? []}
                   onChangeSchool={openSchoolPicker}
                   showChangeButton
                 />

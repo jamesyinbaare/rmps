@@ -4,6 +4,16 @@ export const EXECUTIVE_EXAM_ID_PARAM = "exam_id";
 
 export const EXECUTIVE_MONITORING_HREF = "/dashboard/admin/monitoring";
 export const EXECUTIVE_CENTRES_HREF = `${EXECUTIVE_MONITORING_HREF}/centres`;
+export const TEST_ADMIN_INSPECTORS_HREF = `${EXECUTIVE_MONITORING_HREF}/inspectors`;
+
+/** Monitoring routes that share the selected examination in the URL. */
+export function monitoringExamScopedHref(href: string): boolean {
+  return (
+    href === EXECUTIVE_MONITORING_HREF ||
+    href === EXECUTIVE_CENTRES_HREF ||
+    href === TEST_ADMIN_INSPECTORS_HREF
+  );
+}
 
 const SESSION_KEY = "executive-cache:v1:selected-exam-id";
 
