@@ -62,10 +62,10 @@ from app.services.script_control import (
 )
 from app.services.timetable_dates import scheduled_examination_dates_for_exam
 from app.services.subject_scope import (
+    attendance_sheet_accessible_in_workspace,
     resolve_attendance_scope,
     scheduled_date_items_for_workspace,
     scopes_for_centre_date,
-    sheets_visible_to_posting,
 )
 
 router = APIRouter(tags=["attendance-sheets"])
@@ -193,15 +193,20 @@ async def list_inspector_attendance_sheets(
     stmt = (
         select(InspectorAttendanceSheet, ExaminationCentre)
         .join(ExaminationCentre, InspectorAttendanceSheet.examination_centre_id == ExaminationCentre.id)
-        .where(InspectorAttendanceSheet.inspector_exam_posting_id == ctx.posting.id)
+        .where(
+            InspectorAttendanceSheet.examination_id == examination_id,
+            InspectorAttendanceSheet.examination_centre_id == ctx.examination_centre.id,
+        )
         .order_by(InspectorAttendanceSheet.examination_date.desc(), InspectorAttendanceSheet.created_at.desc())
     )
+    if ctx.subject_scope != ExamInspectorSubjectScope.ALL:
+        stmt = stmt.where(InspectorAttendanceSheet.subject_scope == ctx.subject_scope)
     result = await session.execute(stmt)
     rows = result.all()
     items = [
         _sheet_to_response(sheet, center)
         for sheet, center in rows
-        if sheets_visible_to_posting(ctx.subject_scope, sheet.subject_scope)
+        if attendance_sheet_accessible_in_workspace(ctx, sheet)
     ]
     if examination_date is not None:
         items = [i for i in items if i.examination_date == examination_date]
@@ -324,10 +329,8 @@ async def _load_sheet_for_inspector(
     if row is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Attendance sheet not found")
     sheet, center = row
-    if sheet.inspector_exam_posting_id != ctx.posting.id:
+    if not attendance_sheet_accessible_in_workspace(ctx, sheet):
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Not allowed for this workspace")
-    if not sheets_visible_to_posting(ctx.subject_scope, sheet.subject_scope):
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Not allowed for this workspace scope")
     return sheet, center
 
 
