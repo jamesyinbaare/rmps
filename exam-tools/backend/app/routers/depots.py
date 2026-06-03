@@ -11,6 +11,7 @@ from app.core.security import get_password_hash
 from app.dependencies.auth import DepotKeeperDep, SuperAdminDep
 from app.dependencies.database import DBSessionDep
 from app.models import Depot, School, User, UserRole
+from app.schemas.password_reset import AdminPasswordReset, AdminPasswordResetResponse
 from app.schemas.depot import (
     DepotCreate,
     DepotKeeperCreate,
@@ -23,6 +24,7 @@ from app.schemas.depot import (
     DepotSchoolRow,
     DepotUpdate,
 )
+from app.services.admin_password_reset import apply_admin_password_reset
 from app.services.depot_scope import depot_center_host_ids
 
 router_admin = APIRouter(prefix="/depots", tags=["depots"])
@@ -32,6 +34,18 @@ _MAX_PAGE = 100
 _DEFAULT_PAGE = 20
 # Admin UI loads up to this many depots for dropdowns (e.g. when creating a depot keeper).
 _MAX_DEPOTS_LIST = 500
+
+
+async def _load_depot_keeper_user(session: DBSessionDep, user_id: UUID) -> User:
+    stmt = select(User).where(
+        User.id == user_id,
+        User.role == UserRole.DEPOT_KEEPER,
+        User.depot_id.isnot(None),
+    )
+    user = (await session.execute(stmt)).scalar_one_or_none()
+    if user is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Depot keeper not found")
+    return user
 
 
 @router_admin.get("", response_model=DepotListResponse)
@@ -179,6 +193,29 @@ async def create_depot_keeper(
         username=cast(str, user.username),
         depot_code=depot.code,
     )
+
+
+@router_admin.post(
+    "/keepers/{user_id}/reset-password",
+    response_model=AdminPasswordResetResponse,
+    summary="Reset a depot keeper password",
+)
+async def reset_depot_keeper_password(
+    user_id: UUID,
+    data: AdminPasswordReset,
+    session: DBSessionDep,
+    _admin: SuperAdminDep,
+) -> AdminPasswordResetResponse:
+    if data.mode == "manual" and data.new_password is None:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="new_password is required when mode is manual",
+        )
+    user = await _load_depot_keeper_user(session, user_id)
+    try:
+        return await apply_admin_password_reset(session, user, data)
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from None
 
 
 @router_keeper.get("/schools", response_model=DepotSchoolListResponse)

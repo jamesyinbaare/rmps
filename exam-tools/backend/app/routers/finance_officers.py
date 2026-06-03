@@ -1,6 +1,8 @@
 """Finance officer accounts; super admin creates."""
 
-from fastapi import APIRouter, HTTPException, status
+from uuid import UUID
+
+from fastapi import APIRouter, HTTPException, Query, status
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 
@@ -9,8 +11,33 @@ from app.dependencies.auth import SuperAdminDep
 from app.dependencies.database import DBSessionDep
 from app.models import User, UserRole
 from app.schemas.finance_officer import FinanceOfficerCreate, FinanceOfficerCreatedResponse
+from app.schemas.password_reset import AdminPasswordReset, AdminPasswordResetResponse, StaffEmailUserListResponse
+from app.services.admin_password_reset import apply_admin_password_reset
+from app.services.staff_email_users import list_staff_email_users, load_staff_email_user
 
 router = APIRouter(prefix="/finance-officers", tags=["finance-officers"])
+
+_MAX_PAGE = 100
+_DEFAULT_PAGE = 20
+
+
+@router.get(
+    "",
+    response_model=StaffEmailUserListResponse,
+    summary="List finance officer accounts",
+)
+async def list_finance_officers(
+    session: DBSessionDep,
+    _admin: SuperAdminDep,
+    skip: int = Query(0, ge=0),
+    limit: int = Query(_DEFAULT_PAGE, ge=1, le=_MAX_PAGE),
+) -> StaffEmailUserListResponse:
+    return await list_staff_email_users(
+        session,
+        UserRole.FINANCE_OFFICER,
+        skip=skip,
+        limit=limit,
+    )
 
 
 @router.post(
@@ -57,3 +84,31 @@ async def create_finance_officer(
         full_name=user.full_name,
         email=user.email,
     )
+
+
+@router.post(
+    "/{user_id}/reset-password",
+    response_model=AdminPasswordResetResponse,
+    summary="Reset a finance officer password",
+)
+async def reset_finance_officer_password(
+    user_id: UUID,
+    data: AdminPasswordReset,
+    session: DBSessionDep,
+    _admin: SuperAdminDep,
+) -> AdminPasswordResetResponse:
+    if data.mode == "manual" and data.new_password is None:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="new_password is required when mode is manual",
+        )
+    user = await load_staff_email_user(
+        session,
+        user_id,
+        UserRole.FINANCE_OFFICER,
+        not_found_detail="Finance officer not found",
+    )
+    try:
+        return await apply_admin_password_reset(session, user, data)
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from None

@@ -8,10 +8,11 @@ import {
   adminCreateDepotKeeper,
   adminListDepotKeepers,
   adminListDepots,
+  adminResetDepotKeeperPassword,
   adminUpdateDepot,
-  type AdminDepotKeeperRow,
   type AdminDepotRow,
 } from "@/lib/api";
+import { DepotKeepersManageModal } from "@/components/admin-users/depot-keepers-manage-modal";
 import { formInputClass, formLabelClass } from "@/lib/form-classes";
 
 const PAGE_SIZE = 20;
@@ -73,11 +74,8 @@ export default function AdminDepotsPage() {
   const [depotsLoading, setDepotsLoading] = useState(true);
   const [depotsError, setDepotsError] = useState<string | null>(null);
 
-  const [keepers, setKeepers] = useState<AdminDepotKeeperRow[]>([]);
-  const [keepersTotal, setKeepersTotal] = useState(0);
-  const [keepersPage, setKeepersPage] = useState(1);
-  const [keepersLoading, setKeepersLoading] = useState(true);
-  const [keepersError, setKeepersError] = useState<string | null>(null);
+  const [keeperListOpen, setKeeperListOpen] = useState(false);
+  const [keeperListRefresh, setKeeperListRefresh] = useState(0);
 
   const [addDepotOpen, setAddDepotOpen] = useState(false);
   const [newDepotCode, setNewDepotCode] = useState("");
@@ -116,30 +114,9 @@ export default function AdminDepotsPage() {
     }
   }, [depotsPage]);
 
-  const loadKeepers = useCallback(async () => {
-    setKeepersLoading(true);
-    setKeepersError(null);
-    const skip = (keepersPage - 1) * PAGE_SIZE;
-    try {
-      const data = await adminListDepotKeepers(skip, PAGE_SIZE);
-      setKeepers(data.items);
-      setKeepersTotal(data.total);
-    } catch (e) {
-      setKeepersError(e instanceof Error ? e.message : "Failed to load depot keepers");
-      setKeepers([]);
-      setKeepersTotal(0);
-    } finally {
-      setKeepersLoading(false);
-    }
-  }, [keepersPage]);
-
   useEffect(() => {
     void loadDepots();
   }, [loadDepots]);
-
-  useEffect(() => {
-    void loadKeepers();
-  }, [loadKeepers]);
 
   async function loadDepotsForSelect() {
     try {
@@ -196,7 +173,6 @@ export default function AdminDepotsPage() {
       await adminUpdateDepot(editDepot.id, { name });
       setEditDepot(null);
       await loadDepots();
-      await loadKeepers();
     } catch (e) {
       setEditDepotError(e instanceof Error ? e.message : "Could not update depot");
     } finally {
@@ -237,7 +213,7 @@ export default function AdminDepotsPage() {
         full_name: fn,
       });
       setAddKeeperOpen(false);
-      await loadKeepers();
+      setKeeperListRefresh((n) => n + 1);
     } catch (e) {
       setKeeperFormError(e instanceof Error ? e.message : "Could not create depot keeper");
     } finally {
@@ -246,7 +222,6 @@ export default function AdminDepotsPage() {
   }
 
   const depotsPages = Math.max(1, Math.ceil(depotsTotal / PAGE_SIZE));
-  const keepersPages = Math.max(1, Math.ceil(keepersTotal / PAGE_SIZE));
 
   return (
     <div className="space-y-12">
@@ -360,81 +335,22 @@ export default function AdminDepotsPage() {
               Create depots first.
             </p>
           </div>
-          <button type="button" onClick={openAddKeeper} className={btnPrimary}>
-            Add depot keeper
-          </button>
-        </div>
-
-        {keepersError ? (
-          <p className="rounded-lg border border-destructive/40 bg-destructive/10 p-3 text-sm text-destructive">
-            {keepersError}
-          </p>
-        ) : null}
-
-        <div className="overflow-x-auto rounded-2xl border border-border bg-card">
-          <table className="w-full min-w-[640px] text-left text-sm">
-            <thead className="border-b border-border bg-muted/40 text-muted-foreground">
-              <tr>
-                <th className="px-3 py-3 font-medium">Depot</th>
-                <th className="px-3 py-3 font-medium">Full name</th>
-                <th className="px-3 py-3 font-medium">Username</th>
-              </tr>
-            </thead>
-            <tbody>
-              {keepersLoading ? (
-                <tr>
-                  <td colSpan={3} className="px-3 py-8 text-center text-muted-foreground">
-                    Loading…
-                  </td>
-                </tr>
-              ) : keepers.length === 0 ? (
-                <tr>
-                  <td colSpan={3} className="px-3 py-8 text-center text-muted-foreground">
-                    No depot keepers yet.
-                  </td>
-                </tr>
-              ) : (
-                keepers.map((row) => (
-                  <tr key={row.id} className="border-b border-border last:border-0">
-                    <td className="px-3 py-3">
-                      <span className="font-medium text-foreground">{row.depot_name}</span>
-                      <span className="ml-2 font-mono text-xs text-muted-foreground">{row.depot_code}</span>
-                    </td>
-                    <td className="px-3 py-3">{row.full_name}</td>
-                    <td className="px-3 py-3 font-mono text-xs">{row.username ?? "—"}</td>
-                  </tr>
-                ))
-              )}
-            </tbody>
-          </table>
-        </div>
-
-        {keepersPages > 1 ? (
-          <div className="flex flex-wrap items-center justify-between gap-3">
-            <p className="text-sm text-muted-foreground">
-              Page {keepersPage} of {keepersPages} · {keepersTotal} depot keeper
-              {keepersTotal === 1 ? "" : "s"}
-            </p>
-            <div className="flex gap-2">
-              <button
-                type="button"
-                disabled={keepersPage <= 1 || keepersLoading}
-                onClick={() => setKeepersPage((p) => p - 1)}
-                className={`min-h-11 rounded-lg border border-input-border px-4 text-sm font-medium hover:bg-muted disabled:opacity-50 ${inputFocusRing}`}
-              >
-                Previous
-              </button>
-              <button
-                type="button"
-                disabled={keepersPage >= keepersPages || keepersLoading}
-                onClick={() => setKeepersPage((p) => p + 1)}
-                className={`min-h-11 rounded-lg border border-input-border px-4 text-sm font-medium hover:bg-muted disabled:opacity-50 ${inputFocusRing}`}
-              >
-                Next
-              </button>
-            </div>
+          <div className="flex flex-wrap gap-2">
+            <button type="button" onClick={openAddKeeper} className={btnPrimary}>
+              Add depot keeper
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                void loadDepotsForSelect();
+                setKeeperListOpen(true);
+              }}
+              className={btnSecondary}
+            >
+              View depot keepers…
+            </button>
           </div>
-        ) : null}
+        </div>
       </section>
 
       {addDepotOpen ? (
@@ -620,6 +536,17 @@ export default function AdminDepotsPage() {
           </div>
         </Modal>
       ) : null}
+
+      <DepotKeepersManageModal
+        open={keeperListOpen}
+        onClose={() => setKeeperListOpen(false)}
+        depots={allDepotsForSelect}
+        listKeepers={adminListDepotKeepers}
+        resetPassword={adminResetDepotKeeperPassword}
+        createKeeper={adminCreateDepotKeeper}
+        refreshKey={keeperListRefresh}
+        onAccountsChanged={() => setKeeperListRefresh((n) => n + 1)}
+      />
     </div>
   );
 }
