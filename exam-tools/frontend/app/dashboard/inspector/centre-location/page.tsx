@@ -4,7 +4,6 @@ import {
   AlertTriangle,
   ArrowRight,
   CheckCircle2,
-  ChevronRight,
   ExternalLink,
   Loader2,
   MapPin,
@@ -12,7 +11,7 @@ import {
   Pencil,
   RefreshCw,
 } from "lucide-react";
-import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useState, type ReactNode } from "react";
 import { useRouter } from "next/navigation";
 
 import { DashboardShell } from "@/components/dashboard-shell";
@@ -32,7 +31,6 @@ import {
   getInspectorPostingIdFromToken,
   inspectorMustPickWorkspaceGlobally,
   pickInspectorPostingId,
-  selectInspectorPosting,
 } from "@/lib/auth";
 import { cn } from "@/lib/utils";
 
@@ -111,14 +109,6 @@ function isLocationNotFoundError(e: unknown): boolean {
   return msg.includes("not recorded") || msg.includes("404") || msg.includes("not found");
 }
 
-function postingsByCentre(items: MyInspectorPostingRow[]): MyInspectorPostingRow[] {
-  const byCentre = new Map<string, MyInspectorPostingRow>();
-  for (const p of items) {
-    if (!byCentre.has(p.center_id)) byCentre.set(p.center_id, p);
-  }
-  return [...byCentre.values()].sort((a, b) => a.center_name.localeCompare(b.center_name));
-}
-
 function derivePhase(hasLocation: boolean, changeMode: boolean): PagePhase {
   if (changeMode) return "replace";
   if (hasLocation) return "saved";
@@ -184,32 +174,71 @@ function GpsBusyOverlay() {
 function PageHeaderPanel({
   centreName,
   centreCode,
-  centres,
+  hasLocation,
   refreshing,
   disabled,
   onRefresh,
 }: {
   centreName: string;
   centreCode: string;
-  centres: MyInspectorPostingRow[];
+  hasLocation: boolean;
   refreshing: boolean;
   disabled: boolean;
   onRefresh: () => void;
 }) {
-  const multipleCentres = centres.length > 1;
-  const recorded = centres.filter((c) => c.has_location).length;
-  const pct = multipleCentres ? Math.round((recorded / centres.length) * 100) : 0;
-
   return (
-    <header className={panelClass}>
-      <div className="flex items-start justify-between gap-3">
-        <div className="min-w-0 flex-1">
-          <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
-            Examination centre
-          </p>
-          <p className="mt-1.5 text-base font-semibold leading-snug text-foreground">{centreName}</p>
-          <p className="mt-0.5 font-mono text-xs text-muted-foreground">{centreCode}</p>
+    <header className="relative overflow-hidden rounded-2xl border border-border bg-card shadow-md ring-1 ring-black/[0.04] dark:ring-white/[0.06]">
+      <div
+        className="h-1 bg-linear-to-r from-primary via-primary/50 to-transparent"
+        aria-hidden
+      />
+      <div
+        className="pointer-events-none absolute -right-10 -top-10 size-36 rounded-full bg-primary/[0.07] blur-2xl"
+        aria-hidden
+      />
+      <div
+        className="pointer-events-none absolute -bottom-8 left-8 size-28 rounded-full bg-success/[0.06] blur-2xl"
+        aria-hidden
+      />
+
+      <div className="relative flex items-start gap-3.5 px-4 pt-4 sm:gap-4 sm:px-5 sm:pt-5">
+        <div className="relative shrink-0" aria-hidden>
+          <div className="flex size-12 items-center justify-center rounded-2xl bg-linear-to-br from-primary/20 via-primary/10 to-transparent text-primary shadow-sm ring-1 ring-primary/20 sm:size-[3.25rem]">
+            <MapPin className="size-5 sm:size-[1.35rem]" strokeWidth={1.75} />
+          </div>
+          {hasLocation ? (
+            <span className="absolute -bottom-0.5 -right-0.5 flex size-5 items-center justify-center rounded-full bg-card ring-2 ring-card">
+              <CheckCircle2 className="size-4 text-success" strokeWidth={2.25} />
+            </span>
+          ) : null}
         </div>
+
+        <div className="min-w-0 flex-1 pt-0.5">
+          <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">
+            Your current centre
+          </p>
+          <h2 className="mt-1 text-xl font-semibold leading-tight tracking-tight text-foreground sm:text-[1.35rem]">
+            {centreName}
+          </h2>
+          <div className="mt-2.5 flex flex-wrap items-center gap-2">
+            <span className="inline-flex items-center rounded-lg border border-border/80 bg-muted/40 px-2.5 py-1 font-mono text-[11px] font-semibold tracking-wide text-foreground">
+              {centreCode}
+            </span>
+            {hasLocation ? (
+              <Badge className="border-success/25 bg-success/10 text-[11px] font-medium text-success hover:bg-success/10">
+                On file
+              </Badge>
+            ) : (
+              <Badge
+                variant="outline"
+                className="border-primary/25 bg-primary/5 text-[11px] font-medium text-primary"
+              >
+                Location needed
+              </Badge>
+            )}
+          </div>
+        </div>
+
         <Button
           type="button"
           variant="ghost"
@@ -217,126 +246,24 @@ function PageHeaderPanel({
           disabled={disabled || refreshing}
           onClick={onRefresh}
           aria-label="Refresh"
-          className="shrink-0 text-muted-foreground"
+          className="size-9 shrink-0 rounded-full text-muted-foreground hover:bg-muted/80 hover:text-foreground"
         >
           <RefreshCw className={cn("size-4", refreshing && "animate-spin")} aria-hidden />
         </Button>
       </div>
-      <p className="mt-2 text-sm text-muted-foreground">
-        At the centre? Save where you are — we need it to plan travel routes.
-      </p>
-      {multipleCentres ? (
-        <div className="mt-4 border-t border-border pt-3">
-          <div className="flex items-center justify-between gap-2 text-xs text-muted-foreground">
-            <span>
-              {recorded === centres.length
-                ? "Every centre is on the route map"
-                : `${recorded} of ${centres.length} on the route map`}
-            </span>
-            <span className="font-medium tabular-nums text-foreground">{pct}%</span>
-          </div>
-          <div
-            className="mt-2 h-1.5 overflow-hidden rounded-full bg-muted"
-            role="progressbar"
-            aria-valuenow={recorded}
-            aria-valuemin={0}
-            aria-valuemax={centres.length}
-          >
-            <div
-              className="h-full rounded-full bg-success transition-[width] duration-500 ease-out"
-              style={{ width: `${pct}%` }}
-            />
-          </div>
+
+      <div className="relative mx-4 mb-4 mt-3 sm:mx-5 sm:mb-5 sm:mt-4">
+        <div className="flex gap-3 rounded-xl border border-primary/15 bg-linear-to-br from-primary/[0.07] via-card to-muted/25 px-3.5 py-3.5 shadow-sm sm:px-4 sm:py-4">
+          <span className="flex size-8 shrink-0 items-center justify-center rounded-lg bg-primary/10 text-primary">
+            <Navigation className="size-4" strokeWidth={2} aria-hidden />
+          </span>
+          <p className="text-sm leading-relaxed text-foreground/90">
+            <span className="font-medium text-foreground">At the centre?</span> Please save your location — we need
+            it to plan materials and officer dispatch.
+          </p>
         </div>
-      ) : null}
+      </div>
     </header>
-  );
-}
-
-function SavedFollowUpBanner({
-  pendingCount,
-  nextCentreName,
-  onSwitchNext,
-}: {
-  pendingCount: number;
-  nextCentreName: string;
-  onSwitchNext: () => void;
-}) {
-  return (
-    <div className={cn("flex flex-col gap-3 rounded-xl border border-success/40 bg-success/10 px-3.5 py-3 sm:flex-row sm:items-center sm:justify-between", mobileSlideDown)}>
-      <p className="text-sm text-success">
-        Done.{" "}
-        <span className="font-medium">
-          {pendingCount} more centre{pendingCount === 1 ? "" : "s"} to add for routes.
-        </span>
-      </p>
-      <Button type="button" variant="outline" size="sm" className="shrink-0 bg-background" onClick={onSwitchNext}>
-        Record {nextCentreName}
-        <ChevronRight className="size-4" aria-hidden />
-      </Button>
-    </div>
-  );
-}
-
-function CentreSwitcher({
-  centres,
-  activeCenterId,
-  busy,
-  onSwitch,
-}: {
-  centres: MyInspectorPostingRow[];
-  activeCenterId: string;
-  busy: boolean;
-  onSwitch: (postingId: string) => void;
-}) {
-  if (centres.length <= 1) return null;
-
-  return (
-    <section className={panelClass}>
-      <h2 className="text-base font-semibold text-foreground">Your centres</h2>
-      <p className="mt-1 text-sm text-muted-foreground">Green dot = this centre is on the route map.</p>
-      <ul className="mt-3 divide-y divide-border rounded-xl border border-border/80">
-        {centres.map((c) => {
-          const isActive = c.center_id === activeCenterId;
-          const statusDotClass = c.has_location
-            ? "bg-success"
-            : "border-2 border-muted-foreground/50 bg-transparent";
-          return (
-            <li key={c.center_id}>
-              <button
-                type="button"
-                disabled={busy || isActive}
-                onClick={() => onSwitch(c.id)}
-                className={cn(
-                  "flex min-h-11 w-full items-center gap-3 px-3 py-3 text-left transition-colors",
-                  "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/30 focus-visible:ring-inset",
-                  isActive ? "bg-muted/40" : "hover:bg-muted/50 disabled:opacity-100",
-                )}
-                aria-current={isActive ? "true" : undefined}
-              >
-                <span className={`flex size-2.5 shrink-0 rounded-full ${statusDotClass}`} aria-hidden />
-                <span className="min-w-0 flex-1">
-                  <span className="flex flex-wrap items-center gap-2">
-                    <span className="line-clamp-1 text-sm font-medium text-foreground">{c.center_name}</span>
-                    {isActive ? (
-                      <Badge variant="outline" className="shrink-0 text-[10px]">
-                        Active
-                      </Badge>
-                    ) : null}
-                  </span>
-                  <span className="mt-0.5 block font-mono text-[11px] text-muted-foreground">{c.center_code}</span>
-                </span>
-                {!isActive ? (
-                  <ChevronRight className="size-4 shrink-0 text-muted-foreground" aria-hidden />
-                ) : c.has_location ? (
-                  <CheckCircle2 className="size-4 shrink-0 text-success" aria-label="Marked for routes" />
-                ) : null}
-              </button>
-            </li>
-          );
-        })}
-      </ul>
-    </section>
   );
 }
 
@@ -425,7 +352,7 @@ function UnifiedMapCard({
         <MapCardFooter location={location} />
       ) : (
         <p className="border-t border-border px-4 py-3 text-center text-xs text-muted-foreground">
-          At the centre? Tap Record and allow location when asked.
+          Please tap Record below and allow location when asked.
         </p>
       )}
     </div>
@@ -436,7 +363,7 @@ function RecordSteps() {
   const steps = [
     "Be at the centre — main gate or assembly point works.",
     "Tap Record location and allow location when your phone asks.",
-    "One centre at a time. Switch in the list above if you have more.",
+    "It is saved for this examination centre and used when planning dispatch of materials and officers.",
   ];
   return (
     <ol className="mt-3 space-y-2">
@@ -456,18 +383,14 @@ function ActionPanel({
   phase,
   centreName,
   capturedAt,
-  firstPendingCentre,
   onStartReplace,
   onCancelReplace,
-  onRecordNextCentre,
 }: {
   phase: PagePhase;
   centreName: string;
   capturedAt: string | null;
-  firstPendingCentre: MyInspectorPostingRow | null;
   onStartReplace: () => void;
   onCancelReplace: () => void;
-  onRecordNextCentre: () => void;
 }) {
   if (phase === "record") {
     return (
@@ -486,31 +409,19 @@ function ActionPanel({
         <div className="flex gap-3">
           <CheckCircle2 className="size-5 shrink-0 text-success" aria-hidden />
           <div className="min-w-0 flex-1">
-            <h3 className="text-sm font-semibold text-foreground">Saved for routes</h3>
+            <h3 className="text-sm font-semibold text-foreground">Location saved</h3>
             <p className="mt-1 text-sm text-muted-foreground">
               <span className="font-medium text-foreground">{centreName}</span>
-              {capturedAt ? ` · ${formatCapturedAt(capturedAt)}` : " · just now"}. Planners can use this when
-              working out travel routes.
+              {capturedAt ? ` · ${formatCapturedAt(capturedAt)}` : " · just now"}. We will use this when
+              planning dispatch of examination materials and officers.
             </p>
           </div>
         </div>
 
-        {firstPendingCentre ? (
-          <Button type="button" className="mt-4 w-full" onClick={onRecordNextCentre}>
-            Record next centre
-            <ArrowRight className="size-4" aria-hidden />
-          </Button>
-        ) : null}
-
-        <div
-          className={cn(
-            "rounded-xl border border-border bg-background p-3",
-            firstPendingCentre ? "mt-3" : "mt-4",
-          )}
-        >
+        <div className="mt-4 rounded-xl border border-border bg-background p-3">
           <p className="text-sm font-medium text-foreground">Saved in the wrong place?</p>
           <p className="mt-0.5 text-xs text-muted-foreground">
-            Go to the right spot and save again so routes lead to the correct place.
+            Go to the right spot and save again so dispatch is planned to the correct centre.
           </p>
           <Button type="button" variant="outline" className="mt-3 w-full" onClick={onStartReplace}>
             <Pencil className="size-4" aria-hidden />
@@ -572,7 +483,18 @@ function AlertBanner({
 function LoadingSkeleton() {
   return (
     <div className="mx-auto max-w-lg animate-pulse space-y-4 pb-28" aria-busy="true" aria-label="Loading">
-      <div className={cn(panelClass, "h-28")} />
+      <div className="h-[11.5rem] overflow-hidden rounded-2xl border border-border bg-card shadow-md">
+        <div className="h-1 bg-muted" />
+        <div className="flex gap-3.5 px-4 pt-4 sm:px-5">
+          <div className="size-12 shrink-0 rounded-2xl bg-muted" />
+          <div className="flex-1 space-y-2 pt-1">
+            <div className="h-2.5 w-24 rounded bg-muted" />
+            <div className="h-5 w-full max-w-[14rem] rounded bg-muted" />
+            <div className="h-6 w-20 rounded-lg bg-muted" />
+          </div>
+        </div>
+        <div className="mx-4 mb-4 mt-3 h-16 rounded-xl bg-muted/60 sm:mx-5" />
+      </div>
       <div className={cn(panelClass, "h-36")} />
       <div className="aspect-[16/10] rounded-2xl border border-border bg-muted/40 sm:aspect-2/1" />
       <div className={cn(panelClass, "h-24")} />
@@ -607,9 +529,10 @@ function SaveSuccessOverlay({ open, centreName, onDismiss }: { open: boolean; ce
             <CheckCircle2 className="size-7" strokeWidth={2} aria-hidden />
           </div>
           <div>
-            <h2 className="text-lg font-semibold text-foreground">Saved for routes</h2>
+            <h2 className="text-lg font-semibold text-foreground">Location saved</h2>
             <p className="mt-0.5 text-sm text-muted-foreground">
-              <span className="font-medium text-foreground">{centreName}</span> is on the route map.
+              <span className="font-medium text-foreground">{centreName}</span> is recorded for dispatch
+              planning.
             </p>
           </div>
         </div>
@@ -671,11 +594,8 @@ export default function InspectorCentreLocationPage() {
   const [busy, setBusy] = useState(false);
   const [accuracyHint, setAccuracyHint] = useState<string | null>(null);
   const [showSuccess, setShowSuccess] = useState(false);
-  const [showSavedFollowUp, setShowSavedFollowUp] = useState(false);
   const [mapKey, setMapKey] = useState(0);
   const [changeMode, setChangeMode] = useState(false);
-  const [allCentres, setAllCentres] = useState<MyInspectorPostingRow[]>([]);
-  const [switchingCentre, setSwitchingCentre] = useState(false);
 
   const load = useCallback(async (opts?: { soft?: boolean }) => {
     setError(null);
@@ -686,7 +606,6 @@ export default function InspectorCentreLocationPage() {
       const exam = await getStaffDefaultExamination();
       setExamId(exam.id);
       const postingsRes = await getMyInspectorPostings(exam.id);
-      setAllCentres(postingsByCentre(postingsRes.items));
       if (inspectorMustPickWorkspaceGlobally(postingsRes.items.length)) {
         router.replace("/dashboard/inspector/select-workspace");
         return;
@@ -734,22 +653,6 @@ export default function InspectorCentreLocationPage() {
     return () => window.removeEventListener(AUTH_TOKEN_UPDATED_EVENT, onAuthUpdated);
   }, [load]);
 
-  async function switchToCentre(postingId: string) {
-    if (posting?.id === postingId) return;
-    setSwitchingCentre(true);
-    setError(null);
-    setChangeMode(false);
-    setShowSavedFollowUp(false);
-    try {
-      await selectInspectorPosting(postingId);
-      await load({ soft: true });
-    } catch (e) {
-      setError(e instanceof Error ? e.message : "Could not switch centre");
-    } finally {
-      setSwitchingCentre(false);
-    }
-  }
-
   async function onRecordGps() {
     if (examId == null || posting == null) return;
     if (typeof navigator === "undefined" || !navigator.geolocation) {
@@ -760,7 +663,6 @@ export default function InspectorCentreLocationPage() {
     setBusy(true);
     setError(null);
     setAccuracyHint(null);
-    setShowSavedFollowUp(false);
     navigator.geolocation.getCurrentPosition(
       async (pos) => {
         const { latitude, longitude, accuracy } = pos.coords;
@@ -781,9 +683,7 @@ export default function InspectorCentreLocationPage() {
           setMapKey((k) => k + 1);
           setChangeMode(false);
           setShowSuccess(true);
-          setAllCentres((prev) =>
-            prev.map((c) => (c.center_id === posting.center_id ? { ...c, has_location: true } : c)),
-          );
+          setPosting((prev) => (prev ? { ...prev, has_location: true } : prev));
         } catch (e) {
           setError(e instanceof Error ? e.message : "Failed to save location");
         } finally {
@@ -799,8 +699,7 @@ export default function InspectorCentreLocationPage() {
   }
 
   const hasLocation = location != null;
-  const multipleCentres = allCentres.length > 1;
-  const actionBusy = busy || switchingCentre;
+  const actionBusy = busy;
   const phase = derivePhase(hasLocation, changeMode);
   const showRecordCta = phase === "record" || phase === "replace";
 
@@ -811,18 +710,8 @@ export default function InspectorCentreLocationPage() {
       : "Record location";
   const recordSublabel = busy ? undefined : "Your phone will ask to use location";
 
-  const pendingCentres = useMemo(
-    () => allCentres.filter((c) => !c.has_location),
-    [allCentres],
-  );
-
-  const firstPendingCentre = pendingCentres[0] ?? null;
-
   function handleSuccessDismiss() {
     setShowSuccess(false);
-    if (pendingCentres.length > 0) {
-      setShowSavedFollowUp(true);
-    }
   }
 
   return (
@@ -858,28 +747,11 @@ export default function InspectorCentreLocationPage() {
             <PageHeaderPanel
               centreName={posting.center_name}
               centreCode={posting.center_code}
-              centres={allCentres}
+              hasLocation={hasLocation}
               refreshing={refreshing}
               disabled={actionBusy}
               onRefresh={() => void load({ soft: true })}
             />
-
-            {showSavedFollowUp && firstPendingCentre ? (
-              <SavedFollowUpBanner
-                pendingCount={pendingCentres.length}
-                nextCentreName={firstPendingCentre.center_name}
-                onSwitchNext={() => void switchToCentre(firstPendingCentre.id)}
-              />
-            ) : null}
-
-            {multipleCentres ? (
-              <CentreSwitcher
-                centres={allCentres}
-                activeCenterId={posting.center_id}
-                busy={actionBusy}
-                onSwitch={(id) => void switchToCentre(id)}
-              />
-            ) : null}
 
             <div className={cn("transition-opacity", refreshing && "pointer-events-none opacity-50", mobileIn)}>
               <div key={mapKey}>
@@ -896,7 +768,6 @@ export default function InspectorCentreLocationPage() {
               phase={phase}
               centreName={posting.center_name}
               capturedAt={location?.captured_at ?? null}
-              firstPendingCentre={phase === "saved" && multipleCentres ? firstPendingCentre : null}
               onStartReplace={() => {
                 setError(null);
                 setAccuracyHint(null);
@@ -906,9 +777,6 @@ export default function InspectorCentreLocationPage() {
                 setChangeMode(false);
                 setError(null);
                 setAccuracyHint(null);
-              }}
-              onRecordNextCentre={() => {
-                if (firstPendingCentre) void switchToCentre(firstPendingCentre.id);
               }}
             />
 

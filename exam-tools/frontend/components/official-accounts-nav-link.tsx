@@ -117,7 +117,7 @@ export function CentreLocationNavLink({ href, active, onNavigate }: SubNavProps)
       <span className="min-w-0 flex-1">
         <span className="block text-sm font-medium leading-snug text-foreground">Centre location</span>
         <span className="mt-0.5 block text-xs leading-snug text-muted-foreground">
-          Save where you are for routes
+          For planning material and officer dispatch
         </span>
       </span>
     </Link>
