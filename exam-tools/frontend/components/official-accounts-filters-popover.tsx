@@ -16,6 +16,7 @@ import { REGION_OPTIONS } from "@/lib/school-enums";
 import { cn } from "@/lib/utils";
 
 type CentreOption = { value: string; label: string };
+type RegionOption = { value: string; label: string };
 
 type Props = {
   regionFilter: string;
@@ -28,6 +29,11 @@ type Props = {
   activeFilterCount: number;
   onClearFilters: () => void;
   sectionId: string;
+  /** When false, only region is shown (e.g. bank accounts by centre page). */
+  showCentreField?: boolean;
+  /** Defaults to all regions; pass exam-specific options when narrowing centres. */
+  regionOptions?: RegionOption[];
+  regionAllLabel?: string;
 };
 
 export function OfficialAccountsFiltersPopover({
@@ -41,8 +47,12 @@ export function OfficialAccountsFiltersPopover({
   activeFilterCount,
   onClearFilters,
   sectionId,
+  showCentreField = true,
+  regionOptions,
+  regionAllLabel = "All regions",
 }: Props) {
   const [open, setOpen] = useState(false);
+  const regions = regionOptions ?? REGION_OPTIONS;
 
   return (
     <Popover open={open} onOpenChange={setOpen}>
@@ -78,31 +88,33 @@ export function OfficialAccountsFiltersPopover({
               onChange={(e) => onRegionChange(e.target.value)}
               disabled={centresDisabled}
             >
-              <option value="">All regions</option>
-              {REGION_OPTIONS.map((r) => (
+              <option value="">{regionAllLabel}</option>
+              {regions.map((r) => (
                 <option key={r.value} value={r.value}>
                   {r.label}
                 </option>
               ))}
             </select>
           </div>
-          <div>
-            <p className={formLabelClass}>Examination centre</p>
-            <div className="mt-1.5">
-              <SearchableCombobox
-                options={centerOptions}
-                value={centerId}
-                onChange={onCentreChange}
-                placeholder="All centres"
-                searchPlaceholder="Code or name…"
-                emptyText={centerOptions.length ? "No match." : "No centres."}
-                widthClass="w-full min-w-0"
-                allOptionLabel="All centres"
-                disabled={centresDisabled}
-              />
+          {showCentreField ? (
+            <div>
+              <p className={formLabelClass}>Examination centre</p>
+              <div className="mt-1.5">
+                <SearchableCombobox
+                  options={centerOptions}
+                  value={centerId}
+                  onChange={onCentreChange}
+                  placeholder="All centres"
+                  searchPlaceholder="Code or name…"
+                  emptyText={centerOptions.length ? "No match." : "No centres."}
+                  widthClass="w-full min-w-0"
+                  allOptionLabel="All centres"
+                  disabled={centresDisabled}
+                />
+              </div>
             </div>
-          </div>
-          {centreSummaryHref ? (
+          ) : null}
+          {showCentreField && centreSummaryHref ? (
             <Link
               href={centreSummaryHref}
               className="text-sm font-medium text-primary underline-offset-2 hover:underline"

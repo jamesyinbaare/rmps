@@ -144,6 +144,38 @@ function centreGroupKey(centerId: string, subjectScope?: RecordSubjectScope): st
   return subjectScope ? `${centerId}:${subjectScope}` : centerId;
 }
 
+function parseCentreGroupKey(key: string): { centerId: string; subjectScope: RecordSubjectScope | null } {
+  if (!key.includes(":")) return { centerId: key, subjectScope: null };
+  const [centerId, scope] = key.split(":") as [string, string];
+  if (scope === "CORE" || scope === "ELECTIVE") return { centerId, subjectScope: scope };
+  return { centerId: key, subjectScope: null };
+}
+
+function scopeFromUrlSearchParams(sp: URLSearchParams): RecordSubjectScope | null {
+  const scope = sp.get("scope");
+  if (scope === "CORE" || scope === "ELECTIVE") return scope;
+  const st = sp.get("st");
+  if (st === "CORE_ONLY") return "CORE";
+  if (st === "ELECTIVE_ONLY") return "ELECTIVE";
+  return null;
+}
+
+function isCentreGroupSelected(
+  group: CentreGroup,
+  selectedGroup: CentreGroup | null,
+  selectedGroupKey: string | null,
+  filterSubjectScope: "" | RecordSubjectScope,
+): boolean {
+  if (selectedGroup) return selectedGroup.groupKey === group.groupKey;
+  if (!selectedGroupKey) return false;
+  if (group.groupKey === selectedGroupKey) return true;
+  const parsed = parseCentreGroupKey(selectedGroupKey);
+  if (group.centerId !== parsed.centerId) return false;
+  if (parsed.subjectScope) return group.groupKey === centreGroupKey(parsed.centerId, parsed.subjectScope);
+  if (filterSubjectScope) return group.subjectScope === filterSubjectScope;
+  return group.centerId === selectedGroupKey;
+}
+
 function mergeUploadStatus(
   a: CentreUploadStatus | undefined,
   b: CentreUploadStatus | undefined,
@@ -534,6 +566,7 @@ function AttendanceSheetsContent() {
   const scheduledDatesValidatedRef = useRef(false);
 
   const useComplianceSidebar = uploadStatusFilter !== "all" && Boolean(filterDate);
+  const listBusy = useComplianceSidebar ? complianceLoading : loading;
   const scheduledDateSet = useMemo(() => new Set(scheduledDates), [scheduledDates]);
   const todayIso = serverToday ?? localTodayIso();
   const selectedDateNotYetDue = Boolean(filterDate && filterDate > todayIso);
@@ -574,10 +607,10 @@ function AttendanceSheetsContent() {
     if (date) setFilterDate(date);
     const q = sp.get("q");
     if (q != null) setSearchInput(q);
-    const center = sp.get("center");
-    const scope = sp.get("scope");
-    if (scope === "CORE" || scope === "ELECTIVE") setFilterSubjectScope(scope);
-    if (center && (scope === "CORE" || scope === "ELECTIVE")) {
+    const center = sp.get("center") ?? sp.get("centerId");
+    const scope = scopeFromUrlSearchParams(sp);
+    if (scope) setFilterSubjectScope(scope);
+    if (center && scope) {
       setSelectedGroupKey(centreGroupKey(center, scope));
     } else if (center) {
       setSelectedGroupKey(center);
@@ -679,33 +712,50 @@ function AttendanceSheetsContent() {
     return (
       filteredCentreGroups.find((g) => g.groupKey === selectedGroupKey) ??
       filteredCentreGroups.find((g) => g.centerId === selectedGroupKey) ??
-      filteredCentreGroups[0] ??
       null
     );
   }, [filteredCentreGroups, selectedGroupKey]);
 
+  const selectedCentreQuery = useMemo(() => {
+    if (selectedGroup) {
+      return {
+        centerId: selectedGroup.centerId,
+        subjectScope: selectedGroup.mergedScopes ? null : selectedGroup.subjectScope,
+      };
+    }
+    if (!selectedGroupKey) return null;
+    const parsed = parseCentreGroupKey(selectedGroupKey);
+    return {
+      centerId: parsed.centerId,
+      subjectScope: parsed.subjectScope ?? (filterSubjectScope || null),
+    };
+  }, [selectedGroup, selectedGroupKey, filterSubjectScope]);
+
   const tableSheets = centreSheets.length > 0 ? centreSheets : (selectedGroup?.sheets ?? []);
 
   useEffect(() => {
+    if (listBusy) return;
     if (filteredCentreGroups.length === 0) {
-      setSelectedGroupKey(null);
-      setPreviewIndex(null);
+      if (!selectedGroupKey) setPreviewIndex(null);
       return;
     }
     const keyMatches = (key: string) =>
       filteredCentreGroups.some((g) => g.groupKey === key) ||
       (!filterSubjectScope && filteredCentreGroups.some((g) => g.centerId === key));
-    if (!selectedGroupKey || !keyMatches(selectedGroupKey)) {
+    if (!selectedGroupKey) {
       setSelectedGroupKey(filteredCentreGroups[0]!.groupKey);
       setPreviewIndex(null);
-    } else if (!filterSubjectScope && selectedGroupKey.includes(":")) {
+      return;
+    }
+    if (!keyMatches(selectedGroupKey)) return;
+    if (!filterSubjectScope && selectedGroupKey.includes(":")) {
       const centerId = selectedGroupKey.split(":")[0]!;
       if (filteredCentreGroups.some((g) => g.groupKey === centerId)) {
         setSelectedGroupKey(centerId);
         setPreviewIndex(null);
       }
     }
-  }, [filteredCentreGroups, selectedGroupKey, filterSubjectScope]);
+  }, [filteredCentreGroups, selectedGroupKey, filterSubjectScope, listBusy]);
 
   const loadSummary = useCallback(async () => {
     if (examId === null) {
@@ -767,7 +817,7 @@ function AttendanceSheetsContent() {
   }, [examId, filterDate, uploadStatusFilter, debouncedSearch]);
 
   const loadCentreSheets = useCallback(async () => {
-    if (examId === null || !selectedGroup) {
+    if (examId === null || !selectedCentreQuery) {
       setCentreSheets([]);
       return;
     }
@@ -777,8 +827,8 @@ function AttendanceSheetsContent() {
       const res = await listAdminAttendanceSheets(examId, {
         page: 1,
         pageSize: 200,
-        centerId: selectedGroup.centerId,
-        subjectScope: selectedGroup.mergedScopes ? null : selectedGroup.subjectScope,
+        centerId: selectedCentreQuery.centerId,
+        subjectScope: selectedCentreQuery.subjectScope,
         examinationDate: filterDate || null,
         search: debouncedSearch || null,
       });
@@ -788,7 +838,7 @@ function AttendanceSheetsContent() {
     } finally {
       setCentreSheetsLoading(false);
     }
-  }, [examId, selectedGroup, filterDate, debouncedSearch]);
+  }, [examId, selectedCentreQuery, filterDate, debouncedSearch]);
 
   useEffect(() => {
     void loadSummary();
@@ -803,12 +853,12 @@ function AttendanceSheetsContent() {
   }, [useComplianceSidebar, loadCompliance, loadUploadCentres]);
 
   useEffect(() => {
-    if (selectedGroup && examId != null) {
+    if (selectedCentreQuery && examId != null) {
       void loadCentreSheets();
     } else {
       setCentreSheets([]);
     }
-  }, [selectedGroup, examId, loadCentreSheets]);
+  }, [selectedCentreQuery, examId, loadCentreSheets]);
 
   const onDownload = useCallback(
     async (row: AttendanceSheetAdmin) => {
@@ -958,8 +1008,6 @@ function AttendanceSheetsContent() {
     getCoreRowModel: getCoreRowModel(),
     getSortedRowModel: getSortedRowModel(),
   });
-
-  const listBusy = useComplianceSidebar ? complianceLoading : loading;
 
   const centreLabel = selectedGroup
     ? `${selectedGroup.centerCode} — ${selectedGroup.centerName}`
@@ -1237,7 +1285,7 @@ function AttendanceSheetsContent() {
 
         {listBusy ? (
           <ResultsSkeleton />
-        ) : filteredCentreGroups.length === 0 ? (
+        ) : filteredCentreGroups.length === 0 && !selectedCentreQuery ? (
           renderEmptyState()
         ) : (
           <div
@@ -1270,8 +1318,20 @@ function AttendanceSheetsContent() {
                 role="listbox"
                 aria-label="Examination centres"
               >
+                {filteredCentreGroups.length === 0 ? (
+                  <li className="px-3 py-4 text-xs leading-relaxed text-muted-foreground">
+                    {selectedCentreQuery
+                      ? "No uploads listed for this centre with the current filters. Matching sheets, if any, appear on the right."
+                      : "No centres match the current filters."}
+                  </li>
+                ) : null}
                 {filteredCentreGroups.map((group) => {
-                  const selected = selectedGroup?.groupKey === group.groupKey;
+                  const selected = isCentreGroupSelected(
+                    group,
+                    selectedGroup,
+                    selectedGroupKey,
+                    filterSubjectScope,
+                  );
                   const uploaded = group.uploadStatus === "uploaded";
                   const notYetDue = group.uploadStatus === "not_due";
                   const centreLabel = formatCentreListLabel(group.centerCode, group.centerName);
@@ -1332,16 +1392,18 @@ function AttendanceSheetsContent() {
             </div>
 
             <div className="flex min-h-0 min-w-0 flex-col overflow-hidden lg:h-full">
-              {selectedGroup ? (
+              {selectedGroup || selectedCentreQuery ? (
                 <>
                   <div className="flex shrink-0 flex-wrap items-start justify-between gap-3 border-b border-border bg-muted/20 px-4 py-3 lg:px-5">
                     <div>
                       <h3 className="text-base font-semibold text-foreground">
-                        <span className="font-mono tabular-nums">{selectedGroup.centerCode}</span>
+                        <span className="font-mono tabular-nums">
+                          {selectedGroup?.centerCode ?? tableSheets[0]?.center_code ?? "Centre"}
+                        </span>
                         <span className="mx-2 font-normal text-muted-foreground">—</span>
-                        {selectedGroup.centerName}
+                        {selectedGroup?.centerName ?? tableSheets[0]?.center_name ?? ""}
                         <span className="ml-2 inline-flex flex-wrap items-center gap-1 align-middle">
-                          {centreGroupScopes(selectedGroup).map((scope) => (
+                          {(selectedGroup ? centreGroupScopes(selectedGroup) : selectedCentreQuery?.subjectScope ? [selectedCentreQuery.subjectScope] : []).map((scope) => (
                             <SubjectScopeBadge
                               key={scope}
                               scope={scope}
@@ -1352,22 +1414,22 @@ function AttendanceSheetsContent() {
                         </span>
                       </h3>
                       <p className="mt-0.5 text-xs text-muted-foreground">
-                        {selectedGroup.inspectorFullName ?? tableSheets[0]?.inspector_full_name ?? "Inspector"}
-                        {selectedGroup.inspectorPhone || tableSheets[0]?.inspector_phone ? (
+                        {selectedGroup?.inspectorFullName ?? tableSheets[0]?.inspector_full_name ?? "Inspector"}
+                        {selectedGroup?.inspectorPhone || tableSheets[0]?.inspector_phone ? (
                           <>
                             {" "}
                             ·{" "}
                             <a
-                              href={`tel:${selectedGroup.inspectorPhone ?? tableSheets[0]?.inspector_phone}`}
+                              href={`tel:${selectedGroup?.inspectorPhone ?? tableSheets[0]?.inspector_phone}`}
                               className="text-primary hover:underline"
                             >
-                              {selectedGroup.inspectorPhone ?? tableSheets[0]?.inspector_phone}
+                              {selectedGroup?.inspectorPhone ?? tableSheets[0]?.inspector_phone}
                             </a>
                           </>
                         ) : null}
                       </p>
                     </div>
-                    {tableSheets.length > 0 ? (
+                    {tableSheets.length > 0 && selectedGroup ? (
                       <button
                         type="button"
                         className={btnSecondary}
@@ -1390,12 +1452,12 @@ function AttendanceSheetsContent() {
                       </div>
                     ) : tableSheets.length === 0 ? (
                       <div className="rounded-lg border border-dashed border-border bg-muted/10 px-4 py-12 text-center text-sm text-muted-foreground">
-                        {selectedGroup.uploadStatus === "not_due" ? (
+                        {selectedGroup?.uploadStatus === "not_due" ? (
                           <>
                             Attendance submission is not yet due for this centre
                             {filterDate ? ` on ${formatExamDateLabel(filterDate)}` : ""}.
                           </>
-                        ) : selectedGroup.uploadStatus === "missing" ? (
+                        ) : selectedGroup?.uploadStatus === "missing" ? (
                           <>
                             No attendance sheet uploaded for this centre
                             {filterDate ? ` on ${formatExamDateLabel(filterDate)}` : ""}. Contact the inspector to upload.

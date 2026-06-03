@@ -26,6 +26,9 @@ export type SearchableComboboxProps = {
   disabled?: boolean;
   /** Extra classes on the trigger button (e.g. compact toolbar height). */
   triggerClassName?: string;
+  /** Single-line truncated label (matches native selects in toolbars). */
+  truncateTrigger?: boolean;
+  id?: string;
 };
 
 export function SearchableCombobox({
@@ -42,6 +45,8 @@ export function SearchableCombobox({
   onSearchChange,
   disabled = false,
   triggerClassName,
+  truncateTrigger = false,
+  id,
 }: SearchableComboboxProps) {
   const [open, setOpen] = useState(false);
   const selected = options.find((o) => o.value === value);
@@ -49,17 +54,28 @@ export function SearchableCombobox({
     <Popover open={open} onOpenChange={setOpen}>
       <PopoverTrigger asChild>
         <Button
+          id={id}
           variant="outline"
           role="combobox"
           aria-expanded={open}
           disabled={disabled}
           className={cn(
-            "h-auto min-h-11 min-w-0 max-w-full items-center justify-between gap-2 py-2.5 text-sm font-normal whitespace-normal sm:min-h-10",
+            "relative min-w-0 max-w-full justify-between gap-2 text-sm font-normal",
+            truncateTrigger
+              ? "h-10 items-center whitespace-nowrap py-0"
+              : "h-auto min-h-11 items-center whitespace-normal py-2.5 sm:min-h-10",
             widthClass,
             triggerClassName,
           )}
         >
-          <span className="min-w-0 flex-1 break-words text-left leading-snug">
+          <span
+            title={selected?.label}
+            className={cn(
+              "min-w-0 flex-1 text-left text-sm",
+              truncateTrigger ? "truncate" : "break-words leading-snug",
+              selected ? "text-foreground" : "text-muted-foreground",
+            )}
+          >
             {selected ? selected.label : placeholder}
           </span>
           <ChevronsUpDown className="size-4 shrink-0 self-center opacity-50" />
