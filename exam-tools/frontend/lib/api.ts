@@ -416,6 +416,28 @@ export type InspectorPasswordResetResponse = {
   generated_password?: string | null;
 };
 
+export type AdminPasswordResetPayload = {
+  mode?: "auto" | "manual";
+  new_password?: string;
+};
+
+export type AdminPasswordResetResponse = {
+  generated_password?: string | null;
+};
+
+export type StaffEmailUserRow = {
+  id: string;
+  full_name: string;
+  email: string;
+  is_active: boolean;
+  created_at: string;
+};
+
+export type StaffEmailUserListResponse = {
+  items: StaffEmailUserRow[];
+  total: number;
+};
+
 export async function listInspectors(params: InspectorListParams = {}): Promise<InspectorListResponse> {
   const q = new URLSearchParams();
   if (params.skip != null) q.set("skip", String(params.skip));
@@ -479,6 +501,23 @@ export async function createTestAdminOfficer(
   });
 }
 
+export async function adminListTestAdminOfficers(
+  skip: number,
+  limit: number,
+): Promise<StaffEmailUserListResponse> {
+  return apiJson<StaffEmailUserListResponse>(`/test-admin-officers?skip=${skip}&limit=${limit}`);
+}
+
+export async function adminResetTestAdminOfficerPassword(
+  userId: string,
+  payload: AdminPasswordResetPayload,
+): Promise<AdminPasswordResetResponse> {
+  return apiJson<AdminPasswordResetResponse>(
+    `/test-admin-officers/${encodeURIComponent(userId)}/reset-password`,
+    { method: "POST", body: JSON.stringify(payload) },
+  );
+}
+
 export type FinanceOfficerCreatePayload = {
   email: string;
   password: string;
@@ -498,6 +537,23 @@ export async function createFinanceOfficer(
     method: "POST",
     body: JSON.stringify(payload),
   });
+}
+
+export async function adminListFinanceOfficers(
+  skip: number,
+  limit: number,
+): Promise<StaffEmailUserListResponse> {
+  return apiJson<StaffEmailUserListResponse>(`/finance-officers?skip=${skip}&limit=${limit}`);
+}
+
+export async function adminResetFinanceOfficerPassword(
+  userId: string,
+  payload: AdminPasswordResetPayload,
+): Promise<AdminPasswordResetResponse> {
+  return apiJson<AdminPasswordResetResponse>(
+    `/finance-officers/${encodeURIComponent(userId)}/reset-password`,
+    { method: "POST", body: JSON.stringify(payload) },
+  );
 }
 
 export type SchoolCreatePayload = {
@@ -1448,6 +1504,23 @@ export async function createExecutiveViewer(
     method: "POST",
     body: JSON.stringify(payload),
   });
+}
+
+export async function adminListExecutiveViewers(
+  skip: number,
+  limit: number,
+): Promise<StaffEmailUserListResponse> {
+  return apiJson<StaffEmailUserListResponse>(`/executive-viewers?skip=${skip}&limit=${limit}`);
+}
+
+export async function adminResetExecutiveViewerPassword(
+  userId: string,
+  payload: AdminPasswordResetPayload,
+): Promise<AdminPasswordResetResponse> {
+  return apiJson<AdminPasswordResetResponse>(
+    `/executive-viewers/${encodeURIComponent(userId)}/reset-password`,
+    { method: "POST", body: JSON.stringify(payload) },
+  );
 }
 
 export async function getStaffNationalDaySummary(
@@ -3217,6 +3290,16 @@ export async function adminCreateDepotKeeper(
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(payload),
   });
+}
+
+export async function adminResetDepotKeeperPassword(
+  userId: string,
+  payload: AdminPasswordResetPayload,
+): Promise<AdminPasswordResetResponse> {
+  return apiJson<AdminPasswordResetResponse>(
+    `/depots/keepers/${encodeURIComponent(userId)}/reset-password`,
+    { method: "POST", body: JSON.stringify(payload) },
+  );
 }
 
 export type ExaminerTypeApi = "chief_examiner" | "assistant_examiner" | "team_leader";
