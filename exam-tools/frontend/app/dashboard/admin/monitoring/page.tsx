@@ -36,7 +36,12 @@ function AdminMonitoringContent() {
   }
 
   return (
-    <StaffDashboardOverview variant="national" mobileFirst examIdSearchParam="exam_id" />
+    <StaffDashboardOverview
+      variant="national"
+      mobileFirst
+      examIdSearchParam="exam_id"
+      hideSessionSchedule={me == null || me.role === "TEST_ADMIN_OFFICER"}
+    />
   );
 }
 
