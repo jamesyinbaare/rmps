@@ -1001,6 +1001,8 @@ export type StaffDashboardOverviewProps = {
   mobileFirst?: boolean;
   /** When set, read/write selected examination id in the URL query (e.g. `exam_id`). */
   examIdSearchParam?: string;
+  /** Hide today / upcoming timetable sections (e.g. Test Administration exam overview). */
+  hideSessionSchedule?: boolean;
 };
 
 export function StaffDashboardOverview({
@@ -1012,6 +1014,7 @@ export function StaffDashboardOverview({
   onExamIdChange,
   mobileFirst = false,
   examIdSearchParam,
+  hideSessionSchedule = false,
 }: StaffDashboardOverviewProps = {}) {
   const router = useRouter();
   const pathname = usePathname();
@@ -1227,7 +1230,7 @@ export function StaffDashboardOverview({
   const splitCentreDaySummary = usesSplitCentreDaySummary(centreOverview);
 
   useEffect(() => {
-    if (examId == null || todayDateKey == null) {
+    if (hideSessionSchedule || examId == null || todayDateKey == null) {
       // eslint-disable-next-line react-hooks/set-state-in-effect
       setTodaySummary(null);
       setTodaySummarySplit(null);
@@ -1284,7 +1287,7 @@ export function StaffDashboardOverview({
     return () => {
       cancelled = true;
     };
-  }, [examId, todayDateKey, variant, splitCentreDaySummary]);
+  }, [examId, todayDateKey, variant, splitCentreDaySummary, hideSessionSchedule]);
 
   useEffect(() => {
     if (examId == null || expandedDateKey == null) {
@@ -1671,17 +1674,19 @@ export function StaffDashboardOverview({
         <>
           {depotCompact ? (
             <>
-              <TodayAtCentrePanel
-                items={overview.sessions_today ?? []}
-                summary={todaySummary}
-                summarySplit={todaySummarySplit}
-                summaryLoading={todaySummaryLoading}
-                summaryError={todaySummaryError}
-                sessionScope={sessionScope}
-                hideSchoolNameBadges
-                hideCandidateInvigilatorCards
-              />
-              {upcomingSection}
+              {!hideSessionSchedule ? (
+                <TodayAtCentrePanel
+                  items={overview.sessions_today ?? []}
+                  summary={todaySummary}
+                  summarySplit={todaySummarySplit}
+                  summaryLoading={todaySummaryLoading}
+                  summaryError={todaySummaryError}
+                  sessionScope={sessionScope}
+                  hideSchoolNameBadges
+                  hideCandidateInvigilatorCards
+                />
+              ) : null}
+              {!hideSessionSchedule ? upcomingSection : null}
               <div>
                 <button
                   type="button"
@@ -1798,7 +1803,7 @@ export function StaffDashboardOverview({
                 <CentreStaffStatCards overview={overview as StaffCentreOverviewResponse} />
               )}
 
-              {!executiveMobileNational ? (
+              {!hideSessionSchedule && !executiveMobileNational ? (
                 <TodayAtCentrePanel
                   items={overview.sessions_today ?? []}
                   summary={todaySummary}
@@ -1812,7 +1817,7 @@ export function StaffDashboardOverview({
                 />
               ) : null}
 
-              {upcomingSection}
+              {!hideSessionSchedule ? upcomingSection : null}
             </>
           )}
         </>
