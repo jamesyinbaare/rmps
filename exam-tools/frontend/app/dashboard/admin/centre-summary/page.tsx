@@ -2,16 +2,15 @@
 
 import Link from "next/link";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
-import { Building2, Download, Loader2 } from "lucide-react";
+import { Building2 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 
+import { CentreSummaryCommandBar } from "@/components/centre-summary-command-bar";
 import { RoleGuard } from "@/components/role-guard";
-import { SearchableCombobox } from "@/components/searchable-combobox";
 import { InvigilatorSummaryCard } from "@/components/centre-invigilator-summary-card";
 import { OfficialRolesPanel } from "@/components/centre-official-roles-panel";
-import { OfficialAccountsPageIntro } from "@/components/official-accounts-page-intro";
 import { OfficialAccountsPagination } from "@/components/official-accounts-pagination";
-import { SubjectScopeBadge, timetableFilterBadgeScope } from "@/components/subject-scope-badge";
+import { SubjectScopeBadge } from "@/components/subject-scope-badge";
 import {
   apiJson,
   displayBankCode,
@@ -27,26 +26,26 @@ import {
   type TimetableSubjectFilter,
 } from "@/lib/api";
 import { getCachedCentreSchoolSummary, peekCachedCentreSchoolSummary } from "@/lib/finance-statistics-cache";
-import { formInputClass } from "@/lib/form-classes";
+import {
+  ATTENDANCE_SHEETS_HREF,
+  buildAdminAttendanceSheetsHref,
+} from "@/lib/finance-nav";
 import {
   OFFICIAL_ACCOUNTS_ADMIN_HREF,
   BANK_ACCOUNTS_LABEL,
-  officialAccountsBtnPrimary,
   officialAccountsBtnSecondary,
+  officialAccountsCommandBarClass,
+  officialAccountsCommandBarControlClass,
+  officialAccountsCommandBarRowClass,
+  officialAccountsCommandBarSearchClass,
   officialAccountsPanelClass,
 } from "@/lib/official-accounts-zone";
 import { cn } from "@/lib/utils";
-import { subjectScopeBadgeClass } from "@/lib/subject-scope-display";
 import { OfficialAllowanceBreakdownCell } from "@/components/official-allowance-breakdown";
 import { REGION_OPTIONS } from "@/lib/school-enums";
 
 const DEFAULT_SUBJECT_FILTER: TimetableSubjectFilter = "CORE_ONLY";
-
-const SUBJECT_SCOPE_OPTIONS: { value: TimetableSubjectFilter; label: string; hint: string }[] = [
-  { value: "CORE_ONLY", label: "Core", hint: "Core subjects only" },
-  { value: "ELECTIVE_ONLY", label: "Elective", hint: "Elective subjects only" },
-  { value: "ALL", label: "All", hint: "Include core and elective examination days" },
-];
+const CENTRE_SUMMARY_SECTION_ID = "centre-summary";
 
 const ALL_DESIGNATIONS = "__all__";
 const DEFAULT_CENTRE_PAGE_SIZE = 25;
@@ -54,14 +53,6 @@ const CENTRE_PAGE_SIZE_OPTIONS = [25, 50, 100, 200, 500, 1000] as const;
 
 type SortKey = "name" | "designation" | "days";
 type SortDir = "asc" | "desc";
-
-const filterToolbarClass =
-  "border-b border-border bg-muted/20 px-3 py-2.5 sm:px-4";
-const filterToolbarRowClass = "flex flex-wrap items-end gap-x-3 gap-y-2";
-const filterFieldClass = "flex min-w-0 flex-col gap-0.5";
-const filterLabelClass = "text-[11px] font-medium leading-none text-muted-foreground";
-const filterSelectClass =
-  "block w-full min-h-8 rounded-md border border-input-border bg-input px-2.5 text-xs text-foreground shadow-sm focus:border-primary focus:outline-none focus:ring-2 focus:ring-ring/30";
 
 function formatExamLabel(ex: Examination): string {
   return `${ex.year}${ex.exam_series ? ` ${ex.exam_series}` : ""} — ${ex.exam_type}`;
@@ -80,61 +71,6 @@ function SummarySkeleton() {
         {Array.from({ length: 5 }).map((_, i) => (
           <div key={i} className="h-10 animate-pulse rounded bg-muted/30" />
         ))}
-      </div>
-    </div>
-  );
-}
-
-function SubjectScopeToggle({
-  value,
-  onChange,
-  disabled = false,
-}: {
-  value: TimetableSubjectFilter;
-  onChange: (value: TimetableSubjectFilter) => void;
-  disabled?: boolean;
-}) {
-  return (
-    <div
-      className={cn(filterFieldClass, "w-fit shrink-0")}
-      title="Choose which subject types to include in centre totals and official lists."
-    >
-      <span className={filterLabelClass}>Scope</span>
-      <div
-        className="inline-flex min-h-8 shrink-0 rounded-md border border-input-border bg-muted/30 p-0.5"
-        role="radiogroup"
-        aria-label="Subject scope"
-      >
-        {SUBJECT_SCOPE_OPTIONS.map((opt) => {
-          const id = `centre-summary-scope-${opt.value}`;
-          const checked = value === opt.value;
-          const badgeScope = timetableFilterBadgeScope(opt.value);
-          return (
-            <label
-              key={opt.value}
-              htmlFor={id}
-              title={opt.hint}
-              className={cn(
-                "flex shrink-0 cursor-pointer items-center justify-center whitespace-nowrap rounded px-2 text-xs font-medium transition-colors",
-                checked
-                  ? cn("shadow-sm ring-1 ring-success/30", subjectScopeBadgeClass(badgeScope))
-                  : "text-muted-foreground hover:bg-muted/60 hover:text-foreground",
-              )}
-            >
-              <input
-                id={id}
-                type="radio"
-                name="centre-summary-scope"
-                className="sr-only"
-                value={opt.value}
-                checked={checked}
-                onChange={() => onChange(opt.value)}
-                disabled={disabled}
-              />
-              {opt.label}
-            </label>
-          );
-        })}
       </div>
     </div>
   );
@@ -201,41 +137,10 @@ function sortOfficials(rows: AdminExamCentreOfficialRow[], key: SortKey, dir: So
   });
 }
 
-function ExportButton({
-  disabled,
-  busy,
-  label,
-  onClick,
-}: {
-  disabled: boolean;
-  busy: boolean;
-  label: string;
-  onClick: () => void;
-}) {
-  return (
-    <button
-      type="button"
-      className={cn(
-        officialAccountsBtnPrimary,
-        "min-h-8 px-3 py-1.5 text-xs sm:w-auto [&_svg]:size-3.5",
-      )}
-      disabled={disabled || busy}
-      title={disabled ? "Select a centre to export" : undefined}
-      onClick={onClick}
-    >
-      {busy ? (
-        <>
-          <Loader2 className="mr-2 size-4 animate-spin" aria-hidden />
-          Exporting…
-        </>
-      ) : (
-        <>
-          <Download className="mr-2 size-4" aria-hidden />
-          {label}
-        </>
-      )}
-    </button>
-  );
+function readSubjectFilterFromParams(sp: URLSearchParams): TimetableSubjectFilter {
+  const st = sp.get("st");
+  if (st === "ALL" || st === "CORE_ONLY" || st === "ELECTIVE_ONLY") return st;
+  return DEFAULT_SUBJECT_FILTER;
 }
 
 function AdminCentreSummaryContent() {
@@ -244,17 +149,25 @@ function AdminCentreSummaryContent() {
   const searchParams = useSearchParams();
 
   const [exams, setExams] = useState<Examination[]>([]);
-  const [examId, setExamId] = useState<number | null>(null);
+  const [examId, setExamId] = useState<number | null>(() => {
+    const n = Number.parseInt(searchParams.get("exam") ?? "", 10);
+    return Number.isNaN(n) ? null : n;
+  });
   const [centers, setCenters] = useState<PerExamCentreItem[]>([]);
-  const [centerId, setCenterId] = useState("");
-  const [subjectFilter, setSubjectFilter] = useState<TimetableSubjectFilter>(DEFAULT_SUBJECT_FILTER);
-  const [regionFilter, setRegionFilter] = useState("");
+  const [centresBusy, setCentresBusy] = useState(false);
+  const [centerId, setCenterId] = useState(() => searchParams.get("centerId")?.trim() ?? "");
+  const [subjectFilter, setSubjectFilter] = useState<TimetableSubjectFilter>(() =>
+    readSubjectFilterFromParams(searchParams),
+  );
+  const [regionFilter, setRegionFilter] = useState(() => {
+    const reg = searchParams.get("region")?.trim() ?? "";
+    return reg && REGION_OPTIONS.some((r) => r.value === reg) ? reg : "";
+  });
   const [summary, setSummary] = useState<FinanceCentreSchoolSummaryResponse | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [examListError, setExamListError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
-  const [exportBusy, setExportBusy] = useState(false);
-  const [exportBogBusy, setExportBogBusy] = useState(false);
+  const [exportBusy, setExportBusy] = useState<string | null>(null);
   const [urlHydrated, setUrlHydrated] = useState(false);
 
   const [tableSearch, setTableSearch] = useState("");
@@ -288,23 +201,35 @@ function AdminCentreSummaryContent() {
   useEffect(() => {
     if (examId == null) {
       setCenters([]);
+      setCentresBusy(false);
       return;
     }
     let cancelled = false;
+    setCentresBusy(true);
     void (async () => {
       try {
         const data = await listExaminationCentres(examId, { subject_filter: subjectFilter });
         if (cancelled) return;
         setCenters(data.items);
-        setCenterId((cur) => (cur && data.items.some((c) => c.id === cur) ? cur : ""));
+        setCenterId((cur) => {
+          if (!cur) return "";
+          return data.items.some((c) => c.id === cur) ? cur : "";
+        });
       } catch {
         if (!cancelled) setCenters([]);
+      } finally {
+        if (!cancelled) setCentresBusy(false);
       }
     })();
     return () => {
       cancelled = true;
     };
   }, [examId, subjectFilter]);
+
+  useEffect(() => {
+    const cid = searchParams.get("centerId")?.trim();
+    if (cid) setCenterId(cid);
+  }, [searchParams]);
 
   useEffect(() => {
     if (exams.length === 0) return;
@@ -316,27 +241,40 @@ function AdminCentreSummaryContent() {
     } else {
       setExamId((cur) => (cur === null && exams.length ? exams[0]!.id : cur));
     }
-    const cid = sp.get("centerId")?.trim();
-    if (cid) setCenterId(cid);
     const st = sp.get("st");
     if (st === "ALL" || st === "CORE_ONLY" || st === "ELECTIVE_ONLY") setSubjectFilter(st);
     const reg = sp.get("region")?.trim() ?? "";
     if (reg && REGION_OPTIONS.some((r) => r.value === reg)) setRegionFilter(reg);
+    else if (!reg) setRegionFilter("");
     setUrlHydrated(true);
   }, [exams, searchParams]);
 
   useEffect(() => {
     if (!urlHydrated) return;
+    const urlCenterId = searchParams.get("centerId")?.trim() ?? "";
+    const centerIdForUrl =
+      centerId.trim() || (centresBusy || centers.length === 0 ? urlCenterId : "");
     const p = new URLSearchParams();
     if (examId != null) p.set("exam", String(examId));
-    if (centerId.trim()) p.set("centerId", centerId.trim());
+    if (centerIdForUrl) p.set("centerId", centerIdForUrl);
     if (subjectFilter !== DEFAULT_SUBJECT_FILTER) p.set("st", subjectFilter);
     if (regionFilter) p.set("region", regionFilter);
     const next = p.toString();
     const cur = searchParams.toString();
     if (next === cur) return;
     router.replace(next ? `${pathname}?${next}` : pathname, { scroll: false });
-  }, [urlHydrated, examId, centerId, subjectFilter, regionFilter, pathname, router, searchParams]);
+  }, [
+    urlHydrated,
+    examId,
+    centerId,
+    subjectFilter,
+    regionFilter,
+    centresBusy,
+    centers.length,
+    pathname,
+    router,
+    searchParams,
+  ]);
 
   const regionSelectOptions = useMemo(() => {
     const present = new Set(
@@ -358,19 +296,34 @@ function AdminCentreSummaryContent() {
   }, [regionFilter, regionSelectOptions]);
 
   useEffect(() => {
+    if (centresBusy || centers.length === 0) return;
     setCenterId((cur) =>
       cur && filteredCenters.some((c) => c.id === cur) ? cur : "",
     );
-  }, [filteredCenters]);
+  }, [filteredCenters, centresBusy, centers.length]);
 
-  const centerOptions = useMemo(
-    () =>
-      filteredCenters.map((c) => ({
-        value: c.id,
-        label: `${c.code} — ${c.name}`,
-      })),
-    [filteredCenters],
-  );
+  const centerOptions = useMemo(() => {
+    const opts = filteredCenters.map((c) => ({
+      value: c.id,
+      label: `${c.code} — ${c.name}`,
+    }));
+    const id = centerId.trim();
+    if (!id || opts.some((o) => o.value === id)) return opts;
+    const fromList = centers.find((c) => c.id === id);
+    if (fromList) {
+      return [{ value: id, label: `${fromList.code} — ${fromList.name}` }, ...opts];
+    }
+    if (summary?.center_id === id) {
+      return [
+        { value: id, label: `${summary.center_code} — ${summary.center_name}` },
+        ...opts,
+      ];
+    }
+    if (centresBusy || centers.length === 0) {
+      return [{ value: id, label: "Loading centre…" }, ...opts];
+    }
+    return opts;
+  }, [filteredCenters, centerId, centers, summary]);
 
   const fetchSummary = useCallback(async (options?: { revalidate?: boolean }) => {
     if (examId === null || !centerId.trim()) {
@@ -408,9 +361,9 @@ function AdminCentreSummaryContent() {
     void fetchSummary();
   }, [fetchSummary]);
 
-  async function onExport() {
+  async function onExportExcel() {
     if (examId === null || !summary || !centerId.trim()) return;
-    setExportBusy(true);
+    setExportBusy(`${CENTRE_SUMMARY_SECTION_ID}:excel`);
     setLoadError(null);
     const filename = schoolSummaryExportFilename(
       summary.center_code,
@@ -427,13 +380,13 @@ function AdminCentreSummaryContent() {
     } catch (e) {
       setLoadError(e instanceof Error ? e.message : "Export failed");
     } finally {
-      setExportBusy(false);
+      setExportBusy(null);
     }
   }
 
   async function onExportBog() {
     if (examId === null || !summary || !centerId.trim()) return;
-    setExportBogBusy(true);
+    setExportBusy(`${CENTRE_SUMMARY_SECTION_ID}:bog`);
     setLoadError(null);
     const filename = centreBogExportFilename(
       summary.center_code,
@@ -450,8 +403,13 @@ function AdminCentreSummaryContent() {
     } catch (e) {
       setLoadError(e instanceof Error ? e.message : "BoG export failed");
     } finally {
-      setExportBogBusy(false);
+      setExportBusy(null);
     }
+  }
+
+  function onExportMenu(key: string) {
+    if (key === "excel") void onExportExcel();
+    else if (key === "bog") void onExportBog();
   }
 
   const officials = summary?.officials ?? [];
@@ -501,6 +459,45 @@ function AdminCentreSummaryContent() {
       ? `${OFFICIAL_ACCOUNTS_ADMIN_HREF}?exam=${examId}&centerId=${encodeURIComponent(centerId.trim())}`
       : OFFICIAL_ACCOUNTS_ADMIN_HREF;
 
+  const attendanceSheetsHref = canLoad
+    ? buildAdminAttendanceSheetsHref({
+        examId: examId!,
+        centerId: centerId.trim(),
+        subjectFilter,
+      })
+    : ATTENDANCE_SHEETS_HREF;
+
+  const centreEmptyText = filteredCenters.length
+    ? "No match."
+    : regionFilter
+      ? "No centres in this region."
+      : subjectFilter !== "ALL"
+        ? "No centres for this scope."
+        : "No centres.";
+
+  const exportOptions = useMemo(
+    () => [
+      { key: "excel", label: "Export Excel", primary: true },
+      { key: "bog", label: "Export BoG" },
+    ],
+    [],
+  );
+
+  const exportDisabled = !summary || !canLoad || !!exportBusy;
+  const exportDisabledReason = !canLoad
+    ? "Select a centre to export"
+    : !summary
+      ? "Load centre summary first"
+      : undefined;
+
+  const officialsMeta = busy
+    ? "Updating officials…"
+    : `${filteredOfficials.length} official${filteredOfficials.length === 1 ? "" : "s"}${
+        filteredOfficials.length > pageSize
+          ? ` · page ${page} of ${Math.max(1, Math.ceil(filteredOfficials.length / pageSize))}`
+          : ""
+      }`;
+
   function toggleSort(key: SortKey) {
     if (sortKey === key) setSortDir((d) => (d === "asc" ? "desc" : "asc"));
     else {
@@ -509,99 +506,32 @@ function AdminCentreSummaryContent() {
     }
   }
 
-  const exportDisabled = !summary || !canLoad || exportBusy || exportBogBusy;
-  const exportControl = (
-    <div className="flex flex-row gap-1.5">
-      <ExportButton
-        disabled={exportDisabled}
-        busy={exportBusy}
-        label="Export Excel"
-        onClick={() => void onExport()}
-      />
-      <ExportButton
-        disabled={exportDisabled}
-        busy={exportBogBusy}
-        label="Export BoG"
-        onClick={() => void onExportBog()}
-      />
-    </div>
-  );
-
   return (
     <div className="space-y-3">
-      <OfficialAccountsPageIntro description="Bank accounts and allowances for one examination centre." />
-
       <div className={officialAccountsPanelClass}>
-        <div className={filterToolbarClass}>
-          <div className={filterToolbarRowClass}>
-            <div className={cn(filterFieldClass, "min-w-[10rem] flex-1 sm:max-w-xs")}>
-              <label className={filterLabelClass} htmlFor="centre-summary-exam">
-                Examination
-              </label>
-              <select
-                id="centre-summary-exam"
-                className={filterSelectClass}
-                value={examId ?? ""}
-                onChange={(e) => setExamId(e.target.value ? Number(e.target.value) : null)}
-                disabled={exams.length === 0}
-              >
-                {exams.map((ex) => (
-                  <option key={ex.id} value={ex.id}>
-                    {formatExamLabel(ex)}
-                  </option>
-                ))}
-              </select>
-            </div>
-            <SubjectScopeToggle
-              value={subjectFilter}
-              onChange={setSubjectFilter}
-              disabled={exams.length === 0}
-            />
-            <div className={cn(filterFieldClass, "w-28 shrink-0 sm:w-32")}>
-              <label className={filterLabelClass} htmlFor="centre-summary-region">
-                Region
-              </label>
-              <select
-                id="centre-summary-region"
-                className={filterSelectClass}
-                value={regionFilter}
-                onChange={(e) => setRegionFilter(e.target.value)}
-                disabled={centers.length === 0 || regionSelectOptions.length === 0}
-              >
-                <option value="">All</option>
-                {regionSelectOptions.map((r) => (
-                  <option key={r.value} value={r.value}>
-                    {r.label}
-                  </option>
-                ))}
-              </select>
-            </div>
-            <div className={cn(filterFieldClass, "min-w-[12rem] flex-1 sm:min-w-[14rem]")}>
-              <span className={filterLabelClass}>Centre</span>
-              <SearchableCombobox
-                options={centerOptions}
-                value={centerId}
-                onChange={setCenterId}
-                placeholder="Select centre…"
-                searchPlaceholder="Code or name…"
-                emptyText={
-                  filteredCenters.length
-                    ? "No match."
-                    : regionFilter
-                      ? "No centres in this region."
-                      : subjectFilter !== "ALL"
-                        ? "No centres for this scope."
-                        : "No centres."
-                }
-                widthClass="w-full min-w-0"
-                triggerClassName="min-h-8 rounded-md px-2.5 text-xs"
-                showAllOption={false}
-                disabled={filteredCenters.length === 0}
-              />
-            </div>
-            <div className="ml-auto shrink-0 pb-0.5">{exportControl}</div>
-          </div>
-        </div>
+        <CentreSummaryCommandBar
+          exams={exams}
+          examId={examId}
+          onExamChange={setExamId}
+          formatExamLabel={formatExamLabel}
+          subjectFilter={subjectFilter}
+          onSubjectFilterChange={setSubjectFilter}
+          regionFilter={regionFilter}
+          onRegionChange={setRegionFilter}
+          regionOptions={regionSelectOptions}
+          centerId={centerId}
+          onCentreChange={setCenterId}
+          centerOptions={centerOptions}
+          centresDisabled={centers.length === 0 || filteredCenters.length === 0}
+          centreEmptyText={centreEmptyText}
+          attendanceSheetsHref={attendanceSheetsHref}
+          canLoad={canLoad}
+          exportOptions={exportOptions}
+          exportDisabled={exportDisabled}
+          exportDisabledReason={exportDisabledReason}
+          exportBusy={exportBusy}
+          onExport={onExportMenu}
+        />
 
         {examListError ? (
           <div
@@ -653,43 +583,53 @@ function AdminCentreSummaryContent() {
               refreshing={refreshing}
             />
 
-            <div className="flex flex-col gap-2 border-t border-border/60 px-3 py-2 sm:flex-row sm:items-end sm:gap-2 sm:px-4">
-              <div className="min-w-0 flex-1 sm:max-w-xs">
-                <label className="sr-only" htmlFor="centre-summary-search">
-                  Search officials
-                </label>
-                <input
-                  id="centre-summary-search"
-                  type="search"
-                  className={formInputClass}
-                  placeholder="Search officials…"
-                  value={tableSearch}
-                  onChange={(e) => setTableSearch(e.target.value)}
-                />
-              </div>
-              <div className="min-w-0 flex-1 sm:max-w-[11rem]">
-                <label className="sr-only" htmlFor="centre-summary-designation">
-                  Designation
-                </label>
-                <select
-                  id="centre-summary-designation"
-                  className={formInputClass}
-                  value={designationFilter}
-                  onChange={(e) => setDesignationFilter(e.target.value)}
+            <div
+              className={cn(
+                officialAccountsCommandBarClass,
+                "border-t border-border/60 py-3 sm:py-3.5",
+              )}
+            >
+              <div className={cn(officialAccountsCommandBarRowClass, "items-end")}>
+                <div className="flex min-w-0 flex-1 flex-col gap-1">
+                  <label className="text-xs font-medium text-muted-foreground" htmlFor="centre-summary-search">
+                    Search officials
+                  </label>
+                  <input
+                    id="centre-summary-search"
+                    type="search"
+                    className={cn(officialAccountsCommandBarSearchClass, "max-w-none")}
+                    placeholder="Name, designation, account, phone…"
+                    value={tableSearch}
+                    onChange={(e) => setTableSearch(e.target.value)}
+                    autoComplete="off"
+                  />
+                </div>
+                <div className="flex w-full min-w-0 flex-col gap-1 sm:w-48">
+                  <label className="text-xs font-medium text-muted-foreground" htmlFor="centre-summary-designation">
+                    Designation
+                  </label>
+                  <select
+                    id="centre-summary-designation"
+                    className={cn(officialAccountsCommandBarControlClass, "w-full")}
+                    value={designationFilter}
+                    onChange={(e) => setDesignationFilter(e.target.value)}
+                  >
+                    {designationOptions.map((o) => (
+                      <option key={o.value} value={o.value}>
+                        {o.label}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                <p
+                  className="hidden shrink-0 self-end pb-2.5 text-sm tabular-nums text-muted-foreground lg:block"
+                  aria-live="polite"
                 >
-                  {designationOptions.map((o) => (
-                    <option key={o.value} value={o.value}>
-                      {o.label}
-                    </option>
-                  ))}
-                </select>
+                  {officialsMeta}
+                </p>
               </div>
-              <p className="pb-2 text-xs text-muted-foreground sm:ml-auto sm:max-w-xs sm:text-right sm:pb-2.5">
-                {filteredOfficials.length} official{filteredOfficials.length === 1 ? "" : "s"}
-                {filteredOfficials.length > pageSize
-                  ? ` · page ${page} of ${Math.max(1, Math.ceil(filteredOfficials.length / pageSize))}`
-                  : ""}
-                {busy ? " · updating…" : ""}
+              <p className="text-sm tabular-nums text-muted-foreground lg:hidden" aria-live="polite">
+                {officialsMeta}
               </p>
             </div>
 

@@ -1,5 +1,6 @@
 "use client";
 
+import { Pencil, Trash2 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 
@@ -12,8 +13,13 @@ import {
 import { OfficialModal, FormSection, officialModalFooterClass } from "@/components/official-modal";
 import { TypeToDeleteConfirmModal } from "@/components/type-to-delete-confirm-modal";
 import { SearchableCombobox } from "@/components/searchable-combobox";
-import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { RoleGuard } from "@/components/role-guard";
+import {
+  DesktopTableRowFabActions,
+  desktopTableActionsCellClass,
+  desktopTableActionsHeaderClass,
+} from "@/components/desktop-table-row-fabs";
+import { TooltipProvider } from "@/components/ui/tooltip";
 import { formInputClass, formLabelClass } from "@/lib/form-classes";
 import {
   createExamOfficial,
@@ -171,7 +177,6 @@ export default function InspectorExamOfficialsPage() {
   const [editDaysOpen, setEditDaysOpen] = useState(true);
   const modalScrollRef = useRef<HTMLDivElement>(null);
   /** Desktop table: which row’s ⋮ actions menu is open */
-  const [desktopActionsMenuRowId, setDesktopActionsMenuRowId] = useState<string | null>(null);
   const [tableSearch, setTableSearch] = useState("");
   const [designationFilter, setDesignationFilter] = useState(ALL_DESIGNATIONS_FILTER);
   const [sortKey, setSortKey] = useState<ExamOfficialSortKey>("designation");
@@ -305,10 +310,6 @@ export default function InspectorExamOfficialsPage() {
       cancelled = true;
     };
   }, [examId]);
-
-  useEffect(() => {
-    setDesktopActionsMenuRowId(null);
-  }, [examId, selectedPostingId]);
 
   useEffect(() => {
     if (!modalOpen) return;
@@ -446,7 +447,6 @@ export default function InspectorExamOfficialsPage() {
 
   function openEdit(row: ExamCentreOfficialResponse) {
     if (!scopeMutationsEnabled) return;
-    setDesktopActionsMenuRowId(null);
     setEditing(row);
     setEditBankOpen(false);
     setEditAccountOpen(false);
@@ -813,7 +813,6 @@ export default function InspectorExamOfficialsPage() {
         postingIsAll ? workingScope : undefined,
       );
       setPendingDelete(null);
-      setDesktopActionsMenuRowId(null);
       await loadList();
     } catch (e) {
       setLoadError(e instanceof Error ? e.message : "Delete failed");
@@ -1163,6 +1162,7 @@ export default function InspectorExamOfficialsPage() {
           </div>
 
           {/* Desktop table */}
+          <TooltipProvider delayDuration={350} skipDelayDuration={80}>
           <div className="hidden border-t border-border md:block">
               <div className="overflow-x-auto">
                 <table className="w-full min-w-[44rem] border-collapse text-sm">
@@ -1229,14 +1229,7 @@ export default function InspectorExamOfficialsPage() {
                       <th className="px-3 py-2.5 text-right text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
                         Phone
                       </th>
-                      <th
-                        className="w-12 px-2 py-2.5 text-center text-muted-foreground/80"
-                        aria-label="Actions"
-                      >
-                        <span className="text-lg font-semibold leading-none tracking-tight" aria-hidden>
-                          ⋮
-                        </span>
-                      </th>
+                      <th className={desktopTableActionsHeaderClass}>Actions</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-border/60">
@@ -1256,7 +1249,7 @@ export default function InspectorExamOfficialsPage() {
                       displayedDesktopItems.map((row, index) => (
                         <tr
                           key={row.id}
-                          className="bg-card transition-colors hover:bg-muted/25"
+                          className="group/row bg-card transition-colors hover:bg-muted/25"
                         >
                           <td className="px-2 py-2.5 text-center text-xs tabular-nums text-muted-foreground">
                             {index + 1}
@@ -1288,48 +1281,18 @@ export default function InspectorExamOfficialsPage() {
                           <td className="whitespace-nowrap px-3 py-2.5 text-right tabular-nums text-foreground">
                             {row.telephone_number}
                           </td>
-                          <td className="px-1 py-2 text-center align-middle">
-                            <Popover
-                              open={desktopActionsMenuRowId === row.id}
-                              onOpenChange={(open) => {
-                                if (open) setDesktopActionsMenuRowId(row.id);
-                                else setDesktopActionsMenuRowId((cur) => (cur === row.id ? null : cur));
-                              }}
-                            >
-                              <PopoverTrigger asChild>
-                                <button
-                                  type="button"
-                                  disabled={busy}
-                                  className="inline-flex h-9 w-9 items-center justify-center rounded-md border border-transparent text-muted-foreground transition-colors hover:border-border hover:bg-muted/80 hover:text-foreground focus:outline-none focus:ring-2 focus:ring-ring/30 disabled:pointer-events-none disabled:opacity-40"
-                                  aria-label={`More actions for ${row.full_name}`}
-                                >
-                                  <span className="select-none text-lg font-semibold leading-none" aria-hidden>
-                                    ⋮
-                                  </span>
-                                </button>
-                              </PopoverTrigger>
-                              <PopoverContent className="w-44 p-1" align="end" side="bottom" sideOffset={4}>
-                                <button
-                                  type="button"
-                                  disabled={!scopeMutationsEnabled}
-                                  className="flex w-full items-center rounded-md px-2.5 py-2 text-left text-sm text-foreground transition-colors hover:bg-muted disabled:pointer-events-none disabled:opacity-40"
-                                  onClick={() => openEdit(row)}
-                                >
-                                  Edit
-                                </button>
-                                <button
-                                  type="button"
-                                  disabled={!scopeMutationsEnabled}
-                                  className="flex w-full items-center rounded-md px-2.5 py-2 text-left text-sm text-destructive transition-colors hover:bg-destructive/10 disabled:pointer-events-none disabled:opacity-40"
-                                  onClick={() => {
-                                    setDesktopActionsMenuRowId(null);
-                                    setPendingDelete(row);
-                                  }}
-                                >
-                                  Delete
-                                </button>
-                              </PopoverContent>
-                            </Popover>
+                          <td className={desktopTableActionsCellClass}>
+                            <div className="flex justify-center">
+                              <DesktopTableRowFabActions
+                                rowLabel={row.full_name}
+                                busy={busy}
+                                mutationsEnabled={scopeMutationsEnabled}
+                                onEdit={() => openEdit(row)}
+                                onDelete={() => setPendingDelete(row)}
+                                editIcon={<Pencil className="size-4" strokeWidth={2} aria-hidden />}
+                                deleteIcon={<Trash2 className="size-4" strokeWidth={2} aria-hidden />}
+                              />
+                            </div>
                           </td>
                         </tr>
                       ))
@@ -1345,6 +1308,7 @@ export default function InspectorExamOfficialsPage() {
                 </div>
               ) : null}
           </div>
+          </TooltipProvider>
           </div>
         </div>
 

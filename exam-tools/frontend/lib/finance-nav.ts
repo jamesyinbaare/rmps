@@ -1,3 +1,4 @@
+import type { TimetableSubjectFilter } from "@/lib/api";
 import {
   ACCOUNT_DETAILS_BY_CENTRE_LABEL,
   BANK_ACCOUNTS_LABEL,
@@ -12,6 +13,27 @@ export const OFFICIAL_STATISTICS_HREF = "/dashboard/admin/official-statistics";
 export const FINANCE_CENTRE_SUMMARY_HREF = "/dashboard/admin/finance-centre-summary";
 export const ATTENDANCE_SHEETS_HREF = "/dashboard/admin/attendance-sheets";
 export const BANK_DIRECTORY_HREF = "/dashboard/admin/bank-directory";
+
+export function timetableFilterToAttendanceScope(
+  filter: TimetableSubjectFilter,
+): "" | "CORE" | "ELECTIVE" {
+  if (filter === "CORE_ONLY") return "CORE";
+  if (filter === "ELECTIVE_ONLY") return "ELECTIVE";
+  return "";
+}
+
+export function buildAdminAttendanceSheetsHref(params: {
+  examId: number;
+  centerId: string;
+  subjectFilter: TimetableSubjectFilter;
+}): string {
+  const p = new URLSearchParams();
+  p.set("exam", String(params.examId));
+  p.set("center", params.centerId.trim());
+  const scope = timetableFilterToAttendanceScope(params.subjectFilter);
+  if (scope) p.set("scope", scope);
+  return `${ATTENDANCE_SHEETS_HREF}?${p.toString()}`;
+}
 
 export type FinanceNavIcon =
   | "overview"
