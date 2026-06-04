@@ -1,22 +1,27 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { Fragment, useCallback, useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 
 import { DashboardShell } from "@/components/dashboard-shell";
 import { RoleGuard } from "@/components/role-guard";
 import { formInputClass, formLabelClass } from "@/lib/form-classes";
 import {
+  countDistinctSubjectsInBundles,
+  dateScriptAccordionId,
   displayScriptSubjectCode,
   dueListHint,
   formatUpcomingPapersLabel,
   getPaperInspectorVisuals,
+  groupPaperBundlesByDate,
   groupPaperBundlesBySubject,
+  groupUpcomingBundlesBySubjectAndDate,
   isPaperBundleFullyRecorded,
   partitionDueAndUpcoming,
-  sortSubjectBundleGroups,
-  sortSubjectBundleGroupsAscending,
-  subjectScriptAccordionId,
+  scriptExaminationDateGroupLabel,
+  sortDateBundleGroups,
+  sortDateBundleGroupsAscending,
+  type DateScriptBundleGroup,
   type ScriptPaperBundle,
   type SubjectScriptBundleGroup,
   seriesInspectorBadgeClass,
@@ -52,6 +57,26 @@ const btnSecondary =
   "inline-flex min-h-10 items-center justify-center rounded-lg border border-input-border bg-background px-3 text-sm font-medium text-foreground transition-colors hover:bg-muted focus:outline-none focus:ring-2 focus:ring-ring/30";
 const btnDanger =
   "inline-flex min-h-10 items-center justify-center rounded-lg border border-destructive/50 px-3 text-sm font-medium text-destructive transition-colors hover:bg-destructive/10 focus:outline-none focus:ring-2 focus:ring-ring/30";
+const subjectDividerLineClass = "min-h-0 flex-1 border-t-[3px] border-dotted border-primary";
+
+function SubjectSectionDivider({ label }: { label: string }) {
+  return (
+    <div
+      className="flex min-w-0 items-center gap-2 py-6 sm:gap-3"
+      role="separator"
+      aria-label={label}
+    >
+      <div className={`${subjectDividerLineClass} min-w-8 sm:min-w-12`} aria-hidden />
+      <span
+        className="min-w-0 max-w-[min(62%,20rem)] shrink truncate bg-card px-2 text-center text-xs font-bold leading-snug text-primary sm:max-w-[24rem] sm:px-3 sm:text-sm md:max-w-[28rem]"
+        title={label}
+      >
+        {label}
+      </span>
+      <div className={`${subjectDividerLineClass} min-w-8 sm:min-w-12`} aria-hidden />
+    </div>
+  );
+}
 
 type EditingState = {
   subjectId: number;
@@ -203,7 +228,7 @@ export default function InspectorScriptsControlPage() {
   const [showUpcoming, setShowUpcoming] = useState(true);
   const [openAccordionId, setOpenAccordionId] = useState<string | null>(null);
   const [openSeriesKey, setOpenSeriesKey] = useState<string | null>(null);
-  const subjectAccordionRefs = useRef<Record<string, HTMLDetailsElement | null>>({});
+  const dateAccordionRefs = useRef<Record<string, HTMLDetailsElement | null>>({});
   const [isLgUp, setIsLgUp] = useState(
     () =>
       typeof window !== "undefined" && window.matchMedia("(min-width: 1024px)").matches,
@@ -483,21 +508,21 @@ export default function InspectorScriptsControlPage() {
 
   const partitioned =
     data && data.subjects.length > 0 ? partitionDueAndUpcoming(data.subjects, localTodayIso()) : null;
-  const dueSubjectGroups = partitioned
-    ? sortSubjectBundleGroups(groupPaperBundlesBySubject(partitioned.due))
+  const dueDateGroups = partitioned
+    ? sortDateBundleGroups(groupPaperBundlesByDate(partitioned.due))
     : [];
-  const upcomingSubjectGroups = partitioned
-    ? sortSubjectBundleGroupsAscending(groupPaperBundlesBySubject(partitioned.upcoming))
+  const upcomingDateGroups = partitioned
+    ? sortDateBundleGroupsAscending(groupPaperBundlesByDate(partitioned.upcoming))
     : [];
   const listHint = partitioned ? dueListHint(partitioned.due, partitioned.upcoming) : null;
 
-  function toggleSubjectAccordion(id: string) {
+  function toggleDateAccordion(id: string) {
     const opening = openAccordionId !== id;
     setOpenAccordionId(opening ? id : null);
     if (opening) {
       requestAnimationFrame(() => {
         requestAnimationFrame(() => {
-          subjectAccordionRefs.current[id]?.scrollIntoView({ behavior: "smooth", block: "start" });
+          dateAccordionRefs.current[id]?.scrollIntoView({ behavior: "smooth", block: "start" });
         });
       });
     }
@@ -751,13 +776,20 @@ export default function InspectorScriptsControlPage() {
     );
   }
 
+  function subjectGroupLabel(subjectGroup: SubjectScriptBundleGroup): string {
+    return `${subjectGroup.subjectCode} — ${subjectGroup.subjectName}`;
+  }
+
   function renderPaperBundleCard(bundle: ScriptPaperBundle) {
     const v = getPaperInspectorVisuals(bundle.paperNumber);
     const fullyRecorded = isPaperBundleFullyRecorded(bundle);
     return (
       <div key={`${bundle.subjectId}-${bundle.paperNumber}`} className={v.cardClass}>
         <h3 className="space-y-2">
-          <p className="text-sm font-medium text-muted-foreground">
+          <p
+            className="text-sm font-medium text-muted-foreground"
+            title={`${displayScriptSubjectCode(bundle)} — ${bundle.subjectName}`}
+          >
             {displayScriptSubjectCode(bundle)} — {bundle.subjectName}
           </p>
           <div className="flex flex-wrap items-center gap-2.5">
@@ -784,20 +816,21 @@ export default function InspectorScriptsControlPage() {
     );
   }
 
-  function renderSubjectCollapsibleGroups(
-    groups: SubjectScriptBundleGroup[],
+  function renderDateCollapsibleGroups(
+    groups: DateScriptBundleGroup[],
     scope: "due" | "upcoming",
   ) {
     return (
       <div className={scope === "upcoming" ? "space-y-4" : "space-y-6"}>
-        {groups.map((subjectGroup) => {
-          const accordionId = subjectScriptAccordionId(scope, subjectGroup.key);
+        {groups.map((dateGroup) => {
+          const accordionId = dateScriptAccordionId(scope, dateGroup.key);
           const isOpen = openAccordionId === accordionId;
+          const subjectCount = countDistinctSubjectsInBundles(dateGroup.bundles);
           return (
             <details
-              key={subjectGroup.key}
+              key={dateGroup.key}
               ref={(el) => {
-                subjectAccordionRefs.current[accordionId] = el;
+                dateAccordionRefs.current[accordionId] = el;
               }}
               className={`scroll-mt-4 group rounded-2xl border border-border p-4 shadow-sm sm:p-5 ${
                 scope === "upcoming" ? "bg-card/60" : "bg-card"
@@ -808,14 +841,13 @@ export default function InspectorScriptsControlPage() {
                 className="flex min-h-11 cursor-pointer list-none flex-wrap items-center justify-between gap-2 text-sm font-semibold text-foreground marker:hidden [&::-webkit-details-marker]:hidden"
                 onClick={(e) => {
                   e.preventDefault();
-                  toggleSubjectAccordion(accordionId);
+                  toggleDateAccordion(accordionId);
                 }}
               >
                 <span>
-                  {subjectGroup.subjectCode} — {subjectGroup.subjectName}
+                  {scriptExaminationDateGroupLabel(dateGroup)}
                   <span className="ml-2 font-normal text-muted-foreground">
-                    · {subjectGroup.bundles.length}{" "}
-                    {subjectGroup.bundles.length === 1 ? "paper" : "papers"}
+                    · {subjectCount} {subjectCount === 1 ? "subject" : "subjects"}
                   </span>
                 </span>
                 <span className="text-xs font-normal text-muted-foreground">
@@ -823,25 +855,31 @@ export default function InspectorScriptsControlPage() {
                 </span>
               </summary>
               {scope === "due" ? (
-                <div className="mt-4 space-y-4">
-                  {subjectGroup.bundles.map((bundle) => renderPaperBundleCard(bundle))}
+                <div className="mt-4">
+                  {groupPaperBundlesBySubject(dateGroup.bundles).map((subjectGroup) => (
+                    <Fragment key={subjectGroup.key}>
+                      <SubjectSectionDivider label={subjectGroupLabel(subjectGroup)} />
+                      <div className="space-y-4">
+                        {subjectGroup.bundles.map((bundle) => renderPaperBundleCard(bundle))}
+                      </div>
+                    </Fragment>
+                  ))}
                 </div>
               ) : (
-                <ul className="mt-3 space-y-2 border-t border-border pt-3">
-                  {subjectGroup.bundles.map((bundle) => (
-                    <li
-                      key={`${bundle.subjectId}-${bundle.paperNumber}`}
-                      className="flex flex-col gap-1 text-sm text-foreground sm:flex-row sm:flex-wrap sm:items-baseline sm:gap-x-1.5"
-                    >
-                      <span className="font-medium">{formatUpcomingPapersLabel([bundle])}</span>
-                      <span className="text-muted-foreground">
-                        {bundle.examinationDate
-                          ? `Scheduled ${bundle.examinationDate}`
-                          : "No date in timetable"}
-                      </span>
-                    </li>
-                  ))}
-                </ul>
+                <div className="mt-3">
+                  {groupUpcomingBundlesBySubjectAndDate(dateGroup.bundles).map((rowBundles) => {
+                    const first = rowBundles[0];
+                    const label = `${displayScriptSubjectCode(first)} — ${first.subjectName}`;
+                    return (
+                      <Fragment key={`${first.subjectId}-${rowBundles.map((b) => b.paperNumber).join("-")}`}>
+                        <SubjectSectionDivider label={label} />
+                        <p className="pb-1 text-sm text-muted-foreground">
+                          {formatUpcomingPapersLabel(rowBundles)}
+                        </p>
+                      </Fragment>
+                    );
+                  })}
+                </div>
               )}
             </details>
           );
@@ -962,21 +1000,21 @@ export default function InspectorScriptsControlPage() {
 
               {listHint ? <p className="text-sm text-muted-foreground">{listHint}</p> : null}
 
-              {dueSubjectGroups.length > 0 ? (
-                renderSubjectCollapsibleGroups(dueSubjectGroups, "due")
+              {dueDateGroups.length > 0 ? (
+                renderDateCollapsibleGroups(dueDateGroups, "due")
               ) : (
                 <p className="rounded-lg border border-dashed border-border bg-muted/10 px-4 py-6 text-center text-sm text-muted-foreground">
                   No papers due for packing yet.
                 </p>
               )}
 
-              {showUpcoming && upcomingSubjectGroups.length > 0 ? (
+              {showUpcoming && upcomingDateGroups.length > 0 ? (
                 <section className="space-y-3 border-t border-border pt-8">
                   <h2 className="text-base font-semibold text-foreground">Upcoming</h2>
                   <p className="text-xs text-muted-foreground">
                     Packing is available on or after each paper&apos;s scheduled date.
                   </p>
-                  {renderSubjectCollapsibleGroups(upcomingSubjectGroups, "upcoming")}
+                  {renderDateCollapsibleGroups(upcomingDateGroups, "upcoming")}
                 </section>
               ) : null}
             </div>

@@ -12,6 +12,7 @@ import {
   type ScriptControlStatusFilter,
 } from "@/components/script-control/script-control-status-tabs";
 import {
+  SCRIPT_CONTROL_VIEW_PAGE_SIZES,
   ScriptControlViewTable,
   type ScriptControlViewRow,
 } from "@/components/script-control/script-control-view-table";
@@ -106,8 +107,9 @@ export default function AdminScriptControlViewPage() {
   const subjectTypeFilter = parseScriptControlSubjectTypeFilter(searchParams.get("subject_type"));
   const showSeriesColumns = searchParams.get("detail") === "series";
   const page = Math.max(1, parseInt(searchParams.get("page") ?? "1", 10) || 1);
-  const pageSize = [50, 100, 200].includes(parseInt(searchParams.get("limit") ?? "100", 10))
-    ? parseInt(searchParams.get("limit") ?? "100", 10)
+  const limitParam = parseInt(searchParams.get("limit") ?? "100", 10);
+  const pageSize = (SCRIPT_CONTROL_VIEW_PAGE_SIZES as readonly number[]).includes(limitParam)
+    ? limitParam
     : 100;
 
   const [seriesConfig, setSeriesConfig] = useState<ExaminationScriptSeriesConfigRow[]>([]);

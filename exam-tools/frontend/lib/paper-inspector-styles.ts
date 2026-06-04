@@ -27,6 +27,14 @@ export type SubjectScriptBundleGroup = {
   bundles: ScriptPaperBundle[];
 };
 
+export const SCRIPT_NO_EXAM_DATE_KEY = "no-date";
+
+export type DateScriptBundleGroup = {
+  key: string;
+  examinationDate: string | null;
+  bundles: ScriptPaperBundle[];
+};
+
 export type DueAndUpcomingPapers = {
   due: ScriptPaperBundle[];
   upcoming: ScriptPaperBundle[];
@@ -161,6 +169,77 @@ export function sortSubjectBundleGroups(groups: SubjectScriptBundleGroup[]): Sub
 
 export function subjectScriptAccordionId(scope: "due" | "upcoming", subjectKey: string): string {
   return `${scope}:${subjectKey}`;
+}
+
+/** Subject code then paper number within a date bucket. */
+function sortPaperBundlesBySubjectThenPaper(bundles: ScriptPaperBundle[]): ScriptPaperBundle[] {
+  return [...bundles].sort((a, b) => {
+    const codeCmp = displayScriptSubjectCode(a).localeCompare(displayScriptSubjectCode(b));
+    return codeCmp !== 0 ? codeCmp : a.paperNumber - b.paperNumber;
+  });
+}
+
+export function groupPaperBundlesByDate(bundles: ScriptPaperBundle[]): DateScriptBundleGroup[] {
+  const map = new Map<string, DateScriptBundleGroup>();
+  for (const b of bundles) {
+    const key = b.examinationDate ?? SCRIPT_NO_EXAM_DATE_KEY;
+    const existing = map.get(key);
+    if (existing) {
+      existing.bundles.push(b);
+      continue;
+    }
+    map.set(key, {
+      key,
+      examinationDate: b.examinationDate,
+      bundles: [b],
+    });
+  }
+  for (const g of map.values()) {
+    g.bundles = sortPaperBundlesBySubjectThenPaper(g.bundles);
+  }
+  return Array.from(map.values());
+}
+
+/** Newest examination date first; no-date bucket last. */
+export function sortDateBundleGroups(groups: DateScriptBundleGroup[]): DateScriptBundleGroup[] {
+  return [...groups].sort((a, b) => {
+    if (a.key === SCRIPT_NO_EXAM_DATE_KEY && b.key === SCRIPT_NO_EXAM_DATE_KEY) return 0;
+    if (a.key === SCRIPT_NO_EXAM_DATE_KEY) return 1;
+    if (b.key === SCRIPT_NO_EXAM_DATE_KEY) return -1;
+    return b.key.localeCompare(a.key);
+  });
+}
+
+/** Earliest examination date first; no-date bucket last. */
+export function sortDateBundleGroupsAscending(groups: DateScriptBundleGroup[]): DateScriptBundleGroup[] {
+  return [...groups].sort((a, b) => {
+    if (a.key === SCRIPT_NO_EXAM_DATE_KEY && b.key === SCRIPT_NO_EXAM_DATE_KEY) return 0;
+    if (a.key === SCRIPT_NO_EXAM_DATE_KEY) return 1;
+    if (b.key === SCRIPT_NO_EXAM_DATE_KEY) return -1;
+    return a.key.localeCompare(b.key);
+  });
+}
+
+export function dateScriptAccordionId(scope: "due" | "upcoming", dateKey: string): string {
+  return `${scope}:${dateKey}`;
+}
+
+export function formatScriptExaminationDateLabel(iso: string): string {
+  return new Date(`${iso}T12:00:00`).toLocaleDateString(undefined, {
+    weekday: "short",
+    day: "numeric",
+    month: "short",
+    year: "numeric",
+  });
+}
+
+export function scriptExaminationDateGroupLabel(dateGroup: DateScriptBundleGroup): string {
+  if (dateGroup.examinationDate == null) return "No date in timetable";
+  return formatScriptExaminationDateLabel(dateGroup.examinationDate);
+}
+
+export function countDistinctSubjectsInBundles(bundles: ScriptPaperBundle[]): number {
+  return new Set(bundles.map((b) => b.subjectId)).size;
 }
 
 export function partitionDueAndUpcoming(

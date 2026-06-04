@@ -27,7 +27,7 @@ type Props = {
   paperNumber: number;
   recordType: "regular" | "irregular";
   cap: number;
-  layout: "table" | "cards";
+  layout: "table" | "table-panel" | "cards";
   autoFocus?: boolean;
   autoFocusDelay?: number;
   onDraftChange: (draft: ScriptControlDraft) => void;
@@ -95,9 +95,14 @@ export function ScriptControlEnvelopeFields({
 
   const header = (
     <>
-      <div className="flex items-center justify-between gap-2">
-        <span className={formLabelClass}>Envelopes</span>
-        <button type="button" className={btnSecondary} disabled={draftIsNoScripts(draft)} onClick={addEnvelope}>
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <span className={cn(formLabelClass, "shrink-0")}>Envelopes</span>
+        <button
+          type="button"
+          className={cn(btnSecondary, "shrink-0 whitespace-nowrap")}
+          disabled={draftIsNoScripts(draft)}
+          onClick={addEnvelope}
+        >
           Add envelope
         </button>
       </div>
@@ -193,54 +198,72 @@ export function ScriptControlEnvelopeFields({
     );
   }
 
+  const table = (
+    <div className="overflow-x-auto rounded-lg border border-border">
+      <table className="w-full min-w-[280px] text-sm">
+        <thead className="border-b border-border bg-muted/40 text-left text-xs text-muted-foreground">
+          <tr>
+            <th className="px-3 py-2 font-medium">Envelope</th>
+            <th className="px-3 py-2 font-medium">{packingCountFieldLabel(paperNumber)}</th>
+            <th className="px-3 py-2 w-24" />
+          </tr>
+        </thead>
+        <tbody>
+          {draft.envelopes.map((env, idx) => (
+            <tr key={env.envelope_number} className="border-b border-border/60 last:border-0">
+              <td className="px-3 py-2 font-medium tabular-nums">{env.envelope_number}</td>
+              <td className="px-3 py-2">
+                <input
+                  ref={(el) => {
+                    inputRefs.current[idx] = el;
+                  }}
+                  type="number"
+                  min={0}
+                  inputMode="numeric"
+                  className={cn(formInputClass, "max-w-[140px]")}
+                  value={env.booklet_count === null ? "" : env.booklet_count}
+                  onChange={(e) => {
+                    const v = e.target.value;
+                    updateEnvelope(idx, v === "" ? null : parseInt(v, 10));
+                  }}
+                />
+              </td>
+              <td className="px-3 py-2">
+                {env.envelope_number === 1 && draft.envelopes.length === 1 ? null : (
+                  <button
+                    type="button"
+                    className={cn(btnDanger, "min-h-9 shrink-0 px-2 text-xs whitespace-nowrap")}
+                    onClick={() => removeEnvelope(idx)}
+                  >
+                    Remove
+                  </button>
+                )}
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+
+  if (layout === "table-panel") {
+    return (
+      <div className="flex min-h-0 flex-1 flex-col">
+        <div className="shrink-0 space-y-4">{header}</div>
+        <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain">
+          <div className="space-y-4">
+            {table}
+            {noScriptsHint}
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="space-y-4">
       {header}
-      <div className="overflow-x-auto rounded-lg border border-border">
-        <table className="w-full min-w-[280px] text-sm">
-          <thead className="border-b border-border bg-muted/40 text-left text-xs text-muted-foreground">
-            <tr>
-              <th className="px-3 py-2 font-medium">Envelope</th>
-              <th className="px-3 py-2 font-medium">{packingCountFieldLabel(paperNumber)}</th>
-              <th className="px-3 py-2 w-24" />
-            </tr>
-          </thead>
-          <tbody>
-            {draft.envelopes.map((env, idx) => (
-              <tr key={env.envelope_number} className="border-b border-border/60 last:border-0">
-                <td className="px-3 py-2 font-medium tabular-nums">{env.envelope_number}</td>
-                <td className="px-3 py-2">
-                  <input
-                    ref={(el) => {
-                      inputRefs.current[idx] = el;
-                    }}
-                    type="number"
-                    min={0}
-                    inputMode="numeric"
-                    className={cn(formInputClass, "max-w-[140px]")}
-                    value={env.booklet_count === null ? "" : env.booklet_count}
-                    onChange={(e) => {
-                      const v = e.target.value;
-                      updateEnvelope(idx, v === "" ? null : parseInt(v, 10));
-                    }}
-                  />
-                </td>
-                <td className="px-3 py-2">
-                  {env.envelope_number === 1 && draft.envelopes.length === 1 ? null : (
-                    <button
-                      type="button"
-                      className={cn(btnDanger, "min-h-9 px-2 text-xs")}
-                      onClick={() => removeEnvelope(idx)}
-                    >
-                      Remove
-                    </button>
-                  )}
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
+      {table}
       {noScriptsHint}
     </div>
   );
