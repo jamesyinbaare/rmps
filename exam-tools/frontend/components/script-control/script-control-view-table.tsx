@@ -18,6 +18,8 @@ import type { ScriptControlAdminRow, ScriptControlSchoolOverallStatus } from "@/
 import { packingItemNounForCount } from "@/lib/script-packing-terms";
 import { cn } from "@/lib/utils";
 
+export const SCRIPT_CONTROL_VIEW_PAGE_SIZES = [50, 100, 200, 250, 500] as const;
+
 export type ScriptControlViewRow = {
   school_id: string;
   school_code: string;
@@ -441,7 +443,7 @@ export function ScriptControlViewTable({
             value={String(pageSize)}
             onChange={(e) => onPageSizeChange(parseInt(e.target.value, 10))}
           >
-            {[50, 100, 200].map((n) => (
+            {SCRIPT_CONTROL_VIEW_PAGE_SIZES.map((n) => (
               <option key={n} value={n}>
                 {n} per page
               </option>

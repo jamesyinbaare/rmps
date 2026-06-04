@@ -164,6 +164,8 @@ export function AdminDashboardShell({ children }: Props) {
     return pathname === href || pathname.startsWith(`${href}/`);
   }
 
+  const isScriptControlEdit = pathname.startsWith("/dashboard/admin/script-control/edit");
+
   return (
     <div className="min-h-screen bg-background">
       {sidebarOpen ? (
@@ -280,7 +282,8 @@ export function AdminDashboardShell({ children }: Props) {
         </div>
       </aside>
 
-      <div className="lg:pl-64">
+      <div className="flex h-dvh max-h-dvh flex-col overflow-hidden lg:pl-64">
+        <div className="shrink-0">
         <DashboardStickyHeader
           title={
             financeTitle ??
@@ -312,17 +315,21 @@ export function AdminDashboardShell({ children }: Props) {
                 }
           }
         />
+        </div>
 
         <main
           className={cn(
-            "mx-auto px-4 py-6 sm:px-6",
+            "mx-auto w-full min-h-0 min-w-0 flex-1 overflow-x-auto overflow-y-auto overscroll-y-contain px-4 py-6 sm:px-6",
             pathname === ATTENDANCE_SHEETS_HREF || pathname.startsWith(`${ATTENDANCE_SHEETS_HREF}/`)
               || onOfficialStatisticsPage
               || onCentreSummaryPage
               || onFinanceCentreSummaryPage
+              || isScriptControlEdit
+              || pathname.startsWith("/dashboard/admin/script-control")
               ? "max-w-[1600px]"
               : "max-w-6xl",
             isExecutiveViewer && "pb-[calc(5rem+env(safe-area-inset-bottom))] lg:pb-6",
+            isScriptControlEdit && "pb-10 [--staff-sticky-header-offset:0px]",
           )}
         >
           {children}

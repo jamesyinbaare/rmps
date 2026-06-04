@@ -22,11 +22,11 @@ import type {
 import { cn } from "@/lib/utils";
 
 const btnPrimary =
-  "inline-flex min-h-10 items-center justify-center rounded-lg bg-primary px-3 text-sm font-medium text-primary-foreground hover:bg-primary-hover";
+  "inline-flex min-h-10 shrink-0 items-center justify-center whitespace-nowrap rounded-lg bg-primary px-3 text-sm font-medium text-primary-foreground hover:bg-primary-hover";
 const btnSecondary =
-  "inline-flex min-h-10 items-center justify-center rounded-lg border border-input-border bg-background px-3 text-sm font-medium hover:bg-muted";
+  "inline-flex min-h-10 shrink-0 items-center justify-center whitespace-nowrap rounded-lg border border-input-border bg-background px-3 text-sm font-medium hover:bg-muted";
 const btnDanger =
-  "inline-flex min-h-10 items-center justify-center rounded-lg border border-destructive/50 px-3 text-sm font-medium text-destructive hover:bg-destructive/10";
+  "inline-flex min-h-10 shrink-0 items-center justify-center whitespace-nowrap rounded-lg border border-destructive/50 px-3 text-sm font-medium text-destructive hover:bg-destructive/10";
 
 export type SeriesEditHandlers = {
   onSave: (
@@ -105,7 +105,13 @@ export function ScriptControlSeriesBlock({
   }
 
   return (
-    <li className={cn(paperVisuals.seriesRowClass, "list-none", isPanel && "rounded-none border-0 bg-transparent p-0 shadow-none")}>
+    <li
+      className={cn(
+        paperVisuals.seriesRowClass,
+        "list-none",
+        isPanel && "w-full rounded-none border-0 bg-transparent p-0 shadow-none",
+      )}
+    >
       <div className={cn(isPanel && "mb-4 flex flex-wrap items-center justify-between gap-2 border-b border-border pb-3")}>
         <span className={cn(seriesInspectorBadgeClass, isPanel && "text-sm")}>Series {slot.series_number}</span>
         {isPanel ? (
@@ -189,8 +195,14 @@ export function ScriptControlSeriesBlock({
         </div>
       ) : null}
       {isEditing ? (
-        <div className={cn("mt-3 space-y-4 border-t pt-4", paperVisuals.editDividerClass, isPanel && "border-border")}>
-          {formError && <p className="text-sm text-destructive">{formError}</p>}
+        <div
+          className={cn(
+            "mt-3 space-y-4 border-t pt-4",
+            paperVisuals.editDividerClass,
+            isPanel && "border-border",
+          )}
+        >
+          {formError ? <p className="text-sm text-destructive">{formError}</p> : null}
           <ScriptControlEnvelopeFields
             draft={draft}
             paperNumber={paperNumber}
@@ -200,7 +212,7 @@ export function ScriptControlSeriesBlock({
             autoFocus={isPanel && isEditing}
             onDraftChange={onDraftChange}
           />
-          <div className="flex gap-2 pt-1">
+          <div className="flex flex-wrap gap-2 pt-1">
             <button type="button" className={btnPrimary} disabled={handlers.busy} onClick={() => void handleSave()}>
               Save
             </button>

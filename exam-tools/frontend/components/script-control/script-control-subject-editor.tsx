@@ -220,8 +220,8 @@ export function ScriptControlSubjectEditor({
         ) : null}
       </div>
 
-      {/* Desktop: series nav + focused panel */}
-      <div className="hidden lg:grid lg:grid-cols-[minmax(200px,240px)_1fr] lg:gap-5">
+      {/* Desktop: series nav + focused panel — grows with content; page scrolls */}
+      <div className="hidden lg:grid lg:grid-cols-[minmax(200px,240px)_minmax(0,1fr)] lg:items-start lg:gap-5">
         <ScriptControlEditSeriesNav
           items={navItems}
           selectedKey={desktopSeriesKey}

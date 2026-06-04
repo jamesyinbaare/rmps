@@ -45,7 +45,7 @@ export function ScriptControlEditSeriesNav({ items, selectedKey, onSelect }: Pro
       <div className="border-b border-border px-3 py-2.5">
         <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Series</p>
       </div>
-      <ul className="max-h-[min(70vh,640px)] overflow-y-auto p-2">
+      <ul className="max-h-[min(70vh,640px)] overflow-y-auto overscroll-contain p-2">
         {items.length === 0 ? (
           <li className="px-2 py-4 text-center text-xs text-muted-foreground">No series on this paper.</li>
         ) : (

@@ -65,7 +65,7 @@ export function ScriptControlEditContextBar({
   return (
     <div
       className={cn(
-        "sticky top-[var(--staff-sticky-header-offset,4.5rem)] z-20 isolate min-w-0 max-w-full overflow-hidden rounded-xl border border-border bg-card px-4 py-3 shadow-sm lg:top-[var(--staff-sticky-header-offset,4.5rem)]",
+        "sticky top-[var(--staff-sticky-header-offset,4.5rem)] z-20 isolate min-w-0 max-w-full rounded-xl border border-border bg-card px-4 py-3 shadow-sm lg:top-[var(--staff-sticky-header-offset,4.5rem)]",
         paperEditContextBarClass(paperNumber),
         className,
       )}
