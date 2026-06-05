@@ -62,7 +62,7 @@ export function SearchableCombobox({
           className={cn(
             "relative min-w-0 max-w-full justify-between gap-2 text-sm font-normal",
             truncateTrigger
-              ? "h-10 items-center whitespace-nowrap py-0"
+              ? "h-10 items-center overflow-hidden whitespace-nowrap py-0"
               : "h-auto min-h-11 items-center whitespace-normal py-2.5 sm:min-h-10",
             widthClass,
             triggerClassName,

@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { Fragment, useCallback, useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 
 import { DashboardShell } from "@/components/dashboard-shell";
@@ -8,17 +8,20 @@ import { RoleGuard } from "@/components/role-guard";
 import { formInputClass, formLabelClass } from "@/lib/form-classes";
 import {
   displayQuestionPaperSubjectCode,
-  questionPaperBundleLabel,
   getPaperInspectorVisuals,
+  formatScriptExaminationDateLabel,
+  groupQuestionPaperBundlesByDate,
   groupQuestionPaperBundlesBySubject,
+  groupUpcomingBundlesBySubjectAndDate,
   isQuestionPaperBundleFullyRecorded,
   isQuestionPaperSeriesRecorded,
   partitionQuestionPaperDueAndUpcoming,
-  questionPaperAccordionId,
+  questionPaperBundleLabel,
   questionPaperDueListHint,
-  sortQuestionPaperSubjectBundleGroups,
-  sortQuestionPaperSubjectBundleGroupsAscending,
+  sortDateQuestionPaperBundleGroups,
+  sortDateQuestionPaperBundleGroupsAscending,
   seriesInspectorBadgeClass,
+  type DateQuestionPaperBundleGroup,
   type QuestionPaperBundle,
   type SubjectQuestionPaperBundleGroup,
 } from "@/lib/paper-inspector-styles";
@@ -37,6 +40,27 @@ import { cn } from "@/lib/utils";
 
 const btnPrimary =
   "inline-flex min-h-10 items-center justify-center rounded-lg bg-primary px-3 text-sm font-medium text-primary-foreground transition-colors hover:bg-primary-hover focus:outline-none focus:ring-2 focus:ring-ring/30 disabled:pointer-events-none disabled:opacity-50";
+
+const subjectDividerLineClass = "min-h-0 flex-1 border-t-[3px] border-dotted border-primary";
+
+function SubjectSectionDivider({ label }: { label: string }) {
+  return (
+    <div
+      className="flex min-w-0 items-center gap-2 py-6 sm:gap-3"
+      role="separator"
+      aria-label={label}
+    >
+      <div className={`${subjectDividerLineClass} min-w-8 sm:min-w-12`} aria-hidden />
+      <span
+        className="min-w-0 max-w-[min(62%,20rem)] shrink truncate bg-card px-2 text-center text-xs font-bold leading-snug text-primary sm:max-w-[24rem] sm:px-3 sm:text-sm md:max-w-[28rem]"
+        title={label}
+      >
+        {label}
+      </span>
+      <div className={`${subjectDividerLineClass} min-w-8 sm:min-w-12`} aria-hidden />
+    </div>
+  );
+}
 
 type SlotDraft = {
   copies_received: number | null;
@@ -144,7 +168,7 @@ export default function InspectorQuestionPaperControlPage() {
   const [showUpcoming, setShowUpcoming] = useState(true);
   const [openAccordionId, setOpenAccordionId] = useState<string | null>(null);
   const [openSeriesKey, setOpenSeriesKey] = useState<string | null>(null);
-  const subjectAccordionRefs = useRef<Record<string, HTMLDetailsElement | null>>({});
+  const dateAccordionRefs = useRef<Record<string, HTMLDetailsElement | null>>({});
   const [savingKey, setSavingKey] = useState<string | null>(null);
   const [slotErrors, setSlotErrors] = useState<Record<string, string>>({});
   const [isLgUp, setIsLgUp] = useState(
@@ -311,23 +335,23 @@ export default function InspectorQuestionPaperControlPage() {
     data && data.subjects.length > 0
       ? partitionQuestionPaperDueAndUpcoming(data.subjects, localTodayIso())
       : null;
-  const dueSubjectGroups = partitioned
-    ? sortQuestionPaperSubjectBundleGroups(groupQuestionPaperBundlesBySubject(partitioned.due))
+  const dueDateGroups = partitioned
+    ? sortDateQuestionPaperBundleGroups(groupQuestionPaperBundlesByDate(partitioned.due))
     : [];
-  const upcomingSubjectGroups = partitioned
-    ? sortQuestionPaperSubjectBundleGroupsAscending(
-        groupQuestionPaperBundlesBySubject(partitioned.upcoming),
+  const upcomingDateGroups = partitioned
+    ? sortDateQuestionPaperBundleGroupsAscending(
+        groupQuestionPaperBundlesByDate(partitioned.upcoming),
       )
     : [];
   const listHint = partitioned ? questionPaperDueListHint(partitioned.due, partitioned.upcoming) : null;
 
-  function toggleSubjectAccordion(id: string) {
+  function toggleDateAccordion(id: string) {
     const opening = openAccordionId !== id;
     setOpenAccordionId(opening ? id : null);
     if (opening) {
       requestAnimationFrame(() => {
         requestAnimationFrame(() => {
-          subjectAccordionRefs.current[id]?.scrollIntoView({ behavior: "smooth", block: "start" });
+          dateAccordionRefs.current[id]?.scrollIntoView({ behavior: "smooth", block: "start" });
         });
       });
     }
@@ -539,20 +563,30 @@ export default function InspectorQuestionPaperControlPage() {
     );
   }
 
-  function renderSubjectCollapsibleGroups(
-    groups: SubjectQuestionPaperBundleGroup[],
+  function subjectGroupLabel(subjectGroup: SubjectQuestionPaperBundleGroup): string {
+    return `${subjectGroup.subjectCode} — ${subjectGroup.subjectName}`;
+  }
+
+  function renderDateCollapsibleGroups(
+    groups: DateQuestionPaperBundleGroup[],
     scope: "due" | "upcoming",
   ) {
     return (
       <div className={scope === "upcoming" ? "space-y-4" : "space-y-6"}>
-        {groups.map((subjectGroup) => {
-          const accordionId = questionPaperAccordionId(scope, subjectGroup.key);
+        {groups.map((dateGroup) => {
+          const accordionId = `${scope}:${dateGroup.key}`;
           const isOpen = openAccordionId === accordionId;
+          const subjectCount = new Set(dateGroup.bundles.map((b) => b.subjectId)).size;
+          const dateLabel =
+            dateGroup.examinationDate == null
+              ? "No date in timetable"
+              : formatScriptExaminationDateLabel(dateGroup.examinationDate);
+
           return (
             <details
-              key={subjectGroup.key}
+              key={dateGroup.key}
               ref={(el) => {
-                subjectAccordionRefs.current[accordionId] = el;
+                dateAccordionRefs.current[accordionId] = el;
               }}
               className={`scroll-mt-4 group rounded-2xl border border-border p-4 shadow-sm sm:p-5 ${
                 scope === "upcoming" ? "bg-card/60" : "bg-card"
@@ -563,40 +597,51 @@ export default function InspectorQuestionPaperControlPage() {
                 className="flex min-h-11 cursor-pointer list-none flex-wrap items-center justify-between gap-2 text-sm font-semibold text-foreground marker:hidden [&::-webkit-details-marker]:hidden"
                 onClick={(e) => {
                   e.preventDefault();
-                  toggleSubjectAccordion(accordionId);
+                  toggleDateAccordion(accordionId);
                 }}
               >
                 <span>
-                  {subjectGroup.subjectCode} — {subjectGroup.subjectName}
+                  {dateLabel}
                   <span className="ml-2 font-normal text-muted-foreground">
-                    · {subjectGroup.bundles.length}{" "}
-                    {subjectGroup.bundles.length === 1 ? "paper" : "papers"}
+                    · {subjectCount} {subjectCount === 1 ? "subject" : "subjects"}
                   </span>
                 </span>
                 <span className="text-xs font-normal text-muted-foreground">
                   {isOpen ? "Tap to collapse" : "Tap to expand"}
                 </span>
               </summary>
+
               {scope === "due" ? (
-                <div className="mt-4 space-y-4">
-                  {subjectGroup.bundles.map((bundle) => renderPaperBundleCard(bundle))}
+                <div className="mt-4">
+                  {groupQuestionPaperBundlesBySubject(dateGroup.bundles).map((subjectGroup) => (
+                    <Fragment key={subjectGroup.key}>
+                      <SubjectSectionDivider label={subjectGroupLabel(subjectGroup)} />
+                      <div className="space-y-4">
+                        {subjectGroup.bundles.map((bundle) => renderPaperBundleCard(bundle))}
+                      </div>
+                    </Fragment>
+                  ))}
                 </div>
               ) : (
-                <ul className="mt-3 space-y-2 border-t border-border pt-3">
-                  {subjectGroup.bundles.map((bundle) => (
-                    <li
-                      key={`${bundle.subjectId}-${bundle.coversPapers.join("-")}`}
-                      className="flex flex-col gap-1 text-sm text-foreground sm:flex-row sm:flex-wrap sm:items-baseline sm:gap-x-1.5"
-                    >
-                      <span className="font-medium">{questionPaperBundleLabel(bundle)}</span>
-                      <span className="text-muted-foreground">
-                        {bundle.examinationDate
-                          ? `Scheduled ${bundle.examinationDate}`
-                          : "No date in timetable"}
-                      </span>
-                    </li>
-                  ))}
-                </ul>
+                <div className="mt-3">
+                  {groupUpcomingBundlesBySubjectAndDate(dateGroup.bundles).map((rowBundles) => {
+                    const first = rowBundles[0];
+                    const label = `${displayQuestionPaperSubjectCode(first)} — ${first.subjectName}`;
+                    const rowLabel =
+                      rowBundles.length === 1
+                        ? questionPaperBundleLabel(first)
+                        : rowBundles.map((b) => questionPaperBundleLabel(b)).join(" & ");
+
+                    return (
+                      <Fragment
+                        key={`${first.subjectId}-${rowBundles.map((b) => b.paperNumber).join("-")}`}
+                      >
+                        <SubjectSectionDivider label={label} />
+                        <p className="pb-1 text-sm text-muted-foreground">{rowLabel}</p>
+                      </Fragment>
+                    );
+                  })}
+                </div>
               )}
             </details>
           );
@@ -672,21 +717,21 @@ export default function InspectorQuestionPaperControlPage() {
 
               {listHint ? <p className="text-sm text-muted-foreground">{listHint}</p> : null}
 
-              {dueSubjectGroups.length > 0 ? (
-                renderSubjectCollapsibleGroups(dueSubjectGroups, "due")
+              {dueDateGroups.length > 0 ? (
+                renderDateCollapsibleGroups(dueDateGroups, "due")
               ) : (
                 <p className="rounded-lg border border-dashed border-border bg-muted/10 px-4 py-6 text-center text-sm text-muted-foreground">
                   No papers due for question paper counts yet.
                 </p>
               )}
 
-              {showUpcoming && upcomingSubjectGroups.length > 0 ? (
+              {showUpcoming && upcomingDateGroups.length > 0 ? (
                 <section className="space-y-3 border-t border-border pt-8">
                   <h2 className="text-base font-semibold text-foreground">Upcoming</h2>
                   <p className="text-xs text-muted-foreground">
                     Recording is available on or after each paper&apos;s scheduled date.
                   </p>
-                  {renderSubjectCollapsibleGroups(upcomingSubjectGroups, "upcoming")}
+                  {renderDateCollapsibleGroups(upcomingDateGroups, "upcoming")}
                 </section>
               ) : null}
             </div>

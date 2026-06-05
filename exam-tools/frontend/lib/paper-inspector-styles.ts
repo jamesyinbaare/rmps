@@ -291,7 +291,7 @@ export function irregularDueListHint(due: ScriptPaperBundle[], upcoming: ScriptP
     return "No pending irregular entries on due papers. Upcoming papers are listed below.";
   }
   if (allDueRecorded) {
-    return "No pending irregular entries on due papers. Expand a subject to review or edit.";
+    return "No pending irregular entries on due papers. Expand a date to review or edit.";
   }
   if (due.length === 0 && upcoming.length > 0) {
     return "No irregular entries recorded yet. Use this page only when irregular scripts occur.";
@@ -545,6 +545,69 @@ export function sortQuestionPaperSubjectBundleGroupsAscending(
   });
 }
 
+export type DateQuestionPaperBundleGroup = {
+  key: string;
+  examinationDate: string | null;
+  bundles: QuestionPaperBundle[];
+};
+
+/** Question paper bundles ordered by subject code then paper number within a date bucket. */
+function sortQuestionPaperBundlesBySubjectThenPaper(bundles: QuestionPaperBundle[]): QuestionPaperBundle[] {
+  return [...bundles].sort((a, b) => {
+    const codeCmp = displayQuestionPaperSubjectCode(a).localeCompare(
+      displayQuestionPaperSubjectCode(b),
+    );
+    return codeCmp !== 0 ? codeCmp : a.paperNumber - b.paperNumber;
+  });
+}
+
+export function groupQuestionPaperBundlesByDate(
+  bundles: QuestionPaperBundle[],
+): DateQuestionPaperBundleGroup[] {
+  const map = new Map<string, DateQuestionPaperBundleGroup>();
+  for (const b of bundles) {
+    const key = b.examinationDate ?? SCRIPT_NO_EXAM_DATE_KEY;
+    const existing = map.get(key);
+    if (existing) {
+      existing.bundles.push(b);
+      continue;
+    }
+    map.set(key, {
+      key,
+      examinationDate: b.examinationDate,
+      bundles: [b],
+    });
+  }
+  for (const g of map.values()) {
+    g.bundles = sortQuestionPaperBundlesBySubjectThenPaper(g.bundles);
+  }
+  return Array.from(map.values());
+}
+
+/** Newest examination date first; no-date bucket last. */
+export function sortDateQuestionPaperBundleGroups(
+  groups: DateQuestionPaperBundleGroup[],
+): DateQuestionPaperBundleGroup[] {
+  return [...groups].sort((a, b) => {
+    if (a.key === SCRIPT_NO_EXAM_DATE_KEY && b.key === SCRIPT_NO_EXAM_DATE_KEY) return 0;
+    if (a.key === SCRIPT_NO_EXAM_DATE_KEY) return 1;
+    if (b.key === SCRIPT_NO_EXAM_DATE_KEY) return -1;
+    return b.key.localeCompare(a.key);
+  });
+}
+
+/** Earliest examination date first; no-date bucket last. */
+export function sortDateQuestionPaperBundleGroupsAscending(
+  groups: DateQuestionPaperBundleGroup[],
+): DateQuestionPaperBundleGroup[] {
+  return [...groups].sort((a, b) => {
+    if (a.key === SCRIPT_NO_EXAM_DATE_KEY && b.key === SCRIPT_NO_EXAM_DATE_KEY) return 0;
+    if (a.key === SCRIPT_NO_EXAM_DATE_KEY) return 1;
+    if (b.key === SCRIPT_NO_EXAM_DATE_KEY) return -1;
+    return a.key.localeCompare(b.key);
+  });
+}
+
 export function questionPaperAccordionId(scope: "due" | "upcoming", subjectKey: string): string {
   return `${scope}:${subjectKey}`;
 }
@@ -593,7 +656,7 @@ export function questionPaperDueListHint(
     return "All papers due so far are recorded. Upcoming papers are listed below.";
   }
   if (allDueRecorded) {
-    return "All papers due so far are recorded. Expand a subject to review or edit.";
+    return "All papers due so far are recorded. Expand a date to review or edit.";
   }
   if (due.length === 0 && upcoming.length > 0) {
     return "No question paper counts to record yet — every scheduled paper is still in the future.";

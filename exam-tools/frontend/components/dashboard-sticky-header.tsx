@@ -4,6 +4,7 @@ import Link from "next/link";
 import { Home, LogOut, Menu } from "lucide-react";
 import type { ReactNode } from "react";
 
+import { SidebarThemeToggle } from "@/components/sidebar-theme-toggle";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 
@@ -95,6 +96,8 @@ export function DashboardStickyHeader({
   accent,
   executiveMobileOnly = false,
 }: Props) {
+  const showMobileThemeToggle = executiveMobileOnly || sidebar != null;
+
   return (
     <header
       className={cn(
@@ -150,6 +153,11 @@ export function DashboardStickyHeader({
               Home
             </Link>
           </Button>
+          {showMobileThemeToggle ? (
+            <div className="lg:hidden">
+              <SidebarThemeToggle align="start" />
+            </div>
+          ) : null}
           <HeaderLogoutIconButton onLogout={onLogout} className="shrink-0 lg:hidden" />
           <HeaderLogoutLabeledButton
             onLogout={onLogout}

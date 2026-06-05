@@ -27,14 +27,21 @@ export default function RootLayout({
 }>) {
   return (
     <html lang="en" suppressHydrationWarning>
+      <head>
+        <script
+          dangerouslySetInnerHTML={{
+            __html: `(function(){try{var t=localStorage.getItem("theme")||"ctvet";var r=document.documentElement;r.classList.add("ctvet");if(t==="dark")r.classList.add("dark");r.style.colorScheme=t==="dark"?"dark":"light";}catch(e){}})();`,
+          }}
+        />
+      </head>
       <body
         className={`${geistSans.variable} ${geistMono.variable} font-sans antialiased`}
       >
         <ThemeProvider
-          attribute="class"
+          attribute="data-theme"
           defaultTheme="ctvet"
           enableSystem={false}
-          themes={["ctvet", "light", "dark"]}
+          themes={["ctvet", "dark"]}
           disableTransitionOnChange
         >
           {children}

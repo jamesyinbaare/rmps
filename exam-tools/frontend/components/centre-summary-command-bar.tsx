@@ -9,16 +9,13 @@ import { ExportFabSpeedDial } from "@/components/export-fab-speed-dial";
 import { CommandBarBorderField } from "@/components/command-bar-border-field";
 import { SearchableCombobox } from "@/components/searchable-combobox";
 import type { Examination, TimetableSubjectFilter } from "@/lib/api";
-import {
-  officialAccountsCommandBarClass,
-  officialAccountsCommandBarControlClass,
-} from "@/lib/official-accounts-zone";
+import { officialAccountsCommandBarClass } from "@/lib/official-accounts-zone";
 import { cn } from "@/lib/utils";
 
 const SECTION_ID = "centre-summary";
 
 const attendanceBtnClass = cn(
-  "inline-flex min-h-10 items-center justify-center rounded-lg border border-accent/30 bg-accent px-3.5 text-sm font-semibold text-accent-foreground shadow-md",
+  "inline-flex size-10 shrink-0 items-center justify-center rounded-lg border border-accent/30 bg-accent text-accent-foreground shadow-md",
   "transition-[filter,box-shadow] hover:brightness-95 focus:outline-none focus:ring-2 focus:ring-ring/30",
   "disabled:pointer-events-none disabled:opacity-50",
 );
@@ -26,11 +23,14 @@ const attendanceBtnClass = cn(
 const inputGroupShellClass =
   "flex w-full min-w-0 overflow-hidden rounded-lg border border-input-border bg-input shadow-sm focus-within:border-primary focus-within:ring-2 focus-within:ring-ring/30";
 
-const inputGroupRegionClass =
-  "h-10 shrink-0 cursor-pointer border-0 border-r border-input-border bg-transparent px-2.5 text-sm text-foreground focus:outline-none focus:ring-0 disabled:cursor-not-allowed disabled:opacity-50 sm:px-3";
-
 const inputGroupCentreTriggerClass =
-  "min-h-10 flex-1 rounded-none border-0 bg-transparent shadow-none hover:bg-transparent focus-visible:ring-0 focus-visible:ring-offset-0";
+  "h-10 max-h-10 min-w-0 flex-1 overflow-hidden rounded-none border-0 bg-transparent shadow-none hover:bg-transparent focus-visible:ring-0 focus-visible:ring-offset-0";
+
+const inputGroupRegionTriggerClass =
+  "h-10 w-36 shrink-0 rounded-none border-0 border-r border-input-border bg-transparent px-2.5 shadow-none hover:bg-transparent focus-visible:ring-0 focus-visible:ring-offset-0 sm:w-40 sm:px-3";
+
+const examSelectTriggerClass =
+  "h-10 w-full border-input-border bg-input shadow-sm hover:bg-input focus-visible:ring-2 focus-visible:ring-ring/30";
 
 /** Filters + actions — full toolbar width; school field grows on md+. */
 const filterGridClass =
@@ -100,19 +100,23 @@ export function CentreSummaryCommandBar({
       <div className="flex flex-col gap-3 md:flex-row md:items-end md:gap-4">
         <div className={filterGridClass}>
           <CommandBarBorderField label="Examination" htmlFor={`${SECTION_ID}-exam`} className="min-w-0">
-            <select
+            <SearchableCombobox
               id={`${SECTION_ID}-exam`}
-              className={cn(officialAccountsCommandBarControlClass, "h-10 w-full")}
-              value={examId ?? ""}
-              onChange={(e) => onExamChange(e.target.value ? Number(e.target.value) : null)}
+              options={exams.map((ex) => ({
+                value: String(ex.id),
+                label: formatExamLabel(ex),
+              }))}
+              value={examId != null ? String(examId) : ""}
+              onChange={(v) => onExamChange(v ? Number(v) : null)}
+              placeholder="Select examination…"
+              searchPlaceholder="Examination…"
+              emptyText="No examination found."
+              widthClass="w-full"
+              truncateTrigger
+              triggerClassName={examSelectTriggerClass}
+              showAllOption={false}
               disabled={exams.length === 0}
-            >
-              {exams.map((ex) => (
-                <option key={ex.id} value={ex.id}>
-                  {formatExamLabel(ex)}
-                </option>
-              ))}
-            </select>
+            />
           </CommandBarBorderField>
 
           <CentreSummaryScopeToggle
@@ -129,22 +133,22 @@ export function CentreSummaryCommandBar({
             className="min-w-0 sm:col-span-2 md:col-span-1"
           >
             <div className={inputGroupShellClass}>
-              <select
+              <SearchableCombobox
                 id={`${SECTION_ID}-region`}
-                className={cn(inputGroupRegionClass, "w-28 sm:w-32")}
+                options={regionOptions}
                 value={regionFilter}
-                onChange={(e) => onRegionChange(e.target.value)}
+                onChange={onRegionChange}
+                placeholder={regionAllLabel}
+                searchPlaceholder="Region…"
+                emptyText="No region found."
+                widthClass="w-36 sm:w-40"
+                popoverWidthClass="w-[var(--radix-popover-trigger-width)]"
+                truncateTrigger
+                triggerClassName={inputGroupRegionTriggerClass}
+                allOptionLabel={regionAllLabel}
                 disabled={centresDisabled}
-                aria-label="Region"
-              >
-                <option value="">{regionAllLabel}</option>
-                {regionOptions.map((r) => (
-                  <option key={r.value} value={r.value}>
-                    {r.label}
-                  </option>
-                ))}
-              </select>
-              <div className="min-w-0 flex-1">
+              />
+              <div className="min-w-0 flex-1 overflow-hidden">
                 <SearchableCombobox
                   id={`${SECTION_ID}-centre`}
                   options={centerOptions}
@@ -153,7 +157,7 @@ export function CentreSummaryCommandBar({
                   placeholder="Select school…"
                   searchPlaceholder="Code or name…"
                   emptyText={centreEmptyText}
-                  widthClass="w-full"
+                  widthClass="w-full max-w-full"
                   truncateTrigger
                   triggerClassName={inputGroupCentreTriggerClass}
                   showAllOption={false}
@@ -173,17 +177,16 @@ export function CentreSummaryCommandBar({
             href={attendanceSheetsHref}
             className={cn(
               attendanceBtnClass,
-              "min-w-0 flex-1 gap-2 sm:flex-none sm:px-4",
               "motion-safe:hover:shadow-lg",
               canLoad && "ring-1 ring-accent/35",
               !canLoad && "pointer-events-none opacity-50",
             )}
+            aria-label="Attendance sheets"
             aria-disabled={!canLoad}
             tabIndex={canLoad ? undefined : -1}
-            title={canLoad ? "Open attendance uploads for this centre" : "Select a centre first"}
+            title={canLoad ? "Attendance sheets" : "Select a centre first"}
           >
             <ClipboardList className="size-4 shrink-0" aria-hidden />
-            <span className="truncate">Attendance sheets</span>
           </Link>
           <ExportFabSpeedDial
             options={exportOptions}

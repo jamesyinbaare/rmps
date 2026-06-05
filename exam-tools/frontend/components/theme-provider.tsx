@@ -11,53 +11,22 @@ function ThemeClassHandler() {
   const { theme, resolvedTheme } = useTheme();
 
   useEffect(() => {
-    if (!theme) return;
-
+    const activeTheme = theme ?? resolvedTheme ?? "ctvet";
     const root = document.documentElement;
-
     root.classList.remove("dark", "ctvet");
 
-    if (theme === "ctvet") {
-      root.classList.add("ctvet");
-      const systemTheme = window.matchMedia("(prefers-color-scheme: dark)")
-        .matches
-        ? "dark"
-        : "light";
+    // CTVET green branding. Light = .ctvet; dark = .ctvet.dark (inspector allowances palette).
+    // Classes are managed here — next-themes only stores data-theme so it does not overwrite html.class.
+    root.classList.add("ctvet");
 
-      if (systemTheme === "dark") {
-        root.classList.add("dark");
-        root.style.colorScheme = "dark";
-      } else {
-        root.style.colorScheme = "light";
-      }
+    const isDarkMode = activeTheme === "dark";
+    if (isDarkMode) {
+      root.classList.add("dark");
+      root.style.colorScheme = "dark";
     } else {
-      if (resolvedTheme === "dark") {
-        root.classList.add("dark");
-        root.style.colorScheme = "dark";
-      } else {
-        root.style.colorScheme = "light";
-      }
+      root.style.colorScheme = "light";
     }
   }, [theme, resolvedTheme]);
-
-  useEffect(() => {
-    if (theme !== "ctvet") return;
-
-    const mediaQuery = window.matchMedia("(prefers-color-scheme: dark)");
-    const handleChange = (e: MediaQueryListEvent) => {
-      const root = document.documentElement;
-      if (e.matches) {
-        root.classList.add("dark");
-        root.style.colorScheme = "dark";
-      } else {
-        root.classList.remove("dark");
-        root.style.colorScheme = "light";
-      }
-    };
-
-    mediaQuery.addEventListener("change", handleChange);
-    return () => mediaQuery.removeEventListener("change", handleChange);
-  }, [theme]);
 
   return null;
 }

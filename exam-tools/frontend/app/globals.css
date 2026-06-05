@@ -102,12 +102,12 @@
   --zone-canvas: #f0f7f4;
 }
 
-/* Dark Mode */
+/* Dark Mode — green primary (CTVET / allowances palette) */
 .dark {
   --background: #0f1419;
   --foreground: #f8f9fa;
-  --primary: #e63946;
-  --primary-hover: #ce1126;
+  --primary: #22c06a;
+  --primary-hover: #17a45a;
   --primary-foreground: #ffffff;
   --secondary: #fcd116;
   --secondary-hover: #e6b80a;
@@ -128,7 +128,7 @@
   --destructive-foreground: #ffffff;
   --warning: #fcd116;
   --warning-foreground: #000000;
-  --ring: #e63946;
+  --ring: #22c06a;
 
   --popover: #1a1f2e;
   --popover-foreground: #f8f9fa;
