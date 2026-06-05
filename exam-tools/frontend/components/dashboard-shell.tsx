@@ -17,6 +17,7 @@ import {
   OfficialAccountsNavLink,
   OfficialAccountsNavSection,
 } from "@/components/official-accounts-nav-link";
+import { SidebarThemeToggle } from "@/components/sidebar-theme-toggle";
 import { OFFICIAL_ACCOUNTS_INSPECTOR_ATTENDANCE_HREF } from "@/lib/official-accounts-zone";
 
 /** Subtitle under the page title: full name plus school name and code when present. */
@@ -233,6 +234,9 @@ export function DashboardShell({ title, children, staffRole }: Props) {
               ) : null}
             </div>
           </nav>
+          <div className="hidden shrink-0 border-t border-border p-3 lg:block">
+            <SidebarThemeToggle />
+          </div>
         </div>
       </aside>
 

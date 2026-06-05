@@ -17,6 +17,7 @@ import {
 import { clearAuth, getMe, type UserMe } from "@/lib/auth";
 import { FinanceNavSection } from "@/components/finance-nav-section";
 import { FinanceSidebar } from "@/components/finance-sidebar";
+import { SidebarThemeToggle } from "@/components/sidebar-theme-toggle";
 import { isOfficialAccountsPath } from "@/lib/official-accounts-zone";
 import {
   ATTENDANCE_SHEETS_HREF,
@@ -279,6 +280,9 @@ export function AdminDashboardShell({ children }: Props) {
               ) : null}
             </nav>
           )}
+          <div className="hidden shrink-0 border-t border-border p-3 lg:block">
+            <SidebarThemeToggle />
+          </div>
         </div>
       </aside>
 
