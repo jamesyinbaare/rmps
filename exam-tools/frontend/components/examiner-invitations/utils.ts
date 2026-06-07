@@ -66,9 +66,21 @@ export function coordinationSmsSelectionBlockedReason(
   const blockedCount = rows.filter((row) => !canReceiveCoordinationSms(row.status)).length;
   if (blockedCount === 0) return null;
   if (blockedCount === rows.length) {
-    return "Coordination SMS cannot be sent: none of the selected invitees have accepted the invitation.";
+    return (
+      "None of the people you selected have accepted their invitation yet. " +
+      "You can send a coordination message once they accept."
+    );
   }
-  return `Coordination SMS cannot be sent: ${blockedCount} selected invitee${blockedCount === 1 ? "" : "s"} ha${blockedCount === 1 ? "s" : "ve"} not accepted the invitation. Remove them from the selection first.`;
+  if (blockedCount === 1) {
+    return (
+      "1 person in your selection hasn't accepted their invitation yet. " +
+      "Deselect them first, or wait until they accept."
+    );
+  }
+  return (
+    `${blockedCount} people in your selection haven't accepted their invitation yet. ` +
+    "Deselect them first, or wait until they accept."
+  );
 }
 
 export function humanizeRegion(region: string): string {

@@ -5,17 +5,20 @@ import { useCallback, useEffect, useRef, useState } from "react";
 
 import { parseExaminersTab } from "@/components/examiners/utils";
 import type { ExaminersTab } from "@/components/examiners/types";
-import type { Examination } from "@/lib/api";
+import { getStaffDefaultExamination, type Examination } from "@/lib/api";
 
 type Options = {
   exams: Examination[];
+  /** When true, skip API default exam and use the sole exam in `exams`. */
+  singleExamMode?: boolean;
 };
 
-export function useExaminersUrl({ exams }: Options) {
+export function useExaminersUrl({ exams, singleExamMode = false }: Options) {
   const router = useRouter();
   const pathname = usePathname();
   const searchParams = useSearchParams();
   const hydratedRef = useRef(false);
+  const defaultExamResolvedRef = useRef(false);
 
   const [examId, setExamId] = useState<number | null>(null);
   const [activeTab, setActiveTab] = useState<ExaminersTab>("roster");
@@ -56,6 +59,49 @@ export function useExaminersUrl({ exams }: Options) {
       }
     }
   }, [exams, pathname, router, searchParams]);
+
+  useEffect(() => {
+    if (exams.length === 0) return;
+    if (searchParams.get("exam")) return;
+    if (defaultExamResolvedRef.current) return;
+
+    let cancelled = false;
+
+    (async () => {
+      let resolvedId: number | null = null;
+
+      if (singleExamMode && exams.length === 1) {
+        resolvedId = exams[0]!.id;
+      } else {
+        try {
+          const ex = await getStaffDefaultExamination();
+          if (exams.some((e) => e.id === ex.id)) {
+            resolvedId = ex.id;
+          } else if (exams.length > 0) {
+            resolvedId = exams[0]!.id;
+          }
+        } catch {
+          if (exams.length > 0) resolvedId = exams[0]!.id;
+        }
+      }
+
+      if (cancelled || resolvedId == null) return;
+
+      defaultExamResolvedRef.current = true;
+      const nextTab = parseExaminersTab(searchParams.get("tab"));
+      setExamId(resolvedId);
+      setActiveTab(nextTab);
+
+      const p = new URLSearchParams(searchParams.toString());
+      p.set("exam", String(resolvedId));
+      p.set("tab", nextTab);
+      router.replace(`${pathname}?${p.toString()}`, { scroll: false });
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [exams, pathname, router, searchParams, singleExamMode]);
 
   const pushUrl = useCallback(
     (nextExamId: number | null, nextTab: ExaminersTab) => {

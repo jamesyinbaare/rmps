@@ -23,9 +23,10 @@ const inputFocusRing =
 
 type Props = {
   examId: number | null;
+  embedded?: boolean;
 };
 
-export function ExaminersGroupsPanel({ examId }: Props) {
+export function ExaminersGroupsPanel({ examId, embedded = false }: Props) {
   const [examiners, setExaminers] = useState<ExaminerRow[]>([]);
   const [examinerGroups, setExaminerGroups] = useState<ExaminerGroupRow[]>([]);
   const [groupBusy, setGroupBusy] = useState(false);
@@ -139,20 +140,9 @@ export function ExaminersGroupsPanel({ examId }: Props) {
     }
   }
 
-  if (examId == null) {
-    return (
-      <section className={cn(EXAMINERS_PANEL_CLASS, "flex min-h-[14rem] flex-col items-center justify-center px-6 py-12 text-center")}>
-        <p className="text-sm font-medium text-foreground">Select an examination</p>
-        <p className="mt-1 max-w-sm text-sm text-muted-foreground">
-          Choose an examination above to configure marking groups.
-        </p>
-      </section>
-    );
-  }
-
   return (
     <>
-      <section className={cn(EXAMINERS_PANEL_CLASS, "space-y-4 p-4 sm:p-5")}>
+      <section className={cn(embedded ? "space-y-3 p-2 sm:p-3" : EXAMINERS_PANEL_CLASS, !embedded && "space-y-4 p-4 sm:p-5")}>
         <div>
           <h2 className="text-sm font-semibold text-foreground">Marking groups</h2>
           <p className="mt-1 text-xs text-muted-foreground">

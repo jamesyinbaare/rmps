@@ -116,6 +116,7 @@ class UserRole(enum.IntEnum):
     EXECUTIVE_VIEWER = 7
     SUPERVISOR = 10
     INSPECTOR = 20
+    SUBJECT_OFFICER = 25
     DEPOT_KEEPER = 30
 
     def __lt__(self, other: "UserRole") -> bool:
@@ -157,6 +158,12 @@ class User(Base):
     refresh_tokens = relationship("RefreshToken", back_populates="user", cascade="all, delete-orphan")
     uploaded_exam_documents = relationship("ExamDocument", back_populates="uploaded_by")
     depot = relationship("Depot", back_populates="users")
+    subject_officer_assignments = relationship(
+        "SubjectOfficerAssignment",
+        foreign_keys="SubjectOfficerAssignment.user_id",
+        back_populates="user",
+        cascade="all, delete-orphan",
+    )
 
     __table_args__ = (
         Index(
@@ -164,6 +171,12 @@ class User(Base):
             "phone_number",
             unique=True,
             postgresql_where=text("role = 'INSPECTOR' AND phone_number IS NOT NULL"),
+        ),
+        Index(
+            "ix_users_unique_phone_subject_officer",
+            "phone_number",
+            unique=True,
+            postgresql_where=text("role = 'SUBJECT_OFFICER' AND phone_number IS NOT NULL"),
         ),
     )
 
@@ -1114,6 +1127,91 @@ class ExaminerInvitation(Base):
             "msisdn",
             unique=True,
             postgresql_where=text("status = 'pending'"),
+        ),
+    )
+
+
+class SubjectOfficerAssignment(Base):
+    """Subject scope for a subject officer on an examination."""
+
+    __tablename__ = "subject_officer_assignments"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    user_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+    examination_id = Column(
+        Integer,
+        ForeignKey("examinations.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    subject_id = Column(Integer, ForeignKey("subjects.id", ondelete="RESTRICT"), nullable=False, index=True)
+    created_by_user_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("users.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+
+    user = relationship("User", foreign_keys=[user_id], back_populates="subject_officer_assignments")
+    examination = relationship("Examination", backref="subject_officer_assignments")
+    subject = relationship("Subject")
+    created_by = relationship("User", foreign_keys=[created_by_user_id])
+
+    __table_args__ = (
+        UniqueConstraint(
+            "user_id",
+            "examination_id",
+            "subject_id",
+            name="uq_subject_officer_assignment_user_exam_subject",
+        ),
+    )
+
+
+class ExaminerMarkedScriptReturn(Base):
+    """Marking-centre return verification for an examiner's allocated scripts."""
+
+    __tablename__ = "examiner_marked_script_returns"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    examination_id = Column(Integer, ForeignKey("examinations.id", ondelete="CASCADE"), nullable=False, index=True)
+    subject_id = Column(Integer, ForeignKey("subjects.id", ondelete="RESTRICT"), nullable=False, index=True)
+    examiner_id = Column(UUID(as_uuid=True), ForeignKey("examiners.id", ondelete="CASCADE"), nullable=False, index=True)
+    paper_number = Column(SmallInteger, nullable=False)
+    allocation_run_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("allocation_runs.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    expected_booklets = Column(Integer, nullable=False)
+    returned_booklets = Column(Integer, nullable=True)
+    verified_at = Column(DateTime, nullable=True)
+    verified_by_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True, index=True)
+    notes = Column(Text, nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+
+    examination = relationship("Examination", backref="examiner_marked_script_returns")
+    subject = relationship("Subject")
+    examiner = relationship("Examiner", backref="marked_script_returns")
+    allocation_run = relationship("AllocationRun")
+    verified_by = relationship("User", foreign_keys=[verified_by_id])
+
+    __table_args__ = (
+        UniqueConstraint(
+            "examination_id",
+            "subject_id",
+            "examiner_id",
+            "paper_number",
+            "allocation_run_id",
+            name="uq_examiner_marked_script_return",
+        ),
+        CheckConstraint("expected_booklets >= 0", name="ck_examiner_marked_script_return_expected"),
+        CheckConstraint(
+            "returned_booklets IS NULL OR returned_booklets >= 0",
+            name="ck_examiner_marked_script_return_returned",
         ),
     )
 

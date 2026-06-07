@@ -31,7 +31,7 @@ type Props = {
 export function InvitationsStatusTabs({ active, counts, onChange }: Props) {
   return (
     <div
-      className="flex flex-wrap gap-1.5 rounded-xl border border-primary/10 bg-primary/[0.035] p-1.5 dark:border-border dark:bg-muted/30"
+      className="flex gap-1 overflow-x-auto overscroll-x-contain border-b border-border/60 px-2 py-1.5 sm:px-3"
       role="tablist"
       aria-label="Invitation status filter"
     >
@@ -45,20 +45,13 @@ export function InvitationsStatusTabs({ active, counts, onChange }: Props) {
             role="tab"
             aria-selected={isActive}
             className={cn(
-              "flex min-w-[4.5rem] flex-col items-center rounded-lg border px-3 py-2 text-center transition-colors sm:min-w-0 sm:flex-row sm:gap-2 sm:px-3 sm:py-1.5",
-              isActive ? STATUS_TONE[tab.value] : "border-transparent text-muted-foreground hover:bg-background/80",
+              "flex shrink-0 items-center gap-1.5 rounded-md border px-2.5 py-1 text-xs transition-colors sm:text-sm",
+              isActive ? STATUS_TONE[tab.value] : "border-transparent text-muted-foreground hover:bg-muted/50",
             )}
             onClick={() => onChange(tab.value)}
           >
-            <span className="text-xs font-semibold sm:text-sm">{tab.label}</span>
-            <span
-              className={cn(
-                "tabular-nums text-lg font-bold leading-none sm:text-sm",
-                isActive ? "" : "text-foreground/80",
-              )}
-            >
-              {count}
-            </span>
+            <span className="font-medium">{tab.label}</span>
+            <span className={cn("tabular-nums font-semibold", !isActive && "text-foreground/70")}>{count}</span>
           </button>
         );
       })}

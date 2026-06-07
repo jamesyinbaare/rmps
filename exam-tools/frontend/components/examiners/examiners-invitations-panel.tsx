@@ -19,9 +19,9 @@ import {
   InviteExaminerModal,
   SetCoordinationDateModal,
 } from "@/components/examiner-invitations/invitations-modals";
-import { InvitationsStatusTabs } from "@/components/examiner-invitations/invitations-status-tabs";
 import { InvitationsSummaryStats } from "@/components/examiner-invitations/invitations-summary-stats";
 import { InvitationsTable } from "@/components/examiner-invitations/invitations-table";
+import { ExaminerAllocationModal } from "@/components/examiner-invitations/examiner-allocation-modal";
 import type {
   InvitationStatusCounts,
   InvitationStatusFilter,
@@ -42,6 +42,7 @@ import {
   bulkSetExaminerInvitationCoordinationDate,
   bulkUploadExaminerInvitations,
   createExaminerInvitation,
+  downloadExaminerInvitationLinksExport,
   downloadExaminerInvitationsBulkTemplate,
   listExaminerInvitations,
   resendExaminerInvitationSms,
@@ -63,6 +64,8 @@ const SEARCH_DEBOUNCE_MS = 300;
 type Props = {
   examId: number | null;
   subjects: Subject[];
+  lockedSubjectIds?: number[];
+  embedded?: boolean;
   onInvitationCountsChange?: (counts: InvitationStatusCounts) => void;
 };
 
@@ -80,7 +83,13 @@ function countByStatus(rows: ExaminerInvitationRow[]): InvitationStatusCounts {
   return counts;
 }
 
-export function ExaminersInvitationsPanel({ examId, subjects, onInvitationCountsChange }: Props) {
+export function ExaminersInvitationsPanel({
+  examId,
+  subjects,
+  lockedSubjectIds,
+  embedded = false,
+  onInvitationCountsChange,
+}: Props) {
   const [invitations, setInvitations] = useState<ExaminerInvitationRow[]>([]);
   const [loadingInvitations, setLoadingInvitations] = useState(false);
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -131,6 +140,8 @@ export function ExaminersInvitationsPanel({ examId, subjects, onInvitationCounts
   const [customPageSizeEditing, setCustomPageSizeEditing] = useState(false);
   const [resendUi, setResendUi] = useState<Record<string, ResendUiState>>({});
   const [resendErrors, setResendErrors] = useState<Record<string, string>>({});
+  const [copyLinkUi, setCopyLinkUi] = useState<Record<string, "copied" | "error">>({});
+  const [allocationTarget, setAllocationTarget] = useState<ExaminerInvitationRow | null>(null);
 
   useEffect(() => {
     const t = window.setTimeout(() => setDebouncedSearch(searchQuery), SEARCH_DEBOUNCE_MS);
@@ -138,10 +149,10 @@ export function ExaminersInvitationsPanel({ examId, subjects, onInvitationCounts
   }, [searchQuery]);
 
   useEffect(() => {
-    if (actionMessageTone !== "success" || !actionMessage) return;
+    if (!actionMessage) return;
     const t = window.setTimeout(() => setActionMessage(null), 5000);
     return () => window.clearTimeout(t);
-  }, [actionMessage, actionMessageTone]);
+  }, [actionMessage]);
 
   const loadInvitations = useCallback(async (eid: number) => {
     setLoadError(null);
@@ -240,11 +251,10 @@ export function ExaminersInvitationsPanel({ examId, subjects, onInvitationCounts
 
   const activeFilterCount = useMemo(() => {
     let n = 0;
-    if (statusFilter !== "all") n += 1;
     if (subjectTypeFilter !== "all") n += 1;
     n += subjectFilter.length + roleFilter.length + regionFilter.length;
     return n;
-  }, [statusFilter, subjectTypeFilter, subjectFilter, roleFilter, regionFilter]);
+  }, [subjectTypeFilter, subjectFilter, roleFilter, regionFilter]);
 
   const hasActiveFilters =
     activeFilterCount > 0 || statusFilter !== "all" || debouncedSearch.trim().length > 0;
@@ -403,6 +413,45 @@ export function ExaminersInvitationsPanel({ examId, subjects, onInvitationCounts
     [examId, loadInvitations],
   );
 
+  const handleCopyLink = useCallback(async (inv: ExaminerInvitationRow) => {
+    if (!inv.public_url) {
+      setCopyLinkUi((prev) => ({ ...prev, [inv.id]: "error" }));
+      return;
+    }
+    try {
+      await navigator.clipboard.writeText(inv.public_url);
+      setCopyLinkUi((prev) => ({ ...prev, [inv.id]: "copied" }));
+      window.setTimeout(() => {
+        setCopyLinkUi((prev) => {
+          if (prev[inv.id] !== "copied") return prev;
+          const next = { ...prev };
+          delete next[inv.id];
+          return next;
+        });
+      }, 2500);
+    } catch {
+      setCopyLinkUi((prev) => ({ ...prev, [inv.id]: "error" }));
+    }
+  }, []);
+
+  const handleDownloadLinks = useCallback(async () => {
+    if (examId == null) return;
+    setBusy(true);
+    setActionMessage(null);
+    try {
+      const subjectId =
+        subjectFilter.length === 1 ? Number(subjectFilter[0]) : undefined;
+      await downloadExaminerInvitationLinksExport(examId, subjectId);
+      setActionMessageTone("success");
+      setActionMessage("Examiner links downloaded.");
+    } catch (e) {
+      setActionMessageTone("error");
+      setActionMessage(e instanceof Error ? e.message : "Download failed");
+    } finally {
+      setBusy(false);
+    }
+  }, [examId, subjectFilter]);
+
   function resetInviteForm() {
     setName("");
     setPhone("");
@@ -547,7 +596,7 @@ export function ExaminersInvitationsPanel({ examId, subjects, onInvitationCounts
         } else if (invitationIds.length > 0) {
           setActionMessageTone("success");
           setActionMessage(
-            `Coordination date saved for ${res.updated_count} invitation(s). SMS was not opened because none of the selected invitees have accepted yet.`,
+            `Coordination date saved. SMS wasn't opened because no one in your selection has accepted yet.`,
           );
         }
       }
@@ -613,14 +662,14 @@ export function ExaminersInvitationsPanel({ examId, subjects, onInvitationCounts
   return (
     <>
       {loadError ? (
-        <p className="rounded-lg border border-destructive/40 bg-destructive/10 px-3 py-2 text-sm text-destructive">
+        <p className="mx-3 mt-2 rounded-lg border border-destructive/40 bg-destructive/10 px-3 py-2 text-sm text-destructive sm:mx-4">
           {loadError}
         </p>
       ) : null}
       {actionMessage ? (
         <p
           className={cn(
-            "rounded-lg px-3 py-2 text-sm",
+            "mx-3 mt-2 rounded-lg px-3 py-2 text-sm sm:mx-4",
             actionMessageTone === "success"
               ? "border border-emerald-500/30 bg-emerald-500/10 text-emerald-800 dark:text-emerald-300"
               : "border border-destructive/40 bg-destructive/10 text-destructive",
@@ -631,18 +680,17 @@ export function ExaminersInvitationsPanel({ examId, subjects, onInvitationCounts
         </p>
       ) : null}
 
-      <section className={cn(INVITATIONS_PANEL_CLASS, "flex min-h-0 flex-1 flex-col")}>
+      <section
+        className={cn(
+          embedded ? "flex min-h-0 flex-1 flex-col" : INVITATIONS_PANEL_CLASS,
+          !embedded && "flex min-h-0 flex-1 flex-col",
+        )}
+      >
         <InvitationsCommandBar
-          exams={[]}
           examId={examId}
-          onExamChange={() => {}}
-          formatExamLabel={() => ""}
-          hideExamPicker
           searchQuery={searchQuery}
           onSearchQueryChange={setSearchQuery}
           searchDisabled={examId == null}
-          statusFilter={statusFilter}
-          onStatusFilterChange={setStatusFilter}
           subjectTypeFilter={subjectTypeFilter}
           onSubjectTypeFilterChange={handleSubjectTypeFilterChange}
           subjectOptions={subjectOptions}
@@ -681,30 +729,21 @@ export function ExaminersInvitationsPanel({ examId, subjects, onInvitationCounts
             setInviteError(null);
             setInviteModalOpen(true);
           }}
+          onDownloadLinks={() => void handleDownloadLinks()}
           busy={busy || loadingInvitations}
           disabled={examId == null}
         />
 
-        {examId == null ? (
-          <div className="flex min-h-[14rem] flex-col items-center justify-center gap-2 px-6 py-12 text-center">
-            <p className="text-sm font-medium text-foreground">Select an examination</p>
-            <p className="max-w-sm text-sm text-muted-foreground">
-              Choose an examination above to view and manage examiner invitations.
-            </p>
-          </div>
-        ) : (
-          <div className="flex min-h-0 flex-1 flex-col gap-4 p-4 sm:p-5">
-            <InvitationsSummaryStats
-              counts={statusCounts}
-              activeStatus={statusFilter}
-              onStatusClick={setStatusFilter}
-            />
-            <InvitationsStatusTabs
-              active={statusFilter}
-              counts={statusCounts}
-              onChange={setStatusFilter}
-            />
+        <div className="flex min-h-0 flex-1 flex-col">
+            <div className="space-y-2 px-2 pt-2 sm:px-3">
+              <InvitationsSummaryStats
+                counts={statusCounts}
+                activeStatus={statusFilter}
+                onStatusClick={setStatusFilter}
+              />
+            </div>
 
+            <div className="flex min-h-0 flex-1 flex-col gap-2 p-2 sm:p-3">
             {selectedCount > 0 ? (
               <p className="text-sm text-muted-foreground">{selectedCount} selected</p>
             ) : null}
@@ -783,10 +822,17 @@ export function ExaminersInvitationsPanel({ examId, subjects, onInvitationCounts
                 resendUi={resendUi}
                 resendErrors={resendErrors}
                 onResend={(inv) => void handleResend(inv)}
+                onCopyLink={(inv) => void handleCopyLink(inv)}
+                copyLinkUi={copyLinkUi}
+                onViewAllocation={
+                  lockedSubjectIds != null
+                    ? (inv) => setAllocationTarget(inv)
+                    : undefined
+                }
               />
             )}
+            </div>
           </div>
-        )}
       </section>
 
       <InviteExaminerModal
@@ -877,6 +923,15 @@ export function ExaminersInvitationsPanel({ examId, subjects, onInvitationCounts
         }}
         onSubmit={() => void handleBulkSms()}
         onMessageChange={setCustomSmsMessage}
+      />
+
+      <ExaminerAllocationModal
+        open={allocationTarget != null}
+        onClose={() => setAllocationTarget(null)}
+        examinationId={examId}
+        subjectId={allocationTarget?.subject_id ?? null}
+        examinerId={allocationTarget?.examiner_id ?? null}
+        examinerName={allocationTarget?.name ?? ""}
       />
     </>
   );

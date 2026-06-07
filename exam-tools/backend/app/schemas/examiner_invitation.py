@@ -51,6 +51,7 @@ class ExaminerInvitationResponse(BaseModel):
     sms_sent: bool | None = None
     sms_error: str | None = None
     sms_delivery_id: UUID | None = None
+    public_url: str | None = None
 
     model_config = {"from_attributes": True}
 

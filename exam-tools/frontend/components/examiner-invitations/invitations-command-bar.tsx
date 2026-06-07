@@ -1,7 +1,7 @@
 "use client";
 
-import { Columns3 } from "lucide-react";
-import { useState } from "react";
+import { Columns3, CalendarClock, MailPlus, MessageSquare, MessagesSquare, Upload, UserPlus } from "lucide-react";
+import { useMemo, useState } from "react";
 
 import type { VisibilityState } from "@tanstack/react-table";
 
@@ -12,15 +12,12 @@ import {
   INVITATIONS_COMMAND_BAR_CLASS,
 } from "@/components/examiner-invitations/constants";
 import { InvitationsFiltersPopover } from "@/components/examiner-invitations/invitations-filters-popover";
-import type { InvitationStatusFilter } from "@/components/examiner-invitations/types";
 import type { MultiSelectCheckboxOption } from "@/components/multi-select-checkbox-dropdown";
+import { FabSpeedDial } from "@/components/fab-speed-dial";
 import { OfficialAccountsFilterChips, type OfficialAccountsFilterChip } from "@/components/official-accounts-filter-chips";
-import { SearchableCombobox } from "@/components/searchable-combobox";
 import { Button } from "@/components/ui/button";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
-import type { Examination } from "@/lib/api";
 import {
-  officialAccountsBtnPrimary,
   officialAccountsCommandBarRowClass,
   officialAccountsCommandBarSearchClass,
 } from "@/lib/official-accounts-zone";
@@ -28,15 +25,10 @@ import type { ScriptControlSubjectTypeFilter } from "@/lib/script-control-subjec
 import { cn } from "@/lib/utils";
 
 type Props = {
-  exams: Examination[];
   examId: number | null;
-  onExamChange: (id: number | null) => void;
-  formatExamLabel: (ex: Examination) => string;
   searchQuery: string;
   onSearchQueryChange: (q: string) => void;
   searchDisabled?: boolean;
-  statusFilter: InvitationStatusFilter;
-  onStatusFilterChange: (value: InvitationStatusFilter) => void;
   subjectTypeFilter: ScriptControlSubjectTypeFilter;
   onSubjectTypeFilterChange: (value: ScriptControlSubjectTypeFilter) => void;
   subjectOptions: MultiSelectCheckboxOption[];
@@ -59,21 +51,16 @@ type Props = {
   onSetCoordinationDate: () => void;
   onBulkUpload: () => void;
   onInvite: () => void;
+  onDownloadLinks?: () => void;
   busy: boolean;
   disabled?: boolean;
-  hideExamPicker?: boolean;
 };
 
 export function InvitationsCommandBar({
-  exams,
   examId,
-  onExamChange,
-  formatExamLabel,
   searchQuery,
   onSearchQueryChange,
   searchDisabled,
-  statusFilter,
-  onStatusFilterChange,
   subjectTypeFilter,
   onSubjectTypeFilterChange,
   subjectOptions,
@@ -96,9 +83,9 @@ export function InvitationsCommandBar({
   onSetCoordinationDate,
   onBulkUpload,
   onInvite,
+  onDownloadLinks,
   busy,
   disabled,
-  hideExamPicker = false,
 }: Props) {
   const [columnsOpen, setColumnsOpen] = useState(false);
   const actionsDisabled = disabled || busy || examId == null;
@@ -110,48 +97,81 @@ export function InvitationsCommandBar({
         ? `Send SMS (${filteredCount})`
         : "Send SMS";
 
+  const coordinationLabel =
+    selectedCount > 0 ? `Set coordination date (${selectedCount})` : "Set coordination date";
+
+  const bulkFabOptions = useMemo(
+    () => [
+      {
+        key: "sms",
+        label: smsLabel,
+        icon: MessageSquare,
+        disabled: filteredCount === 0,
+      },
+      {
+        key: "coordination",
+        label: coordinationLabel,
+        icon: CalendarClock,
+        disabled: selectedCount === 0,
+      },
+    ],
+    [coordinationLabel, filteredCount, selectedCount, smsLabel],
+  );
+
+  const inviteFabOptions = useMemo(
+    () => [
+      {
+        key: "invite",
+        label: "Invite examiner",
+        icon: MailPlus,
+      },
+      {
+        key: "bulk-upload",
+        label: "Invite examiners",
+        icon: Upload,
+      },
+    ],
+    [],
+  );
+
+  function handleBulkFabSelect(key: string) {
+    if (key === "sms") onSendSms();
+    else if (key === "coordination") onSetCoordinationDate();
+  }
+
+  function handleInviteFabSelect(key: string) {
+    if (key === "invite") onInvite();
+    else if (key === "bulk-upload") onBulkUpload();
+  }
+
   return (
-    <div className={INVITATIONS_COMMAND_BAR_CLASS}>
-      <div className={cn(officialAccountsCommandBarRowClass, "items-end")}>
-        <div className="flex min-w-0 flex-1 flex-wrap items-end gap-3">
-          {!hideExamPicker ? (
-            <div className="flex min-w-0 flex-col gap-1 sm:min-w-[14rem] sm:flex-1 lg:max-w-xs">
-              <label className="text-xs font-medium text-muted-foreground" htmlFor="ei-exam">
-                Examination
-              </label>
-              <SearchableCombobox
-                id="ei-exam"
-                options={exams.map((ex) => ({ value: String(ex.id), label: formatExamLabel(ex) }))}
-                value={examId != null ? String(examId) : ""}
-                onChange={(v) => onExamChange(v ? Number(v) : null)}
-                placeholder="Select examination…"
-                searchPlaceholder="Search exams…"
-                widthClass="w-full"
-                showAllOption={false}
-                truncateTrigger
-                disabled={busy}
-              />
-            </div>
-          ) : null}
-          <div className={cn("flex min-w-0 flex-1 flex-col gap-1 lg:max-w-md", hideExamPicker && "lg:max-w-xl")}>
-            <label className="text-xs font-medium text-muted-foreground" htmlFor="ei-search">
-              Search
-            </label>
-            <input
-              id="ei-search"
-              type="search"
-              className={cn(officialAccountsCommandBarSearchClass, searchDisabled && "opacity-60")}
-              placeholder="Search name or phone…"
-              value={searchQuery}
-              disabled={searchDisabled || busy}
-              onChange={(e) => onSearchQueryChange(e.target.value)}
-            />
-          </div>
-        </div>
-        <div className="flex flex-wrap items-center gap-2">
+    <div className={cn(INVITATIONS_COMMAND_BAR_CLASS, "overflow-visible")}>
+      <div
+        className={cn(
+          officialAccountsCommandBarRowClass,
+          "flex-col items-stretch gap-3 sm:flex-row sm:items-center sm:justify-between",
+        )}
+      >
+        <input
+          id="ei-search"
+          type="search"
+          aria-label="Search invitations"
+          className={cn(
+            officialAccountsCommandBarSearchClass,
+            "w-full min-w-0 sm:max-w-xs md:max-w-sm lg:max-w-md",
+            searchDisabled && "opacity-60",
+          )}
+          placeholder="Search name or phone…"
+          value={searchQuery}
+          disabled={searchDisabled || busy}
+          onChange={(e) => onSearchQueryChange(e.target.value)}
+        />
+        <div
+          className="flex shrink-0 flex-wrap items-center justify-end gap-2 overflow-visible sm:ml-auto"
+          role="toolbar"
+          aria-label="Invitation actions"
+        >
           <InvitationsFiltersPopover
-            statusFilter={statusFilter}
-            onStatusFilterChange={onStatusFilterChange}
             subjectTypeFilter={subjectTypeFilter}
             onSubjectTypeFilterChange={onSubjectTypeFilterChange}
             subjectOptions={subjectOptions}
@@ -201,24 +221,35 @@ export function InvitationsCommandBar({
               </div>
             </PopoverContent>
           </Popover>
-          <Button type="button" size="sm" variant="outline" disabled={actionsDisabled || filteredCount === 0} onClick={onSendSms}>
-            {smsLabel}
-          </Button>
-          <Button
-            type="button"
-            size="sm"
-            variant="outline"
-            disabled={actionsDisabled || selectedCount === 0}
-            onClick={onSetCoordinationDate}
-          >
-            Set coordination date{selectedCount > 0 ? ` (${selectedCount})` : ""}
-          </Button>
-          <Button type="button" size="sm" variant="outline" disabled={actionsDisabled} onClick={onBulkUpload}>
-            Bulk upload
-          </Button>
-          <button type="button" className={officialAccountsBtnPrimary} disabled={actionsDisabled} onClick={onInvite}>
-            Invite examiner
-          </button>
+          {onDownloadLinks ? (
+            <Button
+              type="button"
+              size="sm"
+              variant="outline"
+              disabled={actionsDisabled}
+              onClick={onDownloadLinks}
+            >
+              Download links
+            </Button>
+          ) : null}
+          <FabSpeedDial
+            options={bulkFabOptions}
+            disabled={actionsDisabled}
+            disabledReason="Select an examination first"
+            busy={busy}
+            onSelect={handleBulkFabSelect}
+            mainIcon={MessagesSquare}
+            sectionLabel="Bulk invitation actions"
+          />
+          <FabSpeedDial
+            options={inviteFabOptions}
+            disabled={actionsDisabled}
+            disabledReason="Select an examination first"
+            busy={busy}
+            onSelect={handleInviteFabSelect}
+            mainIcon={UserPlus}
+            sectionLabel="Add invitations"
+          />
         </div>
       </div>
       <OfficialAccountsFilterChips chips={filterChips} onClearAll={onClearFilters} variant="inline" />

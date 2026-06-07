@@ -61,6 +61,7 @@ export function loginHrefFromPathname(pathname: string): string {
   if (pathname.startsWith("/dashboard/supervisor")) return "/login/supervisor";
   if (pathname.startsWith("/dashboard/inspector")) return "/login/inspector";
   if (pathname.startsWith("/dashboard/depot-keeper")) return "/login/depot-keeper";
+  if (pathname.startsWith("/dashboard/subject-officer")) return "/login/admin";
   return "/";
 }
 
@@ -97,6 +98,7 @@ export type ApiRole =
   | "EXECUTIVE_VIEWER"
   | "SUPERVISOR"
   | "INSPECTOR"
+  | "SUBJECT_OFFICER"
   | "DEPOT_KEEPER";
 
 /** Roles that may use the admin dashboard layout (super admin + monitoring / executive / finance). */
@@ -140,6 +142,7 @@ function dashboardPathForLoginRole(role: TokenResponse["role"]): string {
   if (role === "EXECUTIVE_VIEWER" || role === 7) return "/dashboard/admin/monitoring";
   if (role === "SUPERVISOR" || role === 10) return "/dashboard/supervisor";
   if (role === "INSPECTOR" || role === 20) return "/dashboard/inspector";
+  if (role === "SUBJECT_OFFICER" || role === 25) return "/dashboard/subject-officer";
   if (role === "DEPOT_KEEPER" || role === 30) return "/dashboard/depot-keeper";
   return "/";
 }
@@ -157,6 +160,8 @@ export function dashboardPathForRole(role: string): string {
       return "/dashboard/supervisor";
     case "INSPECTOR":
       return "/dashboard/inspector";
+    case "SUBJECT_OFFICER":
+      return "/dashboard/subject-officer";
     case "DEPOT_KEEPER":
       return "/dashboard/depot-keeper";
     default:
@@ -164,20 +169,76 @@ export function dashboardPathForRole(role: string): string {
   }
 }
 
+type ValidationDetail = {
+  msg?: string;
+  loc?: unknown[];
+};
+
+function fieldLabelFromLoc(loc: unknown[] | undefined): string | null {
+  if (!Array.isArray(loc) || loc.length === 0) return null;
+  const field = String(loc[loc.length - 1]);
+  switch (field) {
+    case "email":
+      return "Email";
+    case "password":
+      return "Password";
+    case "phone_number":
+      return "Phone number";
+    case "school_code":
+      return "School code";
+    case "username":
+      return "Username";
+    default:
+      return null;
+  }
+}
+
+/** Turn raw API/Pydantic auth errors into short messages for login forms. */
+export function humanizeAuthErrorMessage(message: string, fieldLabel?: string | null): string {
+  const normalized = message.trim();
+  const lower = normalized.toLowerCase();
+
+  if (lower.includes("not a valid email address") || lower.includes("@-sign")) {
+    return fieldLabel
+      ? `${fieldLabel}: enter a valid email address (for example name@example.com).`
+      : "Enter a valid email address (for example name@example.com).";
+  }
+  if (lower === "incorrect credentials") {
+    return "Incorrect sign-in details. Check your entries and try again.";
+  }
+  if (lower.includes("no subject assignment")) {
+    return "You are not assigned to any subject for the active examination. Contact your administrator.";
+  }
+  if (lower === "inactive user") {
+    return "This account is inactive. Contact your administrator.";
+  }
+  if (lower.includes("field required") || lower === "missing") {
+    return fieldLabel ? `${fieldLabel} is required.` : "Please fill in all required fields.";
+  }
+
+  return normalized;
+}
+
 export async function parseErrorMessage(res: Response): Promise<string> {
-  const fallback = `Request failed (${res.status})`;
+  const fallback =
+    res.status === 422
+      ? "Check the details you entered and try again."
+      : `Request failed (${res.status})`;
   try {
     const text = await res.text();
     if (!text) return fallback;
     const j = JSON.parse(text) as { detail?: unknown };
-    if (typeof j.detail === "string") return j.detail;
+    if (typeof j.detail === "string") return humanizeAuthErrorMessage(j.detail);
     if (Array.isArray(j.detail)) {
-      const parts = j.detail.map((x) =>
-        typeof x === "object" && x !== null && "msg" in x
-          ? String((x as { msg: string }).msg)
-          : String(x),
-      );
-      return parts.join(", ") || fallback;
+      const parts = j.detail.map((x) => {
+        if (typeof x === "object" && x !== null && "msg" in x) {
+          const detail = x as ValidationDetail;
+          const fieldLabel = fieldLabelFromLoc(detail.loc);
+          return humanizeAuthErrorMessage(String(detail.msg ?? x), fieldLabel);
+        }
+        return humanizeAuthErrorMessage(String(x));
+      });
+      return parts.join(" ") || fallback;
     }
   } catch {
     /* ignore */
@@ -329,7 +390,7 @@ export async function loginSuperAdmin(
   const res = await fetch(`${getApiBaseUrl()}/auth/super-admin/login`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ email, password }),
+    body: JSON.stringify({ email: email.trim().toLowerCase(), password }),
   });
   if (!res.ok) throw new Error(await parseErrorMessage(res));
   const data = (await res.json()) as TokenResponse;

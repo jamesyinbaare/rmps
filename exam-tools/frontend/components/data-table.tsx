@@ -33,6 +33,8 @@ type DataTableProps<TData> = {
   /** Alternate row background; body cells use `bg-inherit` so row color shows through (pair with sticky `bg-inherit` in column meta). */
   striped?: boolean;
   onRowClick?: (row: TData) => void;
+  /** Keep column headers visible while scrolling the table body. */
+  stickyHeader?: boolean;
 };
 
 function metaClasses(
@@ -60,6 +62,7 @@ export function DataTable<TData>({
   showFooter = true,
   striped = false,
   onRowClick,
+  stickyHeader = false,
 }: DataTableProps<TData>) {
   const colCount = table.getAllColumns().length;
   const hasFooter = showFooter && table.getAllColumns().some((c) => c.columnDef.footer != null);
@@ -67,7 +70,7 @@ export function DataTable<TData>({
   return (
     <div className="rounded-md border border-border">
       <Table>
-        <TableHeader>
+        <TableHeader className={cn(stickyHeader && "sticky top-0 z-[1] bg-card shadow-[0_1px_0_0_hsl(var(--border))]")}>
           {table.getHeaderGroups().map((headerGroup) => (
             <TableRow key={headerGroup.id}>
               {headerGroup.headers.map((header) => (
@@ -75,6 +78,7 @@ export function DataTable<TData>({
                   key={header.id}
                   className={cn(
                     "align-top leading-tight whitespace-normal",
+                    stickyHeader && "bg-card",
                     metaClasses(header.column.columnDef.meta, "headerClassName"),
                   )}
                 >

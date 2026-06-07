@@ -9,9 +9,12 @@ from fastapi.responses import Response
 from sqlalchemy import select
 from sqlalchemy.orm import selectinload
 
-from app.dependencies.auth import CurrentUserDep, SuperAdminOrTestAdminOfficerDep
+from app.dependencies.auth import (
+    CurrentUserDep,
+    SuperAdminOrTestAdminOfficerOrSubjectOfficerDep,
+)
 from app.dependencies.database import DBSessionDep
-from app.models import Examination, ExaminerInvitation, ExaminerInvitationStatus, ExaminerType, SmsDelivery
+from app.models import Examination, ExaminerInvitation, ExaminerInvitationStatus, ExaminerType, SmsDelivery, User
 from app.schemas.examiner_invitation import (
     ExaminerInvitationBulkCoordinationResponse,
     ExaminerInvitationBulkCoordinationUpdate,
@@ -29,6 +32,7 @@ from app.schemas.examiner_invitation import (
 from app.schemas.script_allocation import ExaminerTypeSchema
 from app.services.examiner_invitation import (
     create_examiner_invitation,
+    invitation_public_url,
     update_invitation_coordination_date,
 )
 from app.services.examiner_roster import dataframe_row_to_examiner_fields, read_examiners_spreadsheet
@@ -39,7 +43,11 @@ from app.services.sms.examiner_invitation import (
     maybe_send_examiner_invitation_sms,
 )
 from app.services.sms.phone import normalize_msisdn
-from app.services.template_generator import generate_examiners_bulk_template
+from app.services.subject_officer_scope import (
+    assert_subject_officer_access,
+    effective_subject_scope,
+)
+from app.services.template_generator import generate_examiner_invitations_export, generate_examiners_bulk_template
 
 router = APIRouter(tags=["examiner-invitations"])
 
@@ -92,6 +100,7 @@ def _invitation_response(inv: ExaminerInvitation, sms: SmsDelivery | None = None
         elif sms.status == "failed":
             sms_sent = False
             sms_error = sms.error_message
+    public_url = invitation_public_url(inv.token)
     return ExaminerInvitationResponse(
         id=inv.id,
         examination_id=int(inv.examination_id),
@@ -116,7 +125,21 @@ def _invitation_response(inv: ExaminerInvitation, sms: SmsDelivery | None = None
         sms_sent=sms_sent,
         sms_error=sms_error,
         sms_delivery_id=sms_delivery_id,
+        public_url=public_url,
     )
+
+
+async def _assert_invitation_accessible(
+    session,
+    user: User,
+    examination_id: int,
+    inv: ExaminerInvitation,
+) -> None:
+    scope = await effective_subject_scope(session, user, examination_id)
+    if scope is None:
+        return
+    if int(inv.subject_id) not in scope:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Invitation not found")
 
 
 @router.get(
@@ -125,16 +148,21 @@ def _invitation_response(inv: ExaminerInvitation, sms: SmsDelivery | None = None
 )
 async def list_examiner_invitations(
     session: DBSessionDep,
-    _: SuperAdminOrTestAdminOfficerDep,
+    user: SuperAdminOrTestAdminOfficerOrSubjectOfficerDep,
     examination_id: int,
 ) -> list[ExaminerInvitationResponse]:
     await _get_examination_or_404(session, examination_id)
+    scope = await effective_subject_scope(session, user, examination_id)
+    if scope is not None and not scope:
+        return []
     stmt = (
         select(ExaminerInvitation)
         .where(ExaminerInvitation.examination_id == examination_id)
         .options(selectinload(ExaminerInvitation.subject))
         .order_by(ExaminerInvitation.created_at.desc())
     )
+    if scope is not None:
+        stmt = stmt.where(ExaminerInvitation.subject_id.in_(scope))
     rows = list((await session.execute(stmt)).scalars().all())
     out: list[ExaminerInvitationResponse] = []
     for inv in rows:
@@ -151,11 +179,12 @@ async def list_examiner_invitations(
 async def create_examiner_invitation_endpoint(
     session: DBSessionDep,
     user: CurrentUserDep,
-    _: SuperAdminOrTestAdminOfficerDep,
+    auth_user: SuperAdminOrTestAdminOfficerOrSubjectOfficerDep,
     examination_id: int,
     body: ExaminerInvitationCreate,
 ) -> ExaminerInvitationResponse:
     await _get_examination_or_404(session, examination_id)
+    await assert_subject_officer_access(session, auth_user, examination_id, body.subject_id)
     try:
         msisdn = normalize_msisdn(body.phone_number)
     except ValueError as exc:
@@ -235,7 +264,7 @@ async def _get_invitation_or_404(
 )
 async def bulk_set_examiner_invitation_coordination_date(
     session: DBSessionDep,
-    _: SuperAdminOrTestAdminOfficerDep,
+    user: SuperAdminOrTestAdminOfficerOrSubjectOfficerDep,
     examination_id: int,
     body: ExaminerInvitationBulkCoordinationUpdate,
 ) -> ExaminerInvitationBulkCoordinationResponse:
@@ -259,6 +288,7 @@ async def bulk_set_examiner_invitation_coordination_date(
                 )
             )
             continue
+        await _assert_invitation_accessible(session, user, examination_id, inv)
         await update_invitation_coordination_date(session, inv, body.coordination_date)
         updated_count += 1
 
@@ -273,12 +303,13 @@ async def bulk_set_examiner_invitation_coordination_date(
 )
 async def patch_examiner_invitation(
     session: DBSessionDep,
-    _: SuperAdminOrTestAdminOfficerDep,
+    user: SuperAdminOrTestAdminOfficerOrSubjectOfficerDep,
     examination_id: int,
     invitation_id: UUID,
     body: ExaminerInvitationCoordinationUpdate,
 ) -> ExaminerInvitationResponse:
     inv = await _get_invitation_or_404(session, examination_id, invitation_id)
+    await _assert_invitation_accessible(session, user, examination_id, inv)
     await update_invitation_coordination_date(session, inv, body.coordination_date)
     await session.commit()
     sms = await _latest_sms_delivery(session, inv.id)
@@ -292,7 +323,7 @@ async def patch_examiner_invitation(
 async def resend_examiner_invitation_sms(
     session: DBSessionDep,
     user: CurrentUserDep,
-    _: SuperAdminOrTestAdminOfficerDep,
+    auth_user: SuperAdminOrTestAdminOfficerOrSubjectOfficerDep,
     examination_id: int,
     invitation_id: UUID,
 ) -> ExaminerInvitationResendResponse:
@@ -310,6 +341,7 @@ async def resend_examiner_invitation_sms(
     inv = (await session.execute(stmt)).scalar_one_or_none()
     if inv is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Invitation not found")
+    await _assert_invitation_accessible(session, auth_user, examination_id, inv)
     if inv.status not in (
         ExaminerInvitationStatus.PENDING,
         ExaminerInvitationStatus.EXPIRED,
@@ -341,7 +373,7 @@ async def resend_examiner_invitation_sms(
 )
 async def download_examiner_invitations_bulk_template(
     session: DBSessionDep,
-    _: SuperAdminOrTestAdminOfficerDep,
+    _: SuperAdminOrTestAdminOfficerOrSubjectOfficerDep,
     examination_id: int,
 ) -> Response:
     await _get_examination_or_404(session, examination_id)
@@ -361,7 +393,7 @@ async def download_examiner_invitations_bulk_template(
 async def bulk_upload_examiner_invitations(
     session: DBSessionDep,
     user: CurrentUserDep,
-    _: SuperAdminOrTestAdminOfficerDep,
+    auth_user: SuperAdminOrTestAdminOfficerOrSubjectOfficerDep,
     examination_id: int,
     file: UploadFile = File(...),
     send_sms: bool = Query(False, description="Send invitation SMS for each created row"),
@@ -369,6 +401,7 @@ async def bulk_upload_examiner_invitations(
     coordination_date: datetime | None = Query(None, description="Default coordination date for all rows"),
 ) -> ExaminerInvitationBulkImportResponse:
     await _get_examination_or_404(session, examination_id)
+    scope = await effective_subject_scope(session, auth_user, examination_id)
     raw = await file.read()
     if len(raw) > _MAX_BULK_BYTES:
         raise HTTPException(status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE, detail="File too large")
@@ -396,6 +429,8 @@ async def bulk_upload_examiner_invitations(
         try:
             msisdn = normalize_msisdn(fields["phone_number"])
             subject_id = fields["subject_ids"][0]
+            if scope is not None and subject_id not in scope:
+                raise ValueError("Subject not assigned to this officer")
         except ValueError as e:
             errors.append(ExaminerInvitationBulkImportRowError(row_number=row_number, message=str(e)))
             continue
@@ -459,11 +494,12 @@ async def bulk_upload_examiner_invitations(
 async def bulk_send_examiner_invitation_custom_sms(
     session: DBSessionDep,
     user: CurrentUserDep,
-    _: SuperAdminOrTestAdminOfficerDep,
+    auth_user: SuperAdminOrTestAdminOfficerOrSubjectOfficerDep,
     examination_id: int,
     body: ExaminerInvitationBulkSmsRequest,
 ) -> ExaminerInvitationBulkSmsResponse:
     await _get_examination_or_404(session, examination_id)
+    scope = await effective_subject_scope(session, auth_user, examination_id)
 
     unique_ids = list(dict.fromkeys(body.invitation_ids))
     stmt = (
@@ -495,6 +531,15 @@ async def bulk_send_examiner_invitation_custom_sms(
                 ExaminerInvitationBulkSmsRowError(
                     invitation_id=inv_id,
                     message="Invitation not found for this examination",
+                )
+            )
+            failed_count += 1
+            continue
+        if scope is not None and int(inv.subject_id) not in scope:
+            errors.append(
+                ExaminerInvitationBulkSmsRowError(
+                    invitation_id=inv_id,
+                    message="Invitation not in assigned subject scope",
                 )
             )
             failed_count += 1
@@ -538,4 +583,60 @@ async def bulk_send_examiner_invitation_custom_sms(
         sent_count=sent_count,
         failed_count=failed_count,
         errors=errors,
+    )
+
+
+@router.get(
+    "/examinations/{examination_id}/examiner-invitations/export.xlsx",
+    summary="Download examiner invitation links as Excel",
+)
+async def export_examiner_invitations(
+    session: DBSessionDep,
+    user: SuperAdminOrTestAdminOfficerOrSubjectOfficerDep,
+    examination_id: int,
+    subject_id: int | None = Query(None),
+) -> Response:
+    await _get_examination_or_404(session, examination_id)
+    scope = await effective_subject_scope(session, user, examination_id)
+    if scope is not None and not scope:
+        body = generate_examiner_invitations_export([])
+        return Response(
+            content=body,
+            media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            headers={"Content-Disposition": 'attachment; filename="examiner_invitation_links.xlsx"'},
+        )
+    if subject_id is not None:
+        await assert_subject_officer_access(session, user, examination_id, subject_id)
+    stmt = (
+        select(ExaminerInvitation)
+        .where(ExaminerInvitation.examination_id == examination_id)
+        .options(selectinload(ExaminerInvitation.subject))
+        .order_by(ExaminerInvitation.name)
+    )
+    if subject_id is not None:
+        stmt = stmt.where(ExaminerInvitation.subject_id == subject_id)
+    elif scope is not None:
+        stmt = stmt.where(ExaminerInvitation.subject_id.in_(scope))
+    rows = list((await session.execute(stmt)).scalars().all())
+    export_rows: list[dict[str, object]] = []
+    for inv in rows:
+        subject = inv.subject
+        export_rows.append(
+            {
+                "name": inv.name,
+                "phone_number": inv.phone_number,
+                "subject_code": subject.code if subject else "",
+                "subject_name": subject.name if subject else "",
+                "examiner_type": _examiner_type_to_schema(inv.examiner_type).value,
+                "region": inv.region.value,
+                "status": inv.status.value,
+                "coordination_date": inv.coordination_date.isoformat() if inv.coordination_date else "",
+                "public_url": invitation_public_url(inv.token),
+            }
+        )
+    body = generate_examiner_invitations_export(export_rows)
+    return Response(
+        content=body,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": 'attachment; filename="examiner_invitation_links.xlsx"'},
     )

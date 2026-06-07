@@ -93,6 +93,13 @@ super_admin_or_finance_officer = RoleChecker(
 super_admin_or_test_admin_officer = RoleChecker(
     allowed_roles={UserRole.SUPER_ADMIN, UserRole.TEST_ADMIN_OFFICER},
 )
+super_admin_or_test_admin_officer_or_subject_officer = RoleChecker(
+    allowed_roles={
+        UserRole.SUPER_ADMIN,
+        UserRole.TEST_ADMIN_OFFICER,
+        UserRole.SUBJECT_OFFICER,
+    },
+)
 top_level_officer = RoleChecker(
     allowed_roles={
         UserRole.SUPER_ADMIN,
@@ -110,6 +117,7 @@ portal_examination_list = RoleChecker(
 )
 supervisor_only = RoleChecker(allowed_roles={UserRole.SUPERVISOR})
 inspector_only = RoleChecker(allowed_roles={UserRole.INSPECTOR})
+subject_officer_only = RoleChecker(allowed_roles={UserRole.SUBJECT_OFFICER})
 depot_keeper_only = RoleChecker(allowed_roles={UserRole.DEPOT_KEEPER})
 supervisor_or_inspector = RoleChecker(allowed_roles={UserRole.SUPERVISOR, UserRole.INSPECTOR})
 supervisor_inspector_or_depot_keeper = RoleChecker(
@@ -121,6 +129,7 @@ staff_active_examination_roles = RoleChecker(
         UserRole.TEST_ADMIN_OFFICER,
         UserRole.SUPERVISOR,
         UserRole.INSPECTOR,
+        UserRole.SUBJECT_OFFICER,
         UserRole.DEPOT_KEEPER,
     },
 )
@@ -133,10 +142,15 @@ CurrentUserDep = Annotated[User, Depends(get_current_active_user)]
 SuperAdminDep = Annotated[User, Depends(super_admin_only)]
 SuperAdminOrFinanceOfficerDep = Annotated[User, Depends(super_admin_or_finance_officer)]
 SuperAdminOrTestAdminOfficerDep = Annotated[User, Depends(super_admin_or_test_admin_officer)]
+SuperAdminOrTestAdminOfficerOrSubjectOfficerDep = Annotated[
+    User,
+    Depends(super_admin_or_test_admin_officer_or_subject_officer),
+]
 TopLevelOfficerDep = Annotated[User, Depends(top_level_officer)]
 PortalExaminationListDep = Annotated[User, Depends(portal_examination_list)]
 SupervisorDep = Annotated[User, Depends(supervisor_only)]
 InspectorDep = Annotated[User, Depends(inspector_only)]
+SubjectOfficerDep = Annotated[User, Depends(subject_officer_only)]
 DepotKeeperDep = Annotated[User, Depends(depot_keeper_only)]
 SupervisorOrInspectorDep = Annotated[User, Depends(supervisor_or_inspector)]
 SupervisorInspectorOrDepotKeeperDep = Annotated[User, Depends(supervisor_inspector_or_depot_keeper)]

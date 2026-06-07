@@ -57,7 +57,7 @@ def coordination_sms_recipient_error(inv: ExaminerInvitation, template: str) -> 
         return None
     if can_receive_coordination_sms(inv):
         return None
-    return "Coordination SMS can only be sent to invitees who have accepted the invitation."
+    return "This person hasn't accepted their invitation yet."
 
 
 def coordination_sms_bulk_selection_error(
@@ -71,11 +71,18 @@ def coordination_sms_bulk_selection_error(
     if blocked_count == 0:
         return None
     if blocked_count == len(invitations):
-        return "Coordination SMS cannot be sent: none of the selected invitees have accepted the invitation."
+        return (
+            "None of the people you selected have accepted their invitation yet. "
+            "You can send a coordination message once they accept."
+        )
+    if blocked_count == 1:
+        return (
+            "1 person in your selection hasn't accepted their invitation yet. "
+            "Deselect them first, or wait until they accept."
+        )
     return (
-        f"Coordination SMS cannot be sent: {blocked_count} selected invitee"
-        f"{'s have' if blocked_count != 1 else ' has'} not accepted the invitation. "
-        "Remove them from the selection first."
+        f"{blocked_count} people in your selection haven't accepted their invitation yet. "
+        "Deselect them first, or wait until they accept."
     )
 
 

@@ -46,6 +46,7 @@ type Props = {
   onCustomPageSizeBlur: () => void;
   onEdit: (row: RosterTableRow) => void;
   onRemove: (row: RosterTableRow) => void;
+  onViewAllocation?: (row: RosterTableRow) => void;
 };
 
 export function RosterTable({
@@ -67,6 +68,7 @@ export function RosterTable({
   onCustomPageSizeBlur,
   onEdit,
   onRemove,
+  onViewAllocation,
 }: Props) {
   const columns = useMemo<ColumnDef<RosterTableRow>[]>(
     () => [
@@ -155,11 +157,21 @@ export function RosterTable({
             >
               Remove
             </button>
+            {onViewAllocation ? (
+              <button
+                type="button"
+                className="text-sm text-primary underline-offset-2 hover:underline"
+                disabled={busy || row.original.subject_ids[0] == null}
+                onClick={() => onViewAllocation(row.original)}
+              >
+                View allocation
+              </button>
+            ) : null}
           </div>
         ),
       },
     ],
-    [busy, onEdit, onRemove],
+    [busy, onEdit, onRemove, onViewAllocation],
   );
 
   const table = useReactTable({
@@ -205,7 +217,7 @@ export function RosterTable({
   return (
     <div className="flex min-h-0 flex-1 flex-col">
       <div className="min-h-0 flex-1 overflow-auto overscroll-contain">
-        <DataTable table={table} emptyMessage="No examiners match the filters." striped />
+        <DataTable table={table} emptyMessage="No examiners match the filters." striped stickyHeader />
       </div>
       <OfficialAccountsPagination
         page={page}

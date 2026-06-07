@@ -10,17 +10,27 @@ export default function AdminExaminersHubPage() {
   const [me, setMe] = useState<UserMe | null>(null);
   const [exams, setExams] = useState<Examination[]>([]);
   const [subjects, setSubjects] = useState<Subject[]>([]);
+  const [loadingExams, setLoadingExams] = useState(true);
 
   useEffect(() => {
     void getMe().then(setMe).catch(() => setMe(null));
   }, []);
 
   useEffect(() => {
-    void apiJson<Examination[]>("/examinations").then(setExams).catch(() => setExams([]));
+    setLoadingExams(true);
+    void apiJson<Examination[]>("/examinations")
+      .then(setExams)
+      .catch(() => setExams([]))
+      .finally(() => setLoadingExams(false));
     void listAllSubjects().then(setSubjects).catch(() => setSubjects([]));
   }, []);
 
   return (
-    <ExaminersPageShell exams={exams} subjects={subjects} isSuperAdmin={me?.role === "SUPER_ADMIN"} />
+    <ExaminersPageShell
+      exams={exams}
+      subjects={subjects}
+      isSuperAdmin={me?.role === "SUPER_ADMIN"}
+      loadingExams={loadingExams}
+    />
   );
 }

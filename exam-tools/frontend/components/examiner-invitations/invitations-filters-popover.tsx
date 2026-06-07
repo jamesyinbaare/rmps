@@ -3,8 +3,7 @@
 import { Filter } from "lucide-react";
 import { useState } from "react";
 
-import { INPUT_FOCUS_RING, STATUS_FILTER_OPTIONS } from "@/components/examiner-invitations/constants";
-import type { InvitationStatusFilter } from "@/components/examiner-invitations/types";
+import { INPUT_FOCUS_RING } from "@/components/examiner-invitations/constants";
 import { MultiSelectCheckboxDropdown } from "@/components/multi-select-checkbox-dropdown";
 import type { MultiSelectCheckboxOption } from "@/components/multi-select-checkbox-dropdown";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
@@ -16,8 +15,6 @@ import {
 import { cn } from "@/lib/utils";
 
 type Props = {
-  statusFilter: InvitationStatusFilter;
-  onStatusFilterChange: (value: InvitationStatusFilter) => void;
   subjectTypeFilter: ScriptControlSubjectTypeFilter;
   onSubjectTypeFilterChange: (value: ScriptControlSubjectTypeFilter) => void;
   subjectOptions: MultiSelectCheckboxOption[];
@@ -34,8 +31,6 @@ type Props = {
 };
 
 export function InvitationsFiltersPopover({
-  statusFilter,
-  onStatusFilterChange,
   subjectTypeFilter,
   onSubjectTypeFilterChange,
   subjectOptions,
@@ -74,23 +69,6 @@ export function InvitationsFiltersPopover({
       </PopoverTrigger>
       <PopoverContent align="start" className="w-[min(100vw-2rem,22rem)] p-4">
         <div className="flex flex-col gap-4">
-          <div>
-            <label className={formLabelClass} htmlFor="ei-popover-status">
-              Status
-            </label>
-            <select
-              id="ei-popover-status"
-              className={cn(formInputClass, "mt-1.5 w-full")}
-              value={statusFilter}
-              onChange={(e) => onStatusFilterChange(e.target.value as InvitationStatusFilter)}
-            >
-              {STATUS_FILTER_OPTIONS.map((o) => (
-                <option key={o.value} value={o.value}>
-                  {o.label}
-                </option>
-              ))}
-            </select>
-          </div>
           <div>
             <label className={formLabelClass} htmlFor="ei-popover-subject-type">
               Subject type

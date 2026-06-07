@@ -228,3 +228,24 @@ def generate_examination_centres_bulk_template(subject_scope: str = "CORE") -> b
         df.to_excel(writer, index=False, sheet_name="Centres")
     output.seek(0)
     return output.getvalue()
+
+
+def generate_examiner_invitations_export(rows: list[dict[str, object]]) -> bytes:
+    """Excel export of examiner invitations including public URLs."""
+    columns = [
+        "name",
+        "phone_number",
+        "subject_code",
+        "subject_name",
+        "examiner_type",
+        "region",
+        "status",
+        "coordination_date",
+        "public_url",
+    ]
+    df = pd.DataFrame(rows, columns=columns if not rows else None)
+    output = io.BytesIO()
+    with pd.ExcelWriter(output, engine="openpyxl") as writer:
+        df.to_excel(writer, index=False, sheet_name="Examiner links")
+    output.seek(0)
+    return output.getvalue()

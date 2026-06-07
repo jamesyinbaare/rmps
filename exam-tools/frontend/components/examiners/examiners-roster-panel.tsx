@@ -14,6 +14,7 @@ import { RosterTable } from "@/components/examiners/roster-table";
 import type { RosterTableRow } from "@/components/examiners/types";
 import { clampPageSize, humanizeRegion, matchesRosterSearch } from "@/components/examiners/utils";
 import { EXAMINER_TYPE_LABELS, EXAMINER_TYPE_OPTIONS } from "@/components/examiner-invitations/constants";
+import { ExaminerAllocationModal } from "@/components/examiner-invitations/examiner-allocation-modal";
 import { CustomSmsModal } from "@/components/examiner-invitations/invitations-modals";
 import type { OfficialAccountsFilterChip } from "@/components/official-accounts-filter-chips";
 import { Button } from "@/components/ui/button";
@@ -48,10 +49,25 @@ type Props = {
   examId: number | null;
   subjects: Subject[];
   isSuperAdmin: boolean;
+  lockedSubjectIds?: number[];
+  embedded?: boolean;
   onRosterCountChange?: (count: number) => void;
 };
 
-export function ExaminersRosterPanel({ examId, subjects, isSuperAdmin, onRosterCountChange }: Props) {
+type AllocationTarget = {
+  examinerId: string;
+  subjectId: number;
+  name: string;
+};
+
+export function ExaminersRosterPanel({
+  examId,
+  subjects,
+  isSuperAdmin,
+  lockedSubjectIds,
+  embedded = false,
+  onRosterCountChange,
+}: Props) {
   const [examiners, setExaminers] = useState<ExaminerRow[]>([]);
   const [groups, setGroups] = useState<ExaminerGroupRow[]>([]);
   const [loading, setLoading] = useState(false);
@@ -92,11 +108,18 @@ export function ExaminersRosterPanel({ examId, subjects, isSuperAdmin, onRosterC
   const [customSmsMessage, setCustomSmsMessage] = useState("");
   const [smsError, setSmsError] = useState<string | null>(null);
   const [smsResult, setSmsResult] = useState<ExaminerRosterBulkSmsResponse | null>(null);
+  const [allocationTarget, setAllocationTarget] = useState<AllocationTarget | null>(null);
 
   useEffect(() => {
     const t = window.setTimeout(() => setDebouncedSearch(searchQuery), SEARCH_DEBOUNCE_MS);
     return () => window.clearTimeout(t);
   }, [searchQuery]);
+
+  useEffect(() => {
+    if (!actionMessage) return;
+    const t = window.setTimeout(() => setActionMessage(null), 5000);
+    return () => window.clearTimeout(t);
+  }, [actionMessage]);
 
   const loadData = useCallback(async (eid: number) => {
     setLoadError(null);
@@ -447,17 +470,25 @@ export function ExaminersRosterPanel({ examId, subjects, isSuperAdmin, onRosterC
   return (
     <>
       {loadError ? (
-        <p className="rounded-lg border border-destructive/40 bg-destructive/10 px-3 py-2 text-sm text-destructive">
+        <p className="mx-3 mt-2 rounded-lg border border-destructive/40 bg-destructive/10 px-3 py-2 text-sm text-destructive sm:mx-4">
           {loadError}
         </p>
       ) : null}
       {actionMessage ? (
-        <p className="rounded-lg border border-emerald-500/30 bg-emerald-500/10 px-3 py-2 text-sm text-foreground" role="status">
+        <p
+          className="mx-3 mt-2 rounded-lg border border-emerald-500/30 bg-emerald-500/10 px-3 py-2 text-sm text-foreground sm:mx-4"
+          role="status"
+        >
           {actionMessage}
         </p>
       ) : null}
 
-      <section className={cn(EXAMINERS_PANEL_CLASS, "flex min-h-0 flex-1 flex-col")}>
+      <section
+        className={cn(
+          embedded ? "flex min-h-0 flex-1 flex-col" : EXAMINERS_PANEL_CLASS,
+          !embedded && "flex min-h-0 flex-1 flex-col",
+        )}
+      >
         <RosterCommandBar
           searchQuery={searchQuery}
           onSearchQueryChange={setSearchQuery}
@@ -497,15 +528,7 @@ export function ExaminersRosterPanel({ examId, subjects, isSuperAdmin, onRosterC
           disabled={examId == null}
         />
 
-        {examId == null ? (
-          <div className="flex min-h-[14rem] flex-col items-center justify-center gap-2 px-6 py-12 text-center">
-            <p className="text-sm font-medium text-foreground">Select an examination</p>
-            <p className="max-w-sm text-sm text-muted-foreground">
-              Choose an examination above to view and manage the confirmed examiner roster.
-            </p>
-          </div>
-        ) : (
-          <div className="flex min-h-0 flex-1 flex-col gap-4 p-4 sm:p-5">
+        <div className="flex min-h-0 flex-1 flex-col gap-2 p-2 sm:p-3">
             {!loading && examiners.length === 0 ? (
               <div className="flex min-h-[14rem] flex-col items-center justify-center gap-4 rounded-xl border border-dashed border-border bg-muted/20 px-6 py-12 text-center">
                 <div className="space-y-1">
@@ -550,10 +573,22 @@ export function ExaminersRosterPanel({ examId, subjects, isSuperAdmin, onRosterC
                 }}
                 onEdit={openEdit}
                 onRemove={(row) => void handleRemove(row)}
+                onViewAllocation={
+                  lockedSubjectIds != null
+                    ? (row) => {
+                        const subjectId = row.subject_ids[0];
+                        if (subjectId == null) return;
+                        setAllocationTarget({
+                          examinerId: row.id,
+                          subjectId,
+                          name: row.name,
+                        });
+                      }
+                    : undefined
+                }
               />
             )}
           </div>
-        )}
       </section>
 
       <RosterExaminerFormModal
@@ -610,6 +645,15 @@ export function ExaminersRosterPanel({ examId, subjects, isSuperAdmin, onRosterC
         onClose={closeSmsModal}
         onSubmit={() => void handleBulkSms()}
         onMessageChange={setCustomSmsMessage}
+      />
+
+      <ExaminerAllocationModal
+        open={allocationTarget != null}
+        onClose={() => setAllocationTarget(null)}
+        examinationId={examId}
+        subjectId={allocationTarget?.subjectId ?? null}
+        examinerId={allocationTarget?.examinerId ?? null}
+        examinerName={allocationTarget?.name ?? ""}
       />
     </>
   );

@@ -11,8 +11,8 @@ import {
   type SortingState,
   type VisibilityState,
 } from "@tanstack/react-table";
-import { CheckCircle2, Loader2 } from "lucide-react";
-import { useMemo } from "react";
+import { Loader2 } from "lucide-react";
+import { useMemo, useState } from "react";
 
 import { DataTable } from "@/components/data-table";
 import {
@@ -21,6 +21,7 @@ import {
   MAX_CUSTOM_PAGE_SIZE,
   PAGE_SIZE_PRESETS,
 } from "@/components/examiner-invitations/constants";
+import { InvitationRowActionsMenu } from "@/components/examiner-invitations/invitation-row-actions-menu";
 import { InvitationStatusBadge } from "@/components/examiner-invitations/invitation-status-badge";
 import type { ResendUiState } from "@/components/examiner-invitations/types";
 import { formatDateOnly, formatDateTime, humanizeRegion } from "@/components/examiner-invitations/utils";
@@ -52,6 +53,9 @@ type Props = {
   resendUi: Record<string, ResendUiState>;
   resendErrors: Record<string, string>;
   onResend: (inv: ExaminerInvitationRow) => void;
+  onCopyLink?: (inv: ExaminerInvitationRow) => void;
+  copyLinkUi?: Record<string, "copied" | "error">;
+  onViewAllocation?: (inv: ExaminerInvitationRow) => void;
 };
 
 export function InvitationsTable({
@@ -74,7 +78,12 @@ export function InvitationsTable({
   resendUi,
   resendErrors,
   onResend,
+  onCopyLink,
+  copyLinkUi = {},
+  onViewAllocation,
 }: Props) {
+  const [openActionsId, setOpenActionsId] = useState<string | null>(null);
+
   const columns = useMemo<ColumnDef<ExaminerInvitationRow>[]>(
     () => [
       {
@@ -183,44 +192,29 @@ export function InvitationsTable({
       },
       {
         id: "actions",
-        header: "",
+        header: "Actions",
         enableSorting: false,
         enableHiding: false,
         cell: ({ row }) => {
           const inv = row.original;
-          if (inv.status !== "pending" && inv.status !== "expired") return null;
-          const ui = resendUi[inv.id];
-          if (ui === "sending") {
-            return <span className="text-xs text-muted-foreground">Sending…</span>;
-          }
-          if (ui === "success") {
-            return (
-              <span className="inline-flex items-center gap-1 text-xs font-medium text-emerald-600 dark:text-emerald-400">
-                <CheckCircle2 className="size-3.5 shrink-0" aria-hidden />
-                SMS resent
-              </span>
-            );
-          }
-          if (ui === "error") {
-            return (
-              <span className="text-xs text-destructive" title={resendErrors[inv.id]}>
-                {resendErrors[inv.id] ?? "Failed"}
-              </span>
-            );
-          }
           return (
-            <button
-              type="button"
-              className="text-sm text-primary underline-offset-2 hover:underline"
-              onClick={() => onResend(inv)}
-            >
-              Resend invite
-            </button>
+            <InvitationRowActionsMenu
+              inv={inv}
+              open={openActionsId === inv.id}
+              onOpenChange={(next) => setOpenActionsId(next ? inv.id : null)}
+              busy={busy}
+              resendUi={resendUi[inv.id]}
+              resendError={resendErrors[inv.id]}
+              copyLinkState={copyLinkUi[inv.id]}
+              onCopyLink={onCopyLink}
+              onResend={onResend}
+              onViewAllocation={onViewAllocation}
+            />
           );
         },
       },
     ],
-    [onResend, resendErrors, resendUi],
+    [busy, copyLinkUi, onCopyLink, onResend, onViewAllocation, openActionsId, resendErrors, resendUi],
   );
 
   const table = useReactTable({
@@ -268,7 +262,7 @@ export function InvitationsTable({
   return (
     <div className="flex min-h-0 flex-1 flex-col">
       <div className="min-h-0 flex-1 overflow-auto overscroll-contain">
-        <DataTable table={table} emptyMessage="No invitations match the filters." striped />
+        <DataTable table={table} emptyMessage="No invitations match the filters." striped stickyHeader />
       </div>
       <OfficialAccountsPagination
         page={page}

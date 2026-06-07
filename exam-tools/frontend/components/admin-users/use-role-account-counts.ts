@@ -6,6 +6,7 @@ import {
   adminListDepotKeepers,
   adminListExecutiveViewers,
   adminListFinanceOfficers,
+  adminListSubjectOfficers,
   adminListTestAdminOfficers,
   listInspectors,
 } from "@/lib/api";
@@ -16,6 +17,7 @@ export type RoleAccountCounts = {
   executiveViewer: number | null;
   inspector: number | null;
   depotKeeper: number | null;
+  subjectOfficer: number | null;
 };
 
 const emptyCounts: RoleAccountCounts = {
@@ -24,6 +26,7 @@ const emptyCounts: RoleAccountCounts = {
   executiveViewer: null,
   inspector: null,
   depotKeeper: null,
+  subjectOfficer: null,
 };
 
 export function useRoleAccountCounts(refreshKey = 0) {
@@ -33,12 +36,13 @@ export function useRoleAccountCounts(refreshKey = 0) {
   const reload = useCallback(async () => {
     setLoading(true);
     try {
-      const [testAdmin, finance, executive, inspector, keeper] = await Promise.all([
+      const [testAdmin, finance, executive, inspector, keeper, subjectOfficer] = await Promise.all([
         adminListTestAdminOfficers(0, 1),
         adminListFinanceOfficers(0, 1),
         adminListExecutiveViewers(0, 1),
         listInspectors({ skip: 0, limit: 1 }),
         adminListDepotKeepers(0, 1),
+        adminListSubjectOfficers(0, 1),
       ]);
       setCounts({
         testAdminOfficer: testAdmin.total,
@@ -46,6 +50,7 @@ export function useRoleAccountCounts(refreshKey = 0) {
         executiveViewer: executive.total,
         inspector: inspector.total,
         depotKeeper: keeper.total,
+        subjectOfficer: subjectOfficer.total,
       });
     } catch {
       setCounts(emptyCounts);

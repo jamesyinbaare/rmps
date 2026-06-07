@@ -22,6 +22,10 @@ import { OFFICIAL_ACCOUNTS_INSPECTOR_ATTENDANCE_HREF } from "@/lib/official-acco
 
 /** Subtitle under the page title: full name plus school name and code when present. */
 function staffHeaderSubtitle(me: UserMe): string {
+  if (me.role === "SUBJECT_OFFICER") {
+    const phone = me.phone_number?.trim() ?? "";
+    return phone ? `${me.full_name.trim()} · ${phone}` : me.full_name.trim();
+  }
   if (me.role === "DEPOT_KEEPER") {
     const dep =
       me.depot_name != null && me.depot_name.trim() !== ""
@@ -84,7 +88,7 @@ type Props = {
   title: string;
   children?: React.ReactNode;
   /** When set, shows Overview + Examination timetable sub-nav for staff dashboards */
-  staffRole?: "supervisor" | "inspector" | "depot-keeper";
+  staffRole?: "supervisor" | "inspector" | "depot-keeper" | "subject-officer";
 };
 
 const inputFocusRing =
@@ -142,13 +146,17 @@ export function DashboardShell({ title, children, staffRole }: Props) {
       ? "/dashboard/supervisor"
       : staffRole === "depot-keeper"
         ? "/dashboard/depot-keeper"
-        : "/dashboard/inspector";
+        : staffRole === "subject-officer"
+          ? "/dashboard/subject-officer"
+          : "/dashboard/inspector";
   const roleLabel =
     staffRole === "supervisor"
       ? "Supervisor"
       : staffRole === "depot-keeper"
         ? "Depot keeper"
-        : "Inspector";
+        : staffRole === "subject-officer"
+          ? "Subject officer"
+          : "Inspector";
   const examOfficialsHref = `${staffBase}/exam-officials`;
   const centreLocationHref = `${staffBase}/centre-location`;
   const examinationNoticeHref = `${staffBase}/examination-notice`;

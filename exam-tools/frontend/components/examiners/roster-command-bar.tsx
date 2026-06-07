@@ -95,22 +95,31 @@ export function RosterCommandBar({
 
   return (
     <div className={EXAMINERS_COMMAND_BAR_CLASS}>
-      <div className={cn(officialAccountsCommandBarRowClass, "items-end")}>
-        <div className="flex min-w-0 flex-1 flex-col gap-1 lg:max-w-md">
-          <label className="text-xs font-medium text-muted-foreground" htmlFor="roster-search">
-            Search
-          </label>
-          <input
-            id="roster-search"
-            type="search"
-            className={cn(officialAccountsCommandBarSearchClass, searchDisabled && "opacity-60")}
-            placeholder="Search name or phone…"
-            value={searchQuery}
-            disabled={searchDisabled || busy}
-            onChange={(e) => onSearchQueryChange(e.target.value)}
-          />
-        </div>
-        <div className="flex flex-wrap items-center gap-2">
+      <div
+        className={cn(
+          officialAccountsCommandBarRowClass,
+          "flex-col items-stretch gap-3 sm:flex-row sm:items-center sm:justify-between",
+        )}
+      >
+        <input
+          id="roster-search"
+          type="search"
+          aria-label="Search examiners"
+          className={cn(
+            officialAccountsCommandBarSearchClass,
+            "w-full min-w-0 sm:max-w-xs md:max-w-sm lg:max-w-md",
+            searchDisabled && "opacity-60",
+          )}
+          placeholder="Search name or phone…"
+          value={searchQuery}
+          disabled={searchDisabled || busy}
+          onChange={(e) => onSearchQueryChange(e.target.value)}
+        />
+        <div
+          className="flex shrink-0 flex-wrap items-center justify-end gap-2 sm:ml-auto"
+          role="toolbar"
+          aria-label="Roster actions"
+        >
           <RosterFiltersPopover
             subjectTypeFilter={subjectTypeFilter}
             onSubjectTypeFilterChange={onSubjectTypeFilterChange}

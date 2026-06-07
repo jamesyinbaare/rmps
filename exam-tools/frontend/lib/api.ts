@@ -3558,6 +3558,7 @@ export type ExaminerInvitationRow = {
   sms_sent?: boolean | null;
   sms_error?: string | null;
   sms_delivery_id?: string | null;
+  public_url?: string | null;
 };
 
 export type ExaminerInvitationCreatePayload = {
@@ -4470,4 +4471,215 @@ export async function fetchAdminAttendanceSheetBlob(
 ): Promise<Blob> {
   const res = await apiFetch(`/admin/examinations/${examId}/attendance-sheets/${sheetId}/file`);
   return res.blob();
+}
+
+export type AdminSubjectOfficerRow = {
+  id: string;
+  full_name: string;
+  email: string | null;
+  phone_number: string | null;
+};
+
+export type AdminSubjectOfficerListResponse = {
+  items: AdminSubjectOfficerRow[];
+  total: number;
+};
+
+export type AdminSubjectOfficerCreatePayload = {
+  email: string;
+  password: string;
+  full_name: string;
+  phone_number?: string | null;
+  send_sms?: boolean | null;
+};
+
+export type AdminSubjectOfficerCreatedResponse = {
+  id: string;
+  full_name: string;
+  email: string;
+  phone_number?: string | null;
+  sms_sent?: boolean | null;
+  sms_error?: string | null;
+};
+
+export type SubjectOfficerAssignmentSubjectRow = {
+  subject_id: number;
+  subject_code: string;
+  subject_name: string;
+  subject_type: string;
+};
+
+export type SubjectOfficerAssignmentRow = {
+  id: string;
+  user_id: string;
+  full_name: string;
+  email: string | null;
+  phone_number: string | null;
+  subject_ids: number[];
+  subjects: SubjectOfficerAssignmentSubjectRow[];
+};
+
+export type SubjectOfficerAssignmentListResponse = {
+  items: SubjectOfficerAssignmentRow[];
+};
+
+export type SubjectOfficerMeAssignmentSubject = {
+  subject_id: number;
+  subject_code: string;
+  subject_name: string;
+  subject_type: string;
+  subject_original_code?: string | null;
+};
+
+export type SubjectOfficerMeExamAssignment = {
+  examination_id: number;
+  examination_name: string;
+  subjects: SubjectOfficerMeAssignmentSubject[];
+};
+
+export type SubjectOfficerMeAssignmentsResponse = {
+  items: SubjectOfficerMeExamAssignment[];
+};
+
+export type MarkedScriptReturnRow = {
+  examiner_id: string;
+  examiner_name: string;
+  examiner_type: string;
+  paper_number: number;
+  allocation_run_id: string;
+  expected_booklets: number;
+  returned_booklets: number | null;
+  status: string;
+  verified_at: string | null;
+  notes: string | null;
+};
+
+export type MarkedScriptReturnGridResponse = {
+  subject_id: number;
+  subject_code: string;
+  subject_name: string;
+  rows: MarkedScriptReturnRow[];
+  summary: Record<string, number>;
+};
+
+export async function adminListSubjectOfficers(
+  skip = 0,
+  limit = 20,
+): Promise<AdminSubjectOfficerListResponse> {
+  return apiJson<AdminSubjectOfficerListResponse>(`/subject-officers?skip=${skip}&limit=${limit}`);
+}
+
+export async function adminCreateSubjectOfficer(
+  payload: AdminSubjectOfficerCreatePayload,
+): Promise<AdminSubjectOfficerCreatedResponse> {
+  return apiJson<AdminSubjectOfficerCreatedResponse>("/subject-officers", {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function adminResetSubjectOfficerPassword(
+  userId: string,
+  payload: AdminPasswordResetPayload,
+): Promise<AdminPasswordResetResponse> {
+  return apiJson<AdminPasswordResetResponse>(`/subject-officers/${userId}/reset-password`, {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function adminListSubjectOfficerAssignments(
+  examinationId: number,
+): Promise<SubjectOfficerAssignmentListResponse> {
+  return apiJson<SubjectOfficerAssignmentListResponse>(
+    `/subject-officers/examinations/${examinationId}/assignments`,
+  );
+}
+
+export async function adminUpsertSubjectOfficerAssignments(
+  examinationId: number,
+  payload: { user_id: string; subject_ids: number[] },
+): Promise<SubjectOfficerAssignmentRow> {
+  return apiJson<SubjectOfficerAssignmentRow>(
+    `/subject-officers/examinations/${examinationId}/assignments`,
+    {
+      method: "PUT",
+      body: JSON.stringify(payload),
+    },
+  );
+}
+
+export async function adminDeleteSubjectOfficerAssignments(
+  examinationId: number,
+  userId: string,
+): Promise<void> {
+  await apiJson<void>(`/subject-officers/examinations/${examinationId}/assignments/${userId}`, {
+    method: "DELETE",
+  });
+}
+
+export async function getSubjectOfficerMyAssignments(): Promise<SubjectOfficerMeAssignmentsResponse> {
+  return apiJson<SubjectOfficerMeAssignmentsResponse>("/subject-officer/me/assignments");
+}
+
+export async function downloadExaminerInvitationLinksExport(
+  examinationId: number,
+  subjectId?: number,
+): Promise<void> {
+  const q = subjectId != null ? `?subject_id=${subjectId}` : "";
+  await downloadApiFile(
+    `/examinations/${examinationId}/examiner-invitations/export.xlsx${q}`,
+    "examiner_invitation_links.xlsx",
+  );
+}
+
+export async function getSubjectOfficerExaminerScriptsAllocation(
+  examinationId: number,
+  examinerId: string,
+  subjectId: number,
+): Promise<ExaminerPublicScriptsAllocation> {
+  return apiJson<ExaminerPublicScriptsAllocation>(
+    `/examinations/${examinationId}/subject-officer/examiners/${examinerId}/scripts-allocation?subject_id=${subjectId}`,
+  );
+}
+
+export async function getMarkedScriptReturns(
+  examinationId: number,
+  subjectId: number,
+): Promise<MarkedScriptReturnGridResponse> {
+  return apiJson<MarkedScriptReturnGridResponse>(
+    `/examinations/${examinationId}/marked-script-returns?subject_id=${subjectId}`,
+  );
+}
+
+export async function upsertMarkedScriptReturn(
+  examinationId: number,
+  examinerId: string,
+  paperNumber: number,
+  subjectId: number,
+  payload: { returned_booklets: number; notes?: string | null },
+): Promise<unknown> {
+  return apiJson(
+    `/examinations/${examinationId}/marked-script-returns/${examinerId}/${paperNumber}?subject_id=${subjectId}`,
+    {
+      method: "PUT",
+      body: JSON.stringify(payload),
+    },
+  );
+}
+
+export async function verifyMarkedScriptReturn(
+  examinationId: number,
+  examinerId: string,
+  paperNumber: number,
+  subjectId: number,
+  payload: { notes?: string | null; allow_mismatch?: boolean },
+): Promise<unknown> {
+  return apiJson(
+    `/examinations/${examinationId}/marked-script-returns/${examinerId}/${paperNumber}/verify?subject_id=${subjectId}`,
+    {
+      method: "POST",
+      body: JSON.stringify(payload),
+    },
+  );
 }

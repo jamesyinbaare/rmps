@@ -8,9 +8,12 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from app.dependencies.auth import CurrentUserDep, SuperAdminDep, SuperAdminOrTestAdminOfficerDep
+from app.dependencies.auth import (
+    CurrentUserDep,
+    SuperAdminOrTestAdminOfficerOrSubjectOfficerDep,
+)
 from app.dependencies.database import DBSessionDep
-from app.models import Examination, Examiner, ExaminerSubject, ExaminerType
+from app.models import Examination, Examiner, ExaminerSubject, ExaminerType, User
 from app.schemas.script_allocation import (
     ExaminerBulkImportResponse,
     ExaminerBulkImportRowError,
@@ -27,6 +30,10 @@ from app.services.examiner_subject_lock import assert_examiner_subject_allowed
 from app.services.script_allocation import parse_region, sync_examiner_subjects
 from app.services.sms.phone import normalize_msisdn
 from app.services.sms.examiner_roster import maybe_send_custom_examiner_roster_sms
+from app.services.subject_officer_scope import (
+    assert_subject_officer_access,
+    effective_subject_scope,
+)
 from app.services.template_generator import generate_examiners_bulk_template
 
 router = APIRouter(tags=["examiners"])
@@ -75,20 +82,57 @@ async def _get_examination_or_404(session: AsyncSession, examination_id: int) ->
     return row
 
 
+def _examiner_subject_ids(ex: Examiner) -> list[int]:
+    return [int(s.subject_id) for s in ex.subjects]
+
+
+async def _assert_examiner_accessible(
+    session: AsyncSession,
+    user: User,
+    examination_id: int,
+    ex: Examiner,
+) -> None:
+    scope = await effective_subject_scope(session, user, examination_id)
+    if scope is None:
+        return
+    if not scope:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Insufficient permissions")
+    subject_ids = _examiner_subject_ids(ex)
+    if not subject_ids or not any(sid in scope for sid in subject_ids):
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Examiner not found")
+
+
+async def _assert_subject_ids_allowed(
+    session: AsyncSession,
+    user: User,
+    examination_id: int,
+    subject_ids: list[int],
+) -> None:
+    for sid in subject_ids:
+        await assert_subject_officer_access(session, user, examination_id, sid)
+
+
 @router.get("/examinations/{examination_id}/examiners", response_model=list[ExaminerResponse])
 async def list_examiners(
     session: DBSessionDep,
-    _: SuperAdminOrTestAdminOfficerDep,
+    user: SuperAdminOrTestAdminOfficerOrSubjectOfficerDep,
     examination_id: int,
 ) -> list[ExaminerResponse]:
     await _get_examination_or_404(session, examination_id)
+    scope = await effective_subject_scope(session, user, examination_id)
+    if scope is not None and not scope:
+        return []
     stmt = (
         select(Examiner)
         .where(Examiner.examination_id == examination_id)
         .options(selectinload(Examiner.subjects), selectinload(Examiner.group_membership))
         .order_by(Examiner.name)
     )
-    rows = list((await session.execute(stmt)).scalars().all())
+    if scope is not None:
+        stmt = stmt.join(ExaminerSubject, ExaminerSubject.examiner_id == Examiner.id).where(
+            ExaminerSubject.subject_id.in_(scope)
+        )
+    rows = list((await session.execute(stmt)).unique().scalars().all())
     return [_examiner_response(e) for e in rows]
 
 
@@ -99,11 +143,12 @@ async def list_examiners(
 )
 async def create_examiner(
     session: DBSessionDep,
-    _: SuperAdminOrTestAdminOfficerDep,
+    user: SuperAdminOrTestAdminOfficerOrSubjectOfficerDep,
     examination_id: int,
     body: ExaminerCreate,
 ) -> ExaminerResponse:
     await _get_examination_or_404(session, examination_id)
+    await _assert_subject_ids_allowed(session, user, examination_id, body.subject_ids)
     try:
         region = parse_region(body.region)
         msisdn = normalize_msisdn(body.phone_number)
@@ -147,7 +192,7 @@ async def create_examiner(
 )
 async def download_examiners_bulk_template(
     session: DBSessionDep,
-    _: SuperAdminDep,
+    user: SuperAdminOrTestAdminOfficerOrSubjectOfficerDep,
     examination_id: int,
 ) -> Response:
     await _get_examination_or_404(session, examination_id)
@@ -165,11 +210,12 @@ async def download_examiners_bulk_template(
 )
 async def bulk_upload_examiners(
     session: DBSessionDep,
-    _: SuperAdminDep,
+    user: SuperAdminOrTestAdminOfficerOrSubjectOfficerDep,
     examination_id: int,
     file: UploadFile = File(...),
 ) -> ExaminerBulkImportResponse:
     await _get_examination_or_404(session, examination_id)
+    scope = await effective_subject_scope(session, user, examination_id)
     raw = await file.read()
     if len(raw) > _MAX_EXAMINER_BULK_BYTES:
         raise HTTPException(status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE, detail="File too large")
@@ -194,6 +240,8 @@ async def bulk_upload_examiners(
             hr = parse_region(fields["allowed_region"])
             msisdn = normalize_msisdn(fields["phone_number"])
             subject_id = fields["subject_ids"][0]
+            if scope is not None and subject_id not in scope:
+                raise ValueError("Subject not assigned to this officer")
             await assert_examiner_subject_allowed(
                 session,
                 examination_id=examination_id,
@@ -227,7 +275,7 @@ async def bulk_upload_examiners(
 @router.patch("/examinations/{examination_id}/examiners/{examiner_id}", response_model=ExaminerResponse)
 async def update_examiner(
     session: DBSessionDep,
-    _: SuperAdminOrTestAdminOfficerDep,
+    user: SuperAdminOrTestAdminOfficerOrSubjectOfficerDep,
     examination_id: int,
     examiner_id: UUID,
     body: ExaminerUpdate,
@@ -240,6 +288,7 @@ async def update_examiner(
     ex = (await session.execute(stmt)).scalar_one_or_none()
     if ex is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Examiner not found")
+    await _assert_examiner_accessible(session, user, examination_id, ex)
     patch = body.model_dump(exclude_unset=True)
     if "name" in patch and patch["name"] is not None:
         ex.name = str(patch["name"]).strip()
@@ -265,6 +314,7 @@ async def update_examiner(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="Exactly one subject is allowed per examiner",
             )
+        await _assert_subject_ids_allowed(session, user, examination_id, subject_ids)
         msisdn = ex.msisdn
         if not msisdn and ex.phone_number:
             try:
@@ -297,14 +347,19 @@ async def update_examiner(
 @router.delete("/examinations/{examination_id}/examiners/{examiner_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_examiner(
     session: DBSessionDep,
-    _: SuperAdminOrTestAdminOfficerDep,
+    user: SuperAdminOrTestAdminOfficerOrSubjectOfficerDep,
     examination_id: int,
     examiner_id: UUID,
 ) -> None:
-    stmt = select(Examiner).where(Examiner.id == examiner_id, Examiner.examination_id == examination_id)
+    stmt = (
+        select(Examiner)
+        .where(Examiner.id == examiner_id, Examiner.examination_id == examination_id)
+        .options(selectinload(Examiner.subjects))
+    )
     ex = (await session.execute(stmt)).scalar_one_or_none()
     if ex is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Examiner not found")
+    await _assert_examiner_accessible(session, user, examination_id, ex)
     await session.delete(ex)
     await session.commit()
 
@@ -317,11 +372,12 @@ async def delete_examiner(
 async def bulk_send_examiner_roster_custom_sms(
     session: DBSessionDep,
     user: CurrentUserDep,
-    _: SuperAdminOrTestAdminOfficerDep,
+    auth_user: SuperAdminOrTestAdminOfficerOrSubjectOfficerDep,
     examination_id: int,
     body: ExaminerBulkSmsRequest,
 ) -> ExaminerBulkSmsResponse:
     await _get_examination_or_404(session, examination_id)
+    scope = await effective_subject_scope(session, auth_user, examination_id)
 
     unique_ids = list(dict.fromkeys(body.examiner_ids))
     stmt = (
@@ -353,6 +409,17 @@ async def bulk_send_examiner_roster_custom_sms(
             )
             failed_count += 1
             continue
+        if scope is not None:
+            subject_ids = _examiner_subject_ids(ex)
+            if not any(sid in scope for sid in subject_ids):
+                errors.append(
+                    ExaminerBulkSmsRowError(
+                        examiner_id=ex_id,
+                        message="Examiner not in assigned subject scope",
+                    )
+                )
+                failed_count += 1
+                continue
         try:
             sms_sent, sms_error, _delivery_id = await maybe_send_custom_examiner_roster_sms(
                 ex,
