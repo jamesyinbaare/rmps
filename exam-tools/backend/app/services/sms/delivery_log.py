@@ -7,6 +7,7 @@ from typing import TYPE_CHECKING
 from uuid import UUID
 
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
 
 from app.models import SmsDelivery
 from app.services.sms.inspector_credentials import send_inspector_credentials
@@ -14,12 +15,15 @@ from app.services.sms.phone import normalize_msisdn
 from app.services.sms.types import SmsDeliveryResult
 
 if TYPE_CHECKING:
-    pass
+    from app.models import Examiner, ExaminerInvitation
 
 _MAX_ERROR_LEN = 2000
 _MAX_PROVIDER_RESPONSE_LEN = 2000
 
 MESSAGE_TYPE_INSPECTOR_CREDENTIALS = "inspector_credentials"
+MESSAGE_TYPE_EXAMINER_INVITATION = "examiner_invitation"
+MESSAGE_TYPE_EXAMINER_INVITATION_CUSTOM = "examiner_invitation_custom"
+MESSAGE_TYPE_EXAMINER_ROSTER_CUSTOM = "examiner_roster_custom"
 
 
 def _truncate(text: str | None, max_len: int) -> str | None:
@@ -34,7 +38,9 @@ def _truncate(text: str | None, max_len: int) -> str | None:
 async def create_delivery_log(
     session: AsyncSession,
     *,
-    user_id: UUID,
+    user_id: UUID | None = None,
+    examiner_invitation_id: UUID | None = None,
+    examiner_id: UUID | None = None,
     phone_number: str,
     msisdn: str,
     message_type: str,
@@ -47,6 +53,8 @@ async def create_delivery_log(
 ) -> SmsDelivery:
     row = SmsDelivery(
         user_id=user_id,
+        examiner_invitation_id=examiner_invitation_id,
+        examiner_id=examiner_id,
         phone_number=phone_number,
         msisdn=msisdn,
         message_type=message_type,
@@ -141,6 +149,230 @@ async def record_inspector_credentials_sms(
     await session.flush()
 
     result = await send_inspector_credentials(phone, password)
+    if result.sent:
+        await mark_delivery_sent(session, pending.id)
+    else:
+        await mark_delivery_failed(session, pending.id, error=result.error or "SMS failed")
+    await session.commit()
+    return result, pending.id
+
+
+async def record_examiner_invitation_sms(
+    session: AsyncSession,
+    *,
+    invitation: ExaminerInvitation,
+    trigger: str,
+    triggered_by_user_id: UUID | None = None,
+    retried_from_id: UUID | None = None,
+) -> tuple[SmsDeliveryResult, UUID | None]:
+    from app.models import ExaminerInvitation as ExaminerInvitationModel
+    from app.services.sms.examiner_invitation import send_examiner_invitation_sms
+
+    inv = invitation
+    if inv.examination is None or inv.subject is None:
+        from sqlalchemy import select
+
+        stmt = (
+            select(ExaminerInvitationModel)
+            .where(ExaminerInvitationModel.id == invitation.id)
+            .options(
+                selectinload(ExaminerInvitationModel.examination),
+                selectinload(ExaminerInvitationModel.subject),
+            )
+        )
+        inv = (await session.execute(stmt)).scalar_one_or_none()
+        if inv is None:
+            return SmsDeliveryResult(sent=False, error="Invitation not found"), None
+
+    try:
+        msisdn = normalize_msisdn(inv.phone_number)
+    except ValueError as exc:
+        row = await create_delivery_log(
+            session,
+            examiner_invitation_id=inv.id,
+            phone_number=inv.phone_number,
+            msisdn="",
+            message_type=MESSAGE_TYPE_EXAMINER_INVITATION,
+            trigger=trigger,
+            status="failed",
+            triggered_by_user_id=triggered_by_user_id,
+            retried_from_id=retried_from_id,
+            error_message=str(exc),
+        )
+        await session.commit()
+        return SmsDeliveryResult(sent=False, error=str(exc)), row.id
+
+    pending = await create_delivery_log(
+        session,
+        examiner_invitation_id=inv.id,
+        phone_number=inv.phone_number,
+        msisdn=msisdn,
+        message_type=MESSAGE_TYPE_EXAMINER_INVITATION,
+        trigger=trigger,
+        status="pending",
+        triggered_by_user_id=triggered_by_user_id,
+        retried_from_id=retried_from_id,
+    )
+    await session.flush()
+
+    result = await send_examiner_invitation_sms(inv)
+    if result.sent:
+        await mark_delivery_sent(session, pending.id)
+        inv.notified_at = datetime.utcnow()
+    else:
+        await mark_delivery_failed(session, pending.id, error=result.error or "SMS failed")
+    await session.commit()
+    return result, pending.id
+
+
+async def record_custom_examiner_invitation_sms(
+    session: AsyncSession,
+    *,
+    invitation: ExaminerInvitation,
+    message: str,
+    trigger: str,
+    triggered_by_user_id: UUID | None = None,
+    retried_from_id: UUID | None = None,
+) -> tuple[SmsDeliveryResult, UUID | None]:
+    from app.models import ExaminerInvitation as ExaminerInvitationModel
+    from app.services.sms.examiner_invitation import send_custom_examiner_invitation_sms
+
+    inv = invitation
+    if inv.examination is None or inv.subject is None:
+        from sqlalchemy import select
+
+        stmt = (
+            select(ExaminerInvitationModel)
+            .where(ExaminerInvitationModel.id == invitation.id)
+            .options(
+                selectinload(ExaminerInvitationModel.examination),
+                selectinload(ExaminerInvitationModel.subject),
+            )
+        )
+        inv = (await session.execute(stmt)).scalar_one_or_none()
+        if inv is None:
+            return SmsDeliveryResult(sent=False, error="Invitation not found"), None
+
+    try:
+        msisdn = normalize_msisdn(inv.phone_number)
+    except ValueError as exc:
+        row = await create_delivery_log(
+            session,
+            examiner_invitation_id=inv.id,
+            phone_number=inv.phone_number,
+            msisdn="",
+            message_type=MESSAGE_TYPE_EXAMINER_INVITATION_CUSTOM,
+            trigger=trigger,
+            status="failed",
+            triggered_by_user_id=triggered_by_user_id,
+            retried_from_id=retried_from_id,
+            error_message=str(exc),
+        )
+        await session.commit()
+        return SmsDeliveryResult(sent=False, error=str(exc)), row.id
+
+    pending = await create_delivery_log(
+        session,
+        examiner_invitation_id=inv.id,
+        phone_number=inv.phone_number,
+        msisdn=msisdn,
+        message_type=MESSAGE_TYPE_EXAMINER_INVITATION_CUSTOM,
+        trigger=trigger,
+        status="pending",
+        triggered_by_user_id=triggered_by_user_id,
+        retried_from_id=retried_from_id,
+    )
+    await session.flush()
+
+    result = await send_custom_examiner_invitation_sms(inv, message)
+    if result.sent:
+        await mark_delivery_sent(session, pending.id)
+        inv.notified_at = datetime.utcnow()
+    else:
+        await mark_delivery_failed(session, pending.id, error=result.error or "SMS failed")
+    await session.commit()
+    return result, pending.id
+
+
+async def record_custom_examiner_roster_sms(
+    session: AsyncSession,
+    *,
+    examiner: Examiner,
+    message: str,
+    trigger: str,
+    triggered_by_user_id: UUID | None = None,
+    retried_from_id: UUID | None = None,
+) -> tuple[SmsDeliveryResult, UUID | None]:
+    from app.models import Examiner as ExaminerModel
+    from app.models import ExaminerSubject
+    from app.services.sms.examiner_roster import send_custom_examiner_roster_sms
+
+    ex = examiner
+    if ex.examination is None or not ex.subjects:
+        from sqlalchemy import select
+
+        stmt = (
+            select(ExaminerModel)
+            .where(ExaminerModel.id == examiner.id)
+            .options(
+                selectinload(ExaminerModel.examination),
+                selectinload(ExaminerModel.subjects).selectinload(ExaminerSubject.subject),
+                selectinload(ExaminerModel.invitation),
+            )
+        )
+        ex = (await session.execute(stmt)).scalar_one_or_none()
+        if ex is None:
+            return SmsDeliveryResult(sent=False, error="Examiner not found"), None
+
+    phone = ex.phone_number or ""
+    try:
+        msisdn = normalize_msisdn(phone) if phone.strip() else ""
+    except ValueError as exc:
+        row = await create_delivery_log(
+            session,
+            examiner_id=ex.id,
+            phone_number=phone,
+            msisdn="",
+            message_type=MESSAGE_TYPE_EXAMINER_ROSTER_CUSTOM,
+            trigger=trigger,
+            status="failed",
+            triggered_by_user_id=triggered_by_user_id,
+            retried_from_id=retried_from_id,
+            error_message=str(exc),
+        )
+        await session.commit()
+        return SmsDeliveryResult(sent=False, error=str(exc)), row.id
+
+    if not msisdn:
+        row = await create_delivery_log(
+            session,
+            examiner_id=ex.id,
+            phone_number=phone,
+            msisdn="",
+            message_type=MESSAGE_TYPE_EXAMINER_ROSTER_CUSTOM,
+            trigger=trigger,
+            status="failed",
+            triggered_by_user_id=triggered_by_user_id,
+            retried_from_id=retried_from_id,
+            error_message="No phone number on roster",
+        )
+        await session.commit()
+        return SmsDeliveryResult(sent=False, error="No phone number on roster"), row.id
+
+    pending = await create_delivery_log(
+        session,
+        examiner_id=ex.id,
+        phone_number=phone,
+        msisdn=msisdn,
+        message_type=MESSAGE_TYPE_EXAMINER_ROSTER_CUSTOM,
+        trigger=trigger,
+        status="pending",
+        triggered_by_user_id=triggered_by_user_id,
+        retried_from_id=retried_from_id,
+    )
+    await session.flush()
+
+    result = await send_custom_examiner_roster_sms(ex, message)
     if result.sent:
         await mark_delivery_sent(session, pending.id)
     else:

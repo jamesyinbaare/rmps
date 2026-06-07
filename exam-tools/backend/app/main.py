@@ -32,10 +32,12 @@ from app.routers import (
     examination_centres,
     examinations,
     examiner_groups,
+    examiner_invitations,
     examiners,
     finance_officers,
     inspectors,
     programmes,
+    public_examiner_invitations,
     question_paper_control,
     schools,
     script_allocation,
@@ -201,6 +203,7 @@ app.include_router(examination_centres.router)
 app.include_router(centre_locations.exam_router)
 app.include_router(centre_locations.admin_router)
 app.include_router(examiners.router)
+app.include_router(examiner_invitations.router)
 app.include_router(examiner_groups.router)
 app.include_router(examination_candidates.router)
 app.include_router(script_control.router)
@@ -213,6 +216,7 @@ app.include_router(admin_examination_designation_rates.router)
 app.include_router(admin_inspector_postings.router)
 app.include_router(admin_inspector_submission_settings.router)
 app.include_router(admin_sms_deliveries.router)
+app.include_router(public_examiner_invitations.router)
 app.include_router(admin_system.router)
 app.include_router(documents.router)
 app.include_router(attendance_sheets.inspector_router)

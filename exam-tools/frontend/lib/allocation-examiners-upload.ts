@@ -1,4 +1,4 @@
-import { apiJson } from "./api";
+import { apiJson, downloadApiFile } from "./api";
 
 export type ExaminerBulkImportRowError = {
   row_number: number;
@@ -20,4 +20,11 @@ export async function bulkUploadExaminationExaminers(
     method: "POST",
     body: formData,
   });
+}
+
+export async function downloadExaminationExaminersBulkTemplate(examinationId: number): Promise<void> {
+  await downloadApiFile(
+    `/examinations/${examinationId}/examiners/bulk-upload/template`,
+    "examiners_bulk_template.xlsx",
+  );
 }

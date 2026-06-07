@@ -15,14 +15,18 @@ from app.core.passwords import generate_inspector_password
 from app.core.security import get_password_hash
 from app.dependencies.auth import SuperAdminDep
 from app.dependencies.database import DBSessionDep
-from app.models import RefreshToken, SmsDelivery, User, UserRole
+from app.models import Examiner, ExaminerInvitation, RefreshToken, SmsDelivery, User, UserRole
 from app.schemas.sms_delivery import (
     SmsDeliveryListResponse,
     SmsDeliveryRetry,
     SmsDeliveryRetryResponse,
     SmsDeliveryRow,
 )
-from app.services.sms.delivery_log import MESSAGE_TYPE_INSPECTOR_CREDENTIALS
+from app.services.sms.delivery_log import (
+    MESSAGE_TYPE_EXAMINER_INVITATION,
+    MESSAGE_TYPE_INSPECTOR_CREDENTIALS,
+)
+from app.services.sms.examiner_invitation import maybe_send_examiner_invitation_sms
 from app.services.sms.inspector_credentials import maybe_send_inspector_credentials
 
 router = APIRouter(prefix="/admin/sms-deliveries", tags=["admin-sms-deliveries"])
@@ -32,11 +36,11 @@ _DEFAULT_PAGE_SIZE = 20
 _RETRY_DEBOUNCE_SECONDS = 60
 
 
-def _row_to_schema(row: SmsDelivery, full_name: str) -> SmsDeliveryRow:
+def _row_to_schema(row: SmsDelivery, recipient_name: str) -> SmsDeliveryRow:
     return SmsDeliveryRow(
         id=row.id,
-        user_id=row.user_id,
-        inspector_full_name=full_name,
+        user_id=cast(UUID | None, row.user_id),
+        recipient_full_name=recipient_name,
         phone_number=row.phone_number,
         msisdn=row.msisdn,
         message_type=row.message_type,
@@ -77,10 +81,25 @@ async def list_sms_deliveries(
         filters.append(SmsDelivery.created_at <= to_date)
 
     user_alias = aliased(User)
-    join_clause = SmsDelivery.user_id == user_alias.id
+    inv_alias = aliased(ExaminerInvitation)
+    ex_alias = aliased(Examiner)
+    join_user = SmsDelivery.user_id == user_alias.id
+    join_inv = SmsDelivery.examiner_invitation_id == inv_alias.id
+    join_ex = SmsDelivery.examiner_id == ex_alias.id
 
-    count_stmt = select(func.count()).select_from(SmsDelivery).join(user_alias, join_clause)
-    list_stmt = select(SmsDelivery, user_alias.full_name).join(user_alias, join_clause)
+    count_stmt = (
+        select(func.count())
+        .select_from(SmsDelivery)
+        .outerjoin(user_alias, join_user)
+        .outerjoin(inv_alias, join_inv)
+        .outerjoin(ex_alias, join_ex)
+    )
+    list_stmt = select(
+        SmsDelivery,
+        func.coalesce(user_alias.full_name, inv_alias.name, ex_alias.name, SmsDelivery.phone_number).label(
+            "recipient_name"
+        ),
+    ).outerjoin(user_alias, join_user).outerjoin(inv_alias, join_inv).outerjoin(ex_alias, join_ex)
     if filters:
         count_stmt = count_stmt.where(*filters)
         list_stmt = list_stmt.where(*filters)
@@ -89,6 +108,8 @@ async def list_sms_deliveries(
         search_clause = or_(
             SmsDelivery.phone_number.ilike(pattern),
             user_alias.full_name.ilike(pattern),
+            inv_alias.name.ilike(pattern),
+            ex_alias.name.ilike(pattern),
         )
         count_stmt = count_stmt.where(search_clause)
         list_stmt = list_stmt.where(search_clause)
@@ -108,8 +129,15 @@ async def get_sms_delivery(
     _admin: SuperAdminDep,
 ) -> SmsDeliveryRow:
     stmt = (
-        select(SmsDelivery, User.full_name)
-        .join(User, SmsDelivery.user_id == User.id)
+        select(
+            SmsDelivery,
+            func.coalesce(User.full_name, ExaminerInvitation.name, Examiner.name, SmsDelivery.phone_number).label(
+                "recipient_name"
+            ),
+        )
+        .outerjoin(User, SmsDelivery.user_id == User.id)
+        .outerjoin(ExaminerInvitation, SmsDelivery.examiner_invitation_id == ExaminerInvitation.id)
+        .outerjoin(Examiner, SmsDelivery.examiner_id == Examiner.id)
         .where(SmsDelivery.id == delivery_id)
     )
     result = await session.execute(stmt)
@@ -139,12 +167,25 @@ async def retry_sms_delivery(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Only failed deliveries can be retried",
         )
-    if original.message_type != MESSAGE_TYPE_INSPECTOR_CREDENTIALS:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Retry is only supported for inspector credential messages",
+    if original.message_type == MESSAGE_TYPE_INSPECTOR_CREDENTIALS:
+        return await _retry_inspector_credentials_sms(
+            session, original, data, admin
         )
+    if original.message_type == MESSAGE_TYPE_EXAMINER_INVITATION:
+        return await _retry_examiner_invitation_sms(session, original, admin)
 
+    raise HTTPException(
+        status_code=status.HTTP_400_BAD_REQUEST,
+        detail="Retry is not supported for this message type",
+    )
+
+
+async def _retry_inspector_credentials_sms(
+    session: DBSessionDep,
+    original: SmsDelivery,
+    data: SmsDeliveryRetry,
+    admin: User,
+) -> SmsDeliveryRetryResponse:
     debounce_since = datetime.utcnow() - timedelta(seconds=_RETRY_DEBOUNCE_SECONDS)
     recent_sent = await session.execute(
         select(SmsDelivery.id).where(
@@ -203,4 +244,66 @@ async def retry_sms_delivery(
         sms_sent=bool(sms_sent),
         sms_error=sms_error,
         generated_password=generated_password,
+    )
+
+
+async def _retry_examiner_invitation_sms(
+    session: DBSessionDep,
+    original: SmsDelivery,
+    admin: User,
+) -> SmsDeliveryRetryResponse:
+    from sqlalchemy.orm import selectinload
+
+    from app.models import ExaminerInvitationStatus
+
+    if original.examiner_invitation_id is None:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invitation not linked")
+
+    debounce_since = datetime.utcnow() - timedelta(seconds=_RETRY_DEBOUNCE_SECONDS)
+    recent_sent = await session.execute(
+        select(SmsDelivery.id).where(
+            SmsDelivery.retried_from_id == original.id,
+            SmsDelivery.status == "sent",
+            SmsDelivery.created_at >= debounce_since,
+        )
+    )
+    if recent_sent.scalar_one_or_none() is not None:
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail="A retry for this delivery succeeded recently; wait before retrying again",
+        )
+
+    stmt = (
+        select(ExaminerInvitation)
+        .where(ExaminerInvitation.id == original.examiner_invitation_id)
+        .options(
+            selectinload(ExaminerInvitation.subject),
+            selectinload(ExaminerInvitation.examination),
+        )
+    )
+    inv = (await session.execute(stmt)).scalar_one_or_none()
+    if inv is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Invitation not found")
+    if inv.status not in (ExaminerInvitationStatus.PENDING, ExaminerInvitationStatus.EXPIRED):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invitation is no longer pending",
+        )
+
+    sms_sent, sms_error, new_delivery_id = await maybe_send_examiner_invitation_sms(
+        inv,
+        True,
+        session=session,
+        triggered_by_user_id=admin.id,
+        trigger="retry",
+        retried_from_id=original.id,
+    )
+    if new_delivery_id is None:
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="SMS delivery was not logged")
+
+    return SmsDeliveryRetryResponse(
+        delivery_id=new_delivery_id,
+        sms_sent=bool(sms_sent),
+        sms_error=sms_error,
+        generated_password=None,
     )

@@ -4,7 +4,7 @@ from datetime import datetime
 from typing import cast
 
 from fastapi import APIRouter, File, HTTPException, Query, UploadFile, status
-from sqlalchemy import func, select
+from sqlalchemy import select
 
 from app.dependencies.auth import SuperAdminDep, SupervisorInspectorOrDepotKeeperDep
 from app.dependencies.database import DBSessionDep
@@ -24,10 +24,14 @@ from app.services.school_bulk_upload import (
     validate_bank_branch_required_columns,
 )
 
-router = APIRouter(prefix="/bank-branches", tags=["bank-branches"])
+from app.services.bank_branch_query import (
+    DEFAULT_LIMIT,
+    MAX_LIST,
+    distinct_bank_names,
+    list_bank_branches as query_bank_branches,
+)
 
-_MAX_LIST = 500
-_DEFAULT_LIMIT = 200
+router = APIRouter(prefix="/bank-branches", tags=["bank-branches"])
 
 
 @router.get("", response_model=BankBranchListResponse)
@@ -38,31 +42,16 @@ async def list_bank_branches(
     bank_name_exact: str | None = Query(None, description="Exact bank name match (case-sensitive)"),
     branch_name: str | None = Query(None, description="Substring match (case-insensitive)"),
     skip: int = Query(0, ge=0),
-    limit: int = Query(_DEFAULT_LIMIT, ge=1, le=_MAX_LIST),
+    limit: int = Query(DEFAULT_LIMIT, ge=1, le=MAX_LIST),
 ) -> BankBranchListResponse:
-    stmt = select(BankBranch)
-    count_stmt = select(func.count()).select_from(BankBranch)
-    if bank_name_exact and bank_name_exact.strip():
-        exact = bank_name_exact.strip()
-        stmt = stmt.where(BankBranch.bank_name == exact)
-        count_stmt = count_stmt.where(BankBranch.bank_name == exact)
-    elif bank_name and bank_name.strip():
-        pat = f"%{bank_name.strip()}%"
-        stmt = stmt.where(BankBranch.bank_name.ilike(pat))
-        count_stmt = count_stmt.where(BankBranch.bank_name.ilike(pat))
-    if branch_name and branch_name.strip():
-        pat = f"%{branch_name.strip()}%"
-        stmt = stmt.where(BankBranch.branch_name.ilike(pat))
-        count_stmt = count_stmt.where(BankBranch.branch_name.ilike(pat))
-
-    total = int(await session.scalar(count_stmt) or 0)
-    stmt = (
-        stmt.order_by(BankBranch.bank_name.asc(), BankBranch.branch_name.asc(), BankBranch.bank_code.asc())
-        .offset(skip)
-        .limit(limit)
+    rows, total = await query_bank_branches(
+        session,
+        bank_name=bank_name,
+        bank_name_exact=bank_name_exact,
+        branch_name=branch_name,
+        skip=skip,
+        limit=limit,
     )
-    result = await session.execute(stmt)
-    rows = result.scalars().all()
     items = [BankBranchRow.model_validate(r) for r in rows]
     return BankBranchListResponse(items=items, total=total)
 
@@ -74,12 +63,7 @@ async def distinct_bank_names(
     q: str | None = Query(None, description="Substring filter on bank name"),
     limit: int = Query(100, ge=1, le=500),
 ) -> list[str]:
-    stmt = select(BankBranch.bank_name).distinct()
-    if q and q.strip():
-        stmt = stmt.where(BankBranch.bank_name.ilike(f"%{q.strip()}%"))
-    stmt = stmt.order_by(BankBranch.bank_name.asc()).limit(limit)
-    result = await session.execute(stmt)
-    return [cast(str, name) for name in result.scalars().all()]
+    return await distinct_bank_names(session, q=q, limit=limit)
 
 
 @router.post("/bulk-upload", response_model=BankBranchBulkUploadResponse)

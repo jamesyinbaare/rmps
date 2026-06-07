@@ -11,6 +11,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models import ExaminerType, Region, School, Subject, Zone
+from app.services.school_bulk_upload import parse_inspector_phone_number
 from app.services.script_allocation import parse_zone, zones_from_strings
 
 
@@ -142,6 +143,9 @@ def _canonical_column_map() -> dict[str, str]:
         "type": "examiner_type",
         "role": "examiner_type",
         "region": "region",
+        "phone": "phone_number",
+        "phone_number": "phone_number",
+        "mobile": "phone_number",
         "zone": "restrict_zone",
         "allowed_zone": "restrict_zone",
         "source_zone": "restrict_zone",
@@ -193,8 +197,13 @@ async def dataframe_row_to_examiner_fields(
         restrict = str(rz).strip()
     if not allowed_region:
         raise ValueError("Region is required")
+    phone_raw = row.get("phone_number")
+    if phone_raw is None or (isinstance(phone_raw, float) and pd.isna(phone_raw)):
+        raise ValueError("Phone number is required")
+    phone_number = parse_inspector_phone_number(phone_raw)
     return {
         "name": str(name).strip(),
+        "phone_number": phone_number,
         "examiner_type": et,
         "subject_ids": [sid],
         "allowed_region": allowed_region,

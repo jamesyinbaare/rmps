@@ -92,6 +92,13 @@ class ExaminerType(enum.Enum):
     TEAM_LEADER = "team_leader"
 
 
+class ExaminerInvitationStatus(enum.Enum):
+    PENDING = "pending"
+    ACCEPTED = "accepted"
+    DECLINED = "declined"
+    EXPIRED = "expired"
+
+
 class AllocationRunStatus(enum.Enum):
     DRAFT = "draft"
     OPTIMAL = "optimal"
@@ -167,7 +174,19 @@ class SmsDelivery(Base):
     __tablename__ = "sms_deliveries"
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    user_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+    user_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=True, index=True)
+    examiner_invitation_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("examiner_invitations.id", ondelete="CASCADE"),
+        nullable=True,
+        index=True,
+    )
+    examiner_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("examiners.id", ondelete="CASCADE"),
+        nullable=True,
+        index=True,
+    )
     phone_number = Column(String(50), nullable=False)
     msisdn = Column(String(20), nullable=False)
     message_type = Column(String(32), nullable=False)
@@ -192,11 +211,17 @@ class SmsDelivery(Base):
     sent_at = Column(DateTime, nullable=True)
 
     user = relationship("User", foreign_keys=[user_id])
+    examiner_invitation = relationship("ExaminerInvitation", back_populates="sms_deliveries")
+    examiner = relationship("Examiner", back_populates="sms_deliveries")
     triggered_by = relationship("User", foreign_keys=[triggered_by_user_id])
     retried_from = relationship("SmsDelivery", remote_side=[id], foreign_keys=[retried_from_id])
 
     __table_args__ = (
         Index("ix_sms_deliveries_status_created_at", "status", "created_at"),
+        CheckConstraint(
+            "user_id IS NOT NULL OR examiner_invitation_id IS NOT NULL OR examiner_id IS NOT NULL",
+            name="ck_sms_deliveries_recipient",
+        ),
     )
 
 
@@ -385,6 +410,12 @@ class Examination(Base):
         back_populates="examination",
         cascade="all, delete-orphan",
         order_by="ExaminerGroup.name",
+    )
+    examiner_invitations = relationship(
+        "ExaminerInvitation",
+        back_populates="examination",
+        cascade="all, delete-orphan",
+        order_by="ExaminerInvitation.created_at",
     )
     examination_centres = relationship(
         "ExaminationCentre",
@@ -926,6 +957,8 @@ class Examiner(Base):
         nullable=True,
         doc="Optional MILP weight for L1 deviation; if null, a default by examiner_type is used.",
     )
+    phone_number = Column(String(50), nullable=True)
+    msisdn = Column(String(20), nullable=True, index=True)
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
 
@@ -946,13 +979,61 @@ class Examiner(Base):
         back_populates="examiner",
         passive_deletes=True,
     )
+    invitation = relationship(
+        "ExaminerInvitation",
+        back_populates="examiner",
+        uselist=False,
+    )
+    bank_account = relationship(
+        "ExaminerBankAccount",
+        back_populates="examiner",
+        cascade="all, delete-orphan",
+        uselist=False,
+    )
+    sms_deliveries = relationship(
+        "SmsDelivery",
+        back_populates="examiner",
+        cascade="all, delete-orphan",
+    )
 
     __table_args__ = (
         CheckConstraint(
             "deviation_weight IS NULL OR deviation_weight > 0",
             name="ck_examiner_deviation_weight_positive",
         ),
+        UniqueConstraint(
+            "examination_id",
+            "msisdn",
+            name="uq_examiners_examination_msisdn",
+        ),
     )
+
+
+class ExaminerBankAccount(Base):
+    """One bank account per examiner for allowance processing."""
+
+    __tablename__ = "examiner_bank_accounts"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    examiner_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("examiners.id", ondelete="CASCADE"),
+        nullable=False,
+        unique=True,
+        index=True,
+    )
+    bank_branch_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("bank_branches.id", ondelete="RESTRICT"),
+        nullable=False,
+        index=True,
+    )
+    account_number = Column(String(13), nullable=False)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+
+    examiner = relationship("Examiner", back_populates="bank_account")
+    bank_branch = relationship("BankBranch", back_populates="examiner_bank_accounts")
 
 
 class ExaminerSubject(Base):
@@ -963,6 +1044,78 @@ class ExaminerSubject(Base):
 
     examiner = relationship("Examiner", back_populates="subjects")
     subject = relationship("Subject", backref="examiner_subject_links")
+
+
+class ExaminerInvitation(Base):
+    """SMS invitation for a prospective examiner; roster entry created on accept."""
+
+    __tablename__ = "examiner_invitations"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    examination_id = Column(
+        Integer,
+        ForeignKey("examinations.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    subject_id = Column(Integer, ForeignKey("subjects.id", ondelete="RESTRICT"), nullable=False, index=True)
+    name = Column(String(255), nullable=False)
+    phone_number = Column(String(50), nullable=False)
+    msisdn = Column(String(20), nullable=False, index=True)
+    examiner_type = Column(Enum(ExaminerType, create_constraint=False), nullable=False)
+    region = Column(Enum(Region, create_constraint=False), nullable=False)
+    token = Column(String(128), nullable=False, unique=True, index=True)
+    token_expires_at = Column(DateTime, nullable=False)
+    status = Column(
+        Enum(
+            ExaminerInvitationStatus,
+            values_callable=lambda x: [i.value for i in x],
+            native_enum=False,
+            length=16,
+        ),
+        nullable=False,
+        default=ExaminerInvitationStatus.PENDING,
+        server_default="pending",
+        index=True,
+    )
+    invited_by_user_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("users.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+    notified_at = Column(DateTime, nullable=True)
+    responded_at = Column(DateTime, nullable=True)
+    response_deadline = Column(DateTime, nullable=False)
+    coordination_date = Column(DateTime, nullable=True)
+    examiner_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("examiners.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+
+    examination = relationship("Examination", back_populates="examiner_invitations")
+    subject = relationship("Subject")
+    invited_by = relationship("User", foreign_keys=[invited_by_user_id])
+    examiner = relationship("Examiner", back_populates="invitation")
+    sms_deliveries = relationship(
+        "SmsDelivery",
+        back_populates="examiner_invitation",
+        cascade="all, delete-orphan",
+    )
+
+    __table_args__ = (
+        Index(
+            "ix_examiner_invitations_pending_exam_msisdn",
+            "examination_id",
+            "msisdn",
+            unique=True,
+            postgresql_where=text("status = 'pending'"),
+        ),
+    )
 
 
 class AllocationRun(Base):
@@ -1057,6 +1210,7 @@ class BankBranch(Base):
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
 
     exam_officials = relationship("ExamCentreOfficial", back_populates="bank_branch")
+    examiner_bank_accounts = relationship("ExaminerBankAccount", back_populates="bank_branch")
 
 
 class ExamCentreOfficial(Base):

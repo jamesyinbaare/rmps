@@ -42,6 +42,32 @@ def generate_subject_template() -> bytes:
     return output.getvalue()
 
 
+def generate_examiners_bulk_template() -> bytes:
+    """Excel template for examiner roster or invitation bulk upload.
+
+    Columns: name, phone_number, subject_code, examiner_type, region.
+    Phone column is formatted as Text so Excel does not strip leading zeros.
+    """
+    df = pd.DataFrame(
+        {
+            "name": ["Jane Doe", "John Smith"],
+            "phone_number": ["0551234567", "0244123456"],
+            "subject_code": ["301", "302"],
+            "examiner_type": ["assistant_examiner", "chief_examiner"],
+            "region": ["Greater Accra", "Ashanti"],
+        }
+    )
+
+    output = io.BytesIO()
+    with pd.ExcelWriter(output, engine="openpyxl") as writer:
+        df.to_excel(writer, index=False, sheet_name="Examiners")
+        ws = writer.sheets["Examiners"]
+        for row in range(1, 10001):
+            ws.cell(row=row, column=2).number_format = "@"
+    output.seek(0)
+    return output.getvalue()
+
+
 def generate_inspector_postings_bulk_template() -> bytes:
     """Excel template for inspector postings bulk upload.
 

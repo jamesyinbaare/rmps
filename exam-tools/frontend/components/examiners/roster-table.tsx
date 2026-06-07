@@ -1,0 +1,228 @@
+"use client";
+
+import {
+  getCoreRowModel,
+  getPaginationRowModel,
+  getSortedRowModel,
+  useReactTable,
+  type ColumnDef,
+  type PaginationState,
+  type RowSelectionState,
+  type SortingState,
+  type VisibilityState,
+} from "@tanstack/react-table";
+import { Loader2 } from "lucide-react";
+import { useMemo } from "react";
+
+import { DataTable } from "@/components/data-table";
+import {
+  DEFAULT_PAGE_SIZE,
+  INPUT_FOCUS_RING,
+  MAX_CUSTOM_PAGE_SIZE,
+  PAGE_SIZE_PRESETS,
+} from "@/components/examiners/constants";
+import type { RosterTableRow } from "@/components/examiners/types";
+import { humanizeRegion } from "@/components/examiners/utils";
+import { EXAMINER_TYPE_LABELS } from "@/components/examiner-invitations/constants";
+import { OfficialAccountsPagination } from "@/components/official-accounts-pagination";
+import type { ExaminerTypeApi } from "@/lib/api";
+
+type Props = {
+  rows: RosterTableRow[];
+  loading: boolean;
+  busy: boolean;
+  sorting: SortingState;
+  onSortingChange: (sorting: SortingState) => void;
+  rowSelection: RowSelectionState;
+  onRowSelectionChange: (selection: RowSelectionState) => void;
+  columnVisibility: VisibilityState;
+  onColumnVisibilityChange: (visibility: VisibilityState) => void;
+  pagination: PaginationState;
+  onPaginationChange: (pagination: PaginationState) => void;
+  showCustomPageSizeInput: boolean;
+  customPageSizeInput: string;
+  onPageSizeSelectChange: (value: string) => void;
+  onCustomPageSizeChange: (value: string) => void;
+  onCustomPageSizeBlur: () => void;
+  onEdit: (row: RosterTableRow) => void;
+  onRemove: (row: RosterTableRow) => void;
+};
+
+export function RosterTable({
+  rows,
+  loading,
+  busy,
+  sorting,
+  onSortingChange,
+  rowSelection,
+  onRowSelectionChange,
+  columnVisibility,
+  onColumnVisibilityChange,
+  pagination,
+  onPaginationChange,
+  showCustomPageSizeInput,
+  customPageSizeInput,
+  onPageSizeSelectChange,
+  onCustomPageSizeChange,
+  onCustomPageSizeBlur,
+  onEdit,
+  onRemove,
+}: Props) {
+  const columns = useMemo<ColumnDef<RosterTableRow>[]>(
+    () => [
+      {
+        id: "select",
+        header: ({ table }) => (
+          <input
+            type="checkbox"
+            className={`size-4 rounded border-border ${INPUT_FOCUS_RING}`}
+            checked={table.getIsAllPageRowsSelected()}
+            ref={(el) => {
+              if (el) el.indeterminate = table.getIsSomePageRowsSelected();
+            }}
+            onChange={table.getToggleAllPageRowsSelectedHandler()}
+            aria-label="Select all rows"
+          />
+        ),
+        cell: ({ row }) => (
+          <input
+            type="checkbox"
+            className={`size-4 rounded border-border ${INPUT_FOCUS_RING}`}
+            checked={row.getIsSelected()}
+            onChange={row.getToggleSelectedHandler()}
+            aria-label={`Select ${row.original.name}`}
+          />
+        ),
+        enableSorting: false,
+        enableHiding: false,
+      },
+      {
+        accessorKey: "name",
+        header: "Name",
+        cell: ({ getValue }) => <span className="font-medium">{getValue<string>()}</span>,
+      },
+      {
+        accessorKey: "phone_number",
+        header: "Phone",
+        cell: ({ getValue }) => (
+          <span className="font-mono text-xs">{getValue<string | null>() ?? "—"}</span>
+        ),
+      },
+      {
+        id: "subject",
+        accessorFn: (row) => row.subjectLabel,
+        header: "Subject",
+        cell: ({ row }) => <span>{row.original.subjectLabel}</span>,
+      },
+      {
+        accessorKey: "examiner_type",
+        header: "Role",
+        cell: ({ getValue }) => EXAMINER_TYPE_LABELS[getValue<ExaminerTypeApi>()] ?? getValue<string>(),
+      },
+      {
+        accessorKey: "region",
+        header: "Region",
+        cell: ({ getValue }) => humanizeRegion(getValue<string>()),
+      },
+      {
+        id: "group",
+        accessorFn: (row) => row.groupLabel ?? "",
+        header: "Group",
+        cell: ({ row }) => (
+          <span className="text-xs text-muted-foreground">{row.original.groupLabel ?? "—"}</span>
+        ),
+      },
+      {
+        id: "actions",
+        header: "",
+        enableSorting: false,
+        enableHiding: false,
+        cell: ({ row }) => (
+          <div className="flex flex-wrap gap-2">
+            <button
+              type="button"
+              className="text-sm text-primary underline-offset-2 hover:underline"
+              disabled={busy}
+              onClick={() => onEdit(row.original)}
+            >
+              Edit
+            </button>
+            <button
+              type="button"
+              className="text-sm text-destructive underline-offset-2 hover:underline"
+              disabled={busy}
+              onClick={() => onRemove(row.original)}
+            >
+              Remove
+            </button>
+          </div>
+        ),
+      },
+    ],
+    [busy, onEdit, onRemove],
+  );
+
+  const table = useReactTable({
+    data: rows,
+    columns,
+    state: { sorting, rowSelection, columnVisibility, pagination },
+    onSortingChange: (updater) => {
+      const next = typeof updater === "function" ? updater(sorting) : updater;
+      onSortingChange(next);
+    },
+    onRowSelectionChange: (updater) => {
+      const next = typeof updater === "function" ? updater(rowSelection) : updater;
+      onRowSelectionChange(next);
+    },
+    onColumnVisibilityChange: (updater) => {
+      const next = typeof updater === "function" ? updater(columnVisibility) : updater;
+      onColumnVisibilityChange(next);
+    },
+    onPaginationChange: (updater) => {
+      const next = typeof updater === "function" ? updater(pagination) : updater;
+      onPaginationChange(next);
+    },
+    getCoreRowModel: getCoreRowModel(),
+    getSortedRowModel: getSortedRowModel(),
+    getPaginationRowModel: getPaginationRowModel(),
+    enableRowSelection: true,
+    getRowId: (row) => row.id,
+  });
+
+  if (loading) {
+    return (
+      <div className="flex min-h-[12rem] flex-col items-center justify-center gap-2 py-12 text-sm text-muted-foreground">
+        <Loader2 className="size-6 animate-spin" aria-hidden />
+        Loading roster…
+      </div>
+    );
+  }
+
+  if (rows.length === 0) return null;
+
+  const page = pagination.pageIndex + 1;
+
+  return (
+    <div className="flex min-h-0 flex-1 flex-col">
+      <div className="min-h-0 flex-1 overflow-auto overscroll-contain">
+        <DataTable table={table} emptyMessage="No examiners match the filters." striped />
+      </div>
+      <OfficialAccountsPagination
+        page={page}
+        pageSize={pagination.pageSize}
+        total={rows.length}
+        busy={busy}
+        recordLabel="examiner"
+        pageSizeOptions={[...PAGE_SIZE_PRESETS]}
+        showCustomPageSizeInput={showCustomPageSizeInput}
+        customPageSizeInput={customPageSizeInput}
+        onPageSizeSelectChange={onPageSizeSelectChange}
+        onCustomPageSizeChange={onCustomPageSizeChange}
+        onCustomPageSizeBlur={onCustomPageSizeBlur}
+        maxCustomPageSize={MAX_CUSTOM_PAGE_SIZE}
+        onPageChange={(p) => onPaginationChange({ ...pagination, pageIndex: p - 1 })}
+        onPageSizeChange={(size) => onPaginationChange({ pageIndex: 0, pageSize: size })}
+      />
+    </div>
+  );
+}
