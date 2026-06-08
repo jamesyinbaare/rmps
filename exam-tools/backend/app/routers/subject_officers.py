@@ -49,6 +49,16 @@ async def _load_subject_officer_user(session: DBSessionDep, user_id: UUID) -> Us
     return user
 
 
+def _assignment_subject_row(subject: Subject) -> SubjectOfficerAssignmentSubjectRow:
+    return SubjectOfficerAssignmentSubjectRow(
+        subject_id=int(subject.id),
+        subject_code=subject.code,
+        subject_name=subject.name,
+        subject_type=subject.subject_type.value,
+        subject_original_code=subject.original_code,
+    )
+
+
 @router_admin.get("", response_model=SubjectOfficerListResponse)
 async def list_subject_officers(
     session: DBSessionDep,
@@ -73,6 +83,8 @@ async def list_subject_officers(
                 full_name=cast(str, u.full_name),
                 email=cast(str | None, u.email),
                 phone_number=cast(str | None, u.phone_number),
+                is_active=bool(u.is_active),
+                created_at=u.created_at,
             )
             for u in rows
         ],
@@ -210,11 +222,11 @@ async def list_subject_officer_assignments(
         if user is None:
             continue
         entry = grouped.get(user.id)
-        subject_row = SubjectOfficerAssignmentSubjectRow(
+        subject_row = _assignment_subject_row(row.subject) if row.subject else SubjectOfficerAssignmentSubjectRow(
             subject_id=int(row.subject_id),
-            subject_code=row.subject.code if row.subject else "",
-            subject_name=row.subject.name if row.subject else "",
-            subject_type=row.subject.subject_type.value if row.subject else "",
+            subject_code="",
+            subject_name="",
+            subject_type="",
         )
         if entry is None:
             grouped[user.id] = SubjectOfficerAssignmentRow(
@@ -283,14 +295,7 @@ async def upsert_subject_officer_assignments(
         subj = await session.get(Subject, sid)
         if subj is None:
             continue
-        subjects.append(
-            SubjectOfficerAssignmentSubjectRow(
-                subject_id=int(subj.id),
-                subject_code=subj.code,
-                subject_name=subj.name,
-                subject_type=subj.subject_type.value,
-            )
-        )
+        subjects.append(_assignment_subject_row(subj))
     first_id = created_rows[0].id if created_rows else user.id
     return SubjectOfficerAssignmentRow(
         id=first_id,
@@ -337,7 +342,7 @@ async def get_my_subject_officer_assignments(
             exam = await session.get(Examination, exam_id)
             by_exam[exam_id] = SubjectOfficerMeExamAssignment(
                 examination_id=exam_id,
-                examination_name=exam.name if exam else "",
+                examination_name=f"{exam.exam_type} {exam.year}" if exam else "",
                 subjects=[],
             )
         by_exam[exam_id].subjects.append(

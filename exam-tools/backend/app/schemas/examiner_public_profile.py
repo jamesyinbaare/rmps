@@ -6,6 +6,8 @@ from pydantic import BaseModel
 class ExaminerPublicScriptsAllocationRow(BaseModel):
     school_code: str
     school_name: str
+    envelope_number: int
+    series_number: int
     booklet_count: int
 
 

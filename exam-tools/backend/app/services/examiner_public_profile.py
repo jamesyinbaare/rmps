@@ -93,23 +93,29 @@ async def get_examiner_scripts_allocation(
         )
         result = await session.execute(assign_stmt)
 
-        by_school: dict[tuple[str, str], int] = {}
-        for aa, _env, _series, school in result.all():
-            key = (school.code, school.name)
-            by_school[key] = by_school.get(key, 0) + int(aa.booklet_count)
+        rows: list[dict] = []
+        for aa, env, series, school in result.all():
+            rows.append(
+                {
+                    "school_code": school.code,
+                    "school_name": school.name,
+                    "envelope_number": int(env.envelope_number),
+                    "series_number": int(series.series_number),
+                    "booklet_count": int(aa.booklet_count),
+                }
+            )
 
-        if not by_school:
+        if not rows:
             continue
 
-        rows = [
-            {
-                "school_code": code,
-                "school_name": name,
-                "booklet_count": count,
-            }
-            for (code, name), count in sorted(by_school.items(), key=lambda x: x[0][1].lower())
-        ]
-        total = sum(r["booklet_count"] for r in rows)
+        rows.sort(
+            key=lambda r: (
+                str(r["school_name"]).lower(),
+                int(r["envelope_number"]),
+                int(r["series_number"]),
+            )
+        )
+        total = sum(int(r["booklet_count"]) for r in rows)
         blocks.append(
             {
                 "subject_code": subject_code,

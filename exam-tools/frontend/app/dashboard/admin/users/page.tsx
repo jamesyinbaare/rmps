@@ -273,7 +273,7 @@ export default function AdminUsersPage() {
               id="subject-officers"
               title="Subject officer"
               description="Subject-scoped examiner roster, invitations, and marked script return verification."
-              loginHint="Phone + password"
+              loginHint="Staff sign-in · email + password"
               accountCount={counts.subjectOfficer}
               countLoading={countsLoading}
               onManage={() => openManage("subject-officers", "list")}

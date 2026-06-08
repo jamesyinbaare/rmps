@@ -3604,6 +3604,8 @@ export type ExaminerInvitationPublic = {
 export type ExaminerPublicScriptsAllocationRow = {
   school_code: string;
   school_name: string;
+  envelope_number: number;
+  series_number: number;
   booklet_count: number;
 };
 
@@ -4478,6 +4480,8 @@ export type AdminSubjectOfficerRow = {
   full_name: string;
   email: string | null;
   phone_number: string | null;
+  is_active: boolean;
+  created_at: string;
 };
 
 export type AdminSubjectOfficerListResponse = {
@@ -4507,6 +4511,7 @@ export type SubjectOfficerAssignmentSubjectRow = {
   subject_code: string;
   subject_name: string;
   subject_type: string;
+  subject_original_code?: string | null;
 };
 
 export type SubjectOfficerAssignmentRow = {

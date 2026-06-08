@@ -27,6 +27,8 @@ class SubjectOfficerRow(BaseModel):
     full_name: str
     email: EmailStr | None = None
     phone_number: str | None = None
+    is_active: bool
+    created_at: datetime
 
 
 class SubjectOfficerListResponse(BaseModel):
@@ -39,6 +41,7 @@ class SubjectOfficerAssignmentSubjectRow(BaseModel):
     subject_code: str
     subject_name: str
     subject_type: str
+    subject_original_code: str | None = None
 
 
 class SubjectOfficerAssignmentRow(BaseModel):

@@ -180,6 +180,7 @@ export function ExaminersPageShell({
                   isSuperAdmin={isSuperAdmin}
                   lockedSubjectIds={lockedSubjectIds}
                   embedded
+                  loadExaminerGroups={!hideGroups}
                   onRosterCountChange={onRosterCountChange}
                 />
               ) : null}

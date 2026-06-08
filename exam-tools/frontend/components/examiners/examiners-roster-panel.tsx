@@ -51,6 +51,7 @@ type Props = {
   isSuperAdmin: boolean;
   lockedSubjectIds?: number[];
   embedded?: boolean;
+  loadExaminerGroups?: boolean;
   onRosterCountChange?: (count: number) => void;
 };
 
@@ -66,6 +67,7 @@ export function ExaminersRosterPanel({
   isSuperAdmin,
   lockedSubjectIds,
   embedded = false,
+  loadExaminerGroups = true,
   onRosterCountChange,
 }: Props) {
   const [examiners, setExaminers] = useState<ExaminerRow[]>([]);
@@ -125,10 +127,18 @@ export function ExaminersRosterPanel({
     setLoadError(null);
     setLoading(true);
     try {
-      const [list, groupList] = await Promise.all([
-        listExaminationExaminers(eid),
-        listExaminerGroups(eid),
-      ]);
+      const list = await listExaminationExaminers(eid);
+      let groupList: ExaminerGroupRow[] = [];
+      if (loadExaminerGroups) {
+        try {
+          groupList = await listExaminerGroups(eid);
+        } catch (e) {
+          // Subject officers cannot list marking groups; roster still works without group names.
+          if (!(e instanceof Error && e.message === "Insufficient permissions")) {
+            throw e;
+          }
+        }
+      }
       setExaminers(list);
       setGroups(groupList);
       onRosterCountChange?.(list.length);
@@ -140,7 +150,7 @@ export function ExaminersRosterPanel({
     } finally {
       setLoading(false);
     }
-  }, [onRosterCountChange]);
+  }, [loadExaminerGroups, onRosterCountChange]);
 
   useEffect(() => {
     if (examId == null) {
