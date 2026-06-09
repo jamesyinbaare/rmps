@@ -1,65 +1,73 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useState } from "react";
 
 import { DashboardShell } from "@/components/dashboard-shell";
 import { RoleGuard } from "@/components/role-guard";
-import {
-  getStaffDefaultExamination,
-  getSubjectOfficerMyAssignments,
-  type Examination,
-  type SubjectOfficerMeExamAssignment,
-} from "@/lib/api";
-import { formatExamLabel } from "@/lib/official-rates-draft";
+import { useSubjectOfficerAssignments } from "@/hooks/use-subject-officer-assignments";
+import { useSubjectOfficerExamUrl } from "@/hooks/use-subject-officer-exam-url";
+import { subjectNamesSummary, withExamQuery } from "@/lib/subject-officer-exams";
 
 export default function SubjectOfficerDashboardPage() {
-  const [exam, setExam] = useState<Examination | null>(null);
-  const [assignments, setAssignments] = useState<SubjectOfficerMeExamAssignment | null>(null);
+  const { assignments, loading } = useSubjectOfficerAssignments();
+  const examIds = assignments.map((a) => a.examination_id);
+  const { examId } = useSubjectOfficerExamUrl({ examIds, requireSelection: true });
 
-  useEffect(() => {
-    void getStaffDefaultExamination()
-      .then(setExam)
-      .catch(() => setExam(null));
-    void getSubjectOfficerMyAssignments()
-      .then((data) => setAssignments(data.items[0] ?? null))
-      .catch(() => setAssignments(null));
-  }, []);
+  const selected = assignments.find((a) => a.examination_id === examId);
+  const subjectSummary = subjectNamesSummary(assignments, examId);
 
   return (
     <RoleGuard expectedRole="SUBJECT_OFFICER" loginHref="/login/admin">
       <DashboardShell title="Subject officer dashboard" staffRole="subject-officer">
         <div className="space-y-6">
-          <div className="rounded-xl border border-border bg-card p-5">
-            <h2 className="text-base font-semibold text-foreground">Active examination</h2>
-            <p className="mt-2 text-sm text-muted-foreground">
-              {exam ? formatExamLabel(exam) : "Loading examination…"}
+          {loading ? (
+            <p className="text-sm text-muted-foreground">Loading assignments…</p>
+          ) : assignments.length === 0 ? (
+            <p className="text-sm text-muted-foreground">
+              No examination assignments found for your account.
             </p>
-            {assignments ? (
-              <p className="mt-3 text-sm text-foreground">
-                Assigned subjects:{" "}
-                {assignments.subjects.map((s) => s.subject_name).join(", ") || "None"}
+          ) : examId == null ? (
+            <div className="rounded-xl border border-border bg-card p-5">
+              <h2 className="text-base font-semibold text-foreground">Select an examination</h2>
+              <p className="mt-2 text-sm text-muted-foreground">
+                Choose an examination using the selector above to view your assigned subjects and
+                open marking tools.
               </p>
-            ) : null}
-          </div>
+            </div>
+          ) : (
+            <div className="rounded-xl border border-border bg-card p-5">
+              <h2 className="text-base font-semibold text-foreground">
+                {selected?.examination_name ?? "Examination"}
+              </h2>
+              <p className="mt-2 text-sm text-foreground">
+                Assigned subjects: {subjectSummary ?? "None"}
+              </p>
+            </div>
+          )}
 
           <div className="grid gap-3 sm:grid-cols-2">
             <Link
-              href="/dashboard/subject-officer/examiners"
-              className="rounded-xl border border-border bg-card p-5 transition-colors hover:border-primary/40"
+              href={withExamQuery("/dashboard/subject-officer/examiners", examId)}
+              className={`rounded-xl border border-border bg-card p-5 transition-colors hover:border-primary/40 ${
+                examId == null ? "pointer-events-none opacity-50" : ""
+              }`}
+              aria-disabled={examId == null}
             >
               <h3 className="font-semibold text-foreground">Examiners</h3>
               <p className="mt-1 text-sm text-muted-foreground">
-                Manage roster and invitations for your subject(s).
+                Manage roster, invitations, and cohorts for your subject(s).
               </p>
             </Link>
             <Link
-              href="/dashboard/subject-officer/marked-script-returns"
-              className="rounded-xl border border-border bg-card p-5 transition-colors hover:border-primary/40"
+              href={withExamQuery("/dashboard/subject-officer/marked-script-returns", examId)}
+              className={`rounded-xl border border-border bg-card p-5 transition-colors hover:border-primary/40 ${
+                examId == null ? "pointer-events-none opacity-50" : ""
+              }`}
+              aria-disabled={examId == null}
             >
               <h3 className="font-semibold text-foreground">Marked script returns</h3>
               <p className="mt-1 text-sm text-muted-foreground">
-                Record and verify marked scripts returned by examiners.
+                Verify marked scripts returned by examiners, envelope by envelope.
               </p>
             </Link>
           </div>

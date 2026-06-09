@@ -49,6 +49,33 @@ async def _load_subject_officer_user(session: DBSessionDep, user_id: UUID) -> Us
     return user
 
 
+async def _subject_officer_assignments_by_exam(
+    session: DBSessionDep,
+    user_id: UUID,
+) -> SubjectOfficerMeAssignmentsResponse:
+    pairs = await load_subject_officer_assignments_for_user(session, user_id=user_id)
+    by_exam: dict[int, SubjectOfficerMeExamAssignment] = {}
+    for assignment, subject in pairs:
+        exam_id = int(assignment.examination_id)
+        if exam_id not in by_exam:
+            exam = await session.get(Examination, exam_id)
+            by_exam[exam_id] = SubjectOfficerMeExamAssignment(
+                examination_id=exam_id,
+                examination_name=f"{exam.exam_type} {exam.year}" if exam else "",
+                subjects=[],
+            )
+        by_exam[exam_id].subjects.append(
+            SubjectOfficerMeAssignmentSubject(
+                subject_id=int(subject.id),
+                subject_code=subject.code,
+                subject_name=subject.name,
+                subject_type=subject.subject_type.value,
+                subject_original_code=subject.original_code,
+            )
+        )
+    return SubjectOfficerMeAssignmentsResponse(items=list(by_exam.values()))
+
+
 def _assignment_subject_row(subject: Subject) -> SubjectOfficerAssignmentSubjectRow:
     return SubjectOfficerAssignmentSubjectRow(
         subject_id=int(subject.id),
@@ -308,6 +335,20 @@ async def upsert_subject_officer_assignments(
     )
 
 
+@router_admin.get(
+    "/{user_id}/assignments",
+    response_model=SubjectOfficerMeAssignmentsResponse,
+)
+async def list_subject_officer_user_assignments(
+    user_id: UUID,
+    session: DBSessionDep,
+    _admin: SuperAdminDep,
+) -> SubjectOfficerMeAssignmentsResponse:
+    """All examination assignments for one subject officer (admin)."""
+    await _load_subject_officer_user(session, user_id)
+    return await _subject_officer_assignments_by_exam(session, user_id)
+
+
 @router_admin.delete(
     "/examinations/{examination_id}/assignments/{user_id}",
     status_code=status.HTTP_204_NO_CONTENT,
@@ -334,24 +375,4 @@ async def get_my_subject_officer_assignments(
     session: DBSessionDep,
     user: SubjectOfficerDep,
 ) -> SubjectOfficerMeAssignmentsResponse:
-    pairs = await load_subject_officer_assignments_for_user(session, user_id=user.id)
-    by_exam: dict[int, SubjectOfficerMeExamAssignment] = {}
-    for assignment, subject in pairs:
-        exam_id = int(assignment.examination_id)
-        if exam_id not in by_exam:
-            exam = await session.get(Examination, exam_id)
-            by_exam[exam_id] = SubjectOfficerMeExamAssignment(
-                examination_id=exam_id,
-                examination_name=f"{exam.exam_type} {exam.year}" if exam else "",
-                subjects=[],
-            )
-        by_exam[exam_id].subjects.append(
-            SubjectOfficerMeAssignmentSubject(
-                subject_id=int(subject.id),
-                subject_code=subject.code,
-                subject_name=subject.name,
-                subject_type=subject.subject_type.value,
-                subject_original_code=subject.original_code,
-            )
-        )
-    return SubjectOfficerMeAssignmentsResponse(items=list(by_exam.values()))
+    return await _subject_officer_assignments_by_exam(session, user.id)

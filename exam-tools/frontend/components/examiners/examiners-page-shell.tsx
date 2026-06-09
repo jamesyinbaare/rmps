@@ -13,6 +13,7 @@ import { ExaminersContextBar } from "@/components/examiners/examiners-context-ba
 import { ExaminersGroupsPanel } from "@/components/examiners/examiners-groups-panel";
 import { ExaminersInvitationsPanel } from "@/components/examiners/examiners-invitations-panel";
 import { ExaminersRosterPanel } from "@/components/examiners/examiners-roster-panel";
+import { SubjectMarkingGroupsPanel } from "@/components/subject-officer/subject-marking-groups-panel";
 import type { ExaminersSummaryCounts } from "@/components/examiners/types";
 import { useExaminersUrl } from "@/components/examiners/use-examiners-url";
 import type { InvitationStatusCounts } from "@/components/examiner-invitations/types";
@@ -20,15 +21,21 @@ import { OfficialAccountsRoleTabs } from "@/components/official-accounts-role-ta
 import type { Examination, Subject } from "@/lib/api";
 import { cn } from "@/lib/utils";
 
+type MarkingGroupsMode = "admin-allocation" | "subject-officer" | "hidden";
+
 type Props = {
   exams: Examination[];
   subjects: Subject[];
   isSuperAdmin: boolean;
   lockedSubjectIds?: number[];
+  /** @deprecated Use markingGroupsMode instead */
   hideGroups?: boolean;
+  markingGroupsMode?: MarkingGroupsMode;
   showScriptsAllocationLink?: boolean;
   loadingExams?: boolean;
   singleExamMode?: boolean;
+  requireExamSelection?: boolean;
+  examLabelFn?: (ex: Examination) => string;
   showCreateExamsLink?: boolean;
 };
 
@@ -44,11 +51,17 @@ export function ExaminersPageShell({
   isSuperAdmin,
   lockedSubjectIds,
   hideGroups = false,
+  markingGroupsMode,
   showScriptsAllocationLink = true,
   loadingExams = false,
   singleExamMode = false,
+  requireExamSelection = false,
+  examLabelFn,
   showCreateExamsLink = true,
 }: Props) {
+  const resolvedMarkingGroupsMode: MarkingGroupsMode =
+    markingGroupsMode ?? (hideGroups ? "hidden" : "admin-allocation");
+
   const scopedSubjects = useMemo(() => {
     if (!lockedSubjectIds?.length) return subjects;
     const allowed = new Set(lockedSubjectIds);
@@ -56,30 +69,39 @@ export function ExaminersPageShell({
   }, [lockedSubjectIds, subjects]);
 
   const baseTabs = useMemo(
-    () => (hideGroups ? EXAMINERS_TABS.filter((t) => t.key !== "groups") : EXAMINERS_TABS),
-    [hideGroups],
+    () =>
+      resolvedMarkingGroupsMode === "hidden"
+        ? EXAMINERS_TABS.filter((t) => t.key !== "groups")
+        : EXAMINERS_TABS,
+    [resolvedMarkingGroupsMode],
   );
-  const { examId, activeTab, setExamId, setActiveTab } = useExaminersUrl({ exams, singleExamMode });
+  const { examId, activeTab, setExamId, setActiveTab } = useExaminersUrl({
+    exams,
+    singleExamMode,
+    requireExamSelection,
+  });
   const [summaryByExam, setSummaryByExam] = useState<Record<number, ExaminersSummaryCounts>>({});
 
   const summary = examId != null ? (summaryByExam[examId] ?? EMPTY_SUMMARY) : EMPTY_SUMMARY;
-  const singleExam = exams.length === 1 ? exams[0] : null;
+  const singleExam =
+    requireExamSelection || exams.length !== 1 ? null : exams[0] ?? null;
 
   const tabsWithCounts = useMemo(() => {
     return baseTabs.map((tab) => {
-      if (examId == null) return tab;
+      let label =
+        tab.key === "groups" && resolvedMarkingGroupsMode === "subject-officer"
+          ? "Cohorts"
+          : tab.label;
+      if (examId == null) return { ...tab, label };
       if (tab.key === "roster" && summary.roster > 0) {
-        return { ...tab, label: `${tab.label} (${summary.roster.toLocaleString()})` };
+        label = `${label} (${summary.roster.toLocaleString()})`;
       }
       if (tab.key === "invitations" && summary.invitationsPending > 0) {
-        return {
-          ...tab,
-          label: `${tab.label} (${summary.invitationsPending.toLocaleString()} pending)`,
-        };
+        label = `${label} (${summary.invitationsPending.toLocaleString()} pending)`;
       }
-      return tab;
+      return { ...tab, label };
     });
-  }, [baseTabs, examId, summary.invitationsPending, summary.roster]);
+  }, [baseTabs, examId, resolvedMarkingGroupsMode, summary.invitationsPending, summary.roster]);
 
   const scriptsAllocationHref =
     examId != null
@@ -141,6 +163,8 @@ export function ExaminersPageShell({
             rosterCount={examId != null ? summary.roster : undefined}
             pendingInvitations={examId != null ? summary.invitationsPending : undefined}
             showCreateExamsLink={showCreateExamsLink}
+            examLabelFn={examLabelFn}
+            hideExamSelector={requireExamSelection}
             trailingContent={contextTrailing}
           />
           <OfficialAccountsRoleTabs
@@ -168,7 +192,7 @@ export function ExaminersPageShell({
                 <label htmlFor="examiners-exam" className="font-medium text-foreground">
                   Examination
                 </label>{" "}
-                control above to view roster, invitations, and marking groups.
+                control above to view roster, invitations, and cohorts.
               </p>
             </div>
           ) : (
@@ -180,7 +204,7 @@ export function ExaminersPageShell({
                   isSuperAdmin={isSuperAdmin}
                   lockedSubjectIds={lockedSubjectIds}
                   embedded
-                  loadExaminerGroups={!hideGroups}
+                  loadExaminerGroups={resolvedMarkingGroupsMode === "admin-allocation"}
                   onRosterCountChange={onRosterCountChange}
                 />
               ) : null}
@@ -193,8 +217,15 @@ export function ExaminersPageShell({
                   onInvitationCountsChange={onInvitationCountsChange}
                 />
               ) : null}
-              {activeTab === "groups" && !hideGroups ? (
+              {activeTab === "groups" && resolvedMarkingGroupsMode === "admin-allocation" ? (
                 <ExaminersGroupsPanel examId={examId} embedded />
+              ) : null}
+              {activeTab === "groups" && resolvedMarkingGroupsMode === "subject-officer" ? (
+                <SubjectMarkingGroupsPanel
+                  examId={examId}
+                  subjects={scopedSubjects}
+                  embedded
+                />
               ) : null}
             </>
           )}

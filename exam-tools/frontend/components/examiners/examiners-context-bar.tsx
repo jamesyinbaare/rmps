@@ -22,6 +22,10 @@ type Props = {
   pendingInvitations?: number;
   showCreateExamsLink?: boolean;
   trailingContent?: ReactNode;
+  /** Override display label per examination (e.g. subject officer assignment names). */
+  examLabelFn?: (ex: Examination) => string;
+  /** When true, examination is chosen in the dashboard bar; show read-only context here. */
+  hideExamSelector?: boolean;
 };
 
 export function ExaminersContextBar({
@@ -34,13 +38,28 @@ export function ExaminersContextBar({
   pendingInvitations,
   showCreateExamsLink = true,
   trailingContent,
+  examLabelFn,
+  hideExamSelector = false,
 }: Props) {
   const useCombobox = exams.length > EXAMINERS_COMBOBOX_THRESHOLD;
+  const labelFor = (ex: Examination) => (examLabelFn ? examLabelFn(ex) : formatExamLabel(ex));
+  const selectedExam = examId != null ? exams.find((e) => e.id === examId) : null;
 
   return (
     <div className="flex flex-wrap items-end justify-between gap-x-4 gap-y-3 px-3 py-2.5 sm:px-4">
       <div className="flex min-w-0 flex-wrap items-end gap-3">
-        {singleExam ? (
+        {hideExamSelector ? (
+          <div className="flex min-w-0 flex-col gap-1.5">
+            <span className="text-xs font-medium text-muted-foreground">Examination</span>
+            {selectedExam ? (
+              <span className={EXAMINERS_EXAM_META_CLASS} title={labelFor(selectedExam)}>
+                {labelFor(selectedExam)}
+              </span>
+            ) : (
+              <span className="text-sm text-muted-foreground">Select an examination above</span>
+            )}
+          </div>
+        ) : singleExam ? (
           <div className="flex min-w-0 flex-col gap-1.5">
             <span className="text-xs font-medium text-muted-foreground">Examination</span>
             <span className={EXAMINERS_EXAM_META_CLASS} title={formatExamLabel(singleExam)}>
@@ -79,7 +98,7 @@ export function ExaminersContextBar({
             ) : useCombobox ? (
               <SearchableCombobox
                 id="examiners-exam"
-                options={exams.map((ex) => ({ value: String(ex.id), label: formatExamLabel(ex) }))}
+                options={exams.map((ex) => ({ value: String(ex.id), label: labelFor(ex) }))}
                 value={examId != null ? String(examId) : ""}
                 onChange={(v) => onExamChange(v ? Number(v) : null)}
                 placeholder="Select examination…"
@@ -99,7 +118,7 @@ export function ExaminersContextBar({
                 <option value="">Select examination…</option>
                 {exams.map((ex) => (
                   <option key={ex.id} value={ex.id}>
-                    {formatExamLabel(ex)}
+                    {labelFor(ex)}
                   </option>
                 ))}
               </select>

@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import datetime, time
 from enum import Enum
 from uuid import UUID
 
@@ -88,12 +88,36 @@ class MarkedScriptReturnStatusSchema(str, Enum):
     verified = "verified"
 
 
+class MarkedScriptReturnExaminerOption(BaseModel):
+    examiner_id: UUID
+    examiner_name: str
+    examiner_type: str
+    pending_count: int
+    verified_count: int
+
+
+class MarkedScriptReturnPaperOption(BaseModel):
+    paper_number: int
+    pending_count: int
+    verified_count: int
+
+
+class MarkedScriptReturnFiltersResponse(BaseModel):
+    examiners: list[MarkedScriptReturnExaminerOption]
+    papers: list[MarkedScriptReturnPaperOption]
+
+
 class MarkedScriptReturnRow(BaseModel):
+    allocation_assignment_id: UUID
     examiner_id: UUID
     examiner_name: str
     examiner_type: str
     paper_number: int
     allocation_run_id: UUID
+    school_code: str
+    school_name: str
+    envelope_number: int
+    series_number: int
     expected_booklets: int
     returned_booklets: int | None
     status: str
@@ -105,6 +129,18 @@ class MarkedScriptReturnGridResponse(BaseModel):
     subject_id: int
     subject_code: str
     subject_name: str
+    examiner_id: UUID
+    examiner_name: str
+    examiner_type: str
+    paper_number: int
+    marking_group_id: UUID | None = None
+    marking_group_name: str | None = None
+    coordination_date: datetime | None = None
+    coordination_start_time: time | None = None
+    coordination_end_time: time | None = None
+    marking_start_date: datetime | None = None
+    marking_end_date: datetime | None = None
+    marked_script_submission_deadline: datetime | None = None
     rows: list[MarkedScriptReturnRow]
     summary: dict[str, int]
 
@@ -128,6 +164,7 @@ class MarkedScriptReturnRecordResponse(BaseModel):
     examiner_id: UUID
     paper_number: int
     allocation_run_id: UUID
+    allocation_assignment_id: UUID
     expected_booklets: int
     returned_booklets: int | None
     verified_at: datetime | None

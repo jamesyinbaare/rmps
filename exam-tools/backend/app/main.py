@@ -43,6 +43,7 @@ from app.routers import (
     schools,
     script_allocation,
     script_control,
+    subject_marking_groups,
     subject_officers,
     subjects,
     test_admin_officers,
@@ -199,6 +200,7 @@ app.include_router(depots.router_keeper)
 app.include_router(subject_officers.router_admin)
 app.include_router(subject_officers.router_officer)
 app.include_router(marked_script_returns.router)
+app.include_router(subject_marking_groups.router)
 app.include_router(inspectors.router)
 app.include_router(schools.router)
 app.include_router(programmes.router)

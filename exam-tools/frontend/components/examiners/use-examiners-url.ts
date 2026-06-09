@@ -11,9 +11,15 @@ type Options = {
   exams: Examination[];
   /** When true, skip API default exam and use the sole exam in `exams`. */
   singleExamMode?: boolean;
+  /** When true, do not auto-select an examination; user must choose explicitly. */
+  requireExamSelection?: boolean;
 };
 
-export function useExaminersUrl({ exams, singleExamMode = false }: Options) {
+export function useExaminersUrl({
+  exams,
+  singleExamMode = false,
+  requireExamSelection = false,
+}: Options) {
   const router = useRouter();
   const pathname = usePathname();
   const searchParams = useSearchParams();
@@ -62,6 +68,7 @@ export function useExaminersUrl({ exams, singleExamMode = false }: Options) {
 
   useEffect(() => {
     if (exams.length === 0) return;
+    if (requireExamSelection) return;
     if (searchParams.get("exam")) return;
     if (defaultExamResolvedRef.current) return;
 
@@ -101,7 +108,7 @@ export function useExaminersUrl({ exams, singleExamMode = false }: Options) {
     return () => {
       cancelled = true;
     };
-  }, [exams, pathname, router, searchParams, singleExamMode]);
+  }, [exams, pathname, requireExamSelection, router, searchParams, singleExamMode]);
 
   const pushUrl = useCallback(
     (nextExamId: number | null, nextTab: ExaminersTab) => {

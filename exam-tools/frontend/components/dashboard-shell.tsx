@@ -6,8 +6,12 @@ import { useEffect, useId, useState, type ReactNode } from "react";
 
 import { DashboardSimpleHeader, DashboardStickyHeader } from "@/components/dashboard-sticky-header";
 import { ExaminationNoticeSessionBanner } from "@/components/examination-notice-session-banner";
+import { SubjectOfficerExamBar } from "@/components/subject-officer/subject-officer-exam-bar";
 import { StaffSidebarMainNav } from "@/components/staff-sidebar-nav";
 import { useInspectorPostings } from "@/hooks/use-inspector-postings";
+import { useSubjectOfficerAssignments } from "@/hooks/use-subject-officer-assignments";
+import { useSubjectOfficerExamUrl } from "@/hooks/use-subject-officer-exam-url";
+import { subjectNamesSummary } from "@/lib/subject-officer-exams";
 import { clearAuth, AUTH_TOKEN_UPDATED_EVENT, getMe, type UserMe } from "@/lib/auth";
 import { buildStaffSidebarNav } from "@/lib/staff-nav";
 import { cn } from "@/lib/utils";
@@ -94,6 +98,23 @@ type Props = {
 const inputFocusRing =
   "focus:border-primary focus:outline-none focus:ring-2 focus:ring-ring/30";
 
+function SubjectOfficerExamChrome() {
+  const { assignments, loading } = useSubjectOfficerAssignments();
+  const examIds = assignments.map((a) => a.examination_id);
+  const { examId, setExamId } = useSubjectOfficerExamUrl({ examIds, requireSelection: true });
+  const subjectSummary = subjectNamesSummary(assignments, examId);
+
+  return (
+    <SubjectOfficerExamBar
+      assignments={assignments}
+      examId={examId}
+      onExamChange={setExamId}
+      loading={loading}
+      subjectSummary={subjectSummary}
+    />
+  );
+}
+
 export function DashboardShell({ title, children, staffRole }: Props) {
   const router = useRouter();
   const pathname = usePathname();
@@ -176,6 +197,8 @@ export function DashboardShell({ title, children, staffRole }: Props) {
     staffBase,
     changeCentreNavItem,
   });
+
+  const isSubjectOfficer = staffRole === "subject-officer";
 
   const showInspectorBottomNav = staffRole === "inspector";
   const examOfficialsActive = pathname.startsWith(examOfficialsHref);
@@ -270,6 +293,8 @@ export function DashboardShell({ title, children, staffRole }: Props) {
           staffRole={staffRole}
           examinationNoticeHref={examinationNoticeHref}
         />
+
+        {isSubjectOfficer ? <SubjectOfficerExamChrome /> : null}
 
         <main className="mx-auto max-w-6xl px-4 py-6 sm:px-6">{children}</main>
       </div>

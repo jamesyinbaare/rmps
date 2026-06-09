@@ -4547,11 +4547,16 @@ export type SubjectOfficerMeAssignmentsResponse = {
 };
 
 export type MarkedScriptReturnRow = {
+  allocation_assignment_id: string;
   examiner_id: string;
   examiner_name: string;
   examiner_type: string;
   paper_number: number;
   allocation_run_id: string;
+  school_code: string;
+  school_name: string;
+  envelope_number: number;
+  series_number: number;
   expected_booklets: number;
   returned_booklets: number | null;
   status: string;
@@ -4559,19 +4564,158 @@ export type MarkedScriptReturnRow = {
   notes: string | null;
 };
 
+export type MarkedScriptReturnExaminerOption = {
+  examiner_id: string;
+  examiner_name: string;
+  examiner_type: string;
+  pending_count: number;
+  verified_count: number;
+};
+
+export type MarkedScriptReturnPaperOption = {
+  paper_number: number;
+  pending_count: number;
+  verified_count: number;
+};
+
+export type MarkedScriptReturnFiltersResponse = {
+  examiners: MarkedScriptReturnExaminerOption[];
+  papers: MarkedScriptReturnPaperOption[];
+};
+
 export type MarkedScriptReturnGridResponse = {
   subject_id: number;
   subject_code: string;
   subject_name: string;
+  examiner_id: string;
+  examiner_name: string;
+  examiner_type: string;
+  paper_number: number;
+  marking_group_id?: string | null;
+  marking_group_name?: string | null;
+  coordination_date?: string | null;
+  coordination_start_time?: string | null;
+  coordination_end_time?: string | null;
+  marking_start_date?: string | null;
+  marking_end_date?: string | null;
+  marked_script_submission_deadline?: string | null;
   rows: MarkedScriptReturnRow[];
   summary: Record<string, number>;
 };
+
+export type SubjectMarkingGroupSchedulePayload = {
+  coordination_date?: string | null;
+  coordination_start_time?: string | null;
+  coordination_end_time?: string | null;
+  marking_start_date?: string | null;
+  marking_end_date?: string | null;
+  marked_script_submission_deadline?: string | null;
+};
+
+export type SubjectMarkingGroupRow = {
+  id: string;
+  examination_id: number;
+  subject_id: number;
+  name: string;
+  examiner_ids: string[];
+  source_regions: string[];
+  source_roles: string[];
+  coordination_date: string | null;
+  coordination_start_time: string | null;
+  coordination_end_time: string | null;
+  marking_start_date: string | null;
+  marking_end_date: string | null;
+  marked_script_submission_deadline: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
+export async function listSubjectMarkingGroups(
+  examinationId: number,
+  subjectId: number,
+): Promise<SubjectMarkingGroupRow[]> {
+  return apiJson<SubjectMarkingGroupRow[]>(
+    `/examinations/${examinationId}/subject-officer/marking-groups?subject_id=${subjectId}`,
+  );
+}
+
+export async function createSubjectMarkingGroup(
+  examinationId: number,
+  subjectId: number,
+  payload: {
+    name: string;
+  } & SubjectMarkingGroupSchedulePayload,
+): Promise<SubjectMarkingGroupRow> {
+  return apiJson<SubjectMarkingGroupRow>(
+    `/examinations/${examinationId}/subject-officer/marking-groups?subject_id=${subjectId}`,
+    {
+      method: "POST",
+      body: JSON.stringify(payload),
+    },
+  );
+}
+
+export async function updateSubjectMarkingGroup(
+  examinationId: number,
+  subjectId: number,
+  groupId: string,
+  payload: {
+    name?: string;
+  } & SubjectMarkingGroupSchedulePayload,
+): Promise<SubjectMarkingGroupRow> {
+  return apiJson<SubjectMarkingGroupRow>(
+    `/examinations/${examinationId}/subject-officer/marking-groups/${groupId}?subject_id=${subjectId}`,
+    {
+      method: "PATCH",
+      body: JSON.stringify(payload),
+    },
+  );
+}
+
+export async function deleteSubjectMarkingGroup(
+  examinationId: number,
+  subjectId: number,
+  groupId: string,
+): Promise<void> {
+  await apiJson<void>(
+    `/examinations/${examinationId}/subject-officer/marking-groups/${groupId}?subject_id=${subjectId}`,
+    { method: "DELETE" },
+  );
+}
+
+export async function replaceSubjectMarkingGroupMembers(
+  examinationId: number,
+  subjectId: number,
+  groupId: string,
+  payload: { source_regions: string[]; source_roles: string[]; examiner_ids: string[] },
+): Promise<SubjectMarkingGroupRow> {
+  return apiJson<SubjectMarkingGroupRow>(
+    `/examinations/${examinationId}/subject-officer/marking-groups/${groupId}/members?subject_id=${subjectId}`,
+    {
+      method: "PUT",
+      body: JSON.stringify(payload),
+    },
+  );
+}
 
 export async function adminListSubjectOfficers(
   skip = 0,
   limit = 20,
 ): Promise<AdminSubjectOfficerListResponse> {
   return apiJson<AdminSubjectOfficerListResponse>(`/subject-officers?skip=${skip}&limit=${limit}`);
+}
+
+/** Fetches every subject officer page until the list is exhausted. Page size must not exceed the API max (100). */
+export async function listAllSubjectOfficers(pageSize = 100): Promise<AdminSubjectOfficerRow[]> {
+  const all: AdminSubjectOfficerRow[] = [];
+  let skip = 0;
+  while (skip <= 100_000) {
+    const res = await adminListSubjectOfficers(skip, pageSize);
+    all.push(...res.items);
+    if (all.length >= res.total || res.items.length < pageSize) break;
+    skip += pageSize;
+  }
+  return all;
 }
 
 export async function adminCreateSubjectOfficer(
@@ -4623,6 +4767,12 @@ export async function adminDeleteSubjectOfficerAssignments(
   });
 }
 
+export async function adminGetSubjectOfficerUserAssignments(
+  userId: string,
+): Promise<SubjectOfficerMeAssignmentsResponse> {
+  return apiJson<SubjectOfficerMeAssignmentsResponse>(`/subject-officers/${userId}/assignments`);
+}
+
 export async function getSubjectOfficerMyAssignments(): Promise<SubjectOfficerMeAssignmentsResponse> {
   return apiJson<SubjectOfficerMeAssignmentsResponse>("/subject-officer/me/assignments");
 }
@@ -4648,24 +4798,40 @@ export async function getSubjectOfficerExaminerScriptsAllocation(
   );
 }
 
-export async function getMarkedScriptReturns(
+export async function getMarkedScriptReturnFilters(
   examinationId: number,
   subjectId: number,
+  examinerId?: string,
+): Promise<MarkedScriptReturnFiltersResponse> {
+  const params = new URLSearchParams({ subject_id: String(subjectId) });
+  if (examinerId) params.set("examiner_id", examinerId);
+  return apiJson<MarkedScriptReturnFiltersResponse>(
+    `/examinations/${examinationId}/marked-script-returns/filters?${params.toString()}`,
+  );
+}
+
+export async function getMarkedScriptReturns(
+  examinationId: number,
+  params: { subjectId: number; examinerId: string; paperNumber: number },
 ): Promise<MarkedScriptReturnGridResponse> {
+  const qs = new URLSearchParams({
+    subject_id: String(params.subjectId),
+    examiner_id: params.examinerId,
+    paper_number: String(params.paperNumber),
+  });
   return apiJson<MarkedScriptReturnGridResponse>(
-    `/examinations/${examinationId}/marked-script-returns?subject_id=${subjectId}`,
+    `/examinations/${examinationId}/marked-script-returns?${qs.toString()}`,
   );
 }
 
 export async function upsertMarkedScriptReturn(
   examinationId: number,
-  examinerId: string,
-  paperNumber: number,
+  assignmentId: string,
   subjectId: number,
   payload: { returned_booklets: number; notes?: string | null },
 ): Promise<unknown> {
   return apiJson(
-    `/examinations/${examinationId}/marked-script-returns/${examinerId}/${paperNumber}?subject_id=${subjectId}`,
+    `/examinations/${examinationId}/marked-script-returns/assignments/${assignmentId}?subject_id=${subjectId}`,
     {
       method: "PUT",
       body: JSON.stringify(payload),
@@ -4675,16 +4841,29 @@ export async function upsertMarkedScriptReturn(
 
 export async function verifyMarkedScriptReturn(
   examinationId: number,
-  examinerId: string,
-  paperNumber: number,
+  assignmentId: string,
   subjectId: number,
   payload: { notes?: string | null; allow_mismatch?: boolean },
 ): Promise<unknown> {
   return apiJson(
-    `/examinations/${examinationId}/marked-script-returns/${examinerId}/${paperNumber}/verify?subject_id=${subjectId}`,
+    `/examinations/${examinationId}/marked-script-returns/assignments/${assignmentId}/verify?subject_id=${subjectId}`,
     {
       method: "POST",
       body: JSON.stringify(payload),
+    },
+  );
+}
+
+export async function unverifyMarkedScriptReturn(
+  examinationId: number,
+  assignmentId: string,
+  subjectId: number,
+): Promise<unknown> {
+  return apiJson(
+    `/examinations/${examinationId}/marked-script-returns/assignments/${assignmentId}/unverify?subject_id=${subjectId}`,
+    {
+      method: "POST",
+      body: JSON.stringify({}),
     },
   );
 }

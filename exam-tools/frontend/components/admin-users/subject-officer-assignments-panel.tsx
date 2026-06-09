@@ -9,17 +9,17 @@ import {
 import type { Examination, Subject, SubjectOfficerAssignmentRow } from "@/lib/api";
 import {
   adminDeleteSubjectOfficerAssignments,
+  adminGetSubjectOfficerUserAssignments,
   adminListSubjectOfficerAssignments,
-  adminListSubjectOfficers,
   adminUpsertSubjectOfficerAssignments,
   apiJson,
   listAllSubjects,
+  listAllSubjectOfficers,
+  type SubjectOfficerMeExamAssignment,
 } from "@/lib/api";
 import { formInputClass, formLabelClass } from "@/lib/form-classes";
 import { formatExamLabel } from "@/lib/official-rates-draft";
 import { subjectDisplayCode, subjectDisplayLabel } from "@/lib/subject-display";
-
-const OFFICER_LIST_LIMIT = 500;
 
 type SubjectOfficerAssignmentsPanelProps = {
   active: boolean;
@@ -51,6 +51,12 @@ export function SubjectOfficerAssignmentsPanel({
   const [subjectSearch, setSubjectSearch] = useState("");
   const [subjectTypeFilter, setSubjectTypeFilter] = useState<"all" | "CORE" | "ELECTIVE">("all");
   const [assignmentsLoading, setAssignmentsLoading] = useState(false);
+  const [officerExamAssignments, setOfficerExamAssignments] = useState<
+    SubjectOfficerMeExamAssignment[]
+  >([]);
+  const [officerAssignmentsLoading, setOfficerAssignmentsLoading] = useState(false);
+  const [officersLoading, setOfficersLoading] = useState(false);
+  const [officersLoadError, setOfficersLoadError] = useState<string | null>(null);
 
   const sortedSubjects = useMemo(
     () =>
@@ -86,17 +92,23 @@ export function SubjectOfficerAssignmentsPanel({
     if (!active) return;
     void apiJson<Examination[]>("/examinations").then(setExams).catch(() => setExams([]));
     void listAllSubjects().then(setSubjects).catch(() => setSubjects([]));
-    void adminListSubjectOfficers(0, OFFICER_LIST_LIMIT)
-      .then((data) =>
+    setOfficersLoading(true);
+    setOfficersLoadError(null);
+    void listAllSubjectOfficers()
+      .then((items) => {
         setOfficers(
-          data.items.map((row) => ({
+          items.map((row) => ({
             id: row.id,
             full_name: row.full_name,
             email: row.email,
           })),
-        ),
-      )
-      .catch(() => setOfficers([]));
+        );
+      })
+      .catch((e) => {
+        setOfficers([]);
+        setOfficersLoadError(e instanceof Error ? e.message : "Could not load subject officers");
+      })
+      .finally(() => setOfficersLoading(false));
   }, [active, refreshKey]);
 
   useEffect(() => {
@@ -104,14 +116,41 @@ export function SubjectOfficerAssignmentsPanel({
       setAssignments([]);
       return;
     }
+    setAssignments([]);
     void loadAssignments(assignExamId);
   }, [active, assignExamId, refreshKey, loadAssignments]);
+
+  useEffect(() => {
+    if (!active || !assignOfficerId) {
+      setOfficerExamAssignments([]);
+      return;
+    }
+    setOfficerAssignmentsLoading(true);
+    void adminGetSubjectOfficerUserAssignments(assignOfficerId)
+      .then((data) => setOfficerExamAssignments(data.items))
+      .catch(() => setOfficerExamAssignments([]))
+      .finally(() => setOfficerAssignmentsLoading(false));
+  }, [active, assignOfficerId, refreshKey]);
+
+  useEffect(() => {
+    if (!assignOfficerId || assignmentsLoading) return;
+    const row = assignments.find((a) => a.user_id === assignOfficerId);
+    setAssignSubjectIds(row?.subject_ids ?? []);
+  }, [assignOfficerId, assignments, assignmentsLoading]);
 
   function clearForm() {
     setAssignOfficerId("");
     setAssignSubjectIds([]);
     setSubjectSearch("");
+    setOfficerExamAssignments([]);
     setAssignError(null);
+  }
+
+  function handleExamChange(nextExamId: number | "") {
+    setAssignExamId(nextExamId);
+    setAssignSubjectIds([]);
+    setAssignError(null);
+    setAssignMessage(null);
   }
 
   function loadAssignmentIntoForm(row: SubjectOfficerAssignmentRow) {
@@ -136,6 +175,10 @@ export function SubjectOfficerAssignmentsPanel({
       });
       setAssignMessage("Assignments saved.");
       await loadAssignments(assignExamId);
+      if (assignOfficerId) {
+        const data = await adminGetSubjectOfficerUserAssignments(assignOfficerId);
+        setOfficerExamAssignments(data.items);
+      }
       onAccountsChanged?.();
     } catch (e) {
       setAssignError(e instanceof Error ? e.message : "Save failed");
@@ -163,6 +206,10 @@ export function SubjectOfficerAssignmentsPanel({
   }
 
   const selectedOfficer = officers.find((o) => o.id === assignOfficerId);
+  const otherExamAssignments = officerExamAssignments.filter(
+    (row) => row.examination_id !== assignExamId,
+  );
+  const selectedExam = exams.find((ex) => ex.id === assignExamId);
 
   return (
     <div className="space-y-5">
@@ -175,9 +222,7 @@ export function SubjectOfficerAssignmentsPanel({
           className={formInputClass}
           value={assignExamId}
           onChange={(e) => {
-            setAssignExamId(e.target.value ? Number(e.target.value) : "");
-            clearForm();
-            setAssignMessage(null);
+            handleExamChange(e.target.value ? Number(e.target.value) : "");
           }}
         >
           <option value="">Select examination…</option>
@@ -278,9 +323,15 @@ export function SubjectOfficerAssignmentsPanel({
             <div>
               <h3 className="text-sm font-semibold text-foreground">Assign subjects</h3>
               <p className="mt-1 text-xs text-muted-foreground">
-                Select an officer and their subjects. Subject codes shown are the official original
-                codes used across examiner tools.
+                Assignments are saved per examination. The same officer can hold different subjects on
+                different examinations — choose the examination above, then pick subjects here.
+                Subject codes shown are the official original codes used across examiner tools.
               </p>
+              {selectedExam ? (
+                <p className="mt-2 text-xs font-medium text-foreground">
+                  Assigning for {formatExamLabel(selectedExam)}
+                </p>
+              ) : null}
             </div>
 
             <div>
@@ -291,15 +342,19 @@ export function SubjectOfficerAssignmentsPanel({
                 id="so-assign-officer"
                 className={formInputClass}
                 value={assignOfficerId}
+                disabled={officersLoading}
                 onChange={(e) => {
-                  const id = e.target.value;
-                  setAssignOfficerId(id);
-                  const row = assignments.find((a) => a.user_id === id);
-                  setAssignSubjectIds(row?.subject_ids ?? []);
+                  setAssignOfficerId(e.target.value);
                   setAssignError(null);
                 }}
               >
-                <option value="">Select officer…</option>
+                <option value="">
+                  {officersLoading
+                    ? "Loading officers…"
+                    : officers.length === 0
+                      ? "No subject officers found"
+                      : "Select officer…"}
+                </option>
                 {officers.map((row) => (
                   <option key={row.id} value={row.id}>
                     {row.full_name}
@@ -307,10 +362,44 @@ export function SubjectOfficerAssignmentsPanel({
                   </option>
                 ))}
               </select>
+              {officersLoadError ? (
+                <p className="mt-1.5 text-xs text-destructive" role="alert">
+                  {officersLoadError}
+                </p>
+              ) : !officersLoading && officers.length === 0 ? (
+                <p className="mt-1.5 text-xs text-muted-foreground">
+                  Create a subject officer account on the Accounts tab first.
+                </p>
+              ) : null}
             </div>
 
             {assignOfficerId ? (
               <>
+                {officerAssignmentsLoading ? (
+                  <p className="text-xs text-muted-foreground">Loading officer assignments…</p>
+                ) : otherExamAssignments.length > 0 ? (
+                  <div className="rounded-lg border border-border bg-card px-3 py-2 text-xs text-muted-foreground">
+                    <p className="font-medium text-foreground">
+                      Also assigned on {otherExamAssignments.length} other examination
+                      {otherExamAssignments.length === 1 ? "" : "s"}:
+                    </p>
+                    <ul className="mt-1.5 space-y-1">
+                      {otherExamAssignments.map((row) => (
+                        <li key={row.examination_id}>
+                          <span className="font-medium text-foreground">{row.examination_name}</span>
+                          <span className="text-muted-foreground">
+                            {" "}
+                            — {row.subjects.length} subject{row.subjects.length === 1 ? "" : "s"}
+                          </span>
+                        </li>
+                      ))}
+                    </ul>
+                    <p className="mt-2">
+                      Change the examination above to assign this officer on another exam.
+                    </p>
+                  </div>
+                ) : null}
+
                 <div className="flex flex-wrap gap-2">
                   <input
                     type="search"

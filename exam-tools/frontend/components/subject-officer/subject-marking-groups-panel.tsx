@@ -8,7 +8,16 @@ import {
   cohortMembershipEqual,
   type CohortFormSnapshot,
 } from "@/components/cohorts/cohort-form-snapshot";
-import { emptyCohortScheduleDraft } from "@/components/cohorts/cohort-schedule-utils";
+import {
+  CohortScheduleFields,
+  validateCohortSchedule,
+} from "@/components/cohorts/cohort-schedule-fields";
+import {
+  cohortScheduleFromRow,
+  cohortScheduleToPayload,
+  emptyCohortScheduleDraft,
+  type CohortScheduleDraft,
+} from "@/components/cohorts/cohort-schedule-utils";
 import { CohortCoverageBar } from "@/components/cohorts/cohort-coverage-bar";
 import { CohortListColumn } from "@/components/cohorts/cohort-list-column";
 import { CohortManageModal } from "@/components/cohorts/cohort-manage-modal";
@@ -17,45 +26,59 @@ import type { CohortListItem, MembershipExaminer } from "@/components/cohorts/ty
 import { computeCoverage } from "@/components/cohorts/utils";
 import { useCohortMembershipDraft } from "@/components/cohorts/use-cohort-membership-draft";
 import { EXAMINERS_PANEL_CLASS } from "@/components/examiners/constants";
+import { SearchableCombobox } from "@/components/searchable-combobox";
 import { Button } from "@/components/ui/button";
 import {
-  createExaminerGroup,
-  deleteExaminerGroup,
+  createSubjectMarkingGroup,
+  deleteSubjectMarkingGroup,
   listExaminationExaminers,
-  listExaminerGroups,
-  replaceExaminerGroupMembers,
-  replaceExaminerGroupSourceRegions,
-  updateExaminerGroup,
-  type ExaminerGroupRow,
+  listSubjectMarkingGroups,
+  replaceSubjectMarkingGroupMembers,
+  updateSubjectMarkingGroup,
   type ExaminerRow,
+  type SubjectMarkingGroupRow,
+  type Subject,
 } from "@/lib/api";
+import { formInputClass, formLabelClass } from "@/lib/form-classes";
+import { subjectDisplayLabel } from "@/lib/subject-display";
 import { cn } from "@/lib/utils";
 
-function toCohortListItem(g: ExaminerGroupRow): CohortListItem {
+const SUBJECT_COMBO_THRESHOLD = 5;
+
+function toCohortListItem(g: SubjectMarkingGroupRow): CohortListItem {
   return {
     id: g.id,
     name: g.name,
     examiner_ids: g.examiner_ids,
     source_regions: g.source_regions,
+    source_roles: g.source_roles,
+    coordinationDate: g.coordination_date,
+    coordinationStartTime: g.coordination_start_time,
+    coordinationEndTime: g.coordination_end_time,
+    markingStartDate: g.marking_start_date,
+    markingEndDate: g.marking_end_date,
+    markedScriptSubmissionDeadline: g.marked_script_submission_deadline,
   };
 }
 
-function snapshotFromGroup(group: ExaminerGroupRow): CohortFormSnapshot {
-  return buildCohortFormSnapshot(group.name, emptyCohortScheduleDraft(), {
+function snapshotFromGroup(group: SubjectMarkingGroupRow): CohortFormSnapshot {
+  return buildCohortFormSnapshot(group.name, cohortScheduleFromRow(group), {
     source_regions: group.source_regions,
-    source_roles: [],
+    source_roles: group.source_roles,
     examiner_ids: group.examiner_ids,
   });
 }
 
 type Props = {
   examId: number | null;
+  subjects: Subject[];
   embedded?: boolean;
 };
 
-export function ExaminersGroupsPanel({ examId, embedded = false }: Props) {
+export function SubjectMarkingGroupsPanel({ examId, subjects, embedded = false }: Props) {
+  const [subjectId, setSubjectId] = useState<number | "">("");
+  const [groups, setGroups] = useState<SubjectMarkingGroupRow[]>([]);
   const [examiners, setExaminers] = useState<ExaminerRow[]>([]);
-  const [groups, setGroups] = useState<ExaminerGroupRow[]>([]);
   const [loading, setLoading] = useState(false);
   const [busy, setBusy] = useState(false);
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -67,7 +90,9 @@ export function ExaminersGroupsPanel({ examId, embedded = false }: Props) {
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [isCreating, setIsCreating] = useState(false);
   const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false);
+
   const [nameInput, setNameInput] = useState("");
+  const [scheduleDraft, setScheduleDraft] = useState<CohortScheduleDraft>(emptyCohortScheduleDraft);
   const [savedSnapshot, setSavedSnapshot] = useState<CohortFormSnapshot | null>(null);
   const pendingPreselectedRef = useRef<string[]>([]);
   const [captureCreateBaseline, setCaptureCreateBaseline] = useState(false);
@@ -99,29 +124,33 @@ export function ExaminersGroupsPanel({ examId, embedded = false }: Props) {
 
   const cohortList = useMemo(() => groups.map(toCohortListItem), [groups]);
 
-  const rosterExaminers = useMemo((): MembershipExaminer[] => {
-    return examiners.map((e) => ({
-      id: e.id,
-      name: e.name,
-      region: e.region,
-      examiner_type: e.examiner_type,
-    }));
-  }, [examiners]);
+  const subjectExaminers = useMemo((): MembershipExaminer[] => {
+    if (subjectId === "") return [];
+    return examiners
+      .filter((e) => e.subject_ids.includes(Number(subjectId)))
+      .map((e) => ({
+        id: e.id,
+        name: e.name,
+        region: e.region,
+        examiner_type: e.examiner_type,
+      }));
+  }, [examiners, subjectId]);
 
   const editingCohortId = isCreating ? null : selectedId;
-  const membership = useCohortMembershipDraft(rosterExaminers, cohortList, editingCohortId);
+
+  const membership = useCohortMembershipDraft(subjectExaminers, cohortList, editingCohortId);
 
   const coverage = useMemo(
-    () => computeCoverage(rosterExaminers, cohortList),
-    [cohortList, rosterExaminers],
+    () => computeCoverage(subjectExaminers, cohortList),
+    [cohortList, subjectExaminers],
   );
 
-  const emptySchedule = emptyCohortScheduleDraft();
+  const scheduleValidation = useMemo(() => validateCohortSchedule(scheduleDraft), [scheduleDraft]);
 
   const detailsDirty =
     savedSnapshot != null &&
     !cohortDetailsEqual(
-      { name: nameInput, schedule: emptySchedule },
+      { name: nameInput, schedule: scheduleDraft },
       { name: savedSnapshot.name, schedule: savedSnapshot.schedule },
     );
 
@@ -130,37 +159,63 @@ export function ExaminersGroupsPanel({ examId, embedded = false }: Props) {
     !cohortMembershipEqual(membershipPayloadFromDrafts(), savedSnapshot.membership);
 
   const isDirty = detailsDirty || membershipDirty;
+
   const canSaveMembership = !isCreating || selectedId != null;
 
-  const loadData = useCallback(async (eid: number) => {
+  const subjectOptions = useMemo(
+    () =>
+      subjects.map((s) => ({
+        value: String(s.id),
+        label: subjectDisplayLabel(s),
+      })),
+    [subjects],
+  );
+
+  const loadGroups = useCallback(async (eid: number, sid: number) => {
     setLoading(true);
     setLoadError(null);
     try {
-      const [list, loadedGroups] = await Promise.all([
-        listExaminationExaminers(eid),
-        listExaminerGroups(eid),
-      ]);
-      setExaminers(list);
-      setGroups(loadedGroups);
+      setGroups(await listSubjectMarkingGroups(eid, sid));
     } catch (e) {
-      setLoadError(e instanceof Error ? e.message : "Failed to load groups");
-      setExaminers([]);
+      setLoadError(e instanceof Error ? e.message : "Failed to load cohorts");
       setGroups([]);
     } finally {
       setLoading(false);
     }
   }, []);
 
+  const loadExaminers = useCallback(async (eid: number) => {
+    try {
+      setExaminers(await listExaminationExaminers(eid));
+    } catch {
+      setExaminers([]);
+    }
+  }, []);
+
   useEffect(() => {
     if (examId == null) {
+      setGroups([]);
       setExaminers([]);
+      return;
+    }
+    void loadExaminers(examId);
+  }, [examId, loadExaminers]);
+
+  useEffect(() => {
+    if (subjects.length === 1 && subjectId === "") {
+      setSubjectId(subjects[0]!.id);
+    }
+  }, [subjectId, subjects]);
+
+  useEffect(() => {
+    if (examId == null || subjectId === "") {
       setGroups([]);
       closeModal();
       setUnassignedModalOpen(false);
       return;
     }
-    void loadData(examId);
-  }, [examId, loadData]);
+    void loadGroups(examId, Number(subjectId));
+  }, [examId, loadGroups, subjectId]);
 
   const selectedGroup = useMemo(
     () => groups.find((g) => g.id === selectedId) ?? null,
@@ -171,6 +226,7 @@ export function ExaminersGroupsPanel({ examId, embedded = false }: Props) {
     if (!modalOpen) return;
     if (isCreating) {
       setNameInput("");
+      setScheduleDraft(emptyCohortScheduleDraft());
       const pending = pendingPreselectedRef.current;
       pendingPreselectedRef.current = [];
       if (pending.length > 0) {
@@ -184,9 +240,11 @@ export function ExaminersGroupsPanel({ examId, embedded = false }: Props) {
     }
     if (!selectedGroup) return;
     setNameInput(selectedGroup.name);
+    setScheduleDraft(cohortScheduleFromRow(selectedGroup));
     membership.initFromCohort({
       examiner_ids: selectedGroup.examiner_ids,
       source_regions: selectedGroup.source_regions,
+      source_roles: selectedGroup.source_roles,
     });
     setDeleteConfirmOpen(false);
     // eslint-disable-next-line react-hooks/exhaustive-deps -- init when modal opens / selection changes
@@ -194,12 +252,10 @@ export function ExaminersGroupsPanel({ examId, embedded = false }: Props) {
 
   useEffect(() => {
     if (!modalOpen || !isCreating || !captureCreateBaseline) return;
-    setSavedSnapshot(
-      buildCohortFormSnapshot(nameInput, emptyCohortScheduleDraft(), membershipPayloadFromDrafts()),
-    );
+    setSavedSnapshot(buildCohortFormSnapshot(nameInput, scheduleDraft, membershipPayloadFromDrafts()));
     setCaptureCreateBaseline(false);
     // eslint-disable-next-line react-hooks/exhaustive-deps -- capture baseline once after create init
-  }, [modalOpen, isCreating, captureCreateBaseline, nameInput, membership.membersDraft, membership.regionsDraft, membership.rolesDraft]);
+  }, [modalOpen, isCreating, captureCreateBaseline, nameInput, scheduleDraft, membership.membersDraft, membership.regionsDraft, membership.rolesDraft]);
 
   function openCreate(examinerIds: string[] = []) {
     setSelectedId(null);
@@ -228,7 +284,7 @@ export function ExaminersGroupsPanel({ examId, embedded = false }: Props) {
   }
 
   async function handleAddToCohort(cohortId: string, examinerIds: string[]) {
-    if (examId == null) return;
+    if (examId == null || subjectId === "") return;
     const group = groups.find((g) => g.id === cohortId);
     if (!group) return;
 
@@ -236,8 +292,12 @@ export function ExaminersGroupsPanel({ examId, embedded = false }: Props) {
     setLoadError(null);
     try {
       const mergedIds = [...new Set([...group.examiner_ids, ...examinerIds])];
-      await replaceExaminerGroupMembers(examId, cohortId, mergedIds);
-      await loadData(examId);
+      await replaceSubjectMarkingGroupMembers(examId, Number(subjectId), cohortId, {
+        source_regions: group.source_regions,
+        source_roles: group.source_roles,
+        examiner_ids: mergedIds,
+      });
+      await loadGroups(examId, Number(subjectId));
       setUnassignedModalOpen(false);
     } catch (e) {
       setLoadError(e instanceof Error ? e.message : "Failed to add examiners");
@@ -254,36 +314,45 @@ export function ExaminersGroupsPanel({ examId, embedded = false }: Props) {
   function cancelDetailsEdit() {
     if (savedSnapshot) {
       setNameInput(savedSnapshot.name);
+      setScheduleDraft({ ...savedSnapshot.schedule });
     }
     setDetailsError(null);
   }
 
   async function handleSaveDetails(): Promise<boolean> {
-    if (examId == null) return false;
+    if (examId == null || subjectId === "") return false;
     const name = nameInput.trim();
     if (!name) {
-      setDetailsError("Group name is required.");
+      setDetailsError("Cohort name is required.");
+      return false;
+    }
+    if (scheduleValidation.hasBlockingErrors) {
+      setDetailsError("Fix schedule errors before saving.");
       return false;
     }
 
     setBusy(true);
     setDetailsError(null);
     try {
+      const detailsPayload = {
+        name,
+        ...cohortScheduleToPayload(scheduleDraft),
+      };
       const membershipPayload = membershipPayloadFromDrafts();
 
       if (isCreating) {
-        const created = await createExaminerGroup(examId, { name, source_regions: [] });
-        await loadData(examId);
+        const created = await createSubjectMarkingGroup(examId, Number(subjectId), detailsPayload);
+        await loadGroups(examId, Number(subjectId));
         setIsCreating(false);
         setSelectedId(created.id);
-        setSavedSnapshot(buildCohortFormSnapshot(name, emptySchedule, membershipPayload));
+        setSavedSnapshot(buildCohortFormSnapshot(name, scheduleDraft, membershipPayload));
       } else if (selectedId) {
-        await updateExaminerGroup(examId, selectedId, { name });
-        await loadData(examId);
+        await updateSubjectMarkingGroup(examId, Number(subjectId), selectedId, detailsPayload);
+        await loadGroups(examId, Number(subjectId));
         setSavedSnapshot((prev) =>
           buildCohortFormSnapshot(
             name,
-            emptySchedule,
+            scheduleDraft,
             prev?.membership ?? membershipPayload,
           ),
         );
@@ -298,25 +367,29 @@ export function ExaminersGroupsPanel({ examId, embedded = false }: Props) {
   }
 
   async function handleSaveMembership(): Promise<boolean> {
-    if (examId == null) return false;
+    if (examId == null || subjectId === "") return false;
     if (isCreating && !selectedId) {
-      setMembershipError("Save details first to create this group.");
+      setMembershipError("Save details first to create this cohort.");
       return false;
     }
     if (!selectedId) return false;
 
-    const payload = membership.buildPayload();
     setBusy(true);
     setMembershipError(null);
     try {
-      await replaceExaminerGroupSourceRegions(examId, selectedId, payload.source_regions);
-      await replaceExaminerGroupMembers(examId, selectedId, payload.examiner_ids);
-      await loadData(examId);
+      const membershipPayload = membership.buildPayload();
+      await replaceSubjectMarkingGroupMembers(
+        examId,
+        Number(subjectId),
+        selectedId,
+        membershipPayload,
+      );
+      await loadGroups(examId, Number(subjectId));
       setSavedSnapshot((prev) =>
         buildCohortFormSnapshot(
           prev?.name ?? nameInput.trim(),
-          emptySchedule,
-          payload,
+          prev?.schedule ?? scheduleDraft,
+          membershipPayload,
         ),
       );
       return true;
@@ -329,13 +402,13 @@ export function ExaminersGroupsPanel({ examId, embedded = false }: Props) {
   }
 
   async function handleDelete() {
-    if (examId == null || !selectedId) return;
+    if (examId == null || subjectId === "" || !selectedId) return;
     setBusy(true);
     setMembershipError(null);
     try {
-      await deleteExaminerGroup(examId, selectedId);
+      await deleteSubjectMarkingGroup(examId, Number(subjectId), selectedId);
       closeModal();
-      await loadData(examId);
+      await loadGroups(examId, Number(subjectId));
     } catch (e) {
       setMembershipError(e instanceof Error ? e.message : "Delete failed");
     } finally {
@@ -344,35 +417,71 @@ export function ExaminersGroupsPanel({ examId, embedded = false }: Props) {
   }
 
   const softWarning =
-    membership.selectedCount === 0 ? "This group has no examiners yet." : null;
+    membership.selectedCount === 0 ? "This cohort has no examiners yet." : null;
 
-  const panelClass = embedded
-    ? "flex min-h-0 flex-1 flex-col overflow-hidden"
-    : cn(EXAMINERS_PANEL_CLASS, "flex min-h-0 flex-1 flex-col overflow-hidden");
+  const panelClass = embedded ? "flex min-h-0 flex-1 flex-col overflow-hidden" : EXAMINERS_PANEL_CLASS;
 
   return (
     <div className={panelClass}>
       <div className="shrink-0 border-b border-border/80 px-4 py-3 sm:px-5">
-        <h2 className="text-sm font-semibold text-foreground">Marking groups</h2>
-        <p className="mt-1 text-xs text-muted-foreground">
-          Groups define script allocation cohorts by examiner home region. Each region can belong to
-          only one group per examination.
-        </p>
+        <div className="flex flex-wrap items-end gap-3">
+          <div className="min-w-40 flex-1 sm:max-w-xs">
+            <label className={formLabelClass} htmlFor="smg-subject">
+              Subject
+            </label>
+            {subjects.length >= SUBJECT_COMBO_THRESHOLD ? (
+              <SearchableCombobox
+                id="smg-subject"
+                options={subjectOptions}
+                value={subjectId === "" ? "" : String(subjectId)}
+                onChange={(v) => {
+                  setSubjectId(v ? Number(v) : "");
+                  closeModal();
+                  setUnassignedModalOpen(false);
+                }}
+                placeholder="Select subject…"
+                searchPlaceholder="Search subjects…"
+                showAllOption={false}
+                widthClass="w-full mt-1"
+                triggerClassName="h-9 min-h-9"
+                truncateTrigger
+              />
+            ) : (
+              <select
+                id="smg-subject"
+                className={cn(formInputClass, "mt-1")}
+                value={subjectId}
+                onChange={(e) => {
+                  setSubjectId(e.target.value ? Number(e.target.value) : "");
+                  closeModal();
+                  setUnassignedModalOpen(false);
+                }}
+              >
+                <option value="">Select subject…</option>
+                {subjects.map((s) => (
+                  <option key={s.id} value={s.id}>
+                    {subjectDisplayLabel(s)}
+                  </option>
+                ))}
+              </select>
+            )}
+          </div>
+        </div>
       </div>
 
-      {examId == null ? (
+      {subjectId === "" ? (
         <div className="flex flex-1 items-center justify-center p-6 text-center">
-          <p className="text-sm text-muted-foreground">Select an examination to manage groups.</p>
+          <p className="text-sm text-muted-foreground">Select a subject to manage cohorts.</p>
         </div>
       ) : (
         <>
           <CohortCoverageBar
             coverage={coverage}
-            entityLabel="group"
+            entityLabel="cohort"
             onShowUnassigned={openUnassigned}
             trailing={
               <Button type="button" size="sm" disabled={busy} onClick={() => openCreate()}>
-                New group
+                New cohort
               </Button>
             }
           />
@@ -381,21 +490,19 @@ export function ExaminersGroupsPanel({ examId, embedded = false }: Props) {
             cohorts={cohortList}
             onSelect={openSelect}
             onNew={() => openCreate()}
-            newLabel="New group"
-            emptyLabel="No groups yet. Create one to assign examiners by region."
-            searchPlaceholder="Search groups…"
-            entityLabel="group"
             loading={loading}
             unassignedCount={coverage.unassignedCount}
             showUnassignedCount
+            showScheduleColumn
+            emptyLabel="No cohorts yet. Create one to assign examiners and set dates."
             hideNewButton
           />
 
           <CohortUnassignedModal
             open={unassignedModalOpen}
             onClose={() => setUnassignedModalOpen(false)}
-            entityLabel="group"
-            examiners={rosterExaminers}
+            entityLabel="cohort"
+            examiners={subjectExaminers}
             unassignedIds={coverage.unassignedIds}
             cohorts={cohortList}
             busy={busy}
@@ -406,14 +513,20 @@ export function ExaminersGroupsPanel({ examId, embedded = false }: Props) {
           <CohortManageModal
             open={modalOpen}
             mode={isCreating ? "create" : "edit"}
-            entityLabel="group"
-            description="Assign examiners by home region. Each region can belong to only one group."
+            entityLabel="cohort"
             name={nameInput}
             onNameChange={setNameInput}
             isDirty={isDirty}
             detailsDirty={detailsDirty}
             membershipDirty={membershipDirty}
-            showRolesTab={false}
+            detailsSection={({ locked, busy: detailsBusy }) => (
+              <CohortScheduleFields
+                draft={scheduleDraft}
+                onChange={setScheduleDraft}
+                disabled={busy || detailsBusy || locked}
+              />
+            )}
+            showRolesTab
             activeTab={membership.activeTab}
             onTabChange={membership.setActiveTab}
             regionOptions={membership.regionOptions}
@@ -423,7 +536,7 @@ export function ExaminersGroupsPanel({ examId, embedded = false }: Props) {
             membersDraft={membership.membersDraft}
             claimedRegions={membership.claimedRegions}
             claimedRoles={membership.claimedRoles}
-            examiners={rosterExaminers}
+            examiners={subjectExaminers}
             unassignedIds={coverage.unassignedIds}
             peopleFilterUnassignedOnly={membership.peopleFilterUnassignedOnly}
             onPeopleFilterUnassignedOnlyChange={membership.setPeopleFilterUnassignedOnly}
@@ -432,6 +545,8 @@ export function ExaminersGroupsPanel({ examId, embedded = false }: Props) {
             detailsError={detailsError}
             membershipError={membershipError}
             softWarning={softWarning}
+            scheduleWarnings={scheduleValidation.warnings}
+            detailsSaveDisabled={scheduleValidation.hasBlockingErrors}
             canSaveMembership={canSaveMembership}
             deleteConfirmOpen={deleteConfirmOpen}
             onDeleteConfirmOpenChange={setDeleteConfirmOpen}
@@ -443,7 +558,6 @@ export function ExaminersGroupsPanel({ examId, embedded = false }: Props) {
             onSaveMembership={() => handleSaveMembership()}
             onDelete={isCreating ? undefined : () => void handleDelete()}
             onClose={closeModal}
-            peopleOverrideWarning="Saving regions replaces manual member changes. Your current selection will be saved as shown."
           />
         </>
       )}
