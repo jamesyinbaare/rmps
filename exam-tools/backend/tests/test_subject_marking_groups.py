@@ -216,14 +216,59 @@ async def test_update_group_clears_coordination_date() -> None:
 @pytest.mark.asyncio
 async def test_get_examiner_marking_group_returns_none_when_unassigned() -> None:
     session = AsyncMock()
-    missing = MagicMock()
-    missing.scalar_one_or_none.return_value = None
-    session.execute = AsyncMock(return_value=missing)
-
-    result = await get_examiner_marking_group(
-        session,
-        examination_id=1,
-        subject_id=10,
-        examiner_id=uuid4(),
-    )
+    with patch(
+        "app.services.subject_marking_group.get_examiner_marking_groups",
+        new_callable=AsyncMock,
+        return_value=[],
+    ):
+        result = await get_examiner_marking_group(
+            session,
+            examination_id=1,
+            subject_id=10,
+            examiner_id=uuid4(),
+        )
     assert result is None
+
+
+@pytest.mark.asyncio
+async def test_get_examiner_marking_group_prefers_named_over_default() -> None:
+    session = AsyncMock()
+    default_id = uuid4()
+    named_id = uuid4()
+    with patch(
+        "app.services.subject_marking_group.get_examiner_marking_groups",
+        new_callable=AsyncMock,
+        return_value=[
+            {
+                "id": default_id,
+                "name": "All examiners",
+                "is_default": True,
+                "coordination_date": None,
+                "coordination_start_time": None,
+                "coordination_end_time": None,
+                "marking_start_date": None,
+                "marking_end_date": None,
+                "marked_script_submission_deadline": None,
+            },
+            {
+                "id": named_id,
+                "name": "Northern",
+                "is_default": False,
+                "coordination_date": datetime(2026, 6, 15),
+                "coordination_start_time": time(9, 0),
+                "coordination_end_time": time(12, 0),
+                "marking_start_date": None,
+                "marking_end_date": None,
+                "marked_script_submission_deadline": None,
+            },
+        ],
+    ):
+        result = await get_examiner_marking_group(
+            session,
+            examination_id=1,
+            subject_id=10,
+            examiner_id=uuid4(),
+        )
+    assert result is not None
+    assert result["marking_group_id"] == named_id
+    assert result["marking_group_name"] == "Northern"

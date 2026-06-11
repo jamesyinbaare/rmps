@@ -70,12 +70,16 @@ def _parse_source_roles(raw_roles: list[str]) -> list[ExaminerType]:
     return roles
 
 
+DEFAULT_COHORT_NAME = "All examiners"
+
+
 def group_response(group: SubjectMarkingGroup) -> dict:
     return {
         "id": group.id,
         "examination_id": int(group.examination_id),
         "subject_id": int(group.subject_id),
         "name": group.name,
+        "is_default": bool(group.is_default),
         "examiner_ids": [m.examiner_id for m in group.members],
         "source_regions": [r.region.value for r in group.source_regions],
         "source_roles": [r.examiner_type.value for r in group.source_roles],
@@ -230,8 +234,76 @@ async def delete_group(
     )
     if group is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Cohort not found")
+    if group.is_default:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="The default cohort cannot be deleted.",
+        )
     await session.delete(group)
     await session.commit()
+
+
+async def ensure_default_cohort(
+    session: AsyncSession,
+    *,
+    examination_id: int,
+    subject_id: int,
+) -> SubjectMarkingGroup:
+    stmt = select(SubjectMarkingGroup).where(
+        SubjectMarkingGroup.examination_id == examination_id,
+        SubjectMarkingGroup.subject_id == subject_id,
+        SubjectMarkingGroup.is_default.is_(True),
+    )
+    group = (await session.execute(stmt)).scalar_one_or_none()
+    if group is not None:
+        return group
+
+    group = SubjectMarkingGroup(
+        examination_id=examination_id,
+        subject_id=subject_id,
+        name=DEFAULT_COHORT_NAME,
+        is_default=True,
+    )
+    session.add(group)
+    await session.flush()
+    return group
+
+
+async def sync_default_cohort_members(
+    session: AsyncSession,
+    *,
+    examination_id: int,
+    subject_id: int,
+) -> None:
+    group = await ensure_default_cohort(
+        session,
+        examination_id=examination_id,
+        subject_id=subject_id,
+    )
+    stmt = (
+        select(Examiner.id)
+        .join(ExaminerSubject, ExaminerSubject.examiner_id == Examiner.id)
+        .where(
+            Examiner.examination_id == examination_id,
+            ExaminerSubject.subject_id == subject_id,
+        )
+    )
+    examiner_ids = list(dict.fromkeys((await session.execute(stmt)).scalars().all()))
+
+    await session.execute(
+        delete(SubjectMarkingGroupMember).where(SubjectMarkingGroupMember.group_id == group.id)
+    )
+    for eid in examiner_ids:
+        session.add(
+            SubjectMarkingGroupMember(
+                group_id=group.id,
+                examiner_id=eid,
+                examination_id=examination_id,
+                subject_id=subject_id,
+            )
+        )
+    group.updated_at = datetime.utcnow()
+    await session.flush()
 
 
 async def _validate_examiners_on_subject(
@@ -326,6 +398,12 @@ async def replace_group_members(
     if group is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Cohort not found")
 
+    if group.is_default:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Default cohort membership is managed automatically for all subject examiners.",
+        )
+
     regions = _parse_source_regions(source_regions)
     roles = _parse_source_roles(source_roles)
     region_examiner_ids = await _examiner_ids_for_regions(
@@ -385,6 +463,7 @@ async def replace_group_members(
             SubjectMarkingGroup.examination_id == examination_id,
             SubjectMarkingGroup.subject_id == subject_id,
             SubjectMarkingGroup.id != group_id,
+            SubjectMarkingGroup.is_default.is_(False),
         )
         await session.execute(
             delete(SubjectMarkingGroupMember).where(
@@ -413,7 +492,7 @@ async def replace_group_members(
         elif "uq_subject_marking_group_source_role_per_subject" in err:
             detail = "Each role may belong to at most one cohort for this subject."
         else:
-            detail = "Each examiner may belong to only one cohort per subject."
+            detail = "Could not update cohort membership."
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=detail) from e
 
     refreshed = await load_group(
@@ -426,13 +505,13 @@ async def replace_group_members(
     return group_response(refreshed)
 
 
-async def get_examiner_marking_group(
+async def get_examiner_marking_groups(
     session: AsyncSession,
     *,
     examination_id: int,
     subject_id: int,
     examiner_id: UUID,
-) -> dict | None:
+) -> list[dict]:
     stmt = (
         select(SubjectMarkingGroup)
         .join(SubjectMarkingGroupMember, SubjectMarkingGroupMember.group_id == SubjectMarkingGroup.id)
@@ -442,17 +521,48 @@ async def get_examiner_marking_group(
             SubjectMarkingGroupMember.examiner_id == examiner_id,
         )
         .options(*_group_load_options())
+        .order_by(SubjectMarkingGroup.is_default.desc(), SubjectMarkingGroup.name)
     )
-    group = (await session.execute(stmt)).scalar_one_or_none()
-    if group is None:
+    groups = list((await session.execute(stmt)).scalars().unique().all())
+    return [
+        {
+            "id": group.id,
+            "name": group.name,
+            "is_default": bool(group.is_default),
+            "coordination_date": group.coordination_date,
+            "coordination_start_time": group.coordination_start_time,
+            "coordination_end_time": group.coordination_end_time,
+            "marking_start_date": group.marking_start_date,
+            "marking_end_date": group.marking_end_date,
+            "marked_script_submission_deadline": group.marked_script_submission_deadline,
+        }
+        for group in groups
+    ]
+
+
+async def get_examiner_marking_group(
+    session: AsyncSession,
+    *,
+    examination_id: int,
+    subject_id: int,
+    examiner_id: UUID,
+) -> dict | None:
+    groups = await get_examiner_marking_groups(
+        session,
+        examination_id=examination_id,
+        subject_id=subject_id,
+        examiner_id=examiner_id,
+    )
+    if not groups:
         return None
+    chosen = next((g for g in groups if not g["is_default"]), groups[0])
     return {
-        "marking_group_id": group.id,
-        "marking_group_name": group.name,
-        "coordination_date": group.coordination_date,
-        "coordination_start_time": group.coordination_start_time,
-        "coordination_end_time": group.coordination_end_time,
-        "marking_start_date": group.marking_start_date,
-        "marking_end_date": group.marking_end_date,
-        "marked_script_submission_deadline": group.marked_script_submission_deadline,
+        "marking_group_id": chosen["id"],
+        "marking_group_name": chosen["name"],
+        "coordination_date": chosen["coordination_date"],
+        "coordination_start_time": chosen["coordination_start_time"],
+        "coordination_end_time": chosen["coordination_end_time"],
+        "marking_start_date": chosen["marking_start_date"],
+        "marking_end_date": chosen["marking_end_date"],
+        "marked_script_submission_deadline": chosen["marked_script_submission_deadline"],
     }

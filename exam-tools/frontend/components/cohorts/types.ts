@@ -3,6 +3,7 @@ import type { ExaminerTypeApi } from "@/lib/api";
 export type CohortListItem = {
   id: string;
   name: string;
+  is_default?: boolean;
   examiner_ids: string[];
   source_regions: string[];
   source_roles?: string[];

@@ -3,7 +3,8 @@ from __future__ import annotations
 
 from uuid import uuid4
 
-from app.models import Examiner, ExaminerType, Region
+from app.models import Examiner, ExaminerRosterSource, ExaminerSubject, ExaminerType, Region
+from app.services.examiner_portal import generate_portal_token
 from app.services.script_allocation import (
     _decomposed_subgroup_time_limit_sec,
     assign_examiners_to_series_by_booklet_ratio,
@@ -17,6 +18,8 @@ def _make_examiner() -> Examiner:
         name="E",
         examiner_type=ExaminerType.ASSISTANT,
         region=Region.ASHANTI,
+        portal_token=generate_portal_token(),
+        roster_source=ExaminerRosterSource.MANUAL,
     )
     return ex
 

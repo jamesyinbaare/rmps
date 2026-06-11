@@ -60,6 +60,10 @@ type CohortManageModalProps = {
   onClose: () => void;
   peopleOverrideWarning?: string;
   loading?: boolean;
+  membershipLocked?: boolean;
+  nameDisabled?: boolean;
+  /** When false, details stay locked with no edit/save controls. */
+  detailsEditable?: boolean;
 };
 
 export function CohortManageModal({
@@ -91,6 +95,7 @@ export function CohortManageModal({
   rolesDraft,
   examiners,
   detailsSection,
+  detailsEditable = true,
   ...workspaceProps
 }: CohortManageModalProps) {
   const [discardOpen, setDiscardOpen] = useState(false);
@@ -105,7 +110,7 @@ export function CohortManageModal({
     setDetailsEditing(false);
   }, [open, mode]);
 
-  const detailsLocked = !detailsEditing;
+  const detailsLocked = !detailsEditing || !detailsEditable;
 
   const resolvedDetailsSection =
     typeof detailsSection === "function"
@@ -208,9 +213,9 @@ export function CohortManageModal({
           detailsSaveDisabled={detailsSaveDisabled}
           detailsError={detailsError}
           scheduleWarnings={scheduleWarnings}
-          onUnlockDetails={unlockDetails}
-          onSaveDetails={() => void handleSaveDetails()}
-          onCancelDetailsEdit={handleCancelDetailsEdit}
+          onUnlockDetails={detailsEditable ? unlockDetails : undefined}
+          onSaveDetails={detailsEditable ? () => void handleSaveDetails() : undefined}
+          onCancelDetailsEdit={detailsEditable ? handleCancelDetailsEdit : undefined}
           membersDraft={membersDraft}
           regionsDraft={regionsDraft}
           rolesDraft={rolesDraft}

@@ -13,6 +13,11 @@ class ExaminerTypeSchema(str, Enum):
     team_leader = "team_leader"
 
 
+class ExaminerRosterSourceSchema(str, Enum):
+    manual = "manual"
+    invitation = "invitation"
+
+
 class AllocationRunStatusSchema(str, Enum):
     draft = "draft"
     optimal = "optimal"
@@ -144,6 +149,10 @@ class ExaminerResponse(BaseModel):
     subject_ids: list[int]
     deviation_weight: float | None
     examiner_group_id: UUID | None = None
+    portal_url: str
+    roster_source: ExaminerRosterSourceSchema
+    invitation_id: UUID | None = None
+    invitation_status: str | None = None
     created_at: datetime
     updated_at: datetime
 

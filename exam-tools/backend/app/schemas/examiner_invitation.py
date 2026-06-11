@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, time
 from enum import Enum
 from uuid import UUID
 
@@ -68,11 +68,26 @@ class ExaminerInvitationPublicResponse(BaseModel):
     examiner_type_label: str
     region: str
     status: ExaminerInvitationStatusSchema
-    response_deadline: datetime
+    response_deadline: datetime | None = None
     coordination_date: datetime | None
     responded_at: datetime | None
     can_respond: bool
     examiner_id: UUID | None = None
+    portal_mode: str = "invitation"
+    roster_source: str | None = None
+    marking_cohorts: list["ExaminerMarkingCohortPublic"] = Field(default_factory=list)
+
+
+class ExaminerMarkingCohortPublic(BaseModel):
+    id: UUID
+    name: str
+    is_default: bool
+    coordination_date: datetime | None
+    coordination_start_time: time | None = None
+    coordination_end_time: time | None = None
+    marking_start_date: datetime | None = None
+    marking_end_date: datetime | None = None
+    marked_script_submission_deadline: datetime | None = None
 
 
 class ExaminerInvitationActionResponse(BaseModel):

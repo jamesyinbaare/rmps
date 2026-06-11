@@ -37,6 +37,7 @@ class SubjectMarkingGroupResponse(BaseModel):
     examination_id: int
     subject_id: int
     name: str
+    is_default: bool = False
     examiner_ids: list[UUID]
     source_regions: list[str]
     source_roles: list[str]

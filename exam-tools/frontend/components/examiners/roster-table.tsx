@@ -1,5 +1,6 @@
 "use client";
 
+import { useCallback, useMemo, useState } from "react";
 import {
   getCoreRowModel,
   getPaginationRowModel,
@@ -11,8 +12,7 @@ import {
   type SortingState,
   type VisibilityState,
 } from "@tanstack/react-table";
-import { Loader2 } from "lucide-react";
-import { useMemo } from "react";
+import { Check, Copy, Loader2 } from "lucide-react";
 
 import { DataTable } from "@/components/data-table";
 import {
@@ -70,6 +70,29 @@ export function RosterTable({
   onRemove,
   onViewAllocation,
 }: Props) {
+  const [copyUi, setCopyUi] = useState<Record<string, "copied" | "error">>({});
+
+  const handleCopyPortalLink = useCallback(async (row: RosterTableRow) => {
+    if (!row.portal_url) {
+      setCopyUi((prev) => ({ ...prev, [row.id]: "error" }));
+      return;
+    }
+    try {
+      await navigator.clipboard.writeText(row.portal_url);
+      setCopyUi((prev) => ({ ...prev, [row.id]: "copied" }));
+      window.setTimeout(() => {
+        setCopyUi((prev) => {
+          if (prev[row.id] !== "copied") return prev;
+          const next = { ...prev };
+          delete next[row.id];
+          return next;
+        });
+      }, 2500);
+    } catch {
+      setCopyUi((prev) => ({ ...prev, [row.id]: "error" }));
+    }
+  }, []);
+
   const columns = useMemo<ColumnDef<RosterTableRow>[]>(
     () => [
       {
@@ -127,6 +150,38 @@ export function RosterTable({
         cell: ({ getValue }) => humanizeRegion(getValue<string>()),
       },
       {
+        id: "source",
+        accessorFn: (row) => row.roster_source,
+        header: "Source",
+        cell: ({ getValue }) => {
+          const source = getValue<"manual" | "invitation">();
+          return source === "invitation" ? "Invitation" : "Manual";
+        },
+      },
+      {
+        id: "portal",
+        header: "Portal link",
+        enableSorting: false,
+        cell: ({ row }) => {
+          const state = copyUi[row.original.id];
+          return (
+            <button
+              type="button"
+              className="inline-flex items-center gap-1.5 text-xs text-primary underline-offset-2 hover:underline disabled:opacity-50"
+              disabled={busy || !row.original.portal_url}
+              onClick={() => void handleCopyPortalLink(row.original)}
+            >
+              {state === "copied" ? (
+                <Check className="size-3.5" aria-hidden />
+              ) : (
+                <Copy className="size-3.5" aria-hidden />
+              )}
+              {state === "copied" ? "Copied" : state === "error" ? "Copy failed" : "Copy link"}
+            </button>
+          );
+        },
+      },
+      {
         id: "group",
         accessorFn: (row) => row.groupLabel ?? "",
         header: "Group",
@@ -171,7 +226,7 @@ export function RosterTable({
         ),
       },
     ],
-    [busy, onEdit, onRemove, onViewAllocation],
+    [busy, copyUi, handleCopyPortalLink, onEdit, onRemove, onViewAllocation],
   );
 
   const table = useReactTable({

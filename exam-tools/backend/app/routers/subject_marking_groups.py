@@ -2,9 +2,9 @@ from __future__ import annotations
 
 from uuid import UUID
 
-from fastapi import APIRouter, Query, status
+from fastapi import APIRouter, HTTPException, Query, status
 
-from app.dependencies.auth import SubjectOfficerDep
+from app.dependencies.auth import SuperAdminOrTestAdminOfficerOrSubjectOfficerDep
 from app.dependencies.database import DBSessionDep
 from app.schemas.subject_marking_groups import (
     SubjectMarkingGroupCreate,
@@ -16,10 +16,14 @@ from app.services.subject_marking_group import (
     create_group,
     delete_group,
     list_groups,
+    load_group,
     replace_group_members,
     update_group,
 )
-from app.services.subject_officer_scope import assert_subject_officer_access
+from app.services.subject_officer_scope import (
+    assert_subject_officer_access,
+    can_manage_default_cohort,
+)
 
 router = APIRouter(tags=["subject-marking-groups"])
 
@@ -31,7 +35,7 @@ router = APIRouter(tags=["subject-marking-groups"])
 async def get_subject_marking_groups(
     examination_id: int,
     session: DBSessionDep,
-    user: SubjectOfficerDep,
+    user: SuperAdminOrTestAdminOfficerOrSubjectOfficerDep,
     subject_id: int = Query(...),
 ) -> list[SubjectMarkingGroupResponse]:
     await assert_subject_officer_access(session, user, examination_id, subject_id)
@@ -48,7 +52,7 @@ async def post_subject_marking_group(
     examination_id: int,
     body: SubjectMarkingGroupCreate,
     session: DBSessionDep,
-    user: SubjectOfficerDep,
+    user: SuperAdminOrTestAdminOfficerOrSubjectOfficerDep,
     subject_id: int = Query(...),
 ) -> SubjectMarkingGroupResponse:
     await assert_subject_officer_access(session, user, examination_id, subject_id)
@@ -76,10 +80,23 @@ async def patch_subject_marking_group(
     group_id: UUID,
     body: SubjectMarkingGroupUpdate,
     session: DBSessionDep,
-    user: SubjectOfficerDep,
+    user: SuperAdminOrTestAdminOfficerOrSubjectOfficerDep,
     subject_id: int = Query(...),
 ) -> SubjectMarkingGroupResponse:
     await assert_subject_officer_access(session, user, examination_id, subject_id)
+    group = await load_group(
+        session,
+        examination_id=examination_id,
+        subject_id=subject_id,
+        group_id=group_id,
+    )
+    if group is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Cohort not found")
+    if group.is_default and not can_manage_default_cohort(user):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Only administrators can manage the default cohort.",
+        )
     fields_set = body.model_fields_set
     row = await update_group(
         session,
@@ -111,7 +128,7 @@ async def remove_subject_marking_group(
     examination_id: int,
     group_id: UUID,
     session: DBSessionDep,
-    user: SubjectOfficerDep,
+    user: SuperAdminOrTestAdminOfficerOrSubjectOfficerDep,
     subject_id: int = Query(...),
 ) -> None:
     await assert_subject_officer_access(session, user, examination_id, subject_id)
@@ -132,7 +149,7 @@ async def put_subject_marking_group_members(
     group_id: UUID,
     body: SubjectMarkingGroupMembersReplace,
     session: DBSessionDep,
-    user: SubjectOfficerDep,
+    user: SuperAdminOrTestAdminOfficerOrSubjectOfficerDep,
     subject_id: int = Query(...),
 ) -> SubjectMarkingGroupResponse:
     await assert_subject_officer_access(session, user, examination_id, subject_id)

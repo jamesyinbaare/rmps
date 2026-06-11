@@ -89,3 +89,33 @@ async def build_examiner_appointment_letter_pdf(inv: ExaminerInvitation) -> tupl
     )
     fn = f"appointment_letter_{_sanitize_filename_part(inv.name)}.pdf"
     return pdf_bytes, fn
+
+
+async def build_examiner_appointment_letter_for_roster(
+    resolved,
+) -> tuple[bytes, str]:
+    """Build appointment letter PDF for a roster portal examiner."""
+    from app.services.examiner_portal import ResolvedPortalExaminer
+
+    if not isinstance(resolved, ResolvedPortalExaminer):
+        raise ValueError("Invalid portal context")
+
+    examiner = resolved.examiner
+    exam = resolved.examination
+    subject = resolved.subject
+    exam_label_str = examination_label(exam)
+    subj_code = subject_display_code(subject)
+    subject_label = f"{subject.name} ({subj_code})" if subj_code else subject.name
+
+    pdf_bytes = await asyncio.to_thread(
+        _render_appointment_letter_pdf_sync,
+        examination_label_str=exam_label_str,
+        invitee_name=examiner.name,
+        phone_number=examiner.phone_number or "",
+        examiner_type_label=_examiner_type_label(examiner.examiner_type),
+        subject_label=subject_label,
+        region=examiner.region.value,
+        coordination_date=None,
+    )
+    fn = f"appointment_letter_{_sanitize_filename_part(examiner.name)}.pdf"
+    return pdf_bytes, fn

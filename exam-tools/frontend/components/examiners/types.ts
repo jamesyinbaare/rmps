@@ -1,6 +1,6 @@
 import type { ExaminerRow } from "@/lib/api";
 
-export type ExaminersTab = "roster" | "invitations" | "groups";
+export type ExaminersTab = "roster" | "invitations" | "groups" | "cohorts";
 
 export type RosterTableRow = ExaminerRow & {
   subjectLabel: string;

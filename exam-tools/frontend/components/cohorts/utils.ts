@@ -6,6 +6,7 @@ export function computeCoverage(
 ): CohortCoverage {
   const assigned = new Set<string>();
   for (const c of cohorts) {
+    if (c.is_default) continue;
     for (const id of c.examiner_ids) {
       assigned.add(id);
     }

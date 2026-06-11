@@ -30,6 +30,9 @@ export default function AdminExaminersHubPage() {
       exams={exams}
       subjects={subjects}
       isSuperAdmin={me?.role === "SUPER_ADMIN"}
+      showSubjectCohortsTab={
+        me?.role === "SUPER_ADMIN" || me?.role === "TEST_ADMIN_OFFICER"
+      }
       loadingExams={loadingExams}
     />
   );

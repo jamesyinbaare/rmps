@@ -37,6 +37,8 @@ type Props = {
   requireExamSelection?: boolean;
   examLabelFn?: (ex: Examination) => string;
   showCreateExamsLink?: boolean;
+  /** Super Admin / Test Admin Officer: subject marking cohorts tab with default cohort management. */
+  showSubjectCohortsTab?: boolean;
 };
 
 const EMPTY_SUMMARY: ExaminersSummaryCounts = {
@@ -58,6 +60,7 @@ export function ExaminersPageShell({
   requireExamSelection = false,
   examLabelFn,
   showCreateExamsLink = true,
+  showSubjectCohortsTab = false,
 }: Props) {
   const resolvedMarkingGroupsMode: MarkingGroupsMode =
     markingGroupsMode ?? (hideGroups ? "hidden" : "admin-allocation");
@@ -68,13 +71,16 @@ export function ExaminersPageShell({
     return subjects.filter((s) => allowed.has(s.id));
   }, [lockedSubjectIds, subjects]);
 
-  const baseTabs = useMemo(
-    () =>
+  const baseTabs = useMemo(() => {
+    let tabs =
       resolvedMarkingGroupsMode === "hidden"
         ? EXAMINERS_TABS.filter((t) => t.key !== "groups")
-        : EXAMINERS_TABS,
-    [resolvedMarkingGroupsMode],
-  );
+        : [...EXAMINERS_TABS];
+    if (showSubjectCohortsTab) {
+      tabs = [...tabs, { key: "cohorts" as const, label: "Cohorts" }];
+    }
+    return tabs;
+  }, [resolvedMarkingGroupsMode, showSubjectCohortsTab]);
   const { examId, activeTab, setExamId, setActiveTab } = useExaminersUrl({
     exams,
     singleExamMode,
@@ -135,10 +141,10 @@ export function ExaminersPageShell({
   );
 
   const tabAnnouncement = useMemo(() => {
-    const tabLabel = EXAMINERS_TABS.find((t) => t.key === activeTab)?.label ?? activeTab;
+    const tabLabel = baseTabs.find((t) => t.key === activeTab)?.label ?? activeTab;
     if (examId == null) return tabLabel;
     return `${tabLabel} — ${summary.roster} on roster, ${summary.invitationsPending} pending invites`;
-  }, [activeTab, examId, summary.invitationsPending, summary.roster]);
+  }, [activeTab, baseTabs, examId, summary.invitationsPending, summary.roster]);
 
   const contextTrailing =
     showScriptsAllocationLink && examId != null ? (
@@ -224,6 +230,14 @@ export function ExaminersPageShell({
                 <SubjectMarkingGroupsPanel
                   examId={examId}
                   subjects={scopedSubjects}
+                  embedded
+                />
+              ) : null}
+              {activeTab === "cohorts" && showSubjectCohortsTab ? (
+                <SubjectMarkingGroupsPanel
+                  examId={examId}
+                  subjects={subjects}
+                  canManageDefaultCohort
                   embedded
                 />
               ) : null}

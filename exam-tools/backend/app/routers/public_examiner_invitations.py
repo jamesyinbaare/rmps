@@ -17,17 +17,24 @@ from app.services.examiner_appointment_letter_pdf import build_examiner_appointm
 from app.services.examiner_bank_account import (
     bank_account_to_dict,
     get_by_examiner_id,
-    require_accepted_invitation_for_bank,
     upsert_for_examiner,
 )
 from app.services.examiner_invitation import (
-    _is_publicly_accessible,
     accept_examiner_invitation,
     decline_examiner_invitation,
-    get_invitation_by_token,
-    public_invitation_view,
 )
-from app.services.examiner_public_profile import get_scripts_allocation_for_invitation
+from app.services.examiner_portal import (
+    ResolvedPortalExaminer,
+    ResolvedPortalInvitation,
+    resolve_examiner_id_for_portal_token,
+    resolve_portal_token,
+)
+from app.services.examiner_portal_public import (
+    invitation_is_publicly_accessible,
+    public_invitation_portal_view,
+    public_roster_portal_view,
+)
+from app.services.examiner_public_profile import get_examiner_scripts_allocation
 
 router = APIRouter(prefix="/public/examiner-invitations", tags=["public-examiner-invitations"])
 
@@ -36,30 +43,18 @@ def _sanitize_filename_part(s: str) -> str:
     return "".join(c for c in s if c.isalnum() or c in ("_", "-"))
 
 
-async def _resolve_public_invitation(session: DBSessionDep, token: str):
-    inv = await get_invitation_by_token(session, token)
-    if inv is None:
+async def _resolve_portal_or_404(session: DBSessionDep, token: str):
+    resolved = await resolve_portal_token(session, token)
+    if resolved is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Invitation not found")
-    prev_status = inv.status
-    if not _is_publicly_accessible(inv):
-        if inv.status != prev_status:
-            await session.commit()
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="This invitation is no longer available.",
-        )
-    if inv.status != prev_status:
-        await session.commit()
-    return inv
+    return resolved
 
 
-async def _resolve_accepted_for_bank(session: DBSessionDep, token: str):
-    inv = await _resolve_public_invitation(session, token)
+async def _resolve_examiner_id(session: DBSessionDep, token: str):
     try:
-        examiner_id = require_accepted_invitation_for_bank(inv)
+        return await resolve_examiner_id_for_portal_token(session, token)
     except ValueError as exc:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(exc)) from exc
-    return inv, examiner_id
 
 
 @router.get("/{token}", response_model=ExaminerInvitationPublicResponse)
@@ -67,18 +62,22 @@ async def get_public_examiner_invitation(
     session: DBSessionDep,
     token: str,
 ) -> ExaminerInvitationPublicResponse:
-    inv = await get_invitation_by_token(session, token)
-    if inv is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Invitation not found")
-    prev_status = inv.status
-    summary = public_invitation_view(inv)
-    if inv.status != prev_status:
-        await session.commit()
-    if not _is_publicly_accessible(inv):
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="This invitation is no longer available.",
-        )
+    resolved = await _resolve_portal_or_404(session, token)
+
+    if isinstance(resolved, ResolvedPortalInvitation):
+        inv = resolved.invitation
+        prev_status = inv.status
+        summary = await public_invitation_portal_view(session, resolved)
+        if inv.status != prev_status:
+            await session.commit()
+        if not invitation_is_publicly_accessible(resolved):
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="This invitation is no longer available.",
+            )
+        return ExaminerInvitationPublicResponse(**summary)
+
+    summary = await public_roster_portal_view(session, resolved)
     return ExaminerInvitationPublicResponse(**summary)
 
 
@@ -87,9 +86,13 @@ async def accept_public_examiner_invitation(
     session: DBSessionDep,
     token: str,
 ) -> ExaminerInvitationActionResponse:
-    inv = await get_invitation_by_token(session, token)
-    if inv is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Invitation not found")
+    resolved = await _resolve_portal_or_404(session, token)
+    if isinstance(resolved, ResolvedPortalExaminer):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="This portal link does not require confirmation.",
+        )
+    inv = resolved.invitation
     try:
         examiner = await accept_examiner_invitation(session, inv)
         await session.commit()
@@ -108,9 +111,13 @@ async def decline_public_examiner_invitation(
     session: DBSessionDep,
     token: str,
 ) -> ExaminerInvitationActionResponse:
-    inv = await get_invitation_by_token(session, token)
-    if inv is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Invitation not found")
+    resolved = await _resolve_portal_or_404(session, token)
+    if isinstance(resolved, ResolvedPortalExaminer):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="This portal link does not require confirmation.",
+        )
+    inv = resolved.invitation
     try:
         await decline_examiner_invitation(session, inv)
         await session.commit()
@@ -129,7 +136,7 @@ async def get_public_examiner_bank_account(
     session: DBSessionDep,
     token: str,
 ) -> ExaminerBankAccountResponse:
-    _inv, examiner_id = await _resolve_accepted_for_bank(session, token)
+    examiner_id = await _resolve_examiner_id(session, token)
     row = await get_by_examiner_id(session, examiner_id)
     if row is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="No bank account on file.")
@@ -142,7 +149,7 @@ async def upsert_public_examiner_bank_account(
     token: str,
     body: ExaminerBankAccountUpsert,
 ) -> ExaminerBankAccountResponse:
-    _inv, examiner_id = await _resolve_accepted_for_bank(session, token)
+    examiner_id = await _resolve_examiner_id(session, token)
     try:
         row = await upsert_for_examiner(
             session,
@@ -167,7 +174,7 @@ async def list_public_bank_branches(
     skip: int = Query(0, ge=0),
     limit: int = Query(DEFAULT_LIMIT, ge=1, le=MAX_LIST),
 ) -> BankBranchListResponse:
-    await _resolve_accepted_for_bank(session, token)
+    await _resolve_examiner_id(session, token)
     rows, total = await list_bank_branches(
         session,
         bank_name=bank_name,
@@ -187,7 +194,7 @@ async def list_public_bank_names(
     q: str | None = Query(None, description="Substring filter on bank name"),
     limit: int = Query(100, ge=1, le=500),
 ) -> list[str]:
-    await _resolve_accepted_for_bank(session, token)
+    await _resolve_examiner_id(session, token)
     return await distinct_bank_names(session, q=q, limit=limit)
 
 
@@ -196,11 +203,25 @@ async def get_public_examiner_scripts_allocation(
     session: DBSessionDep,
     token: str,
 ) -> ExaminerPublicScriptsAllocationResponse:
-    inv = await _resolve_public_invitation(session, token)
+    resolved = await _resolve_portal_or_404(session, token)
     try:
-        data = await get_scripts_allocation_for_invitation(session, inv)
+        examiner_id = await resolve_examiner_id_for_portal_token(session, token)
     except ValueError as exc:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(exc)) from exc
+
+    if isinstance(resolved, ResolvedPortalInvitation):
+        examination_id = int(resolved.invitation.examination_id)
+        subject_id = int(resolved.invitation.subject_id)
+    else:
+        examination_id = int(resolved.examiner.examination_id)
+        subject_id = int(resolved.subject.id)
+
+    data = await get_examiner_scripts_allocation(
+        session,
+        examiner_id=examiner_id,
+        examination_id=examination_id,
+        subject_id=subject_id,
+    )
     return ExaminerPublicScriptsAllocationResponse(**data)
 
 
@@ -209,15 +230,24 @@ async def download_public_examiner_appointment_letter_pdf(
     session: DBSessionDep,
     token: str,
 ) -> Response:
-    inv = await _resolve_public_invitation(session, token)
-    try:
-        require_accepted_invitation_for_bank(inv)
-    except ValueError as exc:
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(exc)) from exc
-    try:
-        pdf, filename = await build_examiner_appointment_letter_pdf(inv)
-    except ValueError as exc:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+    resolved = await _resolve_portal_or_404(session, token)
+    if isinstance(resolved, ResolvedPortalExaminer):
+        try:
+            from app.services.examiner_appointment_letter_pdf import build_examiner_appointment_letter_for_roster
+
+            pdf, filename = await build_examiner_appointment_letter_for_roster(resolved)
+        except ValueError as exc:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+    else:
+        try:
+            await resolve_examiner_id_for_portal_token(session, token)
+        except ValueError as exc:
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(exc)) from exc
+        try:
+            pdf, filename = await build_examiner_appointment_letter_pdf(resolved.invitation)
+        except ValueError as exc:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+
     safe = _sanitize_filename_part(filename.replace(".pdf", "")) + ".pdf"
     return Response(
         content=pdf,

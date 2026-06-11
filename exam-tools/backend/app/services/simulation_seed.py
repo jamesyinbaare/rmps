@@ -10,6 +10,7 @@ from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import script_envelope_cap
+from app.services.examiner_portal import generate_portal_token
 from app.models import (
     Examination,
     ExaminationCandidate,
@@ -17,6 +18,7 @@ from app.models import (
     ExaminationSchedule,
     ExaminationSubjectScriptSeries,
     Examiner,
+    ExaminerRosterSource,
     ExaminerSubject,
     ExaminerType,
     Region,
@@ -420,6 +422,8 @@ async def _seed_examiners(
             name=f"Core Math Examiner {start + i + 1:03d}",
             examiner_type=examiner_type,
             region=region,
+            portal_token=generate_portal_token(),
+            roster_source=ExaminerRosterSource.MANUAL,
         )
         session.add(examiner)
         await session.flush()

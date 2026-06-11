@@ -43,6 +43,8 @@ type Props = {
   onToggleExaminer: (examinerId: string, checked: boolean) => void;
   peopleOverrideWarning?: string;
   loading?: boolean;
+  membershipLocked?: boolean;
+  nameDisabled?: boolean;
 };
 
 export function CohortWorkspace({
@@ -78,6 +80,8 @@ export function CohortWorkspace({
   onToggleExaminer,
   peopleOverrideWarning,
   loading = false,
+  membershipLocked = false,
+  nameDisabled = false,
 }: Props) {
   if (loading) {
     return (
@@ -164,7 +168,7 @@ export function CohortWorkspace({
               value={name}
               onChange={(e) => onNameChange(e.target.value)}
               placeholder={`e.g. Northern ${entityLabel}`}
-              disabled={busy || detailsLocked}
+              disabled={busy || detailsLocked || nameDisabled}
               autoFocus={!detailsLocked}
             />
           </div>
@@ -175,7 +179,9 @@ export function CohortWorkspace({
       <div className="flex min-h-0 flex-col overflow-hidden rounded-xl border border-border bg-muted/15 p-4 max-lg:min-h-48 sm:p-5">
         <h3 className="shrink-0 text-sm font-semibold text-foreground">Membership</h3>
         <p className="mt-1 shrink-0 text-xs text-muted-foreground">
-          Use region or role rules for bulk assignment, or pick individuals on the People tab.
+          {membershipLocked
+            ? "All subject examiners are always in the default cohort. Edit the schedule above; membership is managed automatically."
+            : "Use region or role rules for bulk assignment, or pick individuals on the People tab."}
         </p>
         <div className="mt-3 min-h-0 flex-1">
           <CohortMembershipTabs
@@ -193,7 +199,7 @@ export function CohortWorkspace({
             unassignedIds={unassignedIds}
             peopleFilterUnassignedOnly={peopleFilterUnassignedOnly}
             onPeopleFilterUnassignedOnlyChange={onPeopleFilterUnassignedOnlyChange}
-            disabled={busy}
+            disabled={busy || membershipLocked}
             onToggleRegion={onToggleRegion}
             onToggleRole={onToggleRole}
             onToggleExaminer={onToggleExaminer}

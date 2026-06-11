@@ -13,7 +13,7 @@ from app.dependencies.auth import (
     SuperAdminOrTestAdminOfficerOrSubjectOfficerDep,
 )
 from app.dependencies.database import DBSessionDep
-from app.models import Examination, Examiner, ExaminerSubject, ExaminerType, User
+from app.models import Examination, Examiner, ExaminerRosterSource, ExaminerSubject, ExaminerType, User
 from app.schemas.script_allocation import (
     ExaminerBulkImportResponse,
     ExaminerBulkImportRowError,
@@ -22,14 +22,17 @@ from app.schemas.script_allocation import (
     ExaminerBulkSmsRowError,
     ExaminerCreate,
     ExaminerResponse,
+    ExaminerRosterSourceSchema,
     ExaminerTypeSchema,
     ExaminerUpdate,
 )
+from app.services.examiner_portal import examiner_portal_url, generate_portal_token
 from app.services.examiner_roster import dataframe_row_to_examiner_fields, read_examiners_spreadsheet
 from app.services.examiner_subject_lock import assert_examiner_subject_allowed
 from app.services.script_allocation import parse_region, sync_examiner_subjects
 from app.services.sms.phone import normalize_msisdn
 from app.services.sms.examiner_roster import maybe_send_custom_examiner_roster_sms
+from app.services.subject_marking_group import sync_default_cohort_members
 from app.services.subject_officer_scope import (
     assert_subject_officer_access,
     effective_subject_scope,
@@ -60,6 +63,7 @@ def _examiner_type_to_schema(t: ExaminerType) -> ExaminerTypeSchema:
 
 def _examiner_response(ex: Examiner) -> ExaminerResponse:
     gid = ex.group_membership.group_id if ex.group_membership is not None else None
+    inv = ex.invitation
     return ExaminerResponse(
         id=ex.id,
         examination_id=int(ex.examination_id),
@@ -70,9 +74,22 @@ def _examiner_response(ex: Examiner) -> ExaminerResponse:
         subject_ids=[s.subject_id for s in ex.subjects],
         deviation_weight=float(ex.deviation_weight) if ex.deviation_weight is not None else None,
         examiner_group_id=gid,
+        portal_url=examiner_portal_url(ex.portal_token),
+        roster_source=ExaminerRosterSourceSchema(ex.roster_source.value),
+        invitation_id=inv.id if inv is not None else None,
+        invitation_status=inv.status.value if inv is not None else None,
         created_at=ex.created_at,
         updated_at=ex.updated_at,
     )
+
+
+async def _sync_default_for_examiner(session: AsyncSession, ex: Examiner) -> None:
+    for sub in ex.subjects:
+        await sync_default_cohort_members(
+            session,
+            examination_id=int(ex.examination_id),
+            subject_id=int(sub.subject_id),
+        )
 
 
 async def _get_examination_or_404(session: AsyncSession, examination_id: int) -> Examination:
@@ -125,7 +142,11 @@ async def list_examiners(
     stmt = (
         select(Examiner)
         .where(Examiner.examination_id == examination_id)
-        .options(selectinload(Examiner.subjects), selectinload(Examiner.group_membership))
+        .options(
+            selectinload(Examiner.subjects),
+            selectinload(Examiner.group_membership),
+            selectinload(Examiner.invitation),
+        )
         .order_by(Examiner.name)
     )
     if scope is not None:
@@ -172,15 +193,22 @@ async def create_examiner(
         examiner_type=_examiner_type_from_schema(body.examiner_type),
         region=region,
         deviation_weight=body.deviation_weight,
+        portal_token=generate_portal_token(),
+        roster_source=ExaminerRosterSource.MANUAL,
     )
     session.add(ex)
     await session.flush()
     await sync_examiner_subjects(session, ex, body.subject_ids)
+    await _sync_default_for_examiner(session, ex)
     await session.commit()
     stmt = (
         select(Examiner)
         .where(Examiner.id == ex.id)
-        .options(selectinload(Examiner.subjects), selectinload(Examiner.group_membership))
+        .options(
+            selectinload(Examiner.subjects),
+            selectinload(Examiner.group_membership),
+            selectinload(Examiner.invitation),
+        )
     )
     ex2 = (await session.execute(stmt)).scalar_one()
     return _examiner_response(ex2)
@@ -259,11 +287,14 @@ async def bulk_upload_examiners(
             examiner_type=fields["examiner_type"],
             region=hr,
             deviation_weight=None,
+            portal_token=generate_portal_token(),
+            roster_source=ExaminerRosterSource.MANUAL,
         )
         session.add(ex)
         try:
             await session.flush()
             await sync_examiner_subjects(session, ex, fields["subject_ids"])
+            await _sync_default_for_examiner(session, ex)
             await session.commit()
             created_count += 1
         except Exception as e:  # noqa: BLE001 — row-level import; surface message to admin
@@ -283,7 +314,11 @@ async def update_examiner(
     stmt = (
         select(Examiner)
         .where(Examiner.id == examiner_id, Examiner.examination_id == examination_id)
-        .options(selectinload(Examiner.subjects), selectinload(Examiner.group_membership))
+        .options(
+            selectinload(Examiner.subjects),
+            selectinload(Examiner.group_membership),
+            selectinload(Examiner.invitation),
+        )
     )
     ex = (await session.execute(stmt)).scalar_one_or_none()
     if ex is None:
@@ -315,6 +350,7 @@ async def update_examiner(
                 detail="Exactly one subject is allowed per examiner",
             )
         await _assert_subject_ids_allowed(session, user, examination_id, subject_ids)
+        previous_subject_ids = _examiner_subject_ids(ex)
         msisdn = ex.msisdn
         if not msisdn and ex.phone_number:
             try:
@@ -334,11 +370,21 @@ async def update_examiner(
             except ValueError as e:
                 raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e)) from e
         await sync_examiner_subjects(session, ex, subject_ids)
+        for sid in set(previous_subject_ids) | set(subject_ids):
+            await sync_default_cohort_members(
+                session,
+                examination_id=examination_id,
+                subject_id=sid,
+            )
     await session.commit()
     stmt2 = (
         select(Examiner)
         .where(Examiner.id == ex.id)
-        .options(selectinload(Examiner.subjects), selectinload(Examiner.group_membership))
+        .options(
+            selectinload(Examiner.subjects),
+            selectinload(Examiner.group_membership),
+            selectinload(Examiner.invitation),
+        )
     )
     ex2 = (await session.execute(stmt2)).scalar_one()
     return _examiner_response(ex2)
@@ -360,7 +406,15 @@ async def delete_examiner(
     if ex is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Examiner not found")
     await _assert_examiner_accessible(session, user, examination_id, ex)
+    subject_ids_before = _examiner_subject_ids(ex)
     await session.delete(ex)
+    await session.flush()
+    for sid in subject_ids_before:
+        await sync_default_cohort_members(
+            session,
+            examination_id=examination_id,
+            subject_id=sid,
+        )
     await session.commit()
 
 

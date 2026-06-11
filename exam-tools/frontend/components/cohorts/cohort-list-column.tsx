@@ -188,7 +188,16 @@ export function CohortListColumn({
                           }
                         }}
                       >
-                        <TableCell className="font-medium text-foreground">{c.name}</TableCell>
+                        <TableCell className="font-medium text-foreground">
+                          <span className="inline-flex flex-wrap items-center gap-2">
+                            {c.name}
+                            {c.is_default ? (
+                              <Badge variant="secondary" className="text-[10px] font-normal uppercase tracking-wide">
+                                Default
+                              </Badge>
+                            ) : null}
+                          </span>
+                        </TableCell>
                         <TableCell className="tabular-nums text-muted-foreground">
                           {c.examiner_ids.length}
                         </TableCell>

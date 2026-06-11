@@ -100,6 +100,11 @@ class ExaminerInvitationStatus(enum.Enum):
     EXPIRED = "expired"
 
 
+class ExaminerRosterSource(enum.Enum):
+    MANUAL = "manual"
+    INVITATION = "invitation"
+
+
 class AllocationRunStatus(enum.Enum):
     DRAFT = "draft"
     OPTIMAL = "optimal"
@@ -966,6 +971,7 @@ class SubjectMarkingGroup(Base):
     marking_start_date = Column(DateTime, nullable=True)
     marking_end_date = Column(DateTime, nullable=True)
     marked_script_submission_deadline = Column(DateTime, nullable=True)
+    is_default = Column(Boolean, nullable=False, default=False, server_default=text("false"))
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
 
@@ -1056,15 +1062,6 @@ class SubjectMarkingGroupMember(Base):
     group = relationship("SubjectMarkingGroup", back_populates="members")
     examiner = relationship("Examiner", back_populates="subject_marking_group_memberships")
 
-    __table_args__ = (
-        UniqueConstraint(
-            "examination_id",
-            "subject_id",
-            "examiner_id",
-            name="uq_subject_marking_group_member_per_subject",
-        ),
-    )
-
 
 class Examiner(Base):
     """Examiner roster for an examination; eligible for script allocation for any campaign on that exam."""
@@ -1088,6 +1085,15 @@ class Examiner(Base):
     )
     phone_number = Column(String(50), nullable=True)
     msisdn = Column(String(20), nullable=True, index=True)
+    portal_token = Column(String(128), nullable=False, unique=True, index=True)
+    roster_source = Column(
+        Enum(
+            ExaminerRosterSource,
+            values_callable=lambda x: [i.value for i in x],
+            create_constraint=False,
+        ),
+        nullable=False,
+    )
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
 

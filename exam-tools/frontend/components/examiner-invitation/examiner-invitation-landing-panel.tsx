@@ -9,6 +9,7 @@ import {
   formatInvitationDeadline,
   invitationStatusMeta,
 } from "@/components/examiner-invitation/examiner-invitation-page-shell";
+import { ExaminerMarkingScheduleSection } from "@/components/examiner-invitation/examiner-marking-schedule-section";
 import { Button } from "@/components/ui/button";
 import {
   acceptPublicExaminerInvitation,
@@ -47,13 +48,20 @@ export function ExaminerInvitationLandingPanel({
   const confirmTitleId = useId();
 
   const canRespond = invitation.can_respond === true;
-  const status = invitationStatusMeta(invitation.status);
+  const isRosterPortal = invitation.portal_mode === "roster";
+  const status = isRosterPortal
+    ? {
+        label: "Roster portal",
+        className: "border-emerald-500/30 bg-emerald-500/10 text-emerald-700 dark:text-emerald-400",
+      }
+    : invitationStatusMeta(invitation.status);
   const StatusIcon =
-    invitation.status === "accepted"
+    invitation.status === "accepted" || isRosterPortal
       ? CheckCircle2
       : invitation.status === "declined"
         ? XCircle
         : CalendarClock;
+  const markingCohorts = invitation.marking_cohorts ?? [];
   const subjectCodeLabel = displaySubjectCode(invitation);
 
   function openConfirm(action: ConfirmAction) {
@@ -142,11 +150,13 @@ export function ExaminerInvitationLandingPanel({
 
           {invitation.status !== "declined" ? (
             <p className="mt-4 text-sm leading-relaxed text-muted-foreground">
-              {invitation.status === "accepted"
-                ? "Your assignment details are below. Open the Profile tab for bank details, script allocations, and your appointment letter."
-                : canRespond
-                  ? "You've been invited to serve as an examiner. Review the details below, then confirm or decline before the deadline."
-                  : "This invitation is no longer open for a response."}
+              {isRosterPortal
+                ? "Welcome to your examiner portal. Review your assignment and marking schedule below, then open Profile for bank details, script allocations, and your appointment letter."
+                : invitation.status === "accepted"
+                  ? "Your assignment details are below. Open the Profile tab for bank details, script allocations, and your appointment letter."
+                  : canRespond
+                    ? "You've been invited to serve as an examiner. Review the details below, then confirm or decline before the deadline."
+                    : "This invitation is no longer open for a response."}
             </p>
           ) : (
             <p className="mt-4 text-sm text-muted-foreground">You declined this invitation.</p>
@@ -167,12 +177,14 @@ export function ExaminerInvitationLandingPanel({
             />
             <ExaminerInvitationDetailTile icon={UserCircle} label="Role" value={invitation.examiner_type_label} />
             <ExaminerInvitationDetailTile icon={MapPin} label="Region" value={invitation.region} />
-            <ExaminerInvitationDetailTile
-              icon={CalendarClock}
-              label="Respond by"
-              value={formatInvitationDeadline(invitation.response_deadline)}
-              className="col-span-2"
-            />
+            {invitation.response_deadline ? (
+              <ExaminerInvitationDetailTile
+                icon={CalendarClock}
+                label="Respond by"
+                value={formatInvitationDeadline(invitation.response_deadline)}
+                className="col-span-2"
+              />
+            ) : null}
             {invitation.coordination_date ? (
               <ExaminerInvitationDetailTile
                 icon={CalendarClock}
@@ -183,6 +195,8 @@ export function ExaminerInvitationLandingPanel({
             ) : null}
           </div>
 
+          <ExaminerMarkingScheduleSection cohorts={markingCohorts} />
+
           {actionMessage ? (
             <div
               className="mt-5 rounded-2xl border border-primary/20 bg-primary/5 px-4 py-3 text-sm leading-relaxed text-foreground"
@@ -192,7 +206,7 @@ export function ExaminerInvitationLandingPanel({
             </div>
           ) : null}
 
-          {!canRespond && invitation.status !== "declined" ? (
+          {!canRespond && invitation.status !== "declined" && !isRosterPortal ? (
             <div className="mt-6 rounded-2xl border border-border/70 bg-muted/30 px-4 py-4 text-center text-sm leading-relaxed text-muted-foreground">
               {invitation.status === "accepted"
                 ? "Thank you for confirming your availability."

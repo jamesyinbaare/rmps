@@ -3397,6 +3397,10 @@ export type ExaminerRow = {
   subject_ids: number[];
   deviation_weight: number | null;
   examiner_group_id: string | null;
+  portal_url: string;
+  roster_source: "manual" | "invitation";
+  invitation_id?: string | null;
+  invitation_status?: string | null;
   created_at: string;
   updated_at: string;
 };
@@ -3582,6 +3586,18 @@ export type ExaminerInvitationBulkCoordinationResponse = {
   errors: ExaminerInvitationBulkSmsRowError[];
 };
 
+export type ExaminerMarkingCohortPublic = {
+  id: string;
+  name: string;
+  is_default: boolean;
+  coordination_date: string | null;
+  coordination_start_time: string | null;
+  coordination_end_time: string | null;
+  marking_start_date: string | null;
+  marking_end_date: string | null;
+  marked_script_submission_deadline: string | null;
+};
+
 export type ExaminerInvitationPublic = {
   invitee_name: string;
   phone_number: string;
@@ -3594,11 +3610,14 @@ export type ExaminerInvitationPublic = {
   examiner_type_label: string;
   region: string;
   status: ExaminerInvitationStatusApi;
-  response_deadline: string;
+  response_deadline: string | null;
   coordination_date: string | null;
   responded_at: string | null;
   can_respond: boolean;
   examiner_id?: string | null;
+  portal_mode?: "invitation" | "roster";
+  roster_source?: "manual" | "invitation" | null;
+  marking_cohorts?: ExaminerMarkingCohortPublic[];
 };
 
 export type ExaminerPublicScriptsAllocationRow = {
@@ -4617,6 +4636,7 @@ export type SubjectMarkingGroupRow = {
   examination_id: number;
   subject_id: number;
   name: string;
+  is_default?: boolean;
   examiner_ids: string[];
   source_regions: string[];
   source_roles: string[];

@@ -29,6 +29,10 @@ def is_unrestricted_examiner_manager(user: User) -> bool:
     return user.role in {UserRole.SUPER_ADMIN, UserRole.TEST_ADMIN_OFFICER}
 
 
+def can_manage_default_cohort(user: User) -> bool:
+    return is_unrestricted_examiner_manager(user)
+
+
 async def effective_subject_scope(
     session: AsyncSession,
     user: User,

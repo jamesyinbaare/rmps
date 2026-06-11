@@ -15,12 +15,14 @@ from app.models import (
     Examiner,
     ExaminerInvitation,
     ExaminerInvitationStatus,
+    ExaminerRosterSource,
     ExaminerType,
     Examination,
     Subject,
 )
 from app.services.examiner_subject_lock import assert_examiner_subject_allowed
 from app.services.script_allocation import parse_region, sync_examiner_subjects
+from app.services.subject_marking_group import sync_default_cohort_members
 
 
 def generate_invitation_token() -> str:
@@ -181,10 +183,17 @@ async def accept_examiner_invitation(session: AsyncSession, inv: ExaminerInvitat
         region=inv.region,
         phone_number=inv.phone_number,
         msisdn=inv.msisdn,
+        portal_token=inv.token,
+        roster_source=ExaminerRosterSource.INVITATION,
     )
     session.add(examiner)
     await session.flush()
     await sync_examiner_subjects(session, examiner, [inv.subject_id])
+    await sync_default_cohort_members(
+        session,
+        examination_id=int(inv.examination_id),
+        subject_id=int(inv.subject_id),
+    )
 
     now = datetime.utcnow()
     inv.status = ExaminerInvitationStatus.ACCEPTED

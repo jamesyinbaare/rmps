@@ -11,6 +11,7 @@ from fastapi import HTTPException
 from app.models import User, UserRole
 from app.services.subject_officer_scope import (
     assert_subject_officer_access,
+    can_manage_default_cohort,
     effective_subject_scope,
     is_unrestricted_examiner_manager,
 )
@@ -18,9 +19,20 @@ from app.services.subject_officer_scope import (
 
 def test_is_unrestricted_examiner_manager() -> None:
     admin = MagicMock(role=UserRole.SUPER_ADMIN)
+    test_admin = MagicMock(role=UserRole.TEST_ADMIN_OFFICER)
     officer = MagicMock(role=UserRole.SUBJECT_OFFICER)
     assert is_unrestricted_examiner_manager(admin) is True
+    assert is_unrestricted_examiner_manager(test_admin) is True
     assert is_unrestricted_examiner_manager(officer) is False
+
+
+def test_can_manage_default_cohort() -> None:
+    admin = MagicMock(role=UserRole.SUPER_ADMIN)
+    test_admin = MagicMock(role=UserRole.TEST_ADMIN_OFFICER)
+    officer = MagicMock(role=UserRole.SUBJECT_OFFICER)
+    assert can_manage_default_cohort(admin) is True
+    assert can_manage_default_cohort(test_admin) is True
+    assert can_manage_default_cohort(officer) is False
 
 
 @pytest.mark.asyncio

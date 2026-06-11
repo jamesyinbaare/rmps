@@ -23,7 +23,8 @@ export default function ExaminerInvitationPublicPage() {
   const [actionMessage, setActionMessage] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
 
-  const isAccepted = invitation?.status === "accepted";
+  const isRosterPortal = invitation?.portal_mode === "roster";
+  const isAccepted = invitation?.status === "accepted" || isRosterPortal;
   const { activeTab, setActiveTab } = useExaminerInvitationTab({ isAccepted: isAccepted === true });
 
   const load = useCallback(async () => {

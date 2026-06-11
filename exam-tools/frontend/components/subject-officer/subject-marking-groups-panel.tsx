@@ -49,6 +49,7 @@ function toCohortListItem(g: SubjectMarkingGroupRow): CohortListItem {
   return {
     id: g.id,
     name: g.name,
+    is_default: g.is_default,
     examiner_ids: g.examiner_ids,
     source_regions: g.source_regions,
     source_roles: g.source_roles,
@@ -73,9 +74,16 @@ type Props = {
   examId: number | null;
   subjects: Subject[];
   embedded?: boolean;
+  /** Super Admin / Test Admin Officer can edit default cohort schedules. */
+  canManageDefaultCohort?: boolean;
 };
 
-export function SubjectMarkingGroupsPanel({ examId, subjects, embedded = false }: Props) {
+export function SubjectMarkingGroupsPanel({
+  examId,
+  subjects,
+  embedded = false,
+  canManageDefaultCohort = false,
+}: Props) {
   const [subjectId, setSubjectId] = useState<number | "">("");
   const [groups, setGroups] = useState<SubjectMarkingGroupRow[]>([]);
   const [examiners, setExaminers] = useState<ExaminerRow[]>([]);
@@ -160,7 +168,14 @@ export function SubjectMarkingGroupsPanel({ examId, subjects, embedded = false }
 
   const isDirty = detailsDirty || membershipDirty;
 
-  const canSaveMembership = !isCreating || selectedId != null;
+  const selectedGroup = useMemo(
+    () => (selectedId ? groups.find((g) => g.id === selectedId) : undefined),
+    [groups, selectedId],
+  );
+  const isDefaultCohort = selectedGroup?.is_default === true;
+  const defaultCohortDetailsEditable = !isDefaultCohort || canManageDefaultCohort;
+
+  const canSaveMembership = (!isCreating || selectedId != null) && !isDefaultCohort;
 
   const subjectOptions = useMemo(
     () =>
@@ -216,11 +231,6 @@ export function SubjectMarkingGroupsPanel({ examId, subjects, embedded = false }
     }
     void loadGroups(examId, Number(subjectId));
   }, [examId, loadGroups, subjectId]);
-
-  const selectedGroup = useMemo(
-    () => groups.find((g) => g.id === selectedId) ?? null,
-    [groups, selectedId],
-  );
 
   useEffect(() => {
     if (!modalOpen) return;
@@ -514,6 +524,13 @@ export function SubjectMarkingGroupsPanel({ examId, subjects, embedded = false }
             open={modalOpen}
             mode={isCreating ? "create" : "edit"}
             entityLabel="cohort"
+            description={
+              isDefaultCohort
+                ? canManageDefaultCohort
+                  ? "All subject examiners are always in the default cohort. You can edit the schedule; membership is synced from the roster."
+                  : "All subject examiners are always in the default cohort. Only administrators can edit the default schedule; membership is synced from the roster."
+                : undefined
+            }
             name={nameInput}
             onNameChange={setNameInput}
             isDirty={isDirty}
@@ -548,6 +565,9 @@ export function SubjectMarkingGroupsPanel({ examId, subjects, embedded = false }
             scheduleWarnings={scheduleValidation.warnings}
             detailsSaveDisabled={scheduleValidation.hasBlockingErrors}
             canSaveMembership={canSaveMembership}
+            membershipLocked={isDefaultCohort}
+            nameDisabled={isDefaultCohort}
+            detailsEditable={defaultCohortDetailsEditable}
             deleteConfirmOpen={deleteConfirmOpen}
             onDeleteConfirmOpenChange={setDeleteConfirmOpen}
             onToggleRegion={membership.toggleRegion}
@@ -556,7 +576,7 @@ export function SubjectMarkingGroupsPanel({ examId, subjects, embedded = false }
             onSaveDetails={() => handleSaveDetails()}
             onCancelDetailsEdit={cancelDetailsEdit}
             onSaveMembership={() => handleSaveMembership()}
-            onDelete={isCreating ? undefined : () => void handleDelete()}
+            onDelete={isCreating || isDefaultCohort ? undefined : () => void handleDelete()}
             onClose={closeModal}
           />
         </>
