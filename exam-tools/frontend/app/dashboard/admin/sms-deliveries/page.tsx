@@ -231,7 +231,7 @@ export default function SmsDeliveriesPage() {
               items.map((row) => (
                 <tr key={row.id} className="border-b border-border last:border-0">
                   <td className="px-3 py-3 whitespace-nowrap">{formatWhen(row.created_at)}</td>
-                  <td className="px-3 py-3">{row.inspector_full_name}</td>
+                  <td className="px-3 py-3">{row.recipient_full_name ?? row.inspector_full_name}</td>
                   <td className="px-3 py-3 font-mono text-xs">{row.phone_number}</td>
                   <td className="px-3 py-3">{row.trigger}</td>
                   <td className="px-3 py-3">{row.status}</td>
@@ -289,7 +289,7 @@ export default function SmsDeliveriesPage() {
             onClick={() => !retryBusy && setRetryTarget(null)}
           />
           <div className="relative z-10 max-h-[90vh] w-full max-w-lg overflow-y-auto rounded-2xl border border-border bg-card p-5 shadow-lg">
-            <h3 className="text-lg font-semibold">Retry SMS — {retryTarget.inspector_full_name}</h3>
+            <h3 className="text-lg font-semibold">Retry SMS — {retryTarget.recipient_full_name ?? retryTarget.inspector_full_name}</h3>
             <p className="mt-1 text-sm text-muted-foreground">
               A new password will be set on the inspector account and sent by SMS.
             </p>

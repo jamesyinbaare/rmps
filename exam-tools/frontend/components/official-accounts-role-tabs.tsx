@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useRef, type MutableRefObject } from "react";
+import { useCallback, useRef, type MutableRefObject, type ReactNode } from "react";
 
 import { cn } from "@/lib/utils";
 
@@ -19,6 +19,8 @@ type OfficialAccountsRoleTabsProps<K extends string> = {
   variant?: "primary" | "compact";
   /** Render as top edge of the main card (no extra gap below tabs). */
   integratedPanel?: boolean;
+  /** Optional content shown to the left of the tab list (compact variant only). */
+  leadingContent?: ReactNode;
 };
 
 export function OfficialAccountsRoleTabs<K extends string>({
@@ -29,6 +31,7 @@ export function OfficialAccountsRoleTabs<K extends string>({
   sticky = false,
   variant = "primary",
   integratedPanel = false,
+  leadingContent,
 }: OfficialAccountsRoleTabsProps<K>) {
   const tabRefs = useRef<(HTMLButtonElement | null)[]>([]);
 
@@ -84,22 +87,30 @@ export function OfficialAccountsRoleTabs<K extends string>({
         )}
       >
         <div
-          className={cn("px-4 py-3 sm:px-5")}
-          role="tablist"
-          aria-label={ariaLabel}
-          onKeyDown={onKeyDown}
+          className={cn(
+            "flex flex-col gap-2 px-3 py-2 sm:flex-row sm:items-center sm:gap-3 sm:px-4 sm:py-2.5",
+            leadingContent && "sm:justify-between",
+          )}
         >
-          <div className="flex gap-1 overflow-x-auto overscroll-x-contain rounded-xl border border-border/60 bg-muted/25 p-1 shadow-inner">
-            {tabs.map((tab, index) => (
-              <CompactTabButton
-                key={tab.key}
-                tab={tab}
-                index={index}
-                isActive={activeKey === tab.key}
-                tabRefs={tabRefs}
-                onSelect={() => onChange(tab.key)}
-              />
-            ))}
+          {leadingContent ? <div className="min-w-0 shrink-0">{leadingContent}</div> : null}
+          <div
+            className="min-w-0 flex-1"
+            role="tablist"
+            aria-label={ariaLabel}
+            onKeyDown={onKeyDown}
+          >
+            <div className="flex gap-1 overflow-x-auto overscroll-x-contain rounded-xl border border-border/60 bg-muted/25 p-1 shadow-inner">
+              {tabs.map((tab, index) => (
+                <CompactTabButton
+                  key={tab.key}
+                  tab={tab}
+                  index={index}
+                  isActive={activeKey === tab.key}
+                  tabRefs={tabRefs}
+                  onSelect={() => onChange(tab.key)}
+                />
+              ))}
+            </div>
           </div>
         </div>
       </div>
@@ -169,7 +180,7 @@ function CompactTabButton<K extends string>({
       id={`admin-eo-tab-${tab.key}`}
       aria-controls={`admin-eo-panel-${tab.key}`}
       className={cn(
-        "shrink-0 whitespace-nowrap rounded-lg px-3.5 py-2.5 text-sm transition-all focus:outline-none focus-visible:ring-2 focus-visible:ring-ring/40 sm:px-4",
+        "shrink-0 whitespace-nowrap rounded-lg px-3 py-2 text-sm transition-all focus:outline-none focus-visible:ring-2 focus-visible:ring-ring/40 sm:px-3.5",
         isActive
           ? "bg-card font-semibold text-foreground shadow-sm ring-1 ring-success/25"
           : "font-medium text-muted-foreground hover:bg-muted/60 hover:text-foreground",

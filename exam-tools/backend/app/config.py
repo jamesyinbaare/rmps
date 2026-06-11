@@ -101,6 +101,11 @@ class Settings(BaseSettings):
     nalo_sms_sender_id: str = "CTVET"
     nalo_sms_url: str = "https://sms.nalosolutions.com/smsbackend/Resl_Nalo/send-message/"
     inspector_portal_url: str = "monitoring.ctvet.gov.gh"
+    examiner_invitation_base_url: str = "http://localhost:3000"
+    examiner_invitation_link_path: str = "/ei"
+    examiner_invitation_token_bytes: int = Field(default=16, ge=9, le=48)
+    examiner_invitation_token_expiry_days: int = Field(default=14, ge=1)
+    examiner_invitation_response_deadline_days: int = Field(default=7, ge=1)
     # Super admin initialization settings
     super_admin_email: str = ""  # Required: Email for the initial SUPER_ADMIN user
     super_admin_password: str = ""  # Required: Password for the initial SUPER_ADMIN user

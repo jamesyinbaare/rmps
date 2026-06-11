@@ -776,6 +776,42 @@ export async function apiJson<T>(path: string, init?: RequestInit): Promise<T> {
   return (await res.json()) as T;
 }
 
+/** Unauthenticated fetch for public invitation portal routes (no Bearer token). */
+export async function publicApiFetch(path: string, init: RequestInit = {}): Promise<Response> {
+  const headers = new Headers(init.headers);
+  if (
+    init.body !== undefined &&
+    !(init.body instanceof FormData) &&
+    !headers.has("Content-Type")
+  ) {
+    headers.set("Content-Type", "application/json");
+  }
+
+  const url = `${getApiBaseUrl()}${path.startsWith("/") ? path : `/${path}`}`;
+  let res: Response;
+  try {
+    res = await fetch(url, {
+      ...init,
+      headers,
+    });
+  } catch (e) {
+    if (e instanceof TypeError) {
+      throw new Error(apiNetworkErrorMessage());
+    }
+    throw e;
+  }
+  if (!res.ok) throw new Error(await parseErrorMessage(res));
+  return res;
+}
+
+export async function publicApiJson<T>(path: string, init?: RequestInit): Promise<T> {
+  const res = await publicApiFetch(path, init);
+  if (res.status === 204) {
+    return undefined as T;
+  }
+  return (await res.json()) as T;
+}
+
 export async function downloadApiFile(path: string, filename: string): Promise<void> {
   const res = await apiFetch(path);
   const blob = await res.blob();
@@ -1337,8 +1373,10 @@ export async function adminBulkUploadInspectorPostings(
 
 export type SmsDeliveryRow = {
   id: string;
-  user_id: string;
-  inspector_full_name: string;
+  user_id: string | null;
+  recipient_full_name: string;
+  /** @deprecated use recipient_full_name */
+  inspector_full_name?: string;
   phone_number: string;
   msisdn: string;
   message_type: string;
@@ -3353,11 +3391,16 @@ export type ExaminerRow = {
   id: string;
   examination_id: number;
   name: string;
+  phone_number: string | null;
   examiner_type: ExaminerTypeApi;
   region: string;
   subject_ids: number[];
   deviation_weight: number | null;
   examiner_group_id: string | null;
+  portal_url: string;
+  roster_source: "manual" | "invitation";
+  invitation_id?: string | null;
+  invitation_status?: string | null;
   created_at: string;
   updated_at: string;
 };
@@ -3473,18 +3516,151 @@ export type AllocationUpdatePayload = {
 
 export type ExaminerCreatePayload = {
   name: string;
+  phone_number: string;
   examiner_type: ExaminerTypeApi;
   region: string;
-  subject_ids: number[];
+  subject_ids: [number];
   deviation_weight?: number | null;
 };
 
 export type ExaminerUpdatePayload = {
   name?: string;
+  phone_number?: string;
   examiner_type?: ExaminerTypeApi;
   region?: string;
-  subject_ids?: number[];
+  subject_ids?: [number];
   deviation_weight?: number | null;
+};
+
+export type ExaminerInvitationStatusApi =
+  | "pending"
+  | "accepted"
+  | "declined"
+  | "expired";
+
+export type ExaminerInvitationRow = {
+  id: string;
+  examination_id: number;
+  subject_id: number;
+  subject_name: string;
+  subject_code: string;
+  subject_original_code?: string | null;
+  subject_type: SubjectTypeEnum;
+  name: string;
+  phone_number: string;
+  examiner_type: ExaminerTypeApi;
+  region: string;
+  status: ExaminerInvitationStatusApi;
+  invited_by_user_id: string | null;
+  notified_at: string | null;
+  responded_at: string | null;
+  response_deadline: string;
+  coordination_date: string | null;
+  examiner_id: string | null;
+  created_at: string;
+  updated_at: string;
+  sms_sent?: boolean | null;
+  sms_error?: string | null;
+  sms_delivery_id?: string | null;
+  public_url?: string | null;
+};
+
+export type ExaminerInvitationCreatePayload = {
+  name: string;
+  phone_number: string;
+  subject_id: number;
+  examiner_type: ExaminerTypeApi;
+  region: string;
+  send_sms?: boolean | null;
+  response_deadline: string;
+  coordination_date?: string | null;
+};
+
+export type ExaminerInvitationBulkCoordinationPayload = {
+  invitation_ids: string[];
+  coordination_date: string;
+};
+
+export type ExaminerInvitationBulkCoordinationResponse = {
+  updated_count: number;
+  errors: ExaminerInvitationBulkSmsRowError[];
+};
+
+export type ExaminerMarkingCohortPublic = {
+  id: string;
+  name: string;
+  is_default: boolean;
+  coordination_date: string | null;
+  coordination_start_time: string | null;
+  coordination_end_time: string | null;
+  marking_start_date: string | null;
+  marking_end_date: string | null;
+  marked_script_submission_deadline: string | null;
+};
+
+export type ExaminerInvitationPublic = {
+  invitee_name: string;
+  phone_number: string;
+  examination_name: string;
+  examination_description: string | null;
+  subject_name: string;
+  subject_code: string;
+  subject_original_code?: string | null;
+  examiner_type: string;
+  examiner_type_label: string;
+  region: string;
+  status: ExaminerInvitationStatusApi;
+  response_deadline: string | null;
+  coordination_date: string | null;
+  responded_at: string | null;
+  can_respond: boolean;
+  examiner_id?: string | null;
+  portal_mode?: "invitation" | "roster";
+  roster_source?: "manual" | "invitation" | null;
+  marking_cohorts?: ExaminerMarkingCohortPublic[];
+};
+
+export type ExaminerPublicScriptsAllocationRow = {
+  school_code: string;
+  school_name: string;
+  envelope_number: number;
+  series_number: number;
+  booklet_count: number;
+};
+
+export type ExaminerPublicScriptsAllocationBlock = {
+  subject_code: string;
+  subject_name: string;
+  paper_number: number;
+  rows: ExaminerPublicScriptsAllocationRow[];
+  total_booklets: number;
+};
+
+export type ExaminerPublicScriptsAllocation = {
+  blocks: ExaminerPublicScriptsAllocationBlock[];
+};
+
+export type ExaminerInvitationActionResult = {
+  status: ExaminerInvitationStatusApi;
+  message: string;
+  examiner_id: string | null;
+};
+
+export type ExaminerBankAccountPublic = {
+  id: string;
+  examiner_id: string;
+  bank_branch_id: string;
+  bank_code: string;
+  bank_name: string;
+  branch_name: string;
+  account_number: string;
+  created_at: string;
+  updated_at: string;
+};
+
+export type ExaminerBankAccountUpsertPayload = {
+  bank_branch_id: string;
+  account_number: string;
 };
 
 export type ScriptsAllocationQuotaReplacePayload = {
@@ -3622,6 +3798,271 @@ export async function updateExaminationExaminer(
 
 export async function deleteExaminationExaminer(examinationId: number, examinerId: string): Promise<void> {
   await apiJson(`/examinations/${examinationId}/examiners/${examinerId}`, { method: "DELETE" });
+}
+
+export async function listExaminerInvitations(examinationId: number): Promise<ExaminerInvitationRow[]> {
+  return apiJson<ExaminerInvitationRow[]>(`/examinations/${examinationId}/examiner-invitations`);
+}
+
+export async function createExaminerInvitation(
+  examinationId: number,
+  payload: ExaminerInvitationCreatePayload,
+): Promise<ExaminerInvitationRow> {
+  return apiJson<ExaminerInvitationRow>(`/examinations/${examinationId}/examiner-invitations`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function downloadExaminerInvitationsBulkTemplate(examinationId: number): Promise<void> {
+  await downloadApiFile(
+    `/examinations/${examinationId}/examiner-invitations/bulk-upload/template`,
+    "examiner_invitations_bulk_template.xlsx",
+  );
+}
+
+export type ExaminerInvitationBulkImportRowError = {
+  row_number: number;
+  message: string;
+};
+
+export type ExaminerInvitationBulkImportResponse = {
+  created_count: number;
+  sms_sent_count: number;
+  sms_failed_count: number;
+  errors: ExaminerInvitationBulkImportRowError[];
+};
+
+export type ExaminerInvitationBulkSmsRowError = {
+  invitation_id: string;
+  message: string;
+};
+
+export type ExaminerInvitationBulkSmsResponse = {
+  sent_count: number;
+  failed_count: number;
+  errors: ExaminerInvitationBulkSmsRowError[];
+};
+
+export type ExaminerInvitationBulkSmsPayload = {
+  invitation_ids: string[];
+  message: string;
+};
+
+export type ExaminerRosterBulkSmsRowError = {
+  examiner_id: string;
+  message: string;
+};
+
+export type ExaminerRosterBulkSmsResponse = {
+  sent_count: number;
+  failed_count: number;
+  errors: ExaminerRosterBulkSmsRowError[];
+};
+
+export type ExaminerRosterBulkSmsPayload = {
+  examiner_ids: string[];
+  message: string;
+};
+
+export type ExaminerInvitationBulkUploadOptions = {
+  sendSms?: boolean;
+  responseDeadline: string;
+  coordinationDate?: string | null;
+};
+
+export async function bulkUploadExaminerInvitations(
+  examinationId: number,
+  file: File,
+  options: ExaminerInvitationBulkUploadOptions,
+): Promise<ExaminerInvitationBulkImportResponse> {
+  const q = new URLSearchParams();
+  q.set("response_deadline", options.responseDeadline);
+  if (options.sendSms) q.set("send_sms", "true");
+  if (options.coordinationDate) q.set("coordination_date", options.coordinationDate);
+  const formData = new FormData();
+  formData.append("file", file);
+  const qs = q.toString();
+  return apiJson<ExaminerInvitationBulkImportResponse>(
+    `/examinations/${examinationId}/examiner-invitations/bulk-upload${qs ? `?${qs}` : ""}`,
+    { method: "POST", body: formData },
+  );
+}
+
+export async function resendExaminerInvitationSms(
+  examinationId: number,
+  invitationId: string,
+): Promise<{ sms_sent: boolean; sms_error: string | null; sms_delivery_id: string | null }> {
+  return apiJson(`/examinations/${examinationId}/examiner-invitations/${invitationId}/resend`, {
+    method: "POST",
+  });
+}
+
+export async function bulkSendExaminerInvitationCustomSms(
+  examinationId: number,
+  payload: ExaminerInvitationBulkSmsPayload,
+): Promise<ExaminerInvitationBulkSmsResponse> {
+  return apiJson<ExaminerInvitationBulkSmsResponse>(
+    `/examinations/${examinationId}/examiner-invitations/bulk-sms`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    },
+  );
+}
+
+export async function updateExaminerInvitationCoordinationDate(
+  examinationId: number,
+  invitationId: string,
+  coordinationDate: string | null,
+): Promise<ExaminerInvitationRow> {
+  return apiJson<ExaminerInvitationRow>(
+    `/examinations/${examinationId}/examiner-invitations/${encodeURIComponent(invitationId)}`,
+    {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ coordination_date: coordinationDate }),
+    },
+  );
+}
+
+export async function bulkSetExaminerInvitationCoordinationDate(
+  examinationId: number,
+  payload: ExaminerInvitationBulkCoordinationPayload,
+): Promise<ExaminerInvitationBulkCoordinationResponse> {
+  return apiJson<ExaminerInvitationBulkCoordinationResponse>(
+    `/examinations/${examinationId}/examiner-invitations/bulk-coordination-date`,
+    {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    },
+  );
+}
+
+export async function bulkSendExaminerRosterCustomSms(
+  examinationId: number,
+  payload: ExaminerRosterBulkSmsPayload,
+): Promise<ExaminerRosterBulkSmsResponse> {
+  return apiJson<ExaminerRosterBulkSmsResponse>(`/examinations/${examinationId}/examiners/bulk-sms`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function getPublicExaminerInvitation(token: string): Promise<ExaminerInvitationPublic> {
+  return publicApiJson<ExaminerInvitationPublic>(`/public/examiner-invitations/${encodeURIComponent(token)}`);
+}
+
+export async function acceptPublicExaminerInvitation(token: string): Promise<ExaminerInvitationActionResult> {
+  return publicApiJson<ExaminerInvitationActionResult>(
+    `/public/examiner-invitations/${encodeURIComponent(token)}/accept`,
+    { method: "POST" },
+  );
+}
+
+export async function declinePublicExaminerInvitation(token: string): Promise<ExaminerInvitationActionResult> {
+  return publicApiJson<ExaminerInvitationActionResult>(
+    `/public/examiner-invitations/${encodeURIComponent(token)}/decline`,
+    { method: "POST" },
+  );
+}
+
+export async function getPublicExaminerBankAccount(
+  token: string,
+): Promise<ExaminerBankAccountPublic | null> {
+  const url = `${getApiBaseUrl()}/public/examiner-invitations/${encodeURIComponent(token)}/bank-account`;
+  let res: Response;
+  try {
+    res = await fetch(url);
+  } catch (e) {
+    if (e instanceof TypeError) {
+      throw new Error(apiNetworkErrorMessage());
+    }
+    throw e;
+  }
+  if (res.status === 404) return null;
+  if (!res.ok) throw new Error(await parseErrorMessage(res));
+  return (await res.json()) as ExaminerBankAccountPublic;
+}
+
+export async function upsertPublicExaminerBankAccount(
+  token: string,
+  payload: ExaminerBankAccountUpsertPayload,
+): Promise<ExaminerBankAccountPublic> {
+  return publicApiJson<ExaminerBankAccountPublic>(
+    `/public/examiner-invitations/${encodeURIComponent(token)}/bank-account`,
+    {
+      method: "PUT",
+      body: JSON.stringify(payload),
+    },
+  );
+}
+
+export async function listPublicBankBranches(
+  token: string,
+  params?: {
+    bank_name?: string | null;
+    bank_name_exact?: string | null;
+    branch_name?: string | null;
+    skip?: number;
+    limit?: number;
+  },
+): Promise<BankBranchListResponse> {
+  const q = new URLSearchParams();
+  if (params?.bank_name_exact?.trim()) q.set("bank_name_exact", params.bank_name_exact.trim());
+  else if (params?.bank_name?.trim()) q.set("bank_name", params.bank_name.trim());
+  if (params?.branch_name?.trim()) q.set("branch_name", params.branch_name.trim());
+  if (params?.skip != null) q.set("skip", String(params.skip));
+  if (params?.limit != null) q.set("limit", String(params.limit));
+  const s = q.toString();
+  return publicApiJson<BankBranchListResponse>(
+    `/public/examiner-invitations/${encodeURIComponent(token)}/bank-branches${s ? `?${s}` : ""}`,
+  );
+}
+
+export async function getPublicDistinctBankNames(
+  token: string,
+  q?: string | null,
+): Promise<string[]> {
+  const u = new URLSearchParams();
+  if (q?.trim()) u.set("q", q.trim());
+  const s = u.toString();
+  return publicApiJson<string[]>(
+    `/public/examiner-invitations/${encodeURIComponent(token)}/bank-names${s ? `?${s}` : ""}`,
+  );
+}
+
+export async function getPublicExaminerScriptsAllocation(
+  token: string,
+): Promise<ExaminerPublicScriptsAllocation> {
+  return publicApiJson<ExaminerPublicScriptsAllocation>(
+    `/public/examiner-invitations/${encodeURIComponent(token)}/scripts-allocation`,
+  );
+}
+
+export async function downloadPublicApiFile(path: string, filename: string): Promise<void> {
+  const res = await publicApiFetch(path);
+  const blob = await res.blob();
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename;
+  a.click();
+  URL.revokeObjectURL(url);
+}
+
+export async function downloadPublicExaminerAppointmentLetterPdf(
+  token: string,
+  filename = "appointment_letter.pdf",
+): Promise<void> {
+  await downloadPublicApiFile(
+    `/public/examiner-invitations/${encodeURIComponent(token)}/appointment-letter.pdf`,
+    filename,
+  );
 }
 
 export async function listExaminerGroups(examinationId: number): Promise<ExaminerGroupRow[]> {
@@ -4051,4 +4492,400 @@ export async function fetchAdminAttendanceSheetBlob(
 ): Promise<Blob> {
   const res = await apiFetch(`/admin/examinations/${examId}/attendance-sheets/${sheetId}/file`);
   return res.blob();
+}
+
+export type AdminSubjectOfficerRow = {
+  id: string;
+  full_name: string;
+  email: string | null;
+  phone_number: string | null;
+  is_active: boolean;
+  created_at: string;
+};
+
+export type AdminSubjectOfficerListResponse = {
+  items: AdminSubjectOfficerRow[];
+  total: number;
+};
+
+export type AdminSubjectOfficerCreatePayload = {
+  email: string;
+  password: string;
+  full_name: string;
+  phone_number?: string | null;
+  send_sms?: boolean | null;
+};
+
+export type AdminSubjectOfficerCreatedResponse = {
+  id: string;
+  full_name: string;
+  email: string;
+  phone_number?: string | null;
+  sms_sent?: boolean | null;
+  sms_error?: string | null;
+};
+
+export type SubjectOfficerAssignmentSubjectRow = {
+  subject_id: number;
+  subject_code: string;
+  subject_name: string;
+  subject_type: string;
+  subject_original_code?: string | null;
+};
+
+export type SubjectOfficerAssignmentRow = {
+  id: string;
+  user_id: string;
+  full_name: string;
+  email: string | null;
+  phone_number: string | null;
+  subject_ids: number[];
+  subjects: SubjectOfficerAssignmentSubjectRow[];
+};
+
+export type SubjectOfficerAssignmentListResponse = {
+  items: SubjectOfficerAssignmentRow[];
+};
+
+export type SubjectOfficerMeAssignmentSubject = {
+  subject_id: number;
+  subject_code: string;
+  subject_name: string;
+  subject_type: string;
+  subject_original_code?: string | null;
+};
+
+export type SubjectOfficerMeExamAssignment = {
+  examination_id: number;
+  examination_name: string;
+  subjects: SubjectOfficerMeAssignmentSubject[];
+};
+
+export type SubjectOfficerMeAssignmentsResponse = {
+  items: SubjectOfficerMeExamAssignment[];
+};
+
+export type MarkedScriptReturnRow = {
+  allocation_assignment_id: string;
+  examiner_id: string;
+  examiner_name: string;
+  examiner_type: string;
+  paper_number: number;
+  allocation_run_id: string;
+  school_code: string;
+  school_name: string;
+  envelope_number: number;
+  series_number: number;
+  expected_booklets: number;
+  returned_booklets: number | null;
+  status: string;
+  verified_at: string | null;
+  notes: string | null;
+};
+
+export type MarkedScriptReturnExaminerOption = {
+  examiner_id: string;
+  examiner_name: string;
+  examiner_type: string;
+  region: string;
+  phone_number: string | null;
+  pending_count: number;
+  verified_count: number;
+};
+
+export type MarkedScriptReturnPaperOption = {
+  paper_number: number;
+  pending_count: number;
+  verified_count: number;
+};
+
+export type MarkedScriptReturnFiltersResponse = {
+  examiners: MarkedScriptReturnExaminerOption[];
+  papers: MarkedScriptReturnPaperOption[];
+};
+
+export type MarkedScriptReturnGridResponse = {
+  subject_id: number;
+  subject_code: string;
+  subject_name: string;
+  examiner_id: string;
+  examiner_name: string;
+  examiner_type: string;
+  paper_number: number;
+  marking_group_id?: string | null;
+  marking_group_name?: string | null;
+  coordination_date?: string | null;
+  coordination_start_time?: string | null;
+  coordination_end_time?: string | null;
+  marking_start_date?: string | null;
+  marking_end_date?: string | null;
+  marked_script_submission_deadline?: string | null;
+  rows: MarkedScriptReturnRow[];
+  summary: Record<string, number>;
+};
+
+export type SubjectMarkingGroupSchedulePayload = {
+  coordination_date?: string | null;
+  coordination_start_time?: string | null;
+  coordination_end_time?: string | null;
+  marking_start_date?: string | null;
+  marking_end_date?: string | null;
+  marked_script_submission_deadline?: string | null;
+};
+
+export type SubjectMarkingGroupRow = {
+  id: string;
+  examination_id: number;
+  subject_id: number;
+  name: string;
+  is_default?: boolean;
+  examiner_ids: string[];
+  source_regions: string[];
+  source_roles: string[];
+  coordination_date: string | null;
+  coordination_start_time: string | null;
+  coordination_end_time: string | null;
+  marking_start_date: string | null;
+  marking_end_date: string | null;
+  marked_script_submission_deadline: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
+export async function listSubjectMarkingGroups(
+  examinationId: number,
+  subjectId: number,
+): Promise<SubjectMarkingGroupRow[]> {
+  return apiJson<SubjectMarkingGroupRow[]>(
+    `/examinations/${examinationId}/subject-officer/marking-groups?subject_id=${subjectId}`,
+  );
+}
+
+export async function createSubjectMarkingGroup(
+  examinationId: number,
+  subjectId: number,
+  payload: {
+    name: string;
+  } & SubjectMarkingGroupSchedulePayload,
+): Promise<SubjectMarkingGroupRow> {
+  return apiJson<SubjectMarkingGroupRow>(
+    `/examinations/${examinationId}/subject-officer/marking-groups?subject_id=${subjectId}`,
+    {
+      method: "POST",
+      body: JSON.stringify(payload),
+    },
+  );
+}
+
+export async function updateSubjectMarkingGroup(
+  examinationId: number,
+  subjectId: number,
+  groupId: string,
+  payload: {
+    name?: string;
+  } & SubjectMarkingGroupSchedulePayload,
+): Promise<SubjectMarkingGroupRow> {
+  return apiJson<SubjectMarkingGroupRow>(
+    `/examinations/${examinationId}/subject-officer/marking-groups/${groupId}?subject_id=${subjectId}`,
+    {
+      method: "PATCH",
+      body: JSON.stringify(payload),
+    },
+  );
+}
+
+export async function deleteSubjectMarkingGroup(
+  examinationId: number,
+  subjectId: number,
+  groupId: string,
+): Promise<void> {
+  await apiJson<void>(
+    `/examinations/${examinationId}/subject-officer/marking-groups/${groupId}?subject_id=${subjectId}`,
+    { method: "DELETE" },
+  );
+}
+
+export async function replaceSubjectMarkingGroupMembers(
+  examinationId: number,
+  subjectId: number,
+  groupId: string,
+  payload: { source_regions: string[]; source_roles: string[]; examiner_ids: string[] },
+): Promise<SubjectMarkingGroupRow> {
+  return apiJson<SubjectMarkingGroupRow>(
+    `/examinations/${examinationId}/subject-officer/marking-groups/${groupId}/members?subject_id=${subjectId}`,
+    {
+      method: "PUT",
+      body: JSON.stringify(payload),
+    },
+  );
+}
+
+export async function adminListSubjectOfficers(
+  skip = 0,
+  limit = 20,
+): Promise<AdminSubjectOfficerListResponse> {
+  return apiJson<AdminSubjectOfficerListResponse>(`/subject-officers?skip=${skip}&limit=${limit}`);
+}
+
+/** Fetches every subject officer page until the list is exhausted. Page size must not exceed the API max (100). */
+export async function listAllSubjectOfficers(pageSize = 100): Promise<AdminSubjectOfficerRow[]> {
+  const all: AdminSubjectOfficerRow[] = [];
+  let skip = 0;
+  while (skip <= 100_000) {
+    const res = await adminListSubjectOfficers(skip, pageSize);
+    all.push(...res.items);
+    if (all.length >= res.total || res.items.length < pageSize) break;
+    skip += pageSize;
+  }
+  return all;
+}
+
+export async function adminCreateSubjectOfficer(
+  payload: AdminSubjectOfficerCreatePayload,
+): Promise<AdminSubjectOfficerCreatedResponse> {
+  return apiJson<AdminSubjectOfficerCreatedResponse>("/subject-officers", {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function adminResetSubjectOfficerPassword(
+  userId: string,
+  payload: AdminPasswordResetPayload,
+): Promise<AdminPasswordResetResponse> {
+  return apiJson<AdminPasswordResetResponse>(`/subject-officers/${userId}/reset-password`, {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function adminListSubjectOfficerAssignments(
+  examinationId: number,
+): Promise<SubjectOfficerAssignmentListResponse> {
+  return apiJson<SubjectOfficerAssignmentListResponse>(
+    `/subject-officers/examinations/${examinationId}/assignments`,
+  );
+}
+
+export async function adminUpsertSubjectOfficerAssignments(
+  examinationId: number,
+  payload: { user_id: string; subject_ids: number[] },
+): Promise<SubjectOfficerAssignmentRow> {
+  return apiJson<SubjectOfficerAssignmentRow>(
+    `/subject-officers/examinations/${examinationId}/assignments`,
+    {
+      method: "PUT",
+      body: JSON.stringify(payload),
+    },
+  );
+}
+
+export async function adminDeleteSubjectOfficerAssignments(
+  examinationId: number,
+  userId: string,
+): Promise<void> {
+  await apiJson<void>(`/subject-officers/examinations/${examinationId}/assignments/${userId}`, {
+    method: "DELETE",
+  });
+}
+
+export async function adminGetSubjectOfficerUserAssignments(
+  userId: string,
+): Promise<SubjectOfficerMeAssignmentsResponse> {
+  return apiJson<SubjectOfficerMeAssignmentsResponse>(`/subject-officers/${userId}/assignments`);
+}
+
+export async function getSubjectOfficerMyAssignments(): Promise<SubjectOfficerMeAssignmentsResponse> {
+  return apiJson<SubjectOfficerMeAssignmentsResponse>("/subject-officer/me/assignments");
+}
+
+export async function downloadExaminerInvitationLinksExport(
+  examinationId: number,
+  subjectId?: number,
+): Promise<void> {
+  const q = subjectId != null ? `?subject_id=${subjectId}` : "";
+  await downloadApiFile(
+    `/examinations/${examinationId}/examiner-invitations/export.xlsx${q}`,
+    "examiner_invitation_links.xlsx",
+  );
+}
+
+export async function getSubjectOfficerExaminerScriptsAllocation(
+  examinationId: number,
+  examinerId: string,
+  subjectId: number,
+): Promise<ExaminerPublicScriptsAllocation> {
+  return apiJson<ExaminerPublicScriptsAllocation>(
+    `/examinations/${examinationId}/subject-officer/examiners/${examinerId}/scripts-allocation?subject_id=${subjectId}`,
+  );
+}
+
+export async function getMarkedScriptReturnFilters(
+  examinationId: number,
+  subjectId: number,
+  examinerId?: string,
+): Promise<MarkedScriptReturnFiltersResponse> {
+  const params = new URLSearchParams({ subject_id: String(subjectId) });
+  if (examinerId) params.set("examiner_id", examinerId);
+  return apiJson<MarkedScriptReturnFiltersResponse>(
+    `/examinations/${examinationId}/marked-script-returns/filters?${params.toString()}`,
+  );
+}
+
+export async function getMarkedScriptReturns(
+  examinationId: number,
+  params: { subjectId: number; examinerId: string; paperNumber: number },
+): Promise<MarkedScriptReturnGridResponse> {
+  const qs = new URLSearchParams({
+    subject_id: String(params.subjectId),
+    examiner_id: params.examinerId,
+    paper_number: String(params.paperNumber),
+  });
+  return apiJson<MarkedScriptReturnGridResponse>(
+    `/examinations/${examinationId}/marked-script-returns?${qs.toString()}`,
+  );
+}
+
+export async function upsertMarkedScriptReturn(
+  examinationId: number,
+  assignmentId: string,
+  subjectId: number,
+  payload: { returned_booklets: number; notes?: string | null },
+): Promise<unknown> {
+  return apiJson(
+    `/examinations/${examinationId}/marked-script-returns/assignments/${assignmentId}?subject_id=${subjectId}`,
+    {
+      method: "PUT",
+      body: JSON.stringify(payload),
+    },
+  );
+}
+
+export async function verifyMarkedScriptReturn(
+  examinationId: number,
+  assignmentId: string,
+  subjectId: number,
+  payload: { notes?: string | null; allow_mismatch?: boolean },
+): Promise<unknown> {
+  return apiJson(
+    `/examinations/${examinationId}/marked-script-returns/assignments/${assignmentId}/verify?subject_id=${subjectId}`,
+    {
+      method: "POST",
+      body: JSON.stringify(payload),
+    },
+  );
+}
+
+export async function unverifyMarkedScriptReturn(
+  examinationId: number,
+  assignmentId: string,
+  subjectId: number,
+): Promise<unknown> {
+  return apiJson(
+    `/examinations/${examinationId}/marked-script-returns/assignments/${assignmentId}/unverify?subject_id=${subjectId}`,
+    {
+      method: "POST",
+      body: JSON.stringify({}),
+    },
+  );
 }

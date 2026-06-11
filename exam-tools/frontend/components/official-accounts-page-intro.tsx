@@ -3,7 +3,7 @@ import { ShieldCheck } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 type Props = {
-  description: string;
+  description?: string;
   actions?: React.ReactNode;
   meta?: React.ReactNode;
   /** When set, replaces the default bank-account privacy notice. */
@@ -20,10 +20,14 @@ export function OfficialAccountsPageIntro({ description, actions, meta, footerNo
             {actions}
           </div>
         ) : null}
-        <div className="order-2 min-w-0 flex-1 space-y-3 lg:order-1">
-          <p className="max-w-2xl text-sm leading-relaxed text-muted-foreground">{description}</p>
-          {meta ? <div className="flex flex-wrap items-center gap-2">{meta}</div> : null}
-        </div>
+        {description || meta ? (
+          <div className="order-2 min-w-0 flex-1 space-y-3 lg:order-1">
+            {description ? (
+              <p className="max-w-2xl text-sm leading-relaxed text-muted-foreground">{description}</p>
+            ) : null}
+            {meta ? <div className="flex flex-wrap items-center gap-2">{meta}</div> : null}
+          </div>
+        ) : null}
       </div>
       {footerNote ?? (
         <p

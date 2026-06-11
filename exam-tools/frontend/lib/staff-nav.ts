@@ -1,6 +1,6 @@
 import type { StaffNavLinkItem, StaffNavSectionConfig } from "@/components/staff-sidebar-nav";
 
-export type StaffRole = "supervisor" | "inspector" | "depot-keeper";
+export type StaffRole = "supervisor" | "inspector" | "depot-keeper" | "subject-officer";
 
 type BuildStaffNavParams = {
   staffRole: StaffRole;
@@ -49,10 +49,26 @@ export function buildStaffSidebarNav({
     ],
   };
 
-  const sections: StaffNavSectionConfig[] = [examOperations];
+  const sections: StaffNavSectionConfig[] = [];
+
+  if (staffRole !== "subject-officer") {
+    sections.push(examOperations);
+  }
 
   if (staffRole === "inspector" || staffRole === "depot-keeper") {
     sections.push(scriptControl);
+  }
+
+  if (staffRole === "subject-officer") {
+    sections.push({
+      title: "Marking",
+      items: [
+        link(staffBase, "Overview", pathname, true),
+        link(`${staffBase}/examiners`, "Examiners", pathname),
+        link(`${staffBase}/allocations`, "Allocations", pathname),
+        link(`${staffBase}/marked-script-returns`, "Marked scripts", pathname),
+      ],
+    });
   }
 
   return {

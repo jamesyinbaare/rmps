@@ -52,7 +52,7 @@ function shouldShowForWindow(first: Date | null, last: Date | null): boolean {
   return today >= windowStart && today <= windowEnd;
 }
 
-type StaffRole = "supervisor" | "inspector" | "depot-keeper";
+type StaffRole = "supervisor" | "inspector" | "depot-keeper" | "subject-officer";
 
 type Props = {
   staffRole: StaffRole;
@@ -65,6 +65,11 @@ export function ExaminationNoticeSessionBanner({ staffRole, examinationNoticeHre
   const [ready, setReady] = useState(false);
 
   useEffect(() => {
+    if (staffRole === "subject-officer") {
+      setVisible(false);
+      setReady(true);
+      return;
+    }
     if (typeof window === "undefined") return;
     if (pathname.startsWith(examinationNoticeHref)) {
       setVisible(false);
@@ -113,7 +118,7 @@ export function ExaminationNoticeSessionBanner({ staffRole, examinationNoticeHre
     setVisible(false);
   }
 
-  if (!ready || !visible) return null;
+  if (staffRole === "subject-officer" || !ready || !visible) return null;
 
   return (
     <div

@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 
 import { CreateInspectorForm } from "@/components/admin-users/create-inspector-form";
 import { DepotKeepersManageModal } from "@/components/admin-users/depot-keepers-manage-modal";
+import { SubjectOfficersManageModal } from "@/components/admin-users/subject-officers-manage-modal";
 import { RoleDirectoryCard } from "@/components/admin-users/role-directory-card";
 import { StaffEmailManageModal } from "@/components/admin-users/staff-email-manage-modal";
 import { useRoleAccountCounts } from "@/components/admin-users/use-role-account-counts";
@@ -13,14 +14,17 @@ import {
 } from "@/components/admin-user-modal-shell";
 import {
   adminCreateDepotKeeper,
+  adminCreateSubjectOfficer,
   adminListDepotKeepers,
   adminListDepots,
   adminListExecutiveViewers,
   adminListFinanceOfficers,
+  adminListSubjectOfficers,
   adminListTestAdminOfficers,
   adminResetDepotKeeperPassword,
   adminResetExecutiveViewerPassword,
   adminResetFinanceOfficerPassword,
+  adminResetSubjectOfficerPassword,
   adminResetTestAdminOfficerPassword,
   apiJson,
   createExecutiveViewer,
@@ -38,7 +42,8 @@ type RoleKey =
   | "finance-officer"
   | "executive-viewer"
   | "inspectors"
-  | "depot-keepers";
+  | "depot-keepers"
+  | "subject-officers";
 
 type ModalState = {
   role: RoleKey;
@@ -54,6 +59,7 @@ function parseHash(hash: string): ModalState {
     "executive-viewer",
     "inspectors",
     "depot-keepers",
+    "subject-officers",
   ];
   if (!roles.includes(base as RoleKey)) return null;
   return {
@@ -263,6 +269,16 @@ export default function AdminUsersPage() {
               onManage={() => openManage("depot-keepers", "list")}
               onCreate={() => openManage("depot-keepers", "create")}
             />
+            <RoleDirectoryCard
+              id="subject-officers"
+              title="Subject officer"
+              description="Subject-scoped examiner roster, invitations, and marked script verification."
+              loginHint="Staff sign-in · email + password"
+              accountCount={counts.subjectOfficer}
+              countLoading={countsLoading}
+              onManage={() => openManage("subject-officers", "list")}
+              onCreate={() => openManage("subject-officers", "create")}
+            />
           </div>
 
           <StaffEmailManageModal
@@ -318,6 +334,18 @@ export default function AdminUsersPage() {
             listKeepers={adminListDepotKeepers}
             resetPassword={adminResetDepotKeeperPassword}
             createKeeper={adminCreateDepotKeeper}
+            refreshKey={refreshKey}
+            onAccountsChanged={bumpRefresh}
+            onPageMessage={notify}
+          />
+
+          <SubjectOfficersManageModal
+            open={modal?.role === "subject-officers"}
+            initialMode={modal?.role === "subject-officers" ? modal.mode : "list"}
+            onClose={closeModal}
+            listOfficers={adminListSubjectOfficers}
+            resetPassword={adminResetSubjectOfficerPassword}
+            createOfficer={adminCreateSubjectOfficer}
             refreshKey={refreshKey}
             onAccountsChanged={bumpRefresh}
             onPageMessage={notify}

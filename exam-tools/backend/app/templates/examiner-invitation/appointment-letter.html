@@ -1,0 +1,293 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Appointment letter — {{ invitee_name }}</title>
+    <style>
+        :root {
+            --theme-primary: #ce1126;
+            --theme-primary-dark: #a50e1e;
+            --theme-ink: #1a1a1a;
+            --theme-muted: #4a4a4a;
+            --theme-border: #737373;
+            --theme-surface: #f2f2f2;
+        }
+
+        @page {
+            size: A4;
+            margin: 2cm 2cm;
+        }
+
+        * { box-sizing: border-box; }
+
+        body {
+            font-family: Helvetica, Arial, sans-serif;
+            font-size: 11pt;
+            color: var(--theme-ink);
+            line-height: 1.55;
+            margin: 0;
+            padding: 0;
+        }
+
+        .watermark {
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background-image: url('img/logo-crest-only.png');
+            background-size: contain;
+            background-repeat: no-repeat;
+            background-position: center;
+            opacity: 0.04;
+            z-index: 0;
+            pointer-events: none;
+        }
+
+        .content-wrapper {
+            position: relative;
+            z-index: 1;
+        }
+
+        .doc-header {
+            display: flex;
+            align-items: center;
+            gap: 16px;
+            margin-bottom: 24px;
+            padding-bottom: 14px;
+            border-bottom: 3px solid var(--theme-primary);
+        }
+
+        .header-logo {
+            height: 64px;
+            width: auto;
+            display: block;
+        }
+
+        .header-title-block {
+            flex: 1;
+            text-align: center;
+            padding: 0 8px;
+        }
+
+        .doc-header h1 {
+            margin: 0;
+            font-size: 14pt;
+            font-weight: 700;
+            color: var(--theme-ink);
+            letter-spacing: 0.04em;
+            text-transform: uppercase;
+        }
+
+        .doc-header .tagline {
+            margin: 6px 0 0;
+            font-size: 9pt;
+            font-weight: 600;
+            color: var(--theme-muted);
+        }
+
+        .doc-header .exam-context {
+            margin: 4px 0 0;
+            font-size: 9pt;
+            color: var(--theme-muted);
+        }
+
+        .letter-date {
+            text-align: right;
+            font-size: 10pt;
+            color: var(--theme-muted);
+            margin-bottom: 24px;
+        }
+
+        .letter-title {
+            text-align: center;
+            font-size: 13pt;
+            font-weight: 700;
+            text-transform: uppercase;
+            letter-spacing: 0.08em;
+            margin: 0 0 24px;
+            color: var(--theme-primary-dark);
+        }
+
+        .meta-panel {
+            background: var(--theme-surface);
+            border: 1px solid var(--theme-border);
+            padding: 12px 14px;
+            margin-bottom: 20px;
+        }
+
+        .meta-grid {
+            display: table;
+            width: 100%;
+            border-collapse: separate;
+            border-spacing: 0 8px;
+        }
+
+        .meta-grid-row { display: table-row; }
+
+        .meta-grid-cell {
+            display: table-cell;
+            width: 50%;
+            vertical-align: top;
+            padding-right: 12px;
+        }
+
+        .meta-grid-cell:nth-child(even) {
+            padding-right: 0;
+            padding-left: 12px;
+        }
+
+        .meta-k {
+            display: block;
+            font-size: 7.5pt;
+            font-weight: 700;
+            text-transform: uppercase;
+            letter-spacing: 0.07em;
+            color: var(--theme-muted);
+            margin-bottom: 2px;
+        }
+
+        .meta-v {
+            font-size: 10.5pt;
+            font-weight: 600;
+            color: var(--theme-ink);
+        }
+
+        .letter-body p {
+            margin: 0 0 14px;
+            text-align: justify;
+        }
+
+        .letter-body .salutation {
+            font-weight: 600;
+            margin-bottom: 16px;
+        }
+
+        .sign-off {
+            margin-top: 32px;
+        }
+
+        .sign-off p {
+            margin: 0 0 4px;
+        }
+
+        .signatory {
+            margin-top: 24px;
+            font-weight: 700;
+            line-height: 1.4;
+        }
+
+        .footer-note {
+            margin-top: 40px;
+            padding-top: 12px;
+            border-top: 1px solid var(--theme-border);
+            font-size: 8pt;
+            color: var(--theme-muted);
+            text-align: center;
+        }
+    </style>
+</head>
+<body>
+    <div class="watermark" aria-hidden="true"></div>
+    <div class="content-wrapper">
+        <header class="doc-header">
+            <img class="header-logo" src="img/logo-crest-only.png" alt="CTVET crest" />
+            <div class="header-title-block">
+                <h1>Commission for Technical and Vocational Education and Training</h1>
+                <p class="tagline">Ministry of Education · Republic of Ghana</p>
+                <p class="exam-context">{{ examination_label }}</p>
+            </div>
+        </header>
+
+        <p class="letter-date">{{ generated_at }}</p>
+
+        <h2 class="letter-title">Appointment as Examiner</h2>
+
+        <div class="meta-panel">
+            <div class="meta-grid">
+                <div class="meta-grid-row">
+                    <div class="meta-grid-cell">
+                        <span class="meta-k">Name</span>
+                        <span class="meta-v">{{ invitee_name }}</span>
+                    </div>
+                    <div class="meta-grid-cell">
+                        <span class="meta-k">Phone</span>
+                        <span class="meta-v">{{ phone_number }}</span>
+                    </div>
+                </div>
+                <div class="meta-grid-row">
+                    <div class="meta-grid-cell">
+                        <span class="meta-k">Role</span>
+                        <span class="meta-v">{{ examiner_type_label }}</span>
+                    </div>
+                    <div class="meta-grid-cell">
+                        <span class="meta-k">Region</span>
+                        <span class="meta-v">{{ region }}</span>
+                    </div>
+                </div>
+                <div class="meta-grid-row">
+                    <div class="meta-grid-cell">
+                        <span class="meta-k">Subject</span>
+                        <span class="meta-v">{{ subject_label }}</span>
+                    </div>
+                    {% if coordination_date %}
+                    <div class="meta-grid-cell">
+                        <span class="meta-k">Coordination date</span>
+                        <span class="meta-v">{{ coordination_date }}</span>
+                    </div>
+                    {% endif %}
+                </div>
+            </div>
+        </div>
+
+        <div class="letter-body">
+            <p class="salutation">Dear {{ invitee_name }},</p>
+
+            <p>
+                Following your confirmation of availability, the Commission for Technical and Vocational
+                Education and Training (CTVET) is pleased to appoint you as <strong>{{ examiner_type_label }}</strong>
+                for <strong>{{ subject_label }}</strong> in the <strong>{{ examination_label }}</strong> examination,
+                serving in the <strong>{{ region }}</strong> region.
+            </p>
+
+            {% if coordination_date %}
+            <p>
+                You are required to attend the coordination meeting scheduled for
+                <strong>{{ coordination_date }}</strong>. Further instructions regarding marking procedures,
+                security of scripts, and reporting requirements will be communicated at that meeting or
+                through official channels.
+            </p>
+            {% else %}
+            <p>
+                Further instructions regarding coordination meetings, marking procedures, security of scripts,
+                and reporting requirements will be communicated through official channels in due course.
+            </p>
+            {% endif %}
+
+            <p>
+                As an examiner, you are expected to maintain the highest standards of integrity,
+                confidentiality, and professionalism throughout the examination process. Your cooperation
+                is essential to the successful conduct of fair and credible examinations.
+            </p>
+
+            <p>
+                Please retain this letter for your records. Your allowance will be processed upon
+                submission of your bank account details through the examiner portal.
+            </p>
+        </div>
+
+        <div class="sign-off">
+            <p>Yours faithfully,</p>
+            <div class="signatory">
+                <p>ERIC ASIEDU ANSAH</p>
+                <p>HEAD, ASSESSMENT</p>
+                <p>FOR: DIRECTOR GENERAL</p>
+            </div>
+        </div>
+
+        <p class="footer-note">
+            Generated {{ generated_at }} · Commission for Technical and Vocational Education and Training
+        </p>
+    </div>
+</body>
+</html>

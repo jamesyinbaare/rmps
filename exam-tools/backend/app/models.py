@@ -19,6 +19,7 @@ from sqlalchemy import (
     String,
     Table,
     Text,
+    Time,
     UniqueConstraint,
     text,
 )
@@ -92,6 +93,18 @@ class ExaminerType(enum.Enum):
     TEAM_LEADER = "team_leader"
 
 
+class ExaminerInvitationStatus(enum.Enum):
+    PENDING = "pending"
+    ACCEPTED = "accepted"
+    DECLINED = "declined"
+    EXPIRED = "expired"
+
+
+class ExaminerRosterSource(enum.Enum):
+    MANUAL = "manual"
+    INVITATION = "invitation"
+
+
 class AllocationRunStatus(enum.Enum):
     DRAFT = "draft"
     OPTIMAL = "optimal"
@@ -109,6 +122,7 @@ class UserRole(enum.IntEnum):
     EXECUTIVE_VIEWER = 7
     SUPERVISOR = 10
     INSPECTOR = 20
+    SUBJECT_OFFICER = 25
     DEPOT_KEEPER = 30
 
     def __lt__(self, other: "UserRole") -> bool:
@@ -150,6 +164,12 @@ class User(Base):
     refresh_tokens = relationship("RefreshToken", back_populates="user", cascade="all, delete-orphan")
     uploaded_exam_documents = relationship("ExamDocument", back_populates="uploaded_by")
     depot = relationship("Depot", back_populates="users")
+    subject_officer_assignments = relationship(
+        "SubjectOfficerAssignment",
+        foreign_keys="SubjectOfficerAssignment.user_id",
+        back_populates="user",
+        cascade="all, delete-orphan",
+    )
 
     __table_args__ = (
         Index(
@@ -157,6 +177,12 @@ class User(Base):
             "phone_number",
             unique=True,
             postgresql_where=text("role = 'INSPECTOR' AND phone_number IS NOT NULL"),
+        ),
+        Index(
+            "ix_users_unique_phone_subject_officer",
+            "phone_number",
+            unique=True,
+            postgresql_where=text("role = 'SUBJECT_OFFICER' AND phone_number IS NOT NULL"),
         ),
     )
 
@@ -167,7 +193,19 @@ class SmsDelivery(Base):
     __tablename__ = "sms_deliveries"
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    user_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+    user_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=True, index=True)
+    examiner_invitation_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("examiner_invitations.id", ondelete="CASCADE"),
+        nullable=True,
+        index=True,
+    )
+    examiner_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("examiners.id", ondelete="CASCADE"),
+        nullable=True,
+        index=True,
+    )
     phone_number = Column(String(50), nullable=False)
     msisdn = Column(String(20), nullable=False)
     message_type = Column(String(32), nullable=False)
@@ -192,11 +230,17 @@ class SmsDelivery(Base):
     sent_at = Column(DateTime, nullable=True)
 
     user = relationship("User", foreign_keys=[user_id])
+    examiner_invitation = relationship("ExaminerInvitation", back_populates="sms_deliveries")
+    examiner = relationship("Examiner", back_populates="sms_deliveries")
     triggered_by = relationship("User", foreign_keys=[triggered_by_user_id])
     retried_from = relationship("SmsDelivery", remote_side=[id], foreign_keys=[retried_from_id])
 
     __table_args__ = (
         Index("ix_sms_deliveries_status_created_at", "status", "created_at"),
+        CheckConstraint(
+            "user_id IS NOT NULL OR examiner_invitation_id IS NOT NULL OR examiner_id IS NOT NULL",
+            name="ck_sms_deliveries_recipient",
+        ),
     )
 
 
@@ -385,6 +429,12 @@ class Examination(Base):
         back_populates="examination",
         cascade="all, delete-orphan",
         order_by="ExaminerGroup.name",
+    )
+    examiner_invitations = relationship(
+        "ExaminerInvitation",
+        back_populates="examination",
+        cascade="all, delete-orphan",
+        order_by="ExaminerInvitation.created_at",
     )
     examination_centres = relationship(
         "ExaminationCentre",
@@ -906,6 +956,113 @@ class ExaminerGroupSourceRegion(Base):
     )
 
 
+class SubjectMarkingGroup(Base):
+    """Subject-scoped marking cohort managed by subject officers (manual membership, coordination dates)."""
+
+    __tablename__ = "subject_marking_groups"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    examination_id = Column(Integer, ForeignKey("examinations.id", ondelete="CASCADE"), nullable=False, index=True)
+    subject_id = Column(Integer, ForeignKey("subjects.id", ondelete="RESTRICT"), nullable=False, index=True)
+    name = Column(String(255), nullable=False)
+    coordination_date = Column(DateTime, nullable=True)
+    coordination_start_time = Column(Time, nullable=True)
+    coordination_end_time = Column(Time, nullable=True)
+    marking_start_date = Column(DateTime, nullable=True)
+    marking_end_date = Column(DateTime, nullable=True)
+    marked_script_submission_deadline = Column(DateTime, nullable=True)
+    is_default = Column(Boolean, nullable=False, default=False, server_default=text("false"))
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+
+    examination = relationship("Examination", backref="subject_marking_groups")
+    subject = relationship("Subject")
+    members = relationship(
+        "SubjectMarkingGroupMember",
+        back_populates="group",
+        cascade="all, delete-orphan",
+    )
+    source_regions = relationship(
+        "SubjectMarkingGroupSourceRegion",
+        back_populates="group",
+        cascade="all, delete-orphan",
+    )
+    source_roles = relationship(
+        "SubjectMarkingGroupSourceRole",
+        back_populates="group",
+        cascade="all, delete-orphan",
+    )
+
+
+class SubjectMarkingGroupSourceRegion(Base):
+    """Cohort region: subject examiners with this home region belong to the cohort."""
+
+    __tablename__ = "subject_marking_group_source_regions"
+
+    group_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("subject_marking_groups.id", ondelete="CASCADE"),
+        primary_key=True,
+    )
+    examination_id = Column(Integer, ForeignKey("examinations.id", ondelete="CASCADE"), nullable=False, index=True)
+    subject_id = Column(Integer, ForeignKey("subjects.id", ondelete="RESTRICT"), nullable=False, index=True)
+    region = Column(Enum(Region, create_constraint=False), primary_key=True)
+
+    group = relationship("SubjectMarkingGroup", back_populates="source_regions")
+
+    __table_args__ = (
+        UniqueConstraint(
+            "examination_id",
+            "subject_id",
+            "region",
+            name="uq_subject_marking_group_source_region_per_subject",
+        ),
+    )
+
+
+class SubjectMarkingGroupSourceRole(Base):
+    """Cohort role: subject examiners with this role belong to the cohort."""
+
+    __tablename__ = "subject_marking_group_source_roles"
+
+    group_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("subject_marking_groups.id", ondelete="CASCADE"),
+        primary_key=True,
+    )
+    examination_id = Column(Integer, ForeignKey("examinations.id", ondelete="CASCADE"), nullable=False, index=True)
+    subject_id = Column(Integer, ForeignKey("subjects.id", ondelete="RESTRICT"), nullable=False, index=True)
+    examiner_type = Column(Enum(ExaminerType, create_constraint=False), primary_key=True)
+
+    group = relationship("SubjectMarkingGroup", back_populates="source_roles")
+
+    __table_args__ = (
+        UniqueConstraint(
+            "examination_id",
+            "subject_id",
+            "examiner_type",
+            name="uq_subject_marking_group_source_role_per_subject",
+        ),
+    )
+
+
+class SubjectMarkingGroupMember(Base):
+    __tablename__ = "subject_marking_group_members"
+
+    group_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("subject_marking_groups.id", ondelete="CASCADE"),
+        primary_key=True,
+    )
+    examiner_id = Column(UUID(as_uuid=True), ForeignKey("examiners.id", ondelete="CASCADE"), primary_key=True)
+    examination_id = Column(Integer, ForeignKey("examinations.id", ondelete="CASCADE"), nullable=False, index=True)
+    subject_id = Column(Integer, ForeignKey("subjects.id", ondelete="RESTRICT"), nullable=False, index=True)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+
+    group = relationship("SubjectMarkingGroup", back_populates="members")
+    examiner = relationship("Examiner", back_populates="subject_marking_group_memberships")
+
+
 class Examiner(Base):
     """Examiner roster for an examination; eligible for script allocation for any campaign on that exam."""
 
@@ -926,6 +1083,17 @@ class Examiner(Base):
         nullable=True,
         doc="Optional MILP weight for L1 deviation; if null, a default by examiner_type is used.",
     )
+    phone_number = Column(String(50), nullable=True)
+    msisdn = Column(String(20), nullable=True, index=True)
+    portal_token = Column(String(128), nullable=False, unique=True, index=True)
+    roster_source = Column(
+        Enum(
+            ExaminerRosterSource,
+            values_callable=lambda x: [i.value for i in x],
+            create_constraint=False,
+        ),
+        nullable=False,
+    )
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
 
@@ -941,10 +1109,31 @@ class Examiner(Base):
         cascade="all, delete-orphan",
         uselist=False,
     )
+    subject_marking_group_memberships = relationship(
+        "SubjectMarkingGroupMember",
+        back_populates="examiner",
+        cascade="all, delete-orphan",
+    )
     allocation_assignments = relationship(
         "AllocationAssignment",
         back_populates="examiner",
         passive_deletes=True,
+    )
+    invitation = relationship(
+        "ExaminerInvitation",
+        back_populates="examiner",
+        uselist=False,
+    )
+    bank_account = relationship(
+        "ExaminerBankAccount",
+        back_populates="examiner",
+        cascade="all, delete-orphan",
+        uselist=False,
+    )
+    sms_deliveries = relationship(
+        "SmsDelivery",
+        back_populates="examiner",
+        cascade="all, delete-orphan",
     )
 
     __table_args__ = (
@@ -952,7 +1141,39 @@ class Examiner(Base):
             "deviation_weight IS NULL OR deviation_weight > 0",
             name="ck_examiner_deviation_weight_positive",
         ),
+        UniqueConstraint(
+            "examination_id",
+            "msisdn",
+            name="uq_examiners_examination_msisdn",
+        ),
     )
+
+
+class ExaminerBankAccount(Base):
+    """One bank account per examiner for allowance processing."""
+
+    __tablename__ = "examiner_bank_accounts"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    examiner_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("examiners.id", ondelete="CASCADE"),
+        nullable=False,
+        unique=True,
+        index=True,
+    )
+    bank_branch_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("bank_branches.id", ondelete="RESTRICT"),
+        nullable=False,
+        index=True,
+    )
+    account_number = Column(String(13), nullable=False)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+
+    examiner = relationship("Examiner", back_populates="bank_account")
+    bank_branch = relationship("BankBranch", back_populates="examiner_bank_accounts")
 
 
 class ExaminerSubject(Base):
@@ -963,6 +1184,163 @@ class ExaminerSubject(Base):
 
     examiner = relationship("Examiner", back_populates="subjects")
     subject = relationship("Subject", backref="examiner_subject_links")
+
+
+class ExaminerInvitation(Base):
+    """SMS invitation for a prospective examiner; roster entry created on accept."""
+
+    __tablename__ = "examiner_invitations"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    examination_id = Column(
+        Integer,
+        ForeignKey("examinations.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    subject_id = Column(Integer, ForeignKey("subjects.id", ondelete="RESTRICT"), nullable=False, index=True)
+    name = Column(String(255), nullable=False)
+    phone_number = Column(String(50), nullable=False)
+    msisdn = Column(String(20), nullable=False, index=True)
+    examiner_type = Column(Enum(ExaminerType, create_constraint=False), nullable=False)
+    region = Column(Enum(Region, create_constraint=False), nullable=False)
+    token = Column(String(128), nullable=False, unique=True, index=True)
+    token_expires_at = Column(DateTime, nullable=False)
+    status = Column(
+        Enum(
+            ExaminerInvitationStatus,
+            values_callable=lambda x: [i.value for i in x],
+            native_enum=False,
+            length=16,
+        ),
+        nullable=False,
+        default=ExaminerInvitationStatus.PENDING,
+        server_default="pending",
+        index=True,
+    )
+    invited_by_user_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("users.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+    notified_at = Column(DateTime, nullable=True)
+    responded_at = Column(DateTime, nullable=True)
+    response_deadline = Column(DateTime, nullable=False)
+    coordination_date = Column(DateTime, nullable=True)
+    examiner_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("examiners.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+
+    examination = relationship("Examination", back_populates="examiner_invitations")
+    subject = relationship("Subject")
+    invited_by = relationship("User", foreign_keys=[invited_by_user_id])
+    examiner = relationship("Examiner", back_populates="invitation")
+    sms_deliveries = relationship(
+        "SmsDelivery",
+        back_populates="examiner_invitation",
+        cascade="all, delete-orphan",
+    )
+
+    __table_args__ = (
+        Index(
+            "ix_examiner_invitations_pending_exam_msisdn",
+            "examination_id",
+            "msisdn",
+            unique=True,
+            postgresql_where=text("status = 'pending'"),
+        ),
+    )
+
+
+class SubjectOfficerAssignment(Base):
+    """Subject scope for a subject officer on an examination."""
+
+    __tablename__ = "subject_officer_assignments"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    user_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+    examination_id = Column(
+        Integer,
+        ForeignKey("examinations.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    subject_id = Column(Integer, ForeignKey("subjects.id", ondelete="RESTRICT"), nullable=False, index=True)
+    created_by_user_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("users.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+
+    user = relationship("User", foreign_keys=[user_id], back_populates="subject_officer_assignments")
+    examination = relationship("Examination", backref="subject_officer_assignments")
+    subject = relationship("Subject")
+    created_by = relationship("User", foreign_keys=[created_by_user_id])
+
+    __table_args__ = (
+        UniqueConstraint(
+            "user_id",
+            "examination_id",
+            "subject_id",
+            name="uq_subject_officer_assignment_user_exam_subject",
+        ),
+    )
+
+
+class ExaminerMarkedScriptReturn(Base):
+    """Marking-centre return verification for an examiner's allocated scripts."""
+
+    __tablename__ = "examiner_marked_script_returns"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    examination_id = Column(Integer, ForeignKey("examinations.id", ondelete="CASCADE"), nullable=False, index=True)
+    subject_id = Column(Integer, ForeignKey("subjects.id", ondelete="RESTRICT"), nullable=False, index=True)
+    examiner_id = Column(UUID(as_uuid=True), ForeignKey("examiners.id", ondelete="CASCADE"), nullable=False, index=True)
+    paper_number = Column(SmallInteger, nullable=False)
+    allocation_run_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("allocation_runs.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    allocation_assignment_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("allocation_assignments.id", ondelete="CASCADE"),
+        nullable=False,
+        unique=True,
+        index=True,
+    )
+    expected_booklets = Column(Integer, nullable=False)
+    returned_booklets = Column(Integer, nullable=True)
+    verified_at = Column(DateTime, nullable=True)
+    verified_by_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True, index=True)
+    notes = Column(Text, nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+
+    examination = relationship("Examination", backref="examiner_marked_script_returns")
+    subject = relationship("Subject")
+    examiner = relationship("Examiner", backref="marked_script_returns")
+    allocation_run = relationship("AllocationRun")
+    allocation_assignment = relationship("AllocationAssignment")
+    verified_by = relationship("User", foreign_keys=[verified_by_id])
+
+    __table_args__ = (
+        CheckConstraint("expected_booklets >= 0", name="ck_examiner_marked_script_return_expected"),
+        CheckConstraint(
+            "returned_booklets IS NULL OR returned_booklets >= 0",
+            name="ck_examiner_marked_script_return_returned",
+        ),
+    )
 
 
 class AllocationRun(Base):
@@ -1057,6 +1435,7 @@ class BankBranch(Base):
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
 
     exam_officials = relationship("ExamCentreOfficial", back_populates="bank_branch")
+    examiner_bank_accounts = relationship("ExaminerBankAccount", back_populates="bank_branch")
 
 
 class ExamCentreOfficial(Base):

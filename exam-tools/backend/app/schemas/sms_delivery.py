@@ -9,8 +9,8 @@ from pydantic import BaseModel, Field, model_validator
 
 class SmsDeliveryRow(BaseModel):
     id: UUID
-    user_id: UUID
-    inspector_full_name: str
+    user_id: UUID | None
+    recipient_full_name: str
     phone_number: str
     msisdn: str
     message_type: str

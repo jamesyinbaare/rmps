@@ -3,7 +3,7 @@ from uuid import UUID
 
 from fastapi import APIRouter, HTTPException, status
 from pydantic import BaseModel, EmailStr
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.security import create_access_token, verify_password
@@ -131,14 +131,16 @@ async def super_admin_login(
     data: SuperAdminLoginRequest,
     session: DBSessionDep,
 ) -> TokenResponse:
+    email_str = str(data.email).strip().lower()
     stmt = select(User).where(
-        User.email == data.email,
+        func.lower(User.email) == email_str,
         User.role.in_(
             (
                 UserRole.SUPER_ADMIN,
                 UserRole.TEST_ADMIN_OFFICER,
                 UserRole.FINANCE_OFFICER,
                 UserRole.EXECUTIVE_VIEWER,
+                UserRole.SUBJECT_OFFICER,
             ),
         ),
     )

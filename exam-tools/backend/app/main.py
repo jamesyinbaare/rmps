@@ -32,14 +32,19 @@ from app.routers import (
     examination_centres,
     examinations,
     examiner_groups,
+    examiner_invitations,
     examiners,
     finance_officers,
     inspectors,
+    marked_script_returns,
     programmes,
+    public_examiner_invitations,
     question_paper_control,
     schools,
     script_allocation,
     script_control,
+    subject_marking_groups,
+    subject_officers,
     subjects,
     test_admin_officers,
     executive_viewers,
@@ -192,6 +197,10 @@ app.include_router(executive_viewers.router)
 app.include_router(finance_officers.router)
 app.include_router(depots.router_admin)
 app.include_router(depots.router_keeper)
+app.include_router(subject_officers.router_admin)
+app.include_router(subject_officers.router_officer)
+app.include_router(marked_script_returns.router)
+app.include_router(subject_marking_groups.router)
 app.include_router(inspectors.router)
 app.include_router(schools.router)
 app.include_router(programmes.router)
@@ -201,6 +210,7 @@ app.include_router(examination_centres.router)
 app.include_router(centre_locations.exam_router)
 app.include_router(centre_locations.admin_router)
 app.include_router(examiners.router)
+app.include_router(examiner_invitations.router)
 app.include_router(examiner_groups.router)
 app.include_router(examination_candidates.router)
 app.include_router(script_control.router)
@@ -213,6 +223,7 @@ app.include_router(admin_examination_designation_rates.router)
 app.include_router(admin_inspector_postings.router)
 app.include_router(admin_inspector_submission_settings.router)
 app.include_router(admin_sms_deliveries.router)
+app.include_router(public_examiner_invitations.router)
 app.include_router(admin_system.router)
 app.include_router(documents.router)
 app.include_router(attendance_sheets.inspector_router)

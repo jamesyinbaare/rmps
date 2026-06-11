@@ -6,8 +6,12 @@ import { useEffect, useId, useState, type ReactNode } from "react";
 
 import { DashboardSimpleHeader, DashboardStickyHeader } from "@/components/dashboard-sticky-header";
 import { ExaminationNoticeSessionBanner } from "@/components/examination-notice-session-banner";
+import { SubjectOfficerExamBar } from "@/components/subject-officer/subject-officer-exam-bar";
 import { StaffSidebarMainNav } from "@/components/staff-sidebar-nav";
 import { useInspectorPostings } from "@/hooks/use-inspector-postings";
+import { useSubjectOfficerAssignments } from "@/hooks/use-subject-officer-assignments";
+import { useSubjectOfficerExamUrl } from "@/hooks/use-subject-officer-exam-url";
+import { subjectNamesSummary } from "@/lib/subject-officer-exams";
 import { clearAuth, AUTH_TOKEN_UPDATED_EVENT, getMe, type UserMe } from "@/lib/auth";
 import { buildStaffSidebarNav } from "@/lib/staff-nav";
 import { cn } from "@/lib/utils";
@@ -22,6 +26,10 @@ import { OFFICIAL_ACCOUNTS_INSPECTOR_ATTENDANCE_HREF } from "@/lib/official-acco
 
 /** Subtitle under the page title: full name plus school name and code when present. */
 function staffHeaderSubtitle(me: UserMe): string {
+  if (me.role === "SUBJECT_OFFICER") {
+    const phone = me.phone_number?.trim() ?? "";
+    return phone ? `${me.full_name.trim()} · ${phone}` : me.full_name.trim();
+  }
   if (me.role === "DEPOT_KEEPER") {
     const dep =
       me.depot_name != null && me.depot_name.trim() !== ""
@@ -84,11 +92,38 @@ type Props = {
   title: string;
   children?: React.ReactNode;
   /** When set, shows Overview + Examination timetable sub-nav for staff dashboards */
-  staffRole?: "supervisor" | "inspector" | "depot-keeper";
+  staffRole?: "supervisor" | "inspector" | "depot-keeper" | "subject-officer";
 };
 
 const inputFocusRing =
   "focus:border-primary focus:outline-none focus:ring-2 focus:ring-ring/30";
+
+function SubjectOfficerExamChrome() {
+  const pathname = usePathname();
+  const { assignments, loading } = useSubjectOfficerAssignments();
+  const examIds = assignments.map((a) => a.examination_id);
+  const { examId, setExamId } = useSubjectOfficerExamUrl({ examIds, requireSelection: true });
+  const subjectSummary = subjectNamesSummary(assignments, examId);
+
+  if (
+    pathname === "/dashboard/subject-officer" ||
+    pathname.startsWith("/dashboard/subject-officer/examiners") ||
+    pathname.startsWith("/dashboard/subject-officer/allocations") ||
+    pathname.startsWith("/dashboard/subject-officer/marked-script-returns")
+  ) {
+    return null;
+  }
+
+  return (
+    <SubjectOfficerExamBar
+      assignments={assignments}
+      examId={examId}
+      onExamChange={setExamId}
+      loading={loading}
+      subjectSummary={subjectSummary}
+    />
+  );
+}
 
 export function DashboardShell({ title, children, staffRole }: Props) {
   const router = useRouter();
@@ -142,13 +177,17 @@ export function DashboardShell({ title, children, staffRole }: Props) {
       ? "/dashboard/supervisor"
       : staffRole === "depot-keeper"
         ? "/dashboard/depot-keeper"
-        : "/dashboard/inspector";
+        : staffRole === "subject-officer"
+          ? "/dashboard/subject-officer"
+          : "/dashboard/inspector";
   const roleLabel =
     staffRole === "supervisor"
       ? "Supervisor"
       : staffRole === "depot-keeper"
         ? "Depot keeper"
-        : "Inspector";
+        : staffRole === "subject-officer"
+          ? "Subject officer"
+          : "Inspector";
   const examOfficialsHref = `${staffBase}/exam-officials`;
   const centreLocationHref = `${staffBase}/centre-location`;
   const examinationNoticeHref = `${staffBase}/examination-notice`;
@@ -168,6 +207,8 @@ export function DashboardShell({ title, children, staffRole }: Props) {
     staffBase,
     changeCentreNavItem,
   });
+
+  const isSubjectOfficer = staffRole === "subject-officer";
 
   const showInspectorBottomNav = staffRole === "inspector";
   const examOfficialsActive = pathname.startsWith(examOfficialsHref);
@@ -240,7 +281,8 @@ export function DashboardShell({ title, children, staffRole }: Props) {
         </div>
       </aside>
 
-      <div className="lg:pl-64">
+      <div className={cn("lg:pl-64", isSubjectOfficer && "flex h-dvh max-h-dvh flex-col overflow-hidden")}>
+        <div className={isSubjectOfficer ? "shrink-0" : undefined}>
         <DashboardStickyHeader
           title={title}
           subtitle={
@@ -263,7 +305,19 @@ export function DashboardShell({ title, children, staffRole }: Props) {
           examinationNoticeHref={examinationNoticeHref}
         />
 
-        <main className="mx-auto max-w-6xl px-4 py-6 sm:px-6">{children}</main>
+        {isSubjectOfficer ? <SubjectOfficerExamChrome /> : null}
+        </div>
+
+        <main
+          className={cn(
+            "mx-auto w-full px-4 py-6 sm:px-6",
+            isSubjectOfficer
+              ? "scrollbar-hide min-h-0 max-w-[1600px] flex-1 overflow-x-hidden overflow-y-auto overscroll-y-contain"
+              : "max-w-6xl",
+          )}
+        >
+          {children}
+        </main>
       </div>
     </div>
   );

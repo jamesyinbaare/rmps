@@ -13,6 +13,11 @@ class ExaminerTypeSchema(str, Enum):
     team_leader = "team_leader"
 
 
+class ExaminerRosterSourceSchema(str, Enum):
+    manual = "manual"
+    invitation = "invitation"
+
+
 class AllocationRunStatusSchema(str, Enum):
     draft = "draft"
     optimal = "optimal"
@@ -118,17 +123,19 @@ class AllocationResponse(BaseModel):
 
 class ExaminerCreate(BaseModel):
     name: str = Field(min_length=1, max_length=255)
+    phone_number: str = Field(min_length=1, max_length=50)
     examiner_type: ExaminerTypeSchema
     region: str = Field(min_length=1, description="Examiner home region (Enum Region value).")
-    subject_ids: list[int] = Field(default_factory=list)
+    subject_ids: list[int] = Field(min_length=1, max_length=1)
     deviation_weight: float | None = Field(default=None, gt=0)
 
 
 class ExaminerUpdate(BaseModel):
     name: str | None = Field(default=None, min_length=1, max_length=255)
+    phone_number: str | None = Field(default=None, min_length=1, max_length=50)
     examiner_type: ExaminerTypeSchema | None = None
     region: str | None = None
-    subject_ids: list[int] | None = None
+    subject_ids: list[int] | None = Field(default=None, min_length=1, max_length=1)
     deviation_weight: float | None = Field(default=None, gt=0)
 
 
@@ -136,11 +143,16 @@ class ExaminerResponse(BaseModel):
     id: UUID
     examination_id: int
     name: str
+    phone_number: str | None = None
     examiner_type: ExaminerTypeSchema
     region: str
     subject_ids: list[int]
     deviation_weight: float | None
     examiner_group_id: UUID | None = None
+    portal_url: str
+    roster_source: ExaminerRosterSourceSchema
+    invitation_id: UUID | None = None
+    invitation_status: str | None = None
     created_at: datetime
     updated_at: datetime
 
@@ -172,6 +184,22 @@ class ExaminerBulkImportRowError(BaseModel):
 class ExaminerBulkImportResponse(BaseModel):
     created_count: int
     errors: list[ExaminerBulkImportRowError]
+
+
+class ExaminerBulkSmsRequest(BaseModel):
+    examiner_ids: list[UUID] = Field(min_length=1, max_length=500)
+    message: str = Field(min_length=1, max_length=640)
+
+
+class ExaminerBulkSmsRowError(BaseModel):
+    examiner_id: UUID
+    message: str
+
+
+class ExaminerBulkSmsResponse(BaseModel):
+    sent_count: int
+    failed_count: int
+    errors: list[ExaminerBulkSmsRowError]
 
 
 class ScriptsAllocationQuotaRow(BaseModel):

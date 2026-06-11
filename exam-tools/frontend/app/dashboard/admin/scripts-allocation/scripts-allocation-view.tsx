@@ -1135,8 +1135,8 @@ export function ScriptsAllocationView({
 
   const examinersManageHref =
     examId != null
-      ? `/dashboard/admin/allocation-examiners?exam=${examId}`
-      : "/dashboard/admin/allocation-examiners";
+      ? `/dashboard/admin/examiners?exam=${examId}&tab=roster`
+      : "/dashboard/admin/examiners?tab=roster";
 
   const mainAllocationHrefFromSetup =
     examId != null && sessionReady && allocationId != null && tripleOk
