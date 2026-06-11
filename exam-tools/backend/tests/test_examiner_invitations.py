@@ -165,6 +165,27 @@ def test_build_examiner_invitation_message() -> None:
     assert "https://example.com/ei/tok" in msg
 
 
+def test_build_examiner_invitation_message_assistant_chief_abbrev() -> None:
+    inv = MagicMock()
+    inv.name = "Sam Mensah"
+    inv.examiner_type = ExaminerType.ASSISTANT_CHIEF
+    inv.token = "tok"
+    sub = MagicMock(spec=Subject)
+    sub.name = "Mathematics"
+    inv.subject = sub
+    exam = MagicMock()
+    exam.exam_type = "BECE"
+    exam.year = 2026
+    inv.examination = exam
+
+    with patch("app.services.examiner_invitation.settings") as mock_settings:
+        mock_settings.examiner_invitation_base_url = "https://example.com"
+        mock_settings.examiner_invitation_link_path = "/ei"
+        msg = build_examiner_invitation_message(inv)
+
+    assert "invited as ACE" in msg
+
+
 def test_subject_display_code_prefers_original_code() -> None:
     sub = MagicMock(spec=Subject)
     sub.code = "301"

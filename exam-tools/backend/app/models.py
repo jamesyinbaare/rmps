@@ -89,8 +89,17 @@ class SubjectType(enum.Enum):
 
 class ExaminerType(enum.Enum):
     CHIEF = "chief_examiner"
+    ASSISTANT_CHIEF = "assistant_chief_examiner"
     ASSISTANT = "assistant_examiner"
     TEAM_LEADER = "team_leader"
+
+
+class ExaminerAllowanceType(enum.Enum):
+    RESPONSIBILITY = "responsibility_allowance"
+    INCONVENIENCE = "inconvenience_allowance"
+    CHIEF_EXAMINERS_REPORT = "chief_examiners_report"
+    VETTING_OF_SCRIPTS = "vetting_of_scripts"
+    INTERNAL_COMMUTING = "internal_commuting"
 
 
 class ExaminerInvitationStatus(enum.Enum):
@@ -1548,6 +1557,225 @@ class ExaminationDesignationRate(Base):
         CheckConstraint(
             "airtime_ghs IS NULL OR airtime_ghs >= 0",
             name="ck_examination_designation_rates_airtime_nonneg",
+        ),
+    )
+
+
+class ExaminationExaminerRoleAllowanceRate(Base):
+    """Per-examination flat role allowance amounts (paid once per examiner by role)."""
+
+    __tablename__ = "examination_examiner_role_allowance_rates"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    examination_id = Column(Integer, ForeignKey("examinations.id", ondelete="CASCADE"), nullable=False, index=True)
+    examiner_type = Column(
+        Enum(
+            ExaminerType,
+            values_callable=lambda x: [i.value for i in x],
+            native_enum=False,
+            length=64,
+        ),
+        nullable=False,
+    )
+    allowance_type = Column(
+        Enum(
+            ExaminerAllowanceType,
+            values_callable=lambda x: [i.value for i in x],
+            native_enum=False,
+            length=64,
+        ),
+        nullable=False,
+    )
+    amount_ghs = Column(Numeric(12, 2), nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+
+    examination = relationship("Examination", backref="examiner_role_allowance_rates")
+
+    __table_args__ = (
+        UniqueConstraint(
+            "examination_id",
+            "examiner_type",
+            "allowance_type",
+            name="uq_exam_examiner_role_allowance_rates",
+        ),
+        CheckConstraint(
+            "amount_ghs IS NULL OR amount_ghs >= 0",
+            name="ck_exam_examiner_role_allowance_rates_amount_nonneg",
+        ),
+    )
+
+
+class ExaminationExaminerMarkingRate(Base):
+    """Per-examination marking rate per script by subject and paper (same for all roles)."""
+
+    __tablename__ = "examination_examiner_marking_rates"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    examination_id = Column(Integer, ForeignKey("examinations.id", ondelete="CASCADE"), nullable=False, index=True)
+    subject_id = Column(Integer, ForeignKey("subjects.id", ondelete="CASCADE"), nullable=False, index=True)
+    paper_number = Column(SmallInteger, nullable=False, default=1)
+    rate_per_script_ghs = Column(Numeric(12, 2), nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+
+    examination = relationship("Examination", backref="examiner_marking_rates")
+    subject = relationship("Subject")
+
+    __table_args__ = (
+        UniqueConstraint(
+            "examination_id",
+            "subject_id",
+            "paper_number",
+            name="uq_examination_examiner_marking_rates_exam_subject_paper",
+        ),
+        CheckConstraint("paper_number >= 1", name="ck_examination_examiner_marking_rates_paper_number"),
+        CheckConstraint(
+            "rate_per_script_ghs IS NULL OR rate_per_script_ghs >= 0",
+            name="ck_examination_examiner_marking_rates_rate_nonneg",
+        ),
+    )
+
+
+class ExaminationExaminerTravelRate(Base):
+    """Per-examination travel and transport (T&T) allowance by examiner home region."""
+
+    __tablename__ = "examination_examiner_travel_rates"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    examination_id = Column(Integer, ForeignKey("examinations.id", ondelete="CASCADE"), nullable=False, index=True)
+    region = Column(
+        Enum(
+            Region,
+            values_callable=lambda x: [i.value for i in x],
+            native_enum=False,
+            length=64,
+        ),
+        nullable=False,
+    )
+    amount_ghs = Column(Numeric(12, 2), nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+
+    examination = relationship("Examination", backref="examiner_travel_rates")
+
+    __table_args__ = (
+        UniqueConstraint("examination_id", "region", name="uq_examination_examiner_travel_rates_exam_region"),
+        CheckConstraint(
+            "amount_ghs IS NULL OR amount_ghs >= 0",
+            name="ck_examination_examiner_travel_rates_amount_nonneg",
+        ),
+    )
+
+
+class ExaminationExaminerTravelZone(Base):
+    """Per-examination custom T&T zone (groups regions for role multipliers)."""
+
+    __tablename__ = "examination_examiner_travel_zones"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    examination_id = Column(Integer, ForeignKey("examinations.id", ondelete="CASCADE"), nullable=False, index=True)
+    name = Column(String(64), nullable=False)
+    sort_order = Column(Integer, nullable=False, default=0)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+
+    examination = relationship("Examination", backref="examiner_travel_zones")
+    regions = relationship(
+        "ExaminationExaminerTravelZoneRegion",
+        back_populates="zone",
+        cascade="all, delete-orphan",
+    )
+    role_factors = relationship(
+        "ExaminationExaminerTravelRoleFactor",
+        back_populates="zone",
+        cascade="all, delete-orphan",
+    )
+
+    __table_args__ = (
+        UniqueConstraint(
+            "examination_id",
+            "name",
+            name="uq_examination_examiner_travel_zones_exam_name",
+        ),
+    )
+
+
+class ExaminationExaminerTravelZoneRegion(Base):
+    """Maps an examiner home region to a T&T zone within an examination."""
+
+    __tablename__ = "examination_examiner_travel_zone_regions"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    examination_id = Column(Integer, ForeignKey("examinations.id", ondelete="CASCADE"), nullable=False, index=True)
+    zone_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("examination_examiner_travel_zones.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    region = Column(
+        Enum(
+            Region,
+            values_callable=lambda x: [i.value for i in x],
+            native_enum=False,
+            length=64,
+        ),
+        nullable=False,
+    )
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+
+    zone = relationship("ExaminationExaminerTravelZone", back_populates="regions")
+
+    __table_args__ = (
+        UniqueConstraint(
+            "examination_id",
+            "region",
+            name="uq_examination_examiner_travel_zone_regions_exam_region",
+        ),
+    )
+
+
+class ExaminationExaminerTravelRoleFactor(Base):
+    """Per-examination T&T multiplier by examiner role and T&T zone (default 1 when unset)."""
+
+    __tablename__ = "examination_examiner_travel_role_factors"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    examination_id = Column(Integer, ForeignKey("examinations.id", ondelete="CASCADE"), nullable=False, index=True)
+    zone_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("examination_examiner_travel_zones.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    examiner_type = Column(
+        Enum(
+            ExaminerType,
+            values_callable=lambda x: [i.value for i in x],
+            native_enum=False,
+            length=64,
+        ),
+        nullable=False,
+    )
+    factor = Column(Numeric(6, 3), nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+
+    examination = relationship("Examination", backref="examiner_travel_role_factors")
+    zone = relationship("ExaminationExaminerTravelZone", back_populates="role_factors")
+
+    __table_args__ = (
+        UniqueConstraint(
+            "examination_id",
+            "examiner_type",
+            "zone_id",
+            name="uq_examination_examiner_travel_role_factors_exam_role_zone",
+        ),
+        CheckConstraint(
+            "factor IS NULL OR factor > 0",
+            name="ck_examination_examiner_travel_role_factors_factor_positive",
         ),
     )
 

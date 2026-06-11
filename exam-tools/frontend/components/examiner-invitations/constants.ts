@@ -5,12 +5,14 @@ import { cn } from "@/lib/utils";
 
 export const EXAMINER_TYPE_OPTIONS: { value: ExaminerTypeApi; label: string }[] = [
   { value: "chief_examiner", label: "Chief examiner" },
+  { value: "assistant_chief_examiner", label: "Assistant chief examiner" },
   { value: "assistant_examiner", label: "Assistant examiner" },
   { value: "team_leader", label: "Team leader" },
 ];
 
 export const EXAMINER_TYPE_LABELS: Record<ExaminerTypeApi, string> = {
   chief_examiner: "Chief examiner",
+  assistant_chief_examiner: "Assistant chief examiner",
   assistant_examiner: "Assistant examiner",
   team_leader: "Team leader",
 };

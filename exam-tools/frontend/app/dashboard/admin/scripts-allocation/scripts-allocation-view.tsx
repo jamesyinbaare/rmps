@@ -113,6 +113,7 @@ function RunStatusBadge({ status }: { status: AllocationRunStatusApi }) {
 
 function examinerTypeLabel(t: ExaminerTypeApi): string {
   if (t === "chief_examiner") return "Chief";
+  if (t === "assistant_chief_examiner") return "Asst chief";
   if (t === "team_leader") return "Team leader";
   return "Assistant";
 }
@@ -1919,6 +1920,7 @@ export function ScriptsAllocationView({
                           >
                             <option value="">All types</option>
                             <option value="chief_examiner">Chief</option>
+                            <option value="assistant_chief_examiner">Asst chief</option>
                             <option value="assistant_examiner">Assistant</option>
                             <option value="team_leader">Team leader</option>
                           </select>

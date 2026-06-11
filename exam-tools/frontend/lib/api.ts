@@ -2639,6 +2639,262 @@ export async function putExaminationDesignationRates(
   });
 }
 
+export type ExaminerAllowanceTypeApi =
+  | "responsibility_allowance"
+  | "inconvenience_allowance"
+  | "chief_examiners_report"
+  | "vetting_of_scripts"
+  | "internal_commuting";
+
+export type ExaminerAllowanceSubjectRef = {
+  id: number;
+  code: string;
+  name: string;
+  subject_type: SubjectTypeEnum;
+  paper_numbers: number[];
+};
+
+export type ExaminerRoleAllowanceRateCell = {
+  examiner_type: ExaminerTypeApi;
+  allowance_type: ExaminerAllowanceTypeApi;
+  amount_ghs: string | null;
+};
+
+export type ExaminationExaminerRoleAllowanceRatesResponse = {
+  examination_id: number;
+  items: ExaminerRoleAllowanceRateCell[];
+};
+
+export type ExaminerRoleAllowanceRateItemUpdate = {
+  examiner_type: ExaminerTypeApi;
+  allowance_type: ExaminerAllowanceTypeApi;
+  amount_ghs?: string | null;
+};
+
+export type ExaminerMarkingRateRow = {
+  subject_id: number;
+  paper_number: number;
+  rate_per_script_ghs: string | null;
+};
+
+export type ExaminationExaminerMarkingRatesResponse = {
+  examination_id: number;
+  subjects: ExaminerAllowanceSubjectRef[];
+  items: ExaminerMarkingRateRow[];
+};
+
+export type ExaminerMarkingRateItemUpdate = {
+  subject_id: number;
+  paper_number: number;
+  rate_per_script_ghs?: string | null;
+};
+
+export type ExaminerTravelRateRow = {
+  region: string;
+  amount_ghs: string | null;
+};
+
+export type ExaminerTravelZoneRow = {
+  id: string;
+  name: string;
+  regions: string[];
+};
+
+export type ExaminerTravelRoleFactorRow = {
+  examiner_type: ExaminerTypeApi;
+  zone_id: string;
+  factor: string | null;
+};
+
+export type ExaminationExaminerTravelRatesResponse = {
+  examination_id: number;
+  zones: ExaminerTravelZoneRow[];
+  items: ExaminerTravelRateRow[];
+  role_factors: ExaminerTravelRoleFactorRow[];
+};
+
+export type SubjectMarkingBreakdownRow = {
+  subject_id: number;
+  subject_code: string;
+  subject_name: string;
+  paper_number: number;
+  allocated_booklets: number;
+  rate_per_script_ghs?: string | null;
+  marking_allowance_ghs?: string | null;
+};
+
+export type AdminExaminerAllowanceRow = {
+  id: string;
+  examination_id: number;
+  examination_label: string;
+  full_name: string;
+  examiner_type: ExaminerTypeApi;
+  region: string;
+  subject_codes: string;
+  subject_names: string;
+  bank_branch_id?: string | null;
+  bank_code?: string | null;
+  bank_name?: string | null;
+  branch_name?: string | null;
+  account_number?: string | null;
+  phone_number?: string | null;
+  responsibility_allowance_ghs: string;
+  inconvenience_allowance_ghs: string;
+  chief_examiners_report_ghs: string;
+  vetting_of_scripts_ghs: string;
+  internal_commuting_ghs: string;
+  marking_allowance_ghs: string;
+  travel_base_ghs: string;
+  travel_zone_name?: string | null;
+  travel_role_factor: string;
+  travel_and_transport_ghs: string;
+  total_allocated_scripts: number;
+  total_payable_ghs: string;
+  subject_breakdowns: SubjectMarkingBreakdownRow[];
+  created_at: string;
+  updated_at: string;
+};
+
+export type AdminExaminerAllowanceListResponse = {
+  items: AdminExaminerAllowanceRow[];
+  total: number;
+};
+
+export async function getExaminationExaminerRoleAllowanceRates(
+  examId: number,
+): Promise<ExaminationExaminerRoleAllowanceRatesResponse> {
+  return apiJson<ExaminationExaminerRoleAllowanceRatesResponse>(
+    `/admin/examinations/${examId}/examiner-role-allowance-rates`,
+  );
+}
+
+export async function putExaminationExaminerRoleAllowanceRates(
+  examId: number,
+  items: ExaminerRoleAllowanceRateItemUpdate[],
+): Promise<ExaminationExaminerRoleAllowanceRatesResponse> {
+  return apiJson<ExaminationExaminerRoleAllowanceRatesResponse>(
+    `/admin/examinations/${examId}/examiner-role-allowance-rates`,
+    {
+      method: "PUT",
+      body: JSON.stringify({ items }),
+    },
+  );
+}
+
+export async function getExaminationExaminerMarkingRates(
+  examId: number,
+): Promise<ExaminationExaminerMarkingRatesResponse> {
+  return apiJson<ExaminationExaminerMarkingRatesResponse>(
+    `/admin/examinations/${examId}/examiner-marking-rates`,
+  );
+}
+
+export async function putExaminationExaminerMarkingRates(
+  examId: number,
+  items: ExaminerMarkingRateItemUpdate[],
+): Promise<ExaminationExaminerMarkingRatesResponse> {
+  return apiJson<ExaminationExaminerMarkingRatesResponse>(
+    `/admin/examinations/${examId}/examiner-marking-rates`,
+    {
+      method: "PUT",
+      body: JSON.stringify({ items }),
+    },
+  );
+}
+
+export async function getExaminationExaminerTravelRates(
+  examId: number,
+): Promise<ExaminationExaminerTravelRatesResponse> {
+  return apiJson<ExaminationExaminerTravelRatesResponse>(
+    `/admin/examinations/${examId}/examiner-travel-rates`,
+  );
+}
+
+export async function putExaminationExaminerTravelRates(
+  examId: number,
+  payload: {
+    items: { region: string; amount_ghs?: string | null }[];
+    zones?: { id?: string | null; name: string; regions: string[] }[];
+    role_factors?: {
+      examiner_type: ExaminerTypeApi;
+      zone_id: string;
+      factor?: string | null;
+    }[];
+  },
+): Promise<ExaminationExaminerTravelRatesResponse> {
+  return apiJson<ExaminationExaminerTravelRatesResponse>(
+    `/admin/examinations/${examId}/examiner-travel-rates`,
+    {
+      method: "PUT",
+      body: JSON.stringify(payload),
+    },
+  );
+}
+
+export async function copyExaminationExaminerAllowanceRates(
+  examId: number,
+  sourceExamId: number,
+): Promise<{ examination_id: number; copied: boolean }> {
+  return apiJson<{ examination_id: number; copied: boolean }>(
+    `/admin/examinations/${examId}/examiner-allowance-rates/copy-from/${sourceExamId}`,
+    { method: "POST" },
+  );
+}
+
+export async function listAdminExaminerAllowances(params: {
+  examination_id: number;
+  role?: string | null;
+  region?: string | null;
+  subject_id?: number | null;
+  search?: string | null;
+  skip?: number;
+  limit?: number;
+}): Promise<AdminExaminerAllowanceListResponse> {
+  const q = new URLSearchParams();
+  q.set("examination_id", String(params.examination_id));
+  if (params.role?.trim()) q.set("role", params.role.trim());
+  if (params.region?.trim()) q.set("region", params.region.trim());
+  if (params.subject_id != null) q.set("subject_id", String(params.subject_id));
+  if (params.search?.trim()) q.set("search", params.search.trim());
+  if (params.skip != null) q.set("skip", String(params.skip));
+  if (params.limit != null) q.set("limit", String(params.limit));
+  return apiJson<AdminExaminerAllowanceListResponse>(`/admin/examiner-allowances?${q.toString()}`);
+}
+
+export async function downloadAdminExaminerAllowancesExport(params: {
+  examination_id: number;
+  role?: string | null;
+  region?: string | null;
+  subject_id?: number | null;
+  search?: string | null;
+  filename: string;
+}): Promise<void> {
+  const q = new URLSearchParams();
+  q.set("examination_id", String(params.examination_id));
+  if (params.role?.trim()) q.set("role", params.role.trim());
+  if (params.region?.trim()) q.set("region", params.region.trim());
+  if (params.subject_id != null) q.set("subject_id", String(params.subject_id));
+  if (params.search?.trim()) q.set("search", params.search.trim());
+  await downloadApiFile(`/admin/examiner-allowances/export.xlsx?${q.toString()}`, params.filename);
+}
+
+export async function downloadAdminExaminerAllowancesBogExport(params: {
+  examination_id: number;
+  role?: string | null;
+  region?: string | null;
+  subject_id?: number | null;
+  search?: string | null;
+  filename: string;
+}): Promise<void> {
+  const q = new URLSearchParams();
+  q.set("examination_id", String(params.examination_id));
+  if (params.role?.trim()) q.set("role", params.role.trim());
+  if (params.region?.trim()) q.set("region", params.region.trim());
+  if (params.subject_id != null) q.set("subject_id", String(params.subject_id));
+  if (params.search?.trim()) q.set("search", params.search.trim());
+  await downloadApiFile(`/admin/examiner-allowances/bog-export.xlsx?${q.toString()}`, params.filename);
+}
+
 export type AdminExamCentreOfficialListResponse = {
   items: AdminExamCentreOfficialRow[];
   total: number;
@@ -3340,7 +3596,11 @@ export async function adminResetDepotKeeperPassword(
   );
 }
 
-export type ExaminerTypeApi = "chief_examiner" | "assistant_examiner" | "team_leader";
+export type ExaminerTypeApi =
+  | "chief_examiner"
+  | "assistant_chief_examiner"
+  | "assistant_examiner"
+  | "team_leader";
 
 export type AllocationRunStatusApi = "draft" | "optimal" | "infeasible" | "timeout" | "error";
 

@@ -17,6 +17,8 @@ from app.initial_data import ensure_super_admin_user
 from app.routers import (
     admin_exam_officials,
     admin_examination_designation_rates,
+    admin_examination_examiner_allowance_rates,
+    admin_examiner_allowances,
     admin_inspector_postings,
     admin_inspector_submission_settings,
     admin_sms_deliveries,
@@ -220,6 +222,8 @@ app.include_router(bank_branches.router)
 app.include_router(exam_officials.router)
 app.include_router(admin_exam_officials.router)
 app.include_router(admin_examination_designation_rates.router)
+app.include_router(admin_examination_examiner_allowance_rates.router)
+app.include_router(admin_examiner_allowances.router)
 app.include_router(admin_inspector_postings.router)
 app.include_router(admin_inspector_submission_settings.router)
 app.include_router(admin_sms_deliveries.router)

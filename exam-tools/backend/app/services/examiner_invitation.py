@@ -38,6 +38,7 @@ def invitation_public_url(token: str) -> str:
 def _examiner_type_label(examiner_type: ExaminerType) -> str:
     return {
         ExaminerType.CHIEF: "Chief examiner",
+        ExaminerType.ASSISTANT_CHIEF: "Assistant chief examiner",
         ExaminerType.ASSISTANT: "Assistant examiner",
         ExaminerType.TEAM_LEADER: "Team leader",
     }[examiner_type]

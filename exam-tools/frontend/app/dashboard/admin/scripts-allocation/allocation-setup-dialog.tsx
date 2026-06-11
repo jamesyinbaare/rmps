@@ -13,6 +13,7 @@ import { REGION_OPTIONS } from "@/lib/school-enums";
 
 const EXAMINER_TYPE_OPTIONS: { value: ExaminerTypeApi; label: string }[] = [
   { value: "chief_examiner", label: "Chief examiner" },
+  { value: "assistant_chief_examiner", label: "Assistant chief examiner" },
   { value: "assistant_examiner", label: "Assistant examiner" },
   { value: "team_leader", label: "Team leader" },
 ];

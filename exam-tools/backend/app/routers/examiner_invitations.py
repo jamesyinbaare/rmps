@@ -58,6 +58,7 @@ _MAX_BULK_ROWS = 2000
 def _examiner_type_from_schema(s: ExaminerTypeSchema) -> ExaminerType:
     return {
         ExaminerTypeSchema.chief_examiner: ExaminerType.CHIEF,
+        ExaminerTypeSchema.assistant_chief_examiner: ExaminerType.ASSISTANT_CHIEF,
         ExaminerTypeSchema.assistant_examiner: ExaminerType.ASSISTANT,
         ExaminerTypeSchema.team_leader: ExaminerType.TEAM_LEADER,
     }[s]
@@ -66,6 +67,7 @@ def _examiner_type_from_schema(s: ExaminerTypeSchema) -> ExaminerType:
 def _examiner_type_to_schema(t: ExaminerType) -> ExaminerTypeSchema:
     return {
         ExaminerType.CHIEF: ExaminerTypeSchema.chief_examiner,
+        ExaminerType.ASSISTANT_CHIEF: ExaminerTypeSchema.assistant_chief_examiner,
         ExaminerType.ASSISTANT: ExaminerTypeSchema.assistant_examiner,
         ExaminerType.TEAM_LEADER: ExaminerTypeSchema.team_leader,
     }[t]

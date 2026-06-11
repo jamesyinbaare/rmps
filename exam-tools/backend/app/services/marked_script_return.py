@@ -32,6 +32,7 @@ from app.services.subject_marking_group import get_examiner_marking_group
 def _examiner_type_label(examiner_type: ExaminerType) -> str:
     return {
         ExaminerType.CHIEF: "Chief examiner",
+        ExaminerType.ASSISTANT_CHIEF: "Assistant chief examiner",
         ExaminerType.ASSISTANT: "Assistant examiner",
         ExaminerType.TEAM_LEADER: "Team leader",
     }[examiner_type]

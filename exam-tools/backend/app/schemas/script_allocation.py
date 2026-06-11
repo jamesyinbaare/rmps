@@ -9,6 +9,7 @@ from pydantic import BaseModel, Field, field_validator
 
 class ExaminerTypeSchema(str, Enum):
     chief_examiner = "chief_examiner"
+    assistant_chief_examiner = "assistant_chief_examiner"
     assistant_examiner = "assistant_examiner"
     team_leader = "team_leader"
 

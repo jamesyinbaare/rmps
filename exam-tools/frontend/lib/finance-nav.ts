@@ -8,6 +8,8 @@ import {
 export const FINANCE_HOME_HREF = "/dashboard/admin";
 
 export const OFFICIAL_RATES_HREF = "/dashboard/admin/official-rates";
+export const EXAMINER_RATES_HREF = "/dashboard/admin/examiner-rates";
+export const EXAMINER_PAYOUTS_HREF = "/dashboard/admin/examiner-payouts";
 export const CENTRE_SUMMARY_HREF = "/dashboard/admin/centre-summary";
 export const OFFICIAL_STATISTICS_HREF = "/dashboard/admin/official-statistics";
 export const FINANCE_CENTRE_SUMMARY_HREF = "/dashboard/admin/finance-centre-summary";
@@ -92,6 +94,12 @@ export const FINANCE_NAV_GROUPS: FinanceNavGroup[] = [
         description: "Single centre drill-down",
         icon: "centre",
       },
+      {
+        href: EXAMINER_PAYOUTS_HREF,
+        label: "Examiner payouts",
+        description: "Marking examiner allowances",
+        icon: "bank",
+      },
     ],
   },
   {
@@ -128,7 +136,13 @@ export const FINANCE_NAV_GROUPS: FinanceNavGroup[] = [
       {
         href: OFFICIAL_RATES_HREF,
         label: "Allowance rates",
-        description: "Daily rates & allowances",
+        description: "Centre official rates",
+        icon: "rates",
+      },
+      {
+        href: EXAMINER_RATES_HREF,
+        label: "Examiner rates",
+        description: "Role & subject allowances",
         icon: "rates",
       },
     ],
@@ -139,6 +153,8 @@ const FINANCE_PAGE_TITLES: [href: string, title: string][] = [
   [FINANCE_HOME_HREF, "Overview"],
   [BANK_DIRECTORY_HREF, "Bank directory"],
   [OFFICIAL_RATES_HREF, "Allowance rates"],
+  [EXAMINER_RATES_HREF, "Examiner rates"],
+  [EXAMINER_PAYOUTS_HREF, "Examiner payouts"],
   [OFFICIAL_ACCOUNTS_ADMIN_HREF, BANK_ACCOUNTS_LABEL],
   [CENTRE_SUMMARY_HREF, ACCOUNT_DETAILS_BY_CENTRE_LABEL],
   [OFFICIAL_STATISTICS_HREF, "Centre overview"],

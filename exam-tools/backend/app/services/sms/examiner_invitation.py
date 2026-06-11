@@ -23,6 +23,7 @@ SMS_SINGLE_SEGMENT_MAX_LEN = 160
 
 _EXAMINER_TYPE_ABBREVS = {
     "chief_examiner": "CE",
+    "assistant_chief_examiner": "ACE",
     "assistant_examiner": "AE",
     "team_leader": "TL",
 }
