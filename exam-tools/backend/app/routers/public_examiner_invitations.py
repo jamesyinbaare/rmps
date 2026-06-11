@@ -235,7 +235,7 @@ async def download_public_examiner_appointment_letter_pdf(
         try:
             from app.services.examiner_appointment_letter_pdf import build_examiner_appointment_letter_for_roster
 
-            pdf, filename = await build_examiner_appointment_letter_for_roster(resolved)
+            pdf, filename = await build_examiner_appointment_letter_for_roster(resolved, session)
         except ValueError as exc:
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
     else:
@@ -244,7 +244,7 @@ async def download_public_examiner_appointment_letter_pdf(
         except ValueError as exc:
             raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(exc)) from exc
         try:
-            pdf, filename = await build_examiner_appointment_letter_pdf(resolved.invitation)
+            pdf, filename = await build_examiner_appointment_letter_pdf(resolved.invitation, session)
         except ValueError as exc:
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
 

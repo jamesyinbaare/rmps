@@ -46,7 +46,8 @@ export function ExaminerAppointmentLetterSection({ token, inviteeName }: Props) 
             Appointment letter
           </h2>
           <p className="mt-1 text-sm leading-relaxed text-muted-foreground">
-            Download your official CTVET appointment letter for your records.
+            Download your official CTVET appointment letter for your records. Acceptance of your appointment is
+            confirmed on this dashboard when you confirm your availability.
           </p>
         </div>
       </div>

@@ -3,12 +3,13 @@
 from __future__ import annotations
 
 from datetime import datetime, timedelta
-from unittest.mock import AsyncMock, MagicMock, patch
+from decimal import Decimal
+from unittest.mock import AsyncMock, MagicMock
 from uuid import uuid4
 
 import pytest
 
-from app.models import ExaminerInvitationStatus, ExaminerType, Region, Subject
+from app.models import ExaminerAllowanceType, ExaminerInvitationStatus, ExaminerType, Region, Subject
 from app.services.examiner_invitation import public_invitation_view
 from app.services.examiner_public_profile import (
     get_scripts_allocation_for_invitation,
@@ -122,18 +123,101 @@ async def test_get_scripts_allocation_for_invitation_empty_when_no_runs() -> Non
 
 
 def test_appointment_letter_pdf_returns_pdf_bytes() -> None:
-    from app.services.examiner_appointment_letter_pdf import _render_appointment_letter_pdf_sync
+    from app.services.examiner_appointment_letter_pdf import (
+        _appointment_role_context,
+        _render_appointment_letter_pdf_sync,
+    )
 
     pdf = _render_appointment_letter_pdf_sync(
-        examination_label_str="NovDec 2026 (Series)",
-        invitee_name="Jane Doe",
-        phone_number="0551234567",
-        examiner_type_label="Assistant examiner",
-        subject_label="Mathematics (MATH301)",
-        region="Ashanti",
-        coordination_date="Friday, 20 June 2026",
+        context={
+            "examination_label": "NovDec 2026 (Series)",
+            "examination_label_upper": "NOVDEC 2026 (SERIES)",
+            "invitee_name": "Jane Doe",
+            "phone_number": "0551234567",
+            "examiner_type_label": "Assistant examiner",
+            "subject_label": "Mathematics (MATH301)",
+            "subject_name": "Mathematics",
+            "region": "Ashanti",
+            "coordination_date": "Friday, 20 June 2026",
+            **_appointment_role_context(ExaminerType.ASSISTANT),
+            "marking_fee_amount": "Ghs 3.50",
+            "responsibility_allowance": "Ghs 70.00",
+            "inconvenience_allowance": "Ghs 70.00",
+            "travel_and_transport_amount": "Ghs 700.00",
+            "internal_commuting": "Ghs 100.00",
+        },
+        reference_number="CTVET/EXM/1/MATH301/ABCD1234",
     )
     assert pdf.startswith(b"%PDF")
+
+
+def test_appointment_role_context_chief_examiner() -> None:
+    from app.services.examiner_appointment_letter_pdf import _appointment_role_context
+
+    ctx = _appointment_role_context(ExaminerType.CHIEF)
+    assert ctx["examiner_role_title"] == "Chief Examiner"
+    assert ctx["conditions_section_heading"] == "CONDITIONS OF APPOINTMENT AS A CHIEF EXAMINER"
+    assert ctx["fees_section_heading"] == "FEES FOR CHIEF EXAMINERS: PAPER 2 (ESSAY/WRITTEN TEST)"
+    assert ctx["show_red_marking_pen_instruction"] is False
+    assert ctx["show_green_vetting_pen_instruction"] is True
+
+
+def test_build_appointment_fee_context_from_rates_uses_subject_and_region_only() -> None:
+    from app.services.examiner_appointment_letter_pdf import _build_appointment_fee_context_from_rates
+
+    zone_id = uuid4()
+    subject_id = 10
+    other_subject_id = 20
+
+    role_rates = {
+        (ExaminerType.ASSISTANT, ExaminerAllowanceType.RESPONSIBILITY): Decimal("70"),
+        (ExaminerType.ASSISTANT, ExaminerAllowanceType.INCONVENIENCE): Decimal("70"),
+        (ExaminerType.ASSISTANT, ExaminerAllowanceType.INTERNAL_COMMUTING): Decimal("100"),
+    }
+    marking_rates = {
+        (subject_id, 2): Decimal("3.50"),
+        (other_subject_id, 2): Decimal("4.00"),
+    }
+    travel_rates = {
+        Region.ASHANTI: Decimal("350"),
+        Region.GREATER_ACCRA: Decimal("200"),
+    }
+    travel_zones = {
+        Region.ASHANTI: zone_id,
+        Region.GREATER_ACCRA: uuid4(),
+    }
+    travel_role_factors = {
+        (ExaminerType.ASSISTANT, zone_id): Decimal("2"),
+    }
+
+    context = _build_appointment_fee_context_from_rates(
+        role_rates=role_rates,
+        marking_rates=marking_rates,
+        travel_rates=travel_rates,
+        travel_zones=travel_zones,
+        travel_role_factors=travel_role_factors,
+        examiner_type=ExaminerType.ASSISTANT,
+        region=Region.ASHANTI,
+        subject_id=subject_id,
+    )
+
+    assert context["marking_fee_amount"] == "Ghs 3.50"
+    assert context["travel_and_transport_amount"] == "Ghs 700.00"
+    assert "travel_zone_lines" not in context
+    assert "marking_fee_lines" not in context
+
+
+def test_compute_travel_payable_returns_none_when_region_unconfigured() -> None:
+    from app.services.examiner_appointment_letter_pdf import _compute_travel_payable
+
+    amount = _compute_travel_payable(
+        region=Region.ASHANTI,
+        examiner_type=ExaminerType.ASSISTANT,
+        travel_rates={},
+        travel_zones={},
+        travel_role_factors={},
+    )
+    assert amount is None
 
 
 @pytest.mark.asyncio

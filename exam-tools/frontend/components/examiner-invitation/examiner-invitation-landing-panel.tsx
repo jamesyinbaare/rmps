@@ -3,6 +3,7 @@
 import { useEffect, useId, useState } from "react";
 import { BookOpen, CalendarClock, CheckCircle2, MapPin, UserCircle, XCircle } from "lucide-react";
 
+import { ExaminerAcceptanceStatement } from "@/components/examiner-invitation/examiner-acceptance-statement";
 import {
   ExaminerInvitationDetailTile,
   formatCoordinationDate,
@@ -197,6 +198,14 @@ export function ExaminerInvitationLandingPanel({
 
           <ExaminerMarkingScheduleSection cohorts={markingCohorts} />
 
+          {canRespond ? (
+            <ExaminerAcceptanceStatement
+              invitation={invitation}
+              heading="Acceptance statement"
+              className="mt-5 rounded-2xl border border-border/70 bg-muted/20 px-4 py-4"
+            />
+          ) : null}
+
           {actionMessage ? (
             <div
               className="mt-5 rounded-2xl border border-primary/20 bg-primary/5 px-4 py-3 text-sm leading-relaxed text-foreground"
@@ -264,9 +273,15 @@ export function ExaminerInvitationLandingPanel({
             </h2>
             <p className="mt-2 text-sm leading-relaxed text-muted-foreground">
               {confirmAction === "accept"
-                ? "We're glad you're available. Type accept below to confirm you're taking on this role."
+                ? "Please read the acceptance statement below, then type accept to confirm you are taking on this role."
                 : "We're sorry you can't take this role. Once you decline, you won't be able to change your answer on this page—please contact the exam office if your plans change."}
             </p>
+            {confirmAction === "accept" ? (
+              <ExaminerAcceptanceStatement
+                invitation={invitation}
+                className="mt-4 rounded-xl border border-border/70 bg-muted/25 px-3.5 py-3.5"
+              />
+            ) : null}
             <div className="mt-4">
               <label className={formLabelClass} htmlFor={confirmInputId}>
                 {confirmAction === "accept" ? "To confirm, type " : "To decline, type "}

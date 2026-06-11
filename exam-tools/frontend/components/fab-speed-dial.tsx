@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useState, type ComponentType, type CSSProperties } from "react";
+import { useCallback, useEffect, useRef, useState, type ComponentType } from "react";
 import { Loader2 } from "lucide-react";
 
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
@@ -27,19 +27,7 @@ const mainFabClass = cn(
 
 const mainFabEnabledClass = "ring-1 ring-secondary/40 motion-safe:hover:shadow-xl";
 
-const mainFabHint = "Tap for more actions";
-
-const optionItemClass =
-  "inline-flex transition-[opacity,transform] duration-300 ease-[cubic-bezier(0.34,1.56,0.64,1)] motion-reduce:transition-none";
-
-function optionItemStyle(index: number, menuOpen: boolean): CSSProperties {
-  const delayMs = menuOpen ? index * 50 : 0;
-  return {
-    transitionDelay: `${delayMs}ms`,
-    opacity: menuOpen ? 1 : 0,
-    transform: menuOpen ? "translateY(0) scale(1)" : "translateY(0.5rem) scale(0.85)",
-  };
-}
+const mainFabHint = "Click for more actions";
 
 export type FabSpeedDialOption = {
   key: string;
@@ -67,12 +55,27 @@ export function FabSpeedDial({
   mainIcon: MainIcon,
   sectionLabel = "Actions",
 }: Props) {
-  const [pinned, setPinned] = useState(false);
-  const [hovered, setHovered] = useState(false);
-  const expanded = pinned;
-  const menuOpen = hovered || expanded;
+  const [open, setOpen] = useState(false);
+  const rootRef = useRef<HTMLDivElement>(null);
 
-  const close = useCallback(() => setPinned(false), []);
+  const close = useCallback(() => setOpen(false), []);
+
+  useEffect(() => {
+    if (!open) return;
+    function onPointerDown(event: PointerEvent) {
+      if (rootRef.current?.contains(event.target as Node)) return;
+      close();
+    }
+    function onKeyDown(event: KeyboardEvent) {
+      if (event.key === "Escape") close();
+    }
+    document.addEventListener("pointerdown", onPointerDown);
+    document.addEventListener("keydown", onKeyDown);
+    return () => {
+      document.removeEventListener("pointerdown", onPointerDown);
+      document.removeEventListener("keydown", onKeyDown);
+    };
+  }, [open, close]);
 
   const handleMainClick = () => {
     if (disabled || busy) return;
@@ -81,9 +84,7 @@ export function FabSpeedDial({
       if (opt && !opt.disabled) onSelect(opt.key);
       return;
     }
-    if (typeof window !== "undefined" && window.matchMedia("(hover: none)").matches) {
-      setPinned((open) => !open);
-    }
+    setOpen((value) => !value);
   };
 
   const handleSelect = (key: string, optionDisabled?: boolean) => {
@@ -95,8 +96,14 @@ export function FabSpeedDial({
   if (options.length === 0) return null;
 
   const optionMenuClass = cn(
-    "pointer-events-none absolute top-full left-1/2 z-30 mt-2 flex -translate-x-1/2 flex-col items-center gap-2",
-    menuOpen && "pointer-events-auto",
+    "pointer-events-none absolute top-full left-1/2 z-30 flex -translate-x-1/2 flex-col items-center gap-2 pt-2",
+    "opacity-0 motion-safe:translate-y-1 motion-safe:scale-95 motion-reduce:translate-y-0 motion-reduce:scale-100",
+    "transition-[opacity,transform] duration-200 ease-out",
+    "group-hover/fab:pointer-events-auto group-hover/fab:opacity-100",
+    "group-hover/fab:motion-safe:translate-y-0 group-hover/fab:motion-safe:scale-100",
+    "group-focus-within/fab:pointer-events-auto group-focus-within/fab:opacity-100",
+    "group-focus-within/fab:motion-safe:translate-y-0 group-focus-within/fab:motion-safe:scale-100",
+    open && "pointer-events-auto opacity-100 motion-safe:translate-y-0 motion-safe:scale-100",
   );
 
   if (options.length === 1) {
@@ -133,16 +140,8 @@ export function FabSpeedDial({
   return (
     <TooltipProvider delayDuration={350} skipDelayDuration={80}>
       <div
-        className={cn("group/fab relative inline-flex", expanded && "fab-expanded")}
-        onMouseEnter={() => setHovered(true)}
-        onMouseLeave={() => {
-          setHovered(false);
-          if (pinned) close();
-        }}
-        onFocus={() => setHovered(true)}
-        onBlur={(e) => {
-          if (!e.currentTarget.contains(e.relatedTarget as Node | null)) setHovered(false);
-        }}
+        ref={rootRef}
+        className={cn("group/fab relative inline-flex", open && "fab-open")}
       >
         <Tooltip>
           <TooltipTrigger asChild>
@@ -151,7 +150,7 @@ export function FabSpeedDial({
                 type="button"
                 className={cn(mainFabClass, !disabled && !busy && mainFabEnabledClass)}
                 disabled={disabled || busy}
-                aria-expanded={expanded}
+                aria-expanded={open}
                 aria-haspopup="menu"
                 aria-label={busy ? "Working…" : sectionLabel}
                 title={
@@ -183,14 +182,12 @@ export function FabSpeedDial({
             return (
               <Tooltip key={opt.key}>
                 <TooltipTrigger asChild>
-                  <span
-                    className={optionItemClass}
-                    style={optionItemStyle(index, menuOpen)}
-                  >
+                  <span className="inline-flex">
                     <button
                       type="button"
                       role="menuitem"
                       className={optionFabClass}
+                      style={{ transitionDelay: open ? `${index * 50}ms` : undefined }}
                       disabled={optionDisabled}
                       aria-label={opt.label}
                       title={opt.label}
