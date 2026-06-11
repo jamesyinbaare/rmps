@@ -291,6 +291,8 @@ async def build_return_filters(
                     "examiner_id": examiner.id,
                     "examiner_name": examiner.name,
                     "examiner_type": _examiner_type_label(examiner.examiner_type),
+                    "region": examiner.region.value,
+                    "phone_number": examiner.phone_number,
                     "pending_count": pending_total,
                     "verified_count": verified_total,
                 }

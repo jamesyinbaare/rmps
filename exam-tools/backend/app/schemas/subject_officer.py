@@ -92,6 +92,8 @@ class MarkedScriptReturnExaminerOption(BaseModel):
     examiner_id: UUID
     examiner_name: str
     examiner_type: str
+    region: str
+    phone_number: str | None = None
     pending_count: int
     verified_count: int
 

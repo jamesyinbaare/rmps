@@ -32,7 +32,7 @@ export function SubjectOfficerExamSelector({
 
   if (loading) {
     return (
-      <div className={compact ? "min-w-48" : "max-w-md"}>
+      <div className={compact ? "min-w-0 w-full sm:min-w-48 sm:max-w-xs" : "max-w-md"}>
         <span className={labelClass}>Examination</span>
         <select className={cn(controlClass, "opacity-60")} disabled aria-busy="true">
           <option>Loading examinations…</option>
@@ -48,7 +48,7 @@ export function SubjectOfficerExamSelector({
   }
 
   return (
-    <div className={compact ? "min-w-48 flex-1 sm:max-w-xs" : "max-w-md"}>
+    <div className={compact ? "min-w-0 w-full flex-1 sm:min-w-48 sm:max-w-xs" : "max-w-md"}>
       <label className={labelClass} htmlFor="so-exam-select">
         Examination
       </label>

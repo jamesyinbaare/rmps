@@ -51,6 +51,7 @@ type Props = {
   isSuperAdmin: boolean;
   lockedSubjectIds?: number[];
   embedded?: boolean;
+  pageScroll?: boolean;
   loadExaminerGroups?: boolean;
   onRosterCountChange?: (count: number) => void;
 };
@@ -67,6 +68,7 @@ export function ExaminersRosterPanel({
   isSuperAdmin,
   lockedSubjectIds,
   embedded = false,
+  pageScroll = false,
   loadExaminerGroups = true,
   onRosterCountChange,
 }: Props) {
@@ -495,7 +497,11 @@ export function ExaminersRosterPanel({
 
       <section
         className={cn(
-          embedded ? "flex min-h-0 flex-1 flex-col" : EXAMINERS_PANEL_CLASS,
+          embedded && !pageScroll
+            ? "flex min-h-0 flex-1 flex-col overflow-hidden"
+            : embedded
+              ? "flex flex-col"
+              : EXAMINERS_PANEL_CLASS,
           !embedded && "flex min-h-0 flex-1 flex-col",
         )}
       >
@@ -536,9 +542,14 @@ export function ExaminersRosterPanel({
           showBulkUpload={isSuperAdmin}
           busy={busy || loading}
           disabled={examId == null}
+          embedded={embedded}
         />
 
-        <div className="flex min-h-0 flex-1 flex-col gap-2 p-2 sm:p-3">
+        <div
+          className={cn(
+            pageScroll ? "flex flex-col gap-2 p-2 sm:p-3" : "flex min-h-0 flex-1 flex-col overflow-hidden",
+          )}
+        >
             {!loading && examiners.length === 0 ? (
               <div className="flex min-h-[14rem] flex-col items-center justify-center gap-4 rounded-xl border border-dashed border-border bg-muted/20 px-6 py-12 text-center">
                 <div className="space-y-1">
@@ -583,6 +594,7 @@ export function ExaminersRosterPanel({
                 }}
                 onEdit={openEdit}
                 onRemove={(row) => void handleRemove(row)}
+                pageScroll={pageScroll}
                 onViewAllocation={
                   lockedSubjectIds != null
                     ? (row) => {

@@ -21,6 +21,10 @@ import {
   MAX_CUSTOM_PAGE_SIZE,
   PAGE_SIZE_PRESETS,
 } from "@/components/examiner-invitations/constants";
+import {
+  EXAMINERS_TABLE_INNER_SCROLL_CLASS,
+  EXAMINERS_TABLE_SCROLL_CONTAINER_CLASS,
+} from "@/components/examiners/constants";
 import { InvitationRowActionsMenu } from "@/components/examiner-invitations/invitation-row-actions-menu";
 import { InvitationStatusBadge } from "@/components/examiner-invitations/invitation-status-badge";
 import type { ResendUiState } from "@/components/examiner-invitations/types";
@@ -56,6 +60,8 @@ type Props = {
   onCopyLink?: (inv: ExaminerInvitationRow) => void;
   copyLinkUi?: Record<string, "copied" | "error">;
   onViewAllocation?: (inv: ExaminerInvitationRow) => void;
+  /** When true, table grows with content and the page/shell scrolls (subject-officer). */
+  pageScroll?: boolean;
 };
 
 export function InvitationsTable({
@@ -81,6 +87,7 @@ export function InvitationsTable({
   onCopyLink,
   copyLinkUi = {},
   onViewAllocation,
+  pageScroll = false,
 }: Props) {
   const [openActionsId, setOpenActionsId] = useState<string | null>(null);
 
@@ -258,28 +265,46 @@ export function InvitationsTable({
   }
 
   const page = pagination.pageIndex + 1;
+  const scrollClass = pageScroll
+    ? EXAMINERS_TABLE_SCROLL_CONTAINER_CLASS
+    : EXAMINERS_TABLE_INNER_SCROLL_CLASS;
+
+  const paginationBlock = (
+    <OfficialAccountsPagination
+      page={page}
+      pageSize={pagination.pageSize}
+      total={rows.length}
+      busy={busy}
+      recordLabel="invitation"
+      pageSizeOptions={[...PAGE_SIZE_PRESETS]}
+      showCustomPageSizeInput={showCustomPageSizeInput}
+      customPageSizeInput={customPageSizeInput}
+      onPageSizeSelectChange={onPageSizeSelectChange}
+      onCustomPageSizeChange={onCustomPageSizeChange}
+      onCustomPageSizeBlur={onCustomPageSizeBlur}
+      maxCustomPageSize={MAX_CUSTOM_PAGE_SIZE}
+      onPageChange={(p) => onPaginationChange({ ...pagination, pageIndex: p - 1 })}
+      onPageSizeChange={(size) => onPaginationChange({ pageIndex: 0, pageSize: size })}
+    />
+  );
+
+  if (pageScroll) {
+    return (
+      <div className="flex flex-col gap-2">
+        <div className={scrollClass}>
+          <DataTable table={table} emptyMessage="No invitations match the filters." striped />
+        </div>
+        {paginationBlock}
+      </div>
+    );
+  }
 
   return (
-    <div className="flex min-h-0 flex-1 flex-col">
-      <div className="min-h-0 flex-1 overflow-auto overscroll-contain">
+    <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
+      <div className={scrollClass}>
         <DataTable table={table} emptyMessage="No invitations match the filters." striped stickyHeader />
       </div>
-      <OfficialAccountsPagination
-        page={page}
-        pageSize={pagination.pageSize}
-        total={rows.length}
-        busy={busy}
-        recordLabel="invitation"
-        pageSizeOptions={[...PAGE_SIZE_PRESETS]}
-        showCustomPageSizeInput={showCustomPageSizeInput}
-        customPageSizeInput={customPageSizeInput}
-        onPageSizeSelectChange={onPageSizeSelectChange}
-        onCustomPageSizeChange={onCustomPageSizeChange}
-        onCustomPageSizeBlur={onCustomPageSizeBlur}
-        maxCustomPageSize={MAX_CUSTOM_PAGE_SIZE}
-        onPageChange={(p) => onPaginationChange({ ...pagination, pageIndex: p - 1 })}
-        onPageSizeChange={(size) => onPaginationChange({ pageIndex: 0, pageSize: size })}
-      />
+      <div className="shrink-0 border-t border-border bg-card">{paginationBlock}</div>
     </div>
   );
 }

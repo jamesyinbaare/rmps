@@ -99,10 +99,20 @@ const inputFocusRing =
   "focus:border-primary focus:outline-none focus:ring-2 focus:ring-ring/30";
 
 function SubjectOfficerExamChrome() {
+  const pathname = usePathname();
   const { assignments, loading } = useSubjectOfficerAssignments();
   const examIds = assignments.map((a) => a.examination_id);
   const { examId, setExamId } = useSubjectOfficerExamUrl({ examIds, requireSelection: true });
   const subjectSummary = subjectNamesSummary(assignments, examId);
+
+  if (
+    pathname === "/dashboard/subject-officer" ||
+    pathname.startsWith("/dashboard/subject-officer/examiners") ||
+    pathname.startsWith("/dashboard/subject-officer/allocations") ||
+    pathname.startsWith("/dashboard/subject-officer/marked-script-returns")
+  ) {
+    return null;
+  }
 
   return (
     <SubjectOfficerExamBar
@@ -271,7 +281,8 @@ export function DashboardShell({ title, children, staffRole }: Props) {
         </div>
       </aside>
 
-      <div className="lg:pl-64">
+      <div className={cn("lg:pl-64", isSubjectOfficer && "flex h-dvh max-h-dvh flex-col overflow-hidden")}>
+        <div className={isSubjectOfficer ? "shrink-0" : undefined}>
         <DashboardStickyHeader
           title={title}
           subtitle={
@@ -295,8 +306,18 @@ export function DashboardShell({ title, children, staffRole }: Props) {
         />
 
         {isSubjectOfficer ? <SubjectOfficerExamChrome /> : null}
+        </div>
 
-        <main className="mx-auto max-w-6xl px-4 py-6 sm:px-6">{children}</main>
+        <main
+          className={cn(
+            "mx-auto w-full px-4 py-6 sm:px-6",
+            isSubjectOfficer
+              ? "scrollbar-hide min-h-0 max-w-[1600px] flex-1 overflow-x-hidden overflow-y-auto overscroll-y-contain"
+              : "max-w-6xl",
+          )}
+        >
+          {children}
+        </main>
       </div>
     </div>
   );

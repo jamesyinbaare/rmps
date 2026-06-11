@@ -51,9 +51,10 @@ function snapshotFromGroup(group: ExaminerGroupRow): CohortFormSnapshot {
 type Props = {
   examId: number | null;
   embedded?: boolean;
+  pageScroll?: boolean;
 };
 
-export function ExaminersGroupsPanel({ examId, embedded = false }: Props) {
+export function ExaminersGroupsPanel({ examId, embedded = false, pageScroll = false }: Props) {
   const [examiners, setExaminers] = useState<ExaminerRow[]>([]);
   const [groups, setGroups] = useState<ExaminerGroupRow[]>([]);
   const [loading, setLoading] = useState(false);
@@ -346,9 +347,12 @@ export function ExaminersGroupsPanel({ examId, embedded = false }: Props) {
   const softWarning =
     membership.selectedCount === 0 ? "This group has no examiners yet." : null;
 
-  const panelClass = embedded
-    ? "flex min-h-0 flex-1 flex-col overflow-hidden"
-    : cn(EXAMINERS_PANEL_CLASS, "flex min-h-0 flex-1 flex-col overflow-hidden");
+  const panelClass =
+    embedded && !pageScroll
+      ? "flex min-h-0 flex-1 flex-col overflow-hidden"
+      : embedded
+        ? "flex flex-col"
+        : cn(EXAMINERS_PANEL_CLASS, "flex min-h-0 flex-1 flex-col overflow-hidden");
 
   return (
     <div className={panelClass}>
@@ -440,7 +444,7 @@ export function ExaminersGroupsPanel({ examId, embedded = false }: Props) {
             onToggleExaminer={membership.toggleExaminer}
             onSaveDetails={() => handleSaveDetails()}
             onCancelDetailsEdit={cancelDetailsEdit}
-            onSaveMembership={() => handleSaveMembership()}
+            onSaveMembership={() => void handleSaveMembership()}
             onDelete={isCreating ? undefined : () => void handleDelete()}
             onClose={closeModal}
             peopleOverrideWarning="Saving regions replaces manual member changes. Your current selection will be saved as shown."

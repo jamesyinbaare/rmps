@@ -4587,6 +4587,8 @@ export type MarkedScriptReturnExaminerOption = {
   examiner_id: string;
   examiner_name: string;
   examiner_type: string;
+  region: string;
+  phone_number: string | null;
   pending_count: number;
   verified_count: number;
 };

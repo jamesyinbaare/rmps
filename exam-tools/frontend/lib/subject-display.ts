@@ -1,7 +1,7 @@
 /** Prefer official original subject code when present (matches examiners admin UI). */
 
 export function subjectDisplayCode(subject: {
-  code: string;
+  code?: string;
   original_code?: string | null;
   subject_original_code?: string | null;
   subject_code?: string;
@@ -12,8 +12,8 @@ export function subjectDisplayCode(subject: {
 }
 
 export function subjectDisplayLabel(subject: {
-  code: string;
-  name: string;
+  code?: string;
+  name?: string;
   original_code?: string | null;
   subject_original_code?: string | null;
   subject_code?: string;

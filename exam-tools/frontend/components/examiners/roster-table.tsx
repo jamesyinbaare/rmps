@@ -12,15 +12,18 @@ import {
   type SortingState,
   type VisibilityState,
 } from "@tanstack/react-table";
-import { Check, Copy, Loader2 } from "lucide-react";
+import { Loader2 } from "lucide-react";
 
 import { DataTable } from "@/components/data-table";
 import {
   DEFAULT_PAGE_SIZE,
+  EXAMINERS_TABLE_INNER_SCROLL_CLASS,
+  EXAMINERS_TABLE_SCROLL_CONTAINER_CLASS,
   INPUT_FOCUS_RING,
   MAX_CUSTOM_PAGE_SIZE,
   PAGE_SIZE_PRESETS,
 } from "@/components/examiners/constants";
+import { RosterRowActionsMenu } from "@/components/examiners/roster-row-actions-menu";
 import type { RosterTableRow } from "@/components/examiners/types";
 import { humanizeRegion } from "@/components/examiners/utils";
 import { EXAMINER_TYPE_LABELS } from "@/components/examiner-invitations/constants";
@@ -47,6 +50,8 @@ type Props = {
   onEdit: (row: RosterTableRow) => void;
   onRemove: (row: RosterTableRow) => void;
   onViewAllocation?: (row: RosterTableRow) => void;
+  /** When true, table grows with content and the page/shell scrolls (subject-officer). */
+  pageScroll?: boolean;
 };
 
 export function RosterTable({
@@ -69,8 +74,10 @@ export function RosterTable({
   onEdit,
   onRemove,
   onViewAllocation,
+  pageScroll = false,
 }: Props) {
   const [copyUi, setCopyUi] = useState<Record<string, "copied" | "error">>({});
+  const [openActionsId, setOpenActionsId] = useState<string | null>(null);
 
   const handleCopyPortalLink = useCallback(async (row: RosterTableRow) => {
     if (!row.portal_url) {
@@ -159,29 +166,6 @@ export function RosterTable({
         },
       },
       {
-        id: "portal",
-        header: "Portal link",
-        enableSorting: false,
-        cell: ({ row }) => {
-          const state = copyUi[row.original.id];
-          return (
-            <button
-              type="button"
-              className="inline-flex items-center gap-1.5 text-xs text-primary underline-offset-2 hover:underline disabled:opacity-50"
-              disabled={busy || !row.original.portal_url}
-              onClick={() => void handleCopyPortalLink(row.original)}
-            >
-              {state === "copied" ? (
-                <Check className="size-3.5" aria-hidden />
-              ) : (
-                <Copy className="size-3.5" aria-hidden />
-              )}
-              {state === "copied" ? "Copied" : state === "error" ? "Copy failed" : "Copy link"}
-            </button>
-          );
-        },
-      },
-      {
         id: "group",
         accessorFn: (row) => row.groupLabel ?? "",
         header: "Group",
@@ -191,42 +175,38 @@ export function RosterTable({
       },
       {
         id: "actions",
-        header: "",
+        header: "Actions",
         enableSorting: false,
         enableHiding: false,
+        meta: {
+          headerClassName: "text-right",
+          cellClassName: "text-right align-middle",
+          sortAriaLabel: "Actions",
+        },
         cell: ({ row }) => (
-          <div className="flex flex-wrap gap-2">
-            <button
-              type="button"
-              className="text-sm text-primary underline-offset-2 hover:underline"
-              disabled={busy}
-              onClick={() => onEdit(row.original)}
-            >
-              Edit
-            </button>
-            <button
-              type="button"
-              className="text-sm text-destructive underline-offset-2 hover:underline"
-              disabled={busy}
-              onClick={() => onRemove(row.original)}
-            >
-              Remove
-            </button>
-            {onViewAllocation ? (
-              <button
-                type="button"
-                className="text-sm text-primary underline-offset-2 hover:underline"
-                disabled={busy || row.original.subject_ids[0] == null}
-                onClick={() => onViewAllocation(row.original)}
-              >
-                View allocation
-              </button>
-            ) : null}
-          </div>
+          <RosterRowActionsMenu
+            row={row.original}
+            open={openActionsId === row.original.id}
+            onOpenChange={(next) => setOpenActionsId(next ? row.original.id : null)}
+            busy={busy}
+            copyLinkState={copyUi[row.original.id]}
+            onEdit={onEdit}
+            onRemove={onRemove}
+            onCopyPortalLink={handleCopyPortalLink}
+            onViewAllocation={onViewAllocation}
+          />
         ),
       },
     ],
-    [busy, copyUi, handleCopyPortalLink, onEdit, onRemove, onViewAllocation],
+    [
+      busy,
+      copyUi,
+      handleCopyPortalLink,
+      onEdit,
+      onRemove,
+      onViewAllocation,
+      openActionsId,
+    ],
   );
 
   const table = useReactTable({
@@ -268,28 +248,46 @@ export function RosterTable({
   if (rows.length === 0) return null;
 
   const page = pagination.pageIndex + 1;
+  const scrollClass = pageScroll
+    ? EXAMINERS_TABLE_SCROLL_CONTAINER_CLASS
+    : EXAMINERS_TABLE_INNER_SCROLL_CLASS;
+
+  const paginationBlock = (
+    <OfficialAccountsPagination
+      page={page}
+      pageSize={pagination.pageSize}
+      total={rows.length}
+      busy={busy}
+      recordLabel="examiner"
+      pageSizeOptions={[...PAGE_SIZE_PRESETS]}
+      showCustomPageSizeInput={showCustomPageSizeInput}
+      customPageSizeInput={customPageSizeInput}
+      onPageSizeSelectChange={onPageSizeSelectChange}
+      onCustomPageSizeChange={onCustomPageSizeChange}
+      onCustomPageSizeBlur={onCustomPageSizeBlur}
+      maxCustomPageSize={MAX_CUSTOM_PAGE_SIZE}
+      onPageChange={(p) => onPaginationChange({ ...pagination, pageIndex: p - 1 })}
+      onPageSizeChange={(size) => onPaginationChange({ pageIndex: 0, pageSize: size })}
+    />
+  );
+
+  if (pageScroll) {
+    return (
+      <div className="flex flex-col gap-2">
+        <div className={scrollClass}>
+          <DataTable table={table} emptyMessage="No examiners match the filters." striped />
+        </div>
+        {paginationBlock}
+      </div>
+    );
+  }
 
   return (
-    <div className="flex min-h-0 flex-1 flex-col">
-      <div className="min-h-0 flex-1 overflow-auto overscroll-contain">
+    <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
+      <div className={scrollClass}>
         <DataTable table={table} emptyMessage="No examiners match the filters." striped stickyHeader />
       </div>
-      <OfficialAccountsPagination
-        page={page}
-        pageSize={pagination.pageSize}
-        total={rows.length}
-        busy={busy}
-        recordLabel="examiner"
-        pageSizeOptions={[...PAGE_SIZE_PRESETS]}
-        showCustomPageSizeInput={showCustomPageSizeInput}
-        customPageSizeInput={customPageSizeInput}
-        onPageSizeSelectChange={onPageSizeSelectChange}
-        onCustomPageSizeChange={onCustomPageSizeChange}
-        onCustomPageSizeBlur={onCustomPageSizeBlur}
-        maxCustomPageSize={MAX_CUSTOM_PAGE_SIZE}
-        onPageChange={(p) => onPaginationChange({ ...pagination, pageIndex: p - 1 })}
-        onPageSizeChange={(size) => onPaginationChange({ pageIndex: 0, pageSize: size })}
-      />
+      <div className="shrink-0 border-t border-border bg-card">{paginationBlock}</div>
     </div>
   );
 }

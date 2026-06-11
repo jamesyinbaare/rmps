@@ -266,6 +266,97 @@
   @apply bg-muted-foreground/50;
 }
 
+@layer utilities {
+  .scrollbar-hide {
+    -ms-overflow-style: none;
+    scrollbar-width: none;
+  }
+
+  .scrollbar-hide::-webkit-scrollbar {
+    display: none;
+  }
+}
+
+/* Subject-officer overview: calendar fills its desktop shell without inner scroll. */
+@layer components {
+  @media (min-width: 1024px) {
+    .so-marking-calendar-shell {
+      display: flex;
+      height: 100%;
+      min-height: 0;
+      flex-direction: column;
+      overflow: hidden;
+    }
+
+    .so-marking-calendar-shell .so-marking-calendar-body {
+      display: flex;
+      min-height: 0;
+      flex: 1 1 0%;
+      flex-direction: column;
+      overflow: hidden;
+    }
+
+    .so-marking-calendar-shell .so-marking-calendar-body .rdp-root {
+      display: flex;
+      height: 100%;
+      min-height: 0;
+      flex: 1 1 0%;
+      flex-direction: column;
+    }
+
+    .so-marking-calendar-shell .so-marking-calendar-body .rdp-months {
+      display: flex;
+      min-height: 0;
+      flex: 1 1 0%;
+      flex-direction: column;
+    }
+
+    .so-marking-calendar-shell .so-marking-calendar-body .rdp-month {
+      display: flex;
+      min-height: 0;
+      flex: 1 1 0%;
+      flex-direction: column;
+    }
+
+    .so-marking-calendar-shell .so-marking-calendar-body .rdp-month_caption {
+      flex-shrink: 0;
+    }
+
+    .so-marking-calendar-shell .so-marking-calendar-body .rdp-month_grid {
+      height: 100%;
+      min-height: 0;
+      flex: 1 1 0%;
+      table-layout: fixed;
+      border-collapse: collapse;
+    }
+
+    .so-marking-calendar-shell .so-marking-calendar-body .rdp-month_grid thead tr {
+      height: auto;
+    }
+
+    .so-marking-calendar-shell .so-marking-calendar-body .rdp-month_grid tbody tr {
+      height: 1%;
+    }
+
+    .so-marking-calendar-shell .so-marking-calendar-body .rdp-day {
+      height: 100%;
+      padding: 2px;
+      vertical-align: middle;
+    }
+
+    .so-marking-calendar-shell .so-marking-calendar-body .rdp-day_button,
+    .so-marking-calendar-shell .so-marking-calendar-body .rdp-day button {
+      height: 100%;
+      width: 100%;
+      min-height: 0;
+    }
+
+    .so-marking-calendar-shell .so-marking-calendar-body .rdp-day button:hover {
+      z-index: 15;
+    }
+  }
+}
+
 @media print {
   /* When printing from the examination notice page, hide chrome and the exam picker. */
   body.printing-examination-notice * {

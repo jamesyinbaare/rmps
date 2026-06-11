@@ -7,6 +7,7 @@ import type { VisibilityState } from "@tanstack/react-table";
 
 import {
   EXAMINERS_COMMAND_BAR_CLASS,
+  EXAMINERS_COMMAND_BAR_EMBEDDED_CLASS,
   INPUT_FOCUS_RING,
   ROSTER_COLUMN_TOGGLE_OPTIONS,
   ROSTER_DEFAULT_COLUMN_VISIBILITY,
@@ -52,6 +53,7 @@ type Props = {
   showBulkUpload: boolean;
   busy: boolean;
   disabled?: boolean;
+  embedded?: boolean;
 };
 
 export function RosterCommandBar({
@@ -82,6 +84,7 @@ export function RosterCommandBar({
   showBulkUpload,
   busy,
   disabled,
+  embedded = false,
 }: Props) {
   const [columnsOpen, setColumnsOpen] = useState(false);
   const actionsDisabled = disabled || busy;
@@ -94,7 +97,7 @@ export function RosterCommandBar({
         : "Send SMS";
 
   return (
-    <div className={EXAMINERS_COMMAND_BAR_CLASS}>
+    <div className={embedded ? EXAMINERS_COMMAND_BAR_EMBEDDED_CLASS : EXAMINERS_COMMAND_BAR_CLASS}>
       <div
         className={cn(
           officialAccountsCommandBarRowClass,

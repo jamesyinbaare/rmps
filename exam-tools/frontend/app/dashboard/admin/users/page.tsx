@@ -272,7 +272,7 @@ export default function AdminUsersPage() {
             <RoleDirectoryCard
               id="subject-officers"
               title="Subject officer"
-              description="Subject-scoped examiner roster, invitations, and marked script return verification."
+              description="Subject-scoped examiner roster, invitations, and marked script verification."
               loginHint="Staff sign-in · email + password"
               accountCount={counts.subjectOfficer}
               countLoading={countsLoading}

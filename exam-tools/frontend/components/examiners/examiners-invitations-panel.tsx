@@ -66,6 +66,7 @@ type Props = {
   subjects: Subject[];
   lockedSubjectIds?: number[];
   embedded?: boolean;
+  pageScroll?: boolean;
   onInvitationCountsChange?: (counts: InvitationStatusCounts) => void;
 };
 
@@ -88,6 +89,7 @@ export function ExaminersInvitationsPanel({
   subjects,
   lockedSubjectIds,
   embedded = false,
+  pageScroll = false,
   onInvitationCountsChange,
 }: Props) {
   const [invitations, setInvitations] = useState<ExaminerInvitationRow[]>([]);
@@ -682,7 +684,11 @@ export function ExaminersInvitationsPanel({
 
       <section
         className={cn(
-          embedded ? "flex min-h-0 flex-1 flex-col" : INVITATIONS_PANEL_CLASS,
+          embedded && !pageScroll
+            ? "flex min-h-0 flex-1 flex-col overflow-hidden"
+            : embedded
+              ? "flex flex-col"
+              : INVITATIONS_PANEL_CLASS,
           !embedded && "flex min-h-0 flex-1 flex-col",
         )}
       >
@@ -734,7 +740,7 @@ export function ExaminersInvitationsPanel({
           disabled={examId == null}
         />
 
-        <div className="flex min-h-0 flex-1 flex-col">
+        <div className={pageScroll ? "flex flex-col" : "flex min-h-0 flex-1 flex-col"}>
             <div className="space-y-2 px-2 pt-2 sm:px-3">
               <InvitationsSummaryStats
                 counts={statusCounts}
@@ -743,7 +749,11 @@ export function ExaminersInvitationsPanel({
               />
             </div>
 
-            <div className="flex min-h-0 flex-1 flex-col gap-2 p-2 sm:p-3">
+            <div
+              className={cn(
+                pageScroll ? "flex flex-col gap-2 p-2 sm:p-3" : "flex min-h-0 flex-1 flex-col gap-2 p-2 sm:p-3",
+              )}
+            >
             {selectedCount > 0 ? (
               <p className="text-sm text-muted-foreground">{selectedCount} selected</p>
             ) : null}
@@ -829,6 +839,7 @@ export function ExaminersInvitationsPanel({
                     ? (inv) => setAllocationTarget(inv)
                     : undefined
                 }
+                pageScroll={pageScroll}
               />
             )}
             </div>

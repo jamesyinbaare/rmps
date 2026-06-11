@@ -63,8 +63,10 @@ export function buildStaffSidebarNav({
     sections.push({
       title: "Marking",
       items: [
+        link(staffBase, "Overview", pathname, true),
         link(`${staffBase}/examiners`, "Examiners", pathname),
-        link(`${staffBase}/marked-script-returns`, "Marked script returns", pathname),
+        link(`${staffBase}/allocations`, "Allocations", pathname),
+        link(`${staffBase}/marked-script-returns`, "Marked scripts", pathname),
       ],
     });
   }

@@ -74,6 +74,7 @@ type Props = {
   examId: number | null;
   subjects: Subject[];
   embedded?: boolean;
+  pageScroll?: boolean;
   /** Super Admin / Test Admin Officer can edit default cohort schedules. */
   canManageDefaultCohort?: boolean;
 };
@@ -82,6 +83,7 @@ export function SubjectMarkingGroupsPanel({
   examId,
   subjects,
   embedded = false,
+  pageScroll = false,
   canManageDefaultCohort = false,
 }: Props) {
   const [subjectId, setSubjectId] = useState<number | "">("");
@@ -429,7 +431,12 @@ export function SubjectMarkingGroupsPanel({
   const softWarning =
     membership.selectedCount === 0 ? "This cohort has no examiners yet." : null;
 
-  const panelClass = embedded ? "flex min-h-0 flex-1 flex-col overflow-hidden" : EXAMINERS_PANEL_CLASS;
+  const panelClass =
+    embedded && !pageScroll
+      ? "flex min-h-0 flex-1 flex-col overflow-hidden"
+      : embedded
+        ? "flex flex-col"
+        : EXAMINERS_PANEL_CLASS;
 
   return (
     <div className={panelClass}>
@@ -575,7 +582,7 @@ export function SubjectMarkingGroupsPanel({
             onToggleExaminer={membership.toggleExaminer}
             onSaveDetails={() => handleSaveDetails()}
             onCancelDetailsEdit={cancelDetailsEdit}
-            onSaveMembership={() => handleSaveMembership()}
+            onSaveMembership={() => void handleSaveMembership()}
             onDelete={isCreating || isDefaultCohort ? undefined : () => void handleDelete()}
             onClose={closeModal}
           />

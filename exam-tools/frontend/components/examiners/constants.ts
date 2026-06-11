@@ -2,6 +2,7 @@ import type { VisibilityState } from "@tanstack/react-table";
 
 import {
   officialAccountsPageLayoutClass,
+  officialAccountsPanelClass,
   officialAccountsPanelFillClass,
   officialAccountsTabPanelClass,
   officialAccountsTableScrollClass,
@@ -9,6 +10,9 @@ import {
 import { cn } from "@/lib/utils";
 
 export const EXAMINERS_PAGE_LAYOUT_CLASS = officialAccountsPageLayoutClass;
+
+/** Subject-officer: content height drives scroll on dashboard main (no flex fill trap). */
+export const EXAMINERS_PAGE_SCROLL_LAYOUT_CLASS = "flex flex-col";
 
 export const EXAMINERS_PANEL_FILL_CLASS = cn(
   officialAccountsPanelFillClass,
@@ -18,7 +22,27 @@ export const EXAMINERS_PANEL_FILL_CLASS = cn(
 
 export const EXAMINERS_TAB_PANEL_CLASS = officialAccountsTabPanelClass;
 
-export const EXAMINERS_TABLE_SCROLL_CLASS = officialAccountsTableScrollClass;
+/** Subject-officer embedded shell: grows with content; page scrolls (no inner table y-scroll). */
+export const EXAMINERS_PANEL_SCROLL_CLASS = cn(officialAccountsPanelClass, "flex flex-col");
+
+export const EXAMINERS_TAB_PANEL_SCROLL_CLASS = cn(
+  "official-accounts-tab-panel flex flex-col",
+);
+
+/** Horizontal scroll only — vertical scroll is the page/shell. */
+export const EXAMINERS_TABLE_SCROLL_CONTAINER_CLASS = cn(
+  "overflow-x-auto",
+  "[&_thead]:sticky [&_thead]:top-0 [&_thead]:z-10",
+  "[&_th]:bg-card [&_th]:shadow-[0_1px_0_0_hsl(var(--border))]",
+);
+
+/** Admin fill layout: table body scrolls inside the panel. */
+export const EXAMINERS_TABLE_INNER_SCROLL_CLASS = cn(
+  officialAccountsTableScrollClass,
+  "overflow-x-auto",
+  "[&_thead]:sticky [&_thead]:top-0 [&_thead]:z-10",
+  "[&_th]:bg-card [&_th]:shadow-[0_1px_0_0_hsl(var(--border))]",
+);
 
 export const EXAMINERS_PANEL_CLASS = cn(
   "relative overflow-x-hidden overflow-y-visible rounded-2xl border border-primary/15 bg-card shadow-sm",
@@ -29,6 +53,11 @@ export const EXAMINERS_PANEL_CLASS = cn(
 export const EXAMINERS_COMMAND_BAR_CLASS = cn(
   "sticky top-0 z-10 flex shrink-0 flex-col gap-2 border-b border-primary/10 bg-primary/[0.045] px-3 py-2.5 backdrop-blur-sm sm:px-4 sm:py-3",
   "dark:border-border dark:bg-muted/20",
+);
+
+/** Fixed toolbar inside a flex panel — no sticky (avoids nested scroll with table header). */
+export const EXAMINERS_COMMAND_BAR_EMBEDDED_CLASS = cn(
+  "flex shrink-0 flex-col gap-2 border-b border-border bg-muted/20 px-3 py-2.5 sm:px-4 sm:py-3",
 );
 
 export const EXAMINERS_EXAM_META_CLASS =

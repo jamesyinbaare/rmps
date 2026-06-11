@@ -3,18 +3,18 @@
 import { useEffect, useMemo } from "react";
 
 import { DashboardShell } from "@/components/dashboard-shell";
-import { MarkedScriptReturnsVerificationShell } from "@/components/subject-officer/marked-script-returns-verification-shell";
-import { useMarkedScriptReturnsUrl } from "@/components/subject-officer/use-marked-script-returns-url";
+import { SubjectOfficerAllocationsShell } from "@/components/subject-officer/subject-officer-allocations-shell";
+import { useSubjectOfficerAllocationsUrl } from "@/components/subject-officer/use-subject-officer-allocations-url";
 import { RoleGuard } from "@/components/role-guard";
 import { useSubjectOfficerAssignments } from "@/hooks/use-subject-officer-assignments";
 import { useSubjectOfficerExamUrl } from "@/hooks/use-subject-officer-exam-url";
 
-export default function SubjectOfficerMarkedScriptReturnsPage() {
+export default function SubjectOfficerAllocationsPage() {
   const { assignments, loading: assignmentsLoading } = useSubjectOfficerAssignments();
   const examIds = useMemo(() => assignments.map((a) => a.examination_id), [assignments]);
   const { examId, setExamId } = useSubjectOfficerExamUrl({ examIds, requireSelection: true });
 
-  const { session, setSession } = useMarkedScriptReturnsUrl({ examIds });
+  const { session, setSession } = useSubjectOfficerAllocationsUrl({ examIds });
 
   useEffect(() => {
     if (session.examId !== examId) {
@@ -22,20 +22,19 @@ export default function SubjectOfficerMarkedScriptReturnsPage() {
         examId,
         subjectId: null,
         examinerId: null,
-        paperNumber: null,
       });
     }
   }, [examId, session.examId, setSession]);
 
   return (
     <RoleGuard expectedRole="SUBJECT_OFFICER" loginHref="/login/admin">
-      <DashboardShell title="Marked scripts" staffRole="subject-officer">
+      <DashboardShell title="Allocations" staffRole="subject-officer">
         {assignmentsLoading ? (
           <p className="text-sm text-muted-foreground">Loading…</p>
         ) : assignments.length === 0 ? (
           <p className="text-sm text-muted-foreground">No subject assignments found for your account.</p>
         ) : (
-          <MarkedScriptReturnsVerificationShell
+          <SubjectOfficerAllocationsShell
             assignments={assignments}
             examId={examId}
             onExamChange={setExamId}

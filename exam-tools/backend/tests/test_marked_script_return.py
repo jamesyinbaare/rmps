@@ -109,6 +109,8 @@ async def test_build_return_filters_lists_examiners() -> None:
     examiner.id = examiner_id
     examiner.name = "Jane Doe"
     examiner.examiner_type = ExaminerType.ASSISTANT
+    examiner.region = MagicMock(value="Ashanti")
+    examiner.phone_number = "0244123456"
 
     allocation = MagicMock()
     allocation.paper_number = 1
@@ -146,6 +148,8 @@ async def test_build_return_filters_lists_examiners() -> None:
     assert len(data["examiners"]) == 1
     assert data["examiners"][0]["examiner_id"] == examiner_id
     assert data["examiners"][0]["pending_count"] == 2
+    assert data["examiners"][0]["region"] == "Ashanti"
+    assert data["examiners"][0]["phone_number"] == "0244123456"
     assert data["papers"] == []
 
 
