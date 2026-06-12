@@ -19,6 +19,11 @@ from app.routers import (
     admin_examination_designation_rates,
     admin_examination_examiner_allowance_rates,
     admin_examiner_allowances,
+    admin_examiner_attendance,
+    admin_examiner_portal_settings,
+    admin_examiner_quota_region_groups,
+    admin_examiner_region_groups,
+    admin_examiner_region_quotas,
     admin_inspector_postings,
     admin_inspector_submission_settings,
     admin_sms_deliveries,
@@ -35,6 +40,7 @@ from app.routers import (
     examinations,
     examiner_groups,
     examiner_invitations,
+    examiner_quota_assessment,
     examiners,
     finance_officers,
     inspectors,
@@ -46,6 +52,8 @@ from app.routers import (
     script_allocation,
     script_control,
     subject_marking_groups,
+    subject_officer_examiner_attendance,
+    subject_officer_lunch_verify,
     subject_officers,
     subjects,
     test_admin_officers,
@@ -202,6 +210,7 @@ app.include_router(depots.router_keeper)
 app.include_router(subject_officers.router_admin)
 app.include_router(subject_officers.router_officer)
 app.include_router(marked_script_returns.router)
+app.include_router(subject_officer_lunch_verify.router)
 app.include_router(subject_marking_groups.router)
 app.include_router(inspectors.router)
 app.include_router(schools.router)
@@ -223,6 +232,14 @@ app.include_router(exam_officials.router)
 app.include_router(admin_exam_officials.router)
 app.include_router(admin_examination_designation_rates.router)
 app.include_router(admin_examination_examiner_allowance_rates.router)
+app.include_router(admin_examiner_region_groups.router)
+app.include_router(admin_examiner_quota_region_groups.router)
+app.include_router(admin_examiner_region_quotas.router)
+app.include_router(admin_examiner_attendance.router)
+app.include_router(admin_examiner_attendance.scan_router)
+app.include_router(admin_examiner_portal_settings.router)
+app.include_router(examiner_quota_assessment.router)
+app.include_router(subject_officer_examiner_attendance.router)
 app.include_router(admin_examiner_allowances.router)
 app.include_router(admin_inspector_postings.router)
 app.include_router(admin_inspector_submission_settings.router)

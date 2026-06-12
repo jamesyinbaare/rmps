@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 
 import {
   EXAMINERS_PAGE_LAYOUT_CLASS,
@@ -12,9 +12,12 @@ import {
   EXAMINERS_TAB_PANEL_SCROLL_CLASS,
   EXAMINERS_TABS,
 } from "@/components/examiners/constants";
+import { ExaminersAppointmentLetterReleasePanel } from "@/components/examiners/examiners-appointment-letter-release-panel";
 import { ExaminersContextBar } from "@/components/examiners/examiners-context-bar";
+import { ExaminersExamSelector } from "@/components/examiners/examiners-exam-selector";
 import { ExaminersGroupsPanel } from "@/components/examiners/examiners-groups-panel";
 import { ExaminersInvitationsPanel } from "@/components/examiners/examiners-invitations-panel";
+import { ExaminersRegionalQuotasPanel } from "@/components/examiners/examiners-regional-quotas-panel";
 import { ExaminersRosterPanel } from "@/components/examiners/examiners-roster-panel";
 import { SubjectMarkingGroupsPanel } from "@/components/subject-officer/subject-marking-groups-panel";
 import type { ExaminersSummaryCounts, ExaminersTab } from "@/components/examiners/types";
@@ -23,7 +26,12 @@ import { SubjectOfficerExamSelector } from "@/components/subject-officer/subject
 import { Badge } from "@/components/ui/badge";
 import type { InvitationStatusCounts } from "@/components/examiner-invitations/types";
 import { OfficialAccountsRoleTabs } from "@/components/official-accounts-role-tabs";
-import type { Examination, Subject, SubjectOfficerMeExamAssignment } from "@/lib/api";
+import {
+  getExaminationScriptSeriesConfig,
+  type Examination,
+  type Subject,
+  type SubjectOfficerMeExamAssignment,
+} from "@/lib/api";
 import {
   officialAccountsCommandBarClass,
   officialAccountsCommandBarRowClass,
@@ -56,6 +64,10 @@ type Props = {
   /** Subject officer: inline exam command bar (matches allocations/overview). */
   subjectOfficerAssignments?: SubjectOfficerMeExamAssignment[];
   assignmentsLoading?: boolean;
+  /** Show subject badges in the exam command bar (subject-officer layout). */
+  showSubjectBadges?: boolean;
+  /** Roster: show regional quota self-test (subject-officer layout). */
+  showQuotaAssessment?: boolean;
 };
 
 const EMPTY_SUMMARY: ExaminersSummaryCounts = {
@@ -80,8 +92,15 @@ export function ExaminersPageShell({
   showSubjectCohortsTab = false,
   subjectOfficerAssignments,
   assignmentsLoading = false,
+  showSubjectBadges: showSubjectBadgesProp,
+  showQuotaAssessment: showQuotaAssessmentProp,
 }: Props) {
   const isSubjectOfficerShell = subjectOfficerAssignments != null;
+  const showSubjectBadges = showSubjectBadgesProp ?? isSubjectOfficerShell;
+  const showQuotaAssessment = showQuotaAssessmentProp ?? isSubjectOfficerShell;
+  const canManageExaminers = !isSubjectOfficerShell;
+  const useScrollShell = true;
+  const [examTimetableSubjects, setExamTimetableSubjects] = useState<Subject[]>([]);
   const resolvedMarkingGroupsMode: MarkingGroupsMode =
     markingGroupsMode ?? (hideGroups ? "hidden" : "admin-allocation");
 
@@ -111,13 +130,54 @@ export function ExaminersPageShell({
     subjects,
   ]);
 
+  useEffect(() => {
+    if (!showSubjectBadges || isSubjectOfficerShell || examId == null) {
+      setExamTimetableSubjects([]);
+      return;
+    }
+    let cancelled = false;
+    void getExaminationScriptSeriesConfig(examId)
+      .then((res) => {
+        if (cancelled) return;
+        setExamTimetableSubjects(
+          res.items.map((row) => ({
+            id: row.subject_id,
+            code: row.subject_code,
+            original_code: null,
+            name: row.subject_name,
+            subject_type: row.subject_type,
+            created_at: "",
+            updated_at: "",
+          })),
+        );
+      })
+      .catch(() => {
+        if (!cancelled) setExamTimetableSubjects([]);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [examId, isSubjectOfficerShell, showSubjectBadges]);
+
+  const commandBarSubjects = isSubjectOfficerShell ? scopedSubjects : examTimetableSubjects;
+
+  const examScopedSubjects = useMemo(() => {
+    if (isSubjectOfficerShell) return scopedSubjects;
+    if (showSubjectBadges && examTimetableSubjects.length > 0) return examTimetableSubjects;
+    return subjects;
+  }, [examTimetableSubjects, isSubjectOfficerShell, scopedSubjects, showSubjectBadges, subjects]);
+
   const baseTabs = useMemo((): { key: ExaminersTab; label: string }[] => {
     let tabs: { key: ExaminersTab; label: string }[] =
       resolvedMarkingGroupsMode === "hidden"
         ? EXAMINERS_TABS.filter((t) => t.key !== "groups")
         : [...EXAMINERS_TABS];
     if (showSubjectCohortsTab) {
-      tabs = [...tabs, { key: "cohorts", label: "Cohorts" }];
+      tabs = [
+        ...tabs,
+        { key: "quotas", label: "Regional quotas" },
+        { key: "cohorts", label: "Cohorts" },
+      ];
     }
     return tabs;
   }, [resolvedMarkingGroupsMode, showSubjectCohortsTab]);
@@ -191,19 +251,32 @@ export function ExaminersPageShell({
       </Link>
     ) : null;
 
-  const subjectOfficerCommandBar = isSubjectOfficerShell ? (
+  const examCommandBar = (
     <div className={officialAccountsCommandBarRowClass}>
-      <SubjectOfficerExamSelector
-        assignments={subjectOfficerAssignments}
-        examId={examId}
-        onExamChange={setExamId}
-        loading={assignmentsLoading}
-        compact
-      />
-      {scopedSubjects.length > 0 ? (
+      {isSubjectOfficerShell ? (
+        <SubjectOfficerExamSelector
+          assignments={subjectOfficerAssignments}
+          examId={examId}
+          onExamChange={setExamId}
+          loading={assignmentsLoading}
+          compact
+        />
+      ) : (
+        <ExaminersExamSelector
+          exams={exams}
+          examId={examId}
+          onExamChange={setExamId}
+          loading={loadingExams}
+          singleExam={singleExam}
+          showCreateExamsLink={showCreateExamsLink}
+          examLabelFn={examLabelFn}
+          compact
+        />
+      )}
+      {showSubjectBadges && commandBarSubjects.length > 0 ? (
         <div className="flex min-w-0 flex-1 flex-wrap items-center gap-1.5">
           <span className="text-xs font-medium text-muted-foreground">Subjects</span>
-          {scopedSubjects.map((s) => (
+          {commandBarSubjects.map((s) => (
             <Badge
               key={s.id}
               variant="outline"
@@ -214,24 +287,24 @@ export function ExaminersPageShell({
           ))}
         </div>
       ) : null}
+      {!showSubjectBadges && !isSubjectOfficerShell && contextTrailing ? (
+        <div className="flex shrink-0 items-end pb-0.5">{contextTrailing}</div>
+      ) : null}
     </div>
-  ) : null;
+  );
 
   const showContextBar =
-    !isSubjectOfficerShell || examId != null || contextTrailing != null;
+    examId != null &&
+    !showSubjectBadges &&
+    (isSubjectOfficerShell
+      ? contextTrailing != null
+      : summary.roster > 0 || summary.invitationsPending > 0);
 
   return (
-    <div
-      className={cn(
-        isSubjectOfficerShell ? EXAMINERS_PAGE_SCROLL_LAYOUT_CLASS : EXAMINERS_PAGE_LAYOUT_CLASS,
-        "p-3 md:p-4",
-      )}
-    >
-      <section className={isSubjectOfficerShell ? EXAMINERS_PANEL_SCROLL_CLASS : EXAMINERS_PANEL_FILL_CLASS}>
+    <div className={cn(useScrollShell ? EXAMINERS_PAGE_SCROLL_LAYOUT_CLASS : EXAMINERS_PAGE_LAYOUT_CLASS, "p-3 md:p-4")}>
+      <section className={useScrollShell ? EXAMINERS_PANEL_SCROLL_CLASS : EXAMINERS_PANEL_FILL_CLASS}>
         <div className="relative z-20 shrink-0 rounded-t-2xl border-b border-border/80 bg-linear-to-b from-muted/35 to-muted/10">
-          {subjectOfficerCommandBar ? (
-            <div className={officialAccountsCommandBarClass}>{subjectOfficerCommandBar}</div>
-          ) : null}
+          <div className={officialAccountsCommandBarClass}>{examCommandBar}</div>
           {showContextBar ? (
             <ExaminersContextBar
               exams={exams}
@@ -243,9 +316,9 @@ export function ExaminersPageShell({
               pendingInvitations={examId != null ? summary.invitationsPending : undefined}
               showCreateExamsLink={showCreateExamsLink}
               examLabelFn={examLabelFn}
-              hideExamSelector={requireExamSelection && !isSubjectOfficerShell}
-              hideExamDisplay={isSubjectOfficerShell}
-              trailingContent={contextTrailing}
+              hideExamSelector
+              hideExamDisplay
+              trailingContent={isSubjectOfficerShell ? contextTrailing : undefined}
             />
           ) : null}
           <OfficialAccountsRoleTabs
@@ -262,21 +335,26 @@ export function ExaminersPageShell({
           id={`admin-eo-panel-${activeTab}`}
           aria-labelledby={`admin-eo-tab-${activeTab}`}
           aria-live="polite"
-          className={isSubjectOfficerShell ? EXAMINERS_TAB_PANEL_SCROLL_CLASS : EXAMINERS_TAB_PANEL_CLASS}
+          className={useScrollShell ? EXAMINERS_TAB_PANEL_SCROLL_CLASS : EXAMINERS_TAB_PANEL_CLASS}
         >
           <p className="sr-only">{tabAnnouncement}</p>
+          {examId != null && showSubjectCohortsTab ? (
+            <div className="shrink-0 px-3 pb-3 md:px-4">
+              <ExaminersAppointmentLetterReleasePanel examId={examId} />
+            </div>
+          ) : null}
           {examId == null ? (
             <div className="flex min-h-[14rem] flex-1 flex-col items-center justify-center gap-3 px-6 py-12 text-center">
               <p className="text-sm font-medium text-foreground">Select an examination</p>
               <p className="max-w-sm text-sm text-muted-foreground">
                 Choose an examination using the{" "}
                 <label
-                  htmlFor={isSubjectOfficerShell ? "so-exam-select" : "examiners-exam"}
+                  htmlFor={isSubjectOfficerShell ? "so-exam-select" : "examiners-exam-select"}
                   className="font-medium text-foreground"
                 >
                   Examination
                 </label>{" "}
-                control above to view roster, invitations, and cohorts.
+                control above to view roster, invitations, and related tools.
               </p>
             </div>
           ) : (
@@ -288,8 +366,12 @@ export function ExaminersPageShell({
                   isSuperAdmin={isSuperAdmin}
                   lockedSubjectIds={lockedSubjectIds}
                   embedded
-                  pageScroll={isSubjectOfficerShell}
+                  pageScroll={useScrollShell}
                   loadExaminerGroups={resolvedMarkingGroupsMode === "admin-allocation"}
+                  showReferenceCodesConfig={showSubjectCohortsTab}
+                  showQuotaAssessment={showQuotaAssessment}
+                  canManageRoster={canManageExaminers}
+                  canEditRoster={canManageExaminers}
                   onRosterCountChange={onRosterCountChange}
                 />
               ) : null}
@@ -299,7 +381,8 @@ export function ExaminersPageShell({
                   subjects={scopedSubjects}
                   lockedSubjectIds={lockedSubjectIds}
                   embedded
-                  pageScroll={isSubjectOfficerShell}
+                  pageScroll={useScrollShell}
+                  readOnly={!canManageExaminers}
                   onInvitationCountsChange={onInvitationCountsChange}
                 />
               ) : null}
@@ -307,7 +390,7 @@ export function ExaminersPageShell({
                 <ExaminersGroupsPanel
                   examId={examId}
                   embedded
-                  pageScroll={isSubjectOfficerShell}
+                  pageScroll={useScrollShell}
                 />
               ) : null}
               {activeTab === "groups" && resolvedMarkingGroupsMode === "subject-officer" ? (
@@ -315,16 +398,25 @@ export function ExaminersPageShell({
                   examId={examId}
                   subjects={scopedSubjects}
                   embedded
-                  pageScroll={isSubjectOfficerShell}
+                  pageScroll={useScrollShell}
+                  canManageCohorts={canManageExaminers}
+                />
+              ) : null}
+              {activeTab === "quotas" && showSubjectCohortsTab ? (
+                <ExaminersRegionalQuotasPanel
+                  examId={examId}
+                  subjects={examScopedSubjects}
+                  embedded
+                  pageScroll={useScrollShell}
                 />
               ) : null}
               {activeTab === "cohorts" && showSubjectCohortsTab ? (
                 <SubjectMarkingGroupsPanel
                   examId={examId}
-                  subjects={subjects}
+                  subjects={examScopedSubjects}
                   canManageDefaultCohort
                   embedded
-                  pageScroll={isSubjectOfficerShell}
+                  pageScroll={useScrollShell}
                 />
               ) : null}
             </>

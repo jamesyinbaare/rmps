@@ -25,8 +25,9 @@ def _group_row(*, group_id: UUID, is_default: bool) -> dict:
         "examiner_ids": [],
         "source_regions": [],
         "source_roles": [],
-        "coordination_date": None,
+        "coordination_start_date": None,
         "coordination_start_time": None,
+        "coordination_end_date": None,
         "coordination_end_time": None,
         "marking_start_date": None,
         "marking_end_date": None,
@@ -59,14 +60,14 @@ async def test_patch_default_cohort_forbidden_for_subject_officer() -> None:
             await patch_subject_marking_group(
                 examination_id=1,
                 group_id=group_id,
-                body=SubjectMarkingGroupUpdate(coordination_date=None),
+                body=SubjectMarkingGroupUpdate(coordination_start_date=None),
                 session=session,
                 user=user,
                 subject_id=10,
             )
 
     assert exc.value.status_code == 403
-    assert "administrators" in exc.value.detail.lower()
+    assert "super admin" in exc.value.detail.lower()
 
 
 @pytest.mark.asyncio
@@ -96,7 +97,7 @@ async def test_patch_default_cohort_allowed_for_super_admin() -> None:
         result = await patch_subject_marking_group(
             examination_id=1,
             group_id=group_id,
-            body=SubjectMarkingGroupUpdate(coordination_date=None),
+            body=SubjectMarkingGroupUpdate(coordination_start_date=None),
             session=session,
             user=user,
             subject_id=10,
@@ -106,7 +107,7 @@ async def test_patch_default_cohort_allowed_for_super_admin() -> None:
 
 
 @pytest.mark.asyncio
-async def test_patch_named_cohort_allowed_for_subject_officer() -> None:
+async def test_patch_named_cohort_forbidden_for_subject_officer() -> None:
     group_id = uuid4()
     user = MagicMock(role=UserRole.SUBJECT_OFFICER)
     session = AsyncMock()
@@ -123,19 +124,15 @@ async def test_patch_named_cohort_allowed_for_subject_officer() -> None:
             new_callable=AsyncMock,
             return_value=group,
         ),
-        patch(
-            "app.routers.subject_marking_groups.update_group",
-            new_callable=AsyncMock,
-            return_value=_group_row(group_id=group_id, is_default=False),
-        ),
     ):
-        result = await patch_subject_marking_group(
-            examination_id=1,
-            group_id=group_id,
-            body=SubjectMarkingGroupUpdate(name="North"),
-            session=session,
-            user=user,
-            subject_id=10,
-        )
+        with pytest.raises(HTTPException) as exc:
+            await patch_subject_marking_group(
+                examination_id=1,
+                group_id=group_id,
+                body=SubjectMarkingGroupUpdate(name="North"),
+                session=session,
+                user=user,
+                subject_id=10,
+            )
 
-    assert result.id == group_id
+    assert exc.value.status_code == 403

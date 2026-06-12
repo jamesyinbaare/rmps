@@ -45,9 +45,16 @@ export default function ExaminerInvitationPublicPage() {
   }, [load]);
 
   const handleAccepted = useCallback(async () => {
-    await load();
-    setActiveTab("profile");
-  }, [load, setActiveTab]);
+    try {
+      const inv = await getPublicExaminerInvitation(token);
+      setInvitation(inv);
+      if (inv.status === "accepted") {
+        setActiveTab("profile");
+      }
+    } catch {
+      await load();
+    }
+  }, [load, setActiveTab, token]);
 
   if (loading) {
     return <ExaminerInvitationLoadingState />;

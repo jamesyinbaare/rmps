@@ -14,6 +14,7 @@ import {
 } from "@tanstack/react-table";
 import { Loader2 } from "lucide-react";
 
+
 import { DataTable } from "@/components/data-table";
 import {
   DEFAULT_PAGE_SIZE,
@@ -49,6 +50,7 @@ type Props = {
   onCustomPageSizeBlur: () => void;
   onEdit: (row: RosterTableRow) => void;
   onRemove: (row: RosterTableRow) => void;
+  canEditRoster?: boolean;
   onViewAllocation?: (row: RosterTableRow) => void;
   /** When true, table grows with content and the page/shell scrolls (subject-officer). */
   pageScroll?: boolean;
@@ -73,6 +75,7 @@ export function RosterTable({
   onCustomPageSizeBlur,
   onEdit,
   onRemove,
+  canEditRoster = true,
   onViewAllocation,
   pageScroll = false,
 }: Props) {
@@ -129,6 +132,13 @@ export function RosterTable({
         enableHiding: false,
       },
       {
+        accessorKey: "reference_code",
+        header: "Code",
+        cell: ({ getValue }) => (
+          <span className="font-mono text-xs">{getValue<string | null>() ?? "—"}</span>
+        ),
+      },
+      {
         accessorKey: "name",
         header: "Name",
         cell: ({ getValue }) => <span className="font-medium">{getValue<string>()}</span>,
@@ -155,6 +165,11 @@ export function RosterTable({
         accessorKey: "region",
         header: "Region",
         cell: ({ getValue }) => humanizeRegion(getValue<string>()),
+      },
+      {
+        accessorKey: "gender",
+        header: "Gender",
+        cell: ({ getValue }) => getValue<string | null>() ?? "—",
       },
       {
         id: "source",
@@ -192,6 +207,7 @@ export function RosterTable({
             copyLinkState={copyUi[row.original.id]}
             onEdit={onEdit}
             onRemove={onRemove}
+            canEditRoster={canEditRoster}
             onCopyPortalLink={handleCopyPortalLink}
             onViewAllocation={onViewAllocation}
           />
@@ -202,6 +218,7 @@ export function RosterTable({
       busy,
       copyUi,
       handleCopyPortalLink,
+      canEditRoster,
       onEdit,
       onRemove,
       onViewAllocation,

@@ -15,6 +15,7 @@ type Props = {
   copyLinkState: "copied" | "error" | undefined;
   onEdit: (row: RosterTableRow) => void;
   onRemove: (row: RosterTableRow) => void;
+  canEditRoster?: boolean;
   onCopyPortalLink: (row: RosterTableRow) => void;
   onViewAllocation?: (row: RosterTableRow) => void;
 };
@@ -27,11 +28,17 @@ export function RosterRowActionsMenu({
   copyLinkState,
   onEdit,
   onRemove,
+  canEditRoster = true,
   onCopyPortalLink,
   onViewAllocation,
 }: Props) {
   const canViewAllocation = Boolean(onViewAllocation && row.subject_ids[0] != null);
   const canCopyLink = Boolean(row.portal_url);
+  const hasMenuItems = canViewAllocation || canEditRoster || canCopyLink;
+
+  if (!hasMenuItems) {
+    return <span className="text-xs text-muted-foreground">—</span>;
+  }
 
   const menuItemClass =
     "block w-full rounded-sm px-3 py-2 text-left text-sm hover:bg-muted disabled:cursor-not-allowed disabled:opacity-50";
@@ -72,18 +79,20 @@ export function RosterRowActionsMenu({
                 View allocation
               </button>
             ) : null}
-            <button
-              type="button"
-              role="menuitem"
-              className={menuItemClass}
-              disabled={busy}
-              onClick={() => {
-                onEdit(row);
-                onOpenChange(false);
-              }}
-            >
-              Edit examiner
-            </button>
+            {canEditRoster ? (
+              <button
+                type="button"
+                role="menuitem"
+                className={menuItemClass}
+                disabled={busy}
+                onClick={() => {
+                  onEdit(row);
+                  onOpenChange(false);
+                }}
+              >
+                Edit examiner
+              </button>
+            ) : null}
             {canCopyLink ? (
               <button
                 type="button"
@@ -98,19 +107,23 @@ export function RosterRowActionsMenu({
                 Copy portal link
               </button>
             ) : null}
-            <div className="my-1 border-t border-border" role="separator" />
-            <button
-              type="button"
-              role="menuitem"
-              className={destructiveItemClass}
-              disabled={busy}
-              onClick={() => {
-                onRemove(row);
-                onOpenChange(false);
-              }}
-            >
-              Remove from roster
-            </button>
+            {canEditRoster ? (
+              <>
+                <div className="my-1 border-t border-border" role="separator" />
+                <button
+                  type="button"
+                  role="menuitem"
+                  className={destructiveItemClass}
+                  disabled={busy}
+                  onClick={() => {
+                    onRemove(row);
+                    onOpenChange(false);
+                  }}
+                >
+                  Remove from roster
+                </button>
+              </>
+            ) : null}
           </div>
         </PopoverContent>
       </Popover>

@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import secrets
+from dataclasses import dataclass
 from datetime import datetime, timezone
+from typing import Literal
 from uuid import UUID
 
 from sqlalchemy import select
@@ -20,9 +22,24 @@ from app.models import (
     Examination,
     Subject,
 )
+from app.services.coordination_schedule import format_coordination_range, validate_coordination_range
+from app.services.examiner_reference_code import assign_reference_code_to_examiner
+from app.services.examiner_regional_quota import (
+    build_quota_waitlist_portal_message,
+    would_exceed_quota,
+)
 from app.services.examiner_subject_lock import assert_examiner_subject_allowed
 from app.services.script_allocation import parse_region, sync_examiner_subjects
+from app.services.sms.phone import normalize_msisdn
 from app.services.subject_marking_group import sync_default_cohort_members
+
+
+@dataclass(frozen=True)
+class AcceptInvitationResult:
+    outcome: Literal["accepted", "quota_waitlisted"]
+    examiner: Examiner | None = None
+    quota_waitlist_message: str | None = None
+    region_group_name: str | None = None
 
 
 def generate_invitation_token() -> str:
@@ -65,7 +82,7 @@ async def get_invitation_by_token(session: AsyncSession, token: str) -> Examiner
 
 def _is_confirmation_open(inv: ExaminerInvitation) -> bool:
     return (
-        inv.status == ExaminerInvitationStatus.PENDING
+        inv.status in (ExaminerInvitationStatus.PENDING, ExaminerInvitationStatus.QUOTA_WAITLISTED)
         and inv.response_deadline >= datetime.utcnow()
     )
 
@@ -86,6 +103,7 @@ def _is_publicly_accessible(inv: ExaminerInvitation) -> bool:
         ExaminerInvitationStatus.PENDING,
         ExaminerInvitationStatus.ACCEPTED,
         ExaminerInvitationStatus.DECLINED,
+        ExaminerInvitationStatus.QUOTA_WAITLISTED,
     )
 
 
@@ -110,7 +128,11 @@ async def create_examiner_invitation(
     region_str: str,
     invited_by_user_id: UUID,
     response_deadline: datetime,
-    coordination_date: datetime | None = None,
+    coordination_start_date: datetime | None = None,
+    coordination_start_time=None,
+    coordination_end_date: datetime | None = None,
+    coordination_end_time=None,
+    gender: str | None = None,
 ) -> ExaminerInvitation:
     exam = await session.get(Examination, examination_id)
     if exam is None:
@@ -130,6 +152,12 @@ async def create_examiner_invitation(
     deadline = _as_naive_utc(response_deadline)
     if deadline is None:
         raise ValueError("Respond-by deadline is required.")
+    validate_coordination_range(
+        coordination_start_date,
+        coordination_start_time,
+        coordination_end_date,
+        coordination_end_time,
+    )
     token = generate_invitation_token()
     inv = ExaminerInvitation(
         examination_id=examination_id,
@@ -137,6 +165,7 @@ async def create_examiner_invitation(
         name=name.strip(),
         phone_number=phone_number,
         msisdn=msisdn,
+        gender=gender,
         examiner_type=examiner_type,
         region=region,
         token=token,
@@ -144,14 +173,17 @@ async def create_examiner_invitation(
         status=ExaminerInvitationStatus.PENDING,
         invited_by_user_id=invited_by_user_id,
         response_deadline=deadline,
-        coordination_date=_as_naive_utc(coordination_date),
+        coordination_start_date=_as_naive_utc(coordination_start_date),
+        coordination_start_time=coordination_start_time,
+        coordination_end_date=_as_naive_utc(coordination_end_date),
+        coordination_end_time=coordination_end_time,
     )
     session.add(inv)
     await session.flush()
     return inv
 
 
-async def accept_examiner_invitation(session: AsyncSession, inv: ExaminerInvitation) -> Examiner:
+async def accept_examiner_invitation(session: AsyncSession, inv: ExaminerInvitation) -> AcceptInvitationResult:
     if inv.status == ExaminerInvitationStatus.ACCEPTED and inv.examiner_id is not None:
         examiner = await session.get(
             Examiner,
@@ -159,11 +191,14 @@ async def accept_examiner_invitation(session: AsyncSession, inv: ExaminerInvitat
             options=(selectinload(Examiner.subjects),),
         )
         if examiner is not None:
-            return examiner
+            return AcceptInvitationResult(outcome="accepted", examiner=examiner)
     if _expire_if_confirmation_deadline_passed(inv):
         await session.flush()
         raise ValueError("The respond-by deadline for this invitation has passed.")
-    if inv.status != ExaminerInvitationStatus.PENDING:
+    if inv.status not in (
+        ExaminerInvitationStatus.PENDING,
+        ExaminerInvitationStatus.QUOTA_WAITLISTED,
+    ):
         raise ValueError("This invitation is no longer available.")
 
     existing = (
@@ -177,6 +212,35 @@ async def accept_examiner_invitation(session: AsyncSession, inv: ExaminerInvitat
     if existing is not None:
         raise ValueError("This person is already on the examiner roster for this examination.")
 
+    quota_check = await would_exceed_quota(
+        session,
+        examination_id=int(inv.examination_id),
+        subject_id=int(inv.subject_id),
+        region=inv.region,
+        examiner_type=inv.examiner_type,
+        gender=inv.gender,
+    )
+    if quota_check.exceeded:
+        now = datetime.utcnow()
+        inv.status = ExaminerInvitationStatus.QUOTA_WAITLISTED
+        if inv.responded_at is None:
+            inv.responded_at = now
+        await session.flush()
+
+        subject = inv.subject
+        subject_name = subject.name if subject else "your subject"
+        portal_message = build_quota_waitlist_portal_message(
+            invitee_name=inv.name,
+            group_name=quota_check.group_name or "your region group",
+            subject_name=subject_name,
+            examiner_type=inv.examiner_type,
+        )
+        return AcceptInvitationResult(
+            outcome="quota_waitlisted",
+            quota_waitlist_message=portal_message,
+            region_group_name=quota_check.group_name,
+        )
+
     examiner = Examiner(
         examination_id=inv.examination_id,
         name=inv.name,
@@ -184,11 +248,13 @@ async def accept_examiner_invitation(session: AsyncSession, inv: ExaminerInvitat
         region=inv.region,
         phone_number=inv.phone_number,
         msisdn=inv.msisdn,
+        gender=inv.gender,
         portal_token=inv.token,
         roster_source=ExaminerRosterSource.INVITATION,
     )
     session.add(examiner)
     await session.flush()
+    await assign_reference_code_to_examiner(session, examiner)
     await sync_examiner_subjects(session, examiner, [inv.subject_id])
     await sync_default_cohort_members(
         session,
@@ -200,8 +266,9 @@ async def accept_examiner_invitation(session: AsyncSession, inv: ExaminerInvitat
     inv.status = ExaminerInvitationStatus.ACCEPTED
     inv.examiner_id = examiner.id
     inv.responded_at = now
+    inv.msisdn = None
     await session.flush()
-    return examiner
+    return AcceptInvitationResult(outcome="accepted", examiner=examiner)
 
 
 async def decline_examiner_invitation(session: AsyncSession, inv: ExaminerInvitation) -> None:
@@ -210,19 +277,87 @@ async def decline_examiner_invitation(session: AsyncSession, inv: ExaminerInvita
     if _expire_if_confirmation_deadline_passed(inv):
         await session.flush()
         raise ValueError("The respond-by deadline for this invitation has passed.")
-    if inv.status != ExaminerInvitationStatus.PENDING:
+    if inv.status not in (
+        ExaminerInvitationStatus.PENDING,
+        ExaminerInvitationStatus.QUOTA_WAITLISTED,
+    ):
         raise ValueError("This invitation is no longer available.")
     inv.status = ExaminerInvitationStatus.DECLINED
     inv.responded_at = datetime.utcnow()
     await session.flush()
 
 
-async def update_invitation_coordination_date(
+async def update_invitation_coordination_schedule(
     session: AsyncSession,
     inv: ExaminerInvitation,
-    coordination_date: datetime | None,
+    *,
+    coordination_start_date: datetime | None,
+    coordination_start_time,
+    coordination_end_date: datetime | None,
+    coordination_end_time,
 ) -> ExaminerInvitation:
-    inv.coordination_date = _as_naive_utc(coordination_date)
+    validate_coordination_range(
+        coordination_start_date,
+        coordination_start_time,
+        coordination_end_date,
+        coordination_end_time,
+    )
+    inv.coordination_start_date = _as_naive_utc(coordination_start_date)
+    inv.coordination_start_time = coordination_start_time
+    inv.coordination_end_date = _as_naive_utc(coordination_end_date)
+    inv.coordination_end_time = coordination_end_time
+    inv.updated_at = datetime.utcnow()
+    await session.flush()
+    return inv
+
+
+def invitation_coordination_summary(inv: ExaminerInvitation) -> dict:
+    return {
+        "coordination_start_date": inv.coordination_start_date,
+        "coordination_start_time": inv.coordination_start_time,
+        "coordination_end_date": inv.coordination_end_date,
+        "coordination_end_time": inv.coordination_end_time,
+    }
+
+
+async def renew_examiner_invitation(
+    session: AsyncSession,
+    inv: ExaminerInvitation,
+    *,
+    response_deadline: datetime,
+    invited_by_user_id: UUID,
+) -> ExaminerInvitation:
+    if inv.status not in (
+        ExaminerInvitationStatus.EXPIRED,
+        ExaminerInvitationStatus.DECLINED,
+        ExaminerInvitationStatus.QUOTA_WAITLISTED,
+    ):
+        raise ValueError("Only expired, declined, or quota-waitlisted invitations can be reopened.")
+
+    deadline = _as_naive_utc(response_deadline)
+    if deadline is None:
+        raise ValueError("Respond-by deadline is required.")
+    if deadline < datetime.utcnow():
+        raise ValueError("Respond-by deadline must be in the future.")
+
+    msisdn = inv.msisdn
+    if not msisdn or not str(msisdn).strip():
+        msisdn = normalize_msisdn(inv.phone_number)
+        inv.msisdn = msisdn
+
+    await assert_examiner_subject_allowed(
+        session,
+        examination_id=int(inv.examination_id),
+        msisdn=msisdn,
+        subject_id=int(inv.subject_id),
+        allow_pending_invitation_id=inv.id,
+    )
+
+    inv.status = ExaminerInvitationStatus.PENDING
+    inv.response_deadline = deadline
+    inv.token_expires_at = deadline
+    inv.responded_at = None
+    inv.invited_by_user_id = invited_by_user_id
     inv.updated_at = datetime.utcnow()
     await session.flush()
     return inv
@@ -244,7 +379,7 @@ def invitation_summary(inv: ExaminerInvitation) -> dict:
         "region": inv.region.value,
         "status": inv.status.value,
         "response_deadline": inv.response_deadline,
-        "coordination_date": inv.coordination_date,
+        **invitation_coordination_summary(inv),
         "responded_at": inv.responded_at,
     }
 
@@ -255,4 +390,14 @@ def public_invitation_view(inv: ExaminerInvitation) -> dict:
     summary = invitation_summary(inv)
     summary["can_respond"] = _is_confirmation_open(inv)
     summary["examiner_id"] = inv.examiner_id if inv.status == ExaminerInvitationStatus.ACCEPTED else None
+    summary["quota_waitlist_message"] = None
+    if inv.status == ExaminerInvitationStatus.QUOTA_WAITLISTED:
+        subject = inv.subject
+        subject_name = subject.name if subject else "your subject"
+        summary["quota_waitlist_message"] = build_quota_waitlist_portal_message(
+            invitee_name=inv.name,
+            group_name="your region group",
+            subject_name=subject_name,
+            examiner_type=inv.examiner_type,
+        )
     return summary

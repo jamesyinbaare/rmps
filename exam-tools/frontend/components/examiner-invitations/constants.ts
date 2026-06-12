@@ -22,6 +22,7 @@ export const STATUS_LABELS: Record<ExaminerInvitationStatusApi, string> = {
   accepted: "Accepted",
   declined: "Declined",
   expired: "Expired",
+  quota_waitlisted: "Quota waitlist",
 };
 
 export const STATUS_FILTER_OPTIONS: { value: ExaminerInvitationStatusApi | "all"; label: string }[] = [
@@ -30,6 +31,7 @@ export const STATUS_FILTER_OPTIONS: { value: ExaminerInvitationStatusApi | "all"
   { value: "accepted", label: STATUS_LABELS.accepted },
   { value: "declined", label: STATUS_LABELS.declined },
   { value: "expired", label: STATUS_LABELS.expired },
+  { value: "quota_waitlisted", label: STATUS_LABELS.quota_waitlisted },
 ];
 
 export const SMS_PLACEHOLDER_TOKENS = [

@@ -50,6 +50,7 @@ const nav = [
   { href: "/dashboard/admin/monitoring/inspectors", label: "Inspectors" },
   { href: "/dashboard/admin/script-control", label: "Worked scripts control" },
   { href: "/dashboard/admin/examiners", label: "Examiners" },
+  { href: "/dashboard/admin/examiners/attendance", label: "Examiners attendance" },
   { href: "/dashboard/admin/scripts-allocation", label: "Scripts allocation" },
   { href: "/dashboard/admin/documents", label: "Documents" },
 ];
@@ -57,12 +58,14 @@ const nav = [
 const SCRIPT_CONTROL_HREF = "/dashboard/admin/script-control";
 const SCRIPTS_ALLOCATION_HREF = "/dashboard/admin/scripts-allocation";
 const EXAMINERS_HREF = "/dashboard/admin/examiners";
+const EXAMINERS_ATTENDANCE_HREF = "/dashboard/admin/examiners/attendance";
 const MONITORING_HREF = "/dashboard/admin/monitoring";
 const TEST_ADMIN_OFFICER_NAV_HREFS = [
   MONITORING_HREF,
   TEST_ADMIN_INSPECTORS_HREF,
   SCRIPT_CONTROL_HREF,
   EXAMINERS_HREF,
+  EXAMINERS_ATTENDANCE_HREF,
   SCRIPTS_ALLOCATION_HREF,
 ];
 
@@ -166,6 +169,7 @@ export function AdminDashboardShell({ children }: Props) {
   }
 
   const isScriptControlEdit = pathname.startsWith("/dashboard/admin/script-control/edit");
+  const onExaminersPage = pathname.startsWith("/dashboard/admin/examiners");
 
   return (
     <div className="min-h-screen bg-background">
@@ -323,13 +327,17 @@ export function AdminDashboardShell({ children }: Props) {
 
         <main
           className={cn(
-            "mx-auto w-full min-h-0 min-w-0 flex-1 overflow-x-auto overflow-y-auto overscroll-y-contain px-4 py-6 sm:px-6",
+            "mx-auto w-full min-h-0 min-w-0 flex-1 overscroll-y-contain px-4 py-6 sm:px-6",
+            onExaminersPage
+              ? "scrollbar-hide overflow-x-hidden overflow-y-auto"
+              : "overflow-x-auto overflow-y-auto",
             pathname === ATTENDANCE_SHEETS_HREF || pathname.startsWith(`${ATTENDANCE_SHEETS_HREF}/`)
               || onOfficialStatisticsPage
               || onCentreSummaryPage
               || onFinanceCentreSummaryPage
               || isScriptControlEdit
               || pathname.startsWith("/dashboard/admin/script-control")
+              || onExaminersPage
               ? "max-w-[1600px]"
               : "max-w-6xl",
             isExecutiveViewer && "pb-[calc(5rem+env(safe-area-inset-bottom))] lg:pb-6",

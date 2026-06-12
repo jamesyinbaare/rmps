@@ -4,20 +4,22 @@ import { useState } from "react";
 import { FileDown } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
-import { downloadPublicExaminerAppointmentLetterPdf } from "@/lib/api";
+import { downloadPublicExaminerAppointmentLetterPdf, type ExaminerInvitationPublic } from "@/lib/api";
 
 type Props = {
   token: string;
   inviteeName: string;
+  invitation: ExaminerInvitationPublic;
 };
 
 function sanitizeFilenamePart(s: string): string {
   return s.replace(/[^\w-]+/g, "_").replace(/^_+|_+$/g, "") || "examiner";
 }
 
-export function ExaminerAppointmentLetterSection({ token, inviteeName }: Props) {
+export function ExaminerAppointmentLetterSection({ token, inviteeName, invitation }: Props) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const available = invitation.appointment_letters_available === true;
 
   async function handleDownload() {
     setBusy(true);
@@ -61,7 +63,7 @@ export function ExaminerAppointmentLetterSection({ token, inviteeName }: Props) 
       <Button
         type="button"
         className="mt-4 min-h-11 w-full"
-        disabled={busy}
+        disabled={busy || !available}
         onClick={() => void handleDownload()}
       >
         {busy ? "Preparing PDF…" : "Download appointment letter (PDF)"}

@@ -17,6 +17,7 @@ class AdminExaminerAllowanceRow(BaseModel):
     examination_id: int
     examination_label: str
     full_name: str
+    reference_code: str | None = None
     examiner_type: str
     region: str
     subject_codes: str

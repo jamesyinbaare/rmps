@@ -3,8 +3,9 @@ import type { SubjectMarkingGroupRow } from "@/lib/api";
 import { dateInputToIso } from "@/components/examiner-invitations/utils";
 
 export type CohortScheduleDraft = {
-  coordinationDate: string;
+  coordinationStartDate: string;
   coordinationStartTime: string;
+  coordinationEndDate: string;
   coordinationEndTime: string;
   markingStartDate: string;
   markingEndDate: string;
@@ -13,8 +14,9 @@ export type CohortScheduleDraft = {
 
 export function emptyCohortScheduleDraft(): CohortScheduleDraft {
   return {
-    coordinationDate: "",
+    coordinationStartDate: "",
     coordinationStartTime: "",
+    coordinationEndDate: "",
     coordinationEndTime: "",
     markingStartDate: "",
     markingEndDate: "",
@@ -43,8 +45,9 @@ export function timeInputToApi(value: string): string | null {
 
 export function cohortScheduleFromRow(row: SubjectMarkingGroupRow): CohortScheduleDraft {
   return {
-    coordinationDate: isoToDateInput(row.coordination_date),
+    coordinationStartDate: isoToDateInput(row.coordination_start_date),
     coordinationStartTime: isoToTimeInput(row.coordination_start_time),
+    coordinationEndDate: isoToDateInput(row.coordination_end_date),
     coordinationEndTime: isoToTimeInput(row.coordination_end_time),
     markingStartDate: isoToDateInput(row.marking_start_date),
     markingEndDate: isoToDateInput(row.marking_end_date),
@@ -54,8 +57,9 @@ export function cohortScheduleFromRow(row: SubjectMarkingGroupRow): CohortSchedu
 
 export function cohortScheduleToPayload(draft: CohortScheduleDraft) {
   return {
-    coordination_date: dateInputToIso(draft.coordinationDate),
+    coordination_start_date: dateInputToIso(draft.coordinationStartDate),
     coordination_start_time: timeInputToApi(draft.coordinationStartTime),
+    coordination_end_date: dateInputToIso(draft.coordinationEndDate),
     coordination_end_time: timeInputToApi(draft.coordinationEndTime),
     marking_start_date: dateInputToIso(draft.markingStartDate),
     marking_end_date: dateInputToIso(draft.markingEndDate),

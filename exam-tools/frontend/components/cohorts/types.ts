@@ -7,8 +7,9 @@ export type CohortListItem = {
   examiner_ids: string[];
   source_regions: string[];
   source_roles?: string[];
-  coordinationDate?: string | null;
+  coordinationStartDate?: string | null;
   coordinationStartTime?: string | null;
+  coordinationEndDate?: string | null;
   coordinationEndTime?: string | null;
   markingStartDate?: string | null;
   markingEndDate?: string | null;

@@ -111,7 +111,9 @@ export function formatCoordinationDate(iso: string): string {
   });
 }
 
-export function invitationStatusMeta(status: "pending" | "accepted" | "declined" | "expired") {
+export function invitationStatusMeta(
+  status: "pending" | "accepted" | "declined" | "expired" | "quota_waitlisted",
+) {
   switch (status) {
     case "accepted":
       return {
@@ -127,6 +129,11 @@ export function invitationStatusMeta(status: "pending" | "accepted" | "declined"
       return {
         label: "Expired",
         className: "border-border bg-muted text-muted-foreground",
+      };
+    case "quota_waitlisted":
+      return {
+        label: "On waitlist",
+        className: "border-amber-500/30 bg-amber-500/10 text-amber-800 dark:text-amber-300",
       };
     default:
       return {

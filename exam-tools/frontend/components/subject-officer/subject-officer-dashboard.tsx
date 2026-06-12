@@ -55,14 +55,14 @@ const calendarGridClass =
 const MARKING_CALENDAR_CLASS_NAMES = {
   root: "w-full min-w-0 flex-1 flex-col lg:flex lg:min-h-0 lg:h-full",
   months: "min-h-0 flex-1 flex-col lg:flex",
-  month: "min-h-0 w-full flex-1 flex-col lg:flex",
+  month: "relative min-h-0 w-full flex-1 flex-col lg:flex",
   month_grid: "w-full min-w-0 min-h-0 flex-1 table-fixed border-collapse",
   weekdays: "",
   weekday:
     "min-w-0 py-1 text-center text-[0.625rem] font-medium text-muted-foreground sm:text-xs",
   week: "",
   day: "relative h-10 min-h-9 min-w-0 p-0.5 align-middle sm:h-11 lg:h-auto lg:min-h-0 lg:p-1",
-  month_caption: "relative flex h-8 w-full shrink-0 min-w-0 items-center justify-center px-8 lg:h-9",
+  month_caption: "relative flex h-8 w-full shrink-0 min-w-0 items-center justify-center px-10 lg:h-9",
   caption_label: "text-sm font-semibold lg:text-base",
 } as const;
 
@@ -134,12 +134,11 @@ function CalendarMonthNavigator({
   const canNext = resolvedIndex < months.length - 1;
 
   return (
-    <div className="flex items-center gap-2 border-b border-border bg-muted/10 px-2 py-2 sm:px-4 sm:py-2.5">
+    <div className="grid grid-cols-[2rem_1fr_2rem] items-center gap-x-2 border-b border-border bg-muted/10 px-2 py-2 sm:gap-x-3 sm:px-4 sm:py-2.5">
       <Button
         type="button"
         variant="outline"
-        size="icon"
-        className="size-8 shrink-0"
+        className="size-8 shrink-0 p-0"
         disabled={!canPrev}
         aria-label="Previous month"
         onClick={() => onMonthChange(months[resolvedIndex - 1]!)}
@@ -147,7 +146,7 @@ function CalendarMonthNavigator({
         <ChevronLeft className="size-4" aria-hidden />
       </Button>
 
-      <div className="flex min-w-0 flex-1 flex-wrap justify-center gap-1.5">
+      <div className="flex min-w-0 flex-nowrap items-center justify-center gap-1.5 overflow-x-auto overscroll-x-contain [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
         {months.map((month) => {
           const active = isSameCalendarMonth(month, activeMonth);
           return (
@@ -156,7 +155,7 @@ function CalendarMonthNavigator({
               type="button"
               onClick={() => onMonthChange(month)}
               className={cn(
-                "rounded-full px-2.5 py-1 text-xs font-medium transition-colors",
+                "shrink-0 rounded-full px-2.5 py-1 text-xs font-medium transition-colors",
                 active
                   ? "bg-primary text-primary-foreground shadow-sm"
                   : "bg-background text-muted-foreground ring-1 ring-border hover:text-foreground",
@@ -172,8 +171,7 @@ function CalendarMonthNavigator({
       <Button
         type="button"
         variant="outline"
-        size="icon"
-        className="size-8 shrink-0"
+        className="size-8 shrink-0 p-0"
         disabled={!canNext}
         aria-label="Next month"
         onClick={() => onMonthChange(months[resolvedIndex + 1]!)}

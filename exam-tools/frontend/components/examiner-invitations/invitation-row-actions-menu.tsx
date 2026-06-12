@@ -18,6 +18,7 @@ type Props = {
   copyLinkState: "copied" | "error" | undefined;
   onCopyLink?: (inv: ExaminerInvitationRow) => void;
   onResend: (inv: ExaminerInvitationRow) => void;
+  onRenew?: (inv: ExaminerInvitationRow) => void;
   onViewAllocation?: (inv: ExaminerInvitationRow) => void;
 };
 
@@ -31,14 +32,24 @@ export function InvitationRowActionsMenu({
   copyLinkState,
   onCopyLink,
   onResend,
+  onRenew,
   onViewAllocation,
 }: Props) {
   const canCopy = Boolean(onCopyLink && inv.public_url);
-  const canResend = inv.status === "pending" || inv.status === "expired";
+  const canResend = inv.status === "pending";
+  const canReopen =
+    (inv.status === "expired" || inv.status === "declined" || inv.status === "quota_waitlisted") &&
+    Boolean(onRenew);
+  const reopenLabel =
+    inv.status === "declined"
+      ? "Reopen invitation"
+      : inv.status === "quota_waitlisted"
+        ? "Reset invitation"
+        : "Renew link";
   const canViewAllocation = Boolean(
     onViewAllocation && inv.status === "accepted" && inv.examiner_id,
   );
-  const hasMenuItems = canCopy || canResend || canViewAllocation;
+  const hasMenuItems = canCopy || canResend || canReopen || canViewAllocation;
 
   if (!hasMenuItems) {
     return <span className="text-xs text-muted-foreground">—</span>;
@@ -78,6 +89,20 @@ export function InvitationRowActionsMenu({
                 }}
               >
                 Copy link
+              </button>
+            ) : null}
+            {canReopen ? (
+              <button
+                type="button"
+                role="menuitem"
+                disabled={busy}
+                className={menuItemClass}
+                onClick={() => {
+                  onRenew?.(inv);
+                  onOpenChange(false);
+                }}
+              >
+                {reopenLabel}
               </button>
             ) : null}
             {canResend ? (

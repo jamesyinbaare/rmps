@@ -26,6 +26,7 @@ from app.services.examiner_invitation import _examiner_type_label
 from app.models import ExaminerType
 
 HEADER_LABELS = [
+    "Code",
     "Name",
     "Role",
     "Region",
@@ -46,7 +47,7 @@ HEADER_LABELS = [
     "Total payable (GHS)",
 ]
 
-COLUMN_WIDTHS = [26, 22, 16, 28, 26, 12, 16, 14, 14, 16, 16, 20, 18, 18, 14, 14, 14, 16]
+COLUMN_WIDTHS = [10, 26, 22, 16, 28, 26, 12, 16, 14, 14, 16, 16, 20, 18, 18, 14, 14, 14, 16]
 
 EXCEL_TEXT_FORMAT = "@"
 AMOUNT_NUMBER_FORMAT = "#,##0.00"
@@ -92,6 +93,7 @@ def _write_amount(ws: object, row: int, col: int, value: Decimal) -> None:
 
 def _row_values(item: AdminExaminerAllowanceRow) -> list[object]:
     return [
+        item.reference_code or "",
         item.full_name,
         _role_label(item.examiner_type),
         item.region,
@@ -143,7 +145,7 @@ def detail_workbook_bytes(
 
     amount_start = HEADER_LABELS.index("Responsibility (GHS)") + 1
     scripts_col = HEADER_LABELS.index("Allocated scripts") + 1
-    text_cols = {9, 8, 7, 6, 5, 4, 3, 2, 1}
+    text_cols = {10, 9, 8, 7, 6, 5, 4, 3, 2, 1}
 
     data_row = header_row + 1
     for idx, item in enumerate(items):
@@ -156,7 +158,7 @@ def detail_workbook_bytes(
                 ws.cell(row=r, column=col, value=int(value))
             elif col >= amount_start:
                 _write_amount(ws, r, col, Decimal(str(value)))
-            elif col in text_cols and col in (7, 8):
+            elif col in text_cols and col in (8, 9):
                 _write_text(ws, r, col, str(value))
             else:
                 ws.cell(row=r, column=col, value=value)

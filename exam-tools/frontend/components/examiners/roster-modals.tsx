@@ -23,6 +23,7 @@ type ExaminerFormModalProps = {
   examinerType: ExaminerTypeApi;
   subjectId: string;
   region: string;
+  gender: string;
   subjectOptions: Option[];
   regionOptions: Option[];
   onClose: () => void;
@@ -32,6 +33,7 @@ type ExaminerFormModalProps = {
   onExaminerTypeChange: (v: ExaminerTypeApi) => void;
   onSubjectIdChange: (v: string) => void;
   onRegionChange: (v: string) => void;
+  onGenderChange: (v: string) => void;
 };
 
 export function RosterExaminerFormModal({
@@ -44,6 +46,7 @@ export function RosterExaminerFormModal({
   examinerType,
   subjectId,
   region,
+  gender,
   subjectOptions,
   regionOptions,
   onClose,
@@ -53,6 +56,7 @@ export function RosterExaminerFormModal({
   onExaminerTypeChange,
   onSubjectIdChange,
   onRegionChange,
+  onGenderChange,
 }: ExaminerFormModalProps) {
   if (!open) return null;
 
@@ -134,6 +138,21 @@ export function RosterExaminerFormModal({
               ))}
             </select>
           </div>
+          <div>
+            <label className={formLabelClass} htmlFor="roster-gender">
+              Gender
+            </label>
+            <select
+              id="roster-gender"
+              className={formInputClass}
+              value={gender}
+              onChange={(e) => onGenderChange(e.target.value)}
+            >
+              <option value="">Not specified</option>
+              <option value="Male">Male</option>
+              <option value="Female">Female</option>
+            </select>
+          </div>
           <div className="md:col-span-2">
             <label className={formLabelClass} id="roster-subject-label">
               Subject
@@ -204,8 +223,11 @@ export function RosterBulkUploadModal({
     >
       <p className="text-xs text-muted-foreground">
         CSV or XLSX with columns: <span className="font-mono">name</span>,{" "}
-        <span className="font-mono">subject_code</span>, <span className="font-mono">examiner_type</span>,{" "}
-        <span className="font-mono">region</span>, <span className="font-mono">phone_number</span>.
+        <span className="font-mono">phone_number</span>, <span className="font-mono">subject_code</span> (original
+        code, e.g. MATH301; internal code still accepted), <span className="font-mono">examiner_type</span> (
+        <span className="font-mono">CE</span>, <span className="font-mono">ACE</span>,{" "}
+        <span className="font-mono">AE</span>, <span className="font-mono">TL</span>, or full names),{" "}
+        <span className="font-mono">region</span>, optional <span className="font-mono">gender</span> (Male/Female).
       </p>
       <div className="mt-3">
         <button type="button" className={officialAccountsBtnSecondary} disabled={busy} onClick={onDownloadTemplate}>

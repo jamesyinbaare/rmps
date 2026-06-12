@@ -7,11 +7,16 @@ import {
   INPUT_FOCUS_RING,
   SMS_PLACEHOLDER_TOKENS,
 } from "@/components/examiner-invitations/constants";
+import {
+  InvitationCoordinationScheduleFields,
+  type InvitationCoordinationDraft,
+} from "@/components/examiner-invitations/invitation-coordination-schedule-fields";
 import { InvitationModalShell } from "@/components/examiner-invitations/invitation-modal-shell";
 import { SearchableCombobox } from "@/components/searchable-combobox";
 import { Button } from "@/components/ui/button";
 import type {
   ExaminerInvitationBulkImportResponse,
+  ExaminerInvitationStatusApi,
   ExaminerTypeApi,
 } from "@/lib/api";
 import { formInputClass, formLabelClass } from "@/lib/form-classes";
@@ -28,8 +33,9 @@ export type InviteModalProps = {
   subjectId: string;
   examinerType: ExaminerTypeApi;
   region: string;
+  gender: string;
   responseDeadlineInput: string;
-  coordinationDateInput: string;
+  coordinationDraft: InvitationCoordinationDraft;
   sendSms: boolean;
   subjectOptions: ComboboxOption[];
   regionOptions: ComboboxOption[];
@@ -40,8 +46,9 @@ export type InviteModalProps = {
   onSubjectIdChange: (v: string) => void;
   onExaminerTypeChange: (v: ExaminerTypeApi) => void;
   onRegionChange: (v: string) => void;
+  onGenderChange: (v: string) => void;
   onResponseDeadlineChange: (v: string) => void;
-  onCoordinationDateChange: (v: string) => void;
+  onCoordinationDraftChange: (v: InvitationCoordinationDraft) => void;
   onSendSmsChange: (v: boolean) => void;
 };
 
@@ -130,6 +137,22 @@ export function InviteExaminerModal(props: InviteModalProps) {
           </select>
         </div>
         <div>
+          <label className={formLabelClass} htmlFor="ei-gender">
+            Gender
+          </label>
+          <select
+            id="ei-gender"
+            className={cn(formInputClass, "mt-1")}
+            value={props.gender}
+            disabled={props.busy}
+            onChange={(e) => props.onGenderChange(e.target.value)}
+          >
+            <option value="">Not specified</option>
+            <option value="Male">Male</option>
+            <option value="Female">Female</option>
+          </select>
+        </div>
+        <div>
           <p className={formLabelClass}>Region</p>
           <div className="mt-1">
             <SearchableCombobox
@@ -162,22 +185,108 @@ export function InviteExaminerModal(props: InviteModalProps) {
               Required — last date/time the invitee can accept or decline.
             </p>
           </div>
-          <div>
-            <label className={formLabelClass} htmlFor="ei-coordination">
-              Coordination date
-            </label>
-            <input
-              id="ei-coordination"
-              type="date"
-              className={cn(formInputClass, "mt-1")}
-              value={props.coordinationDateInput}
-              disabled={props.busy}
-              onChange={(e) => props.onCoordinationDateChange(e.target.value)}
-            />
-            <p className="mt-1 text-xs text-muted-foreground">
-              Optional — can be set later when coordination is scheduled for this group.
+          <div className="sm:col-span-2">
+            <p className={formLabelClass}>Coordination (optional)</p>
+            <p className="mb-2 text-xs text-muted-foreground">
+              Can be set later when coordination is scheduled.
             </p>
+            <InvitationCoordinationScheduleFields
+              idPrefix="ei-invite"
+              draft={props.coordinationDraft}
+              disabled={props.busy}
+              onChange={props.onCoordinationDraftChange}
+            />
           </div>
+        </div>
+        <label className="flex items-center gap-2 text-sm">
+          <input
+            type="checkbox"
+            checked={props.sendSms}
+            disabled={props.busy}
+            onChange={(e) => props.onSendSmsChange(e.target.checked)}
+          />
+          Send invitation by SMS
+        </label>
+      </div>
+    </InvitationModalShell>
+  );
+}
+
+export type RenewInvitationModalProps = {
+  open: boolean;
+  busy: boolean;
+  error: string | null;
+  status?: ExaminerInvitationStatusApi | null;
+  name: string;
+  phone: string;
+  responseDeadlineInput: string;
+  sendSms: boolean;
+  onClose: () => void;
+  onSubmit: () => void;
+  onResponseDeadlineChange: (v: string) => void;
+  onSendSmsChange: (v: boolean) => void;
+};
+
+export function RenewInvitationModal(props: RenewInvitationModalProps) {
+  if (!props.open) return null;
+  const isDeclined = props.status === "declined";
+  const title = isDeclined ? "Reopen invitation" : "Renew invitation link";
+  const submitLabel = isDeclined ? "Reopen invitation" : "Renew link";
+  const busyLabel = isDeclined ? "Reopening…" : "Renewing…";
+  return (
+    <InvitationModalShell
+      title={title}
+      titleId="ei-renew-title"
+      canClose={!props.busy}
+      onClose={props.onClose}
+      footer={
+        <div className="flex justify-end gap-2">
+          <Button type="button" variant="outline" disabled={props.busy} onClick={props.onClose}>
+            Cancel
+          </Button>
+          <Button type="button" disabled={props.busy} onClick={props.onSubmit}>
+            {props.busy ? busyLabel : submitLabel}
+          </Button>
+        </div>
+      }
+    >
+      <p className="text-xs text-muted-foreground">
+        {isDeclined
+          ? "Sets a new respond-by deadline so the invitee can accept or decline again. The same public link is kept."
+          : "Sets a new respond-by deadline and reactivates this invitation. The same public link is kept."}
+      </p>
+      {props.error ? (
+        <p className="mt-3 rounded-lg border border-destructive/40 bg-destructive/10 px-3 py-2 text-sm text-destructive">
+          {props.error}
+        </p>
+      ) : null}
+      <div className="mt-4 space-y-4">
+        <div className="grid gap-3 sm:grid-cols-2">
+          <div>
+            <p className={formLabelClass}>Name</p>
+            <p className="mt-1 text-sm font-medium text-foreground">{props.name}</p>
+          </div>
+          <div>
+            <p className={formLabelClass}>Phone</p>
+            <p className="mt-1 font-mono text-sm text-foreground">{props.phone}</p>
+          </div>
+        </div>
+        <div>
+          <label className={formLabelClass} htmlFor="ei-renew-deadline">
+            Respond by
+          </label>
+          <input
+            id="ei-renew-deadline"
+            type="datetime-local"
+            required
+            className={cn(formInputClass, "mt-1")}
+            value={props.responseDeadlineInput}
+            disabled={props.busy}
+            onChange={(e) => props.onResponseDeadlineChange(e.target.value)}
+          />
+          <p className="mt-1 text-xs text-muted-foreground">
+            Required — last date/time the invitee can accept or decline.
+          </p>
         </div>
         <label className="flex items-center gap-2 text-sm">
           <input
@@ -202,14 +311,14 @@ export type BulkUploadModalProps = {
   bulkFile: File | null;
   sendSmsOnBulk: boolean;
   bulkResponseDeadlineInput: string;
-  bulkCoordinationDateInput: string;
+  bulkCoordinationDraft: InvitationCoordinationDraft;
   onClose: () => void;
   onSubmit: () => void;
   onDownloadTemplate: () => void;
   onFileChange: (file: File | null) => void;
   onSendSmsOnBulkChange: (v: boolean) => void;
   onBulkResponseDeadlineChange: (v: string) => void;
-  onBulkCoordinationDateChange: (v: string) => void;
+  onBulkCoordinationDraftChange: (v: InvitationCoordinationDraft) => void;
 };
 
 export function BulkUploadModal(props: BulkUploadModalProps) {
@@ -234,7 +343,8 @@ export function BulkUploadModal(props: BulkUploadModalProps) {
       }
     >
       <p className="text-xs text-muted-foreground">
-        CSV or XLSX. Columns: name, phone_number, subject_code, examiner_type, region. One subject per row.
+        CSV or XLSX. Columns: name, phone_number, subject_code (original code, e.g. MATH301), examiner_type (CE,
+        ACE, AE, TL, or full names), region, optional gender (Male/Female). One subject per row.
       </p>
       <div className="mt-3">
         <Button
@@ -270,21 +380,17 @@ export function BulkUploadModal(props: BulkUploadModalProps) {
             Required — last date/time invitees can accept or decline.
           </p>
         </div>
-        <div>
-          <label className={formLabelClass} htmlFor="ei-bulk-coordination">
-            Coordination date
-          </label>
-          <input
-            id="ei-bulk-coordination"
-            type="date"
-            className={cn(formInputClass, "mt-1")}
-            value={props.bulkCoordinationDateInput}
-            disabled={props.busy}
-            onChange={(e) => props.onBulkCoordinationDateChange(e.target.value)}
-          />
-          <p className="mt-1 text-xs text-muted-foreground">
-            Optional — can be set later per batch when coordination is scheduled.
+        <div className="sm:col-span-2">
+          <p className={formLabelClass}>Default coordination (optional)</p>
+          <p className="mb-2 text-xs text-muted-foreground">
+            Applied to every row in the upload unless set later per invitation.
           </p>
+          <InvitationCoordinationScheduleFields
+            idPrefix="ei-bulk"
+            draft={props.bulkCoordinationDraft}
+            disabled={props.busy}
+            onChange={props.onBulkCoordinationDraftChange}
+          />
         </div>
       </div>
       <div className="mt-4">
@@ -333,17 +439,19 @@ export type SetCoordinationDateModalProps = {
   busy: boolean;
   error: string | null;
   recipientCount: number;
-  coordinationDateInput: string;
+  coordinationDraft: InvitationCoordinationDraft;
   onClose: () => void;
   onSubmit: () => void;
-  onCoordinationDateChange: (v: string) => void;
+  onCoordinationDraftChange: (v: InvitationCoordinationDraft) => void;
 };
 
 export function SetCoordinationDateModal(props: SetCoordinationDateModalProps) {
+  const canSave =
+    props.coordinationDraft.startDate.trim() !== "" || props.coordinationDraft.endDate.trim() !== "";
   if (!props.open) return null;
   return (
     <InvitationModalShell
-      title="Set coordination date"
+      title="Set coordination schedule"
       titleId="ei-coordination-set-title"
       canClose={!props.busy}
       onClose={props.onClose}
@@ -352,14 +460,14 @@ export function SetCoordinationDateModal(props: SetCoordinationDateModalProps) {
           <Button type="button" variant="outline" disabled={props.busy} onClick={props.onClose}>
             Cancel
           </Button>
-          <Button type="button" disabled={props.busy || !props.coordinationDateInput.trim()} onClick={props.onSubmit}>
-            {props.busy ? "Saving…" : "Save date"}
+          <Button type="button" disabled={props.busy || !canSave} onClick={props.onSubmit}>
+            {props.busy ? "Saving…" : "Save schedule"}
           </Button>
         </div>
       }
     >
       <p className="text-sm text-muted-foreground">
-        Set the coordination meeting date for {props.recipientCount} selected invitation
+        Set the coordination period for {props.recipientCount} selected invitation
         {props.recipientCount === 1 ? "" : "s"}. You can notify invitees afterward with custom SMS using{" "}
         <span className="font-mono text-xs">{`{coordination_date}`}</span>.
       </p>
@@ -369,17 +477,11 @@ export function SetCoordinationDateModal(props: SetCoordinationDateModalProps) {
         </p>
       ) : null}
       <div className="mt-4">
-        <label className={formLabelClass} htmlFor="ei-set-coordination">
-          Coordination date
-        </label>
-        <input
-          id="ei-set-coordination"
-          type="date"
-          required
-          className={cn(formInputClass, "mt-1")}
-          value={props.coordinationDateInput}
+        <InvitationCoordinationScheduleFields
+          idPrefix="ei-set"
+          draft={props.coordinationDraft}
           disabled={props.busy}
-          onChange={(e) => props.onCoordinationDateChange(e.target.value)}
+          onChange={props.onCoordinationDraftChange}
         />
       </div>
     </InvitationModalShell>

@@ -27,14 +27,25 @@ from app.schemas.script_allocation import (
     ExaminerUpdate,
 )
 from app.services.examiner_portal import examiner_portal_url, generate_portal_token
-from app.services.examiner_roster import dataframe_row_to_examiner_fields, read_examiners_spreadsheet
+from app.services.examiner_roster import (
+    dataframe_row_to_examiner_fields,
+    parse_gender_cell,
+    read_examiners_spreadsheet,
+)
+from app.services.examiner_regional_quota import (
+    GenderDistribution,
+    GroupDistribution,
+    assert_examiner_regional_quota_allowed,
+)
 from app.services.examiner_subject_lock import assert_examiner_subject_allowed
 from app.services.script_allocation import parse_region, sync_examiner_subjects
 from app.services.sms.phone import normalize_msisdn
 from app.services.sms.examiner_roster import maybe_send_custom_examiner_roster_sms
+from app.services.examiner_reference_code import assign_reference_code_to_examiner
 from app.services.subject_marking_group import sync_default_cohort_members
 from app.services.subject_officer_scope import (
     assert_subject_officer_access,
+    assert_unrestricted_examiner_manager,
     effective_subject_scope,
 )
 from app.services.template_generator import generate_examiners_bulk_template
@@ -71,8 +82,10 @@ def _examiner_response(ex: Examiner) -> ExaminerResponse:
         examination_id=int(ex.examination_id),
         name=ex.name,
         phone_number=ex.phone_number,
+        gender=ex.gender,
         examiner_type=_examiner_type_to_schema(ex.examiner_type),
         region=ex.region.value,
+        reference_code=ex.reference_code,
         subject_ids=[s.subject_id for s in ex.subjects],
         deviation_weight=float(ex.deviation_weight) if ex.deviation_weight is not None else None,
         examiner_group_id=gid,
@@ -170,11 +183,16 @@ async def create_examiner(
     examination_id: int,
     body: ExaminerCreate,
 ) -> ExaminerResponse:
+    assert_unrestricted_examiner_manager(user)
     await _get_examination_or_404(session, examination_id)
     await _assert_subject_ids_allowed(session, user, examination_id, body.subject_ids)
     try:
         region = parse_region(body.region)
         msisdn = normalize_msisdn(body.phone_number)
+    except ValueError as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e)) from e
+    try:
+        gender = parse_gender_cell(body.gender)
     except ValueError as e:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e)) from e
     subject_id = body.subject_ids[0]
@@ -185,6 +203,14 @@ async def create_examiner(
             msisdn=msisdn,
             subject_id=subject_id,
         )
+        await assert_examiner_regional_quota_allowed(
+            session,
+            examination_id=examination_id,
+            subject_id=subject_id,
+            region=region,
+            examiner_type=_examiner_type_from_schema(body.examiner_type),
+            gender=gender,
+        )
     except ValueError as e:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e)) from e
     ex = Examiner(
@@ -192,6 +218,7 @@ async def create_examiner(
         name=body.name.strip(),
         phone_number=body.phone_number.strip(),
         msisdn=msisdn,
+        gender=gender,
         examiner_type=_examiner_type_from_schema(body.examiner_type),
         region=region,
         deviation_weight=body.deviation_weight,
@@ -201,6 +228,10 @@ async def create_examiner(
     session.add(ex)
     await session.flush()
     await sync_examiner_subjects(session, ex, body.subject_ids)
+    try:
+        await assign_reference_code_to_examiner(session, ex)
+    except ValueError as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e)) from e
     await _sync_default_for_examiner(session, ex)
     await session.commit()
     stmt = (
@@ -244,6 +275,7 @@ async def bulk_upload_examiners(
     examination_id: int,
     file: UploadFile = File(...),
 ) -> ExaminerBulkImportResponse:
+    assert_unrestricted_examiner_manager(user)
     await _get_examination_or_404(session, examination_id)
     scope = await effective_subject_scope(session, user, examination_id)
     raw = await file.read()
@@ -260,6 +292,8 @@ async def bulk_upload_examiners(
         )
     errors: list[ExaminerBulkImportRowError] = []
     created_count = 0
+    batch_additional: dict[tuple[int, UUID], GroupDistribution] = {}
+    batch_gender: dict[int, GenderDistribution] = {}
     for row_number, (_, srow) in enumerate(df.iterrows(), start=2):
         try:
             fields = await dataframe_row_to_examiner_fields(session, srow)
@@ -278,14 +312,45 @@ async def bulk_upload_examiners(
                 msisdn=msisdn,
                 subject_id=subject_id,
             )
+            from app.services.examiner_regional_quota import resolve_group_for_region
+
+            group_id, _ = await resolve_group_for_region(
+                session, examination_id=examination_id, region=hr
+            )
+            await assert_examiner_regional_quota_allowed(
+                session,
+                examination_id=examination_id,
+                subject_id=subject_id,
+                region=hr,
+                examiner_type=fields["examiner_type"],
+                gender=fields.get("gender"),
+                additional=batch_additional,
+                additional_gender=batch_gender,
+            )
         except ValueError as e:
             errors.append(ExaminerBulkImportRowError(row_number=row_number, message=str(e)))
             continue
+        key = (subject_id, group_id)
+        if key not in batch_additional:
+            batch_additional[key] = GroupDistribution()
+        batch_additional[key].total += 1
+        batch_additional[key].by_role[fields["examiner_type"]] = (
+            batch_additional[key].by_role.get(fields["examiner_type"], 0) + 1
+        )
+        row_gender = fields.get("gender")
+        if row_gender in ("Male", "Female"):
+            if subject_id not in batch_gender:
+                batch_gender[subject_id] = GenderDistribution()
+            if row_gender == "Male":
+                batch_gender[subject_id].male += 1
+            else:
+                batch_gender[subject_id].female += 1
         ex = Examiner(
             examination_id=examination_id,
             name=fields["name"],
             phone_number=fields["phone_number"],
             msisdn=msisdn,
+            gender=fields.get("gender"),
             examiner_type=fields["examiner_type"],
             region=hr,
             deviation_weight=None,
@@ -296,6 +361,7 @@ async def bulk_upload_examiners(
         try:
             await session.flush()
             await sync_examiner_subjects(session, ex, fields["subject_ids"])
+            await assign_reference_code_to_examiner(session, ex)
             await _sync_default_for_examiner(session, ex)
             await session.commit()
             created_count += 1
@@ -313,6 +379,7 @@ async def update_examiner(
     examiner_id: UUID,
     body: ExaminerUpdate,
 ) -> ExaminerResponse:
+    assert_unrestricted_examiner_manager(user)
     stmt = (
         select(Examiner)
         .where(Examiner.id == examiner_id, Examiner.examination_id == examination_id)
@@ -329,21 +396,66 @@ async def update_examiner(
     patch = body.model_dump(exclude_unset=True)
     if "name" in patch and patch["name"] is not None:
         ex.name = str(patch["name"]).strip()
-    if "examiner_type" in patch and patch["examiner_type"] is not None:
-        ex.examiner_type = _examiner_type_from_schema(ExaminerTypeSchema(patch["examiner_type"]))
+    new_region = ex.region
+    new_type = ex.examiner_type
+    new_gender = ex.gender
     if "region" in patch and patch["region"] is not None:
         try:
-            ex.region = parse_region(patch["region"])
+            new_region = parse_region(patch["region"])
         except ValueError as e:
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e)) from e
+    if "examiner_type" in patch and patch["examiner_type"] is not None:
+        new_type = _examiner_type_from_schema(ExaminerTypeSchema(patch["examiner_type"]))
+    if "gender" in patch:
+        try:
+            new_gender = parse_gender_cell(patch["gender"])
+        except ValueError as e:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e)) from e
+    if (
+        ("region" in patch and patch["region"] is not None)
+        or ("examiner_type" in patch and patch["examiner_type"] is not None)
+        or "gender" in patch
+    ):
+        subject_ids = _examiner_subject_ids(ex)
+        if len(subject_ids) == 1:
+            try:
+                await assert_examiner_regional_quota_allowed(
+                    session,
+                    examination_id=examination_id,
+                    subject_id=subject_ids[0],
+                    region=new_region,
+                    examiner_type=new_type,
+                    gender=new_gender,
+                    exclude_examiner_id=ex.id,
+                )
+            except ValueError as e:
+                raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e)) from e
+    if "region" in patch and patch["region"] is not None:
+        ex.region = new_region
+    if "examiner_type" in patch and patch["examiner_type"] is not None:
+        ex.examiner_type = new_type
     if "deviation_weight" in patch:
         ex.deviation_weight = patch["deviation_weight"]
+    if "gender" in patch:
+        ex.gender = new_gender
     if "phone_number" in patch and patch["phone_number"] is not None:
         try:
             ex.phone_number = str(patch["phone_number"]).strip()
             ex.msisdn = normalize_msisdn(ex.phone_number)
         except ValueError as e:
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e)) from e
+        subject_ids = _examiner_subject_ids(ex)
+        if len(subject_ids) == 1:
+            try:
+                await assert_examiner_subject_allowed(
+                    session,
+                    examination_id=examination_id,
+                    msisdn=ex.msisdn,
+                    subject_id=subject_ids[0],
+                    exclude_examiner_id=ex.id,
+                )
+            except ValueError as e:
+                raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e)) from e
     if "subject_ids" in patch and patch["subject_ids"] is not None:
         subject_ids = list(patch["subject_ids"])
         if len(subject_ids) != 1:
@@ -399,6 +511,7 @@ async def delete_examiner(
     examination_id: int,
     examiner_id: UUID,
 ) -> None:
+    assert_unrestricted_examiner_manager(user)
     stmt = (
         select(Examiner)
         .where(Examiner.id == examiner_id, Examiner.examination_id == examination_id)

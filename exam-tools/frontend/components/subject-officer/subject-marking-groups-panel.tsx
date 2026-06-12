@@ -53,8 +53,9 @@ function toCohortListItem(g: SubjectMarkingGroupRow): CohortListItem {
     examiner_ids: g.examiner_ids,
     source_regions: g.source_regions,
     source_roles: g.source_roles,
-    coordinationDate: g.coordination_date,
+    coordinationStartDate: g.coordination_start_date,
     coordinationStartTime: g.coordination_start_time,
+    coordinationEndDate: g.coordination_end_date,
     coordinationEndTime: g.coordination_end_time,
     markingStartDate: g.marking_start_date,
     markingEndDate: g.marking_end_date,
@@ -77,6 +78,8 @@ type Props = {
   pageScroll?: boolean;
   /** Super Admin / Test Admin Officer can edit default cohort schedules. */
   canManageDefaultCohort?: boolean;
+  /** When false, cohorts are view-only (subject officers). */
+  canManageCohorts?: boolean;
 };
 
 export function SubjectMarkingGroupsPanel({
@@ -85,6 +88,7 @@ export function SubjectMarkingGroupsPanel({
   embedded = false,
   pageScroll = false,
   canManageDefaultCohort = false,
+  canManageCohorts = true,
 }: Props) {
   const [subjectId, setSubjectId] = useState<number | "">("");
   const [groups, setGroups] = useState<SubjectMarkingGroupRow[]>([]);
@@ -175,9 +179,11 @@ export function SubjectMarkingGroupsPanel({
     [groups, selectedId],
   );
   const isDefaultCohort = selectedGroup?.is_default === true;
-  const defaultCohortDetailsEditable = !isDefaultCohort || canManageDefaultCohort;
+  const defaultCohortDetailsEditable =
+    canManageCohorts && (!isDefaultCohort || canManageDefaultCohort);
+  const cohortDetailsEditable = canManageCohorts && defaultCohortDetailsEditable;
 
-  const canSaveMembership = (!isCreating || selectedId != null) && !isDefaultCohort;
+  const canSaveMembership = canManageCohorts && (!isCreating || selectedId != null) && !isDefaultCohort;
 
   const subjectOptions = useMemo(
     () =>
@@ -488,7 +494,9 @@ export function SubjectMarkingGroupsPanel({
 
       {subjectId === "" ? (
         <div className="flex flex-1 items-center justify-center p-6 text-center">
-          <p className="text-sm text-muted-foreground">Select a subject to manage cohorts.</p>
+          <p className="text-sm text-muted-foreground">
+            {canManageCohorts ? "Select a subject to manage cohorts." : "Select a subject to view cohorts."}
+          </p>
         </div>
       ) : (
         <>
@@ -497,9 +505,11 @@ export function SubjectMarkingGroupsPanel({
             entityLabel="cohort"
             onShowUnassigned={openUnassigned}
             trailing={
-              <Button type="button" size="sm" disabled={busy} onClick={() => openCreate()}>
-                New cohort
-              </Button>
+              canManageCohorts ? (
+                <Button type="button" size="sm" disabled={busy} onClick={() => openCreate()}>
+                  New cohort
+                </Button>
+              ) : null
             }
           />
 
@@ -511,7 +521,11 @@ export function SubjectMarkingGroupsPanel({
             unassignedCount={coverage.unassignedCount}
             showUnassignedCount
             showScheduleColumn
-            emptyLabel="No cohorts yet. Create one to assign examiners and set dates."
+            emptyLabel={
+              canManageCohorts
+                ? "No cohorts yet. Create one to assign examiners and set dates."
+                : "No cohorts yet."
+            }
             hideNewButton
           />
 
@@ -523,6 +537,7 @@ export function SubjectMarkingGroupsPanel({
             unassignedIds={coverage.unassignedIds}
             cohorts={cohortList}
             busy={busy}
+            readOnly={!canManageCohorts}
             onCreateWithSelected={handleCreateWithSelected}
             onAddToCohort={(cohortId, ids) => void handleAddToCohort(cohortId, ids)}
           />
@@ -532,11 +547,13 @@ export function SubjectMarkingGroupsPanel({
             mode={isCreating ? "create" : "edit"}
             entityLabel="cohort"
             description={
-              isDefaultCohort
-                ? canManageDefaultCohort
-                  ? "All subject examiners are always in the default cohort. You can edit the schedule; membership is synced from the roster."
-                  : "All subject examiners are always in the default cohort. Only administrators can edit the default schedule; membership is synced from the roster."
-                : undefined
+              !canManageCohorts
+                ? "View-only. Only Test Admin and Super Admin can create or edit cohorts."
+                : isDefaultCohort
+                  ? canManageDefaultCohort
+                    ? "All subject examiners are always in the default cohort. You can edit the schedule; membership is synced from the roster."
+                    : "All subject examiners are always in the default cohort. Only administrators can edit the default schedule; membership is synced from the roster."
+                  : undefined
             }
             name={nameInput}
             onNameChange={setNameInput}
@@ -572,9 +589,9 @@ export function SubjectMarkingGroupsPanel({
             scheduleWarnings={scheduleValidation.warnings}
             detailsSaveDisabled={scheduleValidation.hasBlockingErrors}
             canSaveMembership={canSaveMembership}
-            membershipLocked={isDefaultCohort}
-            nameDisabled={isDefaultCohort}
-            detailsEditable={defaultCohortDetailsEditable}
+            membershipLocked={!canManageCohorts || isDefaultCohort}
+            nameDisabled={!canManageCohorts || isDefaultCohort}
+            detailsEditable={cohortDetailsEditable}
             deleteConfirmOpen={deleteConfirmOpen}
             onDeleteConfirmOpenChange={setDeleteConfirmOpen}
             onToggleRegion={membership.toggleRegion}
@@ -583,7 +600,9 @@ export function SubjectMarkingGroupsPanel({
             onSaveDetails={() => handleSaveDetails()}
             onCancelDetailsEdit={cancelDetailsEdit}
             onSaveMembership={() => void handleSaveMembership()}
-            onDelete={isCreating || isDefaultCohort ? undefined : () => void handleDelete()}
+            onDelete={
+              !canManageCohorts || isCreating || isDefaultCohort ? undefined : () => void handleDelete()
+            }
             onClose={closeModal}
           />
         </>

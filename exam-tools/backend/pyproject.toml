@@ -26,6 +26,7 @@ dependencies = [
     "alembic-postgresql-enum>=1.8.0",
     "alembic-utils>=0.8.8",
     "google-cloud-storage>=3.10.1",
+    "qrcode>=8.0",
 ]
 
 [dependency-groups]

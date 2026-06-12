@@ -29,7 +29,10 @@ def _mock_invitation(**overrides: object) -> MagicMock:
     inv.region = Region.ASHANTI
     inv.name = "Jane Doe"
     inv.phone_number = "0551234567"
-    inv.coordination_date = datetime(2026, 6, 20, 9, 0)
+    inv.coordination_start_date = datetime(2026, 6, 20, 9, 0)
+    inv.coordination_start_time = None
+    inv.coordination_end_date = datetime(2026, 6, 20, 9, 0)
+    inv.coordination_end_time = None
     for key, value in overrides.items():
         setattr(inv, key, value)
     return inv
@@ -57,7 +60,10 @@ def test_public_invitation_view_includes_examiner_id_when_accepted() -> None:
     inv.status = ExaminerInvitationStatus.ACCEPTED
     inv.examiner_id = examiner_id
     inv.response_deadline = datetime.utcnow() + timedelta(days=7)
-    inv.coordination_date = None
+    inv.coordination_start_date = None
+    inv.coordination_start_time = None
+    inv.coordination_end_date = None
+    inv.coordination_end_time = None
     inv.responded_at = datetime.utcnow()
     sub = MagicMock(spec=Subject)
     sub.code = "301"
@@ -84,7 +90,10 @@ def test_public_invitation_view_omits_examiner_id_when_pending() -> None:
     inv.status = ExaminerInvitationStatus.PENDING
     inv.examiner_id = None
     inv.response_deadline = datetime.utcnow() + timedelta(days=7)
-    inv.coordination_date = None
+    inv.coordination_start_date = None
+    inv.coordination_start_time = None
+    inv.coordination_end_date = None
+    inv.coordination_end_time = None
     inv.responded_at = None
     sub = MagicMock(spec=Subject)
     sub.code = "301"

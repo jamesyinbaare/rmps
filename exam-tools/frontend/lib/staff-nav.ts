@@ -67,6 +67,8 @@ export function buildStaffSidebarNav({
         link(`${staffBase}/examiners`, "Examiners", pathname),
         link(`${staffBase}/allocations`, "Allocations", pathname),
         link(`${staffBase}/marked-script-returns`, "Marked scripts", pathname),
+        link(`${staffBase}/attendance`, "Attendance", pathname),
+        link(`${staffBase}/lunch-verification`, "Lunch Coupons", pathname),
       ],
     });
   }

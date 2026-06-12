@@ -31,7 +31,7 @@ export const EXAMINERS_TAB_PANEL_SCROLL_CLASS = cn(
 
 /** Horizontal scroll only — vertical scroll is the page/shell. */
 export const EXAMINERS_TABLE_SCROLL_CONTAINER_CLASS = cn(
-  "overflow-x-auto",
+  "scrollbar-hide overflow-x-auto",
   "[&_thead]:sticky [&_thead]:top-0 [&_thead]:z-10",
   "[&_th]:bg-card [&_th]:shadow-[0_1px_0_0_hsl(var(--border))]",
 );
@@ -64,11 +64,13 @@ export const EXAMINERS_EXAM_META_CLASS =
   "inline-flex items-center rounded-full border border-primary/25 bg-primary/10 px-3 py-1 text-xs font-medium text-primary";
 
 export const ROSTER_COLUMN_TOGGLE_OPTIONS = [
+  { id: "reference_code", label: "Code", defaultVisible: true },
   { id: "name", label: "Name", defaultVisible: true },
   { id: "phone_number", label: "Phone", defaultVisible: true },
   { id: "subject", label: "Subject", defaultVisible: true },
   { id: "examiner_type", label: "Role", defaultVisible: true },
   { id: "region", label: "Region", defaultVisible: true },
+  { id: "gender", label: "Gender", defaultVisible: false },
   { id: "group", label: "Group", defaultVisible: false },
 ] as const;
 

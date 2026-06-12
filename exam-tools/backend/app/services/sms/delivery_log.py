@@ -24,6 +24,7 @@ MESSAGE_TYPE_INSPECTOR_CREDENTIALS = "inspector_credentials"
 MESSAGE_TYPE_EXAMINER_INVITATION = "examiner_invitation"
 MESSAGE_TYPE_EXAMINER_INVITATION_CUSTOM = "examiner_invitation_custom"
 MESSAGE_TYPE_EXAMINER_ROSTER_CUSTOM = "examiner_roster_custom"
+MESSAGE_TYPE_EXAMINER_APPOINTMENT_LETTER_RELEASED = "examiner_appointment_letter_released"
 
 
 def _truncate(text: str | None, max_len: int) -> str | None:
@@ -379,3 +380,59 @@ async def record_custom_examiner_roster_sms(
         await mark_delivery_failed(session, pending.id, error=result.error or "SMS failed")
     await session.commit()
     return result, pending.id
+
+
+async def record_examiner_appointment_letter_released_sms(
+    session: AsyncSession,
+    *,
+    examiner: Examiner,
+    message: str,
+    trigger: str,
+    triggered_by_user_id: UUID | None = None,
+) -> SmsDeliveryResult:
+    from app.config import settings
+    from app.services.sms.factory import get_sms_provider
+
+    phone = examiner.phone_number or ""
+    if not settings.sms_enabled or not settings.nalo_sms_key.strip():
+        return SmsDeliveryResult(sent=False, error="SMS is not configured")
+
+    try:
+        msisdn = normalize_msisdn(phone)
+    except ValueError as exc:
+        await create_delivery_log(
+            session,
+            examiner_id=examiner.id,
+            phone_number=phone,
+            msisdn="",
+            message_type=MESSAGE_TYPE_EXAMINER_APPOINTMENT_LETTER_RELEASED,
+            trigger=trigger,
+            status="failed",
+            triggered_by_user_id=triggered_by_user_id,
+            error_message=str(exc),
+        )
+        return SmsDeliveryResult(sent=False, error=str(exc))
+
+    pending = await create_delivery_log(
+        session,
+        examiner_id=examiner.id,
+        phone_number=phone,
+        msisdn=msisdn,
+        message_type=MESSAGE_TYPE_EXAMINER_APPOINTMENT_LETTER_RELEASED,
+        trigger=trigger,
+        status="pending",
+        triggered_by_user_id=triggered_by_user_id,
+    )
+    await session.flush()
+
+    result = await get_sms_provider().send_sms(msisdn, message)
+    if result.sent:
+        await mark_delivery_sent(session, pending.id, provider_response=result.provider_response)
+    else:
+        await mark_delivery_failed(
+            session,
+            pending.id,
+            error=result.error or "SMS failed",
+            provider_response=result.provider_response,
+        )
+    return result

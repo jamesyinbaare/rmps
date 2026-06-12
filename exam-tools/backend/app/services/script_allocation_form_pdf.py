@@ -25,7 +25,9 @@ from app.models import (
     ScriptPackingSeries,
     Subject,
 )
+from app.services.examiner_qr_payload import build_examiner_qr_payload
 from app.services.pdf_generator import PdfGenerator, render_html
+from app.services.qr_code import generate_qr_code_base64
 
 MAX_COPIES = 20
 TEMPLATE_REL = "script-allocation/scripts-allocation-form.html"
@@ -54,18 +56,24 @@ def _format_school_display(code: str, name: str, max_len: int = MAX_SCHOOL_DISPL
 
 def _render_one_examiner_pdf_sync(
     *,
+    examination_id: int,
     examination_label_str: str,
     year: int,
     subject_label: str,
     paper_number: int,
     examiner_name: str,
     examiner_region: str,
+    reference_code: str | None,
     rows: list[dict[str, int | str]],
     total_count: int,
 ) -> bytes:
     templates_dir = Path(__file__).parent.parent / "templates"
     app_dir = Path(__file__).parent.parent.resolve()
     generated_at = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
+    qr_payload = (
+        build_examiner_qr_payload(examination_id, reference_code) if reference_code else None
+    )
+    qr_code_base64 = generate_qr_code_base64(qr_payload) if qr_payload else None
     main_html = render_html(
         {
             "examination_label": examination_label_str,
@@ -74,6 +82,8 @@ def _render_one_examiner_pdf_sync(
             "paper_number": paper_number,
             "examiner_name": examiner_name,
             "examiner_region": examiner_region,
+            "reference_code": reference_code,
+            "qr_code_base64": qr_code_base64,
             "rows": rows,
             "total_count": total_count,
             "generated_at": generated_at,
@@ -174,14 +184,17 @@ async def build_scripts_allocation_form_pdf(
         region = examiner.region.value if examiner and examiner.region else "-"
         ordered = _sorted_assignment_rows(rows_raw)
         total = sum(int(r["booklet_count"]) for r in ordered)
+        ref_code = examiner.reference_code if examiner else None
         pdf_bytes = await asyncio.to_thread(
             _render_one_examiner_pdf_sync,
+            examination_id=int(examination.id),
             examination_label_str=exam_label_str,
             year=int(examination.year),
             subject_label=subject_label,
             paper_number=paper_number,
             examiner_name=name,
             examiner_region=region,
+            reference_code=ref_code,
             rows=ordered,
             total_count=total,
         )
@@ -206,12 +219,14 @@ async def build_scripts_allocation_form_pdf(
             total = sum(int(r["booklet_count"]) for r in ordered)
             pdf_bytes = await asyncio.to_thread(
                 _render_one_examiner_pdf_sync,
+                examination_id=int(examination.id),
                 examination_label_str=exam_label_str,
                 year=int(examination.year),
                 subject_label=subject_label,
                 paper_number=paper_number,
                 examiner_name=ex.name,
                 examiner_region=ex.region.value if ex.region else "-",
+                reference_code=ex.reference_code,
                 rows=ordered,
                 total_count=total,
             )

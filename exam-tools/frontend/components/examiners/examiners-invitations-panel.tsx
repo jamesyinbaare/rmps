@@ -17,6 +17,7 @@ import {
   BulkUploadModal,
   CustomSmsModal,
   InviteExaminerModal,
+  RenewInvitationModal,
   SetCoordinationDateModal,
 } from "@/components/examiner-invitations/invitations-modals";
 import { InvitationsSummaryStats } from "@/components/examiner-invitations/invitations-summary-stats";
@@ -28,8 +29,13 @@ import type {
   ResendUiState,
 } from "@/components/examiner-invitations/types";
 import {
+  emptyInvitationCoordinationDraft,
+  invitationCoordinationToPayload,
+  type InvitationCoordinationDraft,
+} from "@/components/examiner-invitations/invitation-coordination-schedule-fields";
+import {
   clampPageSize,
-  dateInputToIso,
+  defaultDatetimeLocalInput,
   datetimeLocalToIso,
   canReceiveCoordinationSms,
   coordinationSmsSelectionBlockedReason,
@@ -39,12 +45,13 @@ import type { OfficialAccountsFilterChip } from "@/components/official-accounts-
 import { Button } from "@/components/ui/button";
 import {
   bulkSendExaminerInvitationCustomSms,
-  bulkSetExaminerInvitationCoordinationDate,
+  bulkSetExaminerInvitationCoordinationSchedule,
   bulkUploadExaminerInvitations,
   createExaminerInvitation,
   downloadExaminerInvitationLinksExport,
   downloadExaminerInvitationsBulkTemplate,
   listExaminerInvitations,
+  renewExaminerInvitation,
   resendExaminerInvitationSms,
   type ExaminerInvitationBulkImportResponse,
   type ExaminerInvitationBulkSmsResponse,
@@ -67,6 +74,7 @@ type Props = {
   lockedSubjectIds?: number[];
   embedded?: boolean;
   pageScroll?: boolean;
+  readOnly?: boolean;
   onInvitationCountsChange?: (counts: InvitationStatusCounts) => void;
 };
 
@@ -90,6 +98,7 @@ export function ExaminersInvitationsPanel({
   lockedSubjectIds,
   embedded = false,
   pageScroll = false,
+  readOnly = false,
   onInvitationCountsChange,
 }: Props) {
   const [invitations, setInvitations] = useState<ExaminerInvitationRow[]>([]);
@@ -98,11 +107,18 @@ export function ExaminersInvitationsPanel({
   const [actionMessage, setActionMessage] = useState<string | null>(null);
   const [actionMessageTone, setActionMessageTone] = useState<"success" | "error">("success");
   const [inviteModalOpen, setInviteModalOpen] = useState(false);
+  const [renewModalOpen, setRenewModalOpen] = useState(false);
+  const [renewTarget, setRenewTarget] = useState<ExaminerInvitationRow | null>(null);
+  const [renewError, setRenewError] = useState<string | null>(null);
+  const [renewDeadlineInput, setRenewDeadlineInput] = useState("");
+  const [renewSendSms, setRenewSendSms] = useState(true);
   const [uploadModalOpen, setUploadModalOpen] = useState(false);
   const [smsModalOpen, setSmsModalOpen] = useState(false);
   const [coordinationModalOpen, setCoordinationModalOpen] = useState(false);
   const [coordinationModalError, setCoordinationModalError] = useState<string | null>(null);
-  const [batchCoordinationDateInput, setBatchCoordinationDateInput] = useState("");
+  const [batchCoordinationDraft, setBatchCoordinationDraft] = useState<InvitationCoordinationDraft>(
+    emptyInvitationCoordinationDraft(),
+  );
   const [uploadError, setUploadError] = useState<string | null>(null);
   const [uploadResult, setUploadResult] = useState<ExaminerInvitationBulkImportResponse | null>(null);
   const [sendSmsOnBulk, setSendSmsOnBulk] = useState(false);
@@ -118,10 +134,15 @@ export function ExaminersInvitationsPanel({
   const [subjectId, setSubjectId] = useState("");
   const [examinerType, setExaminerType] = useState<ExaminerTypeApi>("assistant_examiner");
   const [region, setRegion] = useState("");
+  const [gender, setGender] = useState("");
   const [responseDeadlineInput, setResponseDeadlineInput] = useState("");
-  const [coordinationDateInput, setCoordinationDateInput] = useState("");
+  const [coordinationDraft, setCoordinationDraft] = useState<InvitationCoordinationDraft>(
+    emptyInvitationCoordinationDraft(),
+  );
   const [bulkResponseDeadlineInput, setBulkResponseDeadlineInput] = useState("");
-  const [bulkCoordinationDateInput, setBulkCoordinationDateInput] = useState("");
+  const [bulkCoordinationDraft, setBulkCoordinationDraft] = useState<InvitationCoordinationDraft>(
+    emptyInvitationCoordinationDraft(),
+  );
   const [customSmsMessage, setCustomSmsMessage] = useState("");
 
   const [subjectTypeFilter, setSubjectTypeFilter] = useState<ScriptControlSubjectTypeFilter>("all");
@@ -372,6 +393,68 @@ export function ExaminersInvitationsPanel({
     setPagination({ pageIndex: 0, pageSize: n });
   }
 
+  const openRenew = useCallback((inv: ExaminerInvitationRow) => {
+    setRenewTarget(inv);
+    setRenewError(null);
+    setRenewDeadlineInput(defaultDatetimeLocalInput());
+    setRenewSendSms(true);
+    setRenewModalOpen(true);
+  }, []);
+
+  const closeRenewModal = useCallback(() => {
+    setRenewModalOpen(false);
+    setRenewTarget(null);
+    setRenewError(null);
+    setRenewDeadlineInput("");
+  }, []);
+
+  const handleRenew = useCallback(async () => {
+    if (examId == null || renewTarget == null) return;
+    if (!renewDeadlineInput.trim()) {
+      setRenewError("Respond-by deadline is required.");
+      return;
+    }
+    const responseDeadlineIso = datetimeLocalToIso(renewDeadlineInput);
+    if (!responseDeadlineIso) {
+      setRenewError("Enter a valid respond-by date and time.");
+      return;
+    }
+    setRenewError(null);
+    setBusy(true);
+    setActionMessage(null);
+    try {
+      const res = await renewExaminerInvitation(examId, renewTarget.id, {
+        response_deadline: responseDeadlineIso,
+        send_sms: renewSendSms,
+      });
+      closeRenewModal();
+      const actionVerb = renewTarget.status === "declined" ? "reopened" : "renewed";
+      setActionMessageTone("success");
+      if (res.sms_sent === true) {
+        setActionMessage(`Invitation ${actionVerb} and SMS sent to ${renewTarget.name}.`);
+      } else if (res.sms_sent === false) {
+        setActionMessageTone("error");
+        setActionMessage(
+          `Invitation ${actionVerb} for ${renewTarget.name}, but SMS failed: ${res.sms_error ?? "Unknown error"}`,
+        );
+      } else {
+        setActionMessage(`Invitation ${actionVerb} for ${renewTarget.name}.`);
+      }
+      await loadInvitations(examId);
+    } catch (e) {
+      setRenewError(e instanceof Error ? e.message : "Renew failed");
+    } finally {
+      setBusy(false);
+    }
+  }, [
+    closeRenewModal,
+    examId,
+    loadInvitations,
+    renewDeadlineInput,
+    renewSendSms,
+    renewTarget,
+  ]);
+
   const handleResend = useCallback(
     async (inv: ExaminerInvitationRow) => {
       if (examId == null) return;
@@ -459,10 +542,11 @@ export function ExaminersInvitationsPanel({
     setPhone("");
     setSubjectId("");
     setRegion("");
+    setGender("");
     setExaminerType("assistant_examiner");
     setSendSms(true);
     setResponseDeadlineInput("");
-    setCoordinationDateInput("");
+    setCoordinationDraft(emptyInvitationCoordinationDraft());
   }
 
   function closeUploadModal() {
@@ -510,9 +594,10 @@ export function ExaminersInvitationsPanel({
         subject_id: sid,
         examiner_type: examinerType,
         region: region.trim(),
+        gender: gender.trim() || null,
         send_sms: sendSms,
         response_deadline: responseDeadlineIso,
-        coordination_date: dateInputToIso(coordinationDateInput),
+        ...invitationCoordinationToPayload(coordinationDraft),
       });
       resetInviteForm();
       setInviteModalOpen(false);
@@ -544,7 +629,10 @@ export function ExaminersInvitationsPanel({
       const res = await bulkUploadExaminerInvitations(examId, bulkFile, {
         sendSms: sendSmsOnBulk,
         responseDeadline: responseDeadlineIso,
-        coordinationDate: dateInputToIso(bulkCoordinationDateInput),
+        coordinationStartDate: invitationCoordinationToPayload(bulkCoordinationDraft).coordination_start_date,
+        coordinationStartTime: invitationCoordinationToPayload(bulkCoordinationDraft).coordination_start_time,
+        coordinationEndDate: invitationCoordinationToPayload(bulkCoordinationDraft).coordination_end_date,
+        coordinationEndTime: invitationCoordinationToPayload(bulkCoordinationDraft).coordination_end_time,
       });
       setUploadResult(res);
       setBulkFile(null);
@@ -559,23 +647,22 @@ export function ExaminersInvitationsPanel({
   function closeCoordinationModal() {
     setCoordinationModalOpen(false);
     setCoordinationModalError(null);
-    setBatchCoordinationDateInput("");
+    setBatchCoordinationDraft(emptyInvitationCoordinationDraft());
   }
 
   async function handleSetCoordinationDate() {
     if (examId == null || selectedCount === 0) return;
-    const coordinationIso = dateInputToIso(batchCoordinationDateInput);
-    if (!coordinationIso) {
-      setCoordinationModalError("Enter a valid coordination date.");
+    if (!batchCoordinationDraft.startDate.trim() && !batchCoordinationDraft.endDate.trim()) {
+      setCoordinationModalError("Enter at least a coordination start or end date.");
       return;
     }
     const invitationIds = filteredRows.filter((row) => rowSelection[row.id]).map((row) => row.id);
     setBusy(true);
     setCoordinationModalError(null);
     try {
-      const res = await bulkSetExaminerInvitationCoordinationDate(examId, {
+      const res = await bulkSetExaminerInvitationCoordinationSchedule(examId, {
         invitation_ids: invitationIds,
-        coordination_date: coordinationIso,
+        ...invitationCoordinationToPayload(batchCoordinationDraft),
       });
       await loadInvitations(examId);
       closeCoordinationModal();
@@ -585,7 +672,7 @@ export function ExaminersInvitationsPanel({
           `Updated ${res.updated_count} invitation(s). ${res.errors.length} could not be updated.`,
         );
       } else {
-        setActionMessage(`Coordination date set for ${res.updated_count} invitation(s).`);
+        setActionMessage(`Coordination schedule set for ${res.updated_count} invitation(s).`);
         const acceptedSelected = filteredRows.filter(
           (row) => rowSelection[row.id] && canReceiveCoordinationSms(row.status),
         );
@@ -598,7 +685,7 @@ export function ExaminersInvitationsPanel({
         } else if (invitationIds.length > 0) {
           setActionMessageTone("success");
           setActionMessage(
-            `Coordination date saved. SMS wasn't opened because no one in your selection has accepted yet.`,
+            `Coordination schedule saved. SMS wasn't opened because no one in your selection has accepted yet.`,
           );
         }
       }
@@ -738,6 +825,7 @@ export function ExaminersInvitationsPanel({
           onDownloadLinks={() => void handleDownloadLinks()}
           busy={busy || loadingInvitations}
           disabled={examId == null}
+          readOnly={readOnly}
         />
 
         <div className={pageScroll ? "flex flex-col" : "flex min-h-0 flex-1 flex-col"}>
@@ -763,40 +851,43 @@ export function ExaminersInvitationsPanel({
                 <div className="space-y-1">
                   <p className="text-sm font-medium text-foreground">No invitations yet</p>
                   <p className="max-w-sm text-sm text-muted-foreground">
-                    Send individual invitations or upload a spreadsheet to invite examiners for this
-                    examination.
+                    {readOnly
+                      ? "Invitations will appear here once administrators send them. You can still notify examiners via SMS."
+                      : "Send individual invitations or upload a spreadsheet to invite examiners for this examination."}
                   </p>
                 </div>
-                <div className="flex flex-wrap justify-center gap-2">
-                  <Button
-                    type="button"
-                    size="sm"
-                    className="gap-1.5"
-                    disabled={busy}
-                    onClick={() => {
-                      setInviteError(null);
-                      setInviteModalOpen(true);
-                    }}
-                  >
-                    <MailPlus className="size-4" aria-hidden />
-                    Invite examiner
-                  </Button>
-                  <Button
-                    type="button"
-                    size="sm"
-                    variant="outline"
-                    className="gap-1.5"
-                    disabled={busy}
-                    onClick={() => {
-                      setUploadError(null);
-                      setUploadResult(null);
-                      setUploadModalOpen(true);
-                    }}
-                  >
-                    <Upload className="size-4" aria-hidden />
-                    Bulk upload
-                  </Button>
-                </div>
+                {readOnly ? null : (
+                  <div className="flex flex-wrap justify-center gap-2">
+                    <Button
+                      type="button"
+                      size="sm"
+                      className="gap-1.5"
+                      disabled={busy}
+                      onClick={() => {
+                        setInviteError(null);
+                        setInviteModalOpen(true);
+                      }}
+                    >
+                      <MailPlus className="size-4" aria-hidden />
+                      Invite examiner
+                    </Button>
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="outline"
+                      className="gap-1.5"
+                      disabled={busy}
+                      onClick={() => {
+                        setUploadError(null);
+                        setUploadResult(null);
+                        setUploadModalOpen(true);
+                      }}
+                    >
+                      <Upload className="size-4" aria-hidden />
+                      Bulk upload
+                    </Button>
+                  </div>
+                )}
               </div>
             ) : !loadingInvitations && filteredRows.length === 0 ? (
               <div className="flex min-h-[12rem] flex-col items-center justify-center gap-3 px-6 py-12 text-center">
@@ -832,6 +923,7 @@ export function ExaminersInvitationsPanel({
                 resendUi={resendUi}
                 resendErrors={resendErrors}
                 onResend={(inv) => void handleResend(inv)}
+                onRenew={openRenew}
                 onCopyLink={(inv) => void handleCopyLink(inv)}
                 copyLinkUi={copyLinkUi}
                 onViewAllocation={
@@ -846,6 +938,23 @@ export function ExaminersInvitationsPanel({
           </div>
       </section>
 
+      <RenewInvitationModal
+        open={renewModalOpen}
+        busy={busy}
+        error={renewError}
+        status={renewTarget?.status ?? null}
+        name={renewTarget?.name ?? ""}
+        phone={renewTarget?.phone_number ?? ""}
+        responseDeadlineInput={renewDeadlineInput}
+        sendSms={renewSendSms}
+        onClose={() => {
+          if (!busy) closeRenewModal();
+        }}
+        onSubmit={() => void handleRenew()}
+        onResponseDeadlineChange={setRenewDeadlineInput}
+        onSendSmsChange={setRenewSendSms}
+      />
+
       <InviteExaminerModal
         open={inviteModalOpen}
         busy={busy}
@@ -855,8 +964,9 @@ export function ExaminersInvitationsPanel({
         subjectId={subjectId}
         examinerType={examinerType}
         region={region}
+        gender={gender}
         responseDeadlineInput={responseDeadlineInput}
-        coordinationDateInput={coordinationDateInput}
+        coordinationDraft={coordinationDraft}
         sendSms={sendSms}
         subjectOptions={inviteSubjectOptions}
         regionOptions={regionOptions}
@@ -872,8 +982,9 @@ export function ExaminersInvitationsPanel({
         onSubjectIdChange={setSubjectId}
         onExaminerTypeChange={setExaminerType}
         onRegionChange={setRegion}
+        onGenderChange={setGender}
         onResponseDeadlineChange={setResponseDeadlineInput}
-        onCoordinationDateChange={setCoordinationDateInput}
+        onCoordinationDraftChange={setCoordinationDraft}
         onSendSmsChange={setSendSms}
       />
 
@@ -886,7 +997,7 @@ export function ExaminersInvitationsPanel({
         bulkFile={bulkFile}
         sendSmsOnBulk={sendSmsOnBulk}
         bulkResponseDeadlineInput={bulkResponseDeadlineInput}
-        bulkCoordinationDateInput={bulkCoordinationDateInput}
+        bulkCoordinationDraft={bulkCoordinationDraft}
         onClose={() => {
           if (!busy) closeUploadModal();
         }}
@@ -904,7 +1015,7 @@ export function ExaminersInvitationsPanel({
         }}
         onSendSmsOnBulkChange={setSendSmsOnBulk}
         onBulkResponseDeadlineChange={setBulkResponseDeadlineInput}
-        onBulkCoordinationDateChange={setBulkCoordinationDateInput}
+        onBulkCoordinationDraftChange={setBulkCoordinationDraft}
       />
 
       <SetCoordinationDateModal
@@ -912,12 +1023,12 @@ export function ExaminersInvitationsPanel({
         busy={busy}
         error={coordinationModalError}
         recipientCount={selectedCount}
-        coordinationDateInput={batchCoordinationDateInput}
+        coordinationDraft={batchCoordinationDraft}
         onClose={() => {
           if (!busy) closeCoordinationModal();
         }}
         onSubmit={() => void handleSetCoordinationDate()}
-        onCoordinationDateChange={setBatchCoordinationDateInput}
+        onCoordinationDraftChange={setBatchCoordinationDraft}
       />
 
       <CustomSmsModal

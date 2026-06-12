@@ -50,11 +50,12 @@ export function eventsFromMarkingGroups(
     const subjectLabel = subjectLabelById.get(group.subject_id) ?? `Subject ${group.subject_id}`;
     const cohortName = group.is_default ? "All examiners" : group.name;
 
-    const coordinationDate = isoToDateInput(group.coordination_date);
-    if (coordinationDate) {
+    const coordinationStartDate = isoToDateInput(group.coordination_start_date);
+    const coordinationEndDate = isoToDateInput(group.coordination_end_date);
+    if (coordinationStartDate || coordinationEndDate) {
       pushEvent(events, {
         kind: "coordination",
-        date: coordinationDate,
+        date: coordinationStartDate || coordinationEndDate,
         cohortName,
         subjectId: group.subject_id,
         subjectLabel,
@@ -193,7 +194,8 @@ export function calendarModifiers(
 export function cohortsWithScheduleCount(groups: SubjectMarkingGroupRow[]): number {
   return groups.filter(
     (g) =>
-      g.coordination_date ||
+      g.coordination_start_date ||
+      g.coordination_end_date ||
       g.marking_start_date ||
       g.marking_end_date ||
       g.marked_script_submission_deadline,

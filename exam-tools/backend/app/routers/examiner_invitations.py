@@ -26,16 +26,24 @@ from app.schemas.examiner_invitation import (
     ExaminerInvitationCoordinationUpdate,
     ExaminerInvitationCreate,
     ExaminerInvitationResponse,
+    ExaminerInvitationRenew,
+    ExaminerInvitationRenewResponse,
     ExaminerInvitationResendResponse,
     ExaminerInvitationStatusSchema,
 )
 from app.schemas.script_allocation import ExaminerTypeSchema
 from app.services.examiner_invitation import (
     create_examiner_invitation,
+    invitation_coordination_summary,
     invitation_public_url,
-    update_invitation_coordination_date,
+    renew_examiner_invitation,
+    update_invitation_coordination_schedule,
 )
-from app.services.examiner_roster import dataframe_row_to_examiner_fields, read_examiners_spreadsheet
+from app.services.examiner_roster import (
+    dataframe_row_to_examiner_fields,
+    parse_gender_cell,
+    read_examiners_spreadsheet,
+)
 from app.services.sms.examiner_invitation import (
     coordination_sms_bulk_selection_error,
     coordination_sms_recipient_error,
@@ -45,6 +53,7 @@ from app.services.sms.examiner_invitation import (
 from app.services.sms.phone import normalize_msisdn
 from app.services.subject_officer_scope import (
     assert_subject_officer_access,
+    assert_unrestricted_examiner_manager,
     effective_subject_scope,
 )
 from app.services.template_generator import generate_examiner_invitations_export, generate_examiners_bulk_template
@@ -113,6 +122,7 @@ def _invitation_response(inv: ExaminerInvitation, sms: SmsDelivery | None = None
         subject_type=subject.subject_type.value if subject else "",
         name=inv.name,
         phone_number=inv.phone_number,
+        gender=inv.gender,
         examiner_type=_examiner_type_to_schema(inv.examiner_type),
         region=inv.region.value,
         status=ExaminerInvitationStatusSchema(inv.status.value),
@@ -120,7 +130,7 @@ def _invitation_response(inv: ExaminerInvitation, sms: SmsDelivery | None = None
         notified_at=cast(datetime | None, inv.notified_at),
         responded_at=cast(datetime | None, inv.responded_at),
         response_deadline=cast(datetime, inv.response_deadline),
-        coordination_date=cast(datetime | None, inv.coordination_date),
+        **invitation_coordination_summary(inv),
         examiner_id=cast(UUID | None, inv.examiner_id),
         created_at=cast(datetime, inv.created_at),
         updated_at=cast(datetime, inv.updated_at),
@@ -185,10 +195,15 @@ async def create_examiner_invitation_endpoint(
     examination_id: int,
     body: ExaminerInvitationCreate,
 ) -> ExaminerInvitationResponse:
+    assert_unrestricted_examiner_manager(auth_user)
     await _get_examination_or_404(session, examination_id)
     await assert_subject_officer_access(session, auth_user, examination_id, body.subject_id)
     try:
         msisdn = normalize_msisdn(body.phone_number)
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+    try:
+        gender = parse_gender_cell(body.gender)
     except ValueError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
 
@@ -204,7 +219,11 @@ async def create_examiner_invitation_endpoint(
             region_str=body.region,
             invited_by_user_id=user.id,
             response_deadline=body.response_deadline,
-            coordination_date=body.coordination_date,
+            coordination_start_date=body.coordination_start_date,
+            coordination_start_time=body.coordination_start_time,
+            coordination_end_date=body.coordination_end_date,
+            coordination_end_time=body.coordination_end_time,
+            gender=gender,
         )
         stmt_load = (
             select(ExaminerInvitation)
@@ -262,9 +281,9 @@ async def _get_invitation_or_404(
 @router.patch(
     "/examinations/{examination_id}/examiner-invitations/bulk-coordination-date",
     response_model=ExaminerInvitationBulkCoordinationResponse,
-    summary="Set coordination date on multiple examiner invitations",
+    summary="Set coordination schedule on multiple examiner invitations",
 )
-async def bulk_set_examiner_invitation_coordination_date(
+async def bulk_set_examiner_invitation_coordination_schedule(
     session: DBSessionDep,
     user: SuperAdminOrTestAdminOfficerOrSubjectOfficerDep,
     examination_id: int,
@@ -291,7 +310,14 @@ async def bulk_set_examiner_invitation_coordination_date(
             )
             continue
         await _assert_invitation_accessible(session, user, examination_id, inv)
-        await update_invitation_coordination_date(session, inv, body.coordination_date)
+        await update_invitation_coordination_schedule(
+            session,
+            inv,
+            coordination_start_date=body.coordination_start_date,
+            coordination_start_time=body.coordination_start_time,
+            coordination_end_date=body.coordination_end_date,
+            coordination_end_time=body.coordination_end_time,
+        )
         updated_count += 1
 
     await session.commit()
@@ -301,7 +327,7 @@ async def bulk_set_examiner_invitation_coordination_date(
 @router.patch(
     "/examinations/{examination_id}/examiner-invitations/{invitation_id}",
     response_model=ExaminerInvitationResponse,
-    summary="Update examiner invitation (coordination date)",
+    summary="Update examiner invitation (coordination schedule)",
 )
 async def patch_examiner_invitation(
     session: DBSessionDep,
@@ -312,7 +338,14 @@ async def patch_examiner_invitation(
 ) -> ExaminerInvitationResponse:
     inv = await _get_invitation_or_404(session, examination_id, invitation_id)
     await _assert_invitation_accessible(session, user, examination_id, inv)
-    await update_invitation_coordination_date(session, inv, body.coordination_date)
+    await update_invitation_coordination_schedule(
+        session,
+        inv,
+        coordination_start_date=body.coordination_start_date,
+        coordination_start_time=body.coordination_start_time,
+        coordination_end_date=body.coordination_end_date,
+        coordination_end_time=body.coordination_end_time,
+    )
     await session.commit()
     sms = await _latest_sms_delivery(session, inv.id)
     return _invitation_response(inv, sms)
@@ -369,6 +402,74 @@ async def resend_examiner_invitation_sms(
     )
 
 
+@router.post(
+    "/examinations/{examination_id}/examiner-invitations/{invitation_id}/renew",
+    response_model=ExaminerInvitationRenewResponse,
+    summary="Reopen an expired or declined examiner invitation with a new respond-by deadline",
+)
+async def renew_examiner_invitation_endpoint(
+    session: DBSessionDep,
+    user: CurrentUserDep,
+    auth_user: SuperAdminOrTestAdminOfficerOrSubjectOfficerDep,
+    examination_id: int,
+    invitation_id: UUID,
+    body: ExaminerInvitationRenew,
+) -> ExaminerInvitationRenewResponse:
+    stmt = (
+        select(ExaminerInvitation)
+        .where(
+            ExaminerInvitation.id == invitation_id,
+            ExaminerInvitation.examination_id == examination_id,
+        )
+        .options(
+            selectinload(ExaminerInvitation.subject),
+            selectinload(ExaminerInvitation.examination),
+        )
+    )
+    inv = (await session.execute(stmt)).scalar_one_or_none()
+    if inv is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Invitation not found")
+    await _assert_invitation_accessible(session, auth_user, examination_id, inv)
+
+    try:
+        await renew_examiner_invitation(
+            session,
+            inv,
+            response_deadline=body.response_deadline,
+            invited_by_user_id=user.id,
+        )
+        sms_sent, sms_error, sms_delivery_id = await maybe_send_examiner_invitation_sms(
+            inv,
+            body.send_sms,
+            session=session,
+            triggered_by_user_id=user.id,
+            trigger="renew",
+        )
+        await session.commit()
+    except ValueError as exc:
+        await session.rollback()
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+
+    stmt_reload = (
+        select(ExaminerInvitation)
+        .where(ExaminerInvitation.id == inv.id)
+        .options(selectinload(ExaminerInvitation.subject))
+    )
+    inv2 = (await session.execute(stmt_reload)).scalar_one()
+    sms = await _latest_sms_delivery(session, inv2.id)
+    resp = _invitation_response(inv2, sms)
+    if sms_sent is not None:
+        resp.sms_sent = sms_sent
+        resp.sms_error = sms_error
+        resp.sms_delivery_id = sms_delivery_id
+    return ExaminerInvitationRenewResponse(
+        invitation=resp,
+        sms_sent=sms_sent,
+        sms_error=sms_error,
+        sms_delivery_id=sms_delivery_id,
+    )
+
+
 @router.get(
     "/examinations/{examination_id}/examiner-invitations/bulk-upload/template",
     summary="Download Excel template for examiner invitation bulk upload",
@@ -400,8 +501,12 @@ async def bulk_upload_examiner_invitations(
     file: UploadFile = File(...),
     send_sms: bool = Query(False, description="Send invitation SMS for each created row"),
     response_deadline: datetime = Query(..., description="Respond-by deadline for all rows"),
-    coordination_date: datetime | None = Query(None, description="Default coordination date for all rows"),
+    coordination_start_date: datetime | None = Query(None, description="Default coordination start date for all rows"),
+    coordination_start_time: str | None = Query(None, description="Default coordination start time (HH:MM:SS)"),
+    coordination_end_date: datetime | None = Query(None, description="Default coordination end date for all rows"),
+    coordination_end_time: str | None = Query(None, description="Default coordination end time (HH:MM:SS)"),
 ) -> ExaminerInvitationBulkImportResponse:
+    assert_unrestricted_examiner_manager(auth_user)
     await _get_examination_or_404(session, examination_id)
     scope = await effective_subject_scope(session, auth_user, examination_id)
     raw = await file.read()
@@ -416,6 +521,19 @@ async def bulk_upload_examiner_invitations(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=f"At most {_MAX_BULK_ROWS} data rows are allowed",
         )
+
+    from datetime import time as time_type
+
+    def _parse_time_param(value: str | None):
+        if not value or not value.strip():
+            return None
+        parts = value.strip().split(":")
+        if len(parts) < 2:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid time format")
+        return time_type(int(parts[0]), int(parts[1]), int(parts[2]) if len(parts) > 2 else 0)
+
+    bulk_coord_start_time = _parse_time_param(coordination_start_time)
+    bulk_coord_end_time = _parse_time_param(coordination_end_time)
 
     errors: list[ExaminerInvitationBulkImportRowError] = []
     created_count = 0
@@ -448,7 +566,11 @@ async def bulk_upload_examiner_invitations(
                 region_str=fields["allowed_region"],
                 invited_by_user_id=user.id,
                 response_deadline=response_deadline,
-                coordination_date=coordination_date,
+                coordination_start_date=coordination_start_date,
+                coordination_start_time=bulk_coord_start_time,
+                coordination_end_date=coordination_end_date,
+                coordination_end_time=bulk_coord_end_time,
+                gender=fields.get("gender"),
             )
             stmt_load = (
                 select(ExaminerInvitation)
@@ -632,7 +754,10 @@ async def export_examiner_invitations(
                 "examiner_type": _examiner_type_to_schema(inv.examiner_type).value,
                 "region": inv.region.value,
                 "status": inv.status.value,
-                "coordination_date": inv.coordination_date.isoformat() if inv.coordination_date else "",
+                "coordination_start_date": inv.coordination_start_date.isoformat()
+                if inv.coordination_start_date
+                else "",
+                "coordination_end_date": inv.coordination_end_date.isoformat() if inv.coordination_end_date else "",
                 "public_url": invitation_public_url(inv.token),
             }
         )

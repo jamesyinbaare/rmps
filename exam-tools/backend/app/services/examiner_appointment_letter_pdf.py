@@ -32,7 +32,9 @@ from app.services.examiner_compensation import (
     load_travel_zones_map,
     parse_region_stored,
 )
+from app.services.coordination_schedule import coordination_end_at, format_coordination_range
 from app.services.examiner_invitation import _examiner_type_label, subject_display_code
+from app.services.subject_marking_group import get_examiner_marking_groups
 from app.services.pdf_generator import render_html
 from app.services.script_allocation_form_pdf import examination_label
 
@@ -54,10 +56,13 @@ _FEES_SECTION_PLURAL: dict[ExaminerType, str] = {
 }
 
 
-def _format_coordination_date(dt: datetime | None) -> str | None:
-    if dt is None:
-        return None
-    return dt.strftime("%A, %d %B %Y")
+def _format_coordination_for_letter(
+    start_date: datetime | None,
+    start_time,
+    end_date: datetime | None,
+    end_time,
+) -> str | None:
+    return format_coordination_range(start_date, start_time, end_date, end_time)
 
 
 def _appointment_reference_number(*, examination_id: int, subject_code: str, entity_id: UUID) -> str:
@@ -259,7 +264,12 @@ async def build_examiner_appointment_letter_pdf(
         raise ValueError("Subject not found")
 
     exam_label_str = examination_label(exam)
-    coord = _format_coordination_date(inv.coordination_date)
+    coord = _format_coordination_for_letter(
+        inv.coordination_start_date,
+        inv.coordination_start_time,
+        inv.coordination_end_date,
+        inv.coordination_end_time,
+    )
     reference_number = _appointment_reference_number(
         examination_id=int(exam.id),
         subject_code=subject_display_code(subject) or subject.code or "",
@@ -322,6 +332,47 @@ async def build_examiner_appointment_letter_for_roster(
     if not isinstance(examiner_type, ExaminerType):
         examiner_type = ExaminerType(str(examiner_type))
 
+    coord: str | None = None
+    if session is not None:
+        from sqlalchemy import select
+
+        from app.models import ExaminerInvitation
+
+        inv = (
+            await session.execute(select(ExaminerInvitation).where(ExaminerInvitation.examiner_id == examiner.id))
+        ).scalar_one_or_none()
+        if inv is not None:
+            coord = _format_coordination_for_letter(
+                inv.coordination_start_date,
+                inv.coordination_start_time,
+                inv.coordination_end_date,
+                inv.coordination_end_time,
+            )
+        else:
+            groups = await get_examiner_marking_groups(
+                session,
+                examination_id=int(exam.id),
+                subject_id=int(subject.id),
+                examiner_id=examiner.id,
+            )
+            best_group = None
+            best_end = None
+            for group in groups:
+                end = coordination_end_at(
+                    group.get("coordination_end_date"),
+                    group.get("coordination_end_time"),
+                )
+                if end is not None and (best_end is None or end > best_end):
+                    best_end = end
+                    best_group = group
+            if best_group is not None:
+                coord = _format_coordination_for_letter(
+                    best_group.get("coordination_start_date"),
+                    best_group.get("coordination_start_time"),
+                    best_group.get("coordination_end_date"),
+                    best_group.get("coordination_end_time"),
+                )
+
     context = _base_appointment_context(
         examination_label_str=exam_label_str,
         invitee_name=examiner.name,
@@ -330,7 +381,7 @@ async def build_examiner_appointment_letter_for_roster(
         examiner_type_label=_examiner_type_label(examiner_type),
         subject=subject,
         region=examiner.region.value if isinstance(examiner.region, Region) else str(examiner.region),
-        coordination_date=None,
+        coordination_date=coord,
     )
     if session is not None:
         context.update(

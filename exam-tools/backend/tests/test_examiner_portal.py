@@ -50,6 +50,7 @@ async def test_public_roster_portal_view_payload() -> None:
     examiner.region = Region.ASHANTI
     examiner.examination_id = 1
     examiner.roster_source = ExaminerRosterSource.MANUAL
+    examiner.reference_code = "NAE1"
 
     exam = MagicMock()
     exam.exam_type = "BECE"
@@ -80,6 +81,7 @@ async def test_public_roster_portal_view_payload() -> None:
     assert payload["status"] == "accepted"
     assert payload["can_respond"] is False
     assert len(payload["marking_cohorts"]) == 1
+    assert payload["reference_code"] == "NAE1"
 
 
 @pytest.mark.asyncio

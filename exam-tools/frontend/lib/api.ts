@@ -910,6 +910,10 @@ export type Examination = {
   updated_at: string;
 };
 
+export async function listExaminations(): Promise<Examination[]> {
+  return apiJson<Examination[]>("/examinations");
+}
+
 export type ExaminationSchedule = {
   id: number;
   examination_id: number;
@@ -3652,8 +3656,10 @@ export type ExaminerRow = {
   examination_id: number;
   name: string;
   phone_number: string | null;
+  gender?: string | null;
   examiner_type: ExaminerTypeApi;
   region: string;
+  reference_code: string | null;
   subject_ids: number[];
   deviation_weight: number | null;
   examiner_group_id: string | null;
@@ -3781,6 +3787,7 @@ export type ExaminerCreatePayload = {
   region: string;
   subject_ids: [number];
   deviation_weight?: number | null;
+  gender?: string | null;
 };
 
 export type ExaminerUpdatePayload = {
@@ -3790,13 +3797,15 @@ export type ExaminerUpdatePayload = {
   region?: string;
   subject_ids?: [number];
   deviation_weight?: number | null;
+  gender?: string | null;
 };
 
 export type ExaminerInvitationStatusApi =
   | "pending"
   | "accepted"
   | "declined"
-  | "expired";
+  | "expired"
+  | "quota_waitlisted";
 
 export type ExaminerInvitationRow = {
   id: string;
@@ -3808,6 +3817,7 @@ export type ExaminerInvitationRow = {
   subject_type: SubjectTypeEnum;
   name: string;
   phone_number: string;
+  gender?: string | null;
   examiner_type: ExaminerTypeApi;
   region: string;
   status: ExaminerInvitationStatusApi;
@@ -3815,7 +3825,10 @@ export type ExaminerInvitationRow = {
   notified_at: string | null;
   responded_at: string | null;
   response_deadline: string;
-  coordination_date: string | null;
+  coordination_start_date: string | null;
+  coordination_start_time: string | null;
+  coordination_end_date: string | null;
+  coordination_end_time: string | null;
   examiner_id: string | null;
   created_at: string;
   updated_at: string;
@@ -3831,15 +3844,25 @@ export type ExaminerInvitationCreatePayload = {
   subject_id: number;
   examiner_type: ExaminerTypeApi;
   region: string;
+  gender?: string | null;
   send_sms?: boolean | null;
   response_deadline: string;
-  coordination_date?: string | null;
+  coordination_start_date?: string | null;
+  coordination_start_time?: string | null;
+  coordination_end_date?: string | null;
+  coordination_end_time?: string | null;
+};
+
+export type ExaminerInvitationCoordinationPayload = {
+  coordination_start_date?: string | null;
+  coordination_start_time?: string | null;
+  coordination_end_date?: string | null;
+  coordination_end_time?: string | null;
 };
 
 export type ExaminerInvitationBulkCoordinationPayload = {
   invitation_ids: string[];
-  coordination_date: string;
-};
+} & ExaminerInvitationCoordinationPayload;
 
 export type ExaminerInvitationBulkCoordinationResponse = {
   updated_count: number;
@@ -3850,8 +3873,9 @@ export type ExaminerMarkingCohortPublic = {
   id: string;
   name: string;
   is_default: boolean;
-  coordination_date: string | null;
+  coordination_start_date: string | null;
   coordination_start_time: string | null;
+  coordination_end_date: string | null;
   coordination_end_time: string | null;
   marking_start_date: string | null;
   marking_end_date: string | null;
@@ -3861,6 +3885,7 @@ export type ExaminerMarkingCohortPublic = {
 export type ExaminerInvitationPublic = {
   invitee_name: string;
   phone_number: string;
+  examination_id: number;
   examination_name: string;
   examination_description: string | null;
   subject_name: string;
@@ -3871,13 +3896,195 @@ export type ExaminerInvitationPublic = {
   region: string;
   status: ExaminerInvitationStatusApi;
   response_deadline: string | null;
-  coordination_date: string | null;
+  coordination_start_date: string | null;
+  coordination_start_time: string | null;
+  coordination_end_date: string | null;
+  coordination_end_time: string | null;
   responded_at: string | null;
   can_respond: boolean;
   examiner_id?: string | null;
   portal_mode?: "invitation" | "roster";
   roster_source?: "manual" | "invitation" | null;
   marking_cohorts?: ExaminerMarkingCohortPublic[];
+  reference_code?: string | null;
+  quota_waitlist_message?: string | null;
+  appointment_letters_release_enabled?: boolean;
+  appointment_letters_available?: boolean;
+  coordination_end_at?: string | null;
+  appointment_letters_pending_message?: string | null;
+};
+
+export type ExaminerPortalSettings = {
+  examination_id: number;
+  appointment_letters_release_enabled: boolean;
+  updated_at: string;
+  rostered_examiner_count: number;
+  with_coordination_end_count: number;
+  eligible_now_count: number;
+  notified_count: number;
+};
+
+export type NotifyEligibleAppointmentLettersResponse = {
+  sms_sent_count: number;
+  sms_failed_count: number;
+  skipped_count: number;
+};
+
+export type SubjectExaminerRegionQuotaItem = {
+  group_id: string;
+  examiner_type?: ExaminerTypeApi | null;
+  quota_count: number;
+};
+
+export type SubjectExaminerRegionQuotaSummaryRow = {
+  group_id: string;
+  group_name: string;
+  examiner_type?: ExaminerTypeApi | null;
+  examiner_type_label: string;
+  current_count: number;
+  quota?: number | null;
+  remaining?: number | null;
+};
+
+export type ExaminerQuotaRegionGroupRow = {
+  id: string;
+  name: string;
+  regions: string[];
+};
+
+export type ExaminationExaminerQuotaRegionGroupsResponse = {
+  examination_id: number;
+  groups: ExaminerQuotaRegionGroupRow[];
+  regions_complete: boolean;
+};
+
+export type ExaminationExaminerQuotaRegionGroupsPut = {
+  groups: Array<{
+    id?: string;
+    name: string;
+    regions: string[];
+  }>;
+};
+
+export type SubjectExaminerGenderQuotaSummaryRow = {
+  gender: string;
+  gender_label: string;
+  current_count: number;
+  quota?: number | null;
+  remaining?: number | null;
+};
+
+export type SubjectExaminerRegionQuotasResponse = {
+  examination_id: number;
+  subject_id: number;
+  total_quota?: number | null;
+  male_quota?: number | null;
+  female_quota?: number | null;
+  roster_total: number;
+  groups: ExaminerQuotaRegionGroupRow[];
+  summary: SubjectExaminerRegionQuotaSummaryRow[];
+  gender_summary?: SubjectExaminerGenderQuotaSummaryRow[];
+  items: SubjectExaminerRegionQuotaItem[];
+};
+
+export type QuotaAssessmentResponse = {
+  valid: boolean;
+  violations: string[];
+  row_errors: Array<{ row_number: number; message: string }>;
+  summary_by_group: Array<{
+    group_id: string;
+    group_name: string;
+    examiner_type?: string | null;
+    examiner_type_label: string;
+    current_count: number;
+    proposed_count: number;
+    combined_count: number;
+    quota?: number | null;
+    quota_percent?: number | null;
+    remaining?: number | null;
+    over_cap: boolean;
+  }>;
+  proposed_count: number;
+  summary_by_gender?: Array<{
+    gender: string;
+    gender_label: string;
+    current_count: number;
+    proposed_count: number;
+    combined_count: number;
+    quota?: number | null;
+    quota_percent?: number | null;
+    remaining?: number | null;
+    over_cap: boolean;
+  }>;
+};
+
+export type ExaminerAttendanceMarkResult = {
+  valid: boolean;
+  recorded?: boolean;
+  already_marked?: boolean;
+  message: string;
+  reference_code?: string | null;
+  name?: string | null;
+  examiner_type?: string | null;
+  examiner_type_label?: string | null;
+  region?: string | null;
+  subject_codes?: string[];
+  examiner_id?: string | null;
+  examination_id?: number | null;
+  examination_name?: string | null;
+  attendance_date?: string | null;
+};
+
+export type ExaminerAttendanceRow = {
+  id: string;
+  examination_id: number;
+  examiner_id: string;
+  reference_code: string;
+  attendance_date: string;
+  examiner_name: string;
+  examiner_type: string;
+  examiner_type_label: string;
+  region: string;
+  subject_codes: string[];
+  marked_at: string;
+  marked_by_name?: string | null;
+  examination_name?: string | null;
+};
+
+export type LunchCouponVerifyResult = {
+  valid: boolean;
+  message?: string | null;
+  reference_code?: string | null;
+  name?: string | null;
+  examiner_type?: string | null;
+  examiner_type_label?: string | null;
+  region?: string | null;
+  subject_codes?: string[] | null;
+  examiner_id?: string | null;
+  examination_id?: number | null;
+  examination_name?: string | null;
+  already_verified?: boolean;
+  verified_at?: string | null;
+  verified_by_name?: string | null;
+  recorded?: boolean;
+};
+
+export type LunchCouponVerifiedRow = {
+  examiner_id: string;
+  reference_code: string;
+  name: string;
+  examiner_type_label: string;
+  region: string;
+  subject_codes: string[];
+  verified_at: string;
+  verified_by_name?: string | null;
+  examination_id?: number | null;
+  examination_name?: string | null;
+};
+
+export type LunchCouponVerifiedList = {
+  items: LunchCouponVerifiedRow[];
+  total: number;
 };
 
 export type ExaminerPublicScriptsAllocationRow = {
@@ -3956,10 +4163,42 @@ export type AllocationSolvePayload = {
   marking_group_solve_order?: string[] | null;
 };
 
+export type ExaminerRegionGroupRow = {
+  id: string | null;
+  name: string;
+  code_prefix: string;
+  regions: string[];
+};
+
+export type ExaminationExaminerRegionGroupsResponse = {
+  examination_id: number;
+  groups: ExaminerRegionGroupRow[];
+  regions_complete: boolean;
+  roster_total: number;
+  with_code_count: number;
+  missing_code_count: number;
+};
+
+export type ExaminerReferenceCodesActionResponse = {
+  examination_id: number;
+  assigned_count: number;
+  skipped_count: number;
+  roster_total: number;
+};
+
+export type ExaminationExaminerRegionGroupsPut = {
+  groups: Array<{
+    name: string;
+    code_prefix: string;
+    regions: string[];
+  }>;
+};
+
 export type AllocationExaminerRow = {
   allocation_id: string;
   examiner_id: string;
   examiner_name: string;
+  reference_code: string | null;
   examiner_type: ExaminerTypeApi;
   subject_ids: number[];
   region: string;
@@ -4014,6 +4253,161 @@ export async function deleteAllocation(allocationId: string): Promise<void> {
 
 export async function listExaminationExaminers(examinationId: number): Promise<ExaminerRow[]> {
   return apiJson<ExaminerRow[]>(`/examinations/${examinationId}/examiners`);
+}
+
+export async function getExaminationExaminerRegionGroups(
+  examinationId: number,
+): Promise<ExaminationExaminerRegionGroupsResponse> {
+  return apiJson<ExaminationExaminerRegionGroupsResponse>(
+    `/admin/examinations/${examinationId}/examiner-region-groups`,
+  );
+}
+
+export async function putExaminationExaminerRegionGroups(
+  examinationId: number,
+  payload: ExaminationExaminerRegionGroupsPut,
+): Promise<ExaminationExaminerRegionGroupsResponse> {
+  return apiJson<ExaminationExaminerRegionGroupsResponse>(
+    `/admin/examinations/${examinationId}/examiner-region-groups`,
+    {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    },
+  );
+}
+
+export async function getExaminationExaminerQuotaRegionGroups(
+  examinationId: number,
+): Promise<ExaminationExaminerQuotaRegionGroupsResponse> {
+  return apiJson<ExaminationExaminerQuotaRegionGroupsResponse>(
+    `/admin/examinations/${examinationId}/examiner-quota-region-groups`,
+  );
+}
+
+export async function putExaminationExaminerQuotaRegionGroups(
+  examinationId: number,
+  payload: ExaminationExaminerQuotaRegionGroupsPut,
+): Promise<ExaminationExaminerQuotaRegionGroupsResponse> {
+  return apiJson<ExaminationExaminerQuotaRegionGroupsResponse>(
+    `/admin/examinations/${examinationId}/examiner-quota-region-groups`,
+    {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    },
+  );
+}
+
+export async function generateExaminerReferenceCodes(
+  examinationId: number,
+): Promise<ExaminerReferenceCodesActionResponse> {
+  return apiJson<ExaminerReferenceCodesActionResponse>(
+    `/admin/examinations/${examinationId}/examiner-reference-codes/generate`,
+    { method: "POST" },
+  );
+}
+
+export async function getSubjectExaminerRegionQuotas(
+  examinationId: number,
+  subjectId: number,
+): Promise<SubjectExaminerRegionQuotasResponse> {
+  return apiJson<SubjectExaminerRegionQuotasResponse>(
+    `/admin/examinations/${examinationId}/subjects/${subjectId}/examiner-region-quotas`,
+  );
+}
+
+export async function putSubjectExaminerRegionQuotas(
+  examinationId: number,
+  subjectId: number,
+  payload: {
+    total_quota: number | null;
+    male_quota?: number | null;
+    female_quota?: number | null;
+    items: SubjectExaminerRegionQuotaItem[];
+  },
+): Promise<SubjectExaminerRegionQuotasResponse> {
+  return apiJson<SubjectExaminerRegionQuotasResponse>(
+    `/admin/examinations/${examinationId}/subjects/${subjectId}/examiner-region-quotas`,
+    {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    },
+  );
+}
+
+export async function assessExaminerQuotaUpload(
+  examinationId: number,
+  subjectId: number,
+  file: File,
+): Promise<QuotaAssessmentResponse> {
+  const form = new FormData();
+  form.append("file", file);
+  return apiJson<QuotaAssessmentResponse>(
+    `/examinations/${examinationId}/subjects/${subjectId}/examiner-quota-assessment`,
+    { method: "POST", body: form },
+  );
+}
+
+export async function listExaminerAttendance(
+  examinationId: number,
+  options?: { admin?: boolean },
+): Promise<{ items: ExaminerAttendanceRow[]; total: number }> {
+  const base = options?.admin
+    ? `/admin/examinations/${examinationId}/examiner-attendance`
+    : `/examinations/${examinationId}/subject-officer/examiner-attendance`;
+  return apiJson(base);
+}
+
+export async function listExaminerAttendanceAll(
+  options?: { admin?: boolean; examinationId?: number },
+): Promise<{ items: ExaminerAttendanceRow[]; total: number }> {
+  if (options?.admin) {
+    const params = options.examinationId != null ? `?examination_id=${options.examinationId}` : "";
+    return apiJson(`/admin/examiner-attendance${params}`);
+  }
+  return apiJson("/subject-officer/examiner-attendance");
+}
+
+export async function markExaminerAttendance(
+  examinationId: number,
+  referenceCode: string,
+  options?: { admin?: boolean },
+): Promise<ExaminerAttendanceMarkResult> {
+  const base = options?.admin
+    ? `/admin/examinations/${examinationId}/examiner-attendance/mark`
+    : `/examinations/${examinationId}/subject-officer/examiner-attendance/mark`;
+  return apiJson<ExaminerAttendanceMarkResult>(base, {
+    method: "POST",
+    body: JSON.stringify({ reference_code: referenceCode }),
+  });
+}
+
+export async function markExaminerAttendanceScan(
+  referenceCode: string,
+  options?: { admin?: boolean },
+): Promise<ExaminerAttendanceMarkResult> {
+  const base = options?.admin
+    ? "/admin/examiner-attendance/mark-scan"
+    : "/subject-officer/examiner-attendance/mark-scan";
+  return apiJson<ExaminerAttendanceMarkResult>(base, {
+    method: "POST",
+    body: JSON.stringify({ reference_code: referenceCode }),
+  });
+}
+
+export async function regenerateExaminerReferenceCodes(
+  examinationId: number,
+): Promise<ExaminerReferenceCodesActionResponse> {
+  return apiJson<ExaminerReferenceCodesActionResponse>(
+    `/admin/examinations/${examinationId}/examiner-reference-codes/regenerate`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ confirm: true }),
+    },
+  );
 }
 
 export async function listScriptsAllocationQuotas(
@@ -4129,7 +4523,10 @@ export type ExaminerRosterBulkSmsPayload = {
 export type ExaminerInvitationBulkUploadOptions = {
   sendSms?: boolean;
   responseDeadline: string;
-  coordinationDate?: string | null;
+  coordinationStartDate?: string | null;
+  coordinationStartTime?: string | null;
+  coordinationEndDate?: string | null;
+  coordinationEndTime?: string | null;
 };
 
 export async function bulkUploadExaminerInvitations(
@@ -4140,7 +4537,10 @@ export async function bulkUploadExaminerInvitations(
   const q = new URLSearchParams();
   q.set("response_deadline", options.responseDeadline);
   if (options.sendSms) q.set("send_sms", "true");
-  if (options.coordinationDate) q.set("coordination_date", options.coordinationDate);
+  if (options.coordinationStartDate) q.set("coordination_start_date", options.coordinationStartDate);
+  if (options.coordinationStartTime) q.set("coordination_start_time", options.coordinationStartTime);
+  if (options.coordinationEndDate) q.set("coordination_end_date", options.coordinationEndDate);
+  if (options.coordinationEndTime) q.set("coordination_end_time", options.coordinationEndTime);
   const formData = new FormData();
   formData.append("file", file);
   const qs = q.toString();
@@ -4159,6 +4559,33 @@ export async function resendExaminerInvitationSms(
   });
 }
 
+export type ExaminerInvitationRenewPayload = {
+  response_deadline: string;
+  send_sms?: boolean | null;
+};
+
+export type ExaminerInvitationRenewResponse = {
+  invitation: ExaminerInvitationRow;
+  sms_sent: boolean | null;
+  sms_error: string | null;
+  sms_delivery_id: string | null;
+};
+
+export async function renewExaminerInvitation(
+  examinationId: number,
+  invitationId: string,
+  payload: ExaminerInvitationRenewPayload,
+): Promise<ExaminerInvitationRenewResponse> {
+  return apiJson<ExaminerInvitationRenewResponse>(
+    `/examinations/${examinationId}/examiner-invitations/${invitationId}/renew`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    },
+  );
+}
+
 export async function bulkSendExaminerInvitationCustomSms(
   examinationId: number,
   payload: ExaminerInvitationBulkSmsPayload,
@@ -4173,22 +4600,22 @@ export async function bulkSendExaminerInvitationCustomSms(
   );
 }
 
-export async function updateExaminerInvitationCoordinationDate(
+export async function updateExaminerInvitationCoordinationSchedule(
   examinationId: number,
   invitationId: string,
-  coordinationDate: string | null,
+  payload: ExaminerInvitationCoordinationPayload,
 ): Promise<ExaminerInvitationRow> {
   return apiJson<ExaminerInvitationRow>(
     `/examinations/${examinationId}/examiner-invitations/${encodeURIComponent(invitationId)}`,
     {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ coordination_date: coordinationDate }),
+      body: JSON.stringify(payload),
     },
   );
 }
 
-export async function bulkSetExaminerInvitationCoordinationDate(
+export async function bulkSetExaminerInvitationCoordinationSchedule(
   examinationId: number,
   payload: ExaminerInvitationBulkCoordinationPayload,
 ): Promise<ExaminerInvitationBulkCoordinationResponse> {
@@ -4874,8 +5301,9 @@ export type MarkedScriptReturnGridResponse = {
   paper_number: number;
   marking_group_id?: string | null;
   marking_group_name?: string | null;
-  coordination_date?: string | null;
+  coordination_start_date?: string | null;
   coordination_start_time?: string | null;
+  coordination_end_date?: string | null;
   coordination_end_time?: string | null;
   marking_start_date?: string | null;
   marking_end_date?: string | null;
@@ -4885,8 +5313,9 @@ export type MarkedScriptReturnGridResponse = {
 };
 
 export type SubjectMarkingGroupSchedulePayload = {
-  coordination_date?: string | null;
+  coordination_start_date?: string | null;
   coordination_start_time?: string | null;
+  coordination_end_date?: string | null;
   coordination_end_time?: string | null;
   marking_start_date?: string | null;
   marking_end_date?: string | null;
@@ -4902,8 +5331,9 @@ export type SubjectMarkingGroupRow = {
   examiner_ids: string[];
   source_regions: string[];
   source_roles: string[];
-  coordination_date: string | null;
+  coordination_start_date: string | null;
   coordination_start_time: string | null;
+  coordination_end_date: string | null;
   coordination_end_time: string | null;
   marking_start_date: string | null;
   marking_end_date: string | null;
@@ -4911,6 +5341,30 @@ export type SubjectMarkingGroupRow = {
   created_at: string;
   updated_at: string;
 };
+
+export async function getExaminerPortalSettings(examinationId: number): Promise<ExaminerPortalSettings> {
+  return apiJson<ExaminerPortalSettings>(`/admin/examinations/${examinationId}/examiner-portal-settings`);
+}
+
+export async function putExaminerPortalSettings(
+  examinationId: number,
+  appointmentLettersReleaseEnabled: boolean,
+): Promise<ExaminerPortalSettings> {
+  return apiJson<ExaminerPortalSettings>(`/admin/examinations/${examinationId}/examiner-portal-settings`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ appointment_letters_release_enabled: appointmentLettersReleaseEnabled }),
+  });
+}
+
+export async function notifyEligibleAppointmentLetters(
+  examinationId: number,
+): Promise<NotifyEligibleAppointmentLettersResponse> {
+  return apiJson<NotifyEligibleAppointmentLettersResponse>(
+    `/admin/examinations/${examinationId}/examiner-portal-settings/notify-eligible-appointment-letters`,
+    { method: "POST" },
+  );
+}
 
 export async function listSubjectMarkingGroups(
   examinationId: number,
@@ -5148,4 +5602,36 @@ export async function unverifyMarkedScriptReturn(
       body: JSON.stringify({}),
     },
   );
+}
+
+export async function listVerifiedLunchCoupons(examinationId: number): Promise<LunchCouponVerifiedList> {
+  return apiJson<LunchCouponVerifiedList>(
+    `/examinations/${examinationId}/subject-officer/lunch-coupon/verified`,
+  );
+}
+
+export async function listVerifiedLunchCouponsAll(): Promise<LunchCouponVerifiedList> {
+  return apiJson<LunchCouponVerifiedList>("/subject-officer/lunch-coupon/verified");
+}
+
+export async function verifyExaminerLunchCoupon(
+  examinationId: number,
+  referenceCode: string,
+): Promise<LunchCouponVerifyResult> {
+  return apiJson<LunchCouponVerifyResult>(
+    `/examinations/${examinationId}/subject-officer/lunch-coupon/verify`,
+    {
+      method: "POST",
+      body: JSON.stringify({ reference_code: referenceCode }),
+    },
+  );
+}
+
+export async function verifyExaminerLunchCouponScan(
+  referenceCode: string,
+): Promise<LunchCouponVerifyResult> {
+  return apiJson<LunchCouponVerifyResult>("/subject-officer/lunch-coupon/verify-scan", {
+    method: "POST",
+    body: JSON.stringify({ reference_code: referenceCode }),
+  });
 }

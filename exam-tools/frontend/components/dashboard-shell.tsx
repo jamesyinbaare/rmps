@@ -109,7 +109,8 @@ function SubjectOfficerExamChrome() {
     pathname === "/dashboard/subject-officer" ||
     pathname.startsWith("/dashboard/subject-officer/examiners") ||
     pathname.startsWith("/dashboard/subject-officer/allocations") ||
-    pathname.startsWith("/dashboard/subject-officer/marked-script-returns")
+    pathname.startsWith("/dashboard/subject-officer/marked-script-returns") ||
+    pathname.startsWith("/dashboard/subject-officer/lunch-verification")
   ) {
     return null;
   }

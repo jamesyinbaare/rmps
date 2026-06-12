@@ -60,6 +60,7 @@ function accountDisplayValue(row: ExaminerBankAccountPublic): string {
 }
 
 export function ExaminerBankAccountForm({ token, invitation, className }: Props) {
+  const lettersAvailable = invitation.appointment_letters_available === true;
   const formId = useId();
   const modalScrollRef = useRef<HTMLDivElement>(null);
   const titleId = `${formId}-modal-title`;
@@ -354,7 +355,7 @@ export function ExaminerBankAccountForm({ token, invitation, className }: Props)
           type="button"
           className="mt-4 min-h-11 w-full"
           onClick={openModal}
-          disabled={busy}
+          disabled={busy || !lettersAvailable}
         >
           {saved ? (
             <>

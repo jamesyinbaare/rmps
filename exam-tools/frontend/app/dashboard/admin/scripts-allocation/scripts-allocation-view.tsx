@@ -240,13 +240,21 @@ export function ScriptsAllocationView({
   const poolRowsFiltered = useMemo(() => {
     const q = poolModalFilter.trim().toLowerCase();
     if (!q) return poolRows;
-    return poolRows.filter((p) => p.examiner_name.toLowerCase().includes(q));
+    return poolRows.filter(
+      (p) =>
+        p.examiner_name.toLowerCase().includes(q) ||
+        (p.reference_code?.toLowerCase().includes(q) ?? false),
+    );
   }, [poolRows, poolModalFilter]);
 
   const importCandidatesFiltered = useMemo(() => {
     const q = importModalFilter.trim().toLowerCase();
     if (!q) return modalCandidates;
-    return modalCandidates.filter((c) => c.examiner_name.toLowerCase().includes(q));
+    return modalCandidates.filter(
+      (c) =>
+        c.examiner_name.toLowerCase().includes(q) ||
+        (c.reference_code?.toLowerCase().includes(q) ?? false),
+    );
   }, [modalCandidates, importModalFilter]);
 
   const ruleMarkingGroupsFullyAllocated = useMemo(() => {
@@ -322,7 +330,9 @@ export function ScriptsAllocationView({
         a.examiner_name.localeCompare(b.examiner_name, undefined, { sensitivity: "base" }),
       ).map((r) => ({
         value: r.examiner_id,
-        label: `${r.examiner_name} (${examinerTypeLabel(r.examiner_type)})`,
+        label: r.reference_code
+          ? `${r.reference_code} · ${r.examiner_name} (${examinerTypeLabel(r.examiner_type)})`
+          : `${r.examiner_name} (${examinerTypeLabel(r.examiner_type)})`,
       })),
     [poolRows],
   );
@@ -1510,6 +1520,7 @@ export function ScriptsAllocationView({
                             <th className="w-10 px-2 py-2.5 pl-3" scope="col">
                               <span className="sr-only">Select</span>
                             </th>
+                            <th className="px-3 py-2.5 pr-4">Code</th>
                             <th className="px-3 py-2.5 pr-4">Name</th>
                             <th className="px-3 py-2.5 pr-4">Type</th>
                             <th className="px-3 py-2.5 pr-3">Region / zone</th>
@@ -1531,6 +1542,9 @@ export function ScriptsAllocationView({
                                   }
                                   aria-label={`Select ${c.examiner_name}`}
                                 />
+                              </td>
+                              <td className="px-3 py-2.5 font-mono text-xs text-muted-foreground">
+                                {c.reference_code ?? "—"}
                               </td>
                               <td className="px-3 py-2.5 font-medium text-foreground">{c.examiner_name}</td>
                               <td className="px-3 py-2.5 text-muted-foreground">{examinerTypeLabel(c.examiner_type)}</td>
@@ -1639,6 +1653,7 @@ export function ScriptsAllocationView({
                       <table className="w-full min-w-[640px] border-collapse text-sm">
                         <thead>
                           <tr className="sticky top-0 z-1 border-b border-border bg-muted/80 text-left text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                            <th className="px-3 py-2.5 pr-4">Code</th>
                             <th className="px-3 py-2.5 pr-4">Name</th>
                             <th className="px-3 py-2.5 pr-4">Type</th>
                             <th className="px-3 py-2.5 pr-4">Region / zone</th>
@@ -1648,6 +1663,9 @@ export function ScriptsAllocationView({
                         <tbody>
                           {poolRowsFiltered.map((p) => (
                             <tr key={p.examiner_id} className="border-b border-border/80 align-top hover:bg-muted/20">
+                              <td className="px-3 py-2.5 font-mono text-xs text-muted-foreground">
+                                {p.reference_code ?? "—"}
+                              </td>
                               <td className="px-3 py-2.5 font-medium text-foreground">{p.examiner_name}</td>
                               <td className="px-3 py-2.5 text-muted-foreground">{examinerTypeLabel(p.examiner_type)}</td>
                               <td className="max-w-[240px] px-3 py-2.5 text-muted-foreground">

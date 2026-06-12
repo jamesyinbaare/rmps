@@ -129,6 +129,7 @@ class ExaminerCreate(BaseModel):
     region: str = Field(min_length=1, description="Examiner home region (Enum Region value).")
     subject_ids: list[int] = Field(min_length=1, max_length=1)
     deviation_weight: float | None = Field(default=None, gt=0)
+    gender: str | None = None
 
 
 class ExaminerUpdate(BaseModel):
@@ -138,6 +139,7 @@ class ExaminerUpdate(BaseModel):
     region: str | None = None
     subject_ids: list[int] | None = Field(default=None, min_length=1, max_length=1)
     deviation_weight: float | None = Field(default=None, gt=0)
+    gender: str | None = None
 
 
 class ExaminerResponse(BaseModel):
@@ -145,8 +147,10 @@ class ExaminerResponse(BaseModel):
     examination_id: int
     name: str
     phone_number: str | None = None
+    gender: str | None = None
     examiner_type: ExaminerTypeSchema
     region: str
+    reference_code: str | None = None
     subject_ids: list[int]
     deviation_weight: float | None
     examiner_group_id: UUID | None = None
@@ -164,6 +168,7 @@ class AllocationExaminerResponse(BaseModel):
     allocation_id: UUID
     examiner_id: UUID
     examiner_name: str
+    reference_code: str | None = None
     examiner_type: ExaminerTypeSchema
     subject_ids: list[int]
     region: str | None = None

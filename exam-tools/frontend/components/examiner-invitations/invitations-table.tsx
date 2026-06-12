@@ -28,7 +28,7 @@ import {
 import { InvitationRowActionsMenu } from "@/components/examiner-invitations/invitation-row-actions-menu";
 import { InvitationStatusBadge } from "@/components/examiner-invitations/invitation-status-badge";
 import type { ResendUiState } from "@/components/examiner-invitations/types";
-import { formatDateOnly, formatDateTime, humanizeRegion } from "@/components/examiner-invitations/utils";
+import { formatCoordinationRange, formatDateTime, humanizeRegion } from "@/components/examiner-invitations/utils";
 import { OfficialAccountsPagination } from "@/components/official-accounts-pagination";
 import type {
   ExaminerInvitationRow,
@@ -57,6 +57,7 @@ type Props = {
   resendUi: Record<string, ResendUiState>;
   resendErrors: Record<string, string>;
   onResend: (inv: ExaminerInvitationRow) => void;
+  onRenew?: (inv: ExaminerInvitationRow) => void;
   onCopyLink?: (inv: ExaminerInvitationRow) => void;
   copyLinkUi?: Record<string, "copied" | "error">;
   onViewAllocation?: (inv: ExaminerInvitationRow) => void;
@@ -84,6 +85,7 @@ export function InvitationsTable({
   resendUi,
   resendErrors,
   onResend,
+  onRenew,
   onCopyLink,
   copyLinkUi = {},
   onViewAllocation,
@@ -174,10 +176,17 @@ export function InvitationsTable({
         ),
       },
       {
-        accessorKey: "coordination_date",
+        id: "coordination",
         header: "Coordination",
-        cell: ({ getValue }) => (
-          <span className="whitespace-nowrap text-xs">{formatDateOnly(getValue<string | null>())}</span>
+        cell: ({ row }) => (
+          <span className="whitespace-nowrap text-xs">
+            {formatCoordinationRange(
+              row.original.coordination_start_date,
+              row.original.coordination_start_time,
+              row.original.coordination_end_date,
+              row.original.coordination_end_time,
+            )}
+          </span>
         ),
       },
       {
@@ -215,13 +224,14 @@ export function InvitationsTable({
               copyLinkState={copyLinkUi[inv.id]}
               onCopyLink={onCopyLink}
               onResend={onResend}
+              onRenew={onRenew}
               onViewAllocation={onViewAllocation}
             />
           );
         },
       },
     ],
-    [busy, copyLinkUi, onCopyLink, onResend, onViewAllocation, openActionsId, resendErrors, resendUi],
+    [busy, copyLinkUi, onCopyLink, onRenew, onResend, onViewAllocation, openActionsId, resendErrors, resendUi],
   );
 
   const table = useReactTable({

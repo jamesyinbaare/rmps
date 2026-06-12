@@ -33,11 +33,45 @@ export function formatDateOnly(iso: string | null | undefined): string {
   }
 }
 
+export function defaultDatetimeLocalInput(daysFromNow = 7): string {
+  const d = new Date();
+  d.setDate(d.getDate() + daysFromNow);
+  d.setMinutes(0, 0, 0);
+  const pad = (n: number) => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
+
 export function datetimeLocalToIso(value: string): string | null {
   const trimmed = value.trim();
   if (!trimmed) return null;
   const d = new Date(trimmed);
   return Number.isNaN(d.getTime()) ? null : d.toISOString();
+}
+
+import { formatTimeLabel, isoToTimeInput } from "@/components/cohorts/cohort-schedule-utils";
+
+export function formatCoordinationRange(
+  startDate?: string | null,
+  startTime?: string | null,
+  endDate?: string | null,
+  endTime?: string | null,
+): string {
+  const startLabel = formatDateOnly(startDate);
+  const endLabel = formatDateOnly(endDate ?? startDate);
+  if (startLabel === "—" && endLabel === "—") return "—";
+  if (startLabel !== "—" && endLabel !== "—" && startLabel !== endLabel) {
+    const st = startTime ? isoToTimeInput(startTime) : "";
+    const et = endTime ? isoToTimeInput(endTime) : "";
+    if (st && et) return `${startLabel} – ${endLabel} (${st}–${et})`;
+    return `${startLabel} – ${endLabel}`;
+  }
+  if (startLabel !== "—") {
+    const st = startTime ? formatTimeLabel(startTime) : null;
+    const et = endTime ? formatTimeLabel(endTime) : null;
+    if (st || et) return `${startLabel} (${st ?? "—"}–${et ?? "—"})`;
+    return startLabel;
+  }
+  return endLabel;
 }
 
 export function dateInputToIso(value: string): string | null {

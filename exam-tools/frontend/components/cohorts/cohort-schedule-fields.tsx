@@ -4,6 +4,7 @@ import { useMemo } from "react";
 
 import { formatDateOnly } from "@/components/examiner-invitations/utils";
 import type { CohortScheduleDraft } from "@/components/cohorts/cohort-schedule-utils";
+import { formatTimeLabel } from "@/components/cohorts/cohort-schedule-utils";
 import { validateCohortSchedule } from "@/components/cohorts/cohort-schedule-validation";
 import { formInputClass, formLabelClass } from "@/lib/form-classes";
 import { cn } from "@/lib/utils";
@@ -43,26 +44,26 @@ export function CohortScheduleFields({
         <p className="text-xs text-muted-foreground">
           Coordination is usually before marking begins.
         </p>
-        <div className="grid gap-3 sm:grid-cols-3">
+        <div className="grid gap-3 sm:grid-cols-2">
           <div>
-            <label className={formLabelClass} htmlFor="cohort-coordination-date">
-              Date
+            <label className={formLabelClass} htmlFor="cohort-coordination-start-date">
+              Start date
             </label>
             <input
-              id="cohort-coordination-date"
+              id="cohort-coordination-start-date"
               type="date"
               className={cn(formInputClass, "mt-1")}
-              value={draft.coordinationDate}
-              onChange={(e) => patch({ coordinationDate: e.target.value })}
+              value={draft.coordinationStartDate}
+              onChange={(e) => patch({ coordinationStartDate: e.target.value })}
               disabled={disabled}
             />
           </div>
           <div>
-            <label className={formLabelClass} htmlFor="cohort-coordination-start">
+            <label className={formLabelClass} htmlFor="cohort-coordination-start-time">
               Start time
             </label>
             <input
-              id="cohort-coordination-start"
+              id="cohort-coordination-start-time"
               type="time"
               className={cn(formInputClass, "mt-1")}
               value={draft.coordinationStartTime}
@@ -71,11 +72,31 @@ export function CohortScheduleFields({
             />
           </div>
           <div>
-            <label className={formLabelClass} htmlFor="cohort-coordination-end">
+            <label className={formLabelClass} htmlFor="cohort-coordination-end-date">
+              End date
+            </label>
+            <input
+              id="cohort-coordination-end-date"
+              type="date"
+              className={cn(
+                formInputClass,
+                "mt-1",
+                showValidation && fieldErrors.coordinationEndDate ? fieldErrorClass(true) : "",
+              )}
+              value={draft.coordinationEndDate}
+              onChange={(e) => patch({ coordinationEndDate: e.target.value })}
+              disabled={disabled}
+            />
+            {showValidation && fieldErrors.coordinationEndDate ? (
+              <p className="mt-1 text-xs text-destructive">{fieldErrors.coordinationEndDate}</p>
+            ) : null}
+          </div>
+          <div>
+            <label className={formLabelClass} htmlFor="cohort-coordination-end-time">
               End time
             </label>
             <input
-              id="cohort-coordination-end"
+              id="cohort-coordination-end-time"
               type="time"
               className={cn(
                 formInputClass,
@@ -153,29 +174,39 @@ export function CohortScheduleFields({
 }
 
 export function cohortScheduleSummaryParts({
-  coordinationDate,
+  coordinationStartDate,
   coordinationStartTime,
+  coordinationEndDate,
   coordinationEndTime,
   markingStartDate,
   markingEndDate,
   markedScriptSubmissionDeadline,
 }: {
-  coordinationDate?: string | null;
+  coordinationStartDate?: string | null;
   coordinationStartTime?: string | null;
+  coordinationEndDate?: string | null;
   coordinationEndTime?: string | null;
   markingStartDate?: string | null;
   markingEndDate?: string | null;
   markedScriptSubmissionDeadline?: string | null;
 }): string[] {
   const parts: string[] = [];
-  if (coordinationDate) {
-    let line = `Coordination ${formatDateOnly(coordinationDate)}`;
-    if (coordinationStartTime || coordinationEndTime) {
-      const start = coordinationStartTime?.slice(0, 5) ?? "—";
-      const end = coordinationEndTime?.slice(0, 5) ?? "—";
-      line += ` (${start}–${end})`;
+  if (coordinationStartDate || coordinationEndDate) {
+    const startLabel = formatDateOnly(coordinationStartDate);
+    const endLabel = formatDateOnly(coordinationEndDate ?? coordinationStartDate);
+    const startTime = coordinationStartTime ? formatTimeLabel(coordinationStartTime) : null;
+    const endTime = coordinationEndTime ? formatTimeLabel(coordinationEndTime) : null;
+    if (startLabel !== "—" && endLabel !== "—" && startLabel !== endLabel) {
+      let line = `Coordination ${startLabel} – ${endLabel}`;
+      if (startTime && endTime) line += ` (${startTime}–${endTime})`;
+      parts.push(line);
+    } else if (startLabel !== "—") {
+      let line = `Coordination ${startLabel}`;
+      if (startTime || endTime) {
+        line += ` (${startTime ?? "—"}–${endTime ?? "—"})`;
+      }
+      parts.push(line);
     }
-    parts.push(line);
   }
   if (markingStartDate || markingEndDate) {
     parts.push(
@@ -189,8 +220,9 @@ export function cohortScheduleSummaryParts({
 }
 
 export function CohortScheduleSummary(props: {
-  coordinationDate?: string | null;
+  coordinationStartDate?: string | null;
   coordinationStartTime?: string | null;
+  coordinationEndDate?: string | null;
   coordinationEndTime?: string | null;
   markingStartDate?: string | null;
   markingEndDate?: string | null;

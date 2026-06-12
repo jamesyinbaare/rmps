@@ -81,6 +81,7 @@ def examiner_to_admin_row(
         examination_id=int(examination.id),
         examination_label=examination_label(examination),
         full_name=cast(str, examiner.name),
+        reference_code=cast(str, examiner.reference_code) if examiner.reference_code else None,
         examiner_type=examiner_type_str(examiner.examiner_type),
         region=region_str(examiner.region),
         subject_codes=subject_codes,

@@ -21,6 +21,7 @@ from app.models import (
     SubjectMarkingGroupSourceRegion,
     SubjectMarkingGroupSourceRole,
 )
+from app.services.coordination_schedule import validate_coordination_range
 from app.services.examiner_roster import parse_region
 
 
@@ -83,8 +84,9 @@ def group_response(group: SubjectMarkingGroup) -> dict:
         "examiner_ids": [m.examiner_id for m in group.members],
         "source_regions": [r.region.value for r in group.source_regions],
         "source_roles": [r.examiner_type.value for r in group.source_roles],
-        "coordination_date": group.coordination_date,
+        "coordination_start_date": group.coordination_start_date,
         "coordination_start_time": group.coordination_start_time,
+        "coordination_end_date": group.coordination_end_date,
         "coordination_end_time": group.coordination_end_time,
         "marking_start_date": group.marking_start_date,
         "marking_end_date": group.marking_end_date,
@@ -146,19 +148,27 @@ async def create_group(
     examination_id: int,
     subject_id: int,
     name: str,
-    coordination_date: datetime | None,
+    coordination_start_date: datetime | None,
     coordination_start_time: time | None,
+    coordination_end_date: datetime | None,
     coordination_end_time: time | None,
     marking_start_date: datetime | None,
     marking_end_date: datetime | None,
     marked_script_submission_deadline: datetime | None,
 ) -> dict:
+    validate_coordination_range(
+        coordination_start_date,
+        coordination_start_time,
+        coordination_end_date,
+        coordination_end_time,
+    )
     group = SubjectMarkingGroup(
         examination_id=examination_id,
         subject_id=subject_id,
         name=name.strip(),
-        coordination_date=_as_naive_utc(coordination_date),
+        coordination_start_date=_as_naive_utc(coordination_start_date),
         coordination_start_time=coordination_start_time,
+        coordination_end_date=_as_naive_utc(coordination_end_date),
         coordination_end_time=coordination_end_time,
         marking_start_date=_as_naive_utc(marking_start_date),
         marking_end_date=_as_naive_utc(marking_end_date),
@@ -177,14 +187,16 @@ async def update_group(
     subject_id: int,
     group_id: UUID,
     name: str | None,
-    coordination_date: datetime | None,
+    coordination_start_date: datetime | None,
     coordination_start_time: time | None,
+    coordination_end_date: datetime | None,
     coordination_end_time: time | None,
     marking_start_date: datetime | None,
     marking_end_date: datetime | None,
     marked_script_submission_deadline: datetime | None,
-    update_coordination_date: bool,
+    update_coordination_start_date: bool,
     update_coordination_start_time: bool,
+    update_coordination_end_date: bool,
     update_coordination_end_time: bool,
     update_marking_start_date: bool,
     update_marking_end_date: bool,
@@ -201,12 +213,20 @@ async def update_group(
 
     if name is not None:
         group.name = name.strip()
-    if update_coordination_date:
-        group.coordination_date = _as_naive_utc(coordination_date)
+    if update_coordination_start_date:
+        group.coordination_start_date = _as_naive_utc(coordination_start_date)
     if update_coordination_start_time:
         group.coordination_start_time = coordination_start_time
+    if update_coordination_end_date:
+        group.coordination_end_date = _as_naive_utc(coordination_end_date)
     if update_coordination_end_time:
         group.coordination_end_time = coordination_end_time
+    validate_coordination_range(
+        group.coordination_start_date,
+        group.coordination_start_time,
+        group.coordination_end_date,
+        group.coordination_end_time,
+    )
     if update_marking_start_date:
         group.marking_start_date = _as_naive_utc(marking_start_date)
     if update_marking_end_date:
@@ -529,8 +549,9 @@ async def get_examiner_marking_groups(
             "id": group.id,
             "name": group.name,
             "is_default": bool(group.is_default),
-            "coordination_date": group.coordination_date,
+            "coordination_start_date": group.coordination_start_date,
             "coordination_start_time": group.coordination_start_time,
+            "coordination_end_date": group.coordination_end_date,
             "coordination_end_time": group.coordination_end_time,
             "marking_start_date": group.marking_start_date,
             "marking_end_date": group.marking_end_date,
@@ -559,8 +580,9 @@ async def get_examiner_marking_group(
     return {
         "marking_group_id": chosen["id"],
         "marking_group_name": chosen["name"],
-        "coordination_date": chosen["coordination_date"],
+        "coordination_start_date": chosen["coordination_start_date"],
         "coordination_start_time": chosen["coordination_start_time"],
+        "coordination_end_date": chosen["coordination_end_date"],
         "coordination_end_time": chosen["coordination_end_time"],
         "marking_start_date": chosen["marking_start_date"],
         "marking_end_date": chosen["marking_end_date"],

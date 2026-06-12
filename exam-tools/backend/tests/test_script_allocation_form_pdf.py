@@ -24,6 +24,7 @@ def test_merge_pdf_copies_doubles_page_count() -> None:
         paper_number=2,
         examiner_name="A. Examiner",
         examiner_region="Greater Accra",
+        reference_code=None,
         rows=[
             {
                 "school_name": "Sample SHS",
@@ -52,6 +53,7 @@ def test_merge_pdf_copies_one_is_unchanged() -> None:
         paper_number=1,
         examiner_name="B. Name",
         examiner_region="Ashanti",
+        reference_code=None,
         rows=[
             {
                 "school_name": "X",

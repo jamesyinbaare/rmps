@@ -29,8 +29,9 @@ export function ExaminerMarkingScheduleSection({ cohorts, className }: Props) {
       <div className="space-y-3">
         {cohorts.map((cohort) => {
           const parts = cohortScheduleSummaryParts({
-            coordinationDate: cohort.coordination_date,
+            coordinationStartDate: cohort.coordination_start_date,
             coordinationStartTime: cohort.coordination_start_time,
+            coordinationEndDate: cohort.coordination_end_date,
             coordinationEndTime: cohort.coordination_end_time,
             markingStartDate: cohort.marking_start_date,
             markingEndDate: cohort.marking_end_date,

@@ -54,6 +54,7 @@ type Props = {
   onDownloadLinks?: () => void;
   busy: boolean;
   disabled?: boolean;
+  readOnly?: boolean;
 };
 
 export function InvitationsCommandBar({
@@ -86,6 +87,7 @@ export function InvitationsCommandBar({
   onDownloadLinks,
   busy,
   disabled,
+  readOnly = false,
 }: Props) {
   const [columnsOpen, setColumnsOpen] = useState(false);
   const actionsDisabled = disabled || busy || examId == null;
@@ -241,15 +243,17 @@ export function InvitationsCommandBar({
             mainIcon={MessagesSquare}
             sectionLabel="Bulk invitation actions"
           />
-          <FabSpeedDial
-            options={inviteFabOptions}
-            disabled={actionsDisabled}
-            disabledReason="Select an examination first"
-            busy={busy}
-            onSelect={handleInviteFabSelect}
-            mainIcon={UserPlus}
-            sectionLabel="Add invitations"
-          />
+          {readOnly ? null : (
+            <FabSpeedDial
+              options={inviteFabOptions}
+              disabled={actionsDisabled}
+              disabledReason="Select an examination first"
+              busy={busy}
+              onSelect={handleInviteFabSelect}
+              mainIcon={UserPlus}
+              sectionLabel="Add invitations"
+            />
+          )}
         </div>
       </div>
       <OfficialAccountsFilterChips chips={filterChips} onClearAll={onClearFilters} variant="inline" />

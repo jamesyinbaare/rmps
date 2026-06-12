@@ -6,10 +6,10 @@ import { BookOpen, CalendarClock, CheckCircle2, MapPin, UserCircle, XCircle } fr
 import { ExaminerAcceptanceStatement } from "@/components/examiner-invitation/examiner-acceptance-statement";
 import {
   ExaminerInvitationDetailTile,
-  formatCoordinationDate,
   formatInvitationDeadline,
   invitationStatusMeta,
 } from "@/components/examiner-invitation/examiner-invitation-page-shell";
+import { formatCoordinationRange } from "@/components/examiner-invitations/utils";
 import { ExaminerMarkingScheduleSection } from "@/components/examiner-invitation/examiner-marking-schedule-section";
 import { Button } from "@/components/ui/button";
 import {
@@ -50,6 +50,7 @@ export function ExaminerInvitationLandingPanel({
 
   const canRespond = invitation.can_respond === true;
   const isRosterPortal = invitation.portal_mode === "roster";
+  const isWaitlisted = invitation.status === "quota_waitlisted";
   const status = isRosterPortal
     ? {
         label: "Roster portal",
@@ -155,13 +156,21 @@ export function ExaminerInvitationLandingPanel({
                 ? "Welcome to your examiner portal. Review your assignment and marking schedule below, then open Profile for bank details, script allocations, and your appointment letter."
                 : invitation.status === "accepted"
                   ? "Your assignment details are below. Open the Profile tab for bank details, script allocations, and your appointment letter."
-                  : canRespond
-                    ? "You've been invited to serve as an examiner. Review the details below, then confirm or decline before the deadline."
-                    : "This invitation is no longer open for a response."}
+                  : isWaitlisted
+                    ? "Thank you for responding. The regional quota is full for now — see the note below for what happens next."
+                    : canRespond
+                      ? "You've been invited to serve as an examiner. Review the details below, then confirm or decline before the deadline."
+                      : "This invitation is no longer open for a response."}
             </p>
           ) : (
             <p className="mt-4 text-sm text-muted-foreground">You declined this invitation.</p>
           )}
+
+          {isWaitlisted && invitation.quota_waitlist_message ? (
+            <div className="mt-4 rounded-2xl border border-amber-500/30 bg-amber-500/10 px-4 py-4 text-sm leading-relaxed text-foreground">
+              {invitation.quota_waitlist_message}
+            </div>
+          ) : null}
 
           <div className="mt-5 grid grid-cols-2 gap-3 sm:gap-3.5">
             <ExaminerInvitationDetailTile
@@ -186,11 +195,16 @@ export function ExaminerInvitationLandingPanel({
                 className="col-span-2"
               />
             ) : null}
-            {invitation.coordination_date ? (
+            {invitation.coordination_start_date || invitation.coordination_end_date ? (
               <ExaminerInvitationDetailTile
                 icon={CalendarClock}
-                label="Coordination date"
-                value={formatCoordinationDate(invitation.coordination_date)}
+                label="Coordination"
+                value={formatCoordinationRange(
+                  invitation.coordination_start_date,
+                  invitation.coordination_start_time,
+                  invitation.coordination_end_date,
+                  invitation.coordination_end_time,
+                )}
                 className="col-span-2"
               />
             ) : null}
@@ -208,7 +222,10 @@ export function ExaminerInvitationLandingPanel({
 
           {actionMessage ? (
             <div
-              className="mt-5 rounded-2xl border border-primary/20 bg-primary/5 px-4 py-3 text-sm leading-relaxed text-foreground"
+              className={cn(
+                "mt-5 rounded-2xl border px-4 py-3 text-sm leading-relaxed text-foreground",
+                isWaitlisted ? "border-amber-500/30 bg-amber-500/10" : "border-primary/20 bg-primary/5",
+              )}
               role="status"
             >
               {actionMessage}
@@ -234,7 +251,7 @@ export function ExaminerInvitationLandingPanel({
                 className="min-h-12 w-full text-base shadow-sm"
                 onClick={() => openConfirm("accept")}
               >
-                Confirm availability
+                {isWaitlisted ? "Try confirming again" : "Confirm availability"}
               </Button>
               <Button
                 type="button"

@@ -428,6 +428,10 @@ async def _seed_examiners(
         session.add(examiner)
         await session.flush()
         session.add(ExaminerSubject(examiner_id=examiner.id, subject_id=subject_id))
+        await session.flush()
+        from app.services.examiner_reference_code import assign_reference_code_to_examiner  # noqa: PLC0415
+
+        await assign_reference_code_to_examiner(session, examiner)
 
 
 async def _validate_seed(

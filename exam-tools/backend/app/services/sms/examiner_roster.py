@@ -7,6 +7,7 @@ from typing import TYPE_CHECKING
 from uuid import UUID
 
 from app.config import settings
+from app.services.coordination_schedule import format_coordination_range
 from app.services.examiner_invitation import invitation_public_url
 from app.services.sms.factory import get_sms_provider
 from app.services.sms.phone import normalize_msisdn
@@ -35,10 +36,15 @@ def _format_response_deadline(dt) -> str:
     return dt.strftime("%d %b %Y, %H:%M")
 
 
-def _format_coordination_date(dt) -> str:
-    if dt is None:
+def _coordination_range_for_inv(inv) -> str:
+    if inv is None:
         return ""
-    return dt.strftime("%d %b %Y")
+    return format_coordination_range(
+        inv.coordination_start_date,
+        inv.coordination_start_time,
+        inv.coordination_end_date,
+        inv.coordination_end_time,
+    ) or ""
 
 
 def _subject_name(ex: Examiner) -> str:
@@ -63,7 +69,23 @@ def render_examiner_roster_custom_message(ex: Examiner, template: str) -> str:
         "{role}": role,
         "{region}": ex.region.value.replace("_", " ").title(),
         "{response_deadline}": _format_response_deadline(inv.response_deadline if inv else None),
-        "{coordination_date}": _format_coordination_date(inv.coordination_date if inv else None),
+        "{coordination_date}": _coordination_range_for_inv(inv),
+        "{coordination_start}": format_coordination_range(
+            inv.coordination_start_date if inv else None,
+            inv.coordination_start_time if inv else None,
+            inv.coordination_start_date if inv else None,
+            inv.coordination_start_time if inv else None,
+        )
+        if inv
+        else "",
+        "{coordination_end}": format_coordination_range(
+            inv.coordination_end_date if inv else None,
+            None,
+            inv.coordination_end_date if inv else None,
+            inv.coordination_end_time if inv else None,
+        )
+        if inv
+        else "",
     }
     message = template
     for key, value in replacements.items():

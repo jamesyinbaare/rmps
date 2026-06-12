@@ -45,16 +45,17 @@ def generate_subject_template() -> bytes:
 def generate_examiners_bulk_template() -> bytes:
     """Excel template for examiner roster or invitation bulk upload.
 
-    Columns: name, phone_number, subject_code, examiner_type, region.
+    Columns: name, phone_number, subject_code, examiner_type, region, gender (optional).
     Phone column is formatted as Text so Excel does not strip leading zeros.
     """
     df = pd.DataFrame(
         {
             "name": ["Jane Doe", "John Smith"],
             "phone_number": ["0551234567", "0244123456"],
-            "subject_code": ["301", "302"],
-            "examiner_type": ["assistant_examiner", "chief_examiner"],
+            "subject_code": ["MATH301", "ENG302"],
+            "examiner_type": ["AE", "CE"],
             "region": ["Greater Accra", "Ashanti"],
+            "gender": ["Female", "Male"],
         }
     )
 
@@ -240,7 +241,8 @@ def generate_examiner_invitations_export(rows: list[dict[str, object]]) -> bytes
         "examiner_type",
         "region",
         "status",
-        "coordination_date",
+        "coordination_start_date",
+        "coordination_end_date",
         "public_url",
     ]
     df = pd.DataFrame(rows, columns=columns if not rows else None)

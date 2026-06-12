@@ -29,6 +29,7 @@ type Props = {
   unassignedIds: Set<string>;
   cohorts: CohortListItem[];
   busy?: boolean;
+  readOnly?: boolean;
   onCreateWithSelected: (examinerIds: string[]) => void;
   onAddToCohort: (cohortId: string, examinerIds: string[]) => void;
 };
@@ -45,6 +46,7 @@ export function CohortUnassignedModal({
   unassignedIds,
   cohorts,
   busy = false,
+  readOnly = false,
   onCreateWithSelected,
   onAddToCohort,
 }: Props) {
@@ -118,55 +120,61 @@ export function CohortUnassignedModal({
       open={open}
       onClose={onClose}
       title={`Unassigned examiners (${unassigned.length})`}
-      description={`These examiners are not in any ${entityLabel}. Select them to assign or create a new ${entityLabel}.`}
+      description={
+        readOnly
+          ? `These examiners are not in any ${entityLabel}.`
+          : `These examiners are not in any ${entityLabel}. Select them to assign or create a new ${entityLabel}.`
+      }
       closeDisabled={busy}
       footer={
-        <div className="space-y-3">
-          {error ? <p className="text-sm text-destructive">{error}</p> : null}
-          <div className="flex flex-wrap items-end gap-3">
-            {cohorts.length > 0 ? (
-              <div className="min-w-48 flex-1">
-                <label className="mb-1 block text-xs font-medium text-muted-foreground">
-                  Add to {entityLabel}
-                </label>
-                <select
-                  className={cn(formInputClass, "h-9")}
-                  value={targetCohortId}
-                  onChange={(e) => setTargetCohortId(e.target.value)}
-                  disabled={busy}
-                >
-                  <option value="">Select {entityLabel}…</option>
-                  {cohorts.map((c) => (
-                    <option key={c.id} value={c.id}>
-                      {c.name} ({c.examiner_ids.length})
-                    </option>
-                  ))}
-                </select>
-              </div>
-            ) : null}
-            <div className="flex flex-wrap gap-2">
+        readOnly ? undefined : (
+          <div className="space-y-3">
+            {error ? <p className="text-sm text-destructive">{error}</p> : null}
+            <div className="flex flex-wrap items-end gap-3">
               {cohorts.length > 0 ? (
+                <div className="min-w-48 flex-1">
+                  <label className="mb-1 block text-xs font-medium text-muted-foreground">
+                    Add to {entityLabel}
+                  </label>
+                  <select
+                    className={cn(formInputClass, "h-9")}
+                    value={targetCohortId}
+                    onChange={(e) => setTargetCohortId(e.target.value)}
+                    disabled={busy}
+                  >
+                    <option value="">Select {entityLabel}…</option>
+                    {cohorts.map((c) => (
+                      <option key={c.id} value={c.id}>
+                        {c.name} ({c.examiner_ids.length})
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              ) : null}
+              <div className="flex flex-wrap gap-2">
+                {cohorts.length > 0 ? (
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="outline"
+                    disabled={busy || selectedIds.length === 0 || !targetCohortId}
+                    onClick={handleAddToCohort}
+                  >
+                    Add to {entityLabel}
+                  </Button>
+                ) : null}
                 <Button
                   type="button"
                   size="sm"
-                  variant="outline"
-                  disabled={busy || selectedIds.length === 0 || !targetCohortId}
-                  onClick={handleAddToCohort}
+                  disabled={busy || selectedIds.length === 0}
+                  onClick={handleCreate}
                 >
-                  Add to {entityLabel}
+                  Create {entityLabel} with selected
                 </Button>
-              ) : null}
-              <Button
-                type="button"
-                size="sm"
-                disabled={busy || selectedIds.length === 0}
-                onClick={handleCreate}
-              >
-                Create {entityLabel} with selected
-              </Button>
+              </div>
             </div>
           </div>
-        </div>
+        )
       }
     >
       {unassigned.length === 0 ? (
@@ -195,15 +203,17 @@ export function CohortUnassignedModal({
                 <Table>
                   <TableHeader className="sticky top-0 z-[1] bg-card shadow-[0_1px_0_0_hsl(var(--border))]">
                     <TableRow>
-                      <TableHead className="w-10">
-                        <input
-                          type="checkbox"
-                          aria-label="Select all visible examiners"
-                          checked={allFilteredSelected}
-                          onChange={(e) => toggleAll(e.target.checked)}
-                          disabled={busy}
-                        />
-                      </TableHead>
+                      {readOnly ? null : (
+                        <TableHead className="w-10">
+                          <input
+                            type="checkbox"
+                            aria-label="Select all visible examiners"
+                            checked={allFilteredSelected}
+                            onChange={(e) => toggleAll(e.target.checked)}
+                            disabled={busy}
+                          />
+                        </TableHead>
+                      )}
                       <TableHead>Name</TableHead>
                       <TableHead className="hidden sm:table-cell">Region</TableHead>
                       <TableHead className="hidden md:table-cell">Role</TableHead>
@@ -212,17 +222,19 @@ export function CohortUnassignedModal({
                   <TableBody>
                     {filtered.map((ex) => (
                       <TableRow key={ex.id}>
-                        <TableCell>
-                          <input
-                            type="checkbox"
-                            aria-label={`Select ${ex.name}`}
-                            checked={selected[ex.id] ?? false}
-                            disabled={busy}
-                            onChange={(e) =>
-                              setSelected((prev) => ({ ...prev, [ex.id]: e.target.checked }))
-                            }
-                          />
-                        </TableCell>
+                        {readOnly ? null : (
+                          <TableCell>
+                            <input
+                              type="checkbox"
+                              aria-label={`Select ${ex.name}`}
+                              checked={selected[ex.id] ?? false}
+                              disabled={busy}
+                              onChange={(e) =>
+                                setSelected((prev) => ({ ...prev, [ex.id]: e.target.checked }))
+                              }
+                            />
+                          </TableCell>
+                        )}
                         <TableCell className="font-medium text-foreground">{ex.name}</TableCell>
                         <TableCell className="hidden text-muted-foreground sm:table-cell">
                           {regionLabel(ex.region)}
@@ -238,9 +250,11 @@ export function CohortUnassignedModal({
             </div>
           )}
 
-          <p className="shrink-0 text-xs text-muted-foreground">
-            {selectedIds.length} selected · {filtered.length} shown
-          </p>
+          {readOnly ? null : (
+            <p className="shrink-0 text-xs text-muted-foreground">
+              {selectedIds.length} selected · {filtered.length} shown
+            </p>
+          )}
         </div>
       )}
     </CohortModalShell>

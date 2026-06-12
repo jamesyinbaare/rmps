@@ -86,3 +86,25 @@ async def resolve_examiner_id_for_portal_token(session: AsyncSession, token: str
         return require_accepted_invitation_for_bank(resolved.invitation)
 
     return resolved.examiner.id
+
+
+async def resolve_examiner_id_for_letter_and_bank(session: AsyncSession, token: str) -> UUID:
+    """Accepted/rostered examiner with appointment letter release gate."""
+    examiner_id = await resolve_examiner_id_for_portal_token(session, token)
+    from sqlalchemy.orm import selectinload
+
+    from app.models import ExaminerSubject
+    from app.services.examiner_portal_release import assert_may_access_letter_and_bank, load_examiner_for_portal
+
+    examiner = await load_examiner_for_portal(session, examiner_id)
+    if examiner is None:
+        stmt = (
+            select(Examiner)
+            .where(Examiner.id == examiner_id)
+            .options(selectinload(Examiner.subjects).selectinload(ExaminerSubject.subject))
+        )
+        examiner = (await session.execute(stmt)).scalar_one_or_none()
+    if examiner is None:
+        raise ValueError("Examiner record not found.")
+    await assert_may_access_letter_and_bank(session, examiner)
+    return examiner_id
