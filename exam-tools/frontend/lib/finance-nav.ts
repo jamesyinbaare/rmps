@@ -2,6 +2,8 @@ import type { TimetableSubjectFilter } from "@/lib/api";
 import {
   ACCOUNT_DETAILS_BY_CENTRE_LABEL,
   BANK_ACCOUNTS_LABEL,
+  EXAMINER_ACCOUNTS_BY_SUBJECT_HREF,
+  EXAMINER_ACCOUNTS_BY_SUBJECT_LABEL,
   OFFICIAL_ACCOUNTS_ADMIN_HREF,
 } from "@/lib/official-accounts-zone";
 
@@ -10,6 +12,9 @@ export const FINANCE_HOME_HREF = "/dashboard/admin";
 export const OFFICIAL_RATES_HREF = "/dashboard/admin/official-rates";
 export const EXAMINER_RATES_HREF = "/dashboard/admin/examiner-rates";
 export const EXAMINER_PAYOUTS_HREF = "/dashboard/admin/examiner-payouts";
+export const EXAMINER_ATTENDANCE_HREF = "/dashboard/admin/examiner-attendance";
+/** @deprecated Use EXAMINER_ACCOUNTS_BY_SUBJECT_HREF from official-accounts-zone */
+export { EXAMINERS_BY_SUBJECT_HREF, EXAMINER_ACCOUNTS_BY_SUBJECT_HREF } from "@/lib/official-accounts-zone";
 export const CENTRE_SUMMARY_HREF = "/dashboard/admin/centre-summary";
 export const OFFICIAL_STATISTICS_HREF = "/dashboard/admin/official-statistics";
 export const FINANCE_CENTRE_SUMMARY_HREF = "/dashboard/admin/finance-centre-summary";
@@ -59,6 +64,15 @@ export type FinanceNavGroup = {
   items: FinanceNavItem[];
 };
 
+export type FinanceNavSectionIcon = "examinations" | "coordination" | "setup";
+
+export type FinanceNavSection = {
+  id: string;
+  heading: string;
+  icon: FinanceNavSectionIcon;
+  items: FinanceNavItem[];
+};
+
 export const FINANCE_OVERVIEW_ITEM: FinanceNavItem = {
   href: FINANCE_HOME_HREF,
   label: "Overview",
@@ -78,83 +92,114 @@ export function financeNavActive(pathname: string, href: string): boolean {
   return pathname === href || pathname.startsWith(`${href}/`);
 }
 
-export const FINANCE_NAV_GROUPS: FinanceNavGroup[] = [
+export const COORDINATION_MARKING_NAV_GROUP: FinanceNavGroup = {
+  heading: "Coordination & marking",
+  items: [
+    {
+      href: EXAMINER_PAYOUTS_HREF,
+      label: "Examiner bank accounts",
+      description: "Bank details, allocation & payout",
+      icon: "bank",
+    },
+    {
+      href: EXAMINER_ACCOUNTS_BY_SUBJECT_HREF,
+      label: EXAMINER_ACCOUNTS_BY_SUBJECT_LABEL,
+      description: "Single subject drill-down",
+      icon: "centre",
+    },
+    {
+      href: EXAMINER_ATTENDANCE_HREF,
+      label: "Examiner attendance",
+      description: "Marking centre check-ins",
+      icon: "attendance",
+    },
+  ],
+};
+
+const EXAMINATIONS_NAV_ITEMS: FinanceNavItem[] = [
   {
-    heading: "Account details",
-    items: [
-      {
-        href: OFFICIAL_ACCOUNTS_ADMIN_HREF,
-        label: BANK_ACCOUNTS_LABEL,
-        description: "All centres",
-        icon: "bank",
-      },
-      {
-        href: CENTRE_SUMMARY_HREF,
-        label: ACCOUNT_DETAILS_BY_CENTRE_LABEL,
-        description: "Single centre drill-down",
-        icon: "centre",
-      },
-      {
-        href: EXAMINER_PAYOUTS_HREF,
-        label: "Examiner payouts",
-        description: "Marking examiner allowances",
-        icon: "bank",
-      },
-    ],
+    href: OFFICIAL_ACCOUNTS_ADMIN_HREF,
+    label: BANK_ACCOUNTS_LABEL,
+    description: "All centres",
+    icon: "bank",
   },
   {
-    heading: "Centre reporting",
-    items: [
-      {
-        href: OFFICIAL_STATISTICS_HREF,
-        label: "Centre overview",
-        description: "Headcounts & variance",
-        icon: "statistics",
-      },
-      {
-        href: FINANCE_CENTRE_SUMMARY_HREF,
-        label: "Invigilator by day",
-        description: "Per-day coverage",
-        icon: "calendar",
-      },
-    ],
+    href: CENTRE_SUMMARY_HREF,
+    label: ACCOUNT_DETAILS_BY_CENTRE_LABEL,
+    description: "Single centre drill-down",
+    icon: "centre",
   },
   {
-    heading: "Compliance",
-    items: [
-      {
-        href: ATTENDANCE_SHEETS_HREF,
-        label: "Attendance sheets",
-        description: "Centre uploads",
-        icon: "attendance",
-      },
-    ],
+    href: OFFICIAL_STATISTICS_HREF,
+    label: "Centre overview",
+    description: "Headcounts & variance",
+    icon: "statistics",
   },
   {
-    heading: "Setup",
-    items: [
-      {
-        href: OFFICIAL_RATES_HREF,
-        label: "Allowance rates",
-        description: "Centre official rates",
-        icon: "rates",
-      },
-      {
-        href: EXAMINER_RATES_HREF,
-        label: "Examiner rates",
-        description: "Role & subject allowances",
-        icon: "rates",
-      },
-    ],
+    href: FINANCE_CENTRE_SUMMARY_HREF,
+    label: "Invigilator by day",
+    description: "Per-day coverage",
+    icon: "calendar",
+  },
+  {
+    href: ATTENDANCE_SHEETS_HREF,
+    label: "Attendance sheets",
+    description: "Centre uploads",
+    icon: "attendance",
   },
 ];
+
+const SETUP_NAV_ITEMS: FinanceNavItem[] = [
+  {
+    href: OFFICIAL_RATES_HREF,
+    label: "Allowance rates",
+    description: "Centre official rates",
+    icon: "rates",
+  },
+  {
+    href: EXAMINER_RATES_HREF,
+    label: "Examiner rates",
+    description: "Role & subject allowances",
+    icon: "rates",
+  },
+];
+
+/** Top-level collapsible sidebar sections (sidebar-07 style). */
+export const FINANCE_NAV_SECTIONS: FinanceNavSection[] = [
+  {
+    id: "examinations",
+    heading: "Examinations",
+    icon: "examinations",
+    items: EXAMINATIONS_NAV_ITEMS,
+  },
+  {
+    id: "coordination-marking",
+    heading: "Coordination & marking",
+    icon: "coordination",
+    items: COORDINATION_MARKING_NAV_GROUP.items,
+  },
+  {
+    id: "setup",
+    heading: "Setup",
+    icon: "setup",
+    items: SETUP_NAV_ITEMS,
+  },
+];
+
+/** Collapsible sidebar sections mapped to overview cards on the finance home page. */
+export const FINANCE_NAV_GROUPS: FinanceNavGroup[] = FINANCE_NAV_SECTIONS.map((section) => ({
+  heading: section.heading,
+  items: section.items,
+}));
 
 const FINANCE_PAGE_TITLES: [href: string, title: string][] = [
   [FINANCE_HOME_HREF, "Overview"],
   [BANK_DIRECTORY_HREF, "Bank directory"],
   [OFFICIAL_RATES_HREF, "Allowance rates"],
   [EXAMINER_RATES_HREF, "Examiner rates"],
-  [EXAMINER_PAYOUTS_HREF, "Examiner payouts"],
+  [EXAMINER_PAYOUTS_HREF, "Examiner bank accounts"],
+  [EXAMINER_ATTENDANCE_HREF, "Examiner attendance"],
+  [EXAMINER_ACCOUNTS_BY_SUBJECT_HREF, EXAMINER_ACCOUNTS_BY_SUBJECT_LABEL],
   [OFFICIAL_ACCOUNTS_ADMIN_HREF, BANK_ACCOUNTS_LABEL],
   [CENTRE_SUMMARY_HREF, ACCOUNT_DETAILS_BY_CENTRE_LABEL],
   [OFFICIAL_STATISTICS_HREF, "Centre overview"],

@@ -94,6 +94,19 @@ class ExaminerType(enum.Enum):
     TEAM_LEADER = "team_leader"
 
 
+def examiner_type_column(**kwargs):
+    """Persist examiner roles as API strings (e.g. chief_examiner), not PG enum names."""
+    return Column(
+        Enum(
+            ExaminerType,
+            values_callable=lambda x: [i.value for i in x],
+            native_enum=False,
+            length=64,
+        ),
+        **kwargs,
+    )
+
+
 class ExaminerAllowanceType(enum.Enum):
     RESPONSIBILITY = "responsibility_allowance"
     INCONVENIENCE = "inconvenience_allowance"
@@ -895,7 +908,7 @@ class ScriptsAllocationQuota(Base):
         ForeignKey("allocation_campaigns.id", ondelete="CASCADE"),
         primary_key=True,
     )
-    examiner_type = Column(Enum(ExaminerType, create_constraint=False), primary_key=True)
+    examiner_type = examiner_type_column(primary_key=True)
     subject_id = Column(Integer, ForeignKey("subjects.id", ondelete="CASCADE"), primary_key=True)
     quota_booklets = Column(Integer, nullable=False)
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
@@ -979,6 +992,7 @@ class SubjectMarkingGroup(Base):
     coordination_start_time = Column(Time, nullable=True)
     coordination_end_date = Column(DateTime, nullable=True)
     coordination_end_time = Column(Time, nullable=True)
+    coordination_venue = Column(String(255), nullable=True)
     marking_start_date = Column(DateTime, nullable=True)
     marking_end_date = Column(DateTime, nullable=True)
     marked_script_submission_deadline = Column(DateTime, nullable=True)
@@ -1043,7 +1057,7 @@ class SubjectMarkingGroupSourceRole(Base):
     )
     examination_id = Column(Integer, ForeignKey("examinations.id", ondelete="CASCADE"), nullable=False, index=True)
     subject_id = Column(Integer, ForeignKey("subjects.id", ondelete="RESTRICT"), nullable=False, index=True)
-    examiner_type = Column(Enum(ExaminerType, create_constraint=False), primary_key=True)
+    examiner_type = examiner_type_column(primary_key=True)
 
     group = relationship("SubjectMarkingGroup", back_populates="source_roles")
 
@@ -1087,7 +1101,7 @@ class Examiner(Base):
         index=True,
     )
     name = Column(String(255), nullable=False)
-    examiner_type = Column(Enum(ExaminerType, create_constraint=False), nullable=False)
+    examiner_type = examiner_type_column(nullable=False)
     region = Column(Enum(Region, create_constraint=False), nullable=False)
     deviation_weight = Column(
         Float,
@@ -1221,7 +1235,7 @@ class ExaminerInvitation(Base):
     phone_number = Column(String(50), nullable=False)
     msisdn = Column(String(20), nullable=False, index=True)
     gender = Column(String(20), nullable=True)
-    examiner_type = Column(Enum(ExaminerType, create_constraint=False), nullable=False)
+    examiner_type = examiner_type_column(nullable=False)
     region = Column(Enum(Region, create_constraint=False), nullable=False)
     token = Column(String(128), nullable=False, unique=True, index=True)
     token_expires_at = Column(DateTime, nullable=False)
@@ -1250,6 +1264,7 @@ class ExaminerInvitation(Base):
     coordination_start_time = Column(Time, nullable=True)
     coordination_end_date = Column(DateTime, nullable=True)
     coordination_end_time = Column(Time, nullable=True)
+    coordination_venue = Column(String(255), nullable=True)
     examiner_id = Column(
         UUID(as_uuid=True),
         ForeignKey("examiners.id", ondelete="SET NULL"),
@@ -1376,15 +1391,7 @@ class SubjectExaminerRegionQuota(Base):
         nullable=False,
         index=True,
     )
-    examiner_type = Column(
-        Enum(
-            ExaminerType,
-            values_callable=lambda x: [i.value for i in x],
-            native_enum=False,
-            length=32,
-        ),
-        nullable=True,
-    )
+    examiner_type = examiner_type_column(nullable=True)
     quota_count = Column(Integer, nullable=False)
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
@@ -1745,15 +1752,7 @@ class ExaminationExaminerRoleAllowanceRate(Base):
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     examination_id = Column(Integer, ForeignKey("examinations.id", ondelete="CASCADE"), nullable=False, index=True)
-    examiner_type = Column(
-        Enum(
-            ExaminerType,
-            values_callable=lambda x: [i.value for i in x],
-            native_enum=False,
-            length=64,
-        ),
-        nullable=False,
-    )
+    examiner_type = examiner_type_column(nullable=False)
     allowance_type = Column(
         Enum(
             ExaminerAllowanceType,
@@ -2051,15 +2050,7 @@ class ExaminationExaminerTravelRoleFactor(Base):
         nullable=False,
         index=True,
     )
-    examiner_type = Column(
-        Enum(
-            ExaminerType,
-            values_callable=lambda x: [i.value for i in x],
-            native_enum=False,
-            length=64,
-        ),
-        nullable=False,
-    )
+    examiner_type = examiner_type_column(nullable=False)
     factor = Column(Numeric(6, 3), nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
@@ -2195,6 +2186,32 @@ class InspectorAttendanceSheet(Base):
             "examination_centre_id",
             "examination_date",
             "subject_scope",
+        ),
+    )
+
+
+class ExaminationExaminerAppointmentLetterReference(Base):
+    """Per examination, subject, and role: shared appointment letter reference number."""
+
+    __tablename__ = "examination_examiner_appointment_letter_references"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    examination_id = Column(Integer, ForeignKey("examinations.id", ondelete="CASCADE"), nullable=False, index=True)
+    subject_id = Column(Integer, ForeignKey("subjects.id", ondelete="CASCADE"), nullable=False, index=True)
+    examiner_type = examiner_type_column(nullable=False)
+    reference_number = Column(String(128), nullable=False)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+
+    examination = relationship("Examination", backref="examiner_appointment_letter_references")
+    subject = relationship("Subject")
+
+    __table_args__ = (
+        UniqueConstraint(
+            "examination_id",
+            "subject_id",
+            "examiner_type",
+            name="uq_exam_examiner_appt_letter_refs",
         ),
     )
 

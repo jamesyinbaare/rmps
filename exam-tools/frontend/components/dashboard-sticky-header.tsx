@@ -5,6 +5,7 @@ import { Home, LogOut, Menu } from "lucide-react";
 import type { ReactNode } from "react";
 
 import { SidebarThemeToggle } from "@/components/sidebar-theme-toggle";
+import { FinanceSidebarToggle } from "@/components/finance-sidebar-toggle";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 
@@ -82,6 +83,8 @@ type Props = {
   onLogout: () => void;
   /** When set, shows the mobile sidebar trigger (hidden at `lg` and up). */
   sidebar?: DashboardStickyHeaderSidebar;
+  /** Desktop collapse/expand for the finance sidebar rail (hidden below `lg`). */
+  showSidebarCollapse?: boolean;
   /** Green accent border for official account details routes. */
   accent?: "official-accounts";
   /** Simpler bar below `lg`; full navbar from `lg` up when used with sidebar on desktop. */
@@ -93,6 +96,7 @@ export function DashboardStickyHeader({
   subtitle,
   onLogout,
   sidebar,
+  showSidebarCollapse = false,
   accent,
   executiveMobileOnly = false,
 }: Props) {
@@ -124,6 +128,9 @@ export function DashboardStickyHeader({
           >
             <Menu className="size-5" aria-hidden />
           </Button>
+        ) : null}
+        {showSidebarCollapse ? (
+          <FinanceSidebarToggle className={cn("hidden shrink-0 lg:flex", inputFocusRing)} />
         ) : null}
         <div className="min-w-0 flex-1">
           <h1 className="truncate text-base font-semibold text-card-foreground sm:text-lg">{title}</h1>

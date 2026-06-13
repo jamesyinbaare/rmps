@@ -22,6 +22,7 @@ class ExaminerInvitationCoordinationFields(BaseModel):
     coordination_start_time: time | None = None
     coordination_end_date: datetime | None = None
     coordination_end_time: time | None = None
+    coordination_venue: str | None = Field(default=None, max_length=255)
 
 
 class ExaminerInvitationCreate(ExaminerInvitationCoordinationFields):

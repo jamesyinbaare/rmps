@@ -12,6 +12,7 @@ class SubjectMarkingGroupCreate(BaseModel):
     coordination_start_time: time | None = None
     coordination_end_date: datetime | None = None
     coordination_end_time: time | None = None
+    coordination_venue: str | None = Field(default=None, max_length=255)
     marking_start_date: datetime | None = None
     marking_end_date: datetime | None = None
     marked_script_submission_deadline: datetime | None = None
@@ -23,6 +24,7 @@ class SubjectMarkingGroupUpdate(BaseModel):
     coordination_start_time: time | None = None
     coordination_end_date: datetime | None = None
     coordination_end_time: time | None = None
+    coordination_venue: str | None = Field(default=None, max_length=255)
     marking_start_date: datetime | None = None
     marking_end_date: datetime | None = None
     marked_script_submission_deadline: datetime | None = None
@@ -47,6 +49,7 @@ class SubjectMarkingGroupResponse(BaseModel):
     coordination_start_time: time | None
     coordination_end_date: datetime | None
     coordination_end_time: time | None
+    coordination_venue: str | None = None
     marking_start_date: datetime | None
     marking_end_date: datetime | None
     marked_script_submission_deadline: datetime | None

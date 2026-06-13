@@ -139,8 +139,8 @@ def test_appointment_letter_pdf_returns_pdf_bytes() -> None:
 
     pdf = _render_appointment_letter_pdf_sync(
         context={
-            "examination_label": "NovDec 2026 (Series)",
-            "examination_label_upper": "NOVDEC 2026 (SERIES)",
+            "examination_label": "2026 Series NovDec",
+            "examination_label_upper": "2026 SERIES NOVDEC",
             "invitee_name": "Jane Doe",
             "phone_number": "0551234567",
             "examiner_type_label": "Assistant examiner",
@@ -148,6 +148,7 @@ def test_appointment_letter_pdf_returns_pdf_bytes() -> None:
             "subject_name": "Mathematics",
             "region": "Ashanti",
             "coordination_date": "Friday, 20 June 2026",
+            "coordination_venue": "Simulation Hall",
             **_appointment_role_context(ExaminerType.ASSISTANT),
             "marking_fee_amount": "Ghs 3.50",
             "responsibility_allowance": "Ghs 70.00",
@@ -199,11 +200,16 @@ def test_build_appointment_fee_context_from_rates_uses_subject_and_region_only()
         (ExaminerType.ASSISTANT, zone_id): Decimal("2"),
     }
 
+    travel_zone_names = {
+        zone_id: "Zone A",
+    }
+
     context = _build_appointment_fee_context_from_rates(
         role_rates=role_rates,
         marking_rates=marking_rates,
         travel_rates=travel_rates,
         travel_zones=travel_zones,
+        travel_zone_names=travel_zone_names,
         travel_role_factors=travel_role_factors,
         examiner_type=ExaminerType.ASSISTANT,
         region=Region.ASHANTI,
@@ -216,17 +222,18 @@ def test_build_appointment_fee_context_from_rates_uses_subject_and_region_only()
     assert "marking_fee_lines" not in context
 
 
-def test_compute_travel_payable_returns_none_when_region_unconfigured() -> None:
-    from app.services.examiner_appointment_letter_pdf import _compute_travel_payable
+def test_compute_travel_compensation_zero_when_region_unconfigured() -> None:
+    from app.services.examiner_compensation import compute_travel_compensation
 
-    amount = _compute_travel_payable(
+    comp = compute_travel_compensation(
         region=Region.ASHANTI,
         examiner_type=ExaminerType.ASSISTANT,
         travel_rates={},
         travel_zones={},
+        travel_zone_names={},
         travel_role_factors={},
     )
-    assert amount is None
+    assert comp.payable_ghs == Decimal("0")
 
 
 @pytest.mark.asyncio

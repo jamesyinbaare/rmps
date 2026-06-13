@@ -181,5 +181,45 @@ def test_travel_role_factor_only_affects_travel_not_marking() -> None:
     assert comp.total_payable_ghs == Decimal("100")
 
 
+def test_travel_resolves_when_examiner_region_stored_as_label_string() -> None:
+    ex = _examiner(subjects=[])
+    ex.region = "Upper East"
+    travel = {Region.UPPER_EAST: Decimal("40")}
+    travel_zones, travel_zone_names, factors = _zone_context(
+        region=Region.UPPER_EAST,
+        factor=Decimal("1.5"),
+    )
+    comp = compensation_for_examiner(ex, {}, {}, travel, travel_zones, travel_zone_names, factors, {})
+    assert comp.travel_base_ghs == Decimal("40")
+    assert comp.travel_and_transport_ghs == Decimal("60")
+    assert comp.total_payable_ghs == Decimal("60")
+
+
+def test_total_payable_includes_travel_with_role_allowances() -> None:
+    ex = _examiner(region=Region.VOLTA, subjects=[])
+    ex.examiner_type = "assistant_examiner"
+    role_rates = {
+        (ExaminerType.ASSISTANT, ExaminerAllowanceType.INTERNAL_COMMUTING): Decimal("25"),
+    }
+    travel = {Region.VOLTA: Decimal("40")}
+    travel_zones, travel_zone_names, factors = _zone_context(
+        region=Region.VOLTA,
+        factor=Decimal("2"),
+    )
+    comp = compensation_for_examiner(
+        ex, role_rates, {}, travel, travel_zones, travel_zone_names, factors, {}
+    )
+    assert comp.internal_commuting_ghs == Decimal("25")
+    assert comp.travel_and_transport_ghs == Decimal("80")
+    assert comp.total_payable_ghs == Decimal("105")
+
+
 def test_examiner_type_from_api_label_accepts_assistant_chief() -> None:
     assert examiner_type_from_api_label("assistant_chief_examiner") == ExaminerType.ASSISTANT_CHIEF
+
+
+def test_examiner_type_column_binds_api_value() -> None:
+    from app.models import examiner_type_column
+
+    col_type = examiner_type_column().type
+    assert col_type.process_bind_param(ExaminerType.ASSISTANT_CHIEF, None) == "assistant_chief_examiner"

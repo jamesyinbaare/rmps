@@ -2764,6 +2764,29 @@ export type AdminExaminerAllowanceListResponse = {
   total: number;
 };
 
+export type AdminExaminerMarkingSubjectSummaryRow = {
+  subject_id: number;
+  subject_code: string;
+  subject_name: string;
+  registered_candidates: number;
+  total_allocated_scripts: number;
+  examiner_count: number;
+  variance: number;
+};
+
+export type AdminExaminerMarkingSubjectSummaryResponse = {
+  items: AdminExaminerMarkingSubjectSummaryRow[];
+  total: number;
+};
+
+export async function listAdminExaminerMarkingSubjectSummary(
+  examinationId: number,
+): Promise<AdminExaminerMarkingSubjectSummaryResponse> {
+  return apiJson<AdminExaminerMarkingSubjectSummaryResponse>(
+    `/admin/examinations/${examinationId}/examiner-marking-subject-summary`,
+  );
+}
+
 export async function getExaminationExaminerRoleAllowanceRates(
   examId: number,
 ): Promise<ExaminationExaminerRoleAllowanceRatesResponse> {
@@ -3829,6 +3852,7 @@ export type ExaminerInvitationRow = {
   coordination_start_time: string | null;
   coordination_end_date: string | null;
   coordination_end_time: string | null;
+  coordination_venue: string | null;
   examiner_id: string | null;
   created_at: string;
   updated_at: string;
@@ -3851,6 +3875,7 @@ export type ExaminerInvitationCreatePayload = {
   coordination_start_time?: string | null;
   coordination_end_date?: string | null;
   coordination_end_time?: string | null;
+  coordination_venue?: string | null;
 };
 
 export type ExaminerInvitationCoordinationPayload = {
@@ -3858,6 +3883,7 @@ export type ExaminerInvitationCoordinationPayload = {
   coordination_start_time?: string | null;
   coordination_end_date?: string | null;
   coordination_end_time?: string | null;
+  coordination_venue?: string | null;
 };
 
 export type ExaminerInvitationBulkCoordinationPayload = {
@@ -3877,6 +3903,7 @@ export type ExaminerMarkingCohortPublic = {
   coordination_start_time: string | null;
   coordination_end_date: string | null;
   coordination_end_time: string | null;
+  coordination_venue?: string | null;
   marking_start_date: string | null;
   marking_end_date: string | null;
   marked_script_submission_deadline: string | null;
@@ -3900,6 +3927,7 @@ export type ExaminerInvitationPublic = {
   coordination_start_time: string | null;
   coordination_end_date: string | null;
   coordination_end_time: string | null;
+  coordination_venue?: string | null;
   responded_at: string | null;
   can_respond: boolean;
   examiner_id?: string | null;
@@ -4361,11 +4389,14 @@ export async function listExaminerAttendance(
 }
 
 export async function listExaminerAttendanceAll(
-  options?: { admin?: boolean; examinationId?: number },
+  options?: { admin?: boolean; examinationId?: number; subjectId?: number },
 ): Promise<{ items: ExaminerAttendanceRow[]; total: number }> {
   if (options?.admin) {
-    const params = options.examinationId != null ? `?examination_id=${options.examinationId}` : "";
-    return apiJson(`/admin/examiner-attendance${params}`);
+    const params = new URLSearchParams();
+    if (options.examinationId != null) params.set("examination_id", String(options.examinationId));
+    if (options.subjectId != null) params.set("subject_id", String(options.subjectId));
+    const qs = params.toString();
+    return apiJson(`/admin/examiner-attendance${qs ? `?${qs}` : ""}`);
   }
   return apiJson("/subject-officer/examiner-attendance");
 }
@@ -5317,6 +5348,7 @@ export type SubjectMarkingGroupSchedulePayload = {
   coordination_start_time?: string | null;
   coordination_end_date?: string | null;
   coordination_end_time?: string | null;
+  coordination_venue?: string | null;
   marking_start_date?: string | null;
   marking_end_date?: string | null;
   marked_script_submission_deadline?: string | null;
@@ -5335,11 +5367,37 @@ export type SubjectMarkingGroupRow = {
   coordination_start_time: string | null;
   coordination_end_date: string | null;
   coordination_end_time: string | null;
+  coordination_venue: string | null;
   marking_start_date: string | null;
   marking_end_date: string | null;
   marked_script_submission_deadline: string | null;
   created_at: string;
   updated_at: string;
+};
+
+export type ExaminerAppointmentLetterReferenceSubjectRef = {
+  id: number;
+  code: string;
+  name: string;
+  subject_type: string;
+};
+
+export type ExaminerAppointmentLetterReferenceItem = {
+  subject_id: number;
+  examiner_type: ExaminerTypeApi;
+  reference_number: string | null;
+};
+
+export type ExaminationExaminerAppointmentLetterReferencesResponse = {
+  examination_id: number;
+  subjects: ExaminerAppointmentLetterReferenceSubjectRef[];
+  items: ExaminerAppointmentLetterReferenceItem[];
+};
+
+export type ExaminerAppointmentLetterReferencePutCell = {
+  subject_id: number;
+  examiner_type: ExaminerTypeApi;
+  reference_number: string | null;
 };
 
 export async function getExaminerPortalSettings(examinationId: number): Promise<ExaminerPortalSettings> {
@@ -5363,6 +5421,44 @@ export async function notifyEligibleAppointmentLetters(
   return apiJson<NotifyEligibleAppointmentLettersResponse>(
     `/admin/examinations/${examinationId}/examiner-portal-settings/notify-eligible-appointment-letters`,
     { method: "POST" },
+  );
+}
+
+export async function getExaminerAppointmentLetterReferences(
+  examinationId: number,
+): Promise<ExaminationExaminerAppointmentLetterReferencesResponse> {
+  return apiJson<ExaminationExaminerAppointmentLetterReferencesResponse>(
+    `/admin/examinations/${examinationId}/examiner-appointment-letter-references`,
+  );
+}
+
+export async function putExaminerAppointmentLetterReferences(
+  examinationId: number,
+  items: ExaminerAppointmentLetterReferencePutCell[],
+): Promise<ExaminationExaminerAppointmentLetterReferencesResponse> {
+  return apiJson<ExaminationExaminerAppointmentLetterReferencesResponse>(
+    `/admin/examinations/${examinationId}/examiner-appointment-letter-references`,
+    {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ items }),
+    },
+  );
+}
+
+export async function downloadExaminerAppointmentLetterPreviewPdf(
+  examinationId: number,
+  subjectId: number,
+  examinerType: ExaminerTypeApi,
+  filename = "appointment_letter_preview.pdf",
+): Promise<void> {
+  const q = new URLSearchParams({
+    subject_id: String(subjectId),
+    examiner_type: examinerType,
+  });
+  await downloadApiFile(
+    `/admin/examinations/${examinationId}/examiner-appointment-letter-preview.pdf?${q.toString()}`,
+    filename,
   );
 }
 

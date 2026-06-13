@@ -208,6 +208,14 @@ export function ExaminerInvitationLandingPanel({
                 className="col-span-2"
               />
             ) : null}
+            {invitation.coordination_venue ? (
+              <ExaminerInvitationDetailTile
+                icon={CalendarClock}
+                label="Venue"
+                value={invitation.coordination_venue}
+                className="col-span-2"
+              />
+            ) : null}
           </div>
 
           <ExaminerMarkingScheduleSection cohorts={markingCohorts} />

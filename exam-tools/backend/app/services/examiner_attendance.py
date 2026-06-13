@@ -200,6 +200,7 @@ async def list_examiner_attendances(
     examination_id: int,
     officer_subject_ids: set[int] | None = None,
     attendance_date: date | None = None,
+    all_dates: bool = False,
 ) -> list[dict]:
     stmt = (
         select(ExaminerAttendance)
@@ -213,8 +214,12 @@ async def list_examiner_attendances(
         )
         .order_by(ExaminerAttendance.marked_at.desc())
     )
-    list_date = attendance_date if attendance_date is not None else date.today()
-    stmt = stmt.where(ExaminerAttendance.attendance_date == list_date)
+    if all_dates:
+        if attendance_date is not None:
+            stmt = stmt.where(ExaminerAttendance.attendance_date == attendance_date)
+    else:
+        list_date = attendance_date if attendance_date is not None else date.today()
+        stmt = stmt.where(ExaminerAttendance.attendance_date == list_date)
     if officer_subject_ids is not None:
         stmt = stmt.join(ExaminerSubject, ExaminerSubject.examiner_id == Examiner.id).where(
             ExaminerSubject.subject_id.in_(officer_subject_ids)
@@ -263,6 +268,7 @@ async def list_examiner_attendances_all(
     examination_ids: Sequence[int],
     officer_subject_ids_by_exam: dict[int, set[int]] | None = None,
     attendance_date: date | None = None,
+    all_dates: bool = False,
 ) -> list[dict]:
     items: list[dict] = []
     for examination_id in examination_ids:
@@ -280,6 +286,7 @@ async def list_examiner_attendances_all(
             examination_id=int(examination_id),
             officer_subject_ids=officer_subject_ids,
             attendance_date=attendance_date,
+            all_dates=all_dates,
         )
         for row in rows:
             items.append({**row, "examination_name": exam_name})

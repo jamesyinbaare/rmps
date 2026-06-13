@@ -223,6 +223,7 @@ async def create_examiner_invitation_endpoint(
             coordination_start_time=body.coordination_start_time,
             coordination_end_date=body.coordination_end_date,
             coordination_end_time=body.coordination_end_time,
+            coordination_venue=body.coordination_venue,
             gender=gender,
         )
         stmt_load = (
@@ -317,6 +318,8 @@ async def bulk_set_examiner_invitation_coordination_schedule(
             coordination_start_time=body.coordination_start_time,
             coordination_end_date=body.coordination_end_date,
             coordination_end_time=body.coordination_end_time,
+            coordination_venue=body.coordination_venue,
+            update_coordination_venue="coordination_venue" in body.model_fields_set,
         )
         updated_count += 1
 
@@ -338,6 +341,7 @@ async def patch_examiner_invitation(
 ) -> ExaminerInvitationResponse:
     inv = await _get_invitation_or_404(session, examination_id, invitation_id)
     await _assert_invitation_accessible(session, user, examination_id, inv)
+    fields_set = body.model_fields_set
     await update_invitation_coordination_schedule(
         session,
         inv,
@@ -345,6 +349,8 @@ async def patch_examiner_invitation(
         coordination_start_time=body.coordination_start_time,
         coordination_end_date=body.coordination_end_date,
         coordination_end_time=body.coordination_end_time,
+        coordination_venue=body.coordination_venue,
+        update_coordination_venue="coordination_venue" in fields_set,
     )
     await session.commit()
     sms = await _latest_sms_delivery(session, inv.id)

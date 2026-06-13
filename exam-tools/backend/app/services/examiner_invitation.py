@@ -132,6 +132,7 @@ async def create_examiner_invitation(
     coordination_start_time=None,
     coordination_end_date: datetime | None = None,
     coordination_end_time=None,
+    coordination_venue: str | None = None,
     gender: str | None = None,
 ) -> ExaminerInvitation:
     exam = await session.get(Examination, examination_id)
@@ -177,6 +178,7 @@ async def create_examiner_invitation(
         coordination_start_time=coordination_start_time,
         coordination_end_date=_as_naive_utc(coordination_end_date),
         coordination_end_time=coordination_end_time,
+        coordination_venue=(coordination_venue or "").strip() or None,
     )
     session.add(inv)
     await session.flush()
@@ -295,6 +297,8 @@ async def update_invitation_coordination_schedule(
     coordination_start_time,
     coordination_end_date: datetime | None,
     coordination_end_time,
+    coordination_venue: str | None = None,
+    update_coordination_venue: bool = False,
 ) -> ExaminerInvitation:
     validate_coordination_range(
         coordination_start_date,
@@ -306,6 +310,8 @@ async def update_invitation_coordination_schedule(
     inv.coordination_start_time = coordination_start_time
     inv.coordination_end_date = _as_naive_utc(coordination_end_date)
     inv.coordination_end_time = coordination_end_time
+    if update_coordination_venue:
+        inv.coordination_venue = (coordination_venue or "").strip() or None
     inv.updated_at = datetime.utcnow()
     await session.flush()
     return inv
@@ -317,6 +323,7 @@ def invitation_coordination_summary(inv: ExaminerInvitation) -> dict:
         "coordination_start_time": inv.coordination_start_time,
         "coordination_end_date": inv.coordination_end_date,
         "coordination_end_time": inv.coordination_end_time,
+        "coordination_venue": inv.coordination_venue,
     }
 
 

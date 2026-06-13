@@ -17,9 +17,15 @@ const OPTIONS: { value: ThemeChoice; label: string; Icon: typeof Sun }[] = [
 type SidebarThemeToggleProps = {
   className?: string;
   align?: "center" | "start";
+  /** Pill switcher for expanded sidebar; single icon button for collapsed rail. */
+  variant?: "pill" | "icon";
 };
 
-export function SidebarThemeToggle({ className, align = "center" }: SidebarThemeToggleProps) {
+export function SidebarThemeToggle({
+  className,
+  align = "center",
+  variant = "pill",
+}: SidebarThemeToggleProps) {
   const { theme, setTheme } = useTheme();
   const [mounted, setMounted] = useState(false);
 
@@ -28,6 +34,13 @@ export function SidebarThemeToggle({ className, align = "center" }: SidebarTheme
   }, []);
 
   if (!mounted) {
+    if (variant === "icon") {
+      return (
+        <div className={cn("flex size-9 items-center justify-center", className)} aria-hidden>
+          <div className="size-4 rounded-full bg-muted/50 motion-safe:animate-pulse" />
+        </div>
+      );
+    }
     return (
       <div className={cn(align === "center" && "flex justify-center", className)} aria-hidden>
         <div className="h-9 w-17 rounded-full bg-muted/50 motion-safe:animate-pulse" />
@@ -41,6 +54,10 @@ export function SidebarThemeToggle({ className, align = "center" }: SidebarTheme
     setTheme(next);
   }
 
+  function toggleTheme() {
+    selectTheme(active === "dark" ? "ctvet" : "dark");
+  }
+
   function onRadiogroupKeyDown(event: KeyboardEvent<HTMLDivElement>) {
     if (event.key === "ArrowRight" || event.key === "ArrowDown") {
       event.preventDefault();
@@ -49,6 +66,32 @@ export function SidebarThemeToggle({ className, align = "center" }: SidebarTheme
       event.preventDefault();
       selectTheme("ctvet");
     }
+  }
+
+  if (variant === "icon") {
+    const ActiveIcon = active === "dark" ? Moon : Sun;
+    const nextLabel = active === "dark" ? "Switch to light mode" : "Switch to dark mode";
+    return (
+      <TooltipProvider delayDuration={400} skipDelayDuration={80}>
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <button
+              type="button"
+              onClick={toggleTheme}
+              aria-label={nextLabel}
+              className={cn(
+                "flex size-9 items-center justify-center rounded-lg border border-border bg-background text-muted-foreground transition-colors",
+                "hover:bg-muted hover:text-foreground focus:outline-none focus-visible:ring-2 focus-visible:ring-success/40",
+                className,
+              )}
+            >
+              <ActiveIcon className="size-4" aria-hidden />
+            </button>
+          </TooltipTrigger>
+          <TooltipContent side="right">{nextLabel}</TooltipContent>
+        </Tooltip>
+      </TooltipProvider>
+    );
   }
 
   return (

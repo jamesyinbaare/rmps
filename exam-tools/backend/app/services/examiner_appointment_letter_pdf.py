@@ -8,22 +8,28 @@ from decimal import Decimal
 from pathlib import Path
 from uuid import UUID
 
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models import (
     ExaminerAllowanceType,
     ExaminerInvitation,
     ExaminerType,
+    Examination,
     Region,
     Subject,
+    SubjectMarkingGroup,
 )
 from app.services.certificate_confirmation_response_pdf import render_certificate_style_letter_pdf
+from app.services.examiner_appointment_letter_reference import resolve_appointment_letter_reference_number
 from app.services.examiner_compensation import (
     MarkingRateMap,
     RoleAllowanceMap,
     TravelRateMap,
     TravelRoleFactorMap,
     TravelZoneMap,
+    TravelZoneNameMap,
+    compute_travel_compensation,
     format_ghs_amount,
     load_marking_rates_map,
     load_role_allowance_rates_map,
@@ -33,13 +39,15 @@ from app.services.examiner_compensation import (
     parse_region_stored,
 )
 from app.services.coordination_schedule import coordination_end_at, format_coordination_range
+from app.services.exam_official_export import examination_label
 from app.services.examiner_invitation import _examiner_type_label, subject_display_code
-from app.services.subject_marking_group import get_examiner_marking_groups
 from app.services.pdf_generator import render_html
-from app.services.script_allocation_form_pdf import examination_label
+from app.services.subject_marking_group import get_examiner_marking_groups
 
 APPOINTMENT_CONTENT_TEMPLATE = "examiner-invitation/appointment-letter-examiner.html"
 SIGNATORY_SIGNATURE_REL_PATH = "img/examiner-appointment-signatory-signature.png"
+DEFAULT_COORDINATION_VENUE = "Conference Room of the Ghana TVET Service Headquarters, East Legon"
+DUMMY_APPOINTMENT_LETTEE_NAME = "___________"
 
 _FORMAL_ROLE_TITLE: dict[ExaminerType, str] = {
     ExaminerType.CHIEF: "Chief Examiner",
@@ -65,10 +73,9 @@ def _format_coordination_for_letter(
     return format_coordination_range(start_date, start_time, end_date, end_time)
 
 
-def _appointment_reference_number(*, examination_id: int, subject_code: str, entity_id: UUID) -> str:
-    code = (subject_code or "SUBJ").replace(" ", "").upper()
-    short_id = str(entity_id).replace("-", "").upper()[:8]
-    return f"CTVET/EXM/{examination_id}/{code}/{short_id}"
+def _normalize_coordination_venue(venue: str | None) -> str:
+    trimmed = (venue or "").strip()
+    return trimmed or DEFAULT_COORDINATION_VENUE
 
 
 def _role_article(examiner_type: ExaminerType) -> str:
@@ -97,29 +104,13 @@ def _format_ghs_display(value: Decimal | None) -> str | None:
     return f"Ghs {format_ghs_amount(value)}"
 
 
-def _compute_travel_payable(
-    *,
-    region: Region,
-    examiner_type: ExaminerType,
-    travel_rates: TravelRateMap,
-    travel_zones: TravelZoneMap,
-    travel_role_factors: TravelRoleFactorMap,
-) -> Decimal | None:
-    travel_base = travel_rates.get(region)
-    if travel_base is None:
-        return None
-    zone_id = travel_zones.get(region)
-    factor_raw = travel_role_factors.get((examiner_type, zone_id)) if zone_id is not None else None
-    factor_value = Decimal("1") if factor_raw is None else factor_raw
-    return travel_base * factor_value
-
-
 def _build_appointment_fee_context_from_rates(
     *,
     role_rates: RoleAllowanceMap,
     marking_rates: MarkingRateMap,
     travel_rates: TravelRateMap,
     travel_zones: TravelZoneMap,
+    travel_zone_names: TravelZoneNameMap,
     travel_role_factors: TravelRoleFactorMap,
     examiner_type: ExaminerType,
     region: Region,
@@ -141,14 +132,16 @@ def _build_appointment_fee_context_from_rates(
     internal_commuting = _format_ghs_display(
         role_rates.get((examiner_type, ExaminerAllowanceType.INTERNAL_COMMUTING))
     )
+    travel_comp = compute_travel_compensation(
+        region=region,
+        examiner_type=examiner_type,
+        travel_rates=travel_rates,
+        travel_zones=travel_zones,
+        travel_zone_names=travel_zone_names,
+        travel_role_factors=travel_role_factors,
+    )
     travel_and_transport_amount = _format_ghs_display(
-        _compute_travel_payable(
-            region=region,
-            examiner_type=examiner_type,
-            travel_rates=travel_rates,
-            travel_zones=travel_zones,
-            travel_role_factors=travel_role_factors,
-        )
+        travel_comp.payable_ghs if travel_comp.base_ghs > 0 else None
     )
 
     return {
@@ -174,7 +167,7 @@ async def _build_appointment_fee_context(
     role_rates = await load_role_allowance_rates_map(session, examination_id)
     marking_rates = await load_marking_rates_map(session, examination_id)
     travel_rates = await load_travel_rates_map(session, examination_id)
-    travel_zones, _travel_zone_names = await load_travel_zones_map(session, examination_id)
+    travel_zones, travel_zone_names = await load_travel_zones_map(session, examination_id)
     travel_role_factors = await load_travel_role_factors_map(session, examination_id)
 
     return _build_appointment_fee_context_from_rates(
@@ -182,6 +175,7 @@ async def _build_appointment_fee_context(
         marking_rates=marking_rates,
         travel_rates=travel_rates,
         travel_zones=travel_zones,
+        travel_zone_names=travel_zone_names,
         travel_role_factors=travel_role_factors,
         examiner_type=examiner_type,
         region=parsed_region,
@@ -232,6 +226,7 @@ def _base_appointment_context(
     subject: Subject,
     region: str,
     coordination_date: str | None,
+    coordination_venue: str | None,
 ) -> dict[str, object]:
     subj_code = subject_display_code(subject)
     subject_label = f"{subject.name} ({subj_code})" if subj_code else subject.name
@@ -245,10 +240,90 @@ def _base_appointment_context(
         "subject_name": subject.name,
         "region": region,
         "coordination_date": coordination_date,
+        "coordination_venue": _normalize_coordination_venue(coordination_venue),
         "examiner_type": examiner_type.value,
         "signatory_signature_src": _signatory_signature_src(),
         **_appointment_role_context(examiner_type),
     }
+
+
+async def _load_default_marking_group(
+    session: AsyncSession,
+    *,
+    examination_id: int,
+    subject_id: int,
+) -> SubjectMarkingGroup | None:
+    return (
+        await session.execute(
+            select(SubjectMarkingGroup).where(
+                SubjectMarkingGroup.examination_id == examination_id,
+                SubjectMarkingGroup.subject_id == subject_id,
+                SubjectMarkingGroup.is_default.is_(True),
+            )
+        )
+    ).scalar_one_or_none()
+
+
+async def build_dummy_appointment_letter_preview_pdf(
+    session: AsyncSession,
+    *,
+    examination_id: int,
+    subject: Subject,
+    examiner_type: ExaminerType,
+    reference_number: str,
+) -> tuple[bytes, str]:
+    """Build a preview appointment letter with placeholder invitee name."""
+    exam = await session.get(Examination, examination_id)
+    if exam is None:
+        raise ValueError("Examination not found")
+
+    default_group = await _load_default_marking_group(
+        session,
+        examination_id=examination_id,
+        subject_id=int(subject.id),
+    )
+    coord: str | None = None
+    venue: str | None = None
+    if default_group is not None:
+        coord = _format_coordination_for_letter(
+            default_group.coordination_start_date,
+            default_group.coordination_start_time,
+            default_group.coordination_end_date,
+            default_group.coordination_end_time,
+        )
+        venue = default_group.coordination_venue
+
+    exam_label_str = examination_label(exam)
+    context = _base_appointment_context(
+        examination_label_str=exam_label_str,
+        invitee_name=DUMMY_APPOINTMENT_LETTEE_NAME,
+        phone_number="",
+        examiner_type=examiner_type,
+        examiner_type_label=_examiner_type_label(examiner_type),
+        subject=subject,
+        region=Region.GREATER_ACCRA.value,
+        coordination_date=coord,
+        coordination_venue=venue,
+    )
+    context.update(
+        await _build_appointment_fee_context(
+            session,
+            examination_id=examination_id,
+            examiner_type=examiner_type,
+            region=Region.GREATER_ACCRA,
+            subject_id=int(subject.id),
+        )
+    )
+
+    pdf_bytes = await asyncio.to_thread(
+        _render_appointment_letter_pdf_sync,
+        context=context,
+        reference_number=reference_number,
+    )
+    subj_code = subject_display_code(subject) or subject.code or "subject"
+    role_part = _sanitize_filename_part(examiner_type.value)
+    fn = f"appointment_letter_preview_{_sanitize_filename_part(subj_code)}_{role_part}.pdf"
+    return pdf_bytes, fn
 
 
 async def build_examiner_appointment_letter_pdf(
@@ -270,14 +345,27 @@ async def build_examiner_appointment_letter_pdf(
         inv.coordination_end_date,
         inv.coordination_end_time,
     )
-    reference_number = _appointment_reference_number(
-        examination_id=int(exam.id),
-        subject_code=subject_display_code(subject) or subject.code or "",
-        entity_id=inv.id,
-    )
     examiner_type = inv.examiner_type
     if not isinstance(examiner_type, ExaminerType):
         examiner_type = ExaminerType(str(examiner_type))
+
+    if session is not None:
+        reference_number = await resolve_appointment_letter_reference_number(
+            session,
+            examination_id=int(exam.id),
+            subject_id=int(subject.id),
+            examiner_type=examiner_type,
+            subject_code=subject_display_code(subject) or subject.code or "",
+            entity_id=inv.id,
+        )
+    else:
+        from app.services.examiner_appointment_letter_reference import appointment_reference_number_fallback
+
+        reference_number = appointment_reference_number_fallback(
+            examination_id=int(exam.id),
+            subject_code=subject_display_code(subject) or subject.code or "",
+            entity_id=inv.id,
+        )
 
     context = _base_appointment_context(
         examination_label_str=exam_label_str,
@@ -288,6 +376,7 @@ async def build_examiner_appointment_letter_pdf(
         subject=subject,
         region=inv.region.value,
         coordination_date=coord,
+        coordination_venue=inv.coordination_venue,
     )
     if session is not None:
         context.update(
@@ -323,21 +412,31 @@ async def build_examiner_appointment_letter_for_roster(
     exam = resolved.examination
     subject = resolved.subject
     exam_label_str = examination_label(exam)
-    reference_number = _appointment_reference_number(
-        examination_id=int(exam.id),
-        subject_code=subject_display_code(subject) or subject.code or "",
-        entity_id=examiner.id,
-    )
     examiner_type = examiner.examiner_type
     if not isinstance(examiner_type, ExaminerType):
         examiner_type = ExaminerType(str(examiner_type))
 
-    coord: str | None = None
     if session is not None:
-        from sqlalchemy import select
+        reference_number = await resolve_appointment_letter_reference_number(
+            session,
+            examination_id=int(exam.id),
+            subject_id=int(subject.id),
+            examiner_type=examiner_type,
+            subject_code=subject_display_code(subject) or subject.code or "",
+            entity_id=examiner.id,
+        )
+    else:
+        from app.services.examiner_appointment_letter_reference import appointment_reference_number_fallback
 
-        from app.models import ExaminerInvitation
+        reference_number = appointment_reference_number_fallback(
+            examination_id=int(exam.id),
+            subject_code=subject_display_code(subject) or subject.code or "",
+            entity_id=examiner.id,
+        )
 
+    coord: str | None = None
+    venue: str | None = None
+    if session is not None:
         inv = (
             await session.execute(select(ExaminerInvitation).where(ExaminerInvitation.examiner_id == examiner.id))
         ).scalar_one_or_none()
@@ -348,6 +447,7 @@ async def build_examiner_appointment_letter_for_roster(
                 inv.coordination_end_date,
                 inv.coordination_end_time,
             )
+            venue = inv.coordination_venue
         else:
             groups = await get_examiner_marking_groups(
                 session,
@@ -372,6 +472,7 @@ async def build_examiner_appointment_letter_for_roster(
                     best_group.get("coordination_end_date"),
                     best_group.get("coordination_end_time"),
                 )
+                venue = best_group.get("coordination_venue")
 
     context = _base_appointment_context(
         examination_label_str=exam_label_str,
@@ -382,6 +483,7 @@ async def build_examiner_appointment_letter_for_roster(
         subject=subject,
         region=examiner.region.value if isinstance(examiner.region, Region) else str(examiner.region),
         coordination_date=coord,
+        coordination_venue=venue,
     )
     if session is not None:
         context.update(

@@ -93,6 +93,13 @@ super_admin_or_finance_officer = RoleChecker(
 super_admin_or_test_admin_officer = RoleChecker(
     allowed_roles={UserRole.SUPER_ADMIN, UserRole.TEST_ADMIN_OFFICER},
 )
+super_admin_or_finance_officer_or_test_admin_officer = RoleChecker(
+    allowed_roles={
+        UserRole.SUPER_ADMIN,
+        UserRole.FINANCE_OFFICER,
+        UserRole.TEST_ADMIN_OFFICER,
+    },
+)
 super_admin_or_test_admin_officer_or_subject_officer = RoleChecker(
     allowed_roles={
         UserRole.SUPER_ADMIN,
@@ -142,6 +149,10 @@ CurrentUserDep = Annotated[User, Depends(get_current_active_user)]
 SuperAdminDep = Annotated[User, Depends(super_admin_only)]
 SuperAdminOrFinanceOfficerDep = Annotated[User, Depends(super_admin_or_finance_officer)]
 SuperAdminOrTestAdminOfficerDep = Annotated[User, Depends(super_admin_or_test_admin_officer)]
+SuperAdminOrFinanceOfficerOrTestAdminOfficerDep = Annotated[
+    User,
+    Depends(super_admin_or_finance_officer_or_test_admin_officer),
+]
 SuperAdminOrTestAdminOfficerOrSubjectOfficerDep = Annotated[
     User,
     Depends(super_admin_or_test_admin_officer_or_subject_officer),

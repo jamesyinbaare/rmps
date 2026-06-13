@@ -2,7 +2,15 @@ import { DEFAULT_PAGE_SIZE, MAX_CUSTOM_PAGE_SIZE } from "@/components/examiners/
 import type { ExaminersTab } from "@/components/examiners/types";
 
 export function parseExaminersTab(raw: string | null): ExaminersTab {
-  if (raw === "invitations" || raw === "groups" || raw === "cohorts" || raw === "quotas") return raw;
+  if (
+    raw === "invitations" ||
+    raw === "groups" ||
+    raw === "cohorts" ||
+    raw === "quotas" ||
+    raw === "appointment-letters"
+  ) {
+    return raw;
+  }
   return "roster";
 }
 

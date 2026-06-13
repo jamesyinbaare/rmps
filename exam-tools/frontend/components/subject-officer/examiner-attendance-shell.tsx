@@ -114,7 +114,9 @@ export function ExaminerAttendanceShell({
     setListLoading(true);
     setListError(null);
     try {
-      const data = await listExaminerAttendanceAll({ admin: adminMode });
+      const data = await listExaminerAttendanceAll({
+        admin: adminMode,
+      });
       setItems(data.items);
     } catch (err) {
       setListError(err instanceof Error ? err.message : "Failed to load attendance.");

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from decimal import Decimal
-from typing import cast
+from typing import TypeVar, cast
 from uuid import UUID
 
 from sqlalchemy import select
@@ -27,6 +27,14 @@ from app.models import (
     Subject,
 )
 from app.services.examiner_allocated_booklets import AllocatedBookletsMap
+
+
+@dataclass(frozen=True)
+class TravelCompensation:
+    base_ghs: Decimal
+    zone_name: str | None
+    role_factor: Decimal
+    payable_ghs: Decimal
 
 
 @dataclass(frozen=True)
@@ -66,6 +74,8 @@ TravelZoneMap = dict[Region, UUID]
 TravelZoneNameMap = dict[UUID, str]
 TravelRoleFactorKey = tuple[ExaminerType, UUID]
 TravelRoleFactorMap = dict[TravelRoleFactorKey, Decimal | None]
+
+TRegionMapValue = TypeVar("TRegionMapValue")
 
 _ALLOWANCE_FIELD_BY_TYPE: dict[ExaminerAllowanceType, str] = {
     ExaminerAllowanceType.RESPONSIBILITY: "responsibility_allowance_ghs",
@@ -249,6 +259,48 @@ async def load_travel_role_factors_map(
     return out
 
 
+def _lookup_map_by_region(map: dict[Region, TRegionMapValue], region: Region) -> TRegionMapValue | None:
+    """Resolve travel maps even when region keys were built from mixed DB representations."""
+    if region in map:
+        return map[region]
+    for key, value in map.items():
+        if isinstance(key, Region) and key.value == region.value:
+            return value
+        if isinstance(key, str):
+            try:
+                if parse_region_stored(key) == region:
+                    return value
+            except ValueError:
+                continue
+    return None
+
+
+def compute_travel_compensation(
+    *,
+    region: object,
+    examiner_type: object,
+    travel_rates: TravelRateMap,
+    travel_zones: TravelZoneMap,
+    travel_zone_names: TravelZoneNameMap,
+    travel_role_factors: TravelRoleFactorMap,
+) -> TravelCompensation:
+    """T&T payable = regional base amount × role factor for the examiner's zone (default 1)."""
+    parsed_region = parse_region_stored(region)
+    parsed_type = parse_examiner_type_stored(examiner_type)
+    travel_base = _amount_or_zero(_lookup_map_by_region(travel_rates, parsed_region))
+    zone_id = _lookup_map_by_region(travel_zones, parsed_region)
+    travel_zone_name = travel_zone_names.get(zone_id) if zone_id is not None else None
+    factor_raw = travel_role_factors.get((parsed_type, zone_id)) if zone_id is not None else None
+    travel_factor = _factor_or_one(factor_raw)
+    travel = travel_base * travel_factor
+    return TravelCompensation(
+        base_ghs=travel_base,
+        zone_name=travel_zone_name,
+        role_factor=travel_factor,
+        payable_ghs=travel,
+    )
+
+
 def _lookup_role_amount(
     rates: RoleAllowanceMap,
     examiner_type: ExaminerType,
@@ -267,9 +319,7 @@ def compensation_for_examiner(
     travel_role_factors: TravelRoleFactorMap,
     allocated_booklets: AllocatedBookletsMap,
 ) -> ComputedExaminerCompensation:
-    examiner_type = examiner.examiner_type
-    if not isinstance(examiner_type, ExaminerType):
-        examiner_type = ExaminerType(str(examiner_type))
+    examiner_type = parse_examiner_type_stored(examiner.examiner_type)
 
     role_totals = {field: Decimal("0") for field in _ALLOWANCE_FIELD_BY_TYPE.values()}
     for allowance_type in ExaminerAllowanceType:
@@ -315,15 +365,14 @@ def compensation_for_examiner(
             )
         )
 
-    region = examiner.region
-    if not isinstance(region, Region):
-        region = Region(str(region))
-    travel_base = _amount_or_zero(travel_rates.get(region))
-    zone_id = travel_zones.get(region)
-    travel_zone_name = travel_zone_names.get(zone_id) if zone_id is not None else None
-    factor_raw = travel_role_factors.get((examiner_type, zone_id)) if zone_id is not None else None
-    travel_factor = _factor_or_one(factor_raw)
-    travel = travel_base * travel_factor
+    travel_comp = compute_travel_compensation(
+        region=examiner.region,
+        examiner_type=examiner_type,
+        travel_rates=travel_rates,
+        travel_zones=travel_zones,
+        travel_zone_names=travel_zone_names,
+        travel_role_factors=travel_role_factors,
+    )
 
     total_payable = (
         role_totals["responsibility_allowance_ghs"]
@@ -332,7 +381,7 @@ def compensation_for_examiner(
         + role_totals["vetting_of_scripts_ghs"]
         + role_totals["internal_commuting_ghs"]
         + marking_total
-        + travel
+        + travel_comp.payable_ghs
     )
 
     return ComputedExaminerCompensation(
@@ -342,10 +391,10 @@ def compensation_for_examiner(
         vetting_of_scripts_ghs=role_totals["vetting_of_scripts_ghs"],
         internal_commuting_ghs=role_totals["internal_commuting_ghs"],
         marking_allowance_ghs=marking_total,
-        travel_base_ghs=travel_base,
-        travel_zone_name=travel_zone_name,
-        travel_role_factor=travel_factor,
-        travel_and_transport_ghs=travel,
+        travel_base_ghs=travel_comp.base_ghs,
+        travel_zone_name=travel_comp.zone_name,
+        travel_role_factor=travel_comp.role_factor,
+        travel_and_transport_ghs=travel_comp.payable_ghs,
         total_allocated_scripts=total_allocated_scripts,
         total_payable_ghs=total_payable,
         subject_breakdowns=subject_breakdowns,

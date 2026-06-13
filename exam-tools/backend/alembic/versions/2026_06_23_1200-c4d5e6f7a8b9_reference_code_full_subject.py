@@ -1,6 +1,6 @@
 """Widen examiner reference_code for full original subject code prefix.
 
-Revision ID: c4d5e6f7a8b9
+Revision ID: c4d5e6f7a8c0
 Revises: b3c4d5e6f7a8
 Create Date: 2026-06-23
 """
@@ -10,7 +10,7 @@ from collections.abc import Sequence
 import sqlalchemy as sa
 from alembic import op
 
-revision: str = "c4d5e6f7a8b9"
+revision: str = "c4d5e6f7a8c0"
 down_revision: str | Sequence[str] | None = "b3c4d5e6f7a8"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None

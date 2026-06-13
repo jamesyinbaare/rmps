@@ -88,6 +88,7 @@ def group_response(group: SubjectMarkingGroup) -> dict:
         "coordination_start_time": group.coordination_start_time,
         "coordination_end_date": group.coordination_end_date,
         "coordination_end_time": group.coordination_end_time,
+        "coordination_venue": group.coordination_venue,
         "marking_start_date": group.marking_start_date,
         "marking_end_date": group.marking_end_date,
         "marked_script_submission_deadline": group.marked_script_submission_deadline,
@@ -152,6 +153,7 @@ async def create_group(
     coordination_start_time: time | None,
     coordination_end_date: datetime | None,
     coordination_end_time: time | None,
+    coordination_venue: str | None = None,
     marking_start_date: datetime | None,
     marking_end_date: datetime | None,
     marked_script_submission_deadline: datetime | None,
@@ -170,6 +172,7 @@ async def create_group(
         coordination_start_time=coordination_start_time,
         coordination_end_date=_as_naive_utc(coordination_end_date),
         coordination_end_time=coordination_end_time,
+        coordination_venue=(coordination_venue or "").strip() or None,
         marking_start_date=_as_naive_utc(marking_start_date),
         marking_end_date=_as_naive_utc(marking_end_date),
         marked_script_submission_deadline=_as_naive_utc(marked_script_submission_deadline),
@@ -191,6 +194,7 @@ async def update_group(
     coordination_start_time: time | None,
     coordination_end_date: datetime | None,
     coordination_end_time: time | None,
+    coordination_venue: str | None,
     marking_start_date: datetime | None,
     marking_end_date: datetime | None,
     marked_script_submission_deadline: datetime | None,
@@ -198,6 +202,7 @@ async def update_group(
     update_coordination_start_time: bool,
     update_coordination_end_date: bool,
     update_coordination_end_time: bool,
+    update_coordination_venue: bool,
     update_marking_start_date: bool,
     update_marking_end_date: bool,
     update_submission_deadline: bool,
@@ -221,6 +226,8 @@ async def update_group(
         group.coordination_end_date = _as_naive_utc(coordination_end_date)
     if update_coordination_end_time:
         group.coordination_end_time = coordination_end_time
+    if update_coordination_venue:
+        group.coordination_venue = (coordination_venue or "").strip() or None
     validate_coordination_range(
         group.coordination_start_date,
         group.coordination_start_time,
@@ -553,6 +560,7 @@ async def get_examiner_marking_groups(
             "coordination_start_time": group.coordination_start_time,
             "coordination_end_date": group.coordination_end_date,
             "coordination_end_time": group.coordination_end_time,
+            "coordination_venue": group.coordination_venue,
             "marking_start_date": group.marking_start_date,
             "marking_end_date": group.marking_end_date,
             "marked_script_submission_deadline": group.marked_script_submission_deadline,

@@ -10,18 +10,21 @@ export type InvitationCoordinationDraft = {
   startTime: string;
   endDate: string;
   endTime: string;
+  venue: string;
 };
 
 export function emptyInvitationCoordinationDraft(): InvitationCoordinationDraft {
-  return { startDate: "", startTime: "", endTime: "", endDate: "" };
+  return { startDate: "", startTime: "", endTime: "", endDate: "", venue: "" };
 }
 
 export function invitationCoordinationToPayload(draft: InvitationCoordinationDraft) {
+  const venue = draft.venue.trim();
   return {
     coordination_start_date: dateInputToIso(draft.startDate),
     coordination_start_time: timeInputToApi(draft.startTime),
     coordination_end_date: dateInputToIso(draft.endDate),
     coordination_end_time: timeInputToApi(draft.endTime),
+    coordination_venue: venue || null,
   };
 }
 
@@ -96,6 +99,20 @@ export function InvitationCoordinationScheduleFields({
           value={draft.endTime}
           disabled={disabled}
           onChange={(e) => patch({ endTime: e.target.value })}
+        />
+      </div>
+      <div className="sm:col-span-2">
+        <label className={formLabelClass} htmlFor={`${idPrefix}-coord-venue`}>
+          Venue
+        </label>
+        <input
+          id={`${idPrefix}-coord-venue`}
+          type="text"
+          className={cn(formInputClass, "mt-1")}
+          value={draft.venue}
+          disabled={disabled}
+          placeholder="e.g. Conference Room, Ghana TVET Service HQ, East Legon"
+          onChange={(e) => patch({ venue: e.target.value })}
         />
       </div>
     </div>

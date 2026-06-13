@@ -7,7 +7,10 @@ from datetime import date
 from fastapi import APIRouter, Query
 from sqlalchemy import select
 
-from app.dependencies.auth import SuperAdminOrTestAdminOfficerDep
+from app.dependencies.auth import (
+    SuperAdminOrFinanceOfficerOrTestAdminOfficerDep,
+    SuperAdminOrTestAdminOfficerDep,
+)
 from app.dependencies.database import DBSessionDep
 from app.models import Examination
 from app.schemas.examiner_attendance import (
@@ -35,16 +38,20 @@ async def _all_examination_ids(session) -> list[int]:
 @scan_router.get("/examiner-attendance", response_model=ExaminerAttendanceListResponse)
 async def get_admin_examiner_attendance_all(
     session: DBSessionDep,
-    _: SuperAdminOrTestAdminOfficerDep,
+    _: SuperAdminOrFinanceOfficerOrTestAdminOfficerDep,
     examination_id: int | None = Query(None),
+    subject_id: int | None = Query(None),
     attendance_date: date | None = Query(None),
 ) -> ExaminerAttendanceListResponse:
+    officer_subject_ids = {subject_id} if subject_id is not None else None
+    list_all_dates = subject_id is not None and attendance_date is None
     if examination_id is not None:
         items = await list_examiner_attendances(
             session,
             examination_id=examination_id,
-            officer_subject_ids=None,
+            officer_subject_ids=officer_subject_ids,
             attendance_date=attendance_date,
+            all_dates=list_all_dates,
         )
     else:
         exam_ids = await _all_examination_ids(session)
@@ -83,7 +90,7 @@ async def post_admin_examiner_attendance_mark_scan(
 async def get_admin_examiner_attendance(
     exam_id: int,
     session: DBSessionDep,
-    _: SuperAdminOrTestAdminOfficerDep,
+    _: SuperAdminOrFinanceOfficerOrTestAdminOfficerDep,
     attendance_date: date | None = Query(None),
 ) -> ExaminerAttendanceListResponse:
     items = await list_examiner_attendances(

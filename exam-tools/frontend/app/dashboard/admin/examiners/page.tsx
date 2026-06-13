@@ -37,7 +37,7 @@ export default function AdminExaminersHubPage() {
       requireExamSelection
       showScriptsAllocationLink={false}
       showCreateExamsLink={false}
-      showSubjectBadges
+      showSubjectBadges={false}
       showQuotaAssessment
     />
   );

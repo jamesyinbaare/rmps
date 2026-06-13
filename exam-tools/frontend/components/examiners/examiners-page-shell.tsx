@@ -12,7 +12,7 @@ import {
   EXAMINERS_TAB_PANEL_SCROLL_CLASS,
   EXAMINERS_TABS,
 } from "@/components/examiners/constants";
-import { ExaminersAppointmentLetterReleasePanel } from "@/components/examiners/examiners-appointment-letter-release-panel";
+import { ExaminersAppointmentLettersPanel } from "@/components/examiners/examiners-appointment-letters-panel";
 import { ExaminersContextBar } from "@/components/examiners/examiners-context-bar";
 import { ExaminersExamSelector } from "@/components/examiners/examiners-exam-selector";
 import { ExaminersGroupsPanel } from "@/components/examiners/examiners-groups-panel";
@@ -175,6 +175,7 @@ export function ExaminersPageShell({
     if (showSubjectCohortsTab) {
       tabs = [
         ...tabs,
+        { key: "appointment-letters", label: "Appointment letters" },
         { key: "quotas", label: "Regional quotas" },
         { key: "cohorts", label: "Cohorts" },
       ];
@@ -338,11 +339,6 @@ export function ExaminersPageShell({
           className={useScrollShell ? EXAMINERS_TAB_PANEL_SCROLL_CLASS : EXAMINERS_TAB_PANEL_CLASS}
         >
           <p className="sr-only">{tabAnnouncement}</p>
-          {examId != null && showSubjectCohortsTab ? (
-            <div className="shrink-0 px-3 pb-3 md:px-4">
-              <ExaminersAppointmentLetterReleasePanel examId={examId} />
-            </div>
-          ) : null}
           {examId == null ? (
             <div className="flex min-h-[14rem] flex-1 flex-col items-center justify-center gap-3 px-6 py-12 text-center">
               <p className="text-sm font-medium text-foreground">Select an examination</p>
@@ -418,6 +414,9 @@ export function ExaminersPageShell({
                   embedded
                   pageScroll={useScrollShell}
                 />
+              ) : null}
+              {activeTab === "appointment-letters" && showSubjectCohortsTab ? (
+                <ExaminersAppointmentLettersPanel examId={examId} />
               ) : null}
             </>
           )}

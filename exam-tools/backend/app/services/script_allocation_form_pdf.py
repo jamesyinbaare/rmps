@@ -25,6 +25,7 @@ from app.models import (
     ScriptPackingSeries,
     Subject,
 )
+from app.services.exam_official_export import examination_label
 from app.services.examiner_qr_payload import build_examiner_qr_payload
 from app.services.pdf_generator import PdfGenerator, render_html
 from app.services.qr_code import generate_qr_code_base64
@@ -32,13 +33,6 @@ from app.services.qr_code import generate_qr_code_base64
 MAX_COPIES = 20
 TEMPLATE_REL = "script-allocation/scripts-allocation-form.html"
 MAX_SCHOOL_DISPLAY_LEN = 40
-
-
-def examination_label(exam: Examination) -> str:
-    parts = [exam.exam_type.strip(), str(exam.year)]
-    if exam.exam_series and str(exam.exam_series).strip():
-        parts.append(f"({exam.exam_series.strip()})")
-    return " ".join(parts)
 
 
 def _sanitize_filename_part(s: str) -> str:

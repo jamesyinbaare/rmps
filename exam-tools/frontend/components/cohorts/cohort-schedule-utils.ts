@@ -7,6 +7,7 @@ export type CohortScheduleDraft = {
   coordinationStartTime: string;
   coordinationEndDate: string;
   coordinationEndTime: string;
+  coordinationVenue: string;
   markingStartDate: string;
   markingEndDate: string;
   markedScriptSubmissionDeadline: string;
@@ -18,6 +19,7 @@ export function emptyCohortScheduleDraft(): CohortScheduleDraft {
     coordinationStartTime: "",
     coordinationEndDate: "",
     coordinationEndTime: "",
+    coordinationVenue: "",
     markingStartDate: "",
     markingEndDate: "",
     markedScriptSubmissionDeadline: "",
@@ -49,6 +51,7 @@ export function cohortScheduleFromRow(row: SubjectMarkingGroupRow): CohortSchedu
     coordinationStartTime: isoToTimeInput(row.coordination_start_time),
     coordinationEndDate: isoToDateInput(row.coordination_end_date),
     coordinationEndTime: isoToTimeInput(row.coordination_end_time),
+    coordinationVenue: row.coordination_venue ?? "",
     markingStartDate: isoToDateInput(row.marking_start_date),
     markingEndDate: isoToDateInput(row.marking_end_date),
     markedScriptSubmissionDeadline: isoToDateInput(row.marked_script_submission_deadline),
@@ -61,6 +64,7 @@ export function cohortScheduleToPayload(draft: CohortScheduleDraft) {
     coordination_start_time: timeInputToApi(draft.coordinationStartTime),
     coordination_end_date: dateInputToIso(draft.coordinationEndDate),
     coordination_end_time: timeInputToApi(draft.coordinationEndTime),
+    coordination_venue: draft.coordinationVenue.trim() || null,
     marking_start_date: dateInputToIso(draft.markingStartDate),
     marking_end_date: dateInputToIso(draft.markingEndDate),
     marked_script_submission_deadline: dateInputToIso(draft.markedScriptSubmissionDeadline),

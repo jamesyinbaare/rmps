@@ -26,7 +26,7 @@ import type { CohortListItem, MembershipExaminer } from "@/components/cohorts/ty
 import { computeCoverage } from "@/components/cohorts/utils";
 import { useCohortMembershipDraft } from "@/components/cohorts/use-cohort-membership-draft";
 import { EXAMINERS_PANEL_CLASS } from "@/components/examiners/constants";
-import { SearchableCombobox } from "@/components/searchable-combobox";
+import { SubjectScopePicker } from "@/components/subject-scope-picker";
 import { Button } from "@/components/ui/button";
 import {
   createSubjectMarkingGroup,
@@ -39,12 +39,6 @@ import {
   type SubjectMarkingGroupRow,
   type Subject,
 } from "@/lib/api";
-import { formInputClass, formLabelClass } from "@/lib/form-classes";
-import { subjectDisplayLabel } from "@/lib/subject-display";
-import { cn } from "@/lib/utils";
-
-const SUBJECT_COMBO_THRESHOLD = 5;
-
 function toCohortListItem(g: SubjectMarkingGroupRow): CohortListItem {
   return {
     id: g.id,
@@ -90,7 +84,7 @@ export function SubjectMarkingGroupsPanel({
   canManageDefaultCohort = false,
   canManageCohorts = true,
 }: Props) {
-  const [subjectId, setSubjectId] = useState<number | "">("");
+  const [subjectId, setSubjectId] = useState<number | null>(null);
   const [groups, setGroups] = useState<SubjectMarkingGroupRow[]>([]);
   const [examiners, setExaminers] = useState<ExaminerRow[]>([]);
   const [loading, setLoading] = useState(false);
@@ -139,9 +133,9 @@ export function SubjectMarkingGroupsPanel({
   const cohortList = useMemo(() => groups.map(toCohortListItem), [groups]);
 
   const subjectExaminers = useMemo((): MembershipExaminer[] => {
-    if (subjectId === "") return [];
+    if (subjectId == null) return [];
     return examiners
-      .filter((e) => e.subject_ids.includes(Number(subjectId)))
+      .filter((e) => e.subject_ids.includes(subjectId))
       .map((e) => ({
         id: e.id,
         name: e.name,
@@ -185,15 +179,6 @@ export function SubjectMarkingGroupsPanel({
 
   const canSaveMembership = canManageCohorts && (!isCreating || selectedId != null) && !isDefaultCohort;
 
-  const subjectOptions = useMemo(
-    () =>
-      subjects.map((s) => ({
-        value: String(s.id),
-        label: subjectDisplayLabel(s),
-      })),
-    [subjects],
-  );
-
   const loadGroups = useCallback(async (eid: number, sid: number) => {
     setLoading(true);
     setLoadError(null);
@@ -225,19 +210,13 @@ export function SubjectMarkingGroupsPanel({
   }, [examId, loadExaminers]);
 
   useEffect(() => {
-    if (subjects.length === 1 && subjectId === "") {
-      setSubjectId(subjects[0]!.id);
-    }
-  }, [subjectId, subjects]);
-
-  useEffect(() => {
-    if (examId == null || subjectId === "") {
+    if (examId == null || subjectId == null) {
       setGroups([]);
       closeModal();
       setUnassignedModalOpen(false);
       return;
     }
-    void loadGroups(examId, Number(subjectId));
+    void loadGroups(examId, subjectId);
   }, [examId, loadGroups, subjectId]);
 
   useEffect(() => {
@@ -302,7 +281,7 @@ export function SubjectMarkingGroupsPanel({
   }
 
   async function handleAddToCohort(cohortId: string, examinerIds: string[]) {
-    if (examId == null || subjectId === "") return;
+    if (examId == null || subjectId == null) return;
     const group = groups.find((g) => g.id === cohortId);
     if (!group) return;
 
@@ -310,12 +289,12 @@ export function SubjectMarkingGroupsPanel({
     setLoadError(null);
     try {
       const mergedIds = [...new Set([...group.examiner_ids, ...examinerIds])];
-      await replaceSubjectMarkingGroupMembers(examId, Number(subjectId), cohortId, {
+      await replaceSubjectMarkingGroupMembers(examId, subjectId, cohortId, {
         source_regions: group.source_regions,
         source_roles: group.source_roles,
         examiner_ids: mergedIds,
       });
-      await loadGroups(examId, Number(subjectId));
+      await loadGroups(examId, subjectId);
       setUnassignedModalOpen(false);
     } catch (e) {
       setLoadError(e instanceof Error ? e.message : "Failed to add examiners");
@@ -338,7 +317,7 @@ export function SubjectMarkingGroupsPanel({
   }
 
   async function handleSaveDetails(): Promise<boolean> {
-    if (examId == null || subjectId === "") return false;
+    if (examId == null || subjectId == null) return false;
     const name = nameInput.trim();
     if (!name) {
       setDetailsError("Cohort name is required.");
@@ -359,14 +338,14 @@ export function SubjectMarkingGroupsPanel({
       const membershipPayload = membershipPayloadFromDrafts();
 
       if (isCreating) {
-        const created = await createSubjectMarkingGroup(examId, Number(subjectId), detailsPayload);
-        await loadGroups(examId, Number(subjectId));
+        const created = await createSubjectMarkingGroup(examId, subjectId, detailsPayload);
+        await loadGroups(examId, subjectId);
         setIsCreating(false);
         setSelectedId(created.id);
         setSavedSnapshot(buildCohortFormSnapshot(name, scheduleDraft, membershipPayload));
       } else if (selectedId) {
-        await updateSubjectMarkingGroup(examId, Number(subjectId), selectedId, detailsPayload);
-        await loadGroups(examId, Number(subjectId));
+        await updateSubjectMarkingGroup(examId, subjectId, selectedId, detailsPayload);
+        await loadGroups(examId, subjectId);
         setSavedSnapshot((prev) =>
           buildCohortFormSnapshot(
             name,
@@ -385,7 +364,7 @@ export function SubjectMarkingGroupsPanel({
   }
 
   async function handleSaveMembership(): Promise<boolean> {
-    if (examId == null || subjectId === "") return false;
+    if (examId == null || subjectId == null) return false;
     if (isCreating && !selectedId) {
       setMembershipError("Save details first to create this cohort.");
       return false;
@@ -398,11 +377,11 @@ export function SubjectMarkingGroupsPanel({
       const membershipPayload = membership.buildPayload();
       await replaceSubjectMarkingGroupMembers(
         examId,
-        Number(subjectId),
+        subjectId,
         selectedId,
         membershipPayload,
       );
-      await loadGroups(examId, Number(subjectId));
+      await loadGroups(examId, subjectId);
       setSavedSnapshot((prev) =>
         buildCohortFormSnapshot(
           prev?.name ?? nameInput.trim(),
@@ -420,13 +399,13 @@ export function SubjectMarkingGroupsPanel({
   }
 
   async function handleDelete() {
-    if (examId == null || subjectId === "" || !selectedId) return;
+    if (examId == null || subjectId == null || !selectedId) return;
     setBusy(true);
     setMembershipError(null);
     try {
-      await deleteSubjectMarkingGroup(examId, Number(subjectId), selectedId);
+      await deleteSubjectMarkingGroup(examId, subjectId, selectedId);
       closeModal();
-      await loadGroups(examId, Number(subjectId));
+      await loadGroups(examId, subjectId);
     } catch (e) {
       setMembershipError(e instanceof Error ? e.message : "Delete failed");
     } finally {
@@ -446,53 +425,22 @@ export function SubjectMarkingGroupsPanel({
 
   return (
     <div className={panelClass}>
-      <div className="shrink-0 border-b border-border/80 px-4 py-3 sm:px-5">
-        <div className="flex flex-wrap items-end gap-3">
-          <div className="min-w-40 flex-1 sm:max-w-xs">
-            <label className={formLabelClass} htmlFor="smg-subject">
-              Subject
-            </label>
-            {subjects.length >= SUBJECT_COMBO_THRESHOLD ? (
-              <SearchableCombobox
-                id="smg-subject"
-                options={subjectOptions}
-                value={subjectId === "" ? "" : String(subjectId)}
-                onChange={(v) => {
-                  setSubjectId(v ? Number(v) : "");
-                  closeModal();
-                  setUnassignedModalOpen(false);
-                }}
-                placeholder="Select subject…"
-                searchPlaceholder="Search subjects…"
-                showAllOption={false}
-                widthClass="w-full mt-1"
-                triggerClassName="h-9 min-h-9"
-                truncateTrigger
-              />
-            ) : (
-              <select
-                id="smg-subject"
-                className={cn(formInputClass, "mt-1")}
-                value={subjectId}
-                onChange={(e) => {
-                  setSubjectId(e.target.value ? Number(e.target.value) : "");
-                  closeModal();
-                  setUnassignedModalOpen(false);
-                }}
-              >
-                <option value="">Select subject…</option>
-                {subjects.map((s) => (
-                  <option key={s.id} value={s.id}>
-                    {subjectDisplayLabel(s)}
-                  </option>
-                ))}
-              </select>
-            )}
-          </div>
-        </div>
+      <div className="shrink-0 border-b border-border/80 px-4 py-4 sm:px-5">
+        <SubjectScopePicker
+          subjects={subjects}
+          selectedSubjectId={subjectId}
+          onSelectedSubjectIdChange={(id) => {
+            setSubjectId(id);
+            closeModal();
+            setUnassignedModalOpen(false);
+          }}
+          subjectComboboxId="smg-subject"
+          resetKey={examId}
+          disabled={loading || busy}
+        />
       </div>
 
-      {subjectId === "" ? (
+      {subjectId == null ? (
         <div className="flex flex-1 items-center justify-center p-6 text-center">
           <p className="text-sm text-muted-foreground">
             {canManageCohorts ? "Select a subject to manage cohorts." : "Select a subject to view cohorts."}

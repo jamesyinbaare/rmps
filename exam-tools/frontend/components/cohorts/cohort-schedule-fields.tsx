@@ -111,6 +111,20 @@ export function CohortScheduleFields({
               <p className="mt-1 text-xs text-destructive">{fieldErrors.coordinationEndTime}</p>
             ) : null}
           </div>
+          <div className="sm:col-span-2">
+            <label className={formLabelClass} htmlFor="cohort-coordination-venue">
+              Venue
+            </label>
+            <input
+              id="cohort-coordination-venue"
+              type="text"
+              className={cn(formInputClass, "mt-1")}
+              value={draft.coordinationVenue}
+              onChange={(e) => patch({ coordinationVenue: e.target.value })}
+              disabled={disabled}
+              placeholder="e.g. Conference Room, Ghana TVET Service HQ, East Legon"
+            />
+          </div>
         </div>
       </div>
 

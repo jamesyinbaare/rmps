@@ -15,15 +15,26 @@ import {
   monitoringExamScopedHref,
 } from "@/lib/executive-selected-examination";
 import { clearAuth, getMe, type UserMe } from "@/lib/auth";
+import {
+  FinanceSidebar,
+  FinanceSidebarHeader,
+} from "@/components/finance-sidebar";
+import {
+  FinanceSidebarProvider,
+  useFinanceSidebarCollapsed,
+} from "@/components/finance-sidebar-context";
 import { FinanceNavSection } from "@/components/finance-nav-section";
-import { FinanceSidebar } from "@/components/finance-sidebar";
 import { SidebarThemeToggle } from "@/components/sidebar-theme-toggle";
+import { TooltipProvider } from "@/components/ui/tooltip";
 import { isOfficialAccountsPath } from "@/lib/official-accounts-zone";
 import {
   ATTENDANCE_SHEETS_HREF,
   BANK_DIRECTORY_HREF,
   BANK_DIRECTORY_NAV_ITEM,
   CENTRE_SUMMARY_HREF,
+  EXAMINER_ACCOUNTS_BY_SUBJECT_HREF,
+  EXAMINER_ATTENDANCE_HREF,
+  EXAMINER_PAYOUTS_HREF,
   FINANCE_CENTRE_SUMMARY_HREF,
   financePageStickyTitle,
   OFFICIAL_STATISTICS_HREF,
@@ -50,7 +61,7 @@ const nav = [
   { href: "/dashboard/admin/monitoring/inspectors", label: "Inspectors" },
   { href: "/dashboard/admin/script-control", label: "Worked scripts control" },
   { href: "/dashboard/admin/examiners", label: "Examiners" },
-  { href: "/dashboard/admin/examiners/attendance", label: "Examiners attendance" },
+  { href: EXAMINER_ATTENDANCE_HREF, label: "Examiners attendance" },
   { href: "/dashboard/admin/scripts-allocation", label: "Scripts allocation" },
   { href: "/dashboard/admin/documents", label: "Documents" },
 ];
@@ -58,7 +69,7 @@ const nav = [
 const SCRIPT_CONTROL_HREF = "/dashboard/admin/script-control";
 const SCRIPTS_ALLOCATION_HREF = "/dashboard/admin/scripts-allocation";
 const EXAMINERS_HREF = "/dashboard/admin/examiners";
-const EXAMINERS_ATTENDANCE_HREF = "/dashboard/admin/examiners/attendance";
+const EXAMINERS_ATTENDANCE_HREF = EXAMINER_ATTENDANCE_HREF;
 const MONITORING_HREF = "/dashboard/admin/monitoring";
 const TEST_ADMIN_OFFICER_NAV_HREFS = [
   MONITORING_HREF,
@@ -87,6 +98,14 @@ type Props = {
 };
 
 export function AdminDashboardShell({ children }: Props) {
+  return (
+    <FinanceSidebarProvider>
+      <AdminDashboardShellInner>{children}</AdminDashboardShellInner>
+    </FinanceSidebarProvider>
+  );
+}
+
+function AdminDashboardShellInner({ children }: Props) {
   const pathname = usePathname();
   const router = useRouter();
   const searchParams = useSearchParams();
@@ -94,6 +113,7 @@ export function AdminDashboardShell({ children }: Props) {
   const sidebarNavId = useId();
   const [me, setMe] = useState<UserMe | null>(null);
   const [sidebarOpen, setSidebarOpen] = useState(false);
+  const financeSidebarCollapsed = useFinanceSidebarCollapsed();
 
   useEffect(() => {
     getMe()
@@ -170,6 +190,13 @@ export function AdminDashboardShell({ children }: Props) {
 
   const isScriptControlEdit = pathname.startsWith("/dashboard/admin/script-control/edit");
   const onExaminersPage = pathname.startsWith("/dashboard/admin/examiners");
+  const onMarkingFinancePage =
+    pathname === EXAMINER_ATTENDANCE_HREF
+    || pathname.startsWith(`${EXAMINER_ATTENDANCE_HREF}/`)
+    || pathname === EXAMINER_PAYOUTS_HREF
+    || pathname.startsWith(`${EXAMINER_PAYOUTS_HREF}/`)
+    || pathname === EXAMINER_ACCOUNTS_BY_SUBJECT_HREF
+    || pathname.startsWith(`${EXAMINER_ACCOUNTS_BY_SUBJECT_HREF}/`);
 
   return (
     <div className="min-h-screen bg-background">
@@ -185,38 +212,35 @@ export function AdminDashboardShell({ children }: Props) {
       <aside
         id={sidebarNavId}
         className={cn(
-          "fixed inset-y-0 left-0 z-50 w-64 border-r border-border bg-card transition-transform duration-200 ease-out motion-reduce:transition-none lg:translate-x-0",
+          "fixed inset-y-0 left-0 z-50 border-r border-border bg-card transition-[width,transform] duration-200 ease-out motion-reduce:transition-none lg:translate-x-0",
+          isFinanceOfficer && financeSidebarCollapsed ? "w-64 lg:w-[3.25rem]" : "w-64",
           isExecutiveViewer && "hidden lg:block",
           sidebarOpen ? "translate-x-0" : "-translate-x-full",
         )}
       >
         <div className="flex h-full flex-col">
-          <div
-            className={cn(
-              "border-b border-border p-4",
-              isFinanceOfficer && "bg-gradient-to-br from-success/10 via-card to-card",
-            )}
-          >
-            <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
-              Exam tools
-            </p>
-            <p
+          {isFinanceOfficer ? (
+            <FinanceSidebarHeader isFinanceOfficer />
+          ) : (
+            <div
               className={cn(
-                "mt-1 text-sm font-semibold",
-                isFinanceOfficer ? "text-success" : "text-card-foreground",
+                "border-b border-border p-4",
               )}
             >
-              {isExecutiveViewer
-                ? me
-                  ? executiveUserDisplayName(me)
-                  : "Executive overview"
-                : isTopLevelOfficer
-                  ? "Monitoring"
-                  : isFinanceOfficer
-                    ? "Finance"
+              <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+                Exam tools
+              </p>
+              <p className="mt-1 text-sm font-semibold text-card-foreground">
+                {isExecutiveViewer
+                  ? me
+                    ? executiveUserDisplayName(me)
+                    : "Executive overview"
+                  : isTopLevelOfficer
+                    ? "Monitoring"
                     : "Administration"}
-            </p>
-          </div>
+              </p>
+            </div>
+          )}
           {isFinanceOfficer ? (
             me ? (
               <FinanceSidebar pathname={pathname} onNavigate={() => setSidebarOpen(false)} />
@@ -275,22 +299,31 @@ export function AdminDashboardShell({ children }: Props) {
                   <p className="mb-2 px-2 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
                     Finance
                   </p>
-                  <FinanceNavSection
-                    pathname={pathname}
-                    onNavigate={() => setSidebarOpen(false)}
-                    prependItems={[BANK_DIRECTORY_NAV_ITEM]}
-                  />
+                  <TooltipProvider>
+                    <FinanceNavSection
+                      pathname={pathname}
+                      onNavigate={() => setSidebarOpen(false)}
+                      prependItems={[BANK_DIRECTORY_NAV_ITEM]}
+                    />
+                  </TooltipProvider>
                 </div>
               ) : null}
             </nav>
           )}
-          <div className="hidden shrink-0 border-t border-border p-3 lg:block">
-            <SidebarThemeToggle />
-          </div>
+          {!isFinanceOfficer ? (
+            <div className="hidden shrink-0 border-t border-border p-3 lg:block">
+              <SidebarThemeToggle />
+            </div>
+          ) : null}
         </div>
       </aside>
 
-      <div className="flex h-dvh max-h-dvh flex-col overflow-hidden lg:pl-64">
+      <div
+        className={cn(
+          "flex h-dvh max-h-dvh flex-col overflow-hidden transition-[padding] duration-200 ease-out motion-reduce:transition-none",
+          isFinanceOfficer && financeSidebarCollapsed ? "lg:pl-[3.25rem]" : "lg:pl-64",
+        )}
+      >
         <div className="shrink-0">
         <DashboardStickyHeader
           title={
@@ -313,6 +346,7 @@ export function AdminDashboardShell({ children }: Props) {
           accent={showFinanceNavAccent ? "official-accounts" : undefined}
           onLogout={logout}
           executiveMobileOnly={isExecutiveViewer}
+          showSidebarCollapse={isFinanceOfficer || isSuperAdmin}
           sidebar={
             isExecutiveViewer
               ? undefined
@@ -330,7 +364,9 @@ export function AdminDashboardShell({ children }: Props) {
             "mx-auto w-full min-h-0 min-w-0 flex-1 overscroll-y-contain px-4 py-6 sm:px-6",
             onExaminersPage
               ? "scrollbar-hide overflow-x-hidden overflow-y-auto"
-              : "overflow-x-auto overflow-y-auto",
+              : onMarkingFinancePage
+                ? "overflow-x-hidden overflow-hidden"
+                : "overflow-x-auto overflow-y-auto",
             pathname === ATTENDANCE_SHEETS_HREF || pathname.startsWith(`${ATTENDANCE_SHEETS_HREF}/`)
               || onOfficialStatisticsPage
               || onCentreSummaryPage
@@ -338,6 +374,7 @@ export function AdminDashboardShell({ children }: Props) {
               || isScriptControlEdit
               || pathname.startsWith("/dashboard/admin/script-control")
               || onExaminersPage
+              || onMarkingFinancePage
               ? "max-w-[1600px]"
               : "max-w-6xl",
             isExecutiveViewer && "pb-[calc(5rem+env(safe-area-inset-bottom))] lg:pb-6",
