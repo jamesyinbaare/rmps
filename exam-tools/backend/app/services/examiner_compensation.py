@@ -350,8 +350,6 @@ def compensation_for_examiner(
         subject_by_id[int(link.subject_id)] = link.subject
 
     subject_paper_keys: set[tuple[int, int]] = set()
-    for link in examiner.subjects:
-        subject_paper_keys.add((int(link.subject_id), 1))
     for (ex_id, subject_id, paper_number), count in allocated_booklets.items():
         if ex_id == examiner.id and count > 0:
             subject_paper_keys.add((subject_id, paper_number))
@@ -362,6 +360,8 @@ def compensation_for_examiner(
 
     for subject_id, paper_number in sorted(subject_paper_keys):
         booklets = allocated_booklets.get((examiner.id, subject_id, paper_number), 0)
+        if booklets <= 0:
+            continue
         total_allocated_scripts += booklets
         rate_raw = marking_rates.get((subject_id, paper_number))
         rate_amount = _amount_or_zero(rate_raw)

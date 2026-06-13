@@ -93,6 +93,17 @@ def test_marking_rates_differ_by_paper_number() -> None:
     assert by_paper[2] == Decimal("20")
 
 
+def test_subject_breakdowns_only_include_allocated_papers() -> None:
+    ex = _examiner(subjects=[_subject_link(1, "MATH", "Mathematics")])
+    marking_rates = {(1, 1): Decimal("2"), (1, 2): Decimal("5")}
+    allocated = {(ex.id, 1, 2): 4}
+    comp = compensation_for_examiner(ex, {}, marking_rates, {}, {}, {}, {}, allocated)
+    assert len(comp.subject_breakdowns) == 1
+    assert comp.subject_breakdowns[0].paper_number == 2
+    assert comp.subject_breakdowns[0].allocated_booklets == 4
+    assert comp.marking_allowance_ghs == Decimal("20")
+
+
 def test_same_marking_rate_applies_to_all_roles() -> None:
     subjects = [_subject_link(1, "MATH", "Mathematics")]
     marking_rates = {(1, 1): Decimal("3")}

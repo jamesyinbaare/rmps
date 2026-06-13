@@ -4,7 +4,7 @@ import { Info } from "lucide-react";
 
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { EXAMINER_TYPE_LABELS } from "@/components/examiner-invitations/constants";
-import type { AdminExaminerAllowanceRow, ExaminerTypeApi } from "@/lib/api";
+import type { AdminExaminerAllowanceRow, ExaminerTypeApi, SubjectMarkingBreakdownRow } from "@/lib/api";
 import { formatGhsAmount } from "@/lib/format-ghs";
 import {
   payoutAmountForView,
@@ -37,6 +37,10 @@ type Props = {
   displayAmount?: string;
 };
 
+function applicableMarkingBreakdowns(breakdowns: SubjectMarkingBreakdownRow[]): SubjectMarkingBreakdownRow[] {
+  return breakdowns.filter((sub) => sub.allocated_booklets > 0);
+}
+
 export function ExaminerAllowanceBreakdownCell({
   row,
   examinerName,
@@ -46,6 +50,7 @@ export function ExaminerAllowanceBreakdownCell({
 }: Props) {
   const cellAmount = displayAmount ?? payoutAmountForView(row, payoutView);
   const totalLabel = formatGhsAmount(cellAmount);
+  const markingBreakdowns = applicableMarkingBreakdowns(row.subject_breakdowns);
   const roleLabel = EXAMINER_TYPE_LABELS[row.examiner_type as ExaminerTypeApi] ?? row.examiner_type;
   const ariaLabel = examinerName
     ? `Allowance for ${examinerName}: ${totalLabel}. Open breakdown.`
@@ -89,7 +94,7 @@ export function ExaminerAllowanceBreakdownCell({
               <BreakdownRow label="Internal Commuting" value={formatGhsAmount(row.internal_commuting_ghs)} />
             </div>
           </div>
-          {row.subject_breakdowns.map((sub) => (
+          {markingBreakdowns.map((sub) => (
             <div
               key={`${sub.subject_id}-${sub.paper_number}`}
               className="rounded-lg border border-border/60 bg-muted/20 px-2.5 py-2"
@@ -111,14 +116,16 @@ export function ExaminerAllowanceBreakdownCell({
               </div>
             </div>
           ))}
-          <div className="rounded-lg border border-border/60 bg-muted/20 px-2.5 py-2">
-            <p className="font-medium text-foreground">Marking (total)</p>
-            <div className="mt-2 space-y-1">
-              <BreakdownRow label="Marking (gross)" value={formatGhsAmount(row.marking_allowance_ghs)} />
-              <BreakdownRow label="Marking tax (10%)" value={formatGhsAmount(row.marking_withholding_tax_ghs)} />
-              <BreakdownRow label="Marking net" value={formatGhsAmount(row.marking_net_ghs)} />
+          {markingBreakdowns.length > 0 ? (
+            <div className="rounded-lg border border-border/60 bg-muted/20 px-2.5 py-2">
+              <p className="font-medium text-foreground">Marking (total)</p>
+              <div className="mt-2 space-y-1">
+                <BreakdownRow label="Marking (gross)" value={formatGhsAmount(row.marking_allowance_ghs)} />
+                <BreakdownRow label="Marking tax (10%)" value={formatGhsAmount(row.marking_withholding_tax_ghs)} />
+                <BreakdownRow label="Marking net" value={formatGhsAmount(row.marking_net_ghs)} />
+              </div>
             </div>
-          </div>
+          ) : null}
           {Number(row.travel_role_factor) !== 1 ? (
             <>
               {row.travel_zone_name ? (
