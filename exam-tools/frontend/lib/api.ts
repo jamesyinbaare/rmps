@@ -2725,6 +2725,7 @@ export type SubjectMarkingBreakdownRow = {
   allocated_booklets: number;
   rate_per_script_ghs?: string | null;
   marking_allowance_ghs?: string | null;
+  script_source?: "allocation" | "manual";
 };
 
 export type AdminExaminerAllowanceRow = {

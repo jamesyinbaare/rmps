@@ -5,11 +5,14 @@ from __future__ import annotations
 from datetime import datetime
 from typing import cast
 
-from app.models import Examiner, Examination
+from app.models import Examiner, Examination, MarkingScriptSourceMode
 from app.schemas.admin_examiner_allowance import AdminExaminerAllowanceRow
 from app.schemas.examination_examiner_allowance_rate import SubjectMarkingBreakdownRow
 from app.services.exam_official_export import examination_label
-from app.services.examiner_allocated_booklets import AllocatedBookletsMap
+from app.services.examiner_allocated_booklets import (
+    AllocatedBookletsMap,
+    _is_manual_marking_source_mode,
+)
 from app.services.examiner_compensation import (
     ComputedExaminerCompensation,
     MarkingRateMap,
@@ -37,7 +40,22 @@ def _subject_labels(examiner: Examiner) -> tuple[str, str]:
     return ", ".join(codes), ", ".join(names)
 
 
-def _breakdown_rows(comp: ComputedExaminerCompensation) -> list[SubjectMarkingBreakdownRow]:
+MarkingScriptSourceModes = dict[int, MarkingScriptSourceMode]
+
+
+def _script_source_for_subject(
+    source_modes: MarkingScriptSourceModes | None,
+    subject_id: int,
+) -> str:
+    if source_modes and _is_manual_marking_source_mode(source_modes.get(subject_id)):
+        return "manual"
+    return "allocation"
+
+
+def _breakdown_rows(
+    comp: ComputedExaminerCompensation,
+    source_modes: MarkingScriptSourceModes | None = None,
+) -> list[SubjectMarkingBreakdownRow]:
     return [
         SubjectMarkingBreakdownRow(
             subject_id=row.subject_id,
@@ -47,6 +65,7 @@ def _breakdown_rows(comp: ComputedExaminerCompensation) -> list[SubjectMarkingBr
             allocated_booklets=row.allocated_booklets,
             rate_per_script_ghs=row.rate_per_script_ghs,
             marking_allowance_ghs=row.marking_allowance_ghs,
+            script_source=_script_source_for_subject(source_modes, row.subject_id),
         )
         for row in comp.subject_breakdowns
     ]
@@ -62,6 +81,7 @@ def examiner_to_admin_row(
     travel_zone_names: TravelZoneNameMap,
     travel_role_factors: TravelRoleFactorMap,
     allocated_booklets: AllocatedBookletsMap,
+    source_modes: MarkingScriptSourceModes | None = None,
 ) -> AdminExaminerAllowanceRow:
     comp = compensation_for_examiner(
         examiner,
@@ -110,7 +130,7 @@ def examiner_to_admin_row(
         payout_travel_commuting_ghs=comp.payout_travel_commuting_ghs,
         payout_allowances_marking_ghs=comp.payout_allowances_marking_ghs,
         total_payable_ghs=comp.total_payable_ghs,
-        subject_breakdowns=_breakdown_rows(comp),
+        subject_breakdowns=_breakdown_rows(comp, source_modes),
         created_at=cast(datetime, examiner.created_at),
         updated_at=cast(datetime, examiner.updated_at),
     )
@@ -126,6 +146,7 @@ def examiners_to_admin_rows(
     travel_zone_names: TravelZoneNameMap,
     travel_role_factors: TravelRoleFactorMap,
     allocated_booklets: AllocatedBookletsMap,
+    source_modes: MarkingScriptSourceModes | None = None,
 ) -> list[AdminExaminerAllowanceRow]:
     return [
         examiner_to_admin_row(
@@ -138,6 +159,7 @@ def examiners_to_admin_rows(
             travel_zone_names,
             travel_role_factors,
             allocated_booklets,
+            source_modes,
         )
         for ex in examiners
     ]

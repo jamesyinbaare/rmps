@@ -3,6 +3,7 @@
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
+import { ExaminerAccountsColumnsPopover } from "@/components/examiner-accounts/examiner-accounts-columns-popover";
 import { ExaminerAccountsTable } from "@/components/examiner-accounts/examiner-accounts-table";
 import { ExaminerPayoutsCommandBar } from "@/components/examiner-accounts/examiner-payouts-command-bar";
 import { RoleGuard } from "@/components/role-guard";
@@ -20,6 +21,7 @@ import {
   sumPayoutViewOnPage,
   type ExaminerPayoutView,
 } from "@/lib/examiner-payout-view";
+import { EXAMINER_ACCOUNTS_DEFAULT_COLUMN_VISIBILITY } from "@/lib/examiner-accounts-table-columns";
 import { formatGhsAmount } from "@/lib/format-ghs";
 import {
   buildExaminerAccountsBySubjectHref,
@@ -32,6 +34,7 @@ import {
 } from "@/lib/official-accounts-zone";
 import { REGION_OPTIONS } from "@/lib/school-enums";
 import { cn } from "@/lib/utils";
+import type { VisibilityState } from "@tanstack/react-table";
 
 const SECTION_ID = "examiner-payouts";
 const DEFAULT_PAGE_SIZE = 50;
@@ -78,6 +81,9 @@ function ExaminerPayoutsContent() {
   const [loadError, setLoadError] = useState<string | null>(null);
   const [exportBusy, setExportBusy] = useState<string | null>(null);
   const [payoutView, setPayoutView] = useState<ExaminerPayoutView>("all");
+  const [columnVisibility, setColumnVisibility] = useState<VisibilityState>(
+    EXAMINER_ACCOUNTS_DEFAULT_COLUMN_VISIBILITY,
+  );
   const [urlHydrated, setUrlHydrated] = useState(false);
 
   const searchDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -356,9 +362,16 @@ function ExaminerPayoutsContent() {
                   disabled={busy && items.length === 0}
                 />
               </div>
-              <p className="shrink-0 text-sm tabular-nums text-muted-foreground" aria-live="polite">
-                {tableMeta}
-              </p>
+              <div className="flex shrink-0 items-center gap-2">
+                <ExaminerAccountsColumnsPopover
+                  columnVisibility={columnVisibility}
+                  onColumnVisibilityChange={setColumnVisibility}
+                  disabled={busy && items.length === 0}
+                />
+                <p className="shrink-0 text-sm tabular-nums text-muted-foreground" aria-live="polite">
+                  {tableMeta}
+                </p>
+              </div>
             </div>
           </div>
 
@@ -387,6 +400,7 @@ function ExaminerPayoutsContent() {
               setPayoutView(view);
               syncUrl({ payoutView: view });
             }}
+            columnVisibility={columnVisibility}
           />
         </section>
       </div>

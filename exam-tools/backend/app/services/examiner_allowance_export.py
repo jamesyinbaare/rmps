@@ -12,7 +12,7 @@ from openpyxl.utils import get_column_letter
 from app.models import Examiner, Examination
 from app.schemas.admin_examiner_allowance import AdminExaminerAllowanceRow
 from app.services.exam_official_export import examination_label, safe_filename_part
-from app.services.examiner_allowance_list import examiners_to_admin_rows
+from app.services.examiner_allowance_list import MarkingScriptSourceModes, examiners_to_admin_rows
 from app.services.examiner_allocated_booklets import AllocatedBookletsMap
 from app.services.examiner_compensation import (
     MarkingRateMap,
@@ -202,6 +202,7 @@ def examiner_detail_workbook_bytes(
     travel_zone_names: TravelZoneNameMap,
     travel_role_factors: TravelRoleFactorMap,
     allocated_booklets: AllocatedBookletsMap,
+    source_modes: MarkingScriptSourceModes | None = None,
 ) -> bytes:
     items = examiners_to_admin_rows(
         examiners,
@@ -213,6 +214,7 @@ def examiner_detail_workbook_bytes(
         travel_zone_names,
         travel_role_factors,
         allocated_booklets,
+        source_modes,
     )
     title = f"Examiner allowances — {examination_label(examination)}"
     return detail_workbook_bytes(items, title=title)

@@ -1,9 +1,16 @@
 "use client";
 
+import type { VisibilityState } from "@tanstack/react-table";
+
 import { ExaminerAllowanceBreakdownCell } from "@/components/examiner-allowance-breakdown";
 import { EXAMINER_TYPE_LABELS } from "@/components/examiner-invitations/constants";
 import { OfficialAccountsPagination } from "@/components/official-accounts-pagination";
 import { displayBankCode, type AdminExaminerAllowanceRow, type ExaminerTypeApi } from "@/lib/api";
+import {
+  examinerAccountsTableColSpan,
+  isExaminerAccountsColumnVisible,
+} from "@/lib/examiner-accounts-table-columns";
+import { scriptSourceColumnValue, scriptSourceSummary } from "@/lib/examiner-script-source";
 import { EXAMINER_PAYOUT_VIEW_OPTIONS, payoutColumnLabel, type ExaminerPayoutView } from "@/lib/examiner-payout-view";
 import { cn } from "@/lib/utils";
 import { officialAccountsCommandBarControlClass } from "@/lib/official-accounts-zone";
@@ -11,9 +18,6 @@ import {
   officialAccountsTableLayoutClass,
   officialAccountsTableScrollClass,
 } from "@/lib/official-accounts-zone";
-
-const COL_SPAN_WITH_SUBJECTS = 10;
-const COL_SPAN_SUBJECT_ONLY = 9;
 
 type Props = {
   items: AdminExaminerAllowanceRow[];
@@ -32,13 +36,13 @@ type Props = {
   paperNumber?: number | null;
   payoutView?: ExaminerPayoutView;
   onPayoutViewChange?: (view: ExaminerPayoutView) => void;
+  columnVisibility: VisibilityState;
 };
 
 const payoutViewSelectClass = cn(
   officialAccountsCommandBarControlClass,
   "mt-1 h-8 w-full min-w-[10rem] max-w-[14rem] border-input-border bg-input text-xs shadow-sm hover:bg-input focus-visible:ring-2 focus-visible:ring-ring/30",
 );
-
 
 function scriptsForSubject(
   row: AdminExaminerAllowanceRow,
@@ -79,9 +83,17 @@ export function ExaminerAccountsTable({
   paperNumber = null,
   payoutView = "all",
   onPayoutViewChange,
+  columnVisibility,
 }: Props) {
   const showSubjectScripts = subjectId != null;
-  const colSpan = showSubjectScripts ? COL_SPAN_SUBJECT_ONLY : COL_SPAN_WITH_SUBJECTS;
+  const colSpan = examinerAccountsTableColSpan(columnVisibility, showSubjectScripts);
+  const showRole = isExaminerAccountsColumnVisible(columnVisibility, "role");
+  const showRegion = isExaminerAccountsColumnVisible(columnVisibility, "region");
+  const showSubjects = !showSubjectScripts && isExaminerAccountsColumnVisible(columnVisibility, "subjects");
+  const showBank = isExaminerAccountsColumnVisible(columnVisibility, "bank");
+  const showBranch = isExaminerAccountsColumnVisible(columnVisibility, "branch");
+  const showAccount = isExaminerAccountsColumnVisible(columnVisibility, "account");
+  const showSource = isExaminerAccountsColumnVisible(columnVisibility, "source");
   const scriptsHeader =
     showSubjectScripts && paperNumber != null ? `Scripts (P${paperNumber})` : showSubjectScripts ? "Scripts (subject)" : "Scripts";
 
@@ -95,15 +107,14 @@ export function ExaminerAccountsTable({
                 #
               </th>
               <th className="sticky left-10 z-20 min-w-[8rem] bg-muted/95 px-3 py-2.5 font-semibold">Name</th>
-              <th className="px-3 py-2.5 font-semibold">Role</th>
-              <th className="px-3 py-2.5 font-semibold">Region</th>
-              {!showSubjectScripts ? (
-                <th className="px-3 py-2.5 font-semibold">Subjects</th>
-              ) : null}
-              <th className="px-3 py-2.5 font-semibold">Bank</th>
-              <th className="px-3 py-2.5 font-semibold">Branch</th>
-              <th className="px-3 py-2.5 font-semibold">Account</th>
+              {showRole ? <th className="px-3 py-2.5 font-semibold">Role</th> : null}
+              {showRegion ? <th className="px-3 py-2.5 font-semibold">Region</th> : null}
+              {showSubjects ? <th className="px-3 py-2.5 font-semibold">Subjects</th> : null}
+              {showBank ? <th className="px-3 py-2.5 font-semibold">Bank</th> : null}
+              {showBranch ? <th className="px-3 py-2.5 font-semibold">Branch</th> : null}
+              {showAccount ? <th className="px-3 py-2.5 font-semibold">Account</th> : null}
               <th className="px-3 py-2.5 text-right font-semibold">{scriptsHeader}</th>
+              {showSource ? <th className="px-3 py-2.5 font-semibold">Source</th> : null}
               <th className="min-w-[11rem] px-3 py-2.5 text-right align-bottom font-semibold">
                 {onPayoutViewChange ? (
                   <div className="flex flex-col items-end gap-0.5">
@@ -139,45 +150,66 @@ export function ExaminerAccountsTable({
                 </td>
               </tr>
             ) : (
-              items.map((row, index) => (
-                <tr key={row.id} className="border-b border-border/60 last:border-0 hover:bg-muted/30">
-                  <td className="sticky left-0 z-[1] bg-card px-2 py-2.5 text-center align-top tabular-nums text-muted-foreground">
-                    {(page - 1) * pageSize + index + 1}
-                  </td>
-                  <td className="sticky left-10 z-[1] bg-card px-3 py-2.5 align-top font-medium text-foreground">
-                    {row.full_name}
-                  </td>
-                  <td className="px-3 py-2.5 align-top text-foreground">
-                    {EXAMINER_TYPE_LABELS[row.examiner_type as ExaminerTypeApi] ?? row.examiner_type}
-                  </td>
-                  <td className="px-3 py-2.5 align-top text-muted-foreground">{row.region || "—"}</td>
-                  {!showSubjectScripts ? (
-                    <td
-                      className="max-w-[14rem] truncate px-3 py-2.5 align-top text-muted-foreground"
-                      title={row.subject_names}
-                    >
-                      {row.subject_codes || "—"}
+              items.map((row, index) => {
+                const scriptCount =
+                  showSubjectScripts && subjectId != null
+                    ? scriptsForSubject(row, subjectId, paperNumber)
+                    : row.total_allocated_scripts;
+                const scriptSource = scriptSourceSummary(row.subject_breakdowns, {
+                  subjectId: showSubjectScripts ? subjectId : null,
+                  paperNumber: showSubjectScripts ? paperNumber : null,
+                });
+                return (
+                  <tr key={row.id} className="border-b border-border/60 last:border-0 hover:bg-muted/30">
+                    <td className="sticky left-0 z-[1] bg-card px-2 py-2.5 text-center align-top tabular-nums text-muted-foreground">
+                      {(page - 1) * pageSize + index + 1}
                     </td>
-                  ) : null}
-                  <td className="max-w-36 truncate px-3 py-2.5 align-top" title={row.bank_name ?? undefined}>
-                    {row.bank_name ?? "—"}
-                  </td>
-                  <td className="max-w-36 truncate px-3 py-2.5 align-top text-xs text-muted-foreground">
-                    {row.branch_name ?? displayBankCode(row.bank_code) ?? "—"}
-                  </td>
-                  <td className="px-3 py-2.5 align-top font-mono text-xs tabular-nums">
-                    {row.account_number ?? "—"}
-                  </td>
-                  <td className="px-3 py-2.5 text-right align-top tabular-nums">
-                    {showSubjectScripts && subjectId != null
-                      ? scriptsForSubject(row, subjectId, paperNumber)
-                      : row.total_allocated_scripts}
-                  </td>
-                  <td className="px-3 py-2.5 text-right align-top">
-                    <ExaminerAllowanceBreakdownCell row={row} examinerName={row.full_name} payoutView={payoutView} />
-                  </td>
-                </tr>
-              ))
+                    <td className="sticky left-10 z-[1] bg-card px-3 py-2.5 align-top font-medium text-foreground">
+                      {row.full_name}
+                    </td>
+                    {showRole ? (
+                      <td className="px-3 py-2.5 align-top text-foreground">
+                        {EXAMINER_TYPE_LABELS[row.examiner_type as ExaminerTypeApi] ?? row.examiner_type}
+                      </td>
+                    ) : null}
+                    {showRegion ? (
+                      <td className="px-3 py-2.5 align-top text-muted-foreground">{row.region || "—"}</td>
+                    ) : null}
+                    {showSubjects ? (
+                      <td
+                        className="max-w-[14rem] truncate px-3 py-2.5 align-top text-muted-foreground"
+                        title={row.subject_names}
+                      >
+                        {row.subject_codes || "—"}
+                      </td>
+                    ) : null}
+                    {showBank ? (
+                      <td className="max-w-36 truncate px-3 py-2.5 align-top" title={row.bank_name ?? undefined}>
+                        {row.bank_name ?? "—"}
+                      </td>
+                    ) : null}
+                    {showBranch ? (
+                      <td className="max-w-36 truncate px-3 py-2.5 align-top text-xs text-muted-foreground">
+                        {row.branch_name ?? displayBankCode(row.bank_code) ?? "—"}
+                      </td>
+                    ) : null}
+                    {showAccount ? (
+                      <td className="px-3 py-2.5 align-top font-mono text-xs tabular-nums">
+                        {row.account_number ?? "—"}
+                      </td>
+                    ) : null}
+                    <td className="px-3 py-2.5 text-right align-top tabular-nums">{scriptCount}</td>
+                    {showSource ? (
+                      <td className="px-3 py-2.5 align-top text-muted-foreground">
+                        {scriptCount > 0 ? scriptSourceColumnValue(scriptSource) : "—"}
+                      </td>
+                    ) : null}
+                    <td className="px-3 py-2.5 text-right align-top">
+                      <ExaminerAllowanceBreakdownCell row={row} examinerName={row.full_name} payoutView={payoutView} />
+                    </td>
+                  </tr>
+                );
+              })
             )}
           </tbody>
         </table>

@@ -12,7 +12,7 @@ from app.services.exam_official_bog_export import (
     bog_workbook_bytes,
     exam_bog_export_filename,
 )
-from app.services.examiner_allowance_list import examiner_to_admin_row
+from app.services.examiner_allowance_list import MarkingScriptSourceModes, examiner_to_admin_row
 from app.services.examiner_allocated_booklets import AllocatedBookletsMap
 from app.services.examiner_compensation import (
     MarkingRateMap,
@@ -106,6 +106,7 @@ def examiner_bog_workbook_bytes(
     travel_zone_names: TravelZoneNameMap,
     travel_role_factors: TravelRoleFactorMap,
     allocated_booklets: AllocatedBookletsMap,
+    source_modes: MarkingScriptSourceModes | None = None,
     *,
     title: str,
     mode: ExaminerBogPayoutMode = ExaminerBogPayoutMode.ALL,
@@ -121,6 +122,7 @@ def examiner_bog_workbook_bytes(
             travel_zone_names,
             travel_role_factors,
             allocated_booklets,
+            source_modes,
         )
         for ex in examiners
     ]

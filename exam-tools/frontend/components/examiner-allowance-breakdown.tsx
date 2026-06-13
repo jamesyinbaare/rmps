@@ -3,6 +3,7 @@
 import { Info } from "lucide-react";
 
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import { ScriptSourceIndicator } from "@/components/examiner-accounts/script-source-indicator";
 import { EXAMINER_TYPE_LABELS } from "@/components/examiner-invitations/constants";
 import type { AdminExaminerAllowanceRow, ExaminerTypeApi, SubjectMarkingBreakdownRow } from "@/lib/api";
 import { formatGhsAmount } from "@/lib/format-ghs";
@@ -106,8 +107,14 @@ export function ExaminerAllowanceBreakdownCell({
                 ) : null}
                 <span className="font-normal text-muted-foreground"> · Paper {sub.paper_number}</span>
               </p>
+              <p className="mt-1">
+                <ScriptSourceIndicator source={sub.script_source === "manual" ? "manual" : "allocation"} />
+              </p>
               <div className="mt-2 space-y-1">
-                <BreakdownRow label="Allocated scripts" value={String(sub.allocated_booklets)} />
+                <BreakdownRow
+                  label={sub.script_source === "manual" ? "Manual scripts" : "Automatic scripts"}
+                  value={String(sub.allocated_booklets)}
+                />
                 <BreakdownRow
                   label="Rate per script"
                   value={formatGhsAmount(sub.rate_per_script_ghs ?? null)}

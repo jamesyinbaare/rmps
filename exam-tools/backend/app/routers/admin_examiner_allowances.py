@@ -17,7 +17,10 @@ from app.services.examiner_allowance_bog_export import (
 )
 from app.services.examiner_allowance_export import examiner_detail_workbook_bytes, examiner_export_filename
 from app.services.examiner_allowance_list import examiners_to_admin_rows
-from app.services.examiner_allocated_booklets import load_effective_allocated_booklets_map
+from app.services.examiner_allocated_booklets import (
+    load_effective_allocated_booklets_map,
+    load_subject_source_modes,
+)
 from app.services.examiner_compensation import (
     examiner_type_from_api_label,
     load_marking_rates_map,
@@ -131,6 +134,7 @@ async def admin_list_examiner_allowances(
     travel_zones, travel_zone_names = await load_travel_zones_map(session, examination_id)
     travel_factors = await load_travel_role_factors_map(session, examination_id)
     allocated_booklets = await load_effective_allocated_booklets_map(session, examination_id)
+    source_modes = await load_subject_source_modes(session, examination_id)
     items = examiners_to_admin_rows(
         examiners,
         ex,
@@ -141,6 +145,7 @@ async def admin_list_examiner_allowances(
         travel_zone_names,
         travel_factors,
         allocated_booklets,
+        source_modes,
     )
     return AdminExaminerAllowanceListResponse(items=items, total=total)
 
@@ -177,9 +182,10 @@ async def admin_export_examiner_allowances(
     role_rates = await load_role_allowance_rates_map(session, examination_id)
     marking_rates = await load_marking_rates_map(session, examination_id)
     travel = await load_travel_rates_map(session, examination_id)
-    allocated_booklets = await load_effective_allocated_booklets_map(session, examination_id)
     travel_zones, travel_zone_names = await load_travel_zones_map(session, examination_id)
     travel_factors = await load_travel_role_factors_map(session, examination_id)
+    allocated_booklets = await load_effective_allocated_booklets_map(session, examination_id)
+    source_modes = await load_subject_source_modes(session, examination_id)
     payload = examiner_detail_workbook_bytes(
         examiners,
         ex,
@@ -190,6 +196,7 @@ async def admin_export_examiner_allowances(
         travel_zone_names,
         travel_factors,
         allocated_booklets,
+        source_modes,
     )
     filename = examiner_export_filename(ex)
     return Response(
@@ -250,6 +257,7 @@ async def admin_bog_export_examiner_allowances(
     title = bog_export_title(examination_label(ex), mode)
     travel_zones, travel_zone_names = await load_travel_zones_map(session, examination_id)
     travel_factors = await load_travel_role_factors_map(session, examination_id)
+    source_modes = await load_subject_source_modes(session, examination_id)
     payload = examiner_bog_workbook_bytes(
         examiners,
         ex,
@@ -260,6 +268,7 @@ async def admin_bog_export_examiner_allowances(
         travel_zone_names,
         travel_factors,
         allocated_booklets,
+        source_modes,
         title=title,
         mode=mode,
     )

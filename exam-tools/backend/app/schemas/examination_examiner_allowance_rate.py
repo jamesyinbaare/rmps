@@ -21,6 +21,7 @@ class SubjectMarkingBreakdownRow(BaseModel):
     allocated_booklets: int = 0
     rate_per_script_ghs: Decimal | None = None
     marking_allowance_ghs: Decimal | None = None
+    script_source: str = "allocation"
 
 
 class ExaminerAllowanceSubjectRef(BaseModel):
