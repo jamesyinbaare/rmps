@@ -1,14 +1,23 @@
 import {
   BarChart3,
   BookMarked,
+  BookOpen,
   Building2,
   CalendarDays,
   ClipboardList,
   Coins,
+  FileText,
   GraduationCap,
   Landmark,
   LayoutDashboard,
+  MapPin,
   PenLine,
+  ScrollText,
+  Settings2,
+  Ticket,
+  Truck,
+  UserCog,
+  Users,
   type LucideIcon,
 } from "lucide-react";
 
@@ -23,12 +32,34 @@ export const FINANCE_NAV_ITEM_ICONS: Record<FinanceNavIcon, LucideIcon> = {
   calendar: CalendarDays,
   attendance: ClipboardList,
   directory: BookMarked,
+  examinations: GraduationCap,
+  schools: Building2,
+  programmes: BookOpen,
+  subjects: ScrollText,
+  users: Users,
+  depots: Truck,
+  inspectors: UserCog,
+  documents: FileText,
+  timetable: CalendarDays,
+  monitoring: BarChart3,
+  scripts: ClipboardList,
+  allocation: MapPin,
+  examiners: Users,
+  allocations: MapPin,
+  markedScripts: BookMarked,
+  lunch: Ticket,
+  inspectorPostings: UserCog,
+  examinationCentres: Building2,
 };
 
 export const FINANCE_NAV_SECTION_ICONS: Record<FinanceNavSectionIcon, LucideIcon> = {
   examinations: GraduationCap,
   coordination: PenLine,
   setup: Coins,
+  administration: Settings2,
+  monitoring: BarChart3,
+  marking: PenLine,
+  markingScripts: ClipboardList,
 };
 
 export function financeNavItemIcon(icon: FinanceNavIcon): LucideIcon {

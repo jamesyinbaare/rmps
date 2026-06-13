@@ -40,14 +40,20 @@ HEADER_LABELS = [
     "Inconvenience (GHS)",
     "Chief Examiner's Report (GHS)",
     "Vetting of Scripts (GHS)",
+    "Vetting tax (GHS)",
+    "Vetting net (GHS)",
     "Internal Commuting (GHS)",
     "Marking (GHS)",
+    "Marking tax (GHS)",
+    "Marking net (GHS)",
     "Allocated scripts",
     "T & T (GHS)",
+    "Payout T&T & commuting (GHS)",
+    "Payout allowances & marking (GHS)",
     "Total payable (GHS)",
 ]
 
-COLUMN_WIDTHS = [10, 26, 22, 16, 28, 26, 12, 16, 14, 14, 16, 16, 20, 18, 18, 14, 14, 14, 16]
+COLUMN_WIDTHS = [10, 26, 22, 16, 28, 26, 12, 16, 14, 14, 16, 16, 20, 18, 14, 14, 18, 14, 14, 14, 14, 14, 18, 22, 16]
 
 EXCEL_TEXT_FORMAT = "@"
 AMOUNT_NUMBER_FORMAT = "#,##0.00"
@@ -107,10 +113,16 @@ def _row_values(item: AdminExaminerAllowanceRow) -> list[object]:
         item.inconvenience_allowance_ghs,
         item.chief_examiners_report_ghs,
         item.vetting_of_scripts_ghs,
+        item.vetting_withholding_tax_ghs,
+        item.vetting_net_ghs,
         item.internal_commuting_ghs,
         item.marking_allowance_ghs,
+        item.marking_withholding_tax_ghs,
+        item.marking_net_ghs,
         item.total_allocated_scripts,
         item.travel_and_transport_ghs,
+        item.payout_travel_commuting_ghs,
+        item.payout_allowances_marking_ghs,
         item.total_payable_ghs,
     ]
 

@@ -28,6 +28,17 @@ from app.models import (
 )
 from app.services.examiner_allocated_booklets import AllocatedBookletsMap
 
+WITHHOLDING_TAX_RATE = Decimal("0.10")
+_MONEY_QUANTIZE = Decimal("0.01")
+
+
+def withholding_tax(gross: Decimal) -> tuple[Decimal, Decimal]:
+    """Return (net, tax) after 10% withholding on gross marking/vetting amounts."""
+    if gross <= 0:
+        return Decimal("0"), Decimal("0")
+    tax = (gross * WITHHOLDING_TAX_RATE).quantize(_MONEY_QUANTIZE)
+    return gross - tax, tax
+
 
 @dataclass(frozen=True)
 class TravelCompensation:
@@ -61,6 +72,12 @@ class ComputedExaminerCompensation:
     travel_role_factor: Decimal
     travel_and_transport_ghs: Decimal
     total_allocated_scripts: int
+    marking_withholding_tax_ghs: Decimal
+    marking_net_ghs: Decimal
+    vetting_withholding_tax_ghs: Decimal
+    vetting_net_ghs: Decimal
+    payout_travel_commuting_ghs: Decimal
+    payout_allowances_marking_ghs: Decimal
     total_payable_ghs: Decimal
     subject_breakdowns: list[SubjectMarkingBreakdown]
 
@@ -374,21 +391,25 @@ def compensation_for_examiner(
         travel_role_factors=travel_role_factors,
     )
 
-    total_payable = (
+    marking_net, marking_tax = withholding_tax(marking_total)
+    vetting_gross = role_totals["vetting_of_scripts_ghs"]
+    vetting_net, vetting_tax = withholding_tax(vetting_gross)
+
+    payout_travel_commuting = role_totals["internal_commuting_ghs"] + travel_comp.payable_ghs
+    payout_allowances_marking = (
         role_totals["responsibility_allowance_ghs"]
         + role_totals["inconvenience_allowance_ghs"]
         + role_totals["chief_examiners_report_ghs"]
-        + role_totals["vetting_of_scripts_ghs"]
-        + role_totals["internal_commuting_ghs"]
-        + marking_total
-        + travel_comp.payable_ghs
+        + marking_net
+        + vetting_net
     )
+    total_payable = payout_travel_commuting + payout_allowances_marking
 
     return ComputedExaminerCompensation(
         responsibility_allowance_ghs=role_totals["responsibility_allowance_ghs"],
         inconvenience_allowance_ghs=role_totals["inconvenience_allowance_ghs"],
         chief_examiners_report_ghs=role_totals["chief_examiners_report_ghs"],
-        vetting_of_scripts_ghs=role_totals["vetting_of_scripts_ghs"],
+        vetting_of_scripts_ghs=vetting_gross,
         internal_commuting_ghs=role_totals["internal_commuting_ghs"],
         marking_allowance_ghs=marking_total,
         travel_base_ghs=travel_comp.base_ghs,
@@ -396,6 +417,12 @@ def compensation_for_examiner(
         travel_role_factor=travel_comp.role_factor,
         travel_and_transport_ghs=travel_comp.payable_ghs,
         total_allocated_scripts=total_allocated_scripts,
+        marking_withholding_tax_ghs=marking_tax,
+        marking_net_ghs=marking_net,
+        vetting_withholding_tax_ghs=vetting_tax,
+        vetting_net_ghs=vetting_net,
+        payout_travel_commuting_ghs=payout_travel_commuting,
+        payout_allowances_marking_ghs=payout_allowances_marking,
         total_payable_ghs=total_payable,
         subject_breakdowns=subject_breakdowns,
     )

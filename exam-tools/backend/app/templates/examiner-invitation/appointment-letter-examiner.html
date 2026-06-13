@@ -52,29 +52,83 @@
       margin: 1em 0 1.25em;
     }
 
-    .appointment-letter .letter-fees-table {
+    .appointment-letter .letter-fee-intro {
+      margin: 0.5em 0 0.85em;
+      text-align: left;
+    }
+
+    .appointment-letter .letter-fee-schedule {
       width: 100%;
       border-collapse: collapse;
-      margin: 0.75em 0 1em;
+      margin: 0 0 0.75em;
+      font-size: 11.5pt;
+      line-height: 1.45;
     }
 
-    .appointment-letter .letter-fees-table th,
-    .appointment-letter .letter-fees-table td {
-      border: 1px solid #ccc;
-      padding: 6px 8px;
-      text-align: left;
-      vertical-align: top;
-    }
-
-    .appointment-letter .letter-fees-table th {
+    .appointment-letter .letter-fee-schedule thead th {
+      padding: 0 0 0.35em;
+      border: none;
+      border-bottom: 1pt solid #222;
+      font-size: 9.5pt;
       font-weight: bold;
-      background: transparent;
-      border-bottom: 2px solid #999;
+      letter-spacing: 0.06em;
+      text-transform: uppercase;
+      color: #333;
+      vertical-align: bottom;
     }
 
-    .appointment-letter .letter-fees-table .amount-col {
+    .appointment-letter .letter-fee-schedule thead th.fee-amount-heading {
+      text-align: right;
+      width: 30%;
+      padding-left: 1em;
+    }
+
+    .appointment-letter .letter-fee-schedule tbody td {
+      border: none;
+      padding: 0.45em 0;
+      vertical-align: top;
+      text-align: left;
+    }
+
+    .appointment-letter .letter-fee-schedule tbody tr.fee-item td {
+      border-bottom: 0.5pt solid #d4d4d4;
+    }
+
+    .appointment-letter .letter-fee-schedule tbody tr.fee-item:last-child td {
+      border-bottom: 1pt solid #888;
+    }
+
+    .appointment-letter .letter-fee-schedule tbody tr.fee-category td {
+      padding-top: 0.85em;
+      padding-bottom: 0.2em;
+      font-size: 9.5pt;
+      font-weight: bold;
+      letter-spacing: 0.05em;
+      text-transform: uppercase;
+      color: #444;
+    }
+
+    .appointment-letter .letter-fee-schedule tbody tr.fee-category:first-child td {
+      padding-top: 0.15em;
+    }
+
+    .appointment-letter .letter-fee-schedule .fee-description {
+      padding-right: 1.25em;
+    }
+
+    .appointment-letter .letter-fee-schedule .fee-amount {
       text-align: right;
       white-space: nowrap;
+      font-weight: bold;
+      font-variant-numeric: tabular-nums;
+      padding-left: 1em;
+      width: 30%;
+    }
+
+    .appointment-letter .letter-fee-footnote {
+      margin: 0.35em 0 0;
+      font-size: 10.5pt;
+      color: #333;
     }
 
     .appointment-letter .letter-tax-note {
@@ -107,8 +161,11 @@
 
   <p>
     The Commission for Technical and Vocational Education and Training (CTVET) is pleased to invite you to the
-    Co-ordination meeting and Marking of scripts of the {{ examination_label }} Examinations. The exercise begins at
-    <strong>10:00am</strong> and ends at <strong>4:00pm</strong>. The venue is the
+    Co-ordination meeting and Marking of scripts of the {{ examination_label }} Examinations.{% if coordination_start_time and coordination_end_time %}
+    The exercise begins at <strong>{{ coordination_start_time }}</strong> and ends at <strong>{{ coordination_end_time }}</strong>.{% elif coordination_start_time %}
+    The exercise begins at <strong>{{ coordination_start_time }}</strong>.{% elif coordination_end_time %}
+    The exercise ends at <strong>{{ coordination_end_time }}</strong>.{% endif %}
+    The venue is the
     <strong>{{ coordination_venue }}</strong>{% if coordination_date %} on
     <strong>{{ coordination_date }}</strong>{% else %} on dates to be communicated{% endif %}.
   </p>
@@ -116,7 +173,11 @@
   <p>
     You are invited as {{ examiner_role_article }} <strong>{{ examiner_role_title }}</strong> for
     <strong>{{ subject_name }}</strong> with special responsibility for marking/vetting <strong>Paper 2</strong> scripts.
+    {% if marking_start_date and marking_end_date %}
+    The period for marking begins on <strong>{{ marking_start_date }}</strong> and ends on <strong>{{ marking_end_date }}</strong>.
+    {% else %}
     The period for marking will be communicated at the coordination meeting.
+    {% endif %}
   </p>
 
   <h3 class="letter-section"><span class="letter-underline">1. {{ conditions_section_heading }}</span></h3>
@@ -206,60 +267,79 @@
   <h3 class="letter-section"><span class="letter-underline">3. {{ fees_section_heading }}</span></h3>
 
   {% if marking_fee_amount or responsibility_allowance or inconvenience_allowance or chief_examiners_report_allowance or vetting_of_scripts_allowance or travel_and_transport_amount or internal_commuting %}
-  <table class="letter-fees-table">
+  <p class="letter-fee-intro">
+    The applicable fees and allowances payable for this appointment are summarised below.
+  </p>
+  <table class="letter-fee-schedule">
     <thead>
       <tr>
-        <th>Description</th>
-        <th class="amount-col">Amount</th>
+        <th scope="col">Item</th>
+        <th scope="col" class="fee-amount-heading">Amount (GHS)</th>
       </tr>
     </thead>
     <tbody>
       {% if marking_fee_amount %}
-      <tr>
-        <td>Paper 2 marking fee ({{ subject_name }}, per script)</td>
-        <td class="amount-col"><strong>{{ marking_fee_amount }}</strong></td>
+      <tr class="fee-category">
+        <td colspan="2">Marking</td>
+      </tr>
+      <tr class="fee-item">
+        <td class="fee-description">Paper 2 marking fee &mdash; {{ subject_name }} (per script)</td>
+        <td class="fee-amount">{{ marking_fee_amount }}</td>
       </tr>
       {% endif %}
+      {% if responsibility_allowance or inconvenience_allowance or chief_examiners_report_allowance or vetting_of_scripts_allowance %}
+      <tr class="fee-category">
+        <td colspan="2">Allowances</td>
+      </tr>
       {% if responsibility_allowance %}
-      <tr>
-        <td>Responsibility allowance</td>
-        <td class="amount-col"><strong>{{ responsibility_allowance }}</strong></td>
+      <tr class="fee-item">
+        <td class="fee-description">Responsibility allowance</td>
+        <td class="fee-amount">{{ responsibility_allowance }}</td>
       </tr>
       {% endif %}
       {% if inconvenience_allowance %}
-      <tr>
-        <td>Inconvenience allowance</td>
-        <td class="amount-col"><strong>{{ inconvenience_allowance }}</strong></td>
+      <tr class="fee-item">
+        <td class="fee-description">Inconvenience allowance</td>
+        <td class="fee-amount">{{ inconvenience_allowance }}</td>
       </tr>
       {% endif %}
       {% if chief_examiners_report_allowance %}
-      <tr>
-        <td>Chief Examiner's Report allowance</td>
-        <td class="amount-col"><strong>{{ chief_examiners_report_allowance }}</strong></td>
+      <tr class="fee-item">
+        <td class="fee-description">Chief Examiner&rsquo;s Report allowance</td>
+        <td class="fee-amount">{{ chief_examiners_report_allowance }}</td>
       </tr>
       {% endif %}
       {% if vetting_of_scripts_allowance %}
-      <tr>
-        <td>Vetting of scripts allowance</td>
-        <td class="amount-col"><strong>{{ vetting_of_scripts_allowance }}</strong></td>
+      <tr class="fee-item">
+        <td class="fee-description">Vetting of scripts allowance</td>
+        <td class="fee-amount">{{ vetting_of_scripts_allowance }}</td>
       </tr>
       {% endif %}
+      {% endif %}
+      {% if travel_and_transport_amount or internal_commuting %}
+      <tr class="fee-category">
+        <td colspan="2">Travel and commuting</td>
+      </tr>
       {% if travel_and_transport_amount %}
-      <tr>
-        <td>T &amp; T ({{ region }}) for the entire period of marking (at least 2 visits to the office)</td>
-        <td class="amount-col"><strong>{{ travel_and_transport_amount }}</strong></td>
+      <tr class="fee-item">
+        <td class="fee-description">
+          Travel and transport ({{ region }}) for the entire period of marking
+          (minimum two visits to the office)
+        </td>
+        <td class="fee-amount">{{ travel_and_transport_amount }}</td>
       </tr>
       {% endif %}
       {% if internal_commuting %}
-      <tr>
-        <td>Internal commuting to the office (at least twice)</td>
-        <td class="amount-col"><strong>{{ internal_commuting }}</strong></td>
+      <tr class="fee-item">
+        <td class="fee-description">Internal commuting to the office (minimum two visits)</td>
+        <td class="fee-amount">{{ internal_commuting }}</td>
       </tr>
+      {% endif %}
       {% endif %}
     </tbody>
   </table>
   {% if marking_fee_amount %}
-  <p class="letter-tax-note"><em>(Marking fee per script attracts 10% tax)</em></p>
+  <p class="letter-fee-footnote"><em>Note: Marking fee per script and vetting of scripts allowance are subject to 10% tax.</em></p>
   {% endif %}
   {% endif %}
 
@@ -271,7 +351,7 @@
   </p>
 
   <div class="letter-signoff">
-    <p>Yours faithfully,</p>
+    <p>{{ valediction.rstrip(' ,') }},</p>
 
     <div class="letter-signature-block" aria-hidden="true">
       {% if signatory_signature_src %}
@@ -284,15 +364,16 @@
     </div>
 
     <p>
-      <strong>ERIC ASIEDU ANSAH</strong><br />
-      DIRECTOR 1, ASSESSMENT AND CERTIFICATION<br />
-      FOR: DIRECTOR-GENERAL
+      <strong>{{ signatory_name }}</strong><br />
+      {{ signatory_title }}
     </p>
+    {% if signed_for_director_general %}
+    <p>FOR: DIRECTOR-GENERAL</p>
+    {% endif %}
 
     <p>
       Cc:<br />
-      The Accountant.<br />
-      The Internal Auditor.
+      {% for line in cc_lines %}{{ line }}<br />{% endfor %}
     </p>
   </div>
 </div>

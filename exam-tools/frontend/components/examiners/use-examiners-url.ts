@@ -6,6 +6,10 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { parseExaminersTab } from "@/components/examiners/utils";
 import type { ExaminersTab } from "@/components/examiners/types";
 import { getStaffDefaultExamination, type Examination } from "@/lib/api";
+import {
+  parseScriptControlSubjectTypeFilter,
+  type ScriptControlSubjectTypeFilter,
+} from "@/lib/script-control-subjects";
 
 type Options = {
   exams: Examination[];
@@ -13,12 +17,22 @@ type Options = {
   singleExamMode?: boolean;
   /** When true, do not auto-select an examination; user must choose explicitly. */
   requireExamSelection?: boolean;
+  /** Persist subject type / subject filters in the URL. */
+  syncSubjectInUrl?: boolean;
+};
+
+type UrlPatch = {
+  examId?: number | null;
+  tab?: ExaminersTab;
+  subjectTypeFilter?: ScriptControlSubjectTypeFilter;
+  subjectId?: string;
 };
 
 export function useExaminersUrl({
   exams,
   singleExamMode = false,
   requireExamSelection = false,
+  syncSubjectInUrl = false,
 }: Options) {
   const router = useRouter();
   const pathname = usePathname();
@@ -28,6 +42,44 @@ export function useExaminersUrl({
 
   const [examId, setExamId] = useState<number | null>(null);
   const [activeTab, setActiveTab] = useState<ExaminersTab>("roster");
+  const [subjectTypeFilter, setSubjectTypeFilter] = useState<ScriptControlSubjectTypeFilter>("all");
+  const [subjectId, setSubjectId] = useState("");
+
+  const writeUrl = useCallback(
+    (
+      patch: UrlPatch,
+      options?: { replace?: boolean; base?: { examId: number | null; tab: ExaminersTab; subjectTypeFilter: ScriptControlSubjectTypeFilter; subjectId: string } },
+    ) => {
+      const base = options?.base ?? {
+        examId,
+        tab: activeTab,
+        subjectTypeFilter,
+        subjectId,
+      };
+      const nextExamId = patch.examId !== undefined ? patch.examId : base.examId;
+      const nextTab = patch.tab ?? base.tab;
+      const nextSubjectType = patch.subjectTypeFilter ?? base.subjectTypeFilter;
+      const nextSubjectId = patch.subjectId ?? base.subjectId;
+
+      const p = new URLSearchParams(searchParams.toString());
+      if (nextExamId != null) p.set("exam", String(nextExamId));
+      else p.delete("exam");
+      p.set("tab", nextTab);
+
+      if (syncSubjectInUrl) {
+        if (nextSubjectType !== "all") p.set("subject_type", nextSubjectType);
+        else p.delete("subject_type");
+        if (nextSubjectId.trim()) p.set("subject", nextSubjectId.trim());
+        else p.delete("subject");
+      }
+
+      const qs = p.toString();
+      const href = qs ? `${pathname}?${qs}` : pathname;
+      if (options?.replace) router.replace(href, { scroll: false });
+      else router.push(href, { scroll: false });
+    },
+    [activeTab, examId, pathname, router, searchParams, subjectId, subjectTypeFilter, syncSubjectInUrl],
+  );
 
   useEffect(() => {
     if (exams.length === 0) return;
@@ -43,9 +95,17 @@ export function useExaminersUrl({
 
     const rawTab = searchParams.get("tab");
     const nextTab = parseExaminersTab(rawTab);
+    const nextSubjectType = syncSubjectInUrl
+      ? parseScriptControlSubjectTypeFilter(searchParams.get("subject_type"))
+      : "all";
+    const rawSubject = searchParams.get("subject")?.trim() ?? "";
 
     setExamId(nextExamId);
     setActiveTab(nextTab);
+    if (syncSubjectInUrl) {
+      setSubjectTypeFilter(nextSubjectType);
+      setSubjectId(rawSubject);
+    }
 
     if (!hydratedRef.current) {
       hydratedRef.current = true;
@@ -64,7 +124,7 @@ export function useExaminersUrl({
         router.replace(qs ? `${pathname}?${qs}` : pathname, { scroll: false });
       }
     }
-  }, [exams, pathname, router, searchParams]);
+  }, [exams, pathname, router, searchParams, syncSubjectInUrl]);
 
   useEffect(() => {
     if (exams.length === 0) return;
@@ -99,49 +159,85 @@ export function useExaminersUrl({
       setExamId(resolvedId);
       setActiveTab(nextTab);
 
-      const p = new URLSearchParams(searchParams.toString());
-      p.set("exam", String(resolvedId));
-      p.set("tab", nextTab);
-      router.replace(`${pathname}?${p.toString()}`, { scroll: false });
+      writeUrl(
+        { examId: resolvedId, tab: nextTab },
+        {
+          replace: true,
+          base: {
+            examId: resolvedId,
+            tab: nextTab,
+            subjectTypeFilter,
+            subjectId,
+          },
+        },
+      );
     })();
 
     return () => {
       cancelled = true;
     };
-  }, [exams, pathname, requireExamSelection, router, searchParams, singleExamMode]);
-
-  const pushUrl = useCallback(
-    (nextExamId: number | null, nextTab: ExaminersTab) => {
-      const p = new URLSearchParams(searchParams.toString());
-      if (nextExamId != null) p.set("exam", String(nextExamId));
-      else p.delete("exam");
-      p.set("tab", nextTab);
-      const qs = p.toString();
-      router.push(qs ? `${pathname}?${qs}` : pathname, { scroll: false });
-    },
-    [pathname, router, searchParams],
-  );
+  }, [
+    exams,
+    pathname,
+    requireExamSelection,
+    router,
+    searchParams,
+    singleExamMode,
+    subjectId,
+    subjectTypeFilter,
+    writeUrl,
+  ]);
 
   const setExamIdPush = useCallback(
     (id: number | null) => {
       setExamId(id);
-      pushUrl(id, activeTab);
+      if (id == null) {
+        setSubjectId("");
+        setSubjectTypeFilter("all");
+      }
+      writeUrl({
+        examId: id,
+        tab: activeTab,
+        subjectTypeFilter: id == null ? "all" : subjectTypeFilter,
+        subjectId: id == null ? "" : subjectId,
+      });
     },
-    [activeTab, pushUrl],
+    [activeTab, subjectId, subjectTypeFilter, writeUrl],
   );
 
   const setActiveTabPush = useCallback(
     (tab: ExaminersTab) => {
       setActiveTab(tab);
-      pushUrl(examId, tab);
+      writeUrl({ tab });
     },
-    [examId, pushUrl],
+    [writeUrl],
+  );
+
+  const setSubjectTypeFilterPush = useCallback(
+    (value: ScriptControlSubjectTypeFilter) => {
+      setSubjectTypeFilter(value);
+      setSubjectId("");
+      writeUrl({ subjectTypeFilter: value, subjectId: "" });
+    },
+    [writeUrl],
+  );
+
+  const setSubjectIdPush = useCallback(
+    (value: string) => {
+      setSubjectId(value);
+      writeUrl({ subjectId: value });
+    },
+    [writeUrl],
   );
 
   return {
     examId,
     activeTab,
+    subjectTypeFilter,
+    subjectId,
     setExamId: setExamIdPush,
     setActiveTab: setActiveTabPush,
+    setSubjectTypeFilter: setSubjectTypeFilterPush,
+    setSubjectId: setSubjectIdPush,
   };
 }

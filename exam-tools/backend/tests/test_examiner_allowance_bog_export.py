@@ -48,6 +48,12 @@ def _row(
         travel_role_factor=Decimal("1"),
         travel_and_transport_ghs=Decimal("0"),
         total_allocated_scripts=0,
+        marking_withholding_tax_ghs=Decimal("0"),
+        marking_net_ghs=Decimal("0"),
+        vetting_withholding_tax_ghs=Decimal("0"),
+        vetting_net_ghs=Decimal("0"),
+        payout_travel_commuting_ghs=Decimal("0"),
+        payout_allowances_marking_ghs=Decimal(total),
         total_payable_ghs=Decimal(total),
         subject_breakdowns=[
             SubjectMarkingBreakdownRow(
@@ -84,3 +90,35 @@ def test_examiner_bog_workbook_grand_total() -> None:
     assert ws is not None
     assert ws.cell(row=5, column=5).value == GRAND_TOTAL_LABEL
     assert ws.cell(row=5, column=6).value == 150.0
+
+
+def test_bog_rows_use_travel_commuting_bucket() -> None:
+    item = _row(name="Alice", total="200.00")
+    item = item.model_copy(
+        update={
+            "payout_travel_commuting_ghs": Decimal("50.00"),
+            "payout_allowances_marking_ghs": Decimal("150.00"),
+            "total_payable_ghs": Decimal("200.00"),
+        }
+    )
+    from app.services.examiner_allowance_bog_export import ExaminerBogPayoutMode, bog_rows_from_admin_items
+
+    rows = bog_rows_from_admin_items([item], ExaminerBogPayoutMode.TRAVEL_COMMUTING)
+    assert len(rows) == 1
+    assert rows[0].amount == Decimal("50.00")
+
+
+def test_bog_rows_use_allowances_marking_bucket() -> None:
+    item = _row(name="Alice", total="200.00")
+    item = item.model_copy(
+        update={
+            "payout_travel_commuting_ghs": Decimal("50.00"),
+            "payout_allowances_marking_ghs": Decimal("150.00"),
+            "total_payable_ghs": Decimal("200.00"),
+        }
+    )
+    from app.services.examiner_allowance_bog_export import ExaminerBogPayoutMode, bog_rows_from_admin_items
+
+    rows = bog_rows_from_admin_items([item], ExaminerBogPayoutMode.ALLOWANCES_MARKING)
+    assert len(rows) == 1
+    assert rows[0].amount == Decimal("150.00")

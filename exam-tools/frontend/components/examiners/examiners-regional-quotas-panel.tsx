@@ -32,6 +32,9 @@ type Props = {
   subjects: Subject[];
   embedded?: boolean;
   pageScroll?: boolean;
+  usePageSubjectScope?: boolean;
+  pageSubjectTypeFilter?: ScriptControlSubjectTypeFilter;
+  pageSubjectId?: string;
 };
 
 type DraftCell = { total: string; roles: Record<ExaminerTypeApi, string> };
@@ -77,6 +80,9 @@ export function ExaminersRegionalQuotasPanel({
   examId,
   subjects,
   pageScroll = false,
+  usePageSubjectScope = false,
+  pageSubjectTypeFilter = "all",
+  pageSubjectId = "",
 }: Props) {
   const [regionsComplete, setRegionsComplete] = useState(false);
   const [savedGroups, setSavedGroups] = useState<ExaminerQuotaRegionGroupRow[]>([]);
@@ -96,6 +102,13 @@ export function ExaminersRegionalQuotasPanel({
   const [quotaError, setQuotaError] = useState<string | null>(null);
   const [quotaMessage, setQuotaMessage] = useState<string | null>(null);
   const [expandedRoles, setExpandedRoles] = useState<Record<string, boolean>>({});
+
+  useEffect(() => {
+    if (!usePageSubjectScope) return;
+    setSubjectTypeFilter(pageSubjectTypeFilter);
+    const parsed = Number.parseInt(pageSubjectId, 10);
+    setSubjectId(Number.isNaN(parsed) ? null : parsed);
+  }, [pageSubjectId, pageSubjectTypeFilter, usePageSubjectScope]);
 
   const filteredSubjects = useMemo(() => {
     return subjects
@@ -431,6 +444,7 @@ export function ExaminersRegionalQuotasPanel({
             </div>
           ) : (
             <div className="space-y-5 p-4 sm:p-5">
+              {!usePageSubjectScope ? (
               <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(0,1.2fr)]">
                 <div className="space-y-3">
                   <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Subject type</p>
@@ -471,6 +485,7 @@ export function ExaminersRegionalQuotasPanel({
                   )}
                 </div>
               </div>
+              ) : null}
 
               {selectedSubject && subjectId != null ? (
                 <>

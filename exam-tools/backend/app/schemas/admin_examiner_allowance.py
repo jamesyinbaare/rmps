@@ -39,6 +39,12 @@ class AdminExaminerAllowanceRow(BaseModel):
     travel_role_factor: Decimal
     travel_and_transport_ghs: Decimal
     total_allocated_scripts: int
+    marking_withholding_tax_ghs: Decimal
+    marking_net_ghs: Decimal
+    vetting_withholding_tax_ghs: Decimal
+    vetting_net_ghs: Decimal
+    payout_travel_commuting_ghs: Decimal
+    payout_allowances_marking_ghs: Decimal
     total_payable_ghs: Decimal
     subject_breakdowns: list[SubjectMarkingBreakdownRow]
     created_at: datetime

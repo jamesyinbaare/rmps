@@ -65,6 +65,7 @@ import {
   type ScriptControlSubjectTypeFilter,
 } from "@/lib/script-control-subjects";
 import { cn } from "@/lib/utils";
+import { useSyncPageSubjectScope } from "@/components/examiners/use-sync-page-subject-scope";
 
 const SEARCH_DEBOUNCE_MS = 300;
 
@@ -76,6 +77,9 @@ type Props = {
   pageScroll?: boolean;
   readOnly?: boolean;
   onInvitationCountsChange?: (counts: InvitationStatusCounts) => void;
+  usePageSubjectScope?: boolean;
+  pageSubjectTypeFilter?: ScriptControlSubjectTypeFilter;
+  pageSubjectId?: string;
 };
 
 function countByStatus(rows: ExaminerInvitationRow[]): InvitationStatusCounts {
@@ -100,6 +104,9 @@ export function ExaminersInvitationsPanel({
   pageScroll = false,
   readOnly = false,
   onInvitationCountsChange,
+  usePageSubjectScope = false,
+  pageSubjectTypeFilter = "all",
+  pageSubjectId = "",
 }: Props) {
   const [invitations, setInvitations] = useState<ExaminerInvitationRow[]>([]);
   const [loadingInvitations, setLoadingInvitations] = useState(false);
@@ -165,6 +172,14 @@ export function ExaminersInvitationsPanel({
   const [resendErrors, setResendErrors] = useState<Record<string, string>>({});
   const [copyLinkUi, setCopyLinkUi] = useState<Record<string, "copied" | "error">>({});
   const [allocationTarget, setAllocationTarget] = useState<ExaminerInvitationRow | null>(null);
+
+  useSyncPageSubjectScope({
+    enabled: usePageSubjectScope,
+    pageSubjectTypeFilter,
+    pageSubjectId,
+    setSubjectTypeFilter,
+    setSubjectFilter,
+  });
 
   useEffect(() => {
     const t = window.setTimeout(() => setDebouncedSearch(searchQuery), SEARCH_DEBOUNCE_MS);
@@ -274,10 +289,11 @@ export function ExaminersInvitationsPanel({
 
   const activeFilterCount = useMemo(() => {
     let n = 0;
-    if (subjectTypeFilter !== "all") n += 1;
-    n += subjectFilter.length + roleFilter.length + regionFilter.length;
+    if (!usePageSubjectScope && subjectTypeFilter !== "all") n += 1;
+    if (!usePageSubjectScope) n += subjectFilter.length;
+    n += roleFilter.length + regionFilter.length;
     return n;
-  }, [subjectTypeFilter, subjectFilter, roleFilter, regionFilter]);
+  }, [roleFilter.length, regionFilter.length, subjectFilter.length, subjectTypeFilter, usePageSubjectScope]);
 
   const hasActiveFilters =
     activeFilterCount > 0 || statusFilter !== "all" || debouncedSearch.trim().length > 0;
@@ -298,7 +314,7 @@ export function ExaminersInvitationsPanel({
         onRemove: () => setStatusFilter("all"),
       });
     }
-    if (subjectTypeFilter !== "all") {
+    if (!usePageSubjectScope && subjectTypeFilter !== "all") {
       const label =
         SCRIPT_CONTROL_SUBJECT_TYPE_OPTIONS.find((o) => o.value === subjectTypeFilter)?.label ??
         subjectTypeFilter;
@@ -311,13 +327,15 @@ export function ExaminersInvitationsPanel({
         },
       });
     }
-    for (const id of subjectFilter) {
-      const opt = subjectOptions.find((o) => o.value === id);
-      chips.push({
-        id: `subject-${id}`,
-        label: `Subject: ${opt?.label ?? id}`,
-        onRemove: () => setSubjectFilter((prev) => prev.filter((v) => v !== id)),
-      });
+    if (!usePageSubjectScope) {
+      for (const id of subjectFilter) {
+        const opt = subjectOptions.find((o) => o.value === id);
+        chips.push({
+          id: `subject-${id}`,
+          label: `Subject: ${opt?.label ?? id}`,
+          onRemove: () => setSubjectFilter((prev) => prev.filter((v) => v !== id)),
+        });
+      }
     }
     for (const role of roleFilter) {
       chips.push({
@@ -344,13 +362,16 @@ export function ExaminersInvitationsPanel({
     regionFilter,
     subjectOptions,
     regionOptions,
+    usePageSubjectScope,
   ]);
 
   function clearAllFilters() {
     setSearchQuery("");
     setStatusFilter("all");
-    setSubjectTypeFilter("all");
-    setSubjectFilter([]);
+    if (!usePageSubjectScope) {
+      setSubjectTypeFilter("all");
+      setSubjectFilter([]);
+    }
     setRoleFilter([]);
     setRegionFilter([]);
   }
@@ -556,7 +577,7 @@ export function ExaminersInvitationsPanel({
     setSendSmsOnBulk(false);
     setBulkFile(null);
     setBulkResponseDeadlineInput("");
-    setBulkCoordinationDateInput("");
+    setBulkCoordinationDraft(emptyInvitationCoordinationDraft());
   }
 
   function closeSmsModal() {
@@ -810,7 +831,7 @@ export function ExaminersInvitationsPanel({
           }}
           onSetCoordinationDate={() => {
             setCoordinationModalError(null);
-            setBatchCoordinationDateInput("");
+            setBatchCoordinationDraft(emptyInvitationCoordinationDraft());
             setCoordinationModalOpen(true);
           }}
           onBulkUpload={() => {
@@ -826,6 +847,7 @@ export function ExaminersInvitationsPanel({
           busy={busy || loadingInvitations}
           disabled={examId == null}
           readOnly={readOnly}
+          hideSubjectScopeFilters={usePageSubjectScope}
         />
 
         <div className={pageScroll ? "flex flex-col" : "flex min-h-0 flex-1 flex-col"}>

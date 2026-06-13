@@ -592,6 +592,7 @@ async def get_examiner_marking_group(
         "coordination_start_time": chosen["coordination_start_time"],
         "coordination_end_date": chosen["coordination_end_date"],
         "coordination_end_time": chosen["coordination_end_time"],
+        "coordination_venue": chosen["coordination_venue"],
         "marking_start_date": chosen["marking_start_date"],
         "marking_end_date": chosen["marking_end_date"],
         "marked_script_submission_deadline": chosen["marked_script_submission_deadline"],

@@ -20,6 +20,7 @@ type Props = {
   compact?: boolean;
   /** Icon-only rail (collapsed sidebar). */
   iconOnly?: boolean;
+  resolveHref?: (href: string) => string;
 };
 
 function iconOnlyButtonClass(active: boolean): string {
@@ -38,17 +39,19 @@ export function FinanceNavLink({
   onNavigate,
   compact = false,
   iconOnly: iconOnlyProp,
+  resolveHref,
 }: Props) {
   const collapsed = useFinanceSidebarCollapsed();
   const iconOnly = iconOnlyProp ?? collapsed;
   const Icon = financeNavItemIcon(item.icon);
+  const href = resolveHref ? resolveHref(item.href) : item.href;
 
   if (iconOnly) {
     return (
       <Tooltip>
         <TooltipTrigger asChild>
           <Link
-            href={item.href}
+            href={href}
             onClick={onNavigate}
             aria-current={active ? "page" : undefined}
             aria-label={item.label}
@@ -65,7 +68,7 @@ export function FinanceNavLink({
   if (compact) {
     return (
       <Link
-        href={item.href}
+        href={href}
         onClick={onNavigate}
         aria-current={active ? "page" : undefined}
         title={item.description}
@@ -93,7 +96,7 @@ export function FinanceNavLink({
 
   return (
     <Link
-      href={item.href}
+      href={href}
       onClick={onNavigate}
       aria-current={active ? "page" : undefined}
       className={className}

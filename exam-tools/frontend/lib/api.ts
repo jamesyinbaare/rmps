@@ -2753,6 +2753,12 @@ export type AdminExaminerAllowanceRow = {
   travel_role_factor: string;
   travel_and_transport_ghs: string;
   total_allocated_scripts: number;
+  marking_withholding_tax_ghs: string;
+  marking_net_ghs: string;
+  vetting_withholding_tax_ghs: string;
+  vetting_net_ghs: string;
+  payout_travel_commuting_ghs: string;
+  payout_allowances_marking_ghs: string;
   total_payable_ghs: string;
   subject_breakdowns: SubjectMarkingBreakdownRow[];
   created_at: string;
@@ -2905,12 +2911,15 @@ export async function downloadAdminExaminerAllowancesExport(params: {
   await downloadApiFile(`/admin/examiner-allowances/export.xlsx?${q.toString()}`, params.filename);
 }
 
+export type ExaminerBogPayoutMode = "all" | "travel_commuting" | "allowances_marking";
+
 export async function downloadAdminExaminerAllowancesBogExport(params: {
   examination_id: number;
   role?: string | null;
   region?: string | null;
   subject_id?: number | null;
   search?: string | null;
+  payout_mode?: ExaminerBogPayoutMode;
   filename: string;
 }): Promise<void> {
   const q = new URLSearchParams();
@@ -2919,6 +2928,7 @@ export async function downloadAdminExaminerAllowancesBogExport(params: {
   if (params.region?.trim()) q.set("region", params.region.trim());
   if (params.subject_id != null) q.set("subject_id", String(params.subject_id));
   if (params.search?.trim()) q.set("search", params.search.trim());
+  if (params.payout_mode && params.payout_mode !== "all") q.set("payout_mode", params.payout_mode);
   await downloadApiFile(`/admin/examiner-allowances/bog-export.xlsx?${q.toString()}`, params.filename);
 }
 
@@ -5460,6 +5470,112 @@ export async function downloadExaminerAppointmentLetterPreviewPdf(
     `/admin/examinations/${examinationId}/examiner-appointment-letter-preview.pdf?${q.toString()}`,
     filename,
   );
+}
+
+export type AppointmentLetterSigningOfficial =
+  | "director_general"
+  | "director_assessment_certification";
+
+export type AppointmentLetterSignatureRole =
+  | "director_general"
+  | "director_assessment_certification";
+
+export type AppointmentLetterSignatureMeta = {
+  has_signature: boolean;
+  content_type: string | null;
+};
+
+export type ExaminerAppointmentLetterSettings = {
+  examination_id: number;
+  signing_official: AppointmentLetterSigningOfficial;
+  signed_for_director_general: boolean;
+  director_general_name: string;
+  director_general_title: string;
+  director_assessment_name: string;
+  director_assessment_title: string;
+  valediction: string;
+  letter_date: string | null;
+  cc_lines: string[];
+  director_general_signature: AppointmentLetterSignatureMeta;
+  director_assessment_signature: AppointmentLetterSignatureMeta;
+  updated_at: string | null;
+};
+
+export type ExaminerAppointmentLetterSettingsCopyFromResponse = {
+  examination_id: number;
+  source_examination_id: number;
+  cc_lines_copied: number;
+  signatures_copied: number;
+};
+
+export async function getExaminerAppointmentLetterSettings(
+  examinationId: number,
+): Promise<ExaminerAppointmentLetterSettings> {
+  return apiJson<ExaminerAppointmentLetterSettings>(
+    `/admin/examinations/${examinationId}/examiner-appointment-letter-settings`,
+  );
+}
+
+export async function putExaminerAppointmentLetterSettings(
+  examinationId: number,
+  body: Omit<ExaminerAppointmentLetterSettings, "examination_id" | "director_general_signature" | "director_assessment_signature" | "updated_at">,
+): Promise<ExaminerAppointmentLetterSettings> {
+  return apiJson<ExaminerAppointmentLetterSettings>(
+    `/admin/examinations/${examinationId}/examiner-appointment-letter-settings`,
+    {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    },
+  );
+}
+
+export async function copyExaminerAppointmentLetterSettingsFrom(
+  examinationId: number,
+  sourceExaminationId: number,
+): Promise<ExaminerAppointmentLetterSettingsCopyFromResponse> {
+  return apiJson<ExaminerAppointmentLetterSettingsCopyFromResponse>(
+    `/admin/examinations/${examinationId}/examiner-appointment-letter-settings/copy-from`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ source_examination_id: sourceExaminationId }),
+    },
+  );
+}
+
+export async function uploadExaminerAppointmentLetterSignature(
+  examinationId: number,
+  role: AppointmentLetterSignatureRole,
+  file: File,
+): Promise<ExaminerAppointmentLetterSettings> {
+  const body = new FormData();
+  body.append("file", file);
+  return apiJson<ExaminerAppointmentLetterSettings>(
+    `/admin/examinations/${examinationId}/examiner-appointment-letter-settings/signatures/${role}`,
+    { method: "POST", body },
+  );
+}
+
+export async function deleteExaminerAppointmentLetterSignature(
+  examinationId: number,
+  role: AppointmentLetterSignatureRole,
+): Promise<ExaminerAppointmentLetterSettings> {
+  return apiJson<ExaminerAppointmentLetterSettings>(
+    `/admin/examinations/${examinationId}/examiner-appointment-letter-settings/signatures/${role}`,
+    { method: "DELETE" },
+  );
+}
+
+export async function fetchExaminerAppointmentLetterSignatureBlobUrl(
+  examinationId: number,
+  role: AppointmentLetterSignatureRole,
+): Promise<string> {
+  const res = await apiFetch(
+    `/admin/examinations/${examinationId}/examiner-appointment-letter-settings/signatures/${role}`,
+  );
+  const blob = await res.blob();
+  return URL.createObjectURL(blob);
 }
 
 export async function listSubjectMarkingGroups(

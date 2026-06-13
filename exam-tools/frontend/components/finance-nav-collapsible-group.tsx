@@ -25,6 +25,8 @@ type Props = {
   pathname: string;
   onNavigate?: () => void;
   defaultOpen?: boolean;
+  navActive?: (pathname: string, href: string) => boolean;
+  resolveHref?: (href: string) => string;
 };
 
 export function FinanceNavCollapsibleGroup({
@@ -34,11 +36,13 @@ export function FinanceNavCollapsibleGroup({
   pathname,
   onNavigate,
   defaultOpen = false,
+  navActive = financeNavActive,
+  resolveHref,
 }: Props) {
   const panelId = useId();
   const collapsed = useFinanceSidebarCollapsed();
   const SectionIcon = financeNavSectionIcon(sectionIcon);
-  const hasActiveChild = items.some((item) => financeNavActive(pathname, item.href));
+  const hasActiveChild = items.some((item) => navActive(pathname, item.href));
   const [open, setOpen] = useState(defaultOpen || hasActiveChild);
 
   useEffect(() => {
@@ -109,8 +113,9 @@ export function FinanceNavCollapsibleGroup({
             <FinanceNavCompactLink
               key={item.href}
               item={item}
-              active={financeNavActive(pathname, item.href)}
+              active={navActive(pathname, item.href)}
               onNavigate={onNavigate}
+              resolveHref={resolveHref}
             />
           ))}
         </div>
@@ -123,15 +128,18 @@ function FinanceNavCompactLink({
   item,
   active,
   onNavigate,
+  resolveHref,
 }: {
   item: FinanceNavItem;
   active: boolean;
   onNavigate?: () => void;
+  resolveHref?: (href: string) => string;
 }) {
   const Icon = financeNavItemIcon(item.icon);
+  const href = resolveHref ? resolveHref(item.href) : item.href;
   return (
     <Link
-      href={item.href}
+      href={href}
       onClick={onNavigate}
       aria-current={active ? "page" : undefined}
       title={item.description}

@@ -4,6 +4,9 @@ import { ExaminerAllowanceBreakdownCell } from "@/components/examiner-allowance-
 import { EXAMINER_TYPE_LABELS } from "@/components/examiner-invitations/constants";
 import { OfficialAccountsPagination } from "@/components/official-accounts-pagination";
 import { displayBankCode, type AdminExaminerAllowanceRow, type ExaminerTypeApi } from "@/lib/api";
+import { EXAMINER_PAYOUT_VIEW_OPTIONS, payoutColumnLabel, type ExaminerPayoutView } from "@/lib/examiner-payout-view";
+import { cn } from "@/lib/utils";
+import { officialAccountsCommandBarControlClass } from "@/lib/official-accounts-zone";
 import {
   officialAccountsTableLayoutClass,
   officialAccountsTableScrollClass,
@@ -27,7 +30,15 @@ type Props = {
   subjectId?: number | null;
   /** When set with subjectId, show scripts for this paper only. */
   paperNumber?: number | null;
+  payoutView?: ExaminerPayoutView;
+  onPayoutViewChange?: (view: ExaminerPayoutView) => void;
 };
+
+const payoutViewSelectClass = cn(
+  officialAccountsCommandBarControlClass,
+  "mt-1 h-8 w-full min-w-[10rem] max-w-[14rem] border-input-border bg-input text-xs shadow-sm hover:bg-input focus-visible:ring-2 focus-visible:ring-ring/30",
+);
+
 
 function scriptsForSubject(
   row: AdminExaminerAllowanceRow,
@@ -66,6 +77,8 @@ export function ExaminerAccountsTable({
   onPageSizeChange,
   subjectId = null,
   paperNumber = null,
+  payoutView = "all",
+  onPayoutViewChange,
 }: Props) {
   const showSubjectScripts = subjectId != null;
   const colSpan = showSubjectScripts ? COL_SPAN_SUBJECT_ONLY : COL_SPAN_WITH_SUBJECTS;
@@ -87,11 +100,33 @@ export function ExaminerAccountsTable({
               {!showSubjectScripts ? (
                 <th className="px-3 py-2.5 font-semibold">Subjects</th>
               ) : null}
-              <th className="px-3 py-2.5 text-right font-semibold">{scriptsHeader}</th>
-              <th className="px-3 py-2.5 text-right font-semibold">Total payout</th>
               <th className="px-3 py-2.5 font-semibold">Bank</th>
               <th className="px-3 py-2.5 font-semibold">Branch</th>
               <th className="px-3 py-2.5 font-semibold">Account</th>
+              <th className="px-3 py-2.5 text-right font-semibold">{scriptsHeader}</th>
+              <th className="min-w-[11rem] px-3 py-2.5 text-right align-bottom font-semibold">
+                {onPayoutViewChange ? (
+                  <div className="flex flex-col items-end gap-0.5">
+                    <label className="text-xs font-medium text-muted-foreground" htmlFor="examiner-table-payout-view">
+                      Payout view
+                    </label>
+                    <select
+                      id="examiner-table-payout-view"
+                      className={payoutViewSelectClass}
+                      value={payoutView}
+                      onChange={(e) => onPayoutViewChange(e.target.value as ExaminerPayoutView)}
+                    >
+                      {EXAMINER_PAYOUT_VIEW_OPTIONS.map((opt) => (
+                        <option key={opt.value} value={opt.value}>
+                          {opt.label}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                ) : (
+                  payoutColumnLabel(payoutView)
+                )}
+              </th>
             </tr>
           </thead>
           <tbody>
@@ -124,14 +159,6 @@ export function ExaminerAccountsTable({
                       {row.subject_codes || "—"}
                     </td>
                   ) : null}
-                  <td className="px-3 py-2.5 text-right align-top tabular-nums">
-                    {showSubjectScripts && subjectId != null
-                      ? scriptsForSubject(row, subjectId, paperNumber)
-                      : row.total_allocated_scripts}
-                  </td>
-                  <td className="px-3 py-2.5 text-right align-top">
-                    <ExaminerAllowanceBreakdownCell row={row} examinerName={row.full_name} />
-                  </td>
                   <td className="max-w-36 truncate px-3 py-2.5 align-top" title={row.bank_name ?? undefined}>
                     {row.bank_name ?? "—"}
                   </td>
@@ -140,6 +167,14 @@ export function ExaminerAccountsTable({
                   </td>
                   <td className="px-3 py-2.5 align-top font-mono text-xs tabular-nums">
                     {row.account_number ?? "—"}
+                  </td>
+                  <td className="px-3 py-2.5 text-right align-top tabular-nums">
+                    {showSubjectScripts && subjectId != null
+                      ? scriptsForSubject(row, subjectId, paperNumber)
+                      : row.total_allocated_scripts}
+                  </td>
+                  <td className="px-3 py-2.5 text-right align-top">
+                    <ExaminerAllowanceBreakdownCell row={row} examinerName={row.full_name} payoutView={payoutView} />
                   </td>
                 </tr>
               ))

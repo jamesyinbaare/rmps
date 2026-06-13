@@ -55,6 +55,7 @@ type Props = {
   busy: boolean;
   disabled?: boolean;
   readOnly?: boolean;
+  hideSubjectScopeFilters?: boolean;
 };
 
 export function InvitationsCommandBar({
@@ -88,6 +89,7 @@ export function InvitationsCommandBar({
   busy,
   disabled,
   readOnly = false,
+  hideSubjectScopeFilters = false,
 }: Props) {
   const [columnsOpen, setColumnsOpen] = useState(false);
   const actionsDisabled = disabled || busy || examId == null;
@@ -187,6 +189,7 @@ export function InvitationsCommandBar({
             onRegionFilterChange={onRegionFilterChange}
             activeFilterCount={activeFilterCount}
             onClearFilters={onClearFilters}
+            hideSubjectScopeFilters={hideSubjectScopeFilters}
           />
           <Popover open={columnsOpen} onOpenChange={setColumnsOpen}>
             <PopoverTrigger asChild>

@@ -2228,6 +2228,43 @@ class ExaminationExaminerPortalSettings(Base):
     examination = relationship("Examination", backref="examiner_portal_settings")
 
 
+class AppointmentLetterSigningOfficial(enum.Enum):
+    DIRECTOR_GENERAL = "director_general"
+    DIRECTOR_ASSESSMENT_CERTIFICATION = "director_assessment_certification"
+
+
+class ExaminationExaminerAppointmentLetterSettings(Base):
+    """Per examination: signatory names, signatures, CC lines for appointment letters."""
+
+    __tablename__ = "examination_examiner_appointment_letter_settings"
+
+    examination_id = Column(Integer, ForeignKey("examinations.id", ondelete="CASCADE"), primary_key=True)
+    signing_official = Column(
+        Enum(
+            AppointmentLetterSigningOfficial,
+            values_callable=lambda x: [e.value for e in x],
+            native_enum=False,
+            length=64,
+        ),
+        nullable=False,
+        default=AppointmentLetterSigningOfficial.DIRECTOR_ASSESSMENT_CERTIFICATION,
+        server_default=AppointmentLetterSigningOfficial.DIRECTOR_ASSESSMENT_CERTIFICATION.value,
+    )
+    signed_for_director_general = Column(Boolean, nullable=False, default=True, server_default=text("true"))
+    director_general_name = Column(String(255), nullable=True)
+    director_general_title = Column(String(255), nullable=True)
+    director_general_signature_path = Column(String(512), nullable=True)
+    director_assessment_name = Column(String(255), nullable=True)
+    director_assessment_title = Column(String(255), nullable=True)
+    director_assessment_signature_path = Column(String(512), nullable=True)
+    valediction = Column(String(255), nullable=False, default="Yours faithfully", server_default="Yours faithfully")
+    letter_date = Column(Date, nullable=True)
+    cc_lines = Column(JSON, nullable=False, default=list, server_default=text("'[]'"))
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+
+    examination = relationship("Examination", backref="examiner_appointment_letter_settings")
+
+
 class ExaminationInspectorSubmissionSettings(Base):
     """Per examination: inspector submission window and official-upload scope toggles."""
 

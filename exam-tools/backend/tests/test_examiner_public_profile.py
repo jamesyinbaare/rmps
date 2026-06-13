@@ -132,6 +132,8 @@ async def test_get_scripts_allocation_for_invitation_empty_when_no_runs() -> Non
 
 
 def test_appointment_letter_pdf_returns_pdf_bytes() -> None:
+    from datetime import datetime, timezone
+
     from app.services.examiner_appointment_letter_pdf import (
         _appointment_role_context,
         _render_appointment_letter_pdf_sync,
@@ -148,15 +150,26 @@ def test_appointment_letter_pdf_returns_pdf_bytes() -> None:
             "subject_name": "Mathematics",
             "region": "Ashanti",
             "coordination_date": "Friday, 20 June 2026",
+            "coordination_start_time": "10:00am",
+            "coordination_end_time": "4:00pm",
             "coordination_venue": "Simulation Hall",
+            "marking_start_date": "Monday, 22 June 2026",
+            "marking_end_date": "Friday, 10 July 2026",
             **_appointment_role_context(ExaminerType.ASSISTANT),
-            "marking_fee_amount": "Ghs 3.50",
-            "responsibility_allowance": "Ghs 70.00",
-            "inconvenience_allowance": "Ghs 70.00",
-            "travel_and_transport_amount": "Ghs 700.00",
-            "internal_commuting": "Ghs 100.00",
+            "marking_fee_amount": "3.50",
+            "responsibility_allowance": "70.00",
+            "inconvenience_allowance": "70.00",
+            "travel_and_transport_amount": "700.00",
+            "internal_commuting": "100.00",
+            "signatory_name": "ERIC ASIEDU ANSAH",
+            "signatory_title": "DIRECTOR 1, ASSESSMENT AND CERTIFICATION",
+            "signed_for_director_general": True,
+            "valediction": "Yours faithfully",
+            "cc_lines": ["The Accountant.", "The Internal Auditor."],
+            "signatory_signature_src": None,
         },
         reference_number="CTVET/EXM/1/MATH301/ABCD1234",
+        letter_date=datetime(2026, 6, 13, tzinfo=timezone.utc),
     )
     assert pdf.startswith(b"%PDF")
 
@@ -216,8 +229,8 @@ def test_build_appointment_fee_context_from_rates_uses_subject_and_region_only()
         subject_id=subject_id,
     )
 
-    assert context["marking_fee_amount"] == "Ghs 3.50"
-    assert context["travel_and_transport_amount"] == "Ghs 700.00"
+    assert context["marking_fee_amount"] == "3.50"
+    assert context["travel_and_transport_amount"] == "700.00"
     assert "travel_zone_lines" not in context
     assert "marking_fee_lines" not in context
 

@@ -59,6 +59,7 @@ type Props = {
   busy: boolean;
   disabled?: boolean;
   embedded?: boolean;
+  hideSubjectScopeFilters?: boolean;
 };
 
 export function RosterCommandBar({
@@ -95,6 +96,7 @@ export function RosterCommandBar({
   busy,
   disabled,
   embedded = false,
+  hideSubjectScopeFilters = false,
 }: Props) {
   const [columnsOpen, setColumnsOpen] = useState(false);
   const actionsDisabled = disabled || busy;
@@ -148,6 +150,7 @@ export function RosterCommandBar({
             activeFilterCount={activeFilterCount}
             onClearFilters={onClearFilters}
             disabled={actionsDisabled}
+            hideSubjectScopeFilters={hideSubjectScopeFilters}
           />
           <Popover open={columnsOpen} onOpenChange={setColumnsOpen}>
             <PopoverTrigger asChild>

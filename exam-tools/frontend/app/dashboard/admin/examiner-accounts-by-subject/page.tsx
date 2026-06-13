@@ -37,6 +37,13 @@ import {
   parseScriptControlSubjectTypeFilter,
   type ScriptControlSubjectTypeFilter,
 } from "@/lib/script-control-subjects";
+import {
+  bogExportFilenameSuffix,
+  parseExaminerPayoutView,
+  sumPayoutViewOnPage,
+  type ExaminerPayoutView,
+} from "@/lib/examiner-payout-view";
+import { formatGhsAmount } from "@/lib/format-ghs";
 import { cn } from "@/lib/utils";
 
 const SECTION_ID = "examiner-subject-summary";
@@ -84,6 +91,7 @@ function ExaminerAccountsBySubjectContent() {
   const [rowsBusy, setRowsBusy] = useState(false);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [exportBusy, setExportBusy] = useState<string | null>(null);
+  const [payoutView, setPayoutView] = useState<ExaminerPayoutView>("all");
   const [urlHydrated, setUrlHydrated] = useState(false);
 
   const searchDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -161,6 +169,7 @@ function ExaminerAccountsBySubjectContent() {
         ? rawPageSize
         : DEFAULT_PAGE_SIZE,
     );
+    setPayoutView(parseExaminerPayoutView(searchParams.get("payoutView")));
     setUrlHydrated(true);
   }, [exams, searchParams, urlHydrated]);
 
@@ -174,6 +183,7 @@ function ExaminerAccountsBySubjectContent() {
       search?: string;
       page?: number;
       pageSize?: number;
+      payoutView?: ExaminerPayoutView;
     }) => {
       const p = new URLSearchParams();
       const nextExam = patch.examId !== undefined ? patch.examId : examId;
@@ -184,6 +194,7 @@ function ExaminerAccountsBySubjectContent() {
       const nextSearch = patch.search !== undefined ? patch.search : searchQuery;
       const nextPage = patch.page ?? page;
       const nextPageSize = patch.pageSize ?? pageSize;
+      const nextPayoutView = patch.payoutView ?? payoutView;
       if (nextExam != null) p.set("exam", String(nextExam));
       if (nextSubjectType !== "all") p.set("stype", nextSubjectType);
       if (nextSubject.trim()) p.set("subject", nextSubject.trim());
@@ -192,6 +203,7 @@ function ExaminerAccountsBySubjectContent() {
       if (nextSearch.trim()) p.set("search", nextSearch.trim());
       if (nextPage > 1) p.set("page", String(nextPage));
       if (nextPageSize !== DEFAULT_PAGE_SIZE) p.set("pageSize", String(nextPageSize));
+      if (nextPayoutView !== "all") p.set("payoutView", nextPayoutView);
       const nextQuery = p.toString();
       const currentQuery = searchParams.toString();
       if (nextQuery === currentQuery) return;
@@ -203,6 +215,7 @@ function ExaminerAccountsBySubjectContent() {
       pageSize,
       paperNumber,
       pathname,
+      payoutView,
       regionFilter,
       router,
       searchParams,
@@ -343,6 +356,7 @@ function ExaminerAccountsBySubjectContent() {
     searchQuery,
     page,
     pageSize,
+    payoutView,
     syncUrl,
   ]);
 
@@ -364,7 +378,9 @@ function ExaminerAccountsBySubjectContent() {
   const exportOptions = useMemo(
     () => [
       { key: "excel", label: "Export Excel", primary: true },
-      { key: "bog", label: "Export BoG" },
+      { key: "bog_all", label: "BoG — All together" },
+      { key: "bog_travel_commuting", label: "BoG — T&T & commuting" },
+      { key: "bog_allowances_marking", label: "BoG — Allowances & marking" },
     ],
     [],
   );
@@ -392,10 +408,23 @@ function ExaminerAccountsBySubjectContent() {
           ...exportParams,
           filename: `${base}_examiner_allowances.xlsx`,
         });
-      } else if (key === "bog") {
+      } else if (key === "bog_all") {
         await downloadAdminExaminerAllowancesBogExport({
           ...exportParams,
-          filename: `${base}_examiner_bog.xlsx`,
+          payout_mode: "all",
+          filename: `${base}_${bogExportFilenameSuffix("all")}.xlsx`,
+        });
+      } else if (key === "bog_travel_commuting") {
+        await downloadAdminExaminerAllowancesBogExport({
+          ...exportParams,
+          payout_mode: "travel_commuting",
+          filename: `${base}_${bogExportFilenameSuffix("travel_commuting")}.xlsx`,
+        });
+      } else if (key === "bog_allowances_marking") {
+        await downloadAdminExaminerAllowancesBogExport({
+          ...exportParams,
+          payout_mode: "allowances_marking",
+          filename: `${base}_${bogExportFilenameSuffix("allowances_marking")}.xlsx`,
         });
       }
     } catch (e) {
@@ -425,9 +454,11 @@ function ExaminerAccountsBySubjectContent() {
 
   const initialLoading = summaryBusy && summaries.length === 0;
   const busy = summaryBusy || rowsBusy;
+  const pagePayoutTotal = useMemo(() => sumPayoutViewOnPage(items, payoutView), [items, payoutView]);
+
   const tableMeta = busy
     ? "Updating examiners…"
-    : `${total.toLocaleString()} examiner${total === 1 ? "" : "s"}`;
+    : `${total.toLocaleString()} examiner${total === 1 ? "" : "s"} · ${formatGhsAmount(String(pagePayoutTotal))} on this page`;
 
   return (
     <div className={officialAccountsPageLayoutClass}>
@@ -537,14 +568,14 @@ function ExaminerAccountsBySubjectContent() {
           <section className={officialAccountsTabPanelClass}>
             <div className={cn(officialAccountsCommandBarClass, "shrink-0 border-t border-border/60 py-3")}>
               <div className="flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
-                <div className="min-w-0 flex-1">
+                <div className="min-w-0 flex-1 max-w-xl">
                   <label className="text-xs font-medium text-muted-foreground" htmlFor="examiner-subject-search">
                     Search examiners
                   </label>
                   <input
                     id="examiner-subject-search"
                     type="search"
-                    className={cn(officialAccountsCommandBarSearchClass, "mt-1 max-w-none")}
+                    className={cn(officialAccountsCommandBarSearchClass, "mt-1 w-full max-w-none")}
                     placeholder="Name or phone…"
                     value={searchQuery}
                     onChange={(e) => handleSearchChange(e.target.value)}
@@ -579,6 +610,11 @@ function ExaminerAccountsBySubjectContent() {
               }}
               subjectId={parsedSubjectId}
               paperNumber={paperNumber}
+              payoutView={payoutView}
+              onPayoutViewChange={(view) => {
+                setPayoutView(view);
+                syncUrl({ payoutView: view });
+              }}
             />
           </section>
         ) : null}

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from datetime import datetime, timezone
 from unittest.mock import AsyncMock, MagicMock
 from uuid import uuid4
 
@@ -12,6 +13,11 @@ from app.services.examiner_appointment_letter_pdf import (
     DEFAULT_COORDINATION_VENUE,
     DUMMY_APPOINTMENT_LETTEE_NAME,
     _normalize_coordination_venue,
+)
+from app.services.examiner_appointment_letter_settings import (
+    DEFAULT_DIRECTOR_ASSESSMENT_NAME,
+    DEFAULT_DIRECTOR_ASSESSMENT_TITLE,
+    DEFAULT_VALEDICTION,
 )
 from app.services.examiner_appointment_letter_reference import (
     appointment_reference_number_fallback,
@@ -108,8 +114,12 @@ def test_dummy_appointment_letter_preview_uses_placeholder_name() -> None:
             "subject_label": "Mathematics (MATH301)",
             "subject_name": "Mathematics",
             "region": "Greater Accra",
-            "coordination_date": None,
+            "coordination_date": "Monday, 9 June 2025 to Wednesday, 11 June 2025",
+            "coordination_start_time": "9:00am",
+            "coordination_end_time": "5:00pm",
             "coordination_venue": DEFAULT_COORDINATION_VENUE,
+            "marking_start_date": "Monday, 15 June 2026",
+            "marking_end_date": "Friday, 3 July 2026",
             "examiner_role_title": "Chief Examiner",
             "examiner_role_article": "a",
             "conditions_section_heading": "CONDITIONS",
@@ -117,9 +127,15 @@ def test_dummy_appointment_letter_preview_uses_placeholder_name() -> None:
             "show_red_marking_pen_instruction": False,
             "show_green_vetting_pen_instruction": True,
             "examiner_type": ExaminerType.CHIEF.value,
+            "signatory_name": DEFAULT_DIRECTOR_ASSESSMENT_NAME,
+            "signatory_title": DEFAULT_DIRECTOR_ASSESSMENT_TITLE,
+            "signed_for_director_general": True,
+            "valediction": DEFAULT_VALEDICTION,
+            "cc_lines": ["The Accountant.", "The Internal Auditor."],
             "signatory_signature_src": None,
         },
         reference_number="CTVET/EXM/2026/MATH301/CE",
+        letter_date=datetime(2026, 6, 13, tzinfo=timezone.utc),
     )
     assert pdf.startswith(b"%PDF")
     assert len(pdf) > 1000

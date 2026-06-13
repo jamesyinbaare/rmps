@@ -29,6 +29,7 @@ type Props = {
   activeFilterCount: number;
   onClearFilters: () => void;
   disabled?: boolean;
+  hideSubjectScopeFilters?: boolean;
 };
 
 export function RosterFiltersPopover({
@@ -46,6 +47,7 @@ export function RosterFiltersPopover({
   activeFilterCount,
   onClearFilters,
   disabled,
+  hideSubjectScopeFilters = false,
 }: Props) {
   const [open, setOpen] = useState(false);
 
@@ -73,31 +75,35 @@ export function RosterFiltersPopover({
       </PopoverTrigger>
       <PopoverContent align="start" className="w-[min(100vw-2rem,22rem)] p-4">
         <div className="flex flex-col gap-4">
-          <div>
-            <label className={formLabelClass} htmlFor="roster-popover-subject-type">
-              Subject type
-            </label>
-            <select
-              id="roster-popover-subject-type"
-              className={cn(formInputClass, "mt-1.5 w-full")}
-              value={subjectTypeFilter}
-              onChange={(e) => onSubjectTypeFilterChange(e.target.value as ScriptControlSubjectTypeFilter)}
-            >
-              {SCRIPT_CONTROL_SUBJECT_TYPE_OPTIONS.map((o) => (
-                <option key={o.value} value={o.value}>
-                  {o.label}
-                </option>
-              ))}
-            </select>
-          </div>
-          <MultiSelectCheckboxDropdown
-            id="roster-popover-subject"
-            label="Subject"
-            options={subjectOptions}
-            selected={subjectFilter}
-            onChange={onSubjectFilterChange}
-            allLabel="All subjects"
-          />
+          {!hideSubjectScopeFilters ? (
+            <>
+              <div>
+                <label className={formLabelClass} htmlFor="roster-popover-subject-type">
+                  Subject type
+                </label>
+                <select
+                  id="roster-popover-subject-type"
+                  className={cn(formInputClass, "mt-1.5 w-full")}
+                  value={subjectTypeFilter}
+                  onChange={(e) => onSubjectTypeFilterChange(e.target.value as ScriptControlSubjectTypeFilter)}
+                >
+                  {SCRIPT_CONTROL_SUBJECT_TYPE_OPTIONS.map((o) => (
+                    <option key={o.value} value={o.value}>
+                      {o.label}
+                    </option>
+                  ))}
+                </select>
+              </div>
+              <MultiSelectCheckboxDropdown
+                id="roster-popover-subject"
+                label="Subject"
+                options={subjectOptions}
+                selected={subjectFilter}
+                onChange={onSubjectFilterChange}
+                allLabel="All subjects"
+              />
+            </>
+          ) : null}
           <MultiSelectCheckboxDropdown
             id="roster-popover-role"
             label="Role type"

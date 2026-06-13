@@ -86,3 +86,47 @@ def format_coordination_range(
     if start is not None:
         return start.strftime("%d %b %Y")
     return None
+
+
+def _appointment_letter_date(value: date) -> str:
+    """Formal date for appointment letters, e.g. Friday, 20 June 2026."""
+    return f"{value.strftime('%A')}, {value.day} {value.strftime('%B %Y')}"
+
+
+def format_appointment_letter_time(value: time | None) -> str | None:
+    """12-hour time for appointment letters, e.g. 10:00am."""
+    if value is None:
+        return None
+    hour = value.hour % 12 or 12
+    suffix = "am" if value.hour < 12 else "pm"
+    if value.minute == 0:
+        return f"{hour}:00{suffix}"
+    return f"{hour}:{value.minute:02d}{suffix}"
+
+
+def format_appointment_letter_coordination_dates(
+    start_date: datetime | None,
+    end_date: datetime | None,
+) -> str | None:
+    """Date line for appointment letters: single date or 'start to end'."""
+    start_d = _date_part(_as_naive_utc(start_date))
+    end_d = _date_part(_as_naive_utc(end_date))
+    if start_d is None and end_d is None:
+        return None
+    if start_d is not None and end_d is not None:
+        if start_d == end_d:
+            return _appointment_letter_date(start_d)
+        return f"{_appointment_letter_date(start_d)} to {_appointment_letter_date(end_d)}"
+    if start_d is not None:
+        return _appointment_letter_date(start_d)
+    if end_d is not None:
+        return _appointment_letter_date(end_d)
+    return None
+
+
+def format_appointment_letter_date(value: datetime | None) -> str | None:
+    """Single formal date for appointment letters."""
+    day = _date_part(_as_naive_utc(value))
+    if day is None:
+        return None
+    return _appointment_letter_date(day)

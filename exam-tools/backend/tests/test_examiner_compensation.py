@@ -75,7 +75,9 @@ def test_compensation_flat_role_allowances_plus_marking_and_travel() -> None:
     assert comp.marking_allowance_ghs == Decimal("110")
     assert comp.travel_and_transport_ghs == Decimal("75")
     assert comp.total_allocated_scripts == 50
-    assert comp.total_payable_ghs == Decimal("305")
+    assert comp.marking_withholding_tax_ghs == Decimal("11.00")
+    assert comp.marking_net_ghs == Decimal("99.00")
+    assert comp.total_payable_ghs == Decimal("294.00")
     assert len(comp.subject_breakdowns) == 2
 
 
@@ -178,7 +180,8 @@ def test_travel_role_factor_only_affects_travel_not_marking() -> None:
     )
     assert comp.marking_allowance_ghs == Decimal("20")
     assert comp.travel_and_transport_ghs == Decimal("80")
-    assert comp.total_payable_ghs == Decimal("100")
+    assert comp.marking_net_ghs == Decimal("18.00")
+    assert comp.total_payable_ghs == Decimal("98.00")
 
 
 def test_travel_resolves_when_examiner_region_stored_as_label_string() -> None:
@@ -223,3 +226,28 @@ def test_examiner_type_column_binds_api_value() -> None:
 
     col_type = examiner_type_column().type
     assert col_type.process_bind_param(ExaminerType.ASSISTANT_CHIEF, None) == "assistant_chief_examiner"
+
+
+def test_withholding_tax_and_payout_buckets() -> None:
+    ex = _examiner(
+        region=Region.VOLTA,
+        subjects=[_subject_link(1, "MATH", "Mathematics")],
+    )
+    role_rates = {
+        (ExaminerType.ASSISTANT, ExaminerAllowanceType.RESPONSIBILITY): Decimal("100"),
+        (ExaminerType.ASSISTANT, ExaminerAllowanceType.VETTING_OF_SCRIPTS): Decimal("50"),
+        (ExaminerType.ASSISTANT, ExaminerAllowanceType.INTERNAL_COMMUTING): Decimal("20"),
+    }
+    marking_rates = {(1, 1): Decimal("10")}
+    allocated = {(ex.id, 1, 1): 5}
+    travel = {Region.VOLTA: Decimal("30")}
+    comp = compensation_for_examiner(ex, role_rates, marking_rates, travel, {}, {}, {}, allocated)
+
+    assert comp.marking_allowance_ghs == Decimal("50")
+    assert comp.marking_withholding_tax_ghs == Decimal("5.00")
+    assert comp.marking_net_ghs == Decimal("45.00")
+    assert comp.vetting_withholding_tax_ghs == Decimal("5.00")
+    assert comp.vetting_net_ghs == Decimal("45.00")
+    assert comp.payout_travel_commuting_ghs == Decimal("50")
+    assert comp.payout_allowances_marking_ghs == Decimal("190")
+    assert comp.total_payable_ghs == Decimal("240")

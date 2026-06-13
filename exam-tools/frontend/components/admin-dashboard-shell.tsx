@@ -2,10 +2,21 @@
 
 import Link from "next/link";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
-import { Suspense, useEffect, useId, useMemo, useState } from "react";
+import { BarChart3, Settings2 } from "lucide-react";
+import { Suspense, useCallback, useEffect, useId, useMemo, useState } from "react";
 
 import { DashboardStickyHeader } from "@/components/dashboard-sticky-header";
 import { ExecutiveBottomTabNav } from "@/components/executive-bottom-tab-nav";
+import {
+  FinanceSidebar,
+  FinanceSidebarHeader,
+} from "@/components/finance-sidebar";
+import {
+  FinanceSidebarProvider,
+  useFinanceSidebarCollapsed,
+} from "@/components/finance-sidebar-context";
+import { PortalSidebar, PortalSidebarHeader } from "@/components/portal-sidebar";
+import { TooltipProvider } from "@/components/ui/tooltip";
 import {
   EXECUTIVE_CENTRES_HREF,
   EXECUTIVE_MONITORING_HREF,
@@ -15,22 +26,10 @@ import {
   monitoringExamScopedHref,
 } from "@/lib/executive-selected-examination";
 import { clearAuth, getMe, type UserMe } from "@/lib/auth";
-import {
-  FinanceSidebar,
-  FinanceSidebarHeader,
-} from "@/components/finance-sidebar";
-import {
-  FinanceSidebarProvider,
-  useFinanceSidebarCollapsed,
-} from "@/components/finance-sidebar-context";
-import { FinanceNavSection } from "@/components/finance-nav-section";
-import { SidebarThemeToggle } from "@/components/sidebar-theme-toggle";
-import { TooltipProvider } from "@/components/ui/tooltip";
+import { adminNavActive, getAdminNavForRole } from "@/lib/admin-nav";
 import { isOfficialAccountsPath } from "@/lib/official-accounts-zone";
 import {
   ATTENDANCE_SHEETS_HREF,
-  BANK_DIRECTORY_HREF,
-  BANK_DIRECTORY_NAV_ITEM,
   CENTRE_SUMMARY_HREF,
   EXAMINER_ACCOUNTS_BY_SUBJECT_HREF,
   EXAMINER_ATTENDANCE_HREF,
@@ -44,54 +43,10 @@ import { cn } from "@/lib/utils";
 const inputFocusRing =
   "focus:border-primary focus:outline-none focus:ring-2 focus:ring-ring/30";
 
-const nav = [
-  { href: "/dashboard/admin", label: "Overview" },
-  { href: "/dashboard/admin/examinations", label: "Examinations" },
-  { href: "/dashboard/admin/schools", label: "Schools" },
-  { href: "/dashboard/admin/programmes", label: "Programmes" },
-  { href: "/dashboard/admin/subjects", label: "Subjects" },
-  { href: "/dashboard/admin/examination-centres", label: "Examination centres" },
-  { href: "/dashboard/admin/inspector-postings", label: "Inspector postings" },
-  { href: "/dashboard/admin/inspectors", label: "Inspectors" },
-  { href: "/dashboard/admin/users", label: "Users" },
-  { href: "/dashboard/admin/depots", label: "Depots" },
-  { href: BANK_DIRECTORY_HREF, label: "Bank directory" },
-  { href: "/dashboard/admin/timetable", label: "Examination timetable" },
-  { href: "/dashboard/admin/monitoring", label: "Exam overview" },
-  { href: "/dashboard/admin/monitoring/inspectors", label: "Inspectors" },
-  { href: "/dashboard/admin/script-control", label: "Worked scripts control" },
-  { href: "/dashboard/admin/examiners", label: "Examiners" },
-  { href: EXAMINER_ATTENDANCE_HREF, label: "Examiners attendance" },
-  { href: "/dashboard/admin/scripts-allocation", label: "Scripts allocation" },
-  { href: "/dashboard/admin/documents", label: "Documents" },
-];
-
-const SCRIPT_CONTROL_HREF = "/dashboard/admin/script-control";
-const SCRIPTS_ALLOCATION_HREF = "/dashboard/admin/scripts-allocation";
-const EXAMINERS_HREF = "/dashboard/admin/examiners";
-const EXAMINERS_ATTENDANCE_HREF = EXAMINER_ATTENDANCE_HREF;
-const MONITORING_HREF = "/dashboard/admin/monitoring";
-const TEST_ADMIN_OFFICER_NAV_HREFS = [
-  MONITORING_HREF,
-  TEST_ADMIN_INSPECTORS_HREF,
-  SCRIPT_CONTROL_HREF,
-  EXAMINERS_HREF,
-  EXAMINERS_ATTENDANCE_HREF,
-  SCRIPTS_ALLOCATION_HREF,
-];
-
-const EXECUTIVE_VIEWER_NAV: NavLinkItem[] = [
-  { type: "link", href: EXECUTIVE_MONITORING_HREF, label: "Home" },
-  { type: "link", href: EXECUTIVE_CENTRES_HREF, label: "Centres" },
-];
-
-type NavLinkItem = { type: "link"; href: string; label: string };
-type NavHeadingItem = { type: "heading"; label: string };
-type NavEntry = NavLinkItem | NavHeadingItem;
-
-function toLinkItem(item: { href: string; label: string }): NavLinkItem {
-  return { type: "link", href: item.href, label: item.label };
-}
+const EXECUTIVE_VIEWER_NAV = [
+  { href: EXECUTIVE_MONITORING_HREF, label: "Home" },
+  { href: EXECUTIVE_CENTRES_HREF, label: "Centres" },
+] as const;
 
 type Props = {
   children: React.ReactNode;
@@ -121,30 +76,25 @@ function AdminDashboardShellInner({ children }: Props) {
       .catch(() => setMe(null));
   }, []);
 
-  const visibleNavEntries = useMemo((): NavEntry[] | null => {
-    if (!me) return null;
-    if (me.role === "TEST_ADMIN_OFFICER") {
-      return nav.filter((item) => TEST_ADMIN_OFFICER_NAV_HREFS.includes(item.href)).map(toLinkItem);
-    }
-    if (me.role === "EXECUTIVE_VIEWER") {
-      return EXECUTIVE_VIEWER_NAV;
-    }
-    if (me.role === "FINANCE_OFFICER") {
-      return null;
-    }
-    if (me.role === "SUPER_ADMIN") {
-      return nav
-        .filter((n) => n.href !== BANK_DIRECTORY_HREF && n.href !== TEST_ADMIN_INSPECTORS_HREF)
-        .map(toLinkItem);
-    }
-    return nav.map(toLinkItem);
-  }, [me]);
-
   const isMonitoringOfficer = me?.role === "TEST_ADMIN_OFFICER";
   const isExecutiveViewer = me?.role === "EXECUTIVE_VIEWER";
   const isTopLevelOfficer = isMonitoringOfficer || isExecutiveViewer;
   const isFinanceOfficer = me?.role === "FINANCE_OFFICER";
   const isSuperAdmin = me?.role === "SUPER_ADMIN";
+  const usesPortalSidebar = isFinanceOfficer || isSuperAdmin || isMonitoringOfficer;
+  const adminNavConfig = useMemo(
+    () => (me && (isSuperAdmin || isMonitoringOfficer) ? getAdminNavForRole(me.role) : null),
+    [me, isSuperAdmin, isMonitoringOfficer],
+  );
+
+  const resolveExamScopedHref = useCallback(
+    (href: string) =>
+      monitoringExamScopedHref(href)
+        ? executiveMonitoringHref(href, executiveExamIdFromUrl)
+        : href,
+    [executiveExamIdFromUrl],
+  );
+
   const onExecutiveCentresPage = pathname === EXECUTIVE_CENTRES_HREF;
   const onTestAdminInspectorsPage = pathname === TEST_ADMIN_INSPECTORS_HREF;
   const onCentreSummaryPage =
@@ -174,16 +124,10 @@ function AdminDashboardShellInner({ children }: Props) {
       : "Exam monitoring"
     : null;
 
-  function navLinkActive(href: string): boolean {
-    if (href === "/dashboard/admin") return pathname === href;
-    if (href === MONITORING_HREF || href === EXECUTIVE_MONITORING_HREF) {
-      return pathname === href;
-    }
+  function executiveNavLinkActive(href: string): boolean {
+    if (href === EXECUTIVE_MONITORING_HREF) return pathname === href;
     if (isExecutiveViewer && href === EXECUTIVE_CENTRES_HREF) {
       return pathname === EXECUTIVE_CENTRES_HREF;
-    }
-    if (isMonitoringOfficer && href === TEST_ADMIN_INSPECTORS_HREF) {
-      return pathname === TEST_ADMIN_INSPECTORS_HREF;
     }
     return pathname === href || pathname.startsWith(`${href}/`);
   }
@@ -197,6 +141,8 @@ function AdminDashboardShellInner({ children }: Props) {
     || pathname.startsWith(`${EXAMINER_PAYOUTS_HREF}/`)
     || pathname === EXAMINER_ACCOUNTS_BY_SUBJECT_HREF
     || pathname.startsWith(`${EXAMINER_ACCOUNTS_BY_SUBJECT_HREF}/`);
+
+  const sidebarCollapsed = usesPortalSidebar && financeSidebarCollapsed;
 
   return (
     <div className="min-h-screen bg-background">
@@ -213,115 +159,96 @@ function AdminDashboardShellInner({ children }: Props) {
         id={sidebarNavId}
         className={cn(
           "fixed inset-y-0 left-0 z-50 border-r border-border bg-card transition-[width,transform] duration-200 ease-out motion-reduce:transition-none lg:translate-x-0",
-          isFinanceOfficer && financeSidebarCollapsed ? "w-64 lg:w-[3.25rem]" : "w-64",
+          sidebarCollapsed ? "w-64 lg:w-[3.25rem]" : "w-64",
           isExecutiveViewer && "hidden lg:block",
           sidebarOpen ? "translate-x-0" : "-translate-x-full",
         )}
       >
         <div className="flex h-full flex-col">
-          {isFinanceOfficer ? (
-            <FinanceSidebarHeader isFinanceOfficer />
+          {usesPortalSidebar ? (
+            isFinanceOfficer ? (
+              <FinanceSidebarHeader isFinanceOfficer />
+            ) : isSuperAdmin ? (
+              <PortalSidebarHeader title="Administration" collapsedIcon={Settings2} />
+            ) : (
+              <PortalSidebarHeader title="Monitoring" collapsedIcon={BarChart3} />
+            )
           ) : (
-            <div
-              className={cn(
-                "border-b border-border p-4",
-              )}
-            >
+            <div className="border-b border-border p-4">
               <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
                 Exam tools
               </p>
               <p className="mt-1 text-sm font-semibold text-card-foreground">
-                {isExecutiveViewer
-                  ? me
-                    ? executiveUserDisplayName(me)
-                    : "Executive overview"
-                  : isTopLevelOfficer
-                    ? "Monitoring"
-                    : "Administration"}
+                {me ? executiveUserDisplayName(me) : "Executive overview"}
               </p>
             </div>
           )}
+
           {isFinanceOfficer ? (
             me ? (
               <FinanceSidebar pathname={pathname} onNavigate={() => setSidebarOpen(false)} />
             ) : (
-              <p className="px-3 text-sm text-muted-foreground">Loading…</p>
+              <p className="px-3 py-3 text-sm text-muted-foreground">Loading…</p>
+            )
+          ) : usesPortalSidebar ? (
+            adminNavConfig && me ? (
+              <PortalSidebar
+                pathname={pathname}
+                onNavigate={() => setSidebarOpen(false)}
+                ariaLabel={isSuperAdmin ? "Administration" : "Monitoring"}
+                overviewItem={adminNavConfig.overviewItem}
+                prependItems={adminNavConfig.prependItems}
+                sections={adminNavConfig.sections}
+                showOverview={adminNavConfig.showOverview}
+                navActive={adminNavActive}
+                resolveHref={isMonitoringOfficer ? resolveExamScopedHref : undefined}
+              />
+            ) : (
+              <p className="px-3 py-3 text-sm text-muted-foreground">Loading…</p>
             )
           ) : (
             <nav
               className="flex min-h-0 flex-1 flex-col gap-1 overflow-y-auto overscroll-contain p-3 pb-6"
               aria-label="Dashboard sections"
             >
-              {visibleNavEntries === null ? (
-                <p className="px-3 text-sm text-muted-foreground">Loading…</p>
-              ) : (
-                visibleNavEntries.map((entry) => {
-                  if (entry.type === "heading") {
-                    return (
-                      <div
-                        key={`heading-${entry.label}`}
-                        className="mt-4 border-t border-border px-3 pt-4"
-                      >
-                        <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
-                          {entry.label}
-                        </p>
-                      </div>
-                    );
-                  }
-                  const active = navLinkActive(entry.href);
-                  const linkHref =
-                    entry.type === "link" &&
-                    (isExecutiveViewer || isMonitoringOfficer) &&
-                    monitoringExamScopedHref(entry.href)
+              {me ? (
+                <TooltipProvider>
+                  {EXECUTIVE_VIEWER_NAV.map((entry) => {
+                    const active = executiveNavLinkActive(entry.href);
+                    const linkHref = monitoringExamScopedHref(entry.href)
                       ? executiveMonitoringHref(entry.href, executiveExamIdFromUrl)
                       : entry.href;
-                  return (
-                    <Link
-                      key={entry.href}
-                      href={linkHref}
-                      onClick={() => setSidebarOpen(false)}
-                      aria-current={active ? "page" : undefined}
-                      className={cn(
-                        "rounded-lg px-3 py-2.5 text-sm font-medium transition-colors",
-                        active
-                          ? "bg-primary text-primary-foreground"
-                          : "text-card-foreground hover:bg-muted",
-                        inputFocusRing,
-                      )}
-                    >
-                      {entry.label}
-                    </Link>
-                  );
-                })
+                    return (
+                      <Link
+                        key={entry.href}
+                        href={linkHref}
+                        onClick={() => setSidebarOpen(false)}
+                        aria-current={active ? "page" : undefined}
+                        className={cn(
+                          "rounded-lg px-3 py-2.5 text-sm font-medium transition-colors",
+                          active
+                            ? "bg-primary text-primary-foreground"
+                            : "text-card-foreground hover:bg-muted",
+                          inputFocusRing,
+                        )}
+                      >
+                        {entry.label}
+                      </Link>
+                    );
+                  })}
+                </TooltipProvider>
+              ) : (
+                <p className="px-3 text-sm text-muted-foreground">Loading…</p>
               )}
-              {isSuperAdmin ? (
-                <div className="mt-4 border-t border-border pt-4">
-                  <p className="mb-2 px-2 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
-                    Finance
-                  </p>
-                  <TooltipProvider>
-                    <FinanceNavSection
-                      pathname={pathname}
-                      onNavigate={() => setSidebarOpen(false)}
-                      prependItems={[BANK_DIRECTORY_NAV_ITEM]}
-                    />
-                  </TooltipProvider>
-                </div>
-              ) : null}
             </nav>
           )}
-          {!isFinanceOfficer ? (
-            <div className="hidden shrink-0 border-t border-border p-3 lg:block">
-              <SidebarThemeToggle />
-            </div>
-          ) : null}
         </div>
       </aside>
 
       <div
         className={cn(
           "flex h-dvh max-h-dvh flex-col overflow-hidden transition-[padding] duration-200 ease-out motion-reduce:transition-none",
-          isFinanceOfficer && financeSidebarCollapsed ? "lg:pl-[3.25rem]" : "lg:pl-64",
+          sidebarCollapsed ? "lg:pl-[3.25rem]" : "lg:pl-64",
         )}
       >
         <div className="shrink-0">
@@ -346,7 +273,7 @@ function AdminDashboardShellInner({ children }: Props) {
           accent={showFinanceNavAccent ? "official-accounts" : undefined}
           onLogout={logout}
           executiveMobileOnly={isExecutiveViewer}
-          showSidebarCollapse={isFinanceOfficer || isSuperAdmin}
+          showSidebarCollapse={usesPortalSidebar}
           sidebar={
             isExecutiveViewer
               ? undefined

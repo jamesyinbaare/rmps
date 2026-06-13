@@ -10,6 +10,8 @@ from app.models import Examiner, ExaminerBankAccount, ExaminerSubject, ExaminerT
 from app.schemas.admin_examiner_allowance import AdminExaminerAllowanceListResponse
 from app.services.exam_official_export import examination_label, safe_filename_part
 from app.services.examiner_allowance_bog_export import (
+    ExaminerBogPayoutMode,
+    bog_export_title,
     examiner_bog_export_filename,
     examiner_bog_workbook_bytes,
 )
@@ -197,6 +199,18 @@ async def admin_export_examiner_allowances(
     )
 
 
+def _payout_mode_from_query(raw: str | None) -> ExaminerBogPayoutMode:
+    if raw is None or not str(raw).strip():
+        return ExaminerBogPayoutMode.ALL
+    try:
+        return ExaminerBogPayoutMode(str(raw).strip())
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Invalid payout_mode (expected one of: {', '.join(m.value for m in ExaminerBogPayoutMode)})",
+        ) from exc
+
+
 @router.get("/bog-export.xlsx")
 async def admin_bog_export_examiner_allowances(
     session: DBSessionDep,
@@ -206,6 +220,7 @@ async def admin_bog_export_examiner_allowances(
     region: str | None = Query(None),
     subject_id: int | None = Query(None),
     search: str | None = Query(None),
+    payout_mode: str = Query("all", description="BoG batch: travel_commuting, allowances_marking, or all"),
 ) -> Response:
     ex = await _load_examination(session, examination_id)
     role_filter = _examiner_type_filter_from_query(role)
@@ -230,8 +245,9 @@ async def admin_bog_export_examiner_allowances(
     marking_rates = await load_marking_rates_map(session, examination_id)
     travel = await load_travel_rates_map(session, examination_id)
     allocated_booklets = await load_allocated_booklets_map(session, examination_id)
+    mode = _payout_mode_from_query(payout_mode)
     exam_part = safe_filename_part(f"exam_{examination_id}_{examination_label(ex)}")
-    title = f"BoG payment — {examination_label(ex)} — examiners"
+    title = bog_export_title(examination_label(ex), mode)
     travel_zones, travel_zone_names = await load_travel_zones_map(session, examination_id)
     travel_factors = await load_travel_role_factors_map(session, examination_id)
     payload = examiner_bog_workbook_bytes(
@@ -245,8 +261,9 @@ async def admin_bog_export_examiner_allowances(
         travel_factors,
         allocated_booklets,
         title=title,
+        mode=mode,
     )
-    filename = examiner_bog_export_filename(exam_part)
+    filename = examiner_bog_export_filename(exam_part, mode)
     return Response(
         content=payload,
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",

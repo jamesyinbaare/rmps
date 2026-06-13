@@ -8,6 +8,7 @@ import {
   FINANCE_OVERVIEW_ITEM,
   financeNavActive,
   type FinanceNavItem,
+  type FinanceNavSection as FinanceNavSectionConfig,
 } from "@/lib/finance-nav";
 import { cn } from "@/lib/utils";
 
@@ -16,6 +17,10 @@ type Props = {
   onNavigate?: () => void;
   prependItems?: FinanceNavItem[];
   showOverview?: boolean;
+  sections?: FinanceNavSectionConfig[];
+  overviewItem?: FinanceNavItem;
+  navActive?: (pathname: string, href: string) => boolean;
+  resolveHref?: (href: string) => string;
 };
 
 export function FinanceNavSection({
@@ -23,6 +28,10 @@ export function FinanceNavSection({
   onNavigate,
   prependItems = [],
   showOverview = false,
+  sections = FINANCE_NAV_SECTIONS,
+  overviewItem = FINANCE_OVERVIEW_ITEM,
+  navActive = financeNavActive,
+  resolveHref,
 }: Props) {
   const collapsed = useFinanceSidebarCollapsed();
   const hasTopItems = showOverview || prependItems.length > 0;
@@ -31,9 +40,10 @@ export function FinanceNavSection({
     <>
       {!collapsed && showOverview ? (
         <FinanceNavLink
-          item={FINANCE_OVERVIEW_ITEM}
-          active={financeNavActive(pathname, FINANCE_OVERVIEW_ITEM.href)}
+          item={overviewItem}
+          active={navActive(pathname, overviewItem.href)}
           onNavigate={onNavigate}
+          resolveHref={resolveHref}
         />
       ) : null}
 
@@ -48,8 +58,9 @@ export function FinanceNavSection({
             <FinanceNavLink
               key={item.href}
               item={item}
-              active={financeNavActive(pathname, item.href)}
+              active={navActive(pathname, item.href)}
               onNavigate={onNavigate}
+              resolveHref={resolveHref}
             />
           ))}
         </div>
@@ -61,7 +72,7 @@ export function FinanceNavSection({
           !collapsed && hasTopItems && "mt-3",
         )}
       >
-        {FINANCE_NAV_SECTIONS.map((section) => (
+        {sections.map((section) => (
           <FinanceNavCollapsibleGroup
             key={section.id}
             heading={section.heading}
@@ -69,6 +80,8 @@ export function FinanceNavSection({
             items={section.items}
             pathname={pathname}
             onNavigate={onNavigate}
+            navActive={navActive}
+            resolveHref={resolveHref}
           />
         ))}
       </div>

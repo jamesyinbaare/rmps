@@ -9,23 +9,16 @@ export function ExaminerRatesFormulaCallout() {
       <div>
         <p className="font-medium text-foreground">How examiner totals are calculated</p>
         <p className="mt-1">
-          Each examiner&apos;s payout is the sum of three parts:
+          Each examiner&apos;s net payout is the sum of role allowances, marking (after 10% tax), vetting (after 10%
+          tax), internal commuting, and T&amp;T. Marking and vetting are taxed at 10%; other lines are paid in full.
         </p>
-        <ul className="mt-2 list-inside list-disc space-y-1 pl-0.5">
-          <li>
-            <strong className="font-medium text-foreground">Role allowances</strong> — five flat amounts for their
-            role, counted once.
-          </li>
-          <li>
-            <strong className="font-medium text-foreground">Marking</strong> — for each subject and paper:{" "}
-            <span className="text-foreground">rate per script × allocated scripts</span>.
-          </li>
-          <li>
-            <strong className="font-medium text-foreground">T &amp; T</strong> — from their home region:{" "}
-            <span className="text-foreground">regional amount × role factor for their T&amp;T zone</span> (factor is 1
-            when left blank).
-          </li>
-        </ul>
+        <p className="mt-2">
+          Finance can view three payout batches on the payouts screen:{" "}
+          <strong className="font-medium text-foreground">T&amp;T &amp; commuting</strong>,{" "}
+          <strong className="font-medium text-foreground">Allowances &amp; marking</strong>, or{" "}
+          <strong className="font-medium text-foreground">All together</strong>. Each batch can also be exported
+          separately for BoG payment.
+        </p>
       </div>
     </div>
   );

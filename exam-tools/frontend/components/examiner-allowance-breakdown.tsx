@@ -6,12 +6,24 @@ import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover
 import { EXAMINER_TYPE_LABELS } from "@/components/examiner-invitations/constants";
 import type { AdminExaminerAllowanceRow, ExaminerTypeApi } from "@/lib/api";
 import { formatGhsAmount } from "@/lib/format-ghs";
+import {
+  payoutAmountForView,
+  type ExaminerPayoutView,
+} from "@/lib/examiner-payout-view";
 import { cn } from "@/lib/utils";
 
-function BreakdownRow({ label, value }: { label: string; value: string }) {
+function BreakdownRow({
+  label,
+  value,
+  highlight = false,
+}: {
+  label: string;
+  value: string;
+  highlight?: boolean;
+}) {
   return (
-    <div className="flex justify-between gap-6">
-      <dt className="text-muted-foreground">{label}</dt>
+    <div className={cn("flex justify-between gap-6", highlight && "font-medium text-foreground")}>
+      <dt className={highlight ? "text-foreground" : "text-muted-foreground"}>{label}</dt>
       <dd className="tabular-nums font-medium text-foreground">{value}</dd>
     </div>
   );
@@ -21,10 +33,19 @@ type Props = {
   row: AdminExaminerAllowanceRow;
   examinerName?: string;
   className?: string;
+  payoutView?: ExaminerPayoutView;
+  displayAmount?: string;
 };
 
-export function ExaminerAllowanceBreakdownCell({ row, examinerName, className }: Props) {
-  const totalLabel = formatGhsAmount(row.total_payable_ghs);
+export function ExaminerAllowanceBreakdownCell({
+  row,
+  examinerName,
+  className,
+  payoutView = "all",
+  displayAmount,
+}: Props) {
+  const cellAmount = displayAmount ?? payoutAmountForView(row, payoutView);
+  const totalLabel = formatGhsAmount(cellAmount);
   const roleLabel = EXAMINER_TYPE_LABELS[row.examiner_type as ExaminerTypeApi] ?? row.examiner_type;
   const ariaLabel = examinerName
     ? `Allowance for ${examinerName}: ${totalLabel}. Open breakdown.`
@@ -62,7 +83,9 @@ export function ExaminerAllowanceBreakdownCell({ row, examinerName, className }:
                 label="Chief Examiner's Report"
                 value={formatGhsAmount(row.chief_examiners_report_ghs)}
               />
-              <BreakdownRow label="Vetting of Scripts" value={formatGhsAmount(row.vetting_of_scripts_ghs)} />
+              <BreakdownRow label="Vetting of Scripts (gross)" value={formatGhsAmount(row.vetting_of_scripts_ghs)} />
+              <BreakdownRow label="Vetting tax (10%)" value={formatGhsAmount(row.vetting_withholding_tax_ghs)} />
+              <BreakdownRow label="Vetting net" value={formatGhsAmount(row.vetting_net_ghs)} />
               <BreakdownRow label="Internal Commuting" value={formatGhsAmount(row.internal_commuting_ghs)} />
             </div>
           </div>
@@ -84,10 +107,18 @@ export function ExaminerAllowanceBreakdownCell({ row, examinerName, className }:
                   label="Rate per script"
                   value={formatGhsAmount(sub.rate_per_script_ghs ?? null)}
                 />
-                <BreakdownRow label="Marking" value={formatGhsAmount(sub.marking_allowance_ghs ?? null)} />
+                <BreakdownRow label="Marking (gross)" value={formatGhsAmount(sub.marking_allowance_ghs ?? null)} />
               </div>
             </div>
           ))}
+          <div className="rounded-lg border border-border/60 bg-muted/20 px-2.5 py-2">
+            <p className="font-medium text-foreground">Marking (total)</p>
+            <div className="mt-2 space-y-1">
+              <BreakdownRow label="Marking (gross)" value={formatGhsAmount(row.marking_allowance_ghs)} />
+              <BreakdownRow label="Marking tax (10%)" value={formatGhsAmount(row.marking_withholding_tax_ghs)} />
+              <BreakdownRow label="Marking net" value={formatGhsAmount(row.marking_net_ghs)} />
+            </div>
+          </div>
           {Number(row.travel_role_factor) !== 1 ? (
             <>
               {row.travel_zone_name ? (
@@ -100,8 +131,25 @@ export function ExaminerAllowanceBreakdownCell({ row, examinerName, className }:
           ) : (
             <BreakdownRow label="T & T" value={formatGhsAmount(row.travel_and_transport_ghs)} />
           )}
-          <div className="border-t border-border pt-2">
-            <BreakdownRow label="Total payable" value={totalLabel} />
+          <div className="rounded-lg border border-border/60 bg-muted/20 px-2.5 py-2">
+            <p className="font-medium text-foreground">Payout batches</p>
+            <div className="mt-2 space-y-1">
+              <BreakdownRow
+                label="T&T & commuting"
+                value={formatGhsAmount(row.payout_travel_commuting_ghs)}
+                highlight={payoutView === "travel_commuting"}
+              />
+              <BreakdownRow
+                label="Allowances & marking"
+                value={formatGhsAmount(row.payout_allowances_marking_ghs)}
+                highlight={payoutView === "allowances_marking"}
+              />
+              <BreakdownRow
+                label="All together (net)"
+                value={formatGhsAmount(row.total_payable_ghs)}
+                highlight={payoutView === "all"}
+              />
+            </div>
           </div>
         </dl>
       </PopoverContent>

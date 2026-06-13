@@ -50,7 +50,25 @@ export type FinanceNavIcon =
   | "statistics"
   | "calendar"
   | "attendance"
-  | "directory";
+  | "directory"
+  | "examinations"
+  | "schools"
+  | "programmes"
+  | "subjects"
+  | "users"
+  | "depots"
+  | "inspectors"
+  | "documents"
+  | "timetable"
+  | "monitoring"
+  | "scripts"
+  | "allocation"
+  | "examiners"
+  | "allocations"
+  | "markedScripts"
+  | "lunch"
+  | "inspectorPostings"
+  | "examinationCentres";
 
 export type FinanceNavItem = {
   href: string;
@@ -64,7 +82,14 @@ export type FinanceNavGroup = {
   items: FinanceNavItem[];
 };
 
-export type FinanceNavSectionIcon = "examinations" | "coordination" | "setup";
+export type FinanceNavSectionIcon =
+  | "examinations"
+  | "coordination"
+  | "setup"
+  | "administration"
+  | "monitoring"
+  | "marking"
+  | "markingScripts";
 
 export type FinanceNavSection = {
   id: string;

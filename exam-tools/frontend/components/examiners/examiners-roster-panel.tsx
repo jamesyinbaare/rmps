@@ -14,6 +14,7 @@ import { RosterCommandBar } from "@/components/examiners/roster-command-bar";
 import { RosterBulkUploadModal, RosterExaminerFormModal } from "@/components/examiners/roster-modals";
 import { RosterTable } from "@/components/examiners/roster-table";
 import type { RosterTableRow } from "@/components/examiners/types";
+import { useSyncPageSubjectScope } from "@/components/examiners/use-sync-page-subject-scope";
 import { clampPageSize, humanizeRegion, matchesRosterSearch } from "@/components/examiners/utils";
 import { EXAMINER_TYPE_LABELS, EXAMINER_TYPE_OPTIONS } from "@/components/examiner-invitations/constants";
 import { ExaminerAllocationModal } from "@/components/examiner-invitations/examiner-allocation-modal";
@@ -60,6 +61,9 @@ type Props = {
   canManageRoster?: boolean;
   canEditRoster?: boolean;
   onRosterCountChange?: (count: number) => void;
+  usePageSubjectScope?: boolean;
+  pageSubjectTypeFilter?: ScriptControlSubjectTypeFilter;
+  pageSubjectId?: string;
 };
 
 type AllocationTarget = {
@@ -81,6 +85,9 @@ export function ExaminersRosterPanel({
   canManageRoster = true,
   canEditRoster = true,
   onRosterCountChange,
+  usePageSubjectScope = false,
+  pageSubjectTypeFilter = "all",
+  pageSubjectId = "",
 }: Props) {
   const [examiners, setExaminers] = useState<ExaminerRow[]>([]);
   const [groups, setGroups] = useState<ExaminerGroupRow[]>([]);
@@ -104,6 +111,14 @@ export function ExaminersRosterPanel({
   });
   const [customPageSizeInput, setCustomPageSizeInput] = useState(String(DEFAULT_PAGE_SIZE));
   const [customPageSizeEditing, setCustomPageSizeEditing] = useState(false);
+
+  useSyncPageSubjectScope({
+    enabled: usePageSubjectScope,
+    pageSubjectTypeFilter,
+    pageSubjectId,
+    setSubjectTypeFilter,
+    setSubjectFilter,
+  });
 
   const [regionGroupsOpen, setRegionGroupsOpen] = useState(false);
   const [quotaAssessmentOpen, setQuotaAssessmentOpen] = useState(false);
@@ -250,10 +265,11 @@ export function ExaminersRosterPanel({
 
   const activeFilterCount = useMemo(() => {
     let n = 0;
-    if (subjectTypeFilter !== "all") n += 1;
-    n += roleFilter.length + regionFilter.length + subjectFilter.length;
+    if (!usePageSubjectScope && subjectTypeFilter !== "all") n += 1;
+    n += roleFilter.length + regionFilter.length;
+    if (!usePageSubjectScope) n += subjectFilter.length;
     return n;
-  }, [subjectTypeFilter, roleFilter, regionFilter, subjectFilter]);
+  }, [roleFilter.length, regionFilter.length, subjectFilter.length, subjectTypeFilter, usePageSubjectScope]);
 
   const selectedCount = Object.keys(rowSelection).length;
   const hasActiveFilters =
@@ -275,7 +291,7 @@ export function ExaminersRosterPanel({
         onRemove: () => setSearchQuery(""),
       });
     }
-    if (subjectTypeFilter !== "all") {
+    if (!usePageSubjectScope && subjectTypeFilter !== "all") {
       const label =
         SCRIPT_CONTROL_SUBJECT_TYPE_OPTIONS.find((o) => o.value === subjectTypeFilter)?.label ??
         subjectTypeFilter;
@@ -303,23 +319,27 @@ export function ExaminersRosterPanel({
         onRemove: () => setRegionFilter((prev) => prev.filter((v) => v !== reg)),
       });
     }
-    for (const id of subjectFilter) {
-      const opt = subjectOptions.find((o) => o.value === id);
-      chips.push({
-        id: `subject-${id}`,
-        label: `Subject: ${opt?.label ?? id}`,
-        onRemove: () => setSubjectFilter((prev) => prev.filter((v) => v !== id)),
-      });
+    if (!usePageSubjectScope) {
+      for (const id of subjectFilter) {
+        const opt = subjectOptions.find((o) => o.value === id);
+        chips.push({
+          id: `subject-${id}`,
+          label: `Subject: ${opt?.label ?? id}`,
+          onRemove: () => setSubjectFilter((prev) => prev.filter((v) => v !== id)),
+        });
+      }
     }
     return chips;
-  }, [debouncedSearch, subjectTypeFilter, roleFilter, regionFilter, subjectFilter, regionOptions, subjectOptions]);
+  }, [debouncedSearch, subjectTypeFilter, roleFilter, regionFilter, subjectFilter, regionOptions, subjectOptions, usePageSubjectScope]);
 
   function clearFilters() {
     setSearchQuery("");
-    setSubjectTypeFilter("all");
+    if (!usePageSubjectScope) {
+      setSubjectTypeFilter("all");
+      setSubjectFilter([]);
+    }
     setRoleFilter([]);
     setRegionFilter([]);
-    setSubjectFilter([]);
   }
 
   function handleSubjectTypeFilterChange(next: ScriptControlSubjectTypeFilter) {
@@ -565,6 +585,7 @@ export function ExaminersRosterPanel({
           busy={busy || loading}
           disabled={examId == null}
           embedded={embedded}
+          hideSubjectScopeFilters={usePageSubjectScope}
         />
 
         <div

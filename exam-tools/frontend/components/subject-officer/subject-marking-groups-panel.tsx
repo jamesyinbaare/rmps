@@ -74,6 +74,8 @@ type Props = {
   canManageDefaultCohort?: boolean;
   /** When false, cohorts are view-only (subject officers). */
   canManageCohorts?: boolean;
+  /** When set, subject scope is controlled by the page command bar. */
+  lockedSubjectId?: number;
 };
 
 export function SubjectMarkingGroupsPanel({
@@ -83,6 +85,7 @@ export function SubjectMarkingGroupsPanel({
   pageScroll = false,
   canManageDefaultCohort = false,
   canManageCohorts = true,
+  lockedSubjectId,
 }: Props) {
   const [subjectId, setSubjectId] = useState<number | null>(null);
   const [groups, setGroups] = useState<SubjectMarkingGroupRow[]>([]);
@@ -201,12 +204,18 @@ export function SubjectMarkingGroupsPanel({
   }, []);
 
   useEffect(() => {
+    if (lockedSubjectId != null) {
+      setSubjectId(lockedSubjectId);
+    }
+  }, [lockedSubjectId]);
+
+  useEffect(() => {
     if (examId == null) {
       setGroups([]);
       setExaminers([]);
       return;
     }
-    void loadExaminers(examId);
+    loadExaminers(examId);
   }, [examId, loadExaminers]);
 
   useEffect(() => {
@@ -216,7 +225,7 @@ export function SubjectMarkingGroupsPanel({
       setUnassignedModalOpen(false);
       return;
     }
-    void loadGroups(examId, subjectId);
+    loadGroups(examId, subjectId);
   }, [examId, loadGroups, subjectId]);
 
   useEffect(() => {
@@ -425,6 +434,7 @@ export function SubjectMarkingGroupsPanel({
 
   return (
     <div className={panelClass}>
+      {lockedSubjectId == null ? (
       <div className="shrink-0 border-b border-border/80 px-4 py-4 sm:px-5">
         <SubjectScopePicker
           subjects={subjects}
@@ -439,6 +449,7 @@ export function SubjectMarkingGroupsPanel({
           disabled={loading || busy}
         />
       </div>
+      ) : null}
 
       {subjectId == null ? (
         <div className="flex flex-1 items-center justify-center p-6 text-center">
