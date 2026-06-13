@@ -80,6 +80,10 @@ export const officialAccountsTableLayoutClass = "flex min-h-0 flex-1 flex-col ov
 
 export const officialAccountsTableScrollClass = "min-h-0 flex-1 overflow-auto overscroll-contain";
 
+/** Table on pages that scroll with the main column (no nested vertical scroll). */
+export const officialAccountsTablePageScrollClass = "scrollbar-hide overflow-x-auto";
+export const officialAccountsTablePageLayoutClass = "flex flex-col";
+
 export const officialAccountsPanelToolbarClass =
   "flex flex-col gap-4 border-b border-border bg-muted/20 px-4 py-4 sm:flex-row sm:flex-wrap sm:items-end sm:px-5 sm:py-5";
 

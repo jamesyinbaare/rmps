@@ -20,6 +20,7 @@ import { TooltipProvider } from "@/components/ui/tooltip";
 import {
   EXECUTIVE_CENTRES_HREF,
   EXECUTIVE_MONITORING_HREF,
+  isMonitoringPath,
   TEST_ADMIN_INSPECTORS_HREF,
   executiveMonitoringHref,
   executiveUserDisplayName,
@@ -27,7 +28,7 @@ import {
 } from "@/lib/executive-selected-examination";
 import { clearAuth, getMe, type UserMe } from "@/lib/auth";
 import { adminNavActive, getAdminNavForRole } from "@/lib/admin-nav";
-import { isOfficialAccountsPath } from "@/lib/official-accounts-zone";
+import { isOfficialAccountsPath, OFFICIAL_ACCOUNTS_ADMIN_HREF } from "@/lib/official-accounts-zone";
 import {
   ATTENDANCE_SHEETS_HREF,
   CENTRE_SUMMARY_HREF,
@@ -101,6 +102,8 @@ function AdminDashboardShellInner({ children }: Props) {
     pathname === CENTRE_SUMMARY_HREF || pathname.startsWith(`${CENTRE_SUMMARY_HREF}/`);
   const onFinanceCentreSummaryPage =
     pathname === FINANCE_CENTRE_SUMMARY_HREF || pathname.startsWith(`${FINANCE_CENTRE_SUMMARY_HREF}/`);
+  const onExamOfficialsPage =
+    pathname === OFFICIAL_ACCOUNTS_ADMIN_HREF || pathname.startsWith(`${OFFICIAL_ACCOUNTS_ADMIN_HREF}/`);
   const onOfficialStatisticsPage =
     pathname === OFFICIAL_STATISTICS_HREF || pathname.startsWith(`${OFFICIAL_STATISTICS_HREF}/`);
   const financeTitle = financePageStickyTitle(pathname);
@@ -142,6 +145,9 @@ function AdminDashboardShellInner({ children }: Props) {
     || pathname.startsWith(`${EXAMINER_PAYOUTS_HREF}/`)
     || pathname === EXAMINER_ACCOUNTS_BY_SUBJECT_HREF
     || pathname.startsWith(`${EXAMINER_ACCOUNTS_BY_SUBJECT_HREF}/`);
+  const onMonitoringPage = isMonitoringPath(pathname);
+  const onPageScrollShell =
+    onExaminersPage || onScriptsAllocationPage || onMonitoringPage || onExamOfficialsPage || onCentreSummaryPage;
 
   const sidebarCollapsed = usesPortalSidebar && financeSidebarCollapsed;
 
@@ -290,7 +296,7 @@ function AdminDashboardShellInner({ children }: Props) {
         <main
           className={cn(
             "mx-auto w-full min-h-0 min-w-0 flex-1 overscroll-y-contain px-4 py-6 sm:px-6",
-            onExaminersPage || onScriptsAllocationPage
+            onPageScrollShell
               ? "scrollbar-hide overflow-x-hidden overflow-y-auto"
               : onMarkingFinancePage
                 ? "overflow-x-hidden overflow-hidden"
@@ -299,6 +305,8 @@ function AdminDashboardShellInner({ children }: Props) {
               || onOfficialStatisticsPage
               || onCentreSummaryPage
               || onFinanceCentreSummaryPage
+              || onExamOfficialsPage
+              || onMonitoringPage
               || isScriptControlEdit
               || pathname.startsWith("/dashboard/admin/script-control")
               || onExaminersPage

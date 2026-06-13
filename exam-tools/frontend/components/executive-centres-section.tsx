@@ -450,7 +450,7 @@ export function ExecutiveCentresSection({
             ))}
           </ul>
 
-          <div className="hidden overflow-hidden rounded-xl border border-primary/20 shadow-sm md:block">
+          <div className="scrollbar-hide hidden overflow-x-auto rounded-xl border border-primary/20 shadow-sm md:block">
             <table className="w-full min-w-[36rem] border-collapse text-sm">
               <thead>
                 <tr className="border-b border-primary/15 bg-linear-to-r from-primary/10 via-accent/5 to-success/10 text-left">
