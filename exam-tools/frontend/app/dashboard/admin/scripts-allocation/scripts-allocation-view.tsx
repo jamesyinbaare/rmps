@@ -17,6 +17,7 @@ import {
   ensureAllocation,
   getAllocation,
   getAllocationRun,
+  getMarkingScriptSource,
   importAllocationExaminers,
   listAllocationExaminerImportCandidates,
   listAllocationExaminers,
@@ -38,6 +39,7 @@ import {
   type ExaminerGroupRow,
   type ExaminerTypeApi,
   type Examination,
+  type MarkingScriptSourceMode,
   type ExaminerSubjectRunSummary,
   type Subject,
   type UnassignedEnvelopeItem,
@@ -45,7 +47,7 @@ import {
 import { formInputClass, formLabelClass } from "@/lib/form-classes";
 
 import { AllocationSetupDialog } from "./allocation-setup-dialog";
-import { scriptsAllocationHref } from "./scripts-allocation-href";
+import { manualAllocationHref, scriptsAllocationHref } from "./scripts-allocation-href";
 
 const UUID_RE =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -194,6 +196,7 @@ export function ScriptsAllocationView({
   const [allocationFormPdfBusy, setAllocationFormPdfBusy] = useState(false);
   const [solverSettingsSavedMessage, setSolverSettingsSavedMessage] = useState<string | null>(null);
   const [solveMode, setSolveMode] = useState<"monolithic" | "decomposed">("monolithic");
+  const [subjectMarkingSourceMode, setSubjectMarkingSourceMode] = useState<MarkingScriptSourceMode | null>(null);
 
   const draftSid = Number(draftSubjectId);
   const draftPap = Number(draftPaper);
@@ -540,6 +543,28 @@ export function ScriptsAllocationView({
     }
     void refreshExaminerGroups(examId);
   }, [examId, refreshExaminerGroups]);
+
+  const activeSubjectIdForSource =
+    selectedAllocation?.subject_id ?? (tripleOk && Number.isFinite(draftSid) ? draftSid : null);
+
+  useEffect(() => {
+    if (examId == null || activeSubjectIdForSource == null) {
+      setSubjectMarkingSourceMode(null);
+      return;
+    }
+    let cancelled = false;
+    void (async () => {
+      try {
+        const data = await getMarkingScriptSource(examId, activeSubjectIdForSource);
+        if (!cancelled) setSubjectMarkingSourceMode(data.source_mode);
+      } catch {
+        if (!cancelled) setSubjectMarkingSourceMode(null);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [examId, activeSubjectIdForSource]);
 
   useEffect(() => {
     if (!setupModalOpen || !sessionReady) return;
@@ -1170,6 +1195,25 @@ export function ScriptsAllocationView({
           Open a campaign for one exam, subject, and paper. Configure the pool and solver in one place, then review results
           below.
         </p>
+        <div className="mt-6 grid max-w-3xl gap-3 sm:grid-cols-2">
+          <div className="rounded-xl border border-primary/30 bg-primary/5 p-4">
+            <p className="text-sm font-semibold text-foreground">Automatic allocation</p>
+            <p className="mt-1 text-xs text-muted-foreground">MILP solver, envelope assignment, allocation forms.</p>
+            <Badge variant="secondary" className="mt-3">
+              Current page
+            </Badge>
+          </div>
+          <Link
+            href={manualAllocationHref({ exam: examId, subjectId: activeSubjectIdForSource, paper: draftPaper ? Number(draftPaper) : null })}
+            className="rounded-xl border border-border bg-card p-4 transition-colors hover:border-primary/40 hover:bg-muted/20"
+          >
+            <p className="text-sm font-semibold text-foreground">Manual allocation</p>
+            <p className="mt-1 text-xs text-muted-foreground">
+              Enter or upload script counts per paper for payout (does not change MILP runs).
+            </p>
+            <span className="mt-3 inline-block text-xs font-medium text-primary">Open manual page →</span>
+          </Link>
+        </div>
       </header>
 
       {loadError ? (
@@ -1195,11 +1239,26 @@ export function ScriptsAllocationView({
               Two steps: pick the examination, then subject and paper. Starting locks in that campaign for this page.
             </p>
           </div>
-          {sessionReady ? (
-            <Badge variant="secondary" className="w-fit shrink-0">
-              Session active
-            </Badge>
-          ) : null}
+          <div className="flex flex-wrap items-center gap-2">
+            {sessionReady ? (
+              <Badge variant="secondary" className="w-fit shrink-0">
+                Session active
+              </Badge>
+            ) : null}
+            {subjectMarkingSourceMode === "manual" && activeSubjectIdForSource != null ? (
+              <Link
+                href={manualAllocationHref({
+                  exam: examId,
+                  subjectId: activeSubjectIdForSource,
+                  paper: draftPaper ? Number(draftPaper) : null,
+                })}
+              >
+                <Badge variant="outline" className="w-fit shrink-0 border-amber-500/50 text-amber-800 dark:text-amber-200">
+                  Manual payout source — edit
+                </Badge>
+              </Link>
+            ) : null}
+          </div>
         </div>
 
         <ol className="relative mt-6 grid gap-4 md:gap-5">

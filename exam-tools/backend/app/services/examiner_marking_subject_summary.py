@@ -6,10 +6,6 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models import (
-    Allocation,
-    AllocationAssignment,
-    AllocationRun,
-    AllocationRunStatus,
     ExaminationCandidate,
     ExaminationCandidateSubject,
     Examiner,
@@ -17,6 +13,7 @@ from app.models import (
     Subject,
 )
 from app.schemas.admin_examiner_marking_summary import AdminExaminerMarkingSubjectSummaryRow
+from app.services.examiner_allocated_booklets import load_effective_allocated_booklets_map
 
 
 async def _registered_candidates_by_subject(
@@ -43,31 +40,10 @@ async def _allocated_scripts_by_subject(
     session: AsyncSession,
     examination_id: int,
 ) -> dict[int, int]:
-    alloc_stmt = select(Allocation).where(Allocation.examination_id == examination_id)
-    allocations = list((await session.execute(alloc_stmt)).scalars().all())
-
+    effective_map = await load_effective_allocated_booklets_map(session, examination_id)
     out: dict[int, int] = {}
-    for allocation in allocations:
-        subject_id = int(allocation.subject_id)
-        run_stmt = (
-            select(AllocationRun)
-            .where(
-                AllocationRun.allocation_id == allocation.id,
-                AllocationRun.status == AllocationRunStatus.OPTIMAL,
-            )
-            .order_by(AllocationRun.created_at.desc())
-            .limit(1)
-        )
-        run = (await session.execute(run_stmt)).scalar_one_or_none()
-        if run is None:
-            continue
-
-        assign_stmt = (
-            select(func.coalesce(func.sum(AllocationAssignment.booklet_count), 0))
-            .where(AllocationAssignment.allocation_run_id == run.id)
-        )
-        total = int((await session.execute(assign_stmt)).scalar_one())
-        out[subject_id] = out.get(subject_id, 0) + total
+    for (_examiner_id, subject_id, _paper), count in effective_map.items():
+        out[subject_id] = out.get(subject_id, 0) + count
     return out
 
 

@@ -136,6 +136,11 @@ class AllocationRunStatus(enum.Enum):
     ERROR = "error"
 
 
+class MarkingScriptSourceMode(enum.Enum):
+    ALLOCATION = "allocation"
+    MANUAL = "manual"
+
+
 class UserRole(enum.IntEnum):
     """User roles for exam-tools. Lower values have higher privileges."""
 
@@ -919,6 +924,52 @@ class ScriptsAllocationQuota(Base):
 
     __table_args__ = (
         CheckConstraint("quota_booklets >= 0", name="ck_scripts_allocation_quota_nonneg"),
+    )
+
+
+class ExaminationSubjectMarkingScriptSource(Base):
+    """Per examination subject: payout script counts from MILP allocation or manual entry."""
+
+    __tablename__ = "examination_subject_marking_script_sources"
+
+    examination_id = Column(Integer, ForeignKey("examinations.id", ondelete="CASCADE"), primary_key=True)
+    subject_id = Column(Integer, ForeignKey("subjects.id", ondelete="CASCADE"), primary_key=True)
+    source_mode = Column(
+        Enum(
+            MarkingScriptSourceMode,
+            values_callable=lambda x: [i.value for i in x],
+            create_constraint=False,
+        ),
+        nullable=False,
+        default=MarkingScriptSourceMode.ALLOCATION,
+    )
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+    updated_by_user_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+
+    examination = relationship("Examination", backref="marking_script_sources")
+    subject = relationship("Subject", backref="marking_script_sources")
+    updated_by = relationship("User", foreign_keys=[updated_by_user_id])
+
+
+class ExaminationExaminerManualMarkedScript(Base):
+    """Manual marked script counts per examiner, subject, and paper (parallel to MILP assignments)."""
+
+    __tablename__ = "examination_examiner_manual_marked_scripts"
+
+    examination_id = Column(Integer, ForeignKey("examinations.id", ondelete="CASCADE"), primary_key=True)
+    subject_id = Column(Integer, ForeignKey("subjects.id", ondelete="CASCADE"), primary_key=True)
+    examiner_id = Column(UUID(as_uuid=True), ForeignKey("examiners.id", ondelete="CASCADE"), primary_key=True)
+    paper_number = Column(Integer, primary_key=True)
+    script_count = Column(Integer, nullable=False, default=0)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+
+    examination = relationship("Examination", backref="manual_marked_scripts")
+    subject = relationship("Subject", backref="manual_marked_scripts")
+    examiner = relationship("Examiner", backref="manual_marked_scripts")
+
+    __table_args__ = (
+        CheckConstraint("paper_number >= 1", name="ck_manual_marked_scripts_paper_number"),
+        CheckConstraint("script_count >= 0", name="ck_manual_marked_scripts_count_nonneg"),
     )
 
 

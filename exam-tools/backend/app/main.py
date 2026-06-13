@@ -18,6 +18,7 @@ from app.routers import (
     admin_exam_officials,
     admin_examination_designation_rates,
     admin_examination_examiner_allowance_rates,
+    admin_examination_marking_script_source,
     admin_examiner_allowances,
     admin_examiner_attendance,
     admin_examiner_marking_summary,
@@ -245,6 +246,7 @@ app.include_router(admin_examiner_appointment_letter_settings.router)
 app.include_router(admin_examiner_portal_settings.router)
 app.include_router(examiner_quota_assessment.router)
 app.include_router(subject_officer_examiner_attendance.router)
+app.include_router(admin_examination_marking_script_source.router)
 app.include_router(admin_examiner_allowances.router)
 app.include_router(admin_examiner_marking_summary.router)
 app.include_router(admin_inspector_postings.router)

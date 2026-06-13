@@ -134,6 +134,7 @@ function AdminDashboardShellInner({ children }: Props) {
 
   const isScriptControlEdit = pathname.startsWith("/dashboard/admin/script-control/edit");
   const onExaminersPage = pathname.startsWith("/dashboard/admin/examiners");
+  const onScriptsAllocationPage = pathname.startsWith("/dashboard/admin/scripts-allocation");
   const onMarkingFinancePage =
     pathname === EXAMINER_ATTENDANCE_HREF
     || pathname.startsWith(`${EXAMINER_ATTENDANCE_HREF}/`)
@@ -289,7 +290,7 @@ function AdminDashboardShellInner({ children }: Props) {
         <main
           className={cn(
             "mx-auto w-full min-h-0 min-w-0 flex-1 overscroll-y-contain px-4 py-6 sm:px-6",
-            onExaminersPage
+            onExaminersPage || onScriptsAllocationPage
               ? "scrollbar-hide overflow-x-hidden overflow-y-auto"
               : onMarkingFinancePage
                 ? "overflow-x-hidden overflow-hidden"
@@ -301,6 +302,7 @@ function AdminDashboardShellInner({ children }: Props) {
               || isScriptControlEdit
               || pathname.startsWith("/dashboard/admin/script-control")
               || onExaminersPage
+              || onScriptsAllocationPage
               || onMarkingFinancePage
               ? "max-w-[1600px]"
               : "max-w-6xl",

@@ -5,7 +5,10 @@ from uuid import uuid4
 
 import pytest
 
-from app.services.examiner_allocated_booklets import load_allocated_booklets_map
+from app.services.examiner_allocated_booklets import (
+    _is_manual_marking_source_mode,
+    load_allocated_booklets_map,
+)
 
 
 @pytest.mark.asyncio
@@ -105,3 +108,103 @@ async def test_load_allocated_booklets_skips_campaign_without_optimal_run() -> N
 
     result = await load_allocated_booklets_map(session, 99)
     assert result == {}
+
+
+@pytest.mark.asyncio
+async def test_effective_map_manual_subject_overrides_allocation() -> None:
+    from app.models import MarkingScriptSourceMode
+    from app.services.examiner_allocated_booklets import load_effective_allocated_booklets_map
+
+    exam_id = 1
+    examiner_a = uuid4()
+    subject_math = 10
+
+    alloc = MagicMock()
+    alloc.id = uuid4()
+    alloc.subject_id = subject_math
+    alloc.paper_number = 2
+
+    run = MagicMock()
+    run.id = uuid4()
+    assign = MagicMock()
+    assign.examiner_id = examiner_a
+    assign.booklet_count = 40
+
+    source_row = MagicMock()
+    source_row.subject_id = subject_math
+    source_row.source_mode = MarkingScriptSourceMode.MANUAL
+
+    manual_row = MagicMock()
+    manual_row.examiner_id = examiner_a
+    manual_row.subject_id = subject_math
+    manual_row.paper_number = 2
+    manual_row.script_count = 15
+
+    session = AsyncMock()
+
+    alloc_result = MagicMock()
+    alloc_result.scalars.return_value.all.return_value = [alloc]
+    run_result = MagicMock()
+    run_result.scalar_one_or_none.return_value = run
+    assign_result = MagicMock()
+    assign_result.scalars.return_value.all.return_value = [assign]
+    source_result = MagicMock()
+    source_result.scalars.return_value.all.return_value = [source_row]
+    manual_result = MagicMock()
+    manual_result.scalars.return_value.all.return_value = [manual_row]
+
+    session.execute = AsyncMock(
+        side_effect=[alloc_result, run_result, assign_result, source_result, manual_result]
+    )
+
+    result = await load_effective_allocated_booklets_map(session, exam_id)
+    assert result[(examiner_a, subject_math, 2)] == 15
+
+
+@pytest.mark.asyncio
+async def test_effective_map_revert_to_allocation_when_not_manual() -> None:
+    from app.services.examiner_allocated_booklets import load_effective_allocated_booklets_map
+
+    exam_id = 1
+    examiner_a = uuid4()
+    subject_math = 10
+
+    alloc = MagicMock()
+    alloc.id = uuid4()
+    alloc.subject_id = subject_math
+    alloc.paper_number = 1
+
+    run = MagicMock()
+    run.id = uuid4()
+    assign = MagicMock()
+    assign.examiner_id = examiner_a
+    assign.booklet_count = 22
+
+    session = AsyncMock()
+    alloc_result = MagicMock()
+    alloc_result.scalars.return_value.all.return_value = [alloc]
+    run_result = MagicMock()
+    run_result.scalar_one_or_none.return_value = run
+    assign_result = MagicMock()
+    assign_result.scalars.return_value.all.return_value = [assign]
+    source_result = MagicMock()
+    source_result.scalars.return_value.all.return_value = []
+    manual_result = MagicMock()
+    manual_result.scalars.return_value.all.return_value = []
+
+    session.execute = AsyncMock(
+        side_effect=[alloc_result, run_result, assign_result, source_result, manual_result]
+    )
+
+    result = await load_effective_allocated_booklets_map(session, exam_id)
+    assert result[(examiner_a, subject_math, 1)] == 22
+
+
+def test_is_manual_marking_source_mode_accepts_enum_and_string() -> None:
+    from app.models import MarkingScriptSourceMode
+
+    assert _is_manual_marking_source_mode(MarkingScriptSourceMode.MANUAL) is True
+    assert _is_manual_marking_source_mode("manual") is True
+    assert _is_manual_marking_source_mode("MANUAL") is True
+    assert _is_manual_marking_source_mode(MarkingScriptSourceMode.ALLOCATION) is False
+    assert _is_manual_marking_source_mode("allocation") is False
