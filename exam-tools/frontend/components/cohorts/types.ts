@@ -23,6 +23,11 @@ export type MembershipExaminer = {
   examiner_type: ExaminerTypeApi;
 };
 
+export type CohortRosterMember = MembershipExaminer & {
+  phone_number: string | null;
+  reference_code: string | null;
+};
+
 export type MembershipTab = "regions" | "roles" | "people";
 
 export type RuleOption = {

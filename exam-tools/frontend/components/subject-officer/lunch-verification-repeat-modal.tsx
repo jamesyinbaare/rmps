@@ -69,7 +69,7 @@ export function LunchVerificationRepeatModal({ result, onDismiss }: Props) {
             </span>
             <div className="min-w-0 flex-1">
               <h2 id={titleId} className="text-lg font-semibold text-card-foreground">
-                Already verified
+                Already verified today
               </h2>
             </div>
           </div>

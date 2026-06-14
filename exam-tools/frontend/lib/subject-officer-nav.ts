@@ -1,6 +1,11 @@
 import type { FinanceNavItem, FinanceNavSection } from "@/lib/finance-nav";
+import {
+  SUBJECT_OFFICER_BASE,
+  SUBJECT_OFFICER_LUNCH_COUPONS_PRINT_HREF,
+  SUBJECT_OFFICER_LUNCH_VERIFICATION_HREF,
+} from "@/lib/subject-officer-lunch-nav";
 
-export const SUBJECT_OFFICER_BASE = "/dashboard/subject-officer";
+export { SUBJECT_OFFICER_BASE } from "@/lib/subject-officer-lunch-nav";
 
 export const SUBJECT_OFFICER_OVERVIEW_ITEM: FinanceNavItem = {
   href: SUBJECT_OFFICER_BASE,
@@ -23,10 +28,16 @@ const COORDINATION_ITEMS: FinanceNavItem[] = [
     icon: "attendance",
   },
   {
-    href: `${SUBJECT_OFFICER_BASE}/lunch-verification`,
-    label: "Lunch Coupons",
+    href: SUBJECT_OFFICER_LUNCH_VERIFICATION_HREF,
+    label: "Coupon verification",
     description: "Verify lunch coupons",
     icon: "lunch",
+  },
+  {
+    href: SUBJECT_OFFICER_LUNCH_COUPONS_PRINT_HREF,
+    label: "Lunch coupons",
+    description: "Print coupon PDFs",
+    icon: "documents",
   },
 ];
 

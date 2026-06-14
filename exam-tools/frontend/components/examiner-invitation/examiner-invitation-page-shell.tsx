@@ -2,6 +2,7 @@
 
 import Image from "next/image";
 
+import { SidebarThemeToggle } from "@/components/sidebar-theme-toggle";
 import { cn } from "@/lib/utils";
 
 export function ExaminerInvitationPageShell({ children }: { children: React.ReactNode }) {
@@ -11,7 +12,7 @@ export function ExaminerInvitationPageShell({ children }: { children: React.Reac
         aria-hidden
         className="pointer-events-none absolute inset-x-0 top-0 -z-10 h-72 bg-[radial-gradient(circle_at_top,color-mix(in_oklab,var(--primary)_14%,transparent)_0%,transparent_65%)] sm:h-96"
       />
-      <header className="border-b border-border/60 bg-background/80 px-4 py-4 backdrop-blur-md sm:px-6">
+      <header className="relative border-b border-border/60 bg-background/80 px-4 py-4 backdrop-blur-md sm:px-6">
         <div className="mx-auto flex max-w-lg items-center justify-center gap-3">
           <span className="relative h-11 w-11 shrink-0 overflow-hidden rounded-xl border border-border/80 bg-card shadow-sm">
             <Image
@@ -27,6 +28,9 @@ export function ExaminerInvitationPageShell({ children }: { children: React.Reac
             <p className="text-xs font-semibold uppercase tracking-[0.2em] text-primary">CTVET</p>
             <p className="truncate text-sm text-muted-foreground">Examiner invitation</p>
           </div>
+        </div>
+        <div className="absolute right-4 top-1/2 -translate-y-1/2 sm:right-6">
+          <SidebarThemeToggle variant="icon" />
         </div>
       </header>
       <main className="mx-auto flex w-full max-w-lg flex-1 flex-col px-4 pb-[max(1.5rem,env(safe-area-inset-bottom))] pt-5 sm:px-6 sm:pt-8">

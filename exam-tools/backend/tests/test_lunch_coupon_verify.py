@@ -209,7 +209,7 @@ async def test_verify_and_record_rejects_already_verified() -> None:
     assert result["already_verified"] is True
     assert result["recorded"] is False
     assert result["verified_by_name"] == "Officer One"
-    assert "already verified" in result["message"].lower()
+    assert "already verified today" in result["message"].lower()
 
 
 @pytest.mark.asyncio
@@ -439,3 +439,88 @@ async def test_verify_and_record_lunch_coupon_scan_delegates_to_exam_scoped_flow
     mock_record.assert_awaited_once()
     assert mock_record.await_args.kwargs["examination_id"] == 2
     assert mock_record.await_args.kwargs["reference_code"] == "MATH301-NAE1"
+
+
+def test_paginate_coupons_ten_per_page() -> None:
+    from app.services.lunch_coupon_pdf import COUPONS_PER_PAGE, _paginate_coupons
+
+    coupons = [{"name": f"E{i}"} for i in range(23)]
+    pages = _paginate_coupons(coupons)
+    assert len(pages) == 3
+    assert len(pages[0]) == COUPONS_PER_PAGE
+    assert len(pages[1]) == COUPONS_PER_PAGE
+    assert sum(1 for c in pages[2] if c is not None) == 3
+    assert sum(1 for c in pages[2] if c is None) == 7
+
+
+@pytest.mark.asyncio
+async def test_verify_and_record_uses_verification_date_for_duplicate_check() -> None:
+    from datetime import date
+
+    session = AsyncMock()
+    examiner_id = uuid4()
+    user_id = uuid4()
+    check_date = date(2026, 6, 27)
+
+    with (
+        patch(
+            "app.services.lunch_coupon_verify.verify_lunch_coupon",
+            new=AsyncMock(
+                return_value={
+                    "valid": True,
+                    "reference_code": "NAE1",
+                    "examiner_id": examiner_id,
+                }
+            ),
+        ),
+        patch(
+            "app.services.lunch_coupon_verify._load_existing_verification",
+            new=AsyncMock(return_value=None),
+        ) as mock_load,
+        patch("app.services.lunch_coupon_verify.datetime") as mock_dt,
+    ):
+        mock_dt.utcnow.return_value = __import__("datetime").datetime(2026, 6, 27, 12, 0)
+        result = await verify_and_record_lunch_coupon(
+            session,
+            examination_id=1,
+            officer_subject_ids={10},
+            reference_code="NAE1",
+            verified_by_id=user_id,
+            verification_date=check_date,
+        )
+
+    mock_load.assert_awaited_once()
+    assert mock_load.await_args.kwargs["verification_date"] == check_date
+    assert result["recorded"] is True
+    assert result["verification_date"] == check_date
+
+
+@pytest.mark.asyncio
+async def test_subject_officer_print_pdf_checks_subject_access() -> None:
+    from app.routers.subject_officer_lunch_verify import get_subject_officer_lunch_coupons_print_pdf
+
+    session = AsyncMock()
+    user = MagicMock()
+    user.id = uuid4()
+    user.role = UserRole.SUBJECT_OFFICER
+
+    with (
+        patch(
+            "app.routers.subject_officer_lunch_verify.assert_subject_officer_access",
+            new=AsyncMock(),
+        ) as mock_access,
+        patch(
+            "app.routers.subject_officer_lunch_verify.generate_lunch_coupons_pdf",
+            new=AsyncMock(return_value=(b"%PDF", "lunch.pdf")),
+        ) as mock_pdf,
+    ):
+        response = await get_subject_officer_lunch_coupons_print_pdf(
+            examination_id=1,
+            session=session,
+            user=user,
+            subject_id=42,
+        )
+
+    mock_access.assert_awaited_once_with(session, user, 1, 42)
+    mock_pdf.assert_awaited_once_with(session, examination_id=1, subject_id=42)
+    assert response.media_type == "application/pdf"

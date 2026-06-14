@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
-from datetime import datetime
+from datetime import date, datetime
 from uuid import UUID
 
 from sqlalchemy import select
@@ -196,7 +196,7 @@ async def verify_lunch_coupon(
     session: AsyncSession,
     *,
     examination_id: int,
-    officer_subject_ids: set[int],
+    officer_subject_ids: set[int] | None,
     reference_code: str,
 ) -> dict:
     code = reference_code.strip().upper()
@@ -215,9 +215,12 @@ async def verify_lunch_coupon(
         }
 
     examiner_subject_ids = {int(es.subject_id) for es in examiner.subjects}
-    overlap = examiner_subject_ids & officer_subject_ids
-    if not overlap:
-        return {"valid": False, "message": "Examiner is not on your subject roster."}
+    if officer_subject_ids is not None:
+        overlap = examiner_subject_ids & officer_subject_ids
+        if not overlap:
+            return {"valid": False, "message": "Examiner is not on your subject roster."}
+    else:
+        overlap = examiner_subject_ids
 
     exam = await session.get(Examination, examination_id)
     exam_name = examination_label(exam) if exam is not None else None
@@ -236,6 +239,7 @@ async def verify_and_record_lunch_coupon_scan(
     officer_subject_ids_by_exam: dict[int, set[int]] | None,
     reference_code: str,
     verified_by_id: UUID,
+    verification_date: date | None = None,
 ) -> dict:
     _, parsed_code = parse_examiner_qr_scan(reference_code)
     if not parsed_code:
@@ -265,6 +269,7 @@ async def verify_and_record_lunch_coupon_scan(
         officer_subject_ids=officer_subject_ids,
         reference_code=parsed_code,
         verified_by_id=verified_by_id,
+        verification_date=verification_date,
     )
 
 
@@ -273,12 +278,14 @@ async def _load_existing_verification(
     *,
     examination_id: int,
     examiner_id: UUID,
+    verification_date: date,
 ) -> LunchCouponVerification | None:
     stmt = (
         select(LunchCouponVerification)
         .where(
             LunchCouponVerification.examination_id == examination_id,
             LunchCouponVerification.examiner_id == examiner_id,
+            LunchCouponVerification.verification_date == verification_date,
         )
         .options(selectinload(LunchCouponVerification.verified_by))
     )
@@ -288,18 +295,20 @@ async def _load_existing_verification(
 def _already_verified_message(*, verified_at: datetime, verified_by_name: str | None) -> str:
     stamp = verified_at.strftime("%d %b %Y, %H:%M UTC")
     if verified_by_name:
-        return f"This examiner was already verified on {stamp} by {verified_by_name}."
-    return f"This examiner was already verified on {stamp}."
+        return f"This examiner was already verified today ({stamp}) by {verified_by_name}."
+    return f"This examiner was already verified today ({stamp})."
 
 
 async def verify_and_record_lunch_coupon(
     session: AsyncSession,
     *,
     examination_id: int,
-    officer_subject_ids: set[int],
+    officer_subject_ids: set[int] | None,
     reference_code: str,
     verified_by_id: UUID,
+    verification_date: date | None = None,
 ) -> dict:
+    verify_date = verification_date or date.today()
     result = await verify_lunch_coupon(
         session,
         examination_id=examination_id,
@@ -314,6 +323,7 @@ async def verify_and_record_lunch_coupon(
         session,
         examination_id=examination_id,
         examiner_id=examiner_id,
+        verification_date=verify_date,
     )
 
     if existing is not None:
@@ -325,6 +335,7 @@ async def verify_and_record_lunch_coupon(
             "already_verified": True,
             "verified_at": existing.verified_at,
             "verified_by_name": verified_by_name,
+            "verification_date": existing.verification_date,
             "recorded": False,
             "message": _already_verified_message(
                 verified_at=existing.verified_at,
@@ -338,6 +349,7 @@ async def verify_and_record_lunch_coupon(
             examination_id=examination_id,
             examiner_id=examiner_id,
             reference_code=result["reference_code"],
+            verification_date=verify_date,
             verified_by_id=verified_by_id,
             verified_at=now,
         )
@@ -348,6 +360,7 @@ async def verify_and_record_lunch_coupon(
         **result,
         "already_verified": False,
         "verified_at": now,
+        "verification_date": verify_date,
         "recorded": True,
     }
 
@@ -356,15 +369,16 @@ async def list_lunch_coupon_verifications(
     session: AsyncSession,
     *,
     examination_id: int,
-    officer_subject_ids: set[int],
+    officer_subject_ids: set[int] | None = None,
+    verification_date: date | None = None,
 ) -> list[dict]:
+    list_date = verification_date if verification_date is not None else date.today()
     stmt = (
         select(LunchCouponVerification)
         .join(Examiner, LunchCouponVerification.examiner_id == Examiner.id)
-        .join(ExaminerSubject, ExaminerSubject.examiner_id == Examiner.id)
         .where(
             LunchCouponVerification.examination_id == examination_id,
-            ExaminerSubject.subject_id.in_(officer_subject_ids),
+            LunchCouponVerification.verification_date == list_date,
         )
         .options(
             selectinload(LunchCouponVerification.examiner).selectinload(Examiner.subjects).selectinload(
@@ -372,9 +386,13 @@ async def list_lunch_coupon_verifications(
             ),
             selectinload(LunchCouponVerification.verified_by),
         )
-        .distinct()
         .order_by(LunchCouponVerification.verified_at.desc())
     )
+    if officer_subject_ids is not None:
+        stmt = stmt.join(ExaminerSubject, ExaminerSubject.examiner_id == Examiner.id).where(
+            ExaminerSubject.subject_id.in_(officer_subject_ids),
+        )
+    stmt = stmt.distinct()
     rows = (await session.execute(stmt)).scalars().all()
 
     items: list[dict] = []
@@ -382,7 +400,13 @@ async def list_lunch_coupon_verifications(
         examiner = row.examiner
         if examiner is None:
             continue
-        overlap = {int(es.subject_id) for es in examiner.subjects} & officer_subject_ids
+        examiner_subject_ids = {int(es.subject_id) for es in examiner.subjects}
+        if officer_subject_ids is not None:
+            overlap = examiner_subject_ids & officer_subject_ids
+            if not overlap:
+                continue
+        else:
+            overlap = examiner_subject_ids
         verified_by = row.verified_by
         items.append(
             {
@@ -393,6 +417,7 @@ async def list_lunch_coupon_verifications(
                 "region": examiner.region.value,
                 "subject_codes": _subject_codes_for_overlap(examiner, overlap),
                 "verified_at": row.verified_at,
+                "verification_date": row.verification_date,
                 "verified_by_name": verified_by.full_name if verified_by else None,
             }
         )
@@ -403,12 +428,17 @@ async def list_lunch_coupon_verifications_all(
     session: AsyncSession,
     *,
     examination_ids: Sequence[int],
-    officer_subject_ids_by_exam: dict[int, set[int]],
+    officer_subject_ids_by_exam: dict[int, set[int]] | None = None,
+    verification_date: date | None = None,
 ) -> list[dict]:
     items: list[dict] = []
     for examination_id in examination_ids:
-        officer_subject_ids = officer_subject_ids_by_exam.get(int(examination_id), set())
-        if not officer_subject_ids:
+        officer_subject_ids = (
+            officer_subject_ids_by_exam.get(int(examination_id), set())
+            if officer_subject_ids_by_exam is not None
+            else None
+        )
+        if officer_subject_ids_by_exam is not None and not officer_subject_ids:
             continue
         exam = await session.get(Examination, examination_id)
         exam_name = examination_label(exam) if exam is not None else f"Examination {examination_id}"
@@ -416,6 +446,7 @@ async def list_lunch_coupon_verifications_all(
             session,
             examination_id=int(examination_id),
             officer_subject_ids=officer_subject_ids,
+            verification_date=verification_date,
         )
         for row in rows:
             items.append({**row, "examination_id": int(examination_id), "examination_name": exam_name})

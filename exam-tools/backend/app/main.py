@@ -21,10 +21,16 @@ from app.routers import (
     admin_examination_marking_script_source,
     admin_examiner_allowances,
     admin_examiner_attendance,
+    admin_lunch_coupon,
     admin_examiner_marking_summary,
     admin_examiner_appointment_letter_references,
     admin_examiner_appointment_letter_settings,
     admin_examiner_portal_settings,
+    admin_data_entry_clerk_payouts,
+    admin_data_entry_clerks,
+    admin_script_checker_payouts,
+    admin_script_checkers,
+    admin_workforce_rates,
     admin_examiner_quota_region_groups,
     admin_examiner_region_groups,
     admin_examiner_region_quotas,
@@ -50,7 +56,9 @@ from app.routers import (
     inspectors,
     marked_script_returns,
     programmes,
+    public_data_entry_clerks,
     public_examiner_invitations,
+    public_script_checkers,
     question_paper_control,
     schools,
     script_allocation,
@@ -58,6 +66,8 @@ from app.routers import (
     subject_marking_groups,
     subject_officer_examiner_attendance,
     subject_officer_lunch_verify,
+    workforce_data_entry_clerk_assignments,
+    workforce_script_checker_assignments,
     subject_officers,
     subjects,
     test_admin_officers,
@@ -241,6 +251,8 @@ app.include_router(admin_examiner_quota_region_groups.router)
 app.include_router(admin_examiner_region_quotas.router)
 app.include_router(admin_examiner_attendance.router)
 app.include_router(admin_examiner_attendance.scan_router)
+app.include_router(admin_lunch_coupon.router)
+app.include_router(admin_lunch_coupon.scan_router)
 app.include_router(admin_examiner_appointment_letter_references.router)
 app.include_router(admin_examiner_appointment_letter_settings.router)
 app.include_router(admin_examiner_portal_settings.router)
@@ -248,6 +260,15 @@ app.include_router(examiner_quota_assessment.router)
 app.include_router(subject_officer_examiner_attendance.router)
 app.include_router(admin_examination_marking_script_source.router)
 app.include_router(admin_examiner_allowances.router)
+app.include_router(admin_script_checkers.router)
+app.include_router(admin_data_entry_clerks.router)
+app.include_router(admin_workforce_rates.router)
+app.include_router(admin_script_checker_payouts.router)
+app.include_router(admin_data_entry_clerk_payouts.router)
+app.include_router(workforce_script_checker_assignments.router)
+app.include_router(workforce_data_entry_clerk_assignments.router)
+app.include_router(public_script_checkers.router)
+app.include_router(public_data_entry_clerks.router)
 app.include_router(admin_examiner_marking_summary.router)
 app.include_router(admin_inspector_postings.router)
 app.include_router(admin_inspector_submission_settings.router)

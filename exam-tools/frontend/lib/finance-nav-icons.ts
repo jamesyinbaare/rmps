@@ -5,12 +5,14 @@ import {
   Building2,
   CalendarDays,
   ClipboardList,
+  ClipboardCheck,
   Coins,
   FileText,
   GraduationCap,
   Landmark,
   LayoutDashboard,
   MapPin,
+  Keyboard,
   PenLine,
   ScrollText,
   Settings2,
@@ -60,6 +62,9 @@ export const FINANCE_NAV_SECTION_ICONS: Record<FinanceNavSectionIcon, LucideIcon
   monitoring: BarChart3,
   marking: PenLine,
   markingScripts: ClipboardList,
+  workforce: ClipboardCheck,
+  scriptChecking: ClipboardCheck,
+  dataEntry: Keyboard,
 };
 
 export function financeNavItemIcon(icon: FinanceNavIcon): LucideIcon {

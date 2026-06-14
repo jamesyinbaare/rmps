@@ -35,6 +35,12 @@ type DataTableProps<TData> = {
   onRowClick?: (row: TData) => void;
   /** Keep column headers visible while scrolling the table body. */
   stickyHeader?: boolean;
+  /** Wrapper around the table element. */
+  className?: string;
+  /** Applied to each header row. */
+  headerRowClassName?: string;
+  /** Default classes for every header cell (column meta may extend). */
+  headerCellClassName?: string;
 };
 
 function metaClasses(
@@ -63,22 +69,26 @@ export function DataTable<TData>({
   striped = false,
   onRowClick,
   stickyHeader = false,
+  className,
+  headerRowClassName,
+  headerCellClassName,
 }: DataTableProps<TData>) {
   const colCount = table.getAllColumns().length;
   const hasFooter = showFooter && table.getAllColumns().some((c) => c.columnDef.footer != null);
 
   return (
-    <div className="rounded-md border border-border">
+    <div className={cn("rounded-md border border-border", className)}>
       <Table>
         <TableHeader className={cn(stickyHeader && "sticky top-0 z-[1] bg-card shadow-[0_1px_0_0_hsl(var(--border))]")}>
           {table.getHeaderGroups().map((headerGroup) => (
-            <TableRow key={headerGroup.id}>
+            <TableRow key={headerGroup.id} className={cn("border-b border-border hover:bg-transparent", headerRowClassName)}>
               {headerGroup.headers.map((header) => (
                 <TableHead
                   key={header.id}
                   className={cn(
-                    "align-top leading-tight whitespace-normal",
-                    stickyHeader && "bg-card",
+                    "h-auto align-middle whitespace-nowrap",
+                    stickyHeader && "bg-inherit",
+                    headerCellClassName,
                     metaClasses(header.column.columnDef.meta, "headerClassName"),
                   )}
                 >
@@ -102,7 +112,7 @@ export function DataTable<TData>({
                       )}
                     </button>
                   ) : (
-                    flexRender(header.column.columnDef.header, header.getContext())
+                    <span className="text-inherit">{flexRender(header.column.columnDef.header, header.getContext())}</span>
                   )}
                 </TableHead>
               ))}

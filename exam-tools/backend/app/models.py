@@ -234,6 +234,18 @@ class SmsDelivery(Base):
         nullable=True,
         index=True,
     )
+    script_checker_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("script_checkers.id", ondelete="CASCADE"),
+        nullable=True,
+        index=True,
+    )
+    data_entry_clerk_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("data_entry_clerks.id", ondelete="CASCADE"),
+        nullable=True,
+        index=True,
+    )
     phone_number = Column(String(50), nullable=False)
     msisdn = Column(String(20), nullable=False)
     message_type = Column(String(32), nullable=False)
@@ -260,13 +272,16 @@ class SmsDelivery(Base):
     user = relationship("User", foreign_keys=[user_id])
     examiner_invitation = relationship("ExaminerInvitation", back_populates="sms_deliveries")
     examiner = relationship("Examiner", back_populates="sms_deliveries")
+    script_checker = relationship("ScriptChecker", back_populates="sms_deliveries")
+    data_entry_clerk = relationship("DataEntryClerk", back_populates="sms_deliveries")
     triggered_by = relationship("User", foreign_keys=[triggered_by_user_id])
     retried_from = relationship("SmsDelivery", remote_side=[id], foreign_keys=[retried_from_id])
 
     __table_args__ = (
         Index("ix_sms_deliveries_status_created_at", "status", "created_at"),
         CheckConstraint(
-            "user_id IS NOT NULL OR examiner_invitation_id IS NOT NULL OR examiner_id IS NOT NULL",
+            "user_id IS NOT NULL OR examiner_invitation_id IS NOT NULL OR examiner_id IS NOT NULL "
+            "OR script_checker_id IS NOT NULL OR data_entry_clerk_id IS NOT NULL",
             name="ck_sms_deliveries_recipient",
         ),
     )
@@ -973,6 +988,344 @@ class ExaminationExaminerManualMarkedScript(Base):
     )
 
 
+class WorkforceAssignmentBatchStatus(enum.Enum):
+    ACTIVE = "active"
+    COMPLETED = "completed"
+    CANCELLED = "cancelled"
+
+
+class WorkforceAvailabilityStatus(enum.Enum):
+    PENDING = "pending"
+    CONFIRMED = "confirmed"
+    DECLINED = "declined"
+
+
+class ScriptChecker(Base):
+    """Script checking workforce roster for an examination (token portal, no login)."""
+
+    __tablename__ = "script_checkers"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    examination_id = Column(Integer, ForeignKey("examinations.id", ondelete="CASCADE"), nullable=False, index=True)
+    name = Column(String(255), nullable=False)
+    phone_number = Column(String(50), nullable=True)
+    region = Column(Enum(Region, create_constraint=False), nullable=True)
+    reference_code = Column(String(64), nullable=True)
+    portal_token = Column(String(128), nullable=False, unique=True, index=True)
+    portal_invite_sms_sent_at = Column(DateTime, nullable=True)
+    availability_status = Column(
+        Enum(
+            WorkforceAvailabilityStatus,
+            values_callable=lambda x: [i.value for i in x],
+            native_enum=False,
+            length=16,
+        ),
+        nullable=False,
+        default=WorkforceAvailabilityStatus.PENDING,
+        server_default="pending",
+        index=True,
+    )
+    availability_responded_at = Column(DateTime, nullable=True)
+    availability_deadline = Column(DateTime, nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+
+    examination = relationship("Examination", backref="script_checkers")
+    bank_account = relationship(
+        "ScriptCheckerBankAccount",
+        back_populates="checker",
+        cascade="all, delete-orphan",
+        uselist=False,
+    )
+    assignment_batches = relationship(
+        "ScriptCheckerAssignmentBatch",
+        back_populates="checker",
+        cascade="all, delete-orphan",
+    )
+    sms_deliveries = relationship("SmsDelivery", back_populates="script_checker")
+
+    __table_args__ = (
+        UniqueConstraint(
+            "examination_id",
+            "reference_code",
+            name="uq_script_checkers_examination_reference_code",
+        ),
+    )
+
+
+class ScriptCheckerBankAccount(Base):
+    __tablename__ = "script_checker_bank_accounts"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    checker_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("script_checkers.id", ondelete="CASCADE"),
+        nullable=False,
+        unique=True,
+        index=True,
+    )
+    bank_branch_id = Column(UUID(as_uuid=True), ForeignKey("bank_branches.id", ondelete="RESTRICT"), nullable=False, index=True)
+    account_number = Column(String(13), nullable=False)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+
+    checker = relationship("ScriptChecker", back_populates="bank_account")
+    bank_branch = relationship("BankBranch", back_populates="script_checker_bank_accounts")
+
+
+class ScriptCheckerAssignmentBatch(Base):
+    __tablename__ = "script_checker_assignment_batches"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    examination_id = Column(Integer, ForeignKey("examinations.id", ondelete="CASCADE"), nullable=False, index=True)
+    subject_id = Column(Integer, ForeignKey("subjects.id", ondelete="RESTRICT"), nullable=False, index=True)
+    paper_number = Column(Integer, nullable=False)
+    checker_id = Column(UUID(as_uuid=True), ForeignKey("script_checkers.id", ondelete="CASCADE"), nullable=False, index=True)
+    script_count = Column(Integer, nullable=False)
+    status = Column(
+        Enum(
+            WorkforceAssignmentBatchStatus,
+            values_callable=lambda x: [i.value for i in x],
+            native_enum=False,
+            length=16,
+        ),
+        nullable=False,
+        default=WorkforceAssignmentBatchStatus.ACTIVE,
+        server_default="active",
+        index=True,
+    )
+    batch_sequence = Column(Integer, nullable=False)
+    assigned_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    assigned_by_user_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    completed_at = Column(DateTime, nullable=True)
+    completed_by_user_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+
+    checker = relationship("ScriptChecker", back_populates="assignment_batches")
+    examination = relationship("Examination", backref="script_checker_assignment_batches")
+    subject = relationship("Subject", backref="script_checker_assignment_batches")
+    assigned_by = relationship("User", foreign_keys=[assigned_by_user_id])
+    completed_by = relationship("User", foreign_keys=[completed_by_user_id])
+
+    __table_args__ = (
+        CheckConstraint("paper_number >= 1", name="ck_script_checker_batches_paper"),
+        CheckConstraint("script_count >= 0", name="ck_script_checker_batches_count"),
+        CheckConstraint("batch_sequence >= 1", name="ck_script_checker_batches_sequence"),
+        Index(
+            "uq_script_checker_one_active_batch",
+            "examination_id",
+            "subject_id",
+            "paper_number",
+            "checker_id",
+            unique=True,
+            postgresql_where=text("status = 'active'"),
+        ),
+    )
+
+
+class DataEntryClerk(Base):
+    """Data entry clerk roster for an examination (token portal, no login)."""
+
+    __tablename__ = "data_entry_clerks"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    examination_id = Column(Integer, ForeignKey("examinations.id", ondelete="CASCADE"), nullable=False, index=True)
+    name = Column(String(255), nullable=False)
+    phone_number = Column(String(50), nullable=True)
+    region = Column(Enum(Region, create_constraint=False), nullable=True)
+    reference_code = Column(String(64), nullable=True)
+    portal_token = Column(String(128), nullable=False, unique=True, index=True)
+    portal_invite_sms_sent_at = Column(DateTime, nullable=True)
+    availability_status = Column(
+        Enum(
+            WorkforceAvailabilityStatus,
+            values_callable=lambda x: [i.value for i in x],
+            native_enum=False,
+            length=16,
+        ),
+        nullable=False,
+        default=WorkforceAvailabilityStatus.PENDING,
+        server_default="pending",
+        index=True,
+    )
+    availability_responded_at = Column(DateTime, nullable=True)
+    availability_deadline = Column(DateTime, nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+
+    examination = relationship("Examination", backref="data_entry_clerks")
+    bank_account = relationship(
+        "DataEntryClerkBankAccount",
+        back_populates="clerk",
+        cascade="all, delete-orphan",
+        uselist=False,
+    )
+    assignment_batches = relationship(
+        "DataEntryClerkAssignmentBatch",
+        back_populates="clerk",
+        cascade="all, delete-orphan",
+    )
+    sms_deliveries = relationship("SmsDelivery", back_populates="data_entry_clerk")
+
+    __table_args__ = (
+        UniqueConstraint(
+            "examination_id",
+            "reference_code",
+            name="uq_data_entry_clerks_examination_reference_code",
+        ),
+    )
+
+
+class DataEntryClerkBankAccount(Base):
+    __tablename__ = "data_entry_clerk_bank_accounts"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    clerk_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("data_entry_clerks.id", ondelete="CASCADE"),
+        nullable=False,
+        unique=True,
+        index=True,
+    )
+    bank_branch_id = Column(UUID(as_uuid=True), ForeignKey("bank_branches.id", ondelete="RESTRICT"), nullable=False, index=True)
+    account_number = Column(String(13), nullable=False)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+
+    clerk = relationship("DataEntryClerk", back_populates="bank_account")
+    bank_branch = relationship("BankBranch", back_populates="data_entry_clerk_bank_accounts")
+
+
+class DataEntryClerkAssignmentBatch(Base):
+    __tablename__ = "data_entry_clerk_assignment_batches"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    examination_id = Column(Integer, ForeignKey("examinations.id", ondelete="CASCADE"), nullable=False, index=True)
+    subject_id = Column(Integer, ForeignKey("subjects.id", ondelete="RESTRICT"), nullable=False, index=True)
+    paper_number = Column(Integer, nullable=False)
+    clerk_id = Column(UUID(as_uuid=True), ForeignKey("data_entry_clerks.id", ondelete="CASCADE"), nullable=False, index=True)
+    script_count = Column(Integer, nullable=False)
+    status = Column(
+        Enum(
+            WorkforceAssignmentBatchStatus,
+            values_callable=lambda x: [i.value for i in x],
+            native_enum=False,
+            length=16,
+        ),
+        nullable=False,
+        default=WorkforceAssignmentBatchStatus.ACTIVE,
+        server_default="active",
+        index=True,
+    )
+    batch_sequence = Column(Integer, nullable=False)
+    assigned_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    assigned_by_user_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    completed_at = Column(DateTime, nullable=True)
+    completed_by_user_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+
+    clerk = relationship("DataEntryClerk", back_populates="assignment_batches")
+    examination = relationship("Examination", backref="data_entry_clerk_assignment_batches")
+    subject = relationship("Subject", backref="data_entry_clerk_assignment_batches")
+    assigned_by = relationship("User", foreign_keys=[assigned_by_user_id])
+    completed_by = relationship("User", foreign_keys=[completed_by_user_id])
+
+    __table_args__ = (
+        CheckConstraint("paper_number >= 1", name="ck_data_entry_clerk_batches_paper"),
+        CheckConstraint("script_count >= 0", name="ck_data_entry_clerk_batches_count"),
+        CheckConstraint("batch_sequence >= 1", name="ck_data_entry_clerk_batches_sequence"),
+        Index(
+            "uq_data_entry_clerk_one_active_batch",
+            "examination_id",
+            "subject_id",
+            "paper_number",
+            "clerk_id",
+            unique=True,
+            postgresql_where=text("status = 'active'"),
+        ),
+    )
+
+
+class ExaminationScriptCheckerRate(Base):
+    __tablename__ = "examination_script_checker_rates"
+
+    examination_id = Column(Integer, ForeignKey("examinations.id", ondelete="CASCADE"), primary_key=True)
+    rate_per_script_ghs = Column(Numeric(12, 2), nullable=False, default=0)
+    commuting_allowance_ghs = Column(
+        Numeric(12, 2),
+        nullable=False,
+        default=0,
+        server_default="0",
+        doc="Commuting allowance per day (GHS); multiplied by work days in payout totals.",
+    )
+    lunch_allowance_ghs = Column(
+        Numeric(12, 2),
+        nullable=False,
+        default=0,
+        server_default="0",
+        doc="Lunch allowance per day (GHS); multiplied by work days in payout totals.",
+    )
+    withholding_tax_percent = Column(
+        Numeric(5, 2),
+        nullable=False,
+        default=10,
+        server_default="10",
+        doc="Withholding tax percentage applied to gross script earnings.",
+    )
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+
+    examination = relationship("Examination", backref="script_checker_rates")
+
+    __table_args__ = (
+        CheckConstraint("rate_per_script_ghs >= 0", name="ck_script_checker_rates_nonneg"),
+        CheckConstraint("commuting_allowance_ghs >= 0", name="ck_script_checker_rates_commuting_nonneg"),
+        CheckConstraint("lunch_allowance_ghs >= 0", name="ck_script_checker_rates_lunch_nonneg"),
+        CheckConstraint(
+            "withholding_tax_percent >= 0 AND withholding_tax_percent <= 100",
+            name="ck_script_checker_rates_tax_percent_range",
+        ),
+    )
+
+
+class ExaminationDataEntryClerkRate(Base):
+    __tablename__ = "examination_data_entry_clerk_rates"
+
+    examination_id = Column(Integer, ForeignKey("examinations.id", ondelete="CASCADE"), primary_key=True)
+    rate_per_script_ghs = Column(Numeric(12, 2), nullable=False, default=0)
+    commuting_allowance_ghs = Column(
+        Numeric(12, 2),
+        nullable=False,
+        default=0,
+        server_default="0",
+        doc="Commuting allowance per day (GHS); multiplied by work days in payout totals.",
+    )
+    lunch_allowance_ghs = Column(
+        Numeric(12, 2),
+        nullable=False,
+        default=0,
+        server_default="0",
+        doc="Lunch allowance per day (GHS); multiplied by work days in payout totals.",
+    )
+    withholding_tax_percent = Column(
+        Numeric(5, 2),
+        nullable=False,
+        default=10,
+        server_default="10",
+        doc="Withholding tax percentage applied to gross entry earnings.",
+    )
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+
+    examination = relationship("Examination", backref="data_entry_clerk_rates")
+
+    __table_args__ = (
+        CheckConstraint("rate_per_script_ghs >= 0", name="ck_data_entry_clerk_rates_nonneg"),
+        CheckConstraint("commuting_allowance_ghs >= 0", name="ck_data_entry_clerk_rates_commuting_nonneg"),
+        CheckConstraint("lunch_allowance_ghs >= 0", name="ck_data_entry_clerk_rates_lunch_nonneg"),
+        CheckConstraint(
+            "withholding_tax_percent >= 0 AND withholding_tax_percent <= 100",
+            name="ck_data_entry_clerk_rates_tax_percent_range",
+        ),
+    )
+
+
 class ExaminerGroup(Base):
     """Per examination: cohort regions (examiner home regions) drive membership and envelope bucketing by school.region."""
 
@@ -1564,6 +1917,7 @@ class LunchCouponVerification(Base):
         index=True,
     )
     reference_code = Column(String(16), nullable=False)
+    verification_date = Column(Date, nullable=False)
     verified_by_id = Column(
         UUID(as_uuid=True),
         ForeignKey("users.id", ondelete="SET NULL"),
@@ -1582,7 +1936,8 @@ class LunchCouponVerification(Base):
         UniqueConstraint(
             "examination_id",
             "examiner_id",
-            name="uq_lunch_coupon_verifications_exam_examiner",
+            "verification_date",
+            name="uq_lunch_coupon_verifications_exam_examiner_date",
         ),
     )
 
@@ -1680,6 +2035,8 @@ class BankBranch(Base):
 
     exam_officials = relationship("ExamCentreOfficial", back_populates="bank_branch")
     examiner_bank_accounts = relationship("ExaminerBankAccount", back_populates="bank_branch")
+    script_checker_bank_accounts = relationship("ScriptCheckerBankAccount", back_populates="bank_branch")
+    data_entry_clerk_bank_accounts = relationship("DataEntryClerkBankAccount", back_populates="bank_branch")
 
 
 class ExamCentreOfficial(Base):

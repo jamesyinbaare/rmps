@@ -5,7 +5,7 @@ import { useMemo, useState } from "react";
 import { Search } from "lucide-react";
 
 import { CohortModalShell } from "@/components/cohorts/cohort-modal-shell";
-import type { CohortListItem, MembershipExaminer } from "@/components/cohorts/types";
+import type { CohortListItem, CohortRosterMember, MembershipExaminer } from "@/components/cohorts/types";
 import { EXAMINER_TYPE_LABELS } from "@/components/examiner-invitations/constants";
 import { Button } from "@/components/ui/button";
 import {
@@ -25,7 +25,7 @@ type Props = {
   open: boolean;
   onClose: () => void;
   entityLabel?: string;
-  examiners: MembershipExaminer[];
+  examiners: MembershipExaminer[] | CohortRosterMember[];
   unassignedIds: Set<string>;
   cohorts: CohortListItem[];
   busy?: boolean;
@@ -36,6 +36,10 @@ type Props = {
 
 function regionLabel(value: string): string {
   return REGION_OPTIONS.find((r) => r.value === value)?.label ?? value;
+}
+
+function hasPhone(ex: MembershipExaminer | CohortRosterMember): ex is CohortRosterMember {
+  return "phone_number" in ex;
 }
 
 export function CohortUnassignedModal({
@@ -68,6 +72,7 @@ export function CohortUnassignedModal({
         ex.name,
         regionLabel(ex.region),
         EXAMINER_TYPE_LABELS[ex.examiner_type as ExaminerTypeApi],
+        hasPhone(ex) ? (ex.phone_number ?? "") : "",
       ]
         .join(" ")
         .toLowerCase();
@@ -217,6 +222,7 @@ export function CohortUnassignedModal({
                       <TableHead>Name</TableHead>
                       <TableHead className="hidden sm:table-cell">Region</TableHead>
                       <TableHead className="hidden md:table-cell">Role</TableHead>
+                      {readOnly ? <TableHead>Phone</TableHead> : null}
                     </TableRow>
                   </TableHeader>
                   <TableBody>
@@ -242,6 +248,21 @@ export function CohortUnassignedModal({
                         <TableCell className="hidden text-muted-foreground md:table-cell">
                           {EXAMINER_TYPE_LABELS[ex.examiner_type as ExaminerTypeApi]}
                         </TableCell>
+                        {readOnly ? (
+                          <TableCell>
+                            {hasPhone(ex) && ex.phone_number?.trim() ? (
+                              <a
+                                href={`tel:${ex.phone_number.trim()}`}
+                                className="text-primary hover:underline"
+                                onClick={(e) => e.stopPropagation()}
+                              >
+                                {ex.phone_number.trim()}
+                              </a>
+                            ) : (
+                              <span className="text-muted-foreground">—</span>
+                            )}
+                          </TableCell>
+                        ) : null}
                       </TableRow>
                     ))}
                   </TableBody>

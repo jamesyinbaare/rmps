@@ -8,7 +8,13 @@ import io
 import qrcode
 
 
-def generate_qr_code_base64(payload: str) -> str:
+def generate_qr_code_base64(
+    payload: str,
+    *,
+    box_size: int = 10,
+    border: int = 4,
+    error_correction: int = qrcode.constants.ERROR_CORRECT_L,
+) -> str:
     """Return a base64-encoded PNG for the given payload (no data: prefix)."""
     text = payload.strip()
     if not text:
@@ -16,9 +22,9 @@ def generate_qr_code_base64(payload: str) -> str:
 
     qr = qrcode.QRCode(
         version=1,
-        error_correction=qrcode.constants.ERROR_CORRECT_L,
-        box_size=10,
-        border=4,
+        error_correction=error_correction,
+        box_size=box_size,
+        border=border,
     )
     qr.add_data(text)
     qr.make(fit=True)

@@ -31,6 +31,7 @@ import { adminNavActive, getAdminNavForRole } from "@/lib/admin-nav";
 import { isOfficialAccountsPath, OFFICIAL_ACCOUNTS_ADMIN_HREF } from "@/lib/official-accounts-zone";
 import {
   ATTENDANCE_SHEETS_HREF,
+  BANK_DIRECTORY_HREF,
   CENTRE_SUMMARY_HREF,
   EXAMINER_ACCOUNTS_BY_SUBJECT_HREF,
   EXAMINER_ATTENDANCE_HREF,
@@ -40,6 +41,7 @@ import {
   OFFICIAL_STATISTICS_HREF,
 } from "@/lib/finance-nav";
 import { cn } from "@/lib/utils";
+import { isAdminWorkforceRosterOrAssignmentPage } from "@/lib/workforce-nav";
 
 const inputFocusRing =
   "focus:border-primary focus:outline-none focus:ring-2 focus:ring-ring/30";
@@ -146,8 +148,17 @@ function AdminDashboardShellInner({ children }: Props) {
     || pathname === EXAMINER_ACCOUNTS_BY_SUBJECT_HREF
     || pathname.startsWith(`${EXAMINER_ACCOUNTS_BY_SUBJECT_HREF}/`);
   const onMonitoringPage = isMonitoringPath(pathname);
+  const onBankDirectoryPage =
+    pathname === BANK_DIRECTORY_HREF || pathname.startsWith(`${BANK_DIRECTORY_HREF}/`);
+  const onWorkforcePage = isAdminWorkforceRosterOrAssignmentPage(pathname);
   const onPageScrollShell =
-    onExaminersPage || onScriptsAllocationPage || onMonitoringPage || onExamOfficialsPage || onCentreSummaryPage;
+    onExaminersPage
+    || onScriptsAllocationPage
+    || onMonitoringPage
+    || onExamOfficialsPage
+    || onCentreSummaryPage
+    || onBankDirectoryPage
+    || onWorkforcePage;
 
   const sidebarCollapsed = usesPortalSidebar && financeSidebarCollapsed;
 
@@ -312,6 +323,8 @@ function AdminDashboardShellInner({ children }: Props) {
               || onExaminersPage
               || onScriptsAllocationPage
               || onMarkingFinancePage
+              || onBankDirectoryPage
+              || onWorkforcePage
               ? "max-w-[1600px]"
               : "max-w-6xl",
             isExecutiveViewer && "pb-[calc(5rem+env(safe-area-inset-bottom))] lg:pb-6",

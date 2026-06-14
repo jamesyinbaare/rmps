@@ -121,7 +121,9 @@ function SubjectOfficerExamChrome() {
     pathname.startsWith("/dashboard/subject-officer/examiners") ||
     pathname.startsWith("/dashboard/subject-officer/allocations") ||
     pathname.startsWith("/dashboard/subject-officer/marked-script-returns") ||
-    pathname.startsWith("/dashboard/subject-officer/lunch-verification")
+    pathname.startsWith("/dashboard/subject-officer/attendance") ||
+    pathname.startsWith("/dashboard/subject-officer/lunch-verification") ||
+    pathname.startsWith("/dashboard/subject-officer/lunch-coupon-print")
   ) {
     return null;
   }

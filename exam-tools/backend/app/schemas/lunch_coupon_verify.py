@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import date, datetime
 from uuid import UUID
 
 from pydantic import BaseModel, Field
@@ -23,6 +23,7 @@ class LunchCouponVerifyResponse(BaseModel):
     already_verified: bool = False
     verified_at: datetime | None = None
     verified_by_name: str | None = None
+    verification_date: date | None = None
     recorded: bool = False
 
 
@@ -34,6 +35,7 @@ class LunchCouponVerifiedRow(BaseModel):
     region: str
     subject_codes: list[str]
     verified_at: datetime
+    verification_date: date
     verified_by_name: str | None = None
     examination_id: int | None = None
     examination_name: str | None = None

@@ -13,7 +13,10 @@ import { SubjectOfficerExamSelector } from "@/components/subject-officer/subject
 import { SubjectOfficerPanelShell } from "@/components/subject-officer/subject-officer-panel-shell";
 import { Button } from "@/components/ui/button";
 import {
+  listAdminVerifiedLunchCouponsAll,
   listVerifiedLunchCouponsAll,
+  verifyAdminExaminerLunchCoupon,
+  verifyAdminExaminerLunchCouponScan,
   verifyExaminerLunchCoupon,
   verifyExaminerLunchCouponScan,
   type LunchCouponVerifiedRow,
@@ -28,6 +31,7 @@ const compactLabelClass = "text-xs font-medium text-muted-foreground";
 type Props = {
   assignments: SubjectOfficerMeExamAssignment[];
   assignmentsLoading?: boolean;
+  adminMode?: boolean;
 };
 
 function VerificationResultCard({ result }: { result: LunchCouponVerifyResult }) {
@@ -46,7 +50,7 @@ function VerificationResultCard({ result }: { result: LunchCouponVerifyResult })
         )}
         <div className="min-w-0 flex-1">
           <p className={cn("font-semibold", result.valid ? "text-emerald-800" : "text-destructive")}>
-            {result.valid ? "Valid lunch coupon" : result.already_verified ? "Already verified" : "Invalid lunch coupon"}
+            {result.valid ? "Valid lunch coupon" : result.already_verified ? "Already verified today" : "Invalid lunch coupon"}
           </p>
           {result.valid ? (
             <dl className="mt-3 grid gap-2 text-sm sm:grid-cols-2">
@@ -90,7 +94,11 @@ function VerificationResultCard({ result }: { result: LunchCouponVerifyResult })
   );
 }
 
-export function LunchVerificationShell({ assignments, assignmentsLoading = false }: Props) {
+export function LunchVerificationShell({
+  assignments,
+  assignmentsLoading = false,
+  adminMode = false,
+}: Props) {
   const readerId = useId().replace(/:/g, "");
   const scannerRef = useRef<Html5Qrcode | null>(null);
   const lastScannedRef = useRef<string | null>(null);
@@ -120,7 +128,9 @@ export function LunchVerificationShell({ assignments, assignmentsLoading = false
     setVerifiedLoading(true);
     setVerifiedError(null);
     try {
-      const data = await listVerifiedLunchCouponsAll();
+      const data = adminMode
+        ? await listAdminVerifiedLunchCouponsAll()
+        : await listVerifiedLunchCouponsAll();
       setVerifiedItems(data.items);
     } catch (err) {
       setVerifiedError(err instanceof Error ? err.message : "Failed to load verified examiners.");
@@ -128,7 +138,7 @@ export function LunchVerificationShell({ assignments, assignmentsLoading = false
     } finally {
       setVerifiedLoading(false);
     }
-  }, []);
+  }, [adminMode]);
 
   const stopScanner = useCallback(async () => {
     const scanner = scannerRef.current;
@@ -179,7 +189,9 @@ export function LunchVerificationShell({ assignments, assignmentsLoading = false
       setResult(null);
 
       try {
-        const response = await verifyExaminerLunchCouponScan(code);
+        const response = adminMode
+          ? await verifyAdminExaminerLunchCouponScan(code)
+          : await verifyExaminerLunchCouponScan(code);
         await handleVerifyResponse(response);
       } catch (err) {
         setRepeatPrompt(null);
@@ -195,7 +207,7 @@ export function LunchVerificationShell({ assignments, assignmentsLoading = false
         setVerifying(false);
       }
     },
-    [handleVerifyResponse],
+    [handleVerifyResponse, adminMode],
   );
 
   const runManualVerify = useCallback(
@@ -210,7 +222,9 @@ export function LunchVerificationShell({ assignments, assignmentsLoading = false
       setResult(null);
 
       try {
-        const response = await verifyExaminerLunchCoupon(manualExamId, code);
+        const response = adminMode
+          ? await verifyAdminExaminerLunchCoupon(manualExamId, code)
+          : await verifyExaminerLunchCoupon(manualExamId, code);
         await handleVerifyResponse(response);
       } catch (err) {
         setRepeatPrompt(null);
@@ -223,7 +237,7 @@ export function LunchVerificationShell({ assignments, assignmentsLoading = false
         setVerifying(false);
       }
     },
-    [handleVerifyResponse, manualExamId],
+    [handleVerifyResponse, manualExamId, adminMode],
   );
 
   const handleScan = useCallback(
@@ -278,10 +292,11 @@ export function LunchVerificationShell({ assignments, assignmentsLoading = false
     <SubjectOfficerPanelShell>
       <div className="mx-auto flex w-full max-w-6xl flex-col gap-5">
         <div>
-          <h2 className="text-base font-semibold text-foreground">Lunch Coupons</h2>
+          <h2 className="text-base font-semibold text-foreground">Coupon verification</h2>
           <p className="mt-1 text-sm text-muted-foreground">
-            Scan an examiner&apos;s lunch QR code or type their reference code to check them in. Each successful
-            verification is added to the verified list.
+            {adminMode
+              ? "Scan or enter reference codes to verify examiners for lunch today."
+              : "Scan an examiner's lunch QR code or type their reference code to check them in. Each examiner can be verified once per day."}
           </p>
         </div>
 
@@ -379,6 +394,7 @@ export function LunchVerificationShell({ assignments, assignmentsLoading = false
             items={verifiedItems}
             loading={verifiedLoading}
             error={verifiedError}
+            subtitle="Verified today"
           />
         </div>
       </div>

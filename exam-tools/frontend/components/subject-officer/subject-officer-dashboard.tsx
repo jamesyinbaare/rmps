@@ -574,7 +574,7 @@ export function SubjectOfficerDashboard({
       : "/dashboard/subject-officer/examiners";
   const cohortsHref =
     examId != null
-      ? `/dashboard/subject-officer/examiners?exam=${examId}&tab=cohorts`
+      ? `/dashboard/subject-officer/examiners?exam=${examId}&tab=groups`
       : "/dashboard/subject-officer/examiners";
 
   const selectedDayLabel =
@@ -774,7 +774,7 @@ export function SubjectOfficerDashboard({
                           href={cohortsHref}
                           className="text-sm font-medium text-primary hover:underline"
                         >
-                          Set cohort schedules in Examiners → Cohorts
+                          View cohort schedules in Examiners → Cohorts
                         </Link>
                       ) : null}
                     </div>

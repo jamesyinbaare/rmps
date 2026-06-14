@@ -6,13 +6,26 @@ import {
   EXAMINER_ACCOUNTS_BY_SUBJECT_LABEL,
   OFFICIAL_ACCOUNTS_ADMIN_HREF,
 } from "@/lib/official-accounts-zone";
+import {
+  DATA_ENTRY_CLERK_FINANCE_NAV_ITEMS,
+  SCRIPT_CHECKER_FINANCE_NAV_ITEMS,
+  WORKFORCE_SETUP_RATE_NAV_ITEMS,
+  dataEntryNavSection,
+  scriptCheckingNavSection,
+} from "@/lib/workforce-nav";
 
 export const FINANCE_HOME_HREF = "/dashboard/admin";
 
 export const OFFICIAL_RATES_HREF = "/dashboard/admin/official-rates";
 export const EXAMINER_RATES_HREF = "/dashboard/admin/examiner-rates";
 export const EXAMINER_PAYOUTS_HREF = "/dashboard/admin/examiner-payouts";
+export const SCRIPT_CHECKER_PAYOUTS_HREF = "/dashboard/admin/script-checker-payouts";
+export const DATA_ENTRY_CLERK_PAYOUTS_HREF = "/dashboard/admin/data-entry-clerk-payouts";
+export const SCRIPT_CHECKER_RATES_HREF = "/dashboard/admin/script-checker-rates";
+export const DATA_ENTRY_CLERK_RATES_HREF = "/dashboard/admin/data-entry-clerk-rates";
 export const EXAMINER_ATTENDANCE_HREF = "/dashboard/admin/examiner-attendance";
+export const LUNCH_COUPONS_HREF = "/dashboard/admin/lunch-coupons";
+export const LUNCH_COUPONS_PRINT_HREF = "/dashboard/admin/lunch-coupon-print";
 /** @deprecated Use EXAMINER_ACCOUNTS_BY_SUBJECT_HREF from official-accounts-zone */
 export { EXAMINERS_BY_SUBJECT_HREF, EXAMINER_ACCOUNTS_BY_SUBJECT_HREF } from "@/lib/official-accounts-zone";
 export const CENTRE_SUMMARY_HREF = "/dashboard/admin/centre-summary";
@@ -89,7 +102,10 @@ export type FinanceNavSectionIcon =
   | "administration"
   | "monitoring"
   | "marking"
-  | "markingScripts";
+  | "markingScripts"
+  | "workforce"
+  | "scriptChecking"
+  | "dataEntry";
 
 export type FinanceNavSection = {
   id: string;
@@ -187,6 +203,7 @@ const SETUP_NAV_ITEMS: FinanceNavItem[] = [
     description: "Role & subject allowances",
     icon: "rates",
   },
+  ...WORKFORCE_SETUP_RATE_NAV_ITEMS,
 ];
 
 /** Top-level collapsible sidebar sections (sidebar-07 style). */
@@ -203,6 +220,8 @@ export const FINANCE_NAV_SECTIONS: FinanceNavSection[] = [
     icon: "coordination",
     items: COORDINATION_MARKING_NAV_GROUP.items,
   },
+  scriptCheckingNavSection(SCRIPT_CHECKER_FINANCE_NAV_ITEMS),
+  dataEntryNavSection(DATA_ENTRY_CLERK_FINANCE_NAV_ITEMS),
   {
     id: "setup",
     heading: "Setup",
@@ -223,6 +242,10 @@ const FINANCE_PAGE_TITLES: [href: string, title: string][] = [
   [OFFICIAL_RATES_HREF, "Allowance rates"],
   [EXAMINER_RATES_HREF, "Examiner rates"],
   [EXAMINER_PAYOUTS_HREF, "Examiner bank accounts"],
+  [SCRIPT_CHECKER_PAYOUTS_HREF, "Script checker payouts"],
+  [DATA_ENTRY_CLERK_PAYOUTS_HREF, "Data entry clerk payouts"],
+  [SCRIPT_CHECKER_RATES_HREF, "Script checker rates"],
+  [DATA_ENTRY_CLERK_RATES_HREF, "Data entry clerk rates"],
   [EXAMINER_ATTENDANCE_HREF, "Examiner attendance"],
   [EXAMINER_ACCOUNTS_BY_SUBJECT_HREF, EXAMINER_ACCOUNTS_BY_SUBJECT_LABEL],
   [OFFICIAL_ACCOUNTS_ADMIN_HREF, BANK_ACCOUNTS_LABEL],

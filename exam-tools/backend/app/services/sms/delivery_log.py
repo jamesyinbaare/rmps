@@ -15,7 +15,7 @@ from app.services.sms.phone import normalize_msisdn
 from app.services.sms.types import SmsDeliveryResult
 
 if TYPE_CHECKING:
-    from app.models import Examiner, ExaminerInvitation
+    from app.models import DataEntryClerk, Examiner, ExaminerInvitation, ScriptChecker
 
 _MAX_ERROR_LEN = 2000
 _MAX_PROVIDER_RESPONSE_LEN = 2000
@@ -25,6 +25,7 @@ MESSAGE_TYPE_EXAMINER_INVITATION = "examiner_invitation"
 MESSAGE_TYPE_EXAMINER_INVITATION_CUSTOM = "examiner_invitation_custom"
 MESSAGE_TYPE_EXAMINER_ROSTER_CUSTOM = "examiner_roster_custom"
 MESSAGE_TYPE_EXAMINER_APPOINTMENT_LETTER_RELEASED = "examiner_appointment_letter_released"
+MESSAGE_TYPE_WORKFORCE_PORTAL_INVITE = "workforce_portal_invite"
 
 
 def _truncate(text: str | None, max_len: int) -> str | None:
@@ -42,6 +43,8 @@ async def create_delivery_log(
     user_id: UUID | None = None,
     examiner_invitation_id: UUID | None = None,
     examiner_id: UUID | None = None,
+    script_checker_id: UUID | None = None,
+    data_entry_clerk_id: UUID | None = None,
     phone_number: str,
     msisdn: str,
     message_type: str,
@@ -56,6 +59,8 @@ async def create_delivery_log(
         user_id=user_id,
         examiner_invitation_id=examiner_invitation_id,
         examiner_id=examiner_id,
+        script_checker_id=script_checker_id,
+        data_entry_clerk_id=data_entry_clerk_id,
         phone_number=phone_number,
         msisdn=msisdn,
         message_type=message_type,
@@ -427,12 +432,128 @@ async def record_examiner_appointment_letter_released_sms(
 
     result = await get_sms_provider().send_sms(msisdn, message)
     if result.sent:
-        await mark_delivery_sent(session, pending.id, provider_response=result.provider_response)
+        await mark_delivery_sent(session, pending.id)
     else:
         await mark_delivery_failed(
             session,
             pending.id,
             error=result.error or "SMS failed",
-            provider_response=result.provider_response,
         )
     return result
+
+
+async def record_workforce_portal_invite_sms(
+    session: AsyncSession,
+    *,
+    script_checker: ScriptChecker | None = None,
+    data_entry_clerk: DataEntryClerk | None = None,
+    trigger: str,
+    triggered_by_user_id: UUID | None = None,
+    retried_from_id: UUID | None = None,
+) -> tuple[SmsDeliveryResult, UUID | None]:
+    from sqlalchemy import select
+
+    from app.models import DataEntryClerk as DataEntryClerkModel
+    from app.models import ScriptChecker as ScriptCheckerModel
+    from app.services.sms.workforce_portal_sms import (
+        send_data_entry_clerk_portal_invite_sms,
+        send_script_checker_portal_invite_sms,
+    )
+
+    if (script_checker is None) == (data_entry_clerk is None):
+        return SmsDeliveryResult(sent=False, error="Exactly one workforce member is required"), None
+
+    if script_checker is not None:
+        stmt = (
+            select(ScriptCheckerModel)
+            .where(ScriptCheckerModel.id == script_checker.id)
+            .options(selectinload(ScriptCheckerModel.examination))
+        )
+        person = (await session.execute(stmt)).scalar_one_or_none()
+        if person is None:
+            return SmsDeliveryResult(sent=False, error="Script checker not found"), None
+        phone = person.phone_number or ""
+        script_checker_id = person.id
+        data_entry_clerk_id = None
+        send_fn = send_script_checker_portal_invite_sms
+    else:
+        assert data_entry_clerk is not None
+        stmt = (
+            select(DataEntryClerkModel)
+            .where(DataEntryClerkModel.id == data_entry_clerk.id)
+            .options(selectinload(DataEntryClerkModel.examination))
+        )
+        person = (await session.execute(stmt)).scalar_one_or_none()
+        if person is None:
+            return SmsDeliveryResult(sent=False, error="Data entry clerk not found"), None
+        phone = person.phone_number or ""
+        script_checker_id = None
+        data_entry_clerk_id = person.id
+        send_fn = send_data_entry_clerk_portal_invite_sms
+
+    if not str(phone).strip():
+        row = await create_delivery_log(
+            session,
+            script_checker_id=script_checker_id,
+            data_entry_clerk_id=data_entry_clerk_id,
+            phone_number=phone,
+            msisdn="",
+            message_type=MESSAGE_TYPE_WORKFORCE_PORTAL_INVITE,
+            trigger=trigger,
+            status="failed",
+            triggered_by_user_id=triggered_by_user_id,
+            retried_from_id=retried_from_id,
+            error_message="No phone number on roster",
+        )
+        await session.commit()
+        return SmsDeliveryResult(sent=False, error="No phone number on roster"), row.id
+
+    try:
+        msisdn = normalize_msisdn(phone)
+    except ValueError as exc:
+        row = await create_delivery_log(
+            session,
+            script_checker_id=script_checker_id,
+            data_entry_clerk_id=data_entry_clerk_id,
+            phone_number=phone,
+            msisdn="",
+            message_type=MESSAGE_TYPE_WORKFORCE_PORTAL_INVITE,
+            trigger=trigger,
+            status="failed",
+            triggered_by_user_id=triggered_by_user_id,
+            retried_from_id=retried_from_id,
+            error_message=str(exc),
+        )
+        await session.commit()
+        return SmsDeliveryResult(sent=False, error=str(exc)), row.id
+
+    from app.services.workforce_availability import ensure_workforce_invite_deadline
+
+    ensure_workforce_invite_deadline(person)
+
+    pending = await create_delivery_log(
+        session,
+        script_checker_id=script_checker_id,
+        data_entry_clerk_id=data_entry_clerk_id,
+        phone_number=phone,
+        msisdn=msisdn,
+        message_type=MESSAGE_TYPE_WORKFORCE_PORTAL_INVITE,
+        trigger=trigger,
+        status="pending",
+        triggered_by_user_id=triggered_by_user_id,
+        retried_from_id=retried_from_id,
+    )
+    await session.flush()
+
+    result = await send_fn(person)
+    if result.sent:
+        await mark_delivery_sent(session, pending.id)
+        person.portal_invite_sms_sent_at = datetime.utcnow()
+    else:
+        await mark_delivery_failed(
+            session,
+            pending.id,
+            error=result.error or "SMS failed",
+        )
+    await session.commit()
+    return result, pending.id

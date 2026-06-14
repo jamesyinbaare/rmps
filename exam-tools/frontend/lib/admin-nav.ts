@@ -3,10 +3,21 @@ import {
   BANK_DIRECTORY_NAV_ITEM,
   EXAMINER_ATTENDANCE_HREF,
   FINANCE_NAV_SECTIONS,
+  LUNCH_COUPONS_HREF,
+  LUNCH_COUPONS_PRINT_HREF,
   type FinanceNavItem,
   type FinanceNavSection,
 } from "@/lib/finance-nav";
 import { TEST_ADMIN_INSPECTORS_HREF } from "@/lib/executive-selected-examination";
+import {
+  DATA_ENTRY_CLERK_ADMIN_NAV_ITEMS,
+  DATA_ENTRY_CLERK_SUPER_ADMIN_NAV_ITEMS,
+  SCRIPT_CHECKER_ADMIN_NAV_ITEMS,
+  SCRIPT_CHECKER_SUPER_ADMIN_NAV_ITEMS,
+  dataEntryNavSection,
+  isWorkforceNavSectionId,
+  scriptCheckingNavSection,
+} from "@/lib/workforce-nav";
 
 export const ADMIN_HOME_HREF = "/dashboard/admin";
 export const MONITORING_HREF = "/dashboard/admin/monitoring";
@@ -124,6 +135,18 @@ const MARKING_SCRIPTS_ITEMS: FinanceNavItem[] = [
     description: "Examiner roster",
     icon: "examiners",
   },
+  {
+    href: LUNCH_COUPONS_HREF,
+    label: "Coupon verification",
+    description: "Verify lunch coupons",
+    icon: "lunch",
+  },
+  {
+    href: LUNCH_COUPONS_PRINT_HREF,
+    label: "Lunch coupons",
+    description: "Print coupon PDFs",
+    icon: "documents",
+  },
 ];
 
 const SUPER_ADMIN_CORE_SECTIONS: FinanceNavSection[] = [
@@ -147,9 +170,15 @@ const SUPER_ADMIN_CORE_SECTIONS: FinanceNavSection[] = [
   },
 ];
 
+const FINANCE_NAV_SECTIONS_FOR_SUPER_ADMIN = FINANCE_NAV_SECTIONS.filter(
+  (section) => !isWorkforceNavSectionId(section.id),
+);
+
 export const SUPER_ADMIN_NAV_SECTIONS: FinanceNavSection[] = [
   ...SUPER_ADMIN_CORE_SECTIONS,
-  ...FINANCE_NAV_SECTIONS,
+  scriptCheckingNavSection(SCRIPT_CHECKER_SUPER_ADMIN_NAV_ITEMS),
+  dataEntryNavSection(DATA_ENTRY_CLERK_SUPER_ADMIN_NAV_ITEMS),
+  ...FINANCE_NAV_SECTIONS_FOR_SUPER_ADMIN,
 ];
 
 const TEST_ADMIN_EXAMINATION_ITEMS: FinanceNavItem[] = [
@@ -187,10 +216,16 @@ const TEST_ADMIN_COORDINATION_MARKING_ITEMS: FinanceNavItem[] = [
     icon: "attendance",
   },
   {
-    href: "/dashboard/admin/lunch-coupons",
-    label: "Lunch coupons",
+    href: LUNCH_COUPONS_HREF,
+    label: "Coupon verification",
     description: "Verify lunch coupons",
     icon: "lunch",
+  },
+  {
+    href: LUNCH_COUPONS_PRINT_HREF,
+    label: "Lunch coupons",
+    description: "Print coupon PDFs",
+    icon: "documents",
   },
 ];
 
@@ -214,6 +249,8 @@ export const TEST_ADMIN_NAV_SECTIONS: FinanceNavSection[] = [
     icon: "coordination",
     items: TEST_ADMIN_COORDINATION_MARKING_ITEMS,
   },
+  scriptCheckingNavSection(SCRIPT_CHECKER_ADMIN_NAV_ITEMS),
+  dataEntryNavSection(DATA_ENTRY_CLERK_ADMIN_NAV_ITEMS),
 ];
 
 export type AdminNavConfig = {

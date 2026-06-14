@@ -22,7 +22,8 @@ import { CohortCoverageBar } from "@/components/cohorts/cohort-coverage-bar";
 import { CohortListColumn } from "@/components/cohorts/cohort-list-column";
 import { CohortManageModal } from "@/components/cohorts/cohort-manage-modal";
 import { CohortUnassignedModal } from "@/components/cohorts/cohort-unassigned-modal";
-import type { CohortListItem, MembershipExaminer } from "@/components/cohorts/types";
+import { CohortViewModal } from "@/components/cohorts/cohort-view-modal";
+import type { CohortListItem, CohortRosterMember, MembershipExaminer } from "@/components/cohorts/types";
 import { computeCoverage } from "@/components/cohorts/utils";
 import { useCohortMembershipDraft } from "@/components/cohorts/use-cohort-membership-draft";
 import { EXAMINERS_PANEL_CLASS } from "@/components/examiners/constants";
@@ -144,6 +145,20 @@ export function SubjectMarkingGroupsPanel({
         name: e.name,
         region: e.region,
         examiner_type: e.examiner_type,
+      }));
+  }, [examiners, subjectId]);
+
+  const subjectRosterMembers = useMemo((): CohortRosterMember[] => {
+    if (subjectId == null) return [];
+    return examiners
+      .filter((e) => e.subject_ids.includes(subjectId))
+      .map((e) => ({
+        id: e.id,
+        name: e.name,
+        region: e.region,
+        examiner_type: e.examiner_type,
+        phone_number: e.phone_number,
+        reference_code: e.reference_code,
       }));
   }, [examiners, subjectId]);
 
@@ -459,10 +474,19 @@ export function SubjectMarkingGroupsPanel({
         </div>
       ) : (
         <>
+          {!canManageCohorts ? (
+            <div className="shrink-0 border-b border-border/80 px-4 py-3 sm:px-5">
+              <p className="text-sm text-muted-foreground">
+                View cohort schedules and contact members. Only administrators can create or edit cohorts.
+              </p>
+            </div>
+          ) : null}
+
           <CohortCoverageBar
             coverage={coverage}
             entityLabel="cohort"
             onShowUnassigned={openUnassigned}
+            unassignedButtonLabel={canManageCohorts ? undefined : "View unassigned"}
             trailing={
               canManageCohorts ? (
                 <Button type="button" size="sm" disabled={busy} onClick={() => openCreate()}>
@@ -483,7 +507,7 @@ export function SubjectMarkingGroupsPanel({
             emptyLabel={
               canManageCohorts
                 ? "No cohorts yet. Create one to assign examiners and set dates."
-                : "No cohorts yet."
+                : "No cohorts for this subject yet. Administrators will set these up."
             }
             hideNewButton
           />
@@ -492,7 +516,7 @@ export function SubjectMarkingGroupsPanel({
             open={unassignedModalOpen}
             onClose={() => setUnassignedModalOpen(false)}
             entityLabel="cohort"
-            examiners={subjectExaminers}
+            examiners={canManageCohorts ? subjectExaminers : subjectRosterMembers}
             unassignedIds={coverage.unassignedIds}
             cohorts={cohortList}
             busy={busy}
@@ -501,14 +525,13 @@ export function SubjectMarkingGroupsPanel({
             onAddToCohort={(cohortId, ids) => void handleAddToCohort(cohortId, ids)}
           />
 
+          {canManageCohorts ? (
           <CohortManageModal
             open={modalOpen}
             mode={isCreating ? "create" : "edit"}
             entityLabel="cohort"
             description={
-              !canManageCohorts
-                ? "View-only. Only Test Admin and Super Admin can create or edit cohorts."
-                : isDefaultCohort
+              isDefaultCohort
                   ? canManageDefaultCohort
                     ? "All subject examiners are always in the default cohort. You can edit the schedule; membership is synced from the roster."
                     : "All subject examiners are always in the default cohort. Only administrators can edit the default schedule; membership is synced from the roster."
@@ -564,6 +587,15 @@ export function SubjectMarkingGroupsPanel({
             }
             onClose={closeModal}
           />
+          ) : (
+            <CohortViewModal
+              open={modalOpen}
+              onClose={closeModal}
+              cohort={selectedGroup ?? null}
+              rosterMembers={subjectRosterMembers}
+              examId={examId}
+            />
+          )}
         </>
       )}
     </div>

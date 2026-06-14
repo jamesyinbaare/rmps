@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from fastapi import APIRouter, HTTPException, status
+from fastapi import APIRouter, HTTPException, Query, Response, status
+from fastapi.responses import StreamingResponse
 
 from app.dependencies.auth import SubjectOfficerDep
 from app.dependencies.database import DBSessionDep
@@ -12,6 +13,7 @@ from app.schemas.lunch_coupon_verify import (
     LunchCouponVerifyRequest,
     LunchCouponVerifyResponse,
 )
+from app.services.lunch_coupon_pdf import generate_lunch_coupons_pdf
 from app.services.lunch_coupon_verify import (
     list_lunch_coupon_verifications,
     list_lunch_coupon_verifications_all,
@@ -19,6 +21,7 @@ from app.services.lunch_coupon_verify import (
     verify_and_record_lunch_coupon_scan,
 )
 from app.services.subject_officer_scope import (
+    assert_subject_officer_access,
     assert_subject_officer_examination_access,
     load_subject_officer_multi_exam_scope,
 )
@@ -116,3 +119,25 @@ async def post_lunch_coupon_verify(
     if result.get("recorded"):
         await session.commit()
     return LunchCouponVerifyResponse(**result)
+
+
+@router.get(
+    "/examinations/{examination_id}/subject-officer/lunch-coupons/print.pdf",
+)
+async def get_subject_officer_lunch_coupons_print_pdf(
+    examination_id: int,
+    session: DBSessionDep,
+    user: SubjectOfficerDep,
+    subject_id: int = Query(..., description="Subject id for coupon sheet"),
+) -> Response:
+    await assert_subject_officer_access(session, user, examination_id, subject_id)
+    pdf_bytes, filename = await generate_lunch_coupons_pdf(
+        session,
+        examination_id=examination_id,
+        subject_id=subject_id,
+    )
+    return StreamingResponse(
+        iter([pdf_bytes]),
+        media_type="application/pdf",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )

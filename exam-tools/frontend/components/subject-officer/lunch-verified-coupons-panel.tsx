@@ -14,6 +14,7 @@ type Props = {
   loading: boolean;
   error: string | null;
   className?: string;
+  subtitle?: string;
 };
 
 function formatVerifiedAt(value: string): { time: string; date: string } {
@@ -207,7 +208,7 @@ function VerifiedCouponsSkeleton({ compact }: { compact?: boolean }) {
   );
 }
 
-export function LunchVerifiedCouponsPanel({ items, loading, error, className }: Props) {
+export function LunchVerifiedCouponsPanel({ items, loading, error, className, subtitle }: Props) {
   const [search, setSearch] = useState("");
   const [panelOpen, setPanelOpen] = useState(true);
 
@@ -241,8 +242,11 @@ export function LunchVerifiedCouponsPanel({ items, loading, error, className }: 
             <div className="min-w-0">
               <h3 className="text-sm font-semibold text-foreground">Verified coupons</h3>
               <p className="text-[11px] text-muted-foreground lg:hidden">
-                {items.length === 0 ? "None yet" : "Tap a row for details"}
+                {subtitle ?? (items.length === 0 ? "None yet" : "Tap a row for details")}
               </p>
+              {subtitle ? (
+                <p className="hidden text-[11px] text-muted-foreground lg:block">{subtitle}</p>
+              ) : null}
             </div>
           </div>
           <div className="flex items-center gap-2">
@@ -311,7 +315,7 @@ export function LunchVerifiedCouponsPanel({ items, loading, error, className }: 
               </span>
               <p className="mt-3 text-sm font-medium text-foreground">No verified coupons yet</p>
               <p className="mt-1 max-w-xs text-xs text-muted-foreground lg:text-sm">
-                Scan or enter a reference code to verify an examiner for lunch.
+                Scan or enter a reference code to verify an examiner for lunch today.
               </p>
             </div>
           ) : filteredItems.length === 0 ? (

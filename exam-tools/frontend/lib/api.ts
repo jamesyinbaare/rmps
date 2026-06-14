@@ -1028,6 +1028,8 @@ export type BankBranchBulkUploadResponse = {
 };
 
 export type ListBankBranchesParams = {
+  /** Substring match on bank name or branch name (case-insensitive). */
+  search?: string | null;
   bank_name?: string | null;
   /** When set, only rows whose bank_name equals this string (exact). */
   bank_name_exact?: string | null;
@@ -1038,9 +1040,12 @@ export type ListBankBranchesParams = {
 
 export async function listBankBranches(params?: ListBankBranchesParams): Promise<BankBranchListResponse> {
   const q = new URLSearchParams();
-  if (params?.bank_name_exact?.trim()) q.set("bank_name_exact", params.bank_name_exact.trim());
-  else if (params?.bank_name?.trim()) q.set("bank_name", params.bank_name.trim());
-  if (params?.branch_name?.trim()) q.set("branch_name", params.branch_name.trim());
+  if (params?.search?.trim()) q.set("search", params.search.trim());
+  else {
+    if (params?.bank_name_exact?.trim()) q.set("bank_name_exact", params.bank_name_exact.trim());
+    else if (params?.bank_name?.trim()) q.set("bank_name", params.bank_name.trim());
+    if (params?.branch_name?.trim()) q.set("branch_name", params.branch_name.trim());
+  }
   if (params?.skip != null) q.set("skip", String(params.skip));
   if (params?.limit != null) q.set("limit", String(params.limit));
   const s = q.toString();
@@ -4105,6 +4110,7 @@ export type LunchCouponVerifyResult = {
   already_verified?: boolean;
   verified_at?: string | null;
   verified_by_name?: string | null;
+  verification_date?: string | null;
   recorded?: boolean;
 };
 
@@ -4116,6 +4122,7 @@ export type LunchCouponVerifiedRow = {
   region: string;
   subject_codes: string[];
   verified_at: string;
+  verification_date: string;
   verified_by_name?: string | null;
   examination_id?: number | null;
   examination_name?: string | null;
@@ -5849,6 +5856,67 @@ export async function verifyExaminerLunchCouponScan(
   });
 }
 
+export async function listAdminVerifiedLunchCouponsAll(params?: {
+  examination_id?: number | null;
+  subject_id?: number | null;
+}): Promise<LunchCouponVerifiedList> {
+  const q = new URLSearchParams();
+  if (params?.examination_id != null) q.set("examination_id", String(params.examination_id));
+  if (params?.subject_id != null) q.set("subject_id", String(params.subject_id));
+  const qs = q.toString();
+  return apiJson<LunchCouponVerifiedList>(`/admin/lunch-coupon/verified${qs ? `?${qs}` : ""}`);
+}
+
+export async function verifyAdminExaminerLunchCoupon(
+  examinationId: number,
+  referenceCode: string,
+): Promise<LunchCouponVerifyResult> {
+  return apiJson<LunchCouponVerifyResult>(
+    `/admin/examinations/${examinationId}/lunch-coupon/verify`,
+    {
+      method: "POST",
+      body: JSON.stringify({ reference_code: referenceCode }),
+    },
+  );
+}
+
+export async function verifyAdminExaminerLunchCouponScan(
+  referenceCode: string,
+): Promise<LunchCouponVerifyResult> {
+  return apiJson<LunchCouponVerifyResult>("/admin/lunch-coupon/verify-scan", {
+    method: "POST",
+    body: JSON.stringify({ reference_code: referenceCode }),
+  });
+}
+
+export async function downloadAdminLunchCouponsPdf(params: {
+  examination_id: number;
+  subject_id: number;
+  filename?: string;
+}): Promise<void> {
+  const q = new URLSearchParams();
+  q.set("subject_id", String(params.subject_id));
+  const fallback = `lunch_coupons_exam_${params.examination_id}_subject_${params.subject_id}.pdf`;
+  await downloadApiFile(
+    `/admin/examinations/${params.examination_id}/lunch-coupons/print.pdf?${q.toString()}`,
+    params.filename ?? fallback,
+  );
+}
+
+export async function downloadSubjectOfficerLunchCouponsPdf(params: {
+  examination_id: number;
+  subject_id: number;
+  filename?: string;
+}): Promise<void> {
+  const q = new URLSearchParams();
+  q.set("subject_id", String(params.subject_id));
+  const fallback = `lunch_coupons_exam_${params.examination_id}_subject_${params.subject_id}.pdf`;
+  await downloadApiFile(
+    `/examinations/${params.examination_id}/subject-officer/lunch-coupons/print.pdf?${q.toString()}`,
+    params.filename ?? fallback,
+  );
+}
+
 export type MarkingScriptSourceMode = "allocation" | "manual";
 
 export type MarkingScriptSourceExaminerRow = {
@@ -5957,5 +6025,483 @@ export async function uploadManualMarkedScripts(
   return apiJson<ManualMarkedScriptsUploadResponse>(
     `/admin/examinations/${examinationId}/subjects/${subjectId}/manual-marked-scripts/upload?${params.toString()}`,
     { method: "POST", body: formData },
+  );
+}
+
+// --- Script checkers & data entry clerks ---
+
+export type WorkforceAssignmentBatchStatus = "active" | "completed" | "cancelled";
+
+export type WorkforceAvailabilityStatus = "pending" | "confirmed" | "declined";
+
+export type WorkforceRosterRow = {
+  id: string;
+  examination_id: number;
+  name: string;
+  phone_number: string | null;
+  region: string | null;
+  reference_code: string | null;
+  portal_url: string;
+  portal_invite_sms_sent_at: string | null;
+  availability_status: WorkforceAvailabilityStatus;
+  availability_responded_at: string | null;
+  availability_deadline: string | null;
+  has_bank_account: boolean;
+  created_at: string;
+  updated_at: string;
+};
+
+export type WorkforceRosterCreatePayload = {
+  name: string;
+  phone_number?: string | null;
+  region?: string | null;
+  reference_code?: string | null;
+};
+
+export type WorkforceRosterUpdatePayload = Partial<WorkforceRosterCreatePayload>;
+
+export type WorkforceInviteSmsResult = {
+  id: string;
+  sent: boolean;
+  error: string | null;
+};
+
+export type WorkforceBulkInviteSmsResponse = {
+  results: WorkforceInviteSmsResult[];
+  sent_count: number;
+  failed_count: number;
+};
+
+export type WorkforceAssignmentBatchRow = {
+  id: string;
+  examination_id: number;
+  subject_id: number;
+  paper_number: number;
+  script_count: number;
+  status: WorkforceAssignmentBatchStatus;
+  batch_sequence: number;
+  assigned_at: string;
+  assigned_by_user_id: string | null;
+  completed_at: string | null;
+  completed_by_user_id: string | null;
+};
+
+export type WorkforceAssignmentPersonRow = {
+  id: string;
+  name: string;
+  reference_code: string | null;
+  phone_number: string | null;
+  availability_status: WorkforceAvailabilityStatus;
+  has_bank_account: boolean;
+  active_batch: WorkforceAssignmentBatchRow | null;
+  assigned_total: number;
+  completed_total: number;
+  uncompleted_total: number;
+  batches: WorkforceAssignmentBatchRow[];
+};
+
+export type WorkforceAssignmentGridResponse = {
+  examination_id: number;
+  subject_id: number;
+  paper_number: number;
+  items: WorkforceAssignmentPersonRow[];
+};
+
+export type WorkforceAssignmentRosterResponse = {
+  examination_id: number;
+  items: WorkforceAssignmentPersonRow[];
+};
+
+export const WORKFORCE_PAPER_OPTIONS = [1, 2] as const;
+
+export type WorkforceRatesResponse = {
+  examination_id: number;
+  rate_per_script_ghs: string | null;
+  commuting_allowance_ghs: string | null;
+  lunch_allowance_ghs: string | null;
+  withholding_tax_percent: string;
+};
+
+export type WorkforceRatesPutPayload = {
+  rate_per_script_ghs: string;
+  commuting_allowance_ghs: string;
+  lunch_allowance_ghs: string;
+  withholding_tax_percent: string;
+};
+
+export type WorkforcePayoutCompletedBatchLine = {
+  subject_id: number;
+  subject_code: string | null;
+  subject_name: string | null;
+  paper_number: number;
+  script_count: number;
+  batch_sequence: number;
+};
+
+export type WorkforcePayoutRow = {
+  id: string;
+  examination_id: number;
+  examination_label: string;
+  full_name: string;
+  reference_code: string | null;
+  phone_number: string | null;
+  completed_scripts: number;
+  num_days: number;
+  rate_per_script_ghs: string;
+  commuting_allowance_ghs: string;
+  lunch_allowance_ghs: string;
+  commuting_payable_ghs: string;
+  lunch_payable_ghs: string;
+  script_gross_ghs: string;
+  withholding_tax_percent: string;
+  withholding_tax_ghs: string;
+  script_net_ghs: string;
+  has_rate: boolean;
+  payable_ghs: string;
+  completed_batch_lines: WorkforcePayoutCompletedBatchLine[];
+  bank_branch_id: string | null;
+  bank_code: string | null;
+  bank_name: string | null;
+  branch_name: string | null;
+  account_number: string | null;
+  has_bank_account: boolean;
+};
+
+export type WorkforcePayoutListResponse = {
+  items: WorkforcePayoutRow[];
+  total: number;
+};
+
+export type WorkforcePublicBatchRow = {
+  id: string;
+  subject_id: number;
+  subject_code: string | null;
+  subject_name: string | null;
+  paper_number: number;
+  script_count: number;
+  status: WorkforceAssignmentBatchStatus;
+  batch_sequence: number;
+  assigned_at: string;
+  completed_at: string | null;
+};
+
+export type WorkforcePublicPortal = {
+  id: string;
+  name: string;
+  examination_id: number;
+  examination_label: string;
+  reference_code: string | null;
+  region: string | null;
+  role_label: string;
+  availability_status: WorkforceAvailabilityStatus;
+  availability_responded_at: string | null;
+  availability_deadline: string | null;
+  can_respond: boolean;
+  active_batches: WorkforcePublicBatchRow[];
+  completed_batches: WorkforcePublicBatchRow[];
+  has_bank_account: boolean;
+};
+
+export type WorkforceAvailabilityActionResponse = {
+  status: WorkforceAvailabilityStatus;
+  message: string;
+};
+
+export type WorkforceBankAccountPublic = {
+  id: string;
+  person_id: string;
+  bank_branch_id: string;
+  bank_code: string;
+  bank_name: string;
+  branch_name: string;
+  account_number: string;
+  created_at: string;
+  updated_at: string;
+};
+
+export type WorkforceBankAccountUpsertPayload = {
+  bank_branch_id: string;
+  account_number: string;
+};
+
+function workforcePublicPrefix(kind: "script-checker" | "data-entry-clerk"): string {
+  return kind === "script-checker" ? "/public/script-checkers" : "/public/data-entry-clerks";
+}
+
+function workforceRosterSegment(kind: "script-checker" | "data-entry-clerk"): string {
+  return kind === "script-checker" ? "script-checkers" : "data-entry-clerks";
+}
+
+function workforceAssignmentSegment(kind: "script-checker" | "data-entry-clerk"): string {
+  return kind === "script-checker" ? "script-checker-assignments" : "data-entry-clerk-assignments";
+}
+
+function workforceRatesSegment(kind: "script-checker" | "data-entry-clerk"): string {
+  return kind === "script-checker" ? "script-checker-rates" : "data-entry-clerk-rates";
+}
+
+function workforcePayoutsSegment(kind: "script-checker" | "data-entry-clerk"): string {
+  return kind === "script-checker" ? "script-checker-payouts" : "data-entry-clerk-payouts";
+}
+
+export async function getPublicWorkforcePortal(
+  kind: "script-checker" | "data-entry-clerk",
+  token: string,
+): Promise<WorkforcePublicPortal> {
+  return publicApiJson<WorkforcePublicPortal>(
+    `${workforcePublicPrefix(kind)}/${encodeURIComponent(token)}`,
+  );
+}
+
+export async function acceptPublicWorkforceAvailability(
+  kind: "script-checker" | "data-entry-clerk",
+  token: string,
+): Promise<WorkforceAvailabilityActionResponse> {
+  return publicApiJson<WorkforceAvailabilityActionResponse>(
+    `${workforcePublicPrefix(kind)}/${encodeURIComponent(token)}/accept`,
+    { method: "POST" },
+  );
+}
+
+export async function declinePublicWorkforceAvailability(
+  kind: "script-checker" | "data-entry-clerk",
+  token: string,
+): Promise<WorkforceAvailabilityActionResponse> {
+  return publicApiJson<WorkforceAvailabilityActionResponse>(
+    `${workforcePublicPrefix(kind)}/${encodeURIComponent(token)}/decline`,
+    { method: "POST" },
+  );
+}
+
+export async function getPublicWorkforceBankAccount(
+  kind: "script-checker" | "data-entry-clerk",
+  token: string,
+): Promise<WorkforceBankAccountPublic | null> {
+  const url = `${getApiBaseUrl()}${workforcePublicPrefix(kind)}/${encodeURIComponent(token)}/bank-account`;
+  let res: Response;
+  try {
+    res = await fetch(url);
+  } catch (e) {
+    if (e instanceof TypeError) throw new Error(apiNetworkErrorMessage());
+    throw e;
+  }
+  if (res.status === 404) return null;
+  if (!res.ok) throw new Error(await parseErrorMessage(res));
+  return (await res.json()) as WorkforceBankAccountPublic;
+}
+
+export async function upsertPublicWorkforceBankAccount(
+  kind: "script-checker" | "data-entry-clerk",
+  token: string,
+  payload: WorkforceBankAccountUpsertPayload,
+): Promise<WorkforceBankAccountPublic> {
+  return publicApiJson<WorkforceBankAccountPublic>(
+    `${workforcePublicPrefix(kind)}/${encodeURIComponent(token)}/bank-account`,
+    { method: "PUT", body: JSON.stringify(payload) },
+  );
+}
+
+export async function listPublicWorkforceBankBranches(
+  kind: "script-checker" | "data-entry-clerk",
+  token: string,
+  params?: {
+    bank_name?: string | null;
+    bank_name_exact?: string | null;
+    branch_name?: string | null;
+    skip?: number;
+    limit?: number;
+  },
+): Promise<BankBranchListResponse> {
+  const q = new URLSearchParams();
+  if (params?.bank_name_exact?.trim()) q.set("bank_name_exact", params.bank_name_exact.trim());
+  else if (params?.bank_name?.trim()) q.set("bank_name", params.bank_name.trim());
+  if (params?.branch_name?.trim()) q.set("branch_name", params.branch_name.trim());
+  if (params?.skip != null) q.set("skip", String(params.skip));
+  if (params?.limit != null) q.set("limit", String(params.limit));
+  const s = q.toString();
+  return publicApiJson<BankBranchListResponse>(
+    `${workforcePublicPrefix(kind)}/${encodeURIComponent(token)}/bank-branches${s ? `?${s}` : ""}`,
+  );
+}
+
+export async function getPublicWorkforceDistinctBankNames(
+  kind: "script-checker" | "data-entry-clerk",
+  token: string,
+  q?: string,
+): Promise<string[]> {
+  const params = new URLSearchParams();
+  if (q?.trim()) params.set("q", q.trim());
+  const s = params.toString();
+  return publicApiJson<string[]>(
+    `${workforcePublicPrefix(kind)}/${encodeURIComponent(token)}/bank-names${s ? `?${s}` : ""}`,
+  );
+}
+
+export async function listAdminWorkforceRoster(
+  kind: "script-checker" | "data-entry-clerk",
+  examinationId: number,
+): Promise<WorkforceRosterRow[]> {
+  return apiJson<WorkforceRosterRow[]>(
+    `/admin/examinations/${examinationId}/${workforceRosterSegment(kind)}`,
+  );
+}
+
+export async function createAdminWorkforceRosterMember(
+  kind: "script-checker" | "data-entry-clerk",
+  examinationId: number,
+  payload: WorkforceRosterCreatePayload,
+  options?: { sendSms?: boolean },
+): Promise<WorkforceRosterRow> {
+  const q = options?.sendSms ? "?send_sms=true" : "";
+  return apiJson<WorkforceRosterRow>(
+    `/admin/examinations/${examinationId}/${workforceRosterSegment(kind)}${q}`,
+    { method: "POST", body: JSON.stringify(payload) },
+  );
+}
+
+export async function updateAdminWorkforceRosterMember(
+  kind: "script-checker" | "data-entry-clerk",
+  examinationId: number,
+  personId: string,
+  payload: WorkforceRosterUpdatePayload,
+): Promise<WorkforceRosterRow> {
+  return apiJson<WorkforceRosterRow>(
+    `/admin/examinations/${examinationId}/${workforceRosterSegment(kind)}/${personId}`,
+    { method: "PATCH", body: JSON.stringify(payload) },
+  );
+}
+
+export async function deleteAdminWorkforceRosterMember(
+  kind: "script-checker" | "data-entry-clerk",
+  examinationId: number,
+  personId: string,
+): Promise<void> {
+  await apiJson<void>(
+    `/admin/examinations/${examinationId}/${workforceRosterSegment(kind)}/${personId}`,
+    { method: "DELETE" },
+  );
+}
+
+export async function sendAdminWorkforceInviteSms(
+  kind: "script-checker" | "data-entry-clerk",
+  examinationId: number,
+  personId: string,
+): Promise<WorkforceInviteSmsResult> {
+  return apiJson<WorkforceInviteSmsResult>(
+    `/admin/examinations/${examinationId}/${workforceRosterSegment(kind)}/${personId}/send-invite-sms`,
+    { method: "POST" },
+  );
+}
+
+export async function bulkSendAdminWorkforceInviteSms(
+  kind: "script-checker" | "data-entry-clerk",
+  examinationId: number,
+  ids: string[],
+): Promise<WorkforceBulkInviteSmsResponse> {
+  return apiJson<WorkforceBulkInviteSmsResponse>(
+    `/admin/examinations/${examinationId}/${workforceRosterSegment(kind)}/bulk-invite-sms`,
+    { method: "POST", body: JSON.stringify({ ids }) },
+  );
+}
+
+export async function getWorkforceAssignmentGrid(
+  kind: "script-checker" | "data-entry-clerk",
+  examinationId: number,
+  subjectId: number,
+  paperNumber: number,
+): Promise<WorkforceAssignmentGridResponse> {
+  return apiJson<WorkforceAssignmentGridResponse>(
+    `/examinations/${examinationId}/subjects/${subjectId}/${workforceAssignmentSegment(kind)}?paper_number=${paperNumber}`,
+  );
+}
+
+export async function getWorkforceAssignmentRoster(
+  kind: "script-checker" | "data-entry-clerk",
+  examinationId: number,
+): Promise<WorkforceAssignmentRosterResponse> {
+  return apiJson<WorkforceAssignmentRosterResponse>(
+    `/examinations/${examinationId}/${workforceAssignmentSegment(kind)}/roster`,
+  );
+}
+
+export async function createWorkforceAssignmentBatch(
+  kind: "script-checker" | "data-entry-clerk",
+  examinationId: number,
+  subjectId: number,
+  paperNumber: number,
+  personId: string,
+  scriptCount: number,
+): Promise<WorkforceAssignmentBatchRow> {
+  return apiJson<WorkforceAssignmentBatchRow>(
+    `/examinations/${examinationId}/subjects/${subjectId}/${workforceAssignmentSegment(kind)}?paper_number=${paperNumber}`,
+    { method: "POST", body: JSON.stringify({ person_id: personId, script_count: scriptCount }) },
+  );
+}
+
+export async function completeWorkforceAssignmentBatch(
+  kind: "script-checker" | "data-entry-clerk",
+  examinationId: number,
+  subjectId: number,
+  batchId: string,
+): Promise<WorkforceAssignmentBatchRow> {
+  return apiJson<WorkforceAssignmentBatchRow>(
+    `/examinations/${examinationId}/subjects/${subjectId}/${workforceAssignmentSegment(kind)}/${batchId}/complete`,
+    { method: "POST" },
+  );
+}
+
+export async function cancelWorkforceAssignmentBatch(
+  kind: "script-checker" | "data-entry-clerk",
+  examinationId: number,
+  subjectId: number,
+  batchId: string,
+): Promise<WorkforceAssignmentBatchRow> {
+  return apiJson<WorkforceAssignmentBatchRow>(
+    `/examinations/${examinationId}/subjects/${subjectId}/${workforceAssignmentSegment(kind)}/${batchId}/cancel`,
+    { method: "POST" },
+  );
+}
+
+export async function getAdminWorkforceRates(
+  kind: "script-checker" | "data-entry-clerk",
+  examinationId: number,
+): Promise<WorkforceRatesResponse> {
+  return apiJson<WorkforceRatesResponse>(
+    `/admin/examinations/${examinationId}/${workforceRatesSegment(kind)}`,
+  );
+}
+
+export async function putAdminWorkforceRates(
+  kind: "script-checker" | "data-entry-clerk",
+  examinationId: number,
+  payload: WorkforceRatesPutPayload,
+): Promise<WorkforceRatesResponse> {
+  return apiJson<WorkforceRatesResponse>(
+    `/admin/examinations/${examinationId}/${workforceRatesSegment(kind)}`,
+    { method: "PUT", body: JSON.stringify(payload) },
+  );
+}
+
+export async function listAdminWorkforcePayouts(params: {
+  kind: "script-checker" | "data-entry-clerk";
+  examination_id: number;
+}): Promise<WorkforcePayoutListResponse> {
+  const q = new URLSearchParams();
+  q.set("examination_id", String(params.examination_id));
+  return apiJson<WorkforcePayoutListResponse>(
+    `/admin/${workforcePayoutsSegment(params.kind)}?${q.toString()}`,
+  );
+}
+
+export async function downloadAdminWorkforcePayoutsBogExport(params: {
+  kind: "script-checker" | "data-entry-clerk";
+  examination_id: number;
+  filename: string;
+}): Promise<void> {
+  const q = new URLSearchParams();
+  q.set("examination_id", String(params.examination_id));
+  await downloadApiFile(
+    `/admin/${workforcePayoutsSegment(params.kind)}/bog-export.xlsx?${q.toString()}`,
+    params.filename,
   );
 }
