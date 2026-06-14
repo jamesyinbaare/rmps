@@ -30,7 +30,7 @@ export default function AdminDataEntryClerkAssignmentsPage() {
       <div className="space-y-4">
         <WorkforceAssignmentPageIntro
           config={DATA_ENTRY_CLERK_CONFIG}
-          description="View clerk totals by exam. Use Assign to pick subject, paper, and quantity in a modal."
+          description="See each clerk's progress for this exam. To assign work, open Assign and choose the subject, paper, and number of entries."
           exam={selectedExam}
           formatExamLabel={formatWorkforceExamLabel}
           showAdminLinks

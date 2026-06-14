@@ -200,8 +200,6 @@ export function WorkforceBatchAssignmentPanel({
       });
   }, [rows, searchQuery, statusFilter]);
 
-  const noneConfirmed = rows.length > 0 && !rows.some((r) => r.availability_status === "confirmed");
-
   const contextLine =
     canLoad && selectedExam
       ? `${formatExamLabel(selectedExam)} · ${rows.length} ${config.labelPlural.toLowerCase()}`
@@ -324,8 +322,8 @@ export function WorkforceBatchAssignmentPanel({
         />
       ) : rows.length === 0 ? (
         <EmptyStatePanel
-          title={`No ${config.labelPlural.toLowerCase()} on this exam`}
-          description="Add people to the roster and send SMS invites before assigning work."
+          title={`No confirmed ${config.labelPlural.toLowerCase()} yet`}
+          description="Only people who have accepted the SMS invite appear here. Add roster members and send invites before assigning work."
           action={
             showRosterLinks ? (
               <Button type="button" asChild className={officialAccountsBtnPrimary}>
@@ -393,25 +391,6 @@ export function WorkforceBatchAssignmentPanel({
                   <X className="size-3" />
                 </button>
               </span>
-            </div>
-          ) : null}
-
-          {noneConfirmed ? (
-            <div className="rounded-xl border border-amber-500/30 bg-amber-500/10 px-4 py-3 text-sm text-amber-950 dark:text-amber-100">
-              <p className="font-medium">Nobody has confirmed availability yet</p>
-              <p className="mt-1 text-xs text-amber-900/80 dark:text-amber-200/80">
-                {config.labelPlural} must accept the SMS invite before you can assign work.
-                {showRosterLinks ? (
-                  <>
-                    {" "}
-                    <Link href={config.adminRosterPath} className="font-medium underline underline-offset-2">
-                      Open roster to resend SMS
-                    </Link>
-                  </>
-                ) : (
-                  " Contact your administrator to resend invites."
-                )}
-              </p>
             </div>
           ) : null}
 

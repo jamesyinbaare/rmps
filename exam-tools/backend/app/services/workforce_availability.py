@@ -12,6 +12,7 @@ from app.models import (
     ScriptChecker,
     WorkforceAvailabilityStatus,
 )
+from app.services.workforce_reference_code import ensure_workforce_reference_code
 
 
 def workforce_availability_deadline_from_now() -> datetime:
@@ -44,6 +45,7 @@ async def confirm_workforce_availability(
     person: ScriptChecker | DataEntryClerk,
 ) -> None:
     if person.availability_status == WorkforceAvailabilityStatus.CONFIRMED:
+        await ensure_workforce_reference_code(session, person)
         return
     if person.availability_status == WorkforceAvailabilityStatus.DECLINED:
         raise ValueError("You have already declined this assignment.")
@@ -52,6 +54,7 @@ async def confirm_workforce_availability(
     now = datetime.utcnow()
     person.availability_status = WorkforceAvailabilityStatus.CONFIRMED
     person.availability_responded_at = now
+    await ensure_workforce_reference_code(session, person)
     await session.flush()
 
 

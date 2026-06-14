@@ -35,7 +35,6 @@ const emptyForm = (): FormState => ({
   name: "",
   phone_number: "",
   region: "",
-  reference_code: "",
 });
 
 function formatSmsSentAt(iso: string | null): string {
@@ -96,6 +95,12 @@ export function WorkforceRosterPanel({ config, exams, formatExamLabel }: Props) 
 
   const allSelected = rows.length > 0 && selectedIds.size === rows.length;
 
+  const referenceCodeExample = useMemo(() => {
+    const year = exams.find((e) => e.id === examId)?.year ?? new Date().getFullYear();
+    const prefix = config.kind === "data-entry-clerk" ? "DE" : "SC";
+    return `${prefix}${year}-1`;
+  }, [config.kind, examId, exams]);
+
   function openCreate() {
     setEditing(null);
     setForm(emptyForm());
@@ -109,7 +114,6 @@ export function WorkforceRosterPanel({ config, exams, formatExamLabel }: Props) 
       name: row.name,
       phone_number: row.phone_number ?? "",
       region: row.region ?? "",
-      reference_code: row.reference_code ?? "",
     });
     setModalOpen(true);
   }
@@ -124,7 +128,6 @@ export function WorkforceRosterPanel({ config, exams, formatExamLabel }: Props) 
         name: form.name.trim(),
         phone_number: form.phone_number?.trim() || null,
         region: form.region?.trim() || null,
-        reference_code: form.reference_code?.trim() || null,
       };
       if (editing) {
         await updateAdminWorkforceRosterMember(config.kind, examId, editing.id, payload);
@@ -418,17 +421,18 @@ export function WorkforceRosterPanel({ config, exams, formatExamLabel }: Props) 
                 ))}
               </select>
             </div>
-            <div>
-              <label className={formLabelClass} htmlFor="wf-ref">
-                Reference code
-              </label>
-              <input
-                id="wf-ref"
-                className={formInputClass}
-                value={form.reference_code ?? ""}
-                onChange={(e) => setForm((f) => ({ ...f, reference_code: e.target.value }))}
-              />
-            </div>
+            {editing?.reference_code ? (
+              <div>
+                <p className={formLabelClass}>Reference code</p>
+                <p className="rounded-lg border border-border bg-muted/20 px-3 py-2 font-mono text-sm text-foreground">
+                  {editing.reference_code}
+                </p>
+              </div>
+            ) : (
+              <p className="text-xs text-muted-foreground">
+                Reference code is assigned when they confirm availability via the portal (e.g. {referenceCodeExample}).
+              </p>
+            )}
             {!editing ? (
               <label className={cn("flex items-center gap-2 text-sm")}>
                 <input

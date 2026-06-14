@@ -30,7 +30,7 @@ export default function AdminScriptCheckerAssignmentsPage() {
       <div className="space-y-4">
         <WorkforceAssignmentPageIntro
           config={SCRIPT_CHECKER_CONFIG}
-          description="View checker totals by exam. Use Assign to pick subject, paper, and quantity in a modal."
+          description="See each checker's progress for this exam. To assign work, open Assign and choose the subject, paper, and number of scripts."
           exam={selectedExam}
           formatExamLabel={formatWorkforceExamLabel}
           showAdminLinks

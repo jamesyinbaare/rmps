@@ -43,7 +43,7 @@ export default function SubjectOfficerScriptCheckerAssignmentsPage() {
       <div className="space-y-4">
         <WorkforceAssignmentPageIntro
           config={SCRIPT_CHECKER_CONFIG}
-          description="View checker totals for your exam. Assign batches via modal for your subjects only."
+          description="See checker progress for your exam. Use Assign to choose the subject, paper, and number of scripts for your subjects."
           exam={selectedExam}
           formatExamLabel={formatWorkforceExamLabel}
         />

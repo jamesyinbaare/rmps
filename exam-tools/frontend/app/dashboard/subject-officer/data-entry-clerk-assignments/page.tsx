@@ -43,7 +43,7 @@ export default function SubjectOfficerDataEntryClerkAssignmentsPage() {
       <div className="space-y-4">
         <WorkforceAssignmentPageIntro
           config={DATA_ENTRY_CLERK_CONFIG}
-          description="View clerk totals for your exam. Assign batches via modal for your subjects only."
+          description="See clerk progress for your exam. Use Assign to choose the subject, paper, and number of entries for your subjects."
           exam={selectedExam}
           formatExamLabel={formatWorkforceExamLabel}
         />

@@ -283,7 +283,10 @@ async def list_script_checker_assignment_roster(
     await _load_examination_or_error(session, examination_id)
     stmt = (
         select(ScriptChecker)
-        .where(ScriptChecker.examination_id == examination_id)
+        .where(
+            ScriptChecker.examination_id == examination_id,
+            ScriptChecker.availability_status == WorkforceAvailabilityStatus.CONFIRMED,
+        )
         .options(
             selectinload(ScriptChecker.bank_account),
             selectinload(ScriptChecker.assignment_batches),
@@ -306,7 +309,10 @@ async def list_data_entry_clerk_assignment_roster(
     await _load_examination_or_error(session, examination_id)
     stmt = (
         select(DataEntryClerk)
-        .where(DataEntryClerk.examination_id == examination_id)
+        .where(
+            DataEntryClerk.examination_id == examination_id,
+            DataEntryClerk.availability_status == WorkforceAvailabilityStatus.CONFIRMED,
+        )
         .options(
             selectinload(DataEntryClerk.bank_account),
             selectinload(DataEntryClerk.assignment_batches),
