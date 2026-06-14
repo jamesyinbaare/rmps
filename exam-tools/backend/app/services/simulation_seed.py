@@ -410,7 +410,7 @@ async def _seed_examiners(
     if not eligible_regions:
         raise ValueError("No region/zone data found from schools for examiner generation.")
 
-    types = [ExaminerType.CHIEF, ExaminerType.TEAM_LEADER, ExaminerType.ASSISTANT]
+    types = [ExaminerType.CHIEF, ExaminerType.ASSISTANT_CHIEF, ExaminerType.TEAM_LEADER, ExaminerType.ASSISTANT]
     weights = [0.08, 0.24, 0.68]
     start = int(existing or 0)
     needed = SIM_EXAMINER_COUNT - start
@@ -428,6 +428,10 @@ async def _seed_examiners(
         session.add(examiner)
         await session.flush()
         session.add(ExaminerSubject(examiner_id=examiner.id, subject_id=subject_id))
+        await session.flush()
+        from app.services.examiner_reference_code import assign_reference_code_to_examiner  # noqa: PLC0415
+
+        await assign_reference_code_to_examiner(session, examiner)
 
 
 async def _validate_seed(

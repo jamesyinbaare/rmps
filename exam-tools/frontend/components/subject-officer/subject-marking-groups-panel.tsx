@@ -22,11 +22,12 @@ import { CohortCoverageBar } from "@/components/cohorts/cohort-coverage-bar";
 import { CohortListColumn } from "@/components/cohorts/cohort-list-column";
 import { CohortManageModal } from "@/components/cohorts/cohort-manage-modal";
 import { CohortUnassignedModal } from "@/components/cohorts/cohort-unassigned-modal";
-import type { CohortListItem, MembershipExaminer } from "@/components/cohorts/types";
+import { CohortViewModal } from "@/components/cohorts/cohort-view-modal";
+import type { CohortListItem, CohortRosterMember, MembershipExaminer } from "@/components/cohorts/types";
 import { computeCoverage } from "@/components/cohorts/utils";
 import { useCohortMembershipDraft } from "@/components/cohorts/use-cohort-membership-draft";
 import { EXAMINERS_PANEL_CLASS } from "@/components/examiners/constants";
-import { SearchableCombobox } from "@/components/searchable-combobox";
+import { SubjectScopePicker } from "@/components/subject-scope-picker";
 import { Button } from "@/components/ui/button";
 import {
   createSubjectMarkingGroup,
@@ -39,12 +40,6 @@ import {
   type SubjectMarkingGroupRow,
   type Subject,
 } from "@/lib/api";
-import { formInputClass, formLabelClass } from "@/lib/form-classes";
-import { subjectDisplayLabel } from "@/lib/subject-display";
-import { cn } from "@/lib/utils";
-
-const SUBJECT_COMBO_THRESHOLD = 5;
-
 function toCohortListItem(g: SubjectMarkingGroupRow): CohortListItem {
   return {
     id: g.id,
@@ -53,8 +48,9 @@ function toCohortListItem(g: SubjectMarkingGroupRow): CohortListItem {
     examiner_ids: g.examiner_ids,
     source_regions: g.source_regions,
     source_roles: g.source_roles,
-    coordinationDate: g.coordination_date,
+    coordinationStartDate: g.coordination_start_date,
     coordinationStartTime: g.coordination_start_time,
+    coordinationEndDate: g.coordination_end_date,
     coordinationEndTime: g.coordination_end_time,
     markingStartDate: g.marking_start_date,
     markingEndDate: g.marking_end_date,
@@ -77,6 +73,10 @@ type Props = {
   pageScroll?: boolean;
   /** Super Admin / Test Admin Officer can edit default cohort schedules. */
   canManageDefaultCohort?: boolean;
+  /** When false, cohorts are view-only (subject officers). */
+  canManageCohorts?: boolean;
+  /** When set, subject scope is controlled by the page command bar. */
+  lockedSubjectId?: number;
 };
 
 export function SubjectMarkingGroupsPanel({
@@ -85,8 +85,10 @@ export function SubjectMarkingGroupsPanel({
   embedded = false,
   pageScroll = false,
   canManageDefaultCohort = false,
+  canManageCohorts = true,
+  lockedSubjectId,
 }: Props) {
-  const [subjectId, setSubjectId] = useState<number | "">("");
+  const [subjectId, setSubjectId] = useState<number | null>(null);
   const [groups, setGroups] = useState<SubjectMarkingGroupRow[]>([]);
   const [examiners, setExaminers] = useState<ExaminerRow[]>([]);
   const [loading, setLoading] = useState(false);
@@ -135,14 +137,28 @@ export function SubjectMarkingGroupsPanel({
   const cohortList = useMemo(() => groups.map(toCohortListItem), [groups]);
 
   const subjectExaminers = useMemo((): MembershipExaminer[] => {
-    if (subjectId === "") return [];
+    if (subjectId == null) return [];
     return examiners
-      .filter((e) => e.subject_ids.includes(Number(subjectId)))
+      .filter((e) => e.subject_ids.includes(subjectId))
       .map((e) => ({
         id: e.id,
         name: e.name,
         region: e.region,
         examiner_type: e.examiner_type,
+      }));
+  }, [examiners, subjectId]);
+
+  const subjectRosterMembers = useMemo((): CohortRosterMember[] => {
+    if (subjectId == null) return [];
+    return examiners
+      .filter((e) => e.subject_ids.includes(subjectId))
+      .map((e) => ({
+        id: e.id,
+        name: e.name,
+        region: e.region,
+        examiner_type: e.examiner_type,
+        phone_number: e.phone_number,
+        reference_code: e.reference_code,
       }));
   }, [examiners, subjectId]);
 
@@ -175,18 +191,11 @@ export function SubjectMarkingGroupsPanel({
     [groups, selectedId],
   );
   const isDefaultCohort = selectedGroup?.is_default === true;
-  const defaultCohortDetailsEditable = !isDefaultCohort || canManageDefaultCohort;
+  const defaultCohortDetailsEditable =
+    canManageCohorts && (!isDefaultCohort || canManageDefaultCohort);
+  const cohortDetailsEditable = canManageCohorts && defaultCohortDetailsEditable;
 
-  const canSaveMembership = (!isCreating || selectedId != null) && !isDefaultCohort;
-
-  const subjectOptions = useMemo(
-    () =>
-      subjects.map((s) => ({
-        value: String(s.id),
-        label: subjectDisplayLabel(s),
-      })),
-    [subjects],
-  );
+  const canSaveMembership = canManageCohorts && (!isCreating || selectedId != null) && !isDefaultCohort;
 
   const loadGroups = useCallback(async (eid: number, sid: number) => {
     setLoading(true);
@@ -210,28 +219,28 @@ export function SubjectMarkingGroupsPanel({
   }, []);
 
   useEffect(() => {
+    if (lockedSubjectId != null) {
+      setSubjectId(lockedSubjectId);
+    }
+  }, [lockedSubjectId]);
+
+  useEffect(() => {
     if (examId == null) {
       setGroups([]);
       setExaminers([]);
       return;
     }
-    void loadExaminers(examId);
+    loadExaminers(examId);
   }, [examId, loadExaminers]);
 
   useEffect(() => {
-    if (subjects.length === 1 && subjectId === "") {
-      setSubjectId(subjects[0]!.id);
-    }
-  }, [subjectId, subjects]);
-
-  useEffect(() => {
-    if (examId == null || subjectId === "") {
+    if (examId == null || subjectId == null) {
       setGroups([]);
       closeModal();
       setUnassignedModalOpen(false);
       return;
     }
-    void loadGroups(examId, Number(subjectId));
+    loadGroups(examId, subjectId);
   }, [examId, loadGroups, subjectId]);
 
   useEffect(() => {
@@ -296,7 +305,7 @@ export function SubjectMarkingGroupsPanel({
   }
 
   async function handleAddToCohort(cohortId: string, examinerIds: string[]) {
-    if (examId == null || subjectId === "") return;
+    if (examId == null || subjectId == null) return;
     const group = groups.find((g) => g.id === cohortId);
     if (!group) return;
 
@@ -304,12 +313,12 @@ export function SubjectMarkingGroupsPanel({
     setLoadError(null);
     try {
       const mergedIds = [...new Set([...group.examiner_ids, ...examinerIds])];
-      await replaceSubjectMarkingGroupMembers(examId, Number(subjectId), cohortId, {
+      await replaceSubjectMarkingGroupMembers(examId, subjectId, cohortId, {
         source_regions: group.source_regions,
         source_roles: group.source_roles,
         examiner_ids: mergedIds,
       });
-      await loadGroups(examId, Number(subjectId));
+      await loadGroups(examId, subjectId);
       setUnassignedModalOpen(false);
     } catch (e) {
       setLoadError(e instanceof Error ? e.message : "Failed to add examiners");
@@ -332,7 +341,7 @@ export function SubjectMarkingGroupsPanel({
   }
 
   async function handleSaveDetails(): Promise<boolean> {
-    if (examId == null || subjectId === "") return false;
+    if (examId == null || subjectId == null) return false;
     const name = nameInput.trim();
     if (!name) {
       setDetailsError("Cohort name is required.");
@@ -353,14 +362,14 @@ export function SubjectMarkingGroupsPanel({
       const membershipPayload = membershipPayloadFromDrafts();
 
       if (isCreating) {
-        const created = await createSubjectMarkingGroup(examId, Number(subjectId), detailsPayload);
-        await loadGroups(examId, Number(subjectId));
+        const created = await createSubjectMarkingGroup(examId, subjectId, detailsPayload);
+        await loadGroups(examId, subjectId);
         setIsCreating(false);
         setSelectedId(created.id);
         setSavedSnapshot(buildCohortFormSnapshot(name, scheduleDraft, membershipPayload));
       } else if (selectedId) {
-        await updateSubjectMarkingGroup(examId, Number(subjectId), selectedId, detailsPayload);
-        await loadGroups(examId, Number(subjectId));
+        await updateSubjectMarkingGroup(examId, subjectId, selectedId, detailsPayload);
+        await loadGroups(examId, subjectId);
         setSavedSnapshot((prev) =>
           buildCohortFormSnapshot(
             name,
@@ -379,7 +388,7 @@ export function SubjectMarkingGroupsPanel({
   }
 
   async function handleSaveMembership(): Promise<boolean> {
-    if (examId == null || subjectId === "") return false;
+    if (examId == null || subjectId == null) return false;
     if (isCreating && !selectedId) {
       setMembershipError("Save details first to create this cohort.");
       return false;
@@ -392,11 +401,11 @@ export function SubjectMarkingGroupsPanel({
       const membershipPayload = membership.buildPayload();
       await replaceSubjectMarkingGroupMembers(
         examId,
-        Number(subjectId),
+        subjectId,
         selectedId,
         membershipPayload,
       );
-      await loadGroups(examId, Number(subjectId));
+      await loadGroups(examId, subjectId);
       setSavedSnapshot((prev) =>
         buildCohortFormSnapshot(
           prev?.name ?? nameInput.trim(),
@@ -414,13 +423,13 @@ export function SubjectMarkingGroupsPanel({
   }
 
   async function handleDelete() {
-    if (examId == null || subjectId === "" || !selectedId) return;
+    if (examId == null || subjectId == null || !selectedId) return;
     setBusy(true);
     setMembershipError(null);
     try {
-      await deleteSubjectMarkingGroup(examId, Number(subjectId), selectedId);
+      await deleteSubjectMarkingGroup(examId, subjectId, selectedId);
       closeModal();
-      await loadGroups(examId, Number(subjectId));
+      await loadGroups(examId, subjectId);
     } catch (e) {
       setMembershipError(e instanceof Error ? e.message : "Delete failed");
     } finally {
@@ -440,66 +449,50 @@ export function SubjectMarkingGroupsPanel({
 
   return (
     <div className={panelClass}>
-      <div className="shrink-0 border-b border-border/80 px-4 py-3 sm:px-5">
-        <div className="flex flex-wrap items-end gap-3">
-          <div className="min-w-40 flex-1 sm:max-w-xs">
-            <label className={formLabelClass} htmlFor="smg-subject">
-              Subject
-            </label>
-            {subjects.length >= SUBJECT_COMBO_THRESHOLD ? (
-              <SearchableCombobox
-                id="smg-subject"
-                options={subjectOptions}
-                value={subjectId === "" ? "" : String(subjectId)}
-                onChange={(v) => {
-                  setSubjectId(v ? Number(v) : "");
-                  closeModal();
-                  setUnassignedModalOpen(false);
-                }}
-                placeholder="Select subject…"
-                searchPlaceholder="Search subjects…"
-                showAllOption={false}
-                widthClass="w-full mt-1"
-                triggerClassName="h-9 min-h-9"
-                truncateTrigger
-              />
-            ) : (
-              <select
-                id="smg-subject"
-                className={cn(formInputClass, "mt-1")}
-                value={subjectId}
-                onChange={(e) => {
-                  setSubjectId(e.target.value ? Number(e.target.value) : "");
-                  closeModal();
-                  setUnassignedModalOpen(false);
-                }}
-              >
-                <option value="">Select subject…</option>
-                {subjects.map((s) => (
-                  <option key={s.id} value={s.id}>
-                    {subjectDisplayLabel(s)}
-                  </option>
-                ))}
-              </select>
-            )}
-          </div>
-        </div>
+      {lockedSubjectId == null ? (
+      <div className="shrink-0 border-b border-border/80 px-4 py-4 sm:px-5">
+        <SubjectScopePicker
+          subjects={subjects}
+          selectedSubjectId={subjectId}
+          onSelectedSubjectIdChange={(id) => {
+            setSubjectId(id);
+            closeModal();
+            setUnassignedModalOpen(false);
+          }}
+          subjectComboboxId="smg-subject"
+          resetKey={examId}
+          disabled={loading || busy}
+        />
       </div>
+      ) : null}
 
-      {subjectId === "" ? (
+      {subjectId == null ? (
         <div className="flex flex-1 items-center justify-center p-6 text-center">
-          <p className="text-sm text-muted-foreground">Select a subject to manage cohorts.</p>
+          <p className="text-sm text-muted-foreground">
+            {canManageCohorts ? "Select a subject to manage cohorts." : "Select a subject to view cohorts."}
+          </p>
         </div>
       ) : (
         <>
+          {!canManageCohorts ? (
+            <div className="shrink-0 border-b border-border/80 px-4 py-3 sm:px-5">
+              <p className="text-sm text-muted-foreground">
+                View cohort schedules and contact members. Only administrators can create or edit cohorts.
+              </p>
+            </div>
+          ) : null}
+
           <CohortCoverageBar
             coverage={coverage}
             entityLabel="cohort"
             onShowUnassigned={openUnassigned}
+            unassignedButtonLabel={canManageCohorts ? undefined : "View unassigned"}
             trailing={
-              <Button type="button" size="sm" disabled={busy} onClick={() => openCreate()}>
-                New cohort
-              </Button>
+              canManageCohorts ? (
+                <Button type="button" size="sm" disabled={busy} onClick={() => openCreate()}>
+                  New cohort
+                </Button>
+              ) : null
             }
           />
 
@@ -511,7 +504,11 @@ export function SubjectMarkingGroupsPanel({
             unassignedCount={coverage.unassignedCount}
             showUnassignedCount
             showScheduleColumn
-            emptyLabel="No cohorts yet. Create one to assign examiners and set dates."
+            emptyLabel={
+              canManageCohorts
+                ? "No cohorts yet. Create one to assign examiners and set dates."
+                : "No cohorts for this subject yet. Administrators will set these up."
+            }
             hideNewButton
           />
 
@@ -519,24 +516,26 @@ export function SubjectMarkingGroupsPanel({
             open={unassignedModalOpen}
             onClose={() => setUnassignedModalOpen(false)}
             entityLabel="cohort"
-            examiners={subjectExaminers}
+            examiners={canManageCohorts ? subjectExaminers : subjectRosterMembers}
             unassignedIds={coverage.unassignedIds}
             cohorts={cohortList}
             busy={busy}
+            readOnly={!canManageCohorts}
             onCreateWithSelected={handleCreateWithSelected}
             onAddToCohort={(cohortId, ids) => void handleAddToCohort(cohortId, ids)}
           />
 
+          {canManageCohorts ? (
           <CohortManageModal
             open={modalOpen}
             mode={isCreating ? "create" : "edit"}
             entityLabel="cohort"
             description={
               isDefaultCohort
-                ? canManageDefaultCohort
-                  ? "All subject examiners are always in the default cohort. You can edit the schedule; membership is synced from the roster."
-                  : "All subject examiners are always in the default cohort. Only administrators can edit the default schedule; membership is synced from the roster."
-                : undefined
+                  ? canManageDefaultCohort
+                    ? "All subject examiners are always in the default cohort. You can edit the schedule; membership is synced from the roster."
+                    : "All subject examiners are always in the default cohort. Only administrators can edit the default schedule; membership is synced from the roster."
+                  : undefined
             }
             name={nameInput}
             onNameChange={setNameInput}
@@ -572,9 +571,9 @@ export function SubjectMarkingGroupsPanel({
             scheduleWarnings={scheduleValidation.warnings}
             detailsSaveDisabled={scheduleValidation.hasBlockingErrors}
             canSaveMembership={canSaveMembership}
-            membershipLocked={isDefaultCohort}
-            nameDisabled={isDefaultCohort}
-            detailsEditable={defaultCohortDetailsEditable}
+            membershipLocked={!canManageCohorts || isDefaultCohort}
+            nameDisabled={!canManageCohorts || isDefaultCohort}
+            detailsEditable={cohortDetailsEditable}
             deleteConfirmOpen={deleteConfirmOpen}
             onDeleteConfirmOpenChange={setDeleteConfirmOpen}
             onToggleRegion={membership.toggleRegion}
@@ -583,9 +582,20 @@ export function SubjectMarkingGroupsPanel({
             onSaveDetails={() => handleSaveDetails()}
             onCancelDetailsEdit={cancelDetailsEdit}
             onSaveMembership={() => void handleSaveMembership()}
-            onDelete={isCreating || isDefaultCohort ? undefined : () => void handleDelete()}
+            onDelete={
+              !canManageCohorts || isCreating || isDefaultCohort ? undefined : () => void handleDelete()
+            }
             onClose={closeModal}
           />
+          ) : (
+            <CohortViewModal
+              open={modalOpen}
+              onClose={closeModal}
+              cohort={selectedGroup ?? null}
+              rosterMembers={subjectRosterMembers}
+              examId={examId}
+            />
+          )}
         </>
       )}
     </div>

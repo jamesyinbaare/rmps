@@ -34,6 +34,11 @@ export default function AdminExaminersHubPage() {
         me?.role === "SUPER_ADMIN" || me?.role === "TEST_ADMIN_OFFICER"
       }
       loadingExams={loadingExams}
+      requireExamSelection
+      showScriptsAllocationLink={false}
+      showCreateExamsLink={false}
+      showSubjectBadges={false}
+      showQuotaAssessment
     />
   );
 }

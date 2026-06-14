@@ -910,6 +910,10 @@ export type Examination = {
   updated_at: string;
 };
 
+export async function listExaminations(): Promise<Examination[]> {
+  return apiJson<Examination[]>("/examinations");
+}
+
 export type ExaminationSchedule = {
   id: number;
   examination_id: number;
@@ -1024,6 +1028,8 @@ export type BankBranchBulkUploadResponse = {
 };
 
 export type ListBankBranchesParams = {
+  /** Substring match on bank name or branch name (case-insensitive). */
+  search?: string | null;
   bank_name?: string | null;
   /** When set, only rows whose bank_name equals this string (exact). */
   bank_name_exact?: string | null;
@@ -1034,9 +1040,12 @@ export type ListBankBranchesParams = {
 
 export async function listBankBranches(params?: ListBankBranchesParams): Promise<BankBranchListResponse> {
   const q = new URLSearchParams();
-  if (params?.bank_name_exact?.trim()) q.set("bank_name_exact", params.bank_name_exact.trim());
-  else if (params?.bank_name?.trim()) q.set("bank_name", params.bank_name.trim());
-  if (params?.branch_name?.trim()) q.set("branch_name", params.branch_name.trim());
+  if (params?.search?.trim()) q.set("search", params.search.trim());
+  else {
+    if (params?.bank_name_exact?.trim()) q.set("bank_name_exact", params.bank_name_exact.trim());
+    else if (params?.bank_name?.trim()) q.set("bank_name", params.bank_name.trim());
+    if (params?.branch_name?.trim()) q.set("branch_name", params.branch_name.trim());
+  }
   if (params?.skip != null) q.set("skip", String(params.skip));
   if (params?.limit != null) q.set("limit", String(params.limit));
   const s = q.toString();
@@ -2639,6 +2648,296 @@ export async function putExaminationDesignationRates(
   });
 }
 
+export type ExaminerAllowanceTypeApi =
+  | "responsibility_allowance"
+  | "inconvenience_allowance"
+  | "chief_examiners_report"
+  | "vetting_of_scripts"
+  | "internal_commuting";
+
+export type ExaminerAllowanceSubjectRef = {
+  id: number;
+  code: string;
+  name: string;
+  subject_type: SubjectTypeEnum;
+  paper_numbers: number[];
+};
+
+export type ExaminerRoleAllowanceRateCell = {
+  examiner_type: ExaminerTypeApi;
+  allowance_type: ExaminerAllowanceTypeApi;
+  amount_ghs: string | null;
+};
+
+export type ExaminationExaminerRoleAllowanceRatesResponse = {
+  examination_id: number;
+  items: ExaminerRoleAllowanceRateCell[];
+};
+
+export type ExaminerRoleAllowanceRateItemUpdate = {
+  examiner_type: ExaminerTypeApi;
+  allowance_type: ExaminerAllowanceTypeApi;
+  amount_ghs?: string | null;
+};
+
+export type ExaminerMarkingRateRow = {
+  subject_id: number;
+  paper_number: number;
+  rate_per_script_ghs: string | null;
+};
+
+export type ExaminationExaminerMarkingRatesResponse = {
+  examination_id: number;
+  subjects: ExaminerAllowanceSubjectRef[];
+  items: ExaminerMarkingRateRow[];
+};
+
+export type ExaminerMarkingRateItemUpdate = {
+  subject_id: number;
+  paper_number: number;
+  rate_per_script_ghs?: string | null;
+};
+
+export type ExaminerTravelRateRow = {
+  region: string;
+  amount_ghs: string | null;
+};
+
+export type ExaminerTravelZoneRow = {
+  id: string;
+  name: string;
+  regions: string[];
+};
+
+export type ExaminerTravelRoleFactorRow = {
+  examiner_type: ExaminerTypeApi;
+  zone_id: string;
+  factor: string | null;
+};
+
+export type ExaminationExaminerTravelRatesResponse = {
+  examination_id: number;
+  zones: ExaminerTravelZoneRow[];
+  items: ExaminerTravelRateRow[];
+  role_factors: ExaminerTravelRoleFactorRow[];
+};
+
+export type SubjectMarkingBreakdownRow = {
+  subject_id: number;
+  subject_code: string;
+  subject_name: string;
+  paper_number: number;
+  allocated_booklets: number;
+  rate_per_script_ghs?: string | null;
+  marking_allowance_ghs?: string | null;
+  script_source?: "allocation" | "manual";
+};
+
+export type AdminExaminerAllowanceRow = {
+  id: string;
+  examination_id: number;
+  examination_label: string;
+  full_name: string;
+  examiner_type: ExaminerTypeApi;
+  region: string;
+  subject_codes: string;
+  subject_names: string;
+  bank_branch_id?: string | null;
+  bank_code?: string | null;
+  bank_name?: string | null;
+  branch_name?: string | null;
+  account_number?: string | null;
+  phone_number?: string | null;
+  responsibility_allowance_ghs: string;
+  inconvenience_allowance_ghs: string;
+  chief_examiners_report_ghs: string;
+  vetting_of_scripts_ghs: string;
+  internal_commuting_ghs: string;
+  marking_allowance_ghs: string;
+  travel_base_ghs: string;
+  travel_zone_name?: string | null;
+  travel_role_factor: string;
+  travel_and_transport_ghs: string;
+  total_allocated_scripts: number;
+  marking_withholding_tax_ghs: string;
+  marking_net_ghs: string;
+  vetting_withholding_tax_ghs: string;
+  vetting_net_ghs: string;
+  payout_travel_commuting_ghs: string;
+  payout_allowances_marking_ghs: string;
+  total_payable_ghs: string;
+  subject_breakdowns: SubjectMarkingBreakdownRow[];
+  created_at: string;
+  updated_at: string;
+};
+
+export type AdminExaminerAllowanceListResponse = {
+  items: AdminExaminerAllowanceRow[];
+  total: number;
+};
+
+export type AdminExaminerMarkingSubjectSummaryRow = {
+  subject_id: number;
+  subject_code: string;
+  subject_name: string;
+  registered_candidates: number;
+  total_allocated_scripts: number;
+  examiner_count: number;
+  variance: number;
+};
+
+export type AdminExaminerMarkingSubjectSummaryResponse = {
+  items: AdminExaminerMarkingSubjectSummaryRow[];
+  total: number;
+};
+
+export async function listAdminExaminerMarkingSubjectSummary(
+  examinationId: number,
+): Promise<AdminExaminerMarkingSubjectSummaryResponse> {
+  return apiJson<AdminExaminerMarkingSubjectSummaryResponse>(
+    `/admin/examinations/${examinationId}/examiner-marking-subject-summary`,
+  );
+}
+
+export async function getExaminationExaminerRoleAllowanceRates(
+  examId: number,
+): Promise<ExaminationExaminerRoleAllowanceRatesResponse> {
+  return apiJson<ExaminationExaminerRoleAllowanceRatesResponse>(
+    `/admin/examinations/${examId}/examiner-role-allowance-rates`,
+  );
+}
+
+export async function putExaminationExaminerRoleAllowanceRates(
+  examId: number,
+  items: ExaminerRoleAllowanceRateItemUpdate[],
+): Promise<ExaminationExaminerRoleAllowanceRatesResponse> {
+  return apiJson<ExaminationExaminerRoleAllowanceRatesResponse>(
+    `/admin/examinations/${examId}/examiner-role-allowance-rates`,
+    {
+      method: "PUT",
+      body: JSON.stringify({ items }),
+    },
+  );
+}
+
+export async function getExaminationExaminerMarkingRates(
+  examId: number,
+): Promise<ExaminationExaminerMarkingRatesResponse> {
+  return apiJson<ExaminationExaminerMarkingRatesResponse>(
+    `/admin/examinations/${examId}/examiner-marking-rates`,
+  );
+}
+
+export async function putExaminationExaminerMarkingRates(
+  examId: number,
+  items: ExaminerMarkingRateItemUpdate[],
+): Promise<ExaminationExaminerMarkingRatesResponse> {
+  return apiJson<ExaminationExaminerMarkingRatesResponse>(
+    `/admin/examinations/${examId}/examiner-marking-rates`,
+    {
+      method: "PUT",
+      body: JSON.stringify({ items }),
+    },
+  );
+}
+
+export async function getExaminationExaminerTravelRates(
+  examId: number,
+): Promise<ExaminationExaminerTravelRatesResponse> {
+  return apiJson<ExaminationExaminerTravelRatesResponse>(
+    `/admin/examinations/${examId}/examiner-travel-rates`,
+  );
+}
+
+export async function putExaminationExaminerTravelRates(
+  examId: number,
+  payload: {
+    items: { region: string; amount_ghs?: string | null }[];
+    zones?: { id?: string | null; name: string; regions: string[] }[];
+    role_factors?: {
+      examiner_type: ExaminerTypeApi;
+      zone_id: string;
+      factor?: string | null;
+    }[];
+  },
+): Promise<ExaminationExaminerTravelRatesResponse> {
+  return apiJson<ExaminationExaminerTravelRatesResponse>(
+    `/admin/examinations/${examId}/examiner-travel-rates`,
+    {
+      method: "PUT",
+      body: JSON.stringify(payload),
+    },
+  );
+}
+
+export async function copyExaminationExaminerAllowanceRates(
+  examId: number,
+  sourceExamId: number,
+): Promise<{ examination_id: number; copied: boolean }> {
+  return apiJson<{ examination_id: number; copied: boolean }>(
+    `/admin/examinations/${examId}/examiner-allowance-rates/copy-from/${sourceExamId}`,
+    { method: "POST" },
+  );
+}
+
+export async function listAdminExaminerAllowances(params: {
+  examination_id: number;
+  role?: string | null;
+  region?: string | null;
+  subject_id?: number | null;
+  search?: string | null;
+  skip?: number;
+  limit?: number;
+}): Promise<AdminExaminerAllowanceListResponse> {
+  const q = new URLSearchParams();
+  q.set("examination_id", String(params.examination_id));
+  if (params.role?.trim()) q.set("role", params.role.trim());
+  if (params.region?.trim()) q.set("region", params.region.trim());
+  if (params.subject_id != null) q.set("subject_id", String(params.subject_id));
+  if (params.search?.trim()) q.set("search", params.search.trim());
+  if (params.skip != null) q.set("skip", String(params.skip));
+  if (params.limit != null) q.set("limit", String(params.limit));
+  return apiJson<AdminExaminerAllowanceListResponse>(`/admin/examiner-allowances?${q.toString()}`);
+}
+
+export async function downloadAdminExaminerAllowancesExport(params: {
+  examination_id: number;
+  role?: string | null;
+  region?: string | null;
+  subject_id?: number | null;
+  search?: string | null;
+  filename: string;
+}): Promise<void> {
+  const q = new URLSearchParams();
+  q.set("examination_id", String(params.examination_id));
+  if (params.role?.trim()) q.set("role", params.role.trim());
+  if (params.region?.trim()) q.set("region", params.region.trim());
+  if (params.subject_id != null) q.set("subject_id", String(params.subject_id));
+  if (params.search?.trim()) q.set("search", params.search.trim());
+  await downloadApiFile(`/admin/examiner-allowances/export.xlsx?${q.toString()}`, params.filename);
+}
+
+export type ExaminerBogPayoutMode = "all" | "travel_commuting" | "allowances_marking";
+
+export async function downloadAdminExaminerAllowancesBogExport(params: {
+  examination_id: number;
+  role?: string | null;
+  region?: string | null;
+  subject_id?: number | null;
+  search?: string | null;
+  payout_mode?: ExaminerBogPayoutMode;
+  filename: string;
+}): Promise<void> {
+  const q = new URLSearchParams();
+  q.set("examination_id", String(params.examination_id));
+  if (params.role?.trim()) q.set("role", params.role.trim());
+  if (params.region?.trim()) q.set("region", params.region.trim());
+  if (params.subject_id != null) q.set("subject_id", String(params.subject_id));
+  if (params.search?.trim()) q.set("search", params.search.trim());
+  if (params.payout_mode && params.payout_mode !== "all") q.set("payout_mode", params.payout_mode);
+  await downloadApiFile(`/admin/examiner-allowances/bog-export.xlsx?${q.toString()}`, params.filename);
+}
+
 export type AdminExamCentreOfficialListResponse = {
   items: AdminExamCentreOfficialRow[];
   total: number;
@@ -3340,7 +3639,11 @@ export async function adminResetDepotKeeperPassword(
   );
 }
 
-export type ExaminerTypeApi = "chief_examiner" | "assistant_examiner" | "team_leader";
+export type ExaminerTypeApi =
+  | "chief_examiner"
+  | "assistant_chief_examiner"
+  | "assistant_examiner"
+  | "team_leader";
 
 export type AllocationRunStatusApi = "draft" | "optimal" | "infeasible" | "timeout" | "error";
 
@@ -3392,8 +3695,10 @@ export type ExaminerRow = {
   examination_id: number;
   name: string;
   phone_number: string | null;
+  gender?: string | null;
   examiner_type: ExaminerTypeApi;
   region: string;
+  reference_code: string | null;
   subject_ids: number[];
   deviation_weight: number | null;
   examiner_group_id: string | null;
@@ -3521,6 +3826,7 @@ export type ExaminerCreatePayload = {
   region: string;
   subject_ids: [number];
   deviation_weight?: number | null;
+  gender?: string | null;
 };
 
 export type ExaminerUpdatePayload = {
@@ -3530,13 +3836,15 @@ export type ExaminerUpdatePayload = {
   region?: string;
   subject_ids?: [number];
   deviation_weight?: number | null;
+  gender?: string | null;
 };
 
 export type ExaminerInvitationStatusApi =
   | "pending"
   | "accepted"
   | "declined"
-  | "expired";
+  | "expired"
+  | "quota_waitlisted";
 
 export type ExaminerInvitationRow = {
   id: string;
@@ -3548,6 +3856,7 @@ export type ExaminerInvitationRow = {
   subject_type: SubjectTypeEnum;
   name: string;
   phone_number: string;
+  gender?: string | null;
   examiner_type: ExaminerTypeApi;
   region: string;
   status: ExaminerInvitationStatusApi;
@@ -3555,7 +3864,11 @@ export type ExaminerInvitationRow = {
   notified_at: string | null;
   responded_at: string | null;
   response_deadline: string;
-  coordination_date: string | null;
+  coordination_start_date: string | null;
+  coordination_start_time: string | null;
+  coordination_end_date: string | null;
+  coordination_end_time: string | null;
+  coordination_venue: string | null;
   examiner_id: string | null;
   created_at: string;
   updated_at: string;
@@ -3571,15 +3884,27 @@ export type ExaminerInvitationCreatePayload = {
   subject_id: number;
   examiner_type: ExaminerTypeApi;
   region: string;
+  gender?: string | null;
   send_sms?: boolean | null;
   response_deadline: string;
-  coordination_date?: string | null;
+  coordination_start_date?: string | null;
+  coordination_start_time?: string | null;
+  coordination_end_date?: string | null;
+  coordination_end_time?: string | null;
+  coordination_venue?: string | null;
+};
+
+export type ExaminerInvitationCoordinationPayload = {
+  coordination_start_date?: string | null;
+  coordination_start_time?: string | null;
+  coordination_end_date?: string | null;
+  coordination_end_time?: string | null;
+  coordination_venue?: string | null;
 };
 
 export type ExaminerInvitationBulkCoordinationPayload = {
   invitation_ids: string[];
-  coordination_date: string;
-};
+} & ExaminerInvitationCoordinationPayload;
 
 export type ExaminerInvitationBulkCoordinationResponse = {
   updated_count: number;
@@ -3590,9 +3915,11 @@ export type ExaminerMarkingCohortPublic = {
   id: string;
   name: string;
   is_default: boolean;
-  coordination_date: string | null;
+  coordination_start_date: string | null;
   coordination_start_time: string | null;
+  coordination_end_date: string | null;
   coordination_end_time: string | null;
+  coordination_venue?: string | null;
   marking_start_date: string | null;
   marking_end_date: string | null;
   marked_script_submission_deadline: string | null;
@@ -3601,6 +3928,7 @@ export type ExaminerMarkingCohortPublic = {
 export type ExaminerInvitationPublic = {
   invitee_name: string;
   phone_number: string;
+  examination_id: number;
   examination_name: string;
   examination_description: string | null;
   subject_name: string;
@@ -3611,13 +3939,198 @@ export type ExaminerInvitationPublic = {
   region: string;
   status: ExaminerInvitationStatusApi;
   response_deadline: string | null;
-  coordination_date: string | null;
+  coordination_start_date: string | null;
+  coordination_start_time: string | null;
+  coordination_end_date: string | null;
+  coordination_end_time: string | null;
+  coordination_venue?: string | null;
   responded_at: string | null;
   can_respond: boolean;
   examiner_id?: string | null;
   portal_mode?: "invitation" | "roster";
   roster_source?: "manual" | "invitation" | null;
   marking_cohorts?: ExaminerMarkingCohortPublic[];
+  reference_code?: string | null;
+  quota_waitlist_message?: string | null;
+  appointment_letters_release_enabled?: boolean;
+  appointment_letters_available?: boolean;
+  coordination_end_at?: string | null;
+  appointment_letters_pending_message?: string | null;
+};
+
+export type ExaminerPortalSettings = {
+  examination_id: number;
+  appointment_letters_release_enabled: boolean;
+  updated_at: string;
+  rostered_examiner_count: number;
+  with_coordination_end_count: number;
+  eligible_now_count: number;
+  notified_count: number;
+};
+
+export type NotifyEligibleAppointmentLettersResponse = {
+  sms_sent_count: number;
+  sms_failed_count: number;
+  skipped_count: number;
+};
+
+export type SubjectExaminerRegionQuotaItem = {
+  group_id: string;
+  examiner_type?: ExaminerTypeApi | null;
+  quota_count: number;
+};
+
+export type SubjectExaminerRegionQuotaSummaryRow = {
+  group_id: string;
+  group_name: string;
+  examiner_type?: ExaminerTypeApi | null;
+  examiner_type_label: string;
+  current_count: number;
+  quota?: number | null;
+  remaining?: number | null;
+};
+
+export type ExaminerQuotaRegionGroupRow = {
+  id: string;
+  name: string;
+  regions: string[];
+};
+
+export type ExaminationExaminerQuotaRegionGroupsResponse = {
+  examination_id: number;
+  groups: ExaminerQuotaRegionGroupRow[];
+  regions_complete: boolean;
+};
+
+export type ExaminationExaminerQuotaRegionGroupsPut = {
+  groups: Array<{
+    id?: string;
+    name: string;
+    regions: string[];
+  }>;
+};
+
+export type SubjectExaminerGenderQuotaSummaryRow = {
+  gender: string;
+  gender_label: string;
+  current_count: number;
+  quota?: number | null;
+  remaining?: number | null;
+};
+
+export type SubjectExaminerRegionQuotasResponse = {
+  examination_id: number;
+  subject_id: number;
+  total_quota?: number | null;
+  male_quota?: number | null;
+  female_quota?: number | null;
+  roster_total: number;
+  groups: ExaminerQuotaRegionGroupRow[];
+  summary: SubjectExaminerRegionQuotaSummaryRow[];
+  gender_summary?: SubjectExaminerGenderQuotaSummaryRow[];
+  items: SubjectExaminerRegionQuotaItem[];
+};
+
+export type QuotaAssessmentResponse = {
+  valid: boolean;
+  violations: string[];
+  row_errors: Array<{ row_number: number; message: string }>;
+  summary_by_group: Array<{
+    group_id: string;
+    group_name: string;
+    examiner_type?: string | null;
+    examiner_type_label: string;
+    current_count: number;
+    proposed_count: number;
+    combined_count: number;
+    quota?: number | null;
+    quota_percent?: number | null;
+    remaining?: number | null;
+    over_cap: boolean;
+  }>;
+  proposed_count: number;
+  summary_by_gender?: Array<{
+    gender: string;
+    gender_label: string;
+    current_count: number;
+    proposed_count: number;
+    combined_count: number;
+    quota?: number | null;
+    quota_percent?: number | null;
+    remaining?: number | null;
+    over_cap: boolean;
+  }>;
+};
+
+export type ExaminerAttendanceMarkResult = {
+  valid: boolean;
+  recorded?: boolean;
+  already_marked?: boolean;
+  message: string;
+  reference_code?: string | null;
+  name?: string | null;
+  examiner_type?: string | null;
+  examiner_type_label?: string | null;
+  region?: string | null;
+  subject_codes?: string[];
+  examiner_id?: string | null;
+  examination_id?: number | null;
+  examination_name?: string | null;
+  attendance_date?: string | null;
+};
+
+export type ExaminerAttendanceRow = {
+  id: string;
+  examination_id: number;
+  examiner_id: string;
+  reference_code: string;
+  attendance_date: string;
+  examiner_name: string;
+  examiner_type: string;
+  examiner_type_label: string;
+  region: string;
+  subject_codes: string[];
+  marked_at: string;
+  marked_by_name?: string | null;
+  examination_name?: string | null;
+};
+
+export type LunchCouponVerifyResult = {
+  valid: boolean;
+  message?: string | null;
+  reference_code?: string | null;
+  name?: string | null;
+  examiner_type?: string | null;
+  examiner_type_label?: string | null;
+  region?: string | null;
+  subject_codes?: string[] | null;
+  examiner_id?: string | null;
+  examination_id?: number | null;
+  examination_name?: string | null;
+  already_verified?: boolean;
+  verified_at?: string | null;
+  verified_by_name?: string | null;
+  verification_date?: string | null;
+  recorded?: boolean;
+};
+
+export type LunchCouponVerifiedRow = {
+  examiner_id: string;
+  reference_code: string;
+  name: string;
+  examiner_type_label: string;
+  region: string;
+  subject_codes: string[];
+  verified_at: string;
+  verification_date: string;
+  verified_by_name?: string | null;
+  examination_id?: number | null;
+  examination_name?: string | null;
+};
+
+export type LunchCouponVerifiedList = {
+  items: LunchCouponVerifiedRow[];
+  total: number;
 };
 
 export type ExaminerPublicScriptsAllocationRow = {
@@ -3696,10 +4209,42 @@ export type AllocationSolvePayload = {
   marking_group_solve_order?: string[] | null;
 };
 
+export type ExaminerRegionGroupRow = {
+  id: string | null;
+  name: string;
+  code_prefix: string;
+  regions: string[];
+};
+
+export type ExaminationExaminerRegionGroupsResponse = {
+  examination_id: number;
+  groups: ExaminerRegionGroupRow[];
+  regions_complete: boolean;
+  roster_total: number;
+  with_code_count: number;
+  missing_code_count: number;
+};
+
+export type ExaminerReferenceCodesActionResponse = {
+  examination_id: number;
+  assigned_count: number;
+  skipped_count: number;
+  roster_total: number;
+};
+
+export type ExaminationExaminerRegionGroupsPut = {
+  groups: Array<{
+    name: string;
+    code_prefix: string;
+    regions: string[];
+  }>;
+};
+
 export type AllocationExaminerRow = {
   allocation_id: string;
   examiner_id: string;
   examiner_name: string;
+  reference_code: string | null;
   examiner_type: ExaminerTypeApi;
   subject_ids: number[];
   region: string;
@@ -3754,6 +4299,164 @@ export async function deleteAllocation(allocationId: string): Promise<void> {
 
 export async function listExaminationExaminers(examinationId: number): Promise<ExaminerRow[]> {
   return apiJson<ExaminerRow[]>(`/examinations/${examinationId}/examiners`);
+}
+
+export async function getExaminationExaminerRegionGroups(
+  examinationId: number,
+): Promise<ExaminationExaminerRegionGroupsResponse> {
+  return apiJson<ExaminationExaminerRegionGroupsResponse>(
+    `/admin/examinations/${examinationId}/examiner-region-groups`,
+  );
+}
+
+export async function putExaminationExaminerRegionGroups(
+  examinationId: number,
+  payload: ExaminationExaminerRegionGroupsPut,
+): Promise<ExaminationExaminerRegionGroupsResponse> {
+  return apiJson<ExaminationExaminerRegionGroupsResponse>(
+    `/admin/examinations/${examinationId}/examiner-region-groups`,
+    {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    },
+  );
+}
+
+export async function getExaminationExaminerQuotaRegionGroups(
+  examinationId: number,
+): Promise<ExaminationExaminerQuotaRegionGroupsResponse> {
+  return apiJson<ExaminationExaminerQuotaRegionGroupsResponse>(
+    `/admin/examinations/${examinationId}/examiner-quota-region-groups`,
+  );
+}
+
+export async function putExaminationExaminerQuotaRegionGroups(
+  examinationId: number,
+  payload: ExaminationExaminerQuotaRegionGroupsPut,
+): Promise<ExaminationExaminerQuotaRegionGroupsResponse> {
+  return apiJson<ExaminationExaminerQuotaRegionGroupsResponse>(
+    `/admin/examinations/${examinationId}/examiner-quota-region-groups`,
+    {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    },
+  );
+}
+
+export async function generateExaminerReferenceCodes(
+  examinationId: number,
+): Promise<ExaminerReferenceCodesActionResponse> {
+  return apiJson<ExaminerReferenceCodesActionResponse>(
+    `/admin/examinations/${examinationId}/examiner-reference-codes/generate`,
+    { method: "POST" },
+  );
+}
+
+export async function getSubjectExaminerRegionQuotas(
+  examinationId: number,
+  subjectId: number,
+): Promise<SubjectExaminerRegionQuotasResponse> {
+  return apiJson<SubjectExaminerRegionQuotasResponse>(
+    `/admin/examinations/${examinationId}/subjects/${subjectId}/examiner-region-quotas`,
+  );
+}
+
+export async function putSubjectExaminerRegionQuotas(
+  examinationId: number,
+  subjectId: number,
+  payload: {
+    total_quota: number | null;
+    male_quota?: number | null;
+    female_quota?: number | null;
+    items: SubjectExaminerRegionQuotaItem[];
+  },
+): Promise<SubjectExaminerRegionQuotasResponse> {
+  return apiJson<SubjectExaminerRegionQuotasResponse>(
+    `/admin/examinations/${examinationId}/subjects/${subjectId}/examiner-region-quotas`,
+    {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    },
+  );
+}
+
+export async function assessExaminerQuotaUpload(
+  examinationId: number,
+  subjectId: number,
+  file: File,
+): Promise<QuotaAssessmentResponse> {
+  const form = new FormData();
+  form.append("file", file);
+  return apiJson<QuotaAssessmentResponse>(
+    `/examinations/${examinationId}/subjects/${subjectId}/examiner-quota-assessment`,
+    { method: "POST", body: form },
+  );
+}
+
+export async function listExaminerAttendance(
+  examinationId: number,
+  options?: { admin?: boolean },
+): Promise<{ items: ExaminerAttendanceRow[]; total: number }> {
+  const base = options?.admin
+    ? `/admin/examinations/${examinationId}/examiner-attendance`
+    : `/examinations/${examinationId}/subject-officer/examiner-attendance`;
+  return apiJson(base);
+}
+
+export async function listExaminerAttendanceAll(
+  options?: { admin?: boolean; examinationId?: number; subjectId?: number },
+): Promise<{ items: ExaminerAttendanceRow[]; total: number }> {
+  if (options?.admin) {
+    const params = new URLSearchParams();
+    if (options.examinationId != null) params.set("examination_id", String(options.examinationId));
+    if (options.subjectId != null) params.set("subject_id", String(options.subjectId));
+    const qs = params.toString();
+    return apiJson(`/admin/examiner-attendance${qs ? `?${qs}` : ""}`);
+  }
+  return apiJson("/subject-officer/examiner-attendance");
+}
+
+export async function markExaminerAttendance(
+  examinationId: number,
+  referenceCode: string,
+  options?: { admin?: boolean },
+): Promise<ExaminerAttendanceMarkResult> {
+  const base = options?.admin
+    ? `/admin/examinations/${examinationId}/examiner-attendance/mark`
+    : `/examinations/${examinationId}/subject-officer/examiner-attendance/mark`;
+  return apiJson<ExaminerAttendanceMarkResult>(base, {
+    method: "POST",
+    body: JSON.stringify({ reference_code: referenceCode }),
+  });
+}
+
+export async function markExaminerAttendanceScan(
+  referenceCode: string,
+  options?: { admin?: boolean },
+): Promise<ExaminerAttendanceMarkResult> {
+  const base = options?.admin
+    ? "/admin/examiner-attendance/mark-scan"
+    : "/subject-officer/examiner-attendance/mark-scan";
+  return apiJson<ExaminerAttendanceMarkResult>(base, {
+    method: "POST",
+    body: JSON.stringify({ reference_code: referenceCode }),
+  });
+}
+
+export async function regenerateExaminerReferenceCodes(
+  examinationId: number,
+): Promise<ExaminerReferenceCodesActionResponse> {
+  return apiJson<ExaminerReferenceCodesActionResponse>(
+    `/admin/examinations/${examinationId}/examiner-reference-codes/regenerate`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ confirm: true }),
+    },
+  );
 }
 
 export async function listScriptsAllocationQuotas(
@@ -3869,7 +4572,10 @@ export type ExaminerRosterBulkSmsPayload = {
 export type ExaminerInvitationBulkUploadOptions = {
   sendSms?: boolean;
   responseDeadline: string;
-  coordinationDate?: string | null;
+  coordinationStartDate?: string | null;
+  coordinationStartTime?: string | null;
+  coordinationEndDate?: string | null;
+  coordinationEndTime?: string | null;
 };
 
 export async function bulkUploadExaminerInvitations(
@@ -3880,7 +4586,10 @@ export async function bulkUploadExaminerInvitations(
   const q = new URLSearchParams();
   q.set("response_deadline", options.responseDeadline);
   if (options.sendSms) q.set("send_sms", "true");
-  if (options.coordinationDate) q.set("coordination_date", options.coordinationDate);
+  if (options.coordinationStartDate) q.set("coordination_start_date", options.coordinationStartDate);
+  if (options.coordinationStartTime) q.set("coordination_start_time", options.coordinationStartTime);
+  if (options.coordinationEndDate) q.set("coordination_end_date", options.coordinationEndDate);
+  if (options.coordinationEndTime) q.set("coordination_end_time", options.coordinationEndTime);
   const formData = new FormData();
   formData.append("file", file);
   const qs = q.toString();
@@ -3899,6 +4608,33 @@ export async function resendExaminerInvitationSms(
   });
 }
 
+export type ExaminerInvitationRenewPayload = {
+  response_deadline: string;
+  send_sms?: boolean | null;
+};
+
+export type ExaminerInvitationRenewResponse = {
+  invitation: ExaminerInvitationRow;
+  sms_sent: boolean | null;
+  sms_error: string | null;
+  sms_delivery_id: string | null;
+};
+
+export async function renewExaminerInvitation(
+  examinationId: number,
+  invitationId: string,
+  payload: ExaminerInvitationRenewPayload,
+): Promise<ExaminerInvitationRenewResponse> {
+  return apiJson<ExaminerInvitationRenewResponse>(
+    `/examinations/${examinationId}/examiner-invitations/${invitationId}/renew`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    },
+  );
+}
+
 export async function bulkSendExaminerInvitationCustomSms(
   examinationId: number,
   payload: ExaminerInvitationBulkSmsPayload,
@@ -3913,22 +4649,22 @@ export async function bulkSendExaminerInvitationCustomSms(
   );
 }
 
-export async function updateExaminerInvitationCoordinationDate(
+export async function updateExaminerInvitationCoordinationSchedule(
   examinationId: number,
   invitationId: string,
-  coordinationDate: string | null,
+  payload: ExaminerInvitationCoordinationPayload,
 ): Promise<ExaminerInvitationRow> {
   return apiJson<ExaminerInvitationRow>(
     `/examinations/${examinationId}/examiner-invitations/${encodeURIComponent(invitationId)}`,
     {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ coordination_date: coordinationDate }),
+      body: JSON.stringify(payload),
     },
   );
 }
 
-export async function bulkSetExaminerInvitationCoordinationDate(
+export async function bulkSetExaminerInvitationCoordinationSchedule(
   examinationId: number,
   payload: ExaminerInvitationBulkCoordinationPayload,
 ): Promise<ExaminerInvitationBulkCoordinationResponse> {
@@ -4614,8 +5350,9 @@ export type MarkedScriptReturnGridResponse = {
   paper_number: number;
   marking_group_id?: string | null;
   marking_group_name?: string | null;
-  coordination_date?: string | null;
+  coordination_start_date?: string | null;
   coordination_start_time?: string | null;
+  coordination_end_date?: string | null;
   coordination_end_time?: string | null;
   marking_start_date?: string | null;
   marking_end_date?: string | null;
@@ -4625,9 +5362,11 @@ export type MarkedScriptReturnGridResponse = {
 };
 
 export type SubjectMarkingGroupSchedulePayload = {
-  coordination_date?: string | null;
+  coordination_start_date?: string | null;
   coordination_start_time?: string | null;
+  coordination_end_date?: string | null;
   coordination_end_time?: string | null;
+  coordination_venue?: string | null;
   marking_start_date?: string | null;
   marking_end_date?: string | null;
   marked_script_submission_deadline?: string | null;
@@ -4642,15 +5381,210 @@ export type SubjectMarkingGroupRow = {
   examiner_ids: string[];
   source_regions: string[];
   source_roles: string[];
-  coordination_date: string | null;
+  coordination_start_date: string | null;
   coordination_start_time: string | null;
+  coordination_end_date: string | null;
   coordination_end_time: string | null;
+  coordination_venue: string | null;
   marking_start_date: string | null;
   marking_end_date: string | null;
   marked_script_submission_deadline: string | null;
   created_at: string;
   updated_at: string;
 };
+
+export type ExaminerAppointmentLetterReferenceSubjectRef = {
+  id: number;
+  code: string;
+  name: string;
+  subject_type: string;
+};
+
+export type ExaminerAppointmentLetterReferenceItem = {
+  subject_id: number;
+  examiner_type: ExaminerTypeApi;
+  reference_number: string | null;
+};
+
+export type ExaminationExaminerAppointmentLetterReferencesResponse = {
+  examination_id: number;
+  subjects: ExaminerAppointmentLetterReferenceSubjectRef[];
+  items: ExaminerAppointmentLetterReferenceItem[];
+};
+
+export type ExaminerAppointmentLetterReferencePutCell = {
+  subject_id: number;
+  examiner_type: ExaminerTypeApi;
+  reference_number: string | null;
+};
+
+export async function getExaminerPortalSettings(examinationId: number): Promise<ExaminerPortalSettings> {
+  return apiJson<ExaminerPortalSettings>(`/admin/examinations/${examinationId}/examiner-portal-settings`);
+}
+
+export async function putExaminerPortalSettings(
+  examinationId: number,
+  appointmentLettersReleaseEnabled: boolean,
+): Promise<ExaminerPortalSettings> {
+  return apiJson<ExaminerPortalSettings>(`/admin/examinations/${examinationId}/examiner-portal-settings`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ appointment_letters_release_enabled: appointmentLettersReleaseEnabled }),
+  });
+}
+
+export async function notifyEligibleAppointmentLetters(
+  examinationId: number,
+): Promise<NotifyEligibleAppointmentLettersResponse> {
+  return apiJson<NotifyEligibleAppointmentLettersResponse>(
+    `/admin/examinations/${examinationId}/examiner-portal-settings/notify-eligible-appointment-letters`,
+    { method: "POST" },
+  );
+}
+
+export async function getExaminerAppointmentLetterReferences(
+  examinationId: number,
+): Promise<ExaminationExaminerAppointmentLetterReferencesResponse> {
+  return apiJson<ExaminationExaminerAppointmentLetterReferencesResponse>(
+    `/admin/examinations/${examinationId}/examiner-appointment-letter-references`,
+  );
+}
+
+export async function putExaminerAppointmentLetterReferences(
+  examinationId: number,
+  items: ExaminerAppointmentLetterReferencePutCell[],
+): Promise<ExaminationExaminerAppointmentLetterReferencesResponse> {
+  return apiJson<ExaminationExaminerAppointmentLetterReferencesResponse>(
+    `/admin/examinations/${examinationId}/examiner-appointment-letter-references`,
+    {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ items }),
+    },
+  );
+}
+
+export async function downloadExaminerAppointmentLetterPreviewPdf(
+  examinationId: number,
+  subjectId: number,
+  examinerType: ExaminerTypeApi,
+  filename = "appointment_letter_preview.pdf",
+): Promise<void> {
+  const q = new URLSearchParams({
+    subject_id: String(subjectId),
+    examiner_type: examinerType,
+  });
+  await downloadApiFile(
+    `/admin/examinations/${examinationId}/examiner-appointment-letter-preview.pdf?${q.toString()}`,
+    filename,
+  );
+}
+
+export type AppointmentLetterSigningOfficial =
+  | "director_general"
+  | "director_assessment_certification";
+
+export type AppointmentLetterSignatureRole =
+  | "director_general"
+  | "director_assessment_certification";
+
+export type AppointmentLetterSignatureMeta = {
+  has_signature: boolean;
+  content_type: string | null;
+};
+
+export type ExaminerAppointmentLetterSettings = {
+  examination_id: number;
+  signing_official: AppointmentLetterSigningOfficial;
+  signed_for_director_general: boolean;
+  director_general_name: string;
+  director_general_title: string;
+  director_assessment_name: string;
+  director_assessment_title: string;
+  valediction: string;
+  letter_date: string | null;
+  cc_lines: string[];
+  director_general_signature: AppointmentLetterSignatureMeta;
+  director_assessment_signature: AppointmentLetterSignatureMeta;
+  updated_at: string | null;
+};
+
+export type ExaminerAppointmentLetterSettingsCopyFromResponse = {
+  examination_id: number;
+  source_examination_id: number;
+  cc_lines_copied: number;
+  signatures_copied: number;
+};
+
+export async function getExaminerAppointmentLetterSettings(
+  examinationId: number,
+): Promise<ExaminerAppointmentLetterSettings> {
+  return apiJson<ExaminerAppointmentLetterSettings>(
+    `/admin/examinations/${examinationId}/examiner-appointment-letter-settings`,
+  );
+}
+
+export async function putExaminerAppointmentLetterSettings(
+  examinationId: number,
+  body: Omit<ExaminerAppointmentLetterSettings, "examination_id" | "director_general_signature" | "director_assessment_signature" | "updated_at">,
+): Promise<ExaminerAppointmentLetterSettings> {
+  return apiJson<ExaminerAppointmentLetterSettings>(
+    `/admin/examinations/${examinationId}/examiner-appointment-letter-settings`,
+    {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    },
+  );
+}
+
+export async function copyExaminerAppointmentLetterSettingsFrom(
+  examinationId: number,
+  sourceExaminationId: number,
+): Promise<ExaminerAppointmentLetterSettingsCopyFromResponse> {
+  return apiJson<ExaminerAppointmentLetterSettingsCopyFromResponse>(
+    `/admin/examinations/${examinationId}/examiner-appointment-letter-settings/copy-from`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ source_examination_id: sourceExaminationId }),
+    },
+  );
+}
+
+export async function uploadExaminerAppointmentLetterSignature(
+  examinationId: number,
+  role: AppointmentLetterSignatureRole,
+  file: File,
+): Promise<ExaminerAppointmentLetterSettings> {
+  const body = new FormData();
+  body.append("file", file);
+  return apiJson<ExaminerAppointmentLetterSettings>(
+    `/admin/examinations/${examinationId}/examiner-appointment-letter-settings/signatures/${role}`,
+    { method: "POST", body },
+  );
+}
+
+export async function deleteExaminerAppointmentLetterSignature(
+  examinationId: number,
+  role: AppointmentLetterSignatureRole,
+): Promise<ExaminerAppointmentLetterSettings> {
+  return apiJson<ExaminerAppointmentLetterSettings>(
+    `/admin/examinations/${examinationId}/examiner-appointment-letter-settings/signatures/${role}`,
+    { method: "DELETE" },
+  );
+}
+
+export async function fetchExaminerAppointmentLetterSignatureBlobUrl(
+  examinationId: number,
+  role: AppointmentLetterSignatureRole,
+): Promise<string> {
+  const res = await apiFetch(
+    `/admin/examinations/${examinationId}/examiner-appointment-letter-settings/signatures/${role}`,
+  );
+  const blob = await res.blob();
+  return URL.createObjectURL(blob);
+}
 
 export async function listSubjectMarkingGroups(
   examinationId: number,
@@ -4887,5 +5821,687 @@ export async function unverifyMarkedScriptReturn(
       method: "POST",
       body: JSON.stringify({}),
     },
+  );
+}
+
+export async function listVerifiedLunchCoupons(examinationId: number): Promise<LunchCouponVerifiedList> {
+  return apiJson<LunchCouponVerifiedList>(
+    `/examinations/${examinationId}/subject-officer/lunch-coupon/verified`,
+  );
+}
+
+export async function listVerifiedLunchCouponsAll(): Promise<LunchCouponVerifiedList> {
+  return apiJson<LunchCouponVerifiedList>("/subject-officer/lunch-coupon/verified");
+}
+
+export async function verifyExaminerLunchCoupon(
+  examinationId: number,
+  referenceCode: string,
+): Promise<LunchCouponVerifyResult> {
+  return apiJson<LunchCouponVerifyResult>(
+    `/examinations/${examinationId}/subject-officer/lunch-coupon/verify`,
+    {
+      method: "POST",
+      body: JSON.stringify({ reference_code: referenceCode }),
+    },
+  );
+}
+
+export async function verifyExaminerLunchCouponScan(
+  referenceCode: string,
+): Promise<LunchCouponVerifyResult> {
+  return apiJson<LunchCouponVerifyResult>("/subject-officer/lunch-coupon/verify-scan", {
+    method: "POST",
+    body: JSON.stringify({ reference_code: referenceCode }),
+  });
+}
+
+export async function listAdminVerifiedLunchCouponsAll(params?: {
+  examination_id?: number | null;
+  subject_id?: number | null;
+}): Promise<LunchCouponVerifiedList> {
+  const q = new URLSearchParams();
+  if (params?.examination_id != null) q.set("examination_id", String(params.examination_id));
+  if (params?.subject_id != null) q.set("subject_id", String(params.subject_id));
+  const qs = q.toString();
+  return apiJson<LunchCouponVerifiedList>(`/admin/lunch-coupon/verified${qs ? `?${qs}` : ""}`);
+}
+
+export async function verifyAdminExaminerLunchCoupon(
+  examinationId: number,
+  referenceCode: string,
+): Promise<LunchCouponVerifyResult> {
+  return apiJson<LunchCouponVerifyResult>(
+    `/admin/examinations/${examinationId}/lunch-coupon/verify`,
+    {
+      method: "POST",
+      body: JSON.stringify({ reference_code: referenceCode }),
+    },
+  );
+}
+
+export async function verifyAdminExaminerLunchCouponScan(
+  referenceCode: string,
+): Promise<LunchCouponVerifyResult> {
+  return apiJson<LunchCouponVerifyResult>("/admin/lunch-coupon/verify-scan", {
+    method: "POST",
+    body: JSON.stringify({ reference_code: referenceCode }),
+  });
+}
+
+export async function downloadAdminLunchCouponsPdf(params: {
+  examination_id: number;
+  subject_id: number;
+  filename?: string;
+}): Promise<void> {
+  const q = new URLSearchParams();
+  q.set("subject_id", String(params.subject_id));
+  const fallback = `lunch_coupons_exam_${params.examination_id}_subject_${params.subject_id}.pdf`;
+  await downloadApiFile(
+    `/admin/examinations/${params.examination_id}/lunch-coupons/print.pdf?${q.toString()}`,
+    params.filename ?? fallback,
+  );
+}
+
+export async function downloadSubjectOfficerLunchCouponsPdf(params: {
+  examination_id: number;
+  subject_id: number;
+  filename?: string;
+}): Promise<void> {
+  const q = new URLSearchParams();
+  q.set("subject_id", String(params.subject_id));
+  const fallback = `lunch_coupons_exam_${params.examination_id}_subject_${params.subject_id}.pdf`;
+  await downloadApiFile(
+    `/examinations/${params.examination_id}/subject-officer/lunch-coupons/print.pdf?${q.toString()}`,
+    params.filename ?? fallback,
+  );
+}
+
+export type MarkingScriptSourceMode = "allocation" | "manual";
+
+export type MarkingScriptSourceExaminerRow = {
+  examiner_id: string;
+  name: string;
+  examiner_type: ExaminerTypeApi;
+  phone_number: string | null;
+  allocation_count: number;
+  manual_count: number;
+  effective_count: number;
+};
+
+export type MarkingScriptSourceResponse = {
+  examination_id: number;
+  subject_id: number;
+  source_mode: MarkingScriptSourceMode;
+  available_papers: number[];
+  paper_number: number | null;
+  examiners: MarkingScriptSourceExaminerRow[];
+};
+
+export async function getMarkingScriptSource(
+  examinationId: number,
+  subjectId: number,
+  paper?: number | null,
+): Promise<MarkingScriptSourceResponse> {
+  const params = new URLSearchParams();
+  if (paper != null && paper > 0) params.set("paper", String(Math.floor(paper)));
+  const qs = params.toString();
+  return apiJson<MarkingScriptSourceResponse>(
+    `/admin/examinations/${examinationId}/subjects/${subjectId}/marking-script-source${qs ? `?${qs}` : ""}`,
+  );
+}
+
+export async function updateMarkingScriptSource(
+  examinationId: number,
+  subjectId: number,
+  sourceMode: MarkingScriptSourceMode,
+): Promise<MarkingScriptSourceResponse> {
+  return apiJson<MarkingScriptSourceResponse>(
+    `/admin/examinations/${examinationId}/subjects/${subjectId}/marking-script-source`,
+    {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ source_mode: sourceMode }),
+    },
+  );
+}
+
+export type ManualMarkedScriptItem = {
+  examiner_id: string;
+  paper_number: number;
+  script_count: number;
+};
+
+export async function upsertManualMarkedScripts(
+  examinationId: number,
+  subjectId: number,
+  paper: number,
+  items: ManualMarkedScriptItem[],
+): Promise<MarkingScriptSourceResponse> {
+  return apiJson<MarkingScriptSourceResponse>(
+    `/admin/examinations/${examinationId}/subjects/${subjectId}/manual-marked-scripts?paper=${paper}`,
+    {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ items }),
+    },
+  );
+}
+
+export type ManualMarkedScriptsUploadRowError = {
+  row_number: number;
+  message: string;
+};
+
+export type ManualMarkedScriptsUploadResponse = {
+  applied_count: number;
+  skipped_count: number;
+  errors: ManualMarkedScriptsUploadRowError[];
+  validate_only: boolean;
+};
+
+export async function downloadManualMarkedScriptsTemplate(
+  examinationId: number,
+  subjectId: number,
+  paper: number,
+): Promise<void> {
+  await downloadApiFile(
+    `/admin/examinations/${examinationId}/subjects/${subjectId}/manual-marked-scripts/upload-template?paper=${paper}`,
+    `manual_marked_scripts_ex${examinationId}_sub${subjectId}_p${paper}.xlsx`,
+  );
+}
+
+export async function uploadManualMarkedScripts(
+  examinationId: number,
+  subjectId: number,
+  paper: number,
+  file: File,
+  options?: { validateOnly?: boolean },
+): Promise<ManualMarkedScriptsUploadResponse> {
+  const params = new URLSearchParams({ paper: String(paper) });
+  if (options?.validateOnly) params.set("validate_only", "true");
+  const formData = new FormData();
+  formData.append("file", file);
+  return apiJson<ManualMarkedScriptsUploadResponse>(
+    `/admin/examinations/${examinationId}/subjects/${subjectId}/manual-marked-scripts/upload?${params.toString()}`,
+    { method: "POST", body: formData },
+  );
+}
+
+// --- Script checkers & data entry clerks ---
+
+export type WorkforceAssignmentBatchStatus = "active" | "completed" | "cancelled";
+
+export type WorkforceAvailabilityStatus = "pending" | "confirmed" | "declined";
+
+export type WorkforceRosterRow = {
+  id: string;
+  examination_id: number;
+  name: string;
+  phone_number: string | null;
+  region: string | null;
+  reference_code: string | null;
+  portal_url: string;
+  portal_invite_sms_sent_at: string | null;
+  availability_status: WorkforceAvailabilityStatus;
+  availability_responded_at: string | null;
+  availability_deadline: string | null;
+  has_bank_account: boolean;
+  created_at: string;
+  updated_at: string;
+};
+
+export type WorkforceRosterCreatePayload = {
+  name: string;
+  phone_number?: string | null;
+  region?: string | null;
+  reference_code?: string | null;
+};
+
+export type WorkforceRosterUpdatePayload = Partial<WorkforceRosterCreatePayload>;
+
+export type WorkforceInviteSmsResult = {
+  id: string;
+  sent: boolean;
+  error: string | null;
+};
+
+export type WorkforceBulkInviteSmsResponse = {
+  results: WorkforceInviteSmsResult[];
+  sent_count: number;
+  failed_count: number;
+};
+
+export type WorkforceAssignmentBatchRow = {
+  id: string;
+  examination_id: number;
+  subject_id: number;
+  paper_number: number;
+  script_count: number;
+  status: WorkforceAssignmentBatchStatus;
+  batch_sequence: number;
+  assigned_at: string;
+  assigned_by_user_id: string | null;
+  completed_at: string | null;
+  completed_by_user_id: string | null;
+};
+
+export type WorkforceAssignmentPersonRow = {
+  id: string;
+  name: string;
+  reference_code: string | null;
+  phone_number: string | null;
+  availability_status: WorkforceAvailabilityStatus;
+  has_bank_account: boolean;
+  active_batch: WorkforceAssignmentBatchRow | null;
+  assigned_total: number;
+  completed_total: number;
+  uncompleted_total: number;
+  batches: WorkforceAssignmentBatchRow[];
+};
+
+export type WorkforceAssignmentGridResponse = {
+  examination_id: number;
+  subject_id: number;
+  paper_number: number;
+  items: WorkforceAssignmentPersonRow[];
+};
+
+export type WorkforceAssignmentRosterResponse = {
+  examination_id: number;
+  items: WorkforceAssignmentPersonRow[];
+};
+
+export const WORKFORCE_PAPER_OPTIONS = [1, 2] as const;
+
+export type WorkforceRatesResponse = {
+  examination_id: number;
+  rate_per_script_ghs: string | null;
+  commuting_allowance_ghs: string | null;
+  lunch_allowance_ghs: string | null;
+  withholding_tax_percent: string;
+};
+
+export type WorkforceRatesPutPayload = {
+  rate_per_script_ghs: string;
+  commuting_allowance_ghs: string;
+  lunch_allowance_ghs: string;
+  withholding_tax_percent: string;
+};
+
+export type WorkforcePayoutCompletedBatchLine = {
+  subject_id: number;
+  subject_code: string | null;
+  subject_name: string | null;
+  paper_number: number;
+  script_count: number;
+  batch_sequence: number;
+};
+
+export type WorkforcePayoutRow = {
+  id: string;
+  examination_id: number;
+  examination_label: string;
+  full_name: string;
+  reference_code: string | null;
+  phone_number: string | null;
+  completed_scripts: number;
+  num_days: number;
+  rate_per_script_ghs: string;
+  commuting_allowance_ghs: string;
+  lunch_allowance_ghs: string;
+  commuting_payable_ghs: string;
+  lunch_payable_ghs: string;
+  script_gross_ghs: string;
+  withholding_tax_percent: string;
+  withholding_tax_ghs: string;
+  script_net_ghs: string;
+  has_rate: boolean;
+  payable_ghs: string;
+  completed_batch_lines: WorkforcePayoutCompletedBatchLine[];
+  bank_branch_id: string | null;
+  bank_code: string | null;
+  bank_name: string | null;
+  branch_name: string | null;
+  account_number: string | null;
+  has_bank_account: boolean;
+};
+
+export type WorkforcePayoutListResponse = {
+  items: WorkforcePayoutRow[];
+  total: number;
+};
+
+export type WorkforcePublicBatchRow = {
+  id: string;
+  subject_id: number;
+  subject_code: string | null;
+  subject_name: string | null;
+  paper_number: number;
+  script_count: number;
+  status: WorkforceAssignmentBatchStatus;
+  batch_sequence: number;
+  assigned_at: string;
+  completed_at: string | null;
+};
+
+export type WorkforcePublicPortal = {
+  id: string;
+  name: string;
+  examination_id: number;
+  examination_label: string;
+  reference_code: string | null;
+  region: string | null;
+  role_label: string;
+  availability_status: WorkforceAvailabilityStatus;
+  availability_responded_at: string | null;
+  availability_deadline: string | null;
+  can_respond: boolean;
+  active_batches: WorkforcePublicBatchRow[];
+  completed_batches: WorkforcePublicBatchRow[];
+  has_bank_account: boolean;
+};
+
+export type WorkforceAvailabilityActionResponse = {
+  status: WorkforceAvailabilityStatus;
+  message: string;
+};
+
+export type WorkforceBankAccountPublic = {
+  id: string;
+  person_id: string;
+  bank_branch_id: string;
+  bank_code: string;
+  bank_name: string;
+  branch_name: string;
+  account_number: string;
+  created_at: string;
+  updated_at: string;
+};
+
+export type WorkforceBankAccountUpsertPayload = {
+  bank_branch_id: string;
+  account_number: string;
+};
+
+function workforcePublicPrefix(kind: "script-checker" | "data-entry-clerk"): string {
+  return kind === "script-checker" ? "/public/script-checkers" : "/public/data-entry-clerks";
+}
+
+function workforceRosterSegment(kind: "script-checker" | "data-entry-clerk"): string {
+  return kind === "script-checker" ? "script-checkers" : "data-entry-clerks";
+}
+
+function workforceAssignmentSegment(kind: "script-checker" | "data-entry-clerk"): string {
+  return kind === "script-checker" ? "script-checker-assignments" : "data-entry-clerk-assignments";
+}
+
+function workforceRatesSegment(kind: "script-checker" | "data-entry-clerk"): string {
+  return kind === "script-checker" ? "script-checker-rates" : "data-entry-clerk-rates";
+}
+
+function workforcePayoutsSegment(kind: "script-checker" | "data-entry-clerk"): string {
+  return kind === "script-checker" ? "script-checker-payouts" : "data-entry-clerk-payouts";
+}
+
+export async function getPublicWorkforcePortal(
+  kind: "script-checker" | "data-entry-clerk",
+  token: string,
+): Promise<WorkforcePublicPortal> {
+  return publicApiJson<WorkforcePublicPortal>(
+    `${workforcePublicPrefix(kind)}/${encodeURIComponent(token)}`,
+  );
+}
+
+export async function acceptPublicWorkforceAvailability(
+  kind: "script-checker" | "data-entry-clerk",
+  token: string,
+): Promise<WorkforceAvailabilityActionResponse> {
+  return publicApiJson<WorkforceAvailabilityActionResponse>(
+    `${workforcePublicPrefix(kind)}/${encodeURIComponent(token)}/accept`,
+    { method: "POST" },
+  );
+}
+
+export async function declinePublicWorkforceAvailability(
+  kind: "script-checker" | "data-entry-clerk",
+  token: string,
+): Promise<WorkforceAvailabilityActionResponse> {
+  return publicApiJson<WorkforceAvailabilityActionResponse>(
+    `${workforcePublicPrefix(kind)}/${encodeURIComponent(token)}/decline`,
+    { method: "POST" },
+  );
+}
+
+export async function getPublicWorkforceBankAccount(
+  kind: "script-checker" | "data-entry-clerk",
+  token: string,
+): Promise<WorkforceBankAccountPublic | null> {
+  const url = `${getApiBaseUrl()}${workforcePublicPrefix(kind)}/${encodeURIComponent(token)}/bank-account`;
+  let res: Response;
+  try {
+    res = await fetch(url);
+  } catch (e) {
+    if (e instanceof TypeError) throw new Error(apiNetworkErrorMessage());
+    throw e;
+  }
+  if (res.status === 404) return null;
+  if (!res.ok) throw new Error(await parseErrorMessage(res));
+  return (await res.json()) as WorkforceBankAccountPublic;
+}
+
+export async function upsertPublicWorkforceBankAccount(
+  kind: "script-checker" | "data-entry-clerk",
+  token: string,
+  payload: WorkforceBankAccountUpsertPayload,
+): Promise<WorkforceBankAccountPublic> {
+  return publicApiJson<WorkforceBankAccountPublic>(
+    `${workforcePublicPrefix(kind)}/${encodeURIComponent(token)}/bank-account`,
+    { method: "PUT", body: JSON.stringify(payload) },
+  );
+}
+
+export async function listPublicWorkforceBankBranches(
+  kind: "script-checker" | "data-entry-clerk",
+  token: string,
+  params?: {
+    bank_name?: string | null;
+    bank_name_exact?: string | null;
+    branch_name?: string | null;
+    skip?: number;
+    limit?: number;
+  },
+): Promise<BankBranchListResponse> {
+  const q = new URLSearchParams();
+  if (params?.bank_name_exact?.trim()) q.set("bank_name_exact", params.bank_name_exact.trim());
+  else if (params?.bank_name?.trim()) q.set("bank_name", params.bank_name.trim());
+  if (params?.branch_name?.trim()) q.set("branch_name", params.branch_name.trim());
+  if (params?.skip != null) q.set("skip", String(params.skip));
+  if (params?.limit != null) q.set("limit", String(params.limit));
+  const s = q.toString();
+  return publicApiJson<BankBranchListResponse>(
+    `${workforcePublicPrefix(kind)}/${encodeURIComponent(token)}/bank-branches${s ? `?${s}` : ""}`,
+  );
+}
+
+export async function getPublicWorkforceDistinctBankNames(
+  kind: "script-checker" | "data-entry-clerk",
+  token: string,
+  q?: string,
+): Promise<string[]> {
+  const params = new URLSearchParams();
+  if (q?.trim()) params.set("q", q.trim());
+  const s = params.toString();
+  return publicApiJson<string[]>(
+    `${workforcePublicPrefix(kind)}/${encodeURIComponent(token)}/bank-names${s ? `?${s}` : ""}`,
+  );
+}
+
+export async function listAdminWorkforceRoster(
+  kind: "script-checker" | "data-entry-clerk",
+  examinationId: number,
+): Promise<WorkforceRosterRow[]> {
+  return apiJson<WorkforceRosterRow[]>(
+    `/admin/examinations/${examinationId}/${workforceRosterSegment(kind)}`,
+  );
+}
+
+export async function createAdminWorkforceRosterMember(
+  kind: "script-checker" | "data-entry-clerk",
+  examinationId: number,
+  payload: WorkforceRosterCreatePayload,
+  options?: { sendSms?: boolean },
+): Promise<WorkforceRosterRow> {
+  const q = options?.sendSms ? "?send_sms=true" : "";
+  return apiJson<WorkforceRosterRow>(
+    `/admin/examinations/${examinationId}/${workforceRosterSegment(kind)}${q}`,
+    { method: "POST", body: JSON.stringify(payload) },
+  );
+}
+
+export async function updateAdminWorkforceRosterMember(
+  kind: "script-checker" | "data-entry-clerk",
+  examinationId: number,
+  personId: string,
+  payload: WorkforceRosterUpdatePayload,
+): Promise<WorkforceRosterRow> {
+  return apiJson<WorkforceRosterRow>(
+    `/admin/examinations/${examinationId}/${workforceRosterSegment(kind)}/${personId}`,
+    { method: "PATCH", body: JSON.stringify(payload) },
+  );
+}
+
+export async function deleteAdminWorkforceRosterMember(
+  kind: "script-checker" | "data-entry-clerk",
+  examinationId: number,
+  personId: string,
+): Promise<void> {
+  await apiJson<void>(
+    `/admin/examinations/${examinationId}/${workforceRosterSegment(kind)}/${personId}`,
+    { method: "DELETE" },
+  );
+}
+
+export async function sendAdminWorkforceInviteSms(
+  kind: "script-checker" | "data-entry-clerk",
+  examinationId: number,
+  personId: string,
+): Promise<WorkforceInviteSmsResult> {
+  return apiJson<WorkforceInviteSmsResult>(
+    `/admin/examinations/${examinationId}/${workforceRosterSegment(kind)}/${personId}/send-invite-sms`,
+    { method: "POST" },
+  );
+}
+
+export async function bulkSendAdminWorkforceInviteSms(
+  kind: "script-checker" | "data-entry-clerk",
+  examinationId: number,
+  ids: string[],
+): Promise<WorkforceBulkInviteSmsResponse> {
+  return apiJson<WorkforceBulkInviteSmsResponse>(
+    `/admin/examinations/${examinationId}/${workforceRosterSegment(kind)}/bulk-invite-sms`,
+    { method: "POST", body: JSON.stringify({ ids }) },
+  );
+}
+
+export async function getWorkforceAssignmentGrid(
+  kind: "script-checker" | "data-entry-clerk",
+  examinationId: number,
+  subjectId: number,
+  paperNumber: number,
+): Promise<WorkforceAssignmentGridResponse> {
+  return apiJson<WorkforceAssignmentGridResponse>(
+    `/examinations/${examinationId}/subjects/${subjectId}/${workforceAssignmentSegment(kind)}?paper_number=${paperNumber}`,
+  );
+}
+
+export async function getWorkforceAssignmentRoster(
+  kind: "script-checker" | "data-entry-clerk",
+  examinationId: number,
+): Promise<WorkforceAssignmentRosterResponse> {
+  return apiJson<WorkforceAssignmentRosterResponse>(
+    `/examinations/${examinationId}/${workforceAssignmentSegment(kind)}/roster`,
+  );
+}
+
+export async function createWorkforceAssignmentBatch(
+  kind: "script-checker" | "data-entry-clerk",
+  examinationId: number,
+  subjectId: number,
+  paperNumber: number,
+  personId: string,
+  scriptCount: number,
+): Promise<WorkforceAssignmentBatchRow> {
+  return apiJson<WorkforceAssignmentBatchRow>(
+    `/examinations/${examinationId}/subjects/${subjectId}/${workforceAssignmentSegment(kind)}?paper_number=${paperNumber}`,
+    { method: "POST", body: JSON.stringify({ person_id: personId, script_count: scriptCount }) },
+  );
+}
+
+export async function completeWorkforceAssignmentBatch(
+  kind: "script-checker" | "data-entry-clerk",
+  examinationId: number,
+  subjectId: number,
+  batchId: string,
+): Promise<WorkforceAssignmentBatchRow> {
+  return apiJson<WorkforceAssignmentBatchRow>(
+    `/examinations/${examinationId}/subjects/${subjectId}/${workforceAssignmentSegment(kind)}/${batchId}/complete`,
+    { method: "POST" },
+  );
+}
+
+export async function cancelWorkforceAssignmentBatch(
+  kind: "script-checker" | "data-entry-clerk",
+  examinationId: number,
+  subjectId: number,
+  batchId: string,
+): Promise<WorkforceAssignmentBatchRow> {
+  return apiJson<WorkforceAssignmentBatchRow>(
+    `/examinations/${examinationId}/subjects/${subjectId}/${workforceAssignmentSegment(kind)}/${batchId}/cancel`,
+    { method: "POST" },
+  );
+}
+
+export async function getAdminWorkforceRates(
+  kind: "script-checker" | "data-entry-clerk",
+  examinationId: number,
+): Promise<WorkforceRatesResponse> {
+  return apiJson<WorkforceRatesResponse>(
+    `/admin/examinations/${examinationId}/${workforceRatesSegment(kind)}`,
+  );
+}
+
+export async function putAdminWorkforceRates(
+  kind: "script-checker" | "data-entry-clerk",
+  examinationId: number,
+  payload: WorkforceRatesPutPayload,
+): Promise<WorkforceRatesResponse> {
+  return apiJson<WorkforceRatesResponse>(
+    `/admin/examinations/${examinationId}/${workforceRatesSegment(kind)}`,
+    { method: "PUT", body: JSON.stringify(payload) },
+  );
+}
+
+export async function listAdminWorkforcePayouts(params: {
+  kind: "script-checker" | "data-entry-clerk";
+  examination_id: number;
+}): Promise<WorkforcePayoutListResponse> {
+  const q = new URLSearchParams();
+  q.set("examination_id", String(params.examination_id));
+  return apiJson<WorkforcePayoutListResponse>(
+    `/admin/${workforcePayoutsSegment(params.kind)}?${q.toString()}`,
+  );
+}
+
+export async function downloadAdminWorkforcePayoutsBogExport(params: {
+  kind: "script-checker" | "data-entry-clerk";
+  examination_id: number;
+  filename: string;
+}): Promise<void> {
+  const q = new URLSearchParams();
+  q.set("examination_id", String(params.examination_id));
+  await downloadApiFile(
+    `/admin/${workforcePayoutsSegment(params.kind)}/bog-export.xlsx?${q.toString()}`,
+    params.filename,
   );
 }

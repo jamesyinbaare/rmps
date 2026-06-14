@@ -43,6 +43,7 @@ from app.services.script_allocation_milp import EligiblePair, SlackTarget, solve
 
 DEFAULT_DEVIATION_WEIGHT: dict[ExaminerType, float] = {
     ExaminerType.CHIEF: 2.0,
+    ExaminerType.ASSISTANT_CHIEF: 1.75,
     ExaminerType.ASSISTANT: 1.0,
     ExaminerType.TEAM_LEADER: 1.5,
 }
@@ -1367,6 +1368,7 @@ async def build_run_response(session: AsyncSession, run: AllocationRun) -> dict:
 
     type_to_schema = {
         ExaminerType.CHIEF: ExaminerTypeSchema.chief_examiner,
+        ExaminerType.ASSISTANT_CHIEF: ExaminerTypeSchema.assistant_chief_examiner,
         ExaminerType.ASSISTANT: ExaminerTypeSchema.assistant_examiner,
         ExaminerType.TEAM_LEADER: ExaminerTypeSchema.team_leader,
     }

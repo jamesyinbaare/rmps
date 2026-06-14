@@ -11,6 +11,8 @@ type Props = {
   coverage: CohortCoverage;
   entityLabel?: string;
   onShowUnassigned?: () => void;
+  /** Override unassigned link label (e.g. "View unassigned" for read-only). */
+  unassignedButtonLabel?: string;
   trailing?: ReactNode;
   className?: string;
 };
@@ -19,6 +21,7 @@ export function CohortCoverageBar({
   coverage,
   entityLabel = "cohort",
   onShowUnassigned,
+  unassignedButtonLabel,
   trailing,
   className,
 }: Props) {
@@ -47,7 +50,7 @@ export function CohortCoverageBar({
             className="h-7 px-2 text-xs text-amber-800 hover:text-amber-900 dark:text-amber-300"
             onClick={onShowUnassigned}
           >
-            {unassignedCount} unassigned
+            {unassignedButtonLabel ?? `${unassignedCount} unassigned`}
           </Button>
         ) : (
           <Badge variant="secondary" className="text-xs">

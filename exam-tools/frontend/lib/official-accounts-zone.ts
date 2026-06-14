@@ -7,6 +7,27 @@ export const ACCOUNT_DETAILS_BY_CENTRE_LABEL = "Bank accounts by Centre";
 export const OFFICIAL_ACCOUNTS_STATISTICS_HREF = "/dashboard/admin/official-statistics";
 export const OFFICIAL_ACCOUNTS_INSPECTOR_HREF = "/dashboard/inspector/exam-officials";
 export const OFFICIAL_ACCOUNTS_INSPECTOR_ATTENDANCE_HREF = "/dashboard/inspector/attendance-sheets";
+export const EXAMINER_PAYOUTS_HREF = "/dashboard/admin/examiner-payouts";
+export const EXAMINER_ATTENDANCE_HREF = "/dashboard/admin/examiner-attendance";
+/** @deprecated Use EXAMINER_ACCOUNTS_BY_SUBJECT_HREF */
+export const EXAMINERS_BY_SUBJECT_HREF = "/dashboard/admin/examiners-by-subject";
+export const EXAMINER_ACCOUNTS_BY_SUBJECT_HREF = "/dashboard/admin/examiner-accounts-by-subject";
+export const EXAMINER_BANK_ACCOUNTS_LABEL = "Examiner bank accounts";
+export const EXAMINER_ACCOUNTS_BY_SUBJECT_LABEL = "Bank accounts by subject";
+
+export function buildExaminerAccountsBySubjectHref(params: {
+  examId: number;
+  subjectId?: string;
+  region?: string;
+  role?: string;
+}): string {
+  const p = new URLSearchParams();
+  p.set("exam", String(params.examId));
+  if (params.subjectId?.trim()) p.set("subject", params.subjectId.trim());
+  if (params.region?.trim()) p.set("region", params.region.trim());
+  if (params.role?.trim()) p.set("role", params.role.trim());
+  return `${EXAMINER_ACCOUNTS_BY_SUBJECT_HREF}?${p.toString()}`;
+}
 
 export const OFFICIAL_ACCOUNTS_PATHS = [
   OFFICIAL_ACCOUNTS_ADMIN_HREF,
@@ -14,6 +35,10 @@ export const OFFICIAL_ACCOUNTS_PATHS = [
   OFFICIAL_ACCOUNTS_STATISTICS_HREF,
   OFFICIAL_ACCOUNTS_INSPECTOR_HREF,
   OFFICIAL_ACCOUNTS_INSPECTOR_ATTENDANCE_HREF,
+  EXAMINER_PAYOUTS_HREF,
+  EXAMINER_ATTENDANCE_HREF,
+  EXAMINERS_BY_SUBJECT_HREF,
+  EXAMINER_ACCOUNTS_BY_SUBJECT_HREF,
 ] as const;
 
 export const OFFICIAL_ACCOUNTS_ZONE_ATTR = {
@@ -54,6 +79,10 @@ export const officialAccountsTabPanelClass =
 export const officialAccountsTableLayoutClass = "flex min-h-0 flex-1 flex-col overflow-hidden";
 
 export const officialAccountsTableScrollClass = "min-h-0 flex-1 overflow-auto overscroll-contain";
+
+/** Table on pages that scroll with the main column (no nested vertical scroll). */
+export const officialAccountsTablePageScrollClass = "scrollbar-hide overflow-x-auto";
+export const officialAccountsTablePageLayoutClass = "flex flex-col";
 
 export const officialAccountsPanelToolbarClass =
   "flex flex-col gap-4 border-b border-border bg-muted/20 px-4 py-4 sm:flex-row sm:flex-wrap sm:items-end sm:px-5 sm:py-5";

@@ -1,16 +1,15 @@
 "use client";
 
 import {
-  BarChart3,
-  ClipboardList,
   Coins,
   Landmark,
+  PenLine,
   type LucideIcon,
 } from "lucide-react";
 import { useEffect, useState } from "react";
 
 import { getMe, type UserMe } from "@/lib/auth";
-import { FINANCE_NAV_GROUPS } from "@/lib/finance-nav";
+import { FINANCE_NAV_SECTIONS } from "@/lib/finance-nav";
 import { officialAccountsPanelClass } from "@/lib/official-accounts-zone";
 import { cn } from "@/lib/utils";
 
@@ -18,20 +17,15 @@ const GROUP_ACCENT: Record<
   string,
   { icon: LucideIcon; iconWrap: string; cardBorder: string }
 > = {
-  "Account details": {
+  Examinations: {
     icon: Landmark,
     iconWrap: "bg-success/15 text-success",
     cardBorder: "border-success/20 bg-success/[0.04]",
   },
-  "Centre reporting": {
-    icon: BarChart3,
-    iconWrap: "bg-primary/10 text-primary",
-    cardBorder: "border-primary/15 bg-primary/[0.03]",
-  },
-  Compliance: {
-    icon: ClipboardList,
-    iconWrap: "bg-warning/20 text-warning-foreground",
-    cardBorder: "border-warning/25 bg-warning/[0.06]",
+  "Coordination & marking": {
+    icon: PenLine,
+    iconWrap: "bg-violet-500/15 text-violet-700 dark:text-violet-300",
+    cardBorder: "border-violet-500/20 bg-violet-500/[0.04]",
   },
   Setup: {
     icon: Coins,
@@ -92,12 +86,12 @@ export function FinanceOfficerHome() {
           Sections in the menu
         </h3>
         <ul className="mt-3 grid gap-3 sm:grid-cols-2">
-          {FINANCE_NAV_GROUPS.map((group) => {
-            const accent = GROUP_ACCENT[group.heading] ?? GROUP_ACCENT.Setup;
+          {FINANCE_NAV_SECTIONS.map((section) => {
+            const accent = GROUP_ACCENT[section.heading] ?? GROUP_ACCENT.Setup;
             const Icon = accent.icon;
             return (
               <li
-                key={group.heading}
+                key={section.id}
                 className={cn(
                   "rounded-xl border p-4 shadow-sm",
                   accent.cardBorder,
@@ -114,9 +108,9 @@ export function FinanceOfficerHome() {
                     <Icon className="size-4" />
                   </span>
                   <div className="min-w-0">
-                    <p className="text-sm font-medium text-foreground">{group.heading}</p>
+                    <p className="text-sm font-medium text-foreground">{section.heading}</p>
                     <p className="mt-1 text-xs leading-relaxed text-muted-foreground">
-                      {group.items.map((item) => item.label).join(" · ")}
+                      {section.items.map((item) => item.label).join(" · ")}
                     </p>
                   </div>
                 </div>

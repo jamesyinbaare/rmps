@@ -83,6 +83,54 @@ def examination_label(ex: Examination) -> str:
     return " ".join(parts)
 
 
+def _compact_exam_token(value: str | None) -> str:
+    return re.sub(r"[\s/_\-]+", "", (value or "").strip().lower())
+
+
+_SMS_EXAM_SERIES_ABBREVS: dict[str, str] = {
+    "mayjune": "MJ",
+    "may": "MJ",
+    "mj": "MJ",
+    "novdec": "ND",
+    "nov": "ND",
+    "nd": "ND",
+    "novemberdecember": "ND",
+}
+
+_SMS_EXAM_TYPE_ABBREVS: dict[str, str] = {
+    "certificateii": "Cert 2",
+    "certificate2": "Cert 2",
+    "certii": "Cert 2",
+    "cert2": "Cert 2",
+    "novdec": "ND",
+    "novemberdecember": "ND",
+}
+
+
+def _abbreviate_exam_series_for_sms(series: str | None) -> str | None:
+    if not series or not str(series).strip():
+        return None
+    raw = str(series).strip()
+    return _SMS_EXAM_SERIES_ABBREVS.get(_compact_exam_token(raw), raw)
+
+
+def _abbreviate_exam_type_for_sms(exam_type: str) -> str:
+    raw = str(exam_type).strip()
+    return _SMS_EXAM_TYPE_ABBREVS.get(_compact_exam_token(raw), raw)
+
+
+def examination_label_sms(ex: Examination) -> str:
+    """Compact examination label for SMS (keeps invite links within one segment)."""
+    parts = [str(ex.year)]
+    series = _abbreviate_exam_series_for_sms(ex.exam_series)
+    exam_type = _abbreviate_exam_type_for_sms(ex.exam_type)
+    if series:
+        parts.append(series)
+    if exam_type and exam_type not in parts:
+        parts.append(exam_type)
+    return " ".join(parts)
+
+
 def safe_filename_part(s: str) -> str:
     t = re.sub(r"[^\w\-]+", "_", s.strip(), flags=re.UNICODE).strip("_")
     return (t or "export")[:80]

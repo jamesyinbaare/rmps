@@ -19,6 +19,9 @@ type CohortModalShellProps = {
   footer?: ReactNode;
   children: ReactNode;
   className?: string;
+  headerClassName?: string;
+  bodyClassName?: string;
+  footerClassName?: string;
 };
 
 export function CohortModalShell({
@@ -31,6 +34,9 @@ export function CohortModalShell({
   footer,
   children,
   className,
+  headerClassName,
+  bodyClassName,
+  footerClassName,
 }: CohortModalShellProps) {
   const titleId = useId();
   const requestClose = onCloseAttempt ?? onClose;
@@ -72,7 +78,7 @@ export function CohortModalShell({
   const entering = !closing;
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center">
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 sm:p-6">
       <button
         type="button"
         aria-label="Close dialog"
@@ -92,7 +98,8 @@ export function CohortModalShell({
         aria-modal="true"
         aria-labelledby={titleId}
         className={cn(
-          "relative z-10 flex h-[90vh] w-[90vw] flex-col overflow-hidden rounded-2xl border border-border bg-card shadow-2xl motion-reduce:animate-none",
+          "relative z-10 flex h-[90vh] w-full max-w-6xl flex-col overflow-hidden rounded-2xl border border-border bg-card shadow-2xl motion-reduce:animate-none",
+          "before:pointer-events-none before:absolute before:inset-x-0 before:top-0 before:h-0.5 before:bg-primary/60 before:content-['']",
           entering
             ? "motion-safe:animate-in motion-safe:fade-in-0 motion-safe:zoom-in-95 motion-safe:slide-in-from-bottom-2 motion-safe:duration-200"
             : "motion-safe:animate-out motion-safe:fade-out-0 motion-safe:zoom-out-95 motion-safe:slide-out-to-bottom-2 motion-safe:duration-200",
@@ -100,7 +107,12 @@ export function CohortModalShell({
         )}
         onMouseDown={(e) => e.stopPropagation()}
       >
-        <div className="flex shrink-0 items-start justify-between gap-4 border-b border-border px-5 py-4 sm:px-6">
+        <div
+          className={cn(
+            "flex shrink-0 items-start justify-between gap-4 border-b border-border px-5 py-4 sm:px-6",
+            headerClassName,
+          )}
+        >
           <div className="min-w-0 flex-1 pr-2">
             <h2 id={titleId} className="truncate text-lg font-semibold text-foreground sm:text-xl">
               {title}
@@ -120,12 +132,17 @@ export function CohortModalShell({
           </button>
         </div>
 
-        <div className="flex min-h-0 flex-1 flex-col overflow-hidden px-5 py-5 sm:px-6">
+        <div className={cn("flex min-h-0 flex-1 flex-col overflow-hidden px-5 py-5 sm:px-6", bodyClassName)}>
           <div className="min-h-0 flex-1">{children}</div>
         </div>
 
         {footer ? (
-          <div className="flex min-h-0 shrink-0 flex-col border-t border-border bg-card px-5 py-4 sm:px-6">
+          <div
+            className={cn(
+              "flex min-h-0 shrink-0 flex-col border-t border-border bg-card px-5 py-4 sm:px-6",
+              footerClassName,
+            )}
+          >
             {footer}
           </div>
         ) : null}

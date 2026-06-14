@@ -33,6 +33,14 @@ def can_manage_default_cohort(user: User) -> bool:
     return is_unrestricted_examiner_manager(user)
 
 
+def assert_unrestricted_examiner_manager(user: User) -> None:
+    if not is_unrestricted_examiner_manager(user):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Only Test Admin and Super Admin can manage examiners and cohorts.",
+        )
+
+
 async def effective_subject_scope(
     session: AsyncSession,
     user: User,
@@ -90,6 +98,20 @@ async def assert_examiner_in_subject_scope(
 ) -> None:
     for sid in subject_ids:
         await assert_subject_officer_access(session, user, examination_id, sid)
+
+
+async def load_subject_officer_multi_exam_scope(
+    session: AsyncSession,
+    *,
+    user_id: UUID,
+) -> tuple[list[int], dict[int, set[int]]]:
+    """Return examination ids and per-exam subject ids for a subject officer."""
+    stmt = select(SubjectOfficerAssignment).where(SubjectOfficerAssignment.user_id == user_id)
+    rows = list((await session.execute(stmt)).scalars().all())
+    by_exam: dict[int, set[int]] = {}
+    for row in rows:
+        by_exam.setdefault(int(row.examination_id), set()).add(int(row.subject_id))
+    return list(by_exam.keys()), by_exam
 
 
 async def load_subject_officer_assignments_for_user(

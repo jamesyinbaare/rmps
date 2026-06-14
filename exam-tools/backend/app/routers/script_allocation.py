@@ -54,6 +54,7 @@ router = APIRouter(tags=["script-allocation"])
 def _examiner_type_from_schema(s: ExaminerTypeSchema) -> ExaminerType:
     return {
         ExaminerTypeSchema.chief_examiner: ExaminerType.CHIEF,
+        ExaminerTypeSchema.assistant_chief_examiner: ExaminerType.ASSISTANT_CHIEF,
         ExaminerTypeSchema.assistant_examiner: ExaminerType.ASSISTANT,
         ExaminerTypeSchema.team_leader: ExaminerType.TEAM_LEADER,
     }[s]
@@ -62,6 +63,7 @@ def _examiner_type_from_schema(s: ExaminerTypeSchema) -> ExaminerType:
 def _examiner_type_to_schema(t: ExaminerType) -> ExaminerTypeSchema:
     return {
         ExaminerType.CHIEF: ExaminerTypeSchema.chief_examiner,
+        ExaminerType.ASSISTANT_CHIEF: ExaminerTypeSchema.assistant_chief_examiner,
         ExaminerType.ASSISTANT: ExaminerTypeSchema.assistant_examiner,
         ExaminerType.TEAM_LEADER: ExaminerTypeSchema.team_leader,
     }[t]
@@ -405,6 +407,7 @@ def _allocation_examiner_row(member: AllocationExaminer, examiner: Examiner) -> 
         allocation_id=member.allocation_id,
         examiner_id=member.examiner_id,
         examiner_name=examiner.name,
+        reference_code=examiner.reference_code,
         examiner_type=_examiner_type_to_schema(examiner.examiner_type),
         subject_ids=[s.subject_id for s in examiner.subjects],
         region=examiner.region.value if examiner.region is not None else None,
@@ -464,6 +467,7 @@ async def list_allocation_examiner_import_candidates(
                 allocation_id=allocation_id,
                 examiner_id=examiner.id,
                 examiner_name=examiner.name,
+                reference_code=examiner.reference_code,
                 examiner_type=_examiner_type_to_schema(examiner.examiner_type),
                 subject_ids=sorted(subject_ids),
                 region=examiner.region.value if examiner.region is not None else None,

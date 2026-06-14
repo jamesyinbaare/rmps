@@ -18,12 +18,14 @@ pytest.importorskip("weasyprint", reason="WeasyPrint required for HTML→PDF in 
 
 def test_merge_pdf_copies_doubles_page_count() -> None:
     single = _render_one_examiner_pdf_sync(
-        examination_label_str="NovDec 2026 (Series)",
+        examination_id=1,
+        examination_label_str="2026 Series NovDec",
         year=2026,
         subject_label="Mathematics (MATH)",
         paper_number=2,
         examiner_name="A. Examiner",
         examiner_region="Greater Accra",
+        reference_code=None,
         rows=[
             {
                 "school_name": "Sample SHS",
@@ -46,12 +48,14 @@ def test_merge_pdf_copies_doubles_page_count() -> None:
 
 def test_merge_pdf_copies_one_is_unchanged() -> None:
     single = _render_one_examiner_pdf_sync(
+        examination_id=1,
         examination_label_str="Exam",
         year=2025,
         subject_label="English (ENG)",
         paper_number=1,
         examiner_name="B. Name",
         examiner_region="Ashanti",
+        reference_code=None,
         rows=[
             {
                 "school_name": "X",

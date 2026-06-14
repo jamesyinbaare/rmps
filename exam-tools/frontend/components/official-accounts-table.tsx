@@ -15,6 +15,8 @@ import {
 } from "@/lib/admin-exam-official-rows";
 import {
   officialAccountsTableLayoutClass,
+  officialAccountsTablePageLayoutClass,
+  officialAccountsTablePageScrollClass,
   officialAccountsTableScrollClass,
 } from "@/lib/official-accounts-zone";
 import { cn } from "@/lib/utils";
@@ -45,6 +47,8 @@ type Props = {
   onSortChange: (key: AdminOfficialSortKey) => void;
   groupByCentre?: boolean;
   clientFilteredCount?: number;
+  /** Scroll with the page instead of a nested vertical scroll region. */
+  pageScroll?: boolean;
 };
 
 function TableSkeleton({ colSpan, rows = 6 }: { colSpan: number; rows?: number }) {
@@ -243,6 +247,7 @@ export function OfficialAccountsTable({
   onSortChange,
   groupByCentre = false,
   clientFilteredCount,
+  pageScroll = false,
 }: Props) {
   const colSpan = showDesignationColumn ? COL_SPAN_ALL : COL_SPAN_NO_DESIGNATION;
   const centreColSpan = showDesignationColumn ? 4 : 3;
@@ -278,10 +283,14 @@ export function OfficialAccountsTable({
     return emptyLabel;
   }, [searchQuery, displayCount, items.length, hasActiveFilters, emptyLabel]);
 
+  const tableLayoutClass = pageScroll ? officialAccountsTablePageLayoutClass : officialAccountsTableLayoutClass;
+  const tableScrollClass = pageScroll ? officialAccountsTablePageScrollClass : officialAccountsTableScrollClass;
+  const desktopTableWrapClass = pageScroll ? "hidden md:block" : "hidden min-h-0 overflow-auto md:block";
+
   return (
-    <div className={officialAccountsTableLayoutClass}>
-      <div className={officialAccountsTableScrollClass}>
-        <div className="hidden min-h-0 overflow-auto md:block">
+    <div className={tableLayoutClass}>
+      <div className={tableScrollClass}>
+        <div className={desktopTableWrapClass}>
           <table className="w-full min-w-[52rem] table-fixed border-collapse text-sm">
             <colgroup>
               <col style={{ width: "11rem" }} />
@@ -423,7 +432,7 @@ export function OfficialAccountsTable({
           </table>
         </div>
 
-        <div className="min-h-0 overflow-auto p-4 md:hidden">
+        <div className={cn("p-4 md:hidden", pageScroll ? "overflow-x-auto" : "min-h-0 overflow-auto")}>
           <div className="space-y-3">
         {busy && items.length === 0 ? (
           <div className="space-y-2" role="status" aria-label="Loading">

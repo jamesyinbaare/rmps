@@ -51,9 +51,15 @@ type Props = {
   onAdd: () => void;
   onBulkUpload?: () => void;
   showBulkUpload: boolean;
+  canManageRoster?: boolean;
+  onConfigureReferenceCodes?: () => void;
+  showReferenceCodesConfig?: boolean;
+  onTestQuota?: () => void;
+  showQuotaAssessment?: boolean;
   busy: boolean;
   disabled?: boolean;
   embedded?: boolean;
+  hideSubjectScopeFilters?: boolean;
 };
 
 export function RosterCommandBar({
@@ -82,9 +88,15 @@ export function RosterCommandBar({
   onAdd,
   onBulkUpload,
   showBulkUpload,
+  canManageRoster = true,
+  onConfigureReferenceCodes,
+  showReferenceCodesConfig = false,
+  onTestQuota,
+  showQuotaAssessment = false,
   busy,
   disabled,
   embedded = false,
+  hideSubjectScopeFilters = false,
 }: Props) {
   const [columnsOpen, setColumnsOpen] = useState(false);
   const actionsDisabled = disabled || busy;
@@ -113,7 +125,7 @@ export function RosterCommandBar({
             "w-full min-w-0 sm:max-w-xs md:max-w-sm lg:max-w-md",
             searchDisabled && "opacity-60",
           )}
-          placeholder="Search name or phone…"
+          placeholder="Search code, name, or phone…"
           value={searchQuery}
           disabled={searchDisabled || busy}
           onChange={(e) => onSearchQueryChange(e.target.value)}
@@ -138,6 +150,7 @@ export function RosterCommandBar({
             activeFilterCount={activeFilterCount}
             onClearFilters={onClearFilters}
             disabled={actionsDisabled}
+            hideSubjectScopeFilters={hideSubjectScopeFilters}
           />
           <Popover open={columnsOpen} onOpenChange={setColumnsOpen}>
             <PopoverTrigger asChild>
@@ -177,14 +190,32 @@ export function RosterCommandBar({
           <Button type="button" size="sm" variant="outline" disabled={actionsDisabled || filteredCount === 0} onClick={onSendSms}>
             {smsLabel}
           </Button>
-          {showBulkUpload && onBulkUpload ? (
+          {showReferenceCodesConfig && onConfigureReferenceCodes ? (
+            <Button
+              type="button"
+              size="sm"
+              variant="outline"
+              disabled={actionsDisabled}
+              onClick={onConfigureReferenceCodes}
+            >
+              Reference codes
+            </Button>
+          ) : null}
+          {showQuotaAssessment && onTestQuota ? (
+            <Button type="button" size="sm" variant="outline" disabled={actionsDisabled} onClick={onTestQuota}>
+              Test quota
+            </Button>
+          ) : null}
+          {canManageRoster && showBulkUpload && onBulkUpload ? (
             <Button type="button" size="sm" variant="outline" disabled={actionsDisabled} onClick={onBulkUpload}>
               Bulk upload
             </Button>
           ) : null}
-          <button type="button" className={officialAccountsBtnPrimary} disabled={actionsDisabled} onClick={onAdd}>
-            Add examiner
-          </button>
+          {canManageRoster ? (
+            <button type="button" className={officialAccountsBtnPrimary} disabled={actionsDisabled} onClick={onAdd}>
+              Add examiner
+            </button>
+          ) : null}
         </div>
       </div>
       <OfficialAccountsFilterChips chips={filterChips} onClearAll={onClearFilters} variant="inline" />

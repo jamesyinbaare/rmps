@@ -231,8 +231,9 @@ def bog_workbook_bytes(
     rates_by_designation: dict[ExamOfficialDesignation, ExaminationDesignationRate],
     *,
     title: str | None = None,
+    prebuilt_rows: list[BogExportRow] | None = None,
 ) -> bytes:
-    rows = bog_export_rows(pairs, rates_by_designation)
+    rows = prebuilt_rows if prebuilt_rows is not None else bog_export_rows(pairs, rates_by_designation)
     total = bog_grand_total(rows)
 
     wb = Workbook()

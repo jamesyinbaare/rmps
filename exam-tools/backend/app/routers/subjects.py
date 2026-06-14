@@ -5,7 +5,10 @@ from fastapi.responses import StreamingResponse
 from sqlalchemy import func, insert, select
 from sqlalchemy.exc import IntegrityError
 
-from app.dependencies.auth import SuperAdminDep, SuperAdminOrTestAdminOfficerDep
+from app.dependencies.auth import (
+    SuperAdminDep,
+    SuperAdminOrFinanceOfficerOrTestAdminOfficerDep,
+)
 from app.dependencies.database import DBSessionDep
 from app.models import Programme, Subject, SubjectType, programme_subjects
 from app.schemas.subject import (
@@ -72,7 +75,7 @@ async def create_subject(
 @router.get("", response_model=SubjectListResponse)
 async def list_subjects(
     session: DBSessionDep,
-    _: SuperAdminOrTestAdminOfficerDep,
+    _: SuperAdminOrFinanceOfficerOrTestAdminOfficerDep,
     page: int = Query(1, ge=1),
     page_size: int = Query(20, ge=1, le=_MAX_PAGE_SIZE),
 ) -> SubjectListResponse:
@@ -353,7 +356,7 @@ async def bulk_upload_subjects(
 async def get_subject(
     subject_id: int,
     session: DBSessionDep,
-    _: SuperAdminOrTestAdminOfficerDep,
+    _: SuperAdminOrFinanceOfficerOrTestAdminOfficerDep,
 ) -> SubjectResponse:
     stmt = select(Subject).where(Subject.id == subject_id)
     result = await session.execute(stmt)

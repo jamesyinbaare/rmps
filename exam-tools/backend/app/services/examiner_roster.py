@@ -98,6 +98,9 @@ def parse_examiner_type_cell(value: Any) -> ExaminerType:
         "chief": ExaminerType.CHIEF,
         "chief_examiner": ExaminerType.CHIEF,
         "ce": ExaminerType.CHIEF,
+        "assistant_chief": ExaminerType.ASSISTANT_CHIEF,
+        "assistant_chief_examiner": ExaminerType.ASSISTANT_CHIEF,
+        "ace": ExaminerType.ASSISTANT_CHIEF,
         "team_leader": ExaminerType.TEAM_LEADER,
         "tl": ExaminerType.TEAM_LEADER,
         "assistant": ExaminerType.ASSISTANT,
@@ -112,22 +115,68 @@ def parse_examiner_type_cell(value: Any) -> ExaminerType:
         raise ValueError(f"Unknown examiner type: {raw!r}") from e
 
 
+def _unique_subject_ids(subjects: list[Subject]) -> list[int]:
+    seen: set[int] = set()
+    out: list[int] = []
+    for s in subjects:
+        sid = int(s.id)
+        if sid not in seen:
+            seen.add(sid)
+            out.append(sid)
+    return out
+
+
 async def subject_id_for_code(session: AsyncSession, code: str) -> int:
     c = str(code).strip()
     if not c:
         raise ValueError("Subject code is required")
-    stmt = select(Subject).where(Subject.code == c)
-    row = (await session.execute(stmt)).scalar_one_or_none()
-    if row is None:
-        stmt_ci = select(Subject).where(Subject.code.ilike(c))
-        matches = list((await session.execute(stmt_ci)).scalars().all())
-        if len(matches) == 1:
-            row = matches[0]
-        elif len(matches) > 1:
-            raise ValueError(f"Ambiguous subject code: {c!r}")
-    if row is None:
-        raise ValueError(f"Unknown subject code: {c!r}")
-    return int(row.id)
+
+    exact_matches: list[Subject] = []
+    for stmt in (
+        select(Subject).where(Subject.original_code == c),
+        select(Subject).where(Subject.code == c),
+    ):
+        for row in (await session.execute(stmt)).scalars().all():
+            if row not in exact_matches:
+                exact_matches.append(row)
+    exact_ids = _unique_subject_ids(exact_matches)
+    if len(exact_ids) == 1:
+        return exact_ids[0]
+    if len(exact_ids) > 1:
+        raise ValueError(f"Ambiguous subject code: {c!r}")
+
+    ci_matches: list[Subject] = []
+    for stmt in (
+        select(Subject).where(Subject.original_code.ilike(c)),
+        select(Subject).where(Subject.code.ilike(c)),
+    ):
+        for row in (await session.execute(stmt)).scalars().all():
+            if row not in ci_matches:
+                ci_matches.append(row)
+    ci_ids = _unique_subject_ids(ci_matches)
+    if len(ci_ids) == 1:
+        return ci_ids[0]
+    if len(ci_ids) > 1:
+        raise ValueError(f"Ambiguous subject code: {c!r}")
+    raise ValueError(f"Unknown subject code: {c!r}")
+
+
+def parse_gender_cell(value: Any) -> str | None:
+    if value is None or (isinstance(value, float) and pd.isna(value)):
+        return None
+    raw = str(value).strip()
+    if not raw:
+        return None
+    aliases: dict[str, str] = {
+        "male": "Male",
+        "m": "Male",
+        "female": "Female",
+        "f": "Female",
+    }
+    normalized = aliases.get(raw.lower())
+    if normalized is not None:
+        return normalized
+    raise ValueError(f"Unknown gender: {raw!r} (use Male or Female)")
 
 
 def _canonical_column_map() -> dict[str, str]:
@@ -137,8 +186,12 @@ def _canonical_column_map() -> dict[str, str]:
         "full_name": "name",
         "examiner_name": "name",
         "subject_code": "subject_code",
+        "original_code": "subject_code",
+        "original_subject_code": "subject_code",
         "subject": "subject_code",
         "sub_code": "subject_code",
+        "gender": "gender",
+        "sex": "gender",
         "examiner_type": "examiner_type",
         "type": "examiner_type",
         "role": "examiner_type",
@@ -201,6 +254,7 @@ async def dataframe_row_to_examiner_fields(
     if phone_raw is None or (isinstance(phone_raw, float) and pd.isna(phone_raw)):
         raise ValueError("Phone number is required")
     phone_number = parse_inspector_phone_number(phone_raw)
+    gender = parse_gender_cell(row.get("gender"))
     return {
         "name": str(name).strip(),
         "phone_number": phone_number,
@@ -208,4 +262,5 @@ async def dataframe_row_to_examiner_fields(
         "subject_ids": [sid],
         "allowed_region": allowed_region,
         "restrict_zone": restrict,
+        "gender": gender,
     }

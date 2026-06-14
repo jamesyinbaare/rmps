@@ -255,23 +255,40 @@ async def subject_series_count_map(session: AsyncSession, exam_id: int) -> dict[
 
 async def ordered_subjects_on_examination_timetable(session: AsyncSession, exam_id: int) -> list[Subject]:
     """Subjects resolved from examination schedules, one entry per timetable row, ordered by schedule subject_code."""
+    rows = await ordered_subject_papers_on_examination_timetable(session, exam_id)
+    return [subject for subject, _papers in rows]
+
+
+async def ordered_subject_papers_on_examination_timetable(
+    session: AsyncSession,
+    exam_id: int,
+) -> list[tuple[Subject, list[int]]]:
+    """Timetable subjects with paper numbers from schedules, ordered by subject code."""
     schedules = await load_schedules_for_exam(session, exam_id)
     if not schedules:
         return []
-    schedules_sorted = sorted(schedules, key=lambda s: s.subject_code)
-    codes = sorted({s.subject_code for s in schedules})
+    code_to_papers: dict[str, set[int]] = {}
+    code_order: list[str] = []
+    for sch in sorted(schedules, key=lambda s: s.subject_code):
+        if sch.subject_code not in code_to_papers:
+            code_to_papers[sch.subject_code] = set()
+            code_order.append(sch.subject_code)
+        code_to_papers[sch.subject_code].update(_paper_numbers_from_schedule(sch))
+
+    codes = list(code_order)
     sub_stmt = select(Subject).where(or_(Subject.code.in_(codes), Subject.original_code.in_(codes)))
-    sub_result = await session.execute(sub_stmt)
-    subjects = list(sub_result.scalars().all())
+    subjects = list((await session.execute(sub_stmt)).scalars().all())
     by_code = _subject_by_schedule_codes(subjects)
-    out: list[Subject] = []
+
+    out: list[tuple[Subject, list[int]]] = []
     seen: set[int] = set()
-    for sch in schedules_sorted:
-        sub = by_code.get(sch.subject_code)
+    for code in codes:
+        sub = by_code.get(code)
         if sub is None or sub.id in seen:
             continue
         seen.add(sub.id)
-        out.append(sub)
+        papers = sorted(code_to_papers.get(code) or {1})
+        out.append((sub, papers))
     return out
 
 

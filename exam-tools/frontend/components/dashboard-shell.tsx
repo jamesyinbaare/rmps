@@ -2,18 +2,29 @@
 
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
+import { PenLine } from "lucide-react";
 import { useEffect, useId, useState, type ReactNode } from "react";
 
 import { DashboardSimpleHeader, DashboardStickyHeader } from "@/components/dashboard-sticky-header";
 import { ExaminationNoticeSessionBanner } from "@/components/examination-notice-session-banner";
 import { SubjectOfficerExamBar } from "@/components/subject-officer/subject-officer-exam-bar";
 import { StaffSidebarMainNav } from "@/components/staff-sidebar-nav";
+import {
+  FinanceSidebarProvider,
+  useFinanceSidebarCollapsed,
+} from "@/components/finance-sidebar-context";
+import { PortalSidebar, PortalSidebarHeader } from "@/components/portal-sidebar";
 import { useInspectorPostings } from "@/hooks/use-inspector-postings";
 import { useSubjectOfficerAssignments } from "@/hooks/use-subject-officer-assignments";
 import { useSubjectOfficerExamUrl } from "@/hooks/use-subject-officer-exam-url";
 import { subjectNamesSummary } from "@/lib/subject-officer-exams";
 import { clearAuth, AUTH_TOKEN_UPDATED_EVENT, getMe, type UserMe } from "@/lib/auth";
 import { buildStaffSidebarNav } from "@/lib/staff-nav";
+import {
+  SUBJECT_OFFICER_NAV_SECTIONS,
+  SUBJECT_OFFICER_OVERVIEW_ITEM,
+  subjectOfficerNavActive,
+} from "@/lib/subject-officer-nav";
 import { cn } from "@/lib/utils";
 import {
   AllowancesSubNavLink,
@@ -109,7 +120,10 @@ function SubjectOfficerExamChrome() {
     pathname === "/dashboard/subject-officer" ||
     pathname.startsWith("/dashboard/subject-officer/examiners") ||
     pathname.startsWith("/dashboard/subject-officer/allocations") ||
-    pathname.startsWith("/dashboard/subject-officer/marked-script-returns")
+    pathname.startsWith("/dashboard/subject-officer/marked-script-returns") ||
+    pathname.startsWith("/dashboard/subject-officer/attendance") ||
+    pathname.startsWith("/dashboard/subject-officer/lunch-verification") ||
+    pathname.startsWith("/dashboard/subject-officer/lunch-coupon-print")
   ) {
     return null;
   }
@@ -126,6 +140,24 @@ function SubjectOfficerExamChrome() {
 }
 
 export function DashboardShell({ title, children, staffRole }: Props) {
+  if (staffRole === "subject-officer") {
+    return (
+      <FinanceSidebarProvider>
+        <DashboardShellInner title={title} staffRole={staffRole}>
+          {children}
+        </DashboardShellInner>
+      </FinanceSidebarProvider>
+    );
+  }
+
+  return (
+    <DashboardShellInner title={title} staffRole={staffRole}>
+      {children}
+    </DashboardShellInner>
+  );
+}
+
+function DashboardShellInner({ title, children, staffRole }: Props) {
   const router = useRouter();
   const pathname = usePathname();
   const sidebarNavId = useId();
@@ -209,6 +241,8 @@ export function DashboardShell({ title, children, staffRole }: Props) {
   });
 
   const isSubjectOfficer = staffRole === "subject-officer";
+  const financeSidebarCollapsed = useFinanceSidebarCollapsed();
+  const subjectOfficerSidebarCollapsed = isSubjectOfficer && financeSidebarCollapsed;
 
   const showInspectorBottomNav = staffRole === "inspector";
   const examOfficialsActive = pathname.startsWith(examOfficialsHref);
@@ -229,17 +263,35 @@ export function DashboardShell({ title, children, staffRole }: Props) {
 
       <aside
         id={sidebarNavId}
-        className={`fixed inset-y-0 left-0 z-50 w-64 border-r border-border bg-card transition-transform duration-200 ease-out motion-reduce:transition-none lg:translate-x-0 ${
-          sidebarOpen ? "translate-x-0" : "-translate-x-full"
-        }`}
+        className={cn(
+          "fixed inset-y-0 left-0 z-50 border-r border-border bg-card transition-[width,transform] duration-200 ease-out motion-reduce:transition-none lg:translate-x-0",
+          subjectOfficerSidebarCollapsed ? "w-64 lg:w-[3.25rem]" : "w-64",
+          sidebarOpen ? "translate-x-0" : "-translate-x-full",
+        )}
       >
         <div className="flex h-full flex-col">
-          <div className="border-b border-border p-3">
-            <p className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
-              Exam tools
-            </p>
-            <p className="mt-0.5 text-sm font-semibold leading-snug text-card-foreground">{roleLabel}</p>
-          </div>
+          {isSubjectOfficer ? (
+            <PortalSidebarHeader title="Subject officer" collapsedIcon={PenLine} />
+          ) : (
+            <div className="border-b border-border p-3">
+              <p className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
+                Exam tools
+              </p>
+              <p className="mt-0.5 text-sm font-semibold leading-snug text-card-foreground">{roleLabel}</p>
+            </div>
+          )}
+          {isSubjectOfficer ? (
+            <PortalSidebar
+              pathname={pathname}
+              onNavigate={() => setSidebarOpen(false)}
+              ariaLabel="Marking"
+              overviewItem={SUBJECT_OFFICER_OVERVIEW_ITEM}
+              sections={SUBJECT_OFFICER_NAV_SECTIONS}
+              showOverview
+              navActive={subjectOfficerNavActive}
+            />
+          ) : (
+            <>
           <nav
             className="flex min-h-0 flex-1 flex-col overflow-y-auto overscroll-contain p-3 pb-5"
             aria-label="Dashboard sections"
@@ -278,10 +330,17 @@ export function DashboardShell({ title, children, staffRole }: Props) {
           <div className="hidden shrink-0 border-t border-border p-3 lg:block">
             <SidebarThemeToggle />
           </div>
+            </>
+          )}
         </div>
       </aside>
 
-      <div className={cn("lg:pl-64", isSubjectOfficer && "flex h-dvh max-h-dvh flex-col overflow-hidden")}>
+      <div
+        className={cn(
+          subjectOfficerSidebarCollapsed ? "lg:pl-[3.25rem]" : "lg:pl-64",
+          isSubjectOfficer && "flex h-dvh max-h-dvh flex-col overflow-hidden",
+        )}
+      >
         <div className={isSubjectOfficer ? "shrink-0" : undefined}>
         <DashboardStickyHeader
           title={title}
@@ -293,6 +352,7 @@ export function DashboardShell({ title, children, staffRole }: Props) {
               : null
           }
           onLogout={logout}
+          showSidebarCollapse={isSubjectOfficer}
           sidebar={{
             id: sidebarNavId,
             open: sidebarOpen,

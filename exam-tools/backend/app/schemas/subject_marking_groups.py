@@ -8,9 +8,11 @@ from pydantic import BaseModel, Field
 
 class SubjectMarkingGroupCreate(BaseModel):
     name: str = Field(min_length=1, max_length=255)
-    coordination_date: datetime | None = None
+    coordination_start_date: datetime | None = None
     coordination_start_time: time | None = None
+    coordination_end_date: datetime | None = None
     coordination_end_time: time | None = None
+    coordination_venue: str | None = Field(default=None, max_length=255)
     marking_start_date: datetime | None = None
     marking_end_date: datetime | None = None
     marked_script_submission_deadline: datetime | None = None
@@ -18,9 +20,11 @@ class SubjectMarkingGroupCreate(BaseModel):
 
 class SubjectMarkingGroupUpdate(BaseModel):
     name: str | None = Field(default=None, min_length=1, max_length=255)
-    coordination_date: datetime | None = None
+    coordination_start_date: datetime | None = None
     coordination_start_time: time | None = None
+    coordination_end_date: datetime | None = None
     coordination_end_time: time | None = None
+    coordination_venue: str | None = Field(default=None, max_length=255)
     marking_start_date: datetime | None = None
     marking_end_date: datetime | None = None
     marked_script_submission_deadline: datetime | None = None
@@ -41,9 +45,11 @@ class SubjectMarkingGroupResponse(BaseModel):
     examiner_ids: list[UUID]
     source_regions: list[str]
     source_roles: list[str]
-    coordination_date: datetime | None
+    coordination_start_date: datetime | None
     coordination_start_time: time | None
+    coordination_end_date: datetime | None
     coordination_end_time: time | None
+    coordination_venue: str | None = None
     marking_start_date: datetime | None
     marking_end_date: datetime | None
     marked_script_submission_deadline: datetime | None

@@ -137,8 +137,9 @@ class MarkedScriptReturnGridResponse(BaseModel):
     paper_number: int
     marking_group_id: UUID | None = None
     marking_group_name: str | None = None
-    coordination_date: datetime | None = None
+    coordination_start_date: datetime | None = None
     coordination_start_time: time | None = None
+    coordination_end_date: datetime | None = None
     coordination_end_time: time | None = None
     marking_start_date: datetime | None = None
     marking_end_date: datetime | None = None

@@ -15,6 +15,10 @@ export function monitoringExamScopedHref(href: string): boolean {
   );
 }
 
+export function isMonitoringPath(pathname: string): boolean {
+  return pathname === EXECUTIVE_MONITORING_HREF || pathname.startsWith(`${EXECUTIVE_MONITORING_HREF}/`);
+}
+
 const SESSION_KEY = "executive-cache:v1:selected-exam-id";
 
 const EXECUTIVE_VIEWER_PLACEHOLDER_NAME = /^executive\s+viewer$/i;

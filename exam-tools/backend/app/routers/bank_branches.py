@@ -38,6 +38,7 @@ router = APIRouter(prefix="/bank-branches", tags=["bank-branches"])
 async def list_bank_branches(
     session: DBSessionDep,
     _user: SupervisorInspectorOrDepotKeeperDep,
+    search: str | None = Query(None, description="Substring match on bank name or branch name"),
     bank_name: str | None = Query(None, description="Substring match (case-insensitive)"),
     bank_name_exact: str | None = Query(None, description="Exact bank name match (case-sensitive)"),
     branch_name: str | None = Query(None, description="Substring match (case-insensitive)"),
@@ -46,6 +47,7 @@ async def list_bank_branches(
 ) -> BankBranchListResponse:
     rows, total = await query_bank_branches(
         session,
+        search=search,
         bank_name=bank_name,
         bank_name_exact=bank_name_exact,
         branch_name=branch_name,

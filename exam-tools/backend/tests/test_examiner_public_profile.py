@@ -3,12 +3,13 @@
 from __future__ import annotations
 
 from datetime import datetime, timedelta
-from unittest.mock import AsyncMock, MagicMock, patch
+from decimal import Decimal
+from unittest.mock import AsyncMock, MagicMock
 from uuid import uuid4
 
 import pytest
 
-from app.models import ExaminerInvitationStatus, ExaminerType, Region, Subject
+from app.models import ExaminerAllowanceType, ExaminerInvitationStatus, ExaminerType, Region, Subject
 from app.services.examiner_invitation import public_invitation_view
 from app.services.examiner_public_profile import (
     get_scripts_allocation_for_invitation,
@@ -28,7 +29,10 @@ def _mock_invitation(**overrides: object) -> MagicMock:
     inv.region = Region.ASHANTI
     inv.name = "Jane Doe"
     inv.phone_number = "0551234567"
-    inv.coordination_date = datetime(2026, 6, 20, 9, 0)
+    inv.coordination_start_date = datetime(2026, 6, 20, 9, 0)
+    inv.coordination_start_time = None
+    inv.coordination_end_date = datetime(2026, 6, 20, 9, 0)
+    inv.coordination_end_time = None
     for key, value in overrides.items():
         setattr(inv, key, value)
     return inv
@@ -56,7 +60,10 @@ def test_public_invitation_view_includes_examiner_id_when_accepted() -> None:
     inv.status = ExaminerInvitationStatus.ACCEPTED
     inv.examiner_id = examiner_id
     inv.response_deadline = datetime.utcnow() + timedelta(days=7)
-    inv.coordination_date = None
+    inv.coordination_start_date = None
+    inv.coordination_start_time = None
+    inv.coordination_end_date = None
+    inv.coordination_end_time = None
     inv.responded_at = datetime.utcnow()
     sub = MagicMock(spec=Subject)
     sub.code = "301"
@@ -83,7 +90,10 @@ def test_public_invitation_view_omits_examiner_id_when_pending() -> None:
     inv.status = ExaminerInvitationStatus.PENDING
     inv.examiner_id = None
     inv.response_deadline = datetime.utcnow() + timedelta(days=7)
-    inv.coordination_date = None
+    inv.coordination_start_date = None
+    inv.coordination_start_time = None
+    inv.coordination_end_date = None
+    inv.coordination_end_time = None
     inv.responded_at = None
     sub = MagicMock(spec=Subject)
     sub.code = "301"
@@ -122,18 +132,121 @@ async def test_get_scripts_allocation_for_invitation_empty_when_no_runs() -> Non
 
 
 def test_appointment_letter_pdf_returns_pdf_bytes() -> None:
-    from app.services.examiner_appointment_letter_pdf import _render_appointment_letter_pdf_sync
+    from datetime import datetime, timezone
+
+    from app.services.examiner_appointment_letter_pdf import (
+        _appointment_role_context,
+        _render_appointment_letter_pdf_sync,
+    )
 
     pdf = _render_appointment_letter_pdf_sync(
-        examination_label_str="NovDec 2026 (Series)",
-        invitee_name="Jane Doe",
-        phone_number="0551234567",
-        examiner_type_label="Assistant examiner",
-        subject_label="Mathematics (MATH301)",
-        region="Ashanti",
-        coordination_date="Friday, 20 June 2026",
+        context={
+            "examination_label": "2026 Series NovDec",
+            "examination_label_upper": "2026 SERIES NOVDEC",
+            "invitee_name": "Jane Doe",
+            "phone_number": "0551234567",
+            "examiner_type_label": "Assistant examiner",
+            "subject_label": "Mathematics (MATH301)",
+            "subject_name": "Mathematics",
+            "region": "Ashanti",
+            "coordination_date": "Friday, 20 June 2026",
+            "coordination_start_time": "10:00am",
+            "coordination_end_time": "4:00pm",
+            "coordination_venue": "Simulation Hall",
+            "marking_start_date": "Monday, 22 June 2026",
+            "marking_end_date": "Friday, 10 July 2026",
+            **_appointment_role_context(ExaminerType.ASSISTANT),
+            "marking_fee_amount": "3.50",
+            "responsibility_allowance": "70.00",
+            "inconvenience_allowance": "70.00",
+            "travel_and_transport_amount": "700.00",
+            "internal_commuting": "100.00",
+            "signatory_name": "ERIC ASIEDU ANSAH",
+            "signatory_title": "DIRECTOR 1, ASSESSMENT AND CERTIFICATION",
+            "signed_for_director_general": True,
+            "valediction": "Yours faithfully",
+            "cc_lines": ["The Accountant.", "The Internal Auditor."],
+            "signatory_signature_src": None,
+        },
+        reference_number="CTVET/EXM/1/MATH301/ABCD1234",
+        letter_date=datetime(2026, 6, 13, tzinfo=timezone.utc),
     )
     assert pdf.startswith(b"%PDF")
+
+
+def test_appointment_role_context_chief_examiner() -> None:
+    from app.services.examiner_appointment_letter_pdf import _appointment_role_context
+
+    ctx = _appointment_role_context(ExaminerType.CHIEF)
+    assert ctx["examiner_role_title"] == "Chief Examiner"
+    assert ctx["conditions_section_heading"] == "CONDITIONS OF APPOINTMENT AS A CHIEF EXAMINER"
+    assert ctx["fees_section_heading"] == "FEES FOR CHIEF EXAMINERS: PAPER 2 (ESSAY/WRITTEN TEST)"
+    assert ctx["show_red_marking_pen_instruction"] is False
+    assert ctx["show_green_vetting_pen_instruction"] is True
+
+
+def test_build_appointment_fee_context_from_rates_uses_subject_and_region_only() -> None:
+    from app.services.examiner_appointment_letter_pdf import _build_appointment_fee_context_from_rates
+
+    zone_id = uuid4()
+    subject_id = 10
+    other_subject_id = 20
+
+    role_rates = {
+        (ExaminerType.ASSISTANT, ExaminerAllowanceType.RESPONSIBILITY): Decimal("70"),
+        (ExaminerType.ASSISTANT, ExaminerAllowanceType.INCONVENIENCE): Decimal("70"),
+        (ExaminerType.ASSISTANT, ExaminerAllowanceType.INTERNAL_COMMUTING): Decimal("100"),
+    }
+    marking_rates = {
+        (subject_id, 2): Decimal("3.50"),
+        (other_subject_id, 2): Decimal("4.00"),
+    }
+    travel_rates = {
+        Region.ASHANTI: Decimal("350"),
+        Region.GREATER_ACCRA: Decimal("200"),
+    }
+    travel_zones = {
+        Region.ASHANTI: zone_id,
+        Region.GREATER_ACCRA: uuid4(),
+    }
+    travel_role_factors = {
+        (ExaminerType.ASSISTANT, zone_id): Decimal("2"),
+    }
+
+    travel_zone_names = {
+        zone_id: "Zone A",
+    }
+
+    context = _build_appointment_fee_context_from_rates(
+        role_rates=role_rates,
+        marking_rates=marking_rates,
+        travel_rates=travel_rates,
+        travel_zones=travel_zones,
+        travel_zone_names=travel_zone_names,
+        travel_role_factors=travel_role_factors,
+        examiner_type=ExaminerType.ASSISTANT,
+        region=Region.ASHANTI,
+        subject_id=subject_id,
+    )
+
+    assert context["marking_fee_amount"] == "3.50"
+    assert context["travel_and_transport_amount"] == "700.00"
+    assert "travel_zone_lines" not in context
+    assert "marking_fee_lines" not in context
+
+
+def test_compute_travel_compensation_zero_when_region_unconfigured() -> None:
+    from app.services.examiner_compensation import compute_travel_compensation
+
+    comp = compute_travel_compensation(
+        region=Region.ASHANTI,
+        examiner_type=ExaminerType.ASSISTANT,
+        travel_rates={},
+        travel_zones={},
+        travel_zone_names={},
+        travel_role_factors={},
+    )
+    assert comp.payable_ghs == Decimal("0")
 
 
 @pytest.mark.asyncio

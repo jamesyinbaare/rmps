@@ -46,8 +46,9 @@ function roleChipLabel(role: string): string {
 function cohortSearchText(c: CohortListItem, showSchedule: boolean): string {
   const scheduleParts = showSchedule
     ? cohortScheduleSummaryParts({
-        coordinationDate: c.coordinationDate,
+        coordinationStartDate: c.coordinationStartDate,
         coordinationStartTime: c.coordinationStartTime,
+        coordinationEndDate: c.coordinationEndDate,
         coordinationEndTime: c.coordinationEndTime,
         markingStartDate: c.markingStartDate,
         markingEndDate: c.markingEndDate,
@@ -167,8 +168,9 @@ export function CohortListColumn({
                 <TableBody>
                   {filtered.map((c) => {
                     const scheduleParts = cohortScheduleSummaryParts({
-                      coordinationDate: c.coordinationDate,
+                      coordinationStartDate: c.coordinationStartDate,
                       coordinationStartTime: c.coordinationStartTime,
+                      coordinationEndDate: c.coordinationEndDate,
                       coordinationEndTime: c.coordinationEndTime,
                       markingStartDate: c.markingStartDate,
                       markingEndDate: c.markingEndDate,

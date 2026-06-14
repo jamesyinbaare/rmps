@@ -17,8 +17,9 @@ from app.services.examiner_invitation import (
     invitation_public_url,
     invitation_summary,
     public_invitation_view,
+    renew_examiner_invitation,
     subject_display_code,
-    update_invitation_coordination_date,
+    update_invitation_coordination_schedule,
 )
 from app.services.sms.examiner_invitation import (
     build_examiner_invitation_message,
@@ -51,7 +52,7 @@ def test_as_naive_utc_none() -> None:
 
 
 @pytest.mark.asyncio
-async def test_create_examiner_invitation_stores_naive_coordination_date() -> None:
+async def test_create_examiner_invitation_stores_naive_coordination_dates() -> None:
     session = AsyncMock()
     exam = MagicMock()
     exam.id = 1
@@ -77,11 +78,13 @@ async def test_create_examiner_invitation_stores_naive_coordination_date() -> No
             region_str="Upper East",
             invited_by_user_id=uuid4(),
             response_deadline=datetime(2026, 6, 13, 12, 0),
-            coordination_date=datetime(2026, 6, 10, 0, 0, tzinfo=timezone.utc),
+            coordination_start_date=datetime(2026, 6, 10, 0, 0, tzinfo=timezone.utc),
+            coordination_end_date=datetime(2026, 6, 12, 0, 0, tzinfo=timezone.utc),
         )
 
-    assert inv.coordination_date == datetime(2026, 6, 10, 0, 0)
-    assert inv.coordination_date.tzinfo is None
+    assert inv.coordination_start_date == datetime(2026, 6, 10, 0, 0)
+    assert inv.coordination_end_date == datetime(2026, 6, 12, 0, 0)
+    assert inv.coordination_start_date.tzinfo is None
     assert inv.response_deadline == datetime(2026, 6, 13, 12, 0)
     assert inv.response_deadline.tzinfo is None
 
@@ -113,22 +116,27 @@ async def test_create_examiner_invitation_requires_response_deadline() -> None:
 
 
 @pytest.mark.asyncio
-async def test_update_invitation_coordination_date_stores_naive() -> None:
+async def test_update_invitation_coordination_schedule_stores_naive() -> None:
     from app.models import ExaminerInvitation
 
     session = AsyncMock()
     session.flush = AsyncMock()
     inv = MagicMock(spec=ExaminerInvitation)
-    inv.coordination_date = None
+    inv.coordination_start_date = None
+    inv.coordination_end_date = None
 
-    await update_invitation_coordination_date(
+    await update_invitation_coordination_schedule(
         session,
         inv,
-        datetime(2026, 7, 15, 0, 0, tzinfo=timezone.utc),
+        coordination_start_date=datetime(2026, 7, 14, 0, 0, tzinfo=timezone.utc),
+        coordination_start_time=None,
+        coordination_end_date=datetime(2026, 7, 15, 0, 0, tzinfo=timezone.utc),
+        coordination_end_time=None,
     )
 
-    assert inv.coordination_date == datetime(2026, 7, 15, 0, 0)
-    assert inv.coordination_date.tzinfo is None
+    assert inv.coordination_start_date == datetime(2026, 7, 14, 0, 0)
+    assert inv.coordination_end_date == datetime(2026, 7, 15, 0, 0)
+    assert inv.coordination_end_date.tzinfo is None
     session.flush.assert_awaited_once()
 
 
@@ -165,6 +173,27 @@ def test_build_examiner_invitation_message() -> None:
     assert "https://example.com/ei/tok" in msg
 
 
+def test_build_examiner_invitation_message_assistant_chief_abbrev() -> None:
+    inv = MagicMock()
+    inv.name = "Sam Mensah"
+    inv.examiner_type = ExaminerType.ASSISTANT_CHIEF
+    inv.token = "tok"
+    sub = MagicMock(spec=Subject)
+    sub.name = "Mathematics"
+    inv.subject = sub
+    exam = MagicMock()
+    exam.exam_type = "BECE"
+    exam.year = 2026
+    inv.examination = exam
+
+    with patch("app.services.examiner_invitation.settings") as mock_settings:
+        mock_settings.examiner_invitation_base_url = "https://example.com"
+        mock_settings.examiner_invitation_link_path = "/ei"
+        msg = build_examiner_invitation_message(inv)
+
+    assert "invited as ACE" in msg
+
+
 def test_subject_display_code_prefers_original_code() -> None:
     sub = MagicMock(spec=Subject)
     sub.code = "301"
@@ -180,7 +209,10 @@ def test_invitation_summary_includes_full_subject_code_fields() -> None:
     inv.region = Region.ASHANTI
     inv.status = ExaminerInvitationStatus.PENDING
     inv.response_deadline = datetime(2026, 6, 12, 12, 0)
-    inv.coordination_date = datetime(2026, 6, 20, 9, 0)
+    inv.coordination_start_date = datetime(2026, 6, 20, 9, 0)
+    inv.coordination_start_time = None
+    inv.coordination_end_date = datetime(2026, 6, 20, 9, 0)
+    inv.coordination_end_time = None
     inv.responded_at = None
     sub = MagicMock(spec=Subject)
     sub.code = "301"
@@ -197,7 +229,7 @@ def test_invitation_summary_includes_full_subject_code_fields() -> None:
     assert summary["phone_number"] == "0551234567"
     assert summary["subject_code"] == "301"
     assert summary["subject_original_code"] == "MATH301"
-    assert summary["coordination_date"] == datetime(2026, 6, 20, 9, 0)
+    assert summary["coordination_start_date"] == datetime(2026, 6, 20, 9, 0)
 
 
 def test_render_examiner_invitation_custom_message_placeholders() -> None:
@@ -207,7 +239,10 @@ def test_render_examiner_invitation_custom_message_placeholders() -> None:
     inv.token = "tok"
     inv.region = Region.GREATER_ACCRA
     inv.response_deadline = datetime(2026, 6, 12, 17, 30)
-    inv.coordination_date = None
+    inv.coordination_start_date = None
+    inv.coordination_start_time = None
+    inv.coordination_end_date = None
+    inv.coordination_end_time = None
     sub = MagicMock(spec=Subject)
     sub.name = "Mathematics"
     inv.subject = sub
@@ -241,7 +276,10 @@ def test_render_examiner_invitation_custom_message_coordination_date() -> None:
     inv.token = "tok"
     inv.region = Region.ASHANTI
     inv.response_deadline = datetime(2026, 6, 12, 12, 0)
-    inv.coordination_date = datetime(2026, 7, 1, 0, 0)
+    inv.coordination_start_date = datetime(2026, 7, 1, 0, 0)
+    inv.coordination_start_time = None
+    inv.coordination_end_date = datetime(2026, 7, 1, 0, 0)
+    inv.coordination_end_time = None
     inv.subject = MagicMock(spec=Subject)
     inv.subject.name = "Maths"
     inv.examination = MagicMock()
@@ -322,6 +360,41 @@ def test_build_examiner_invitation_message_typical_length_within_sms_limit() -> 
 
 
 @pytest.mark.asyncio
+async def test_assert_examiner_subject_allowed_rejects_global_roster_on_other_exam() -> None:
+    from app.services.examiner_subject_lock import assert_examiner_subject_allowed
+
+    session = AsyncMock()
+    es = MagicMock()
+    es.subject_id = 1
+
+    ex = MagicMock()
+    ex.examination_id = 99
+    ex.subjects = [es]
+
+    global_roster_result = MagicMock()
+    global_roster_result.scalars.return_value.all.return_value = [ex]
+
+    session.execute = AsyncMock(return_value=global_roster_result)
+    session.get = AsyncMock(
+        side_effect=lambda _model, pk: MagicMock(
+            name="Maths",
+            code="MATH",
+            exam_type="NovDec",
+            year=2026,
+            exam_series=None,
+        )
+    )
+
+    with pytest.raises(ValueError, match="already registered"):
+        await assert_examiner_subject_allowed(
+            session,
+            examination_id=1,
+            msisdn="233551234567",
+            subject_id=2,
+        )
+
+
+@pytest.mark.asyncio
 async def test_assert_examiner_subject_allowed_rejects_different_subject_invitation() -> None:
     from app.services.examiner_subject_lock import assert_examiner_subject_allowed
 
@@ -329,17 +402,20 @@ async def test_assert_examiner_subject_allowed_rejects_different_subject_invitat
     inv = MagicMock()
     inv.status = ExaminerInvitationStatus.DECLINED
     inv.subject_id = 1
+    inv.examination_id = 1
 
     sub_a = MagicMock(spec=Subject)
     sub_a.name = "Maths"
     sub_a.code = "MATH"
 
+    empty = MagicMock()
+    empty.scalars.return_value.all.return_value = []
     inv_result = MagicMock()
     inv_result.scalars.return_value.all.return_value = [inv]
     roster_result = MagicMock()
     roster_result.scalars.return_value.all.return_value = []
 
-    session.execute = AsyncMock(side_effect=[inv_result, roster_result])
+    session.execute = AsyncMock(side_effect=[empty, empty, inv_result, roster_result])
     session.get = AsyncMock(return_value=sub_a)
 
     with pytest.raises(ValueError, match="invited for Maths"):
@@ -359,13 +435,16 @@ async def test_assert_examiner_subject_allowed_rejects_pending_duplicate() -> No
     inv = MagicMock()
     inv.status = ExaminerInvitationStatus.PENDING
     inv.subject_id = 1
+    inv.examination_id = 1
 
+    empty = MagicMock()
+    empty.scalars.return_value.all.return_value = []
     inv_result = MagicMock()
     inv_result.scalars.return_value.all.return_value = [inv]
     roster_result = MagicMock()
     roster_result.scalars.return_value.all.return_value = []
 
-    session.execute = AsyncMock(side_effect=[inv_result, roster_result])
+    session.execute = AsyncMock(side_effect=[empty, empty, inv_result, roster_result])
 
     with pytest.raises(ValueError, match="already pending"):
         await assert_examiner_subject_allowed(
@@ -408,13 +487,30 @@ async def test_accept_examiner_invitation_creates_roster_row() -> None:
 
     session.flush = AsyncMock(side_effect=_flush)
 
-    with patch(
-        "app.services.examiner_invitation.sync_examiner_subjects",
-        new_callable=AsyncMock,
-    ) as mock_sync:
-        examiner = await accept_examiner_invitation(session, inv)
+    with (
+        patch(
+            "app.services.examiner_invitation.would_exceed_quota",
+            new_callable=AsyncMock,
+            return_value=MagicMock(exceeded=False),
+        ),
+        patch(
+            "app.services.examiner_invitation.assign_reference_code_to_examiner",
+            new_callable=AsyncMock,
+        ),
+        patch(
+            "app.services.examiner_invitation.sync_default_cohort_members",
+            new_callable=AsyncMock,
+        ),
+        patch(
+            "app.services.examiner_invitation.sync_examiner_subjects",
+            new_callable=AsyncMock,
+        ) as mock_sync,
+    ):
+        result = await accept_examiner_invitation(session, inv)
 
-    assert examiner.name == "Jane"
+    assert result.outcome == "accepted"
+    assert result.examiner is not None
+    assert result.examiner.name == "Jane"
     assert inv.status == ExaminerInvitationStatus.ACCEPTED
     assert inv.examiner_id is not None
     mock_sync.assert_awaited_once()
@@ -444,7 +540,10 @@ def _mock_public_invitation(**overrides: object) -> MagicMock:
     inv.region = Region.ASHANTI
     inv.status = ExaminerInvitationStatus.PENDING
     inv.response_deadline = datetime.utcnow() + timedelta(days=2)
-    inv.coordination_date = None
+    inv.coordination_start_date = None
+    inv.coordination_start_time = None
+    inv.coordination_end_date = None
+    inv.coordination_end_time = None
     inv.responded_at = None
     sub = MagicMock(spec=Subject)
     sub.code = "301"
@@ -543,3 +642,129 @@ def test_public_invitation_view_already_expired_not_accessible() -> None:
     assert view["status"] == "expired"
     assert view["can_respond"] is False
     assert _is_publicly_accessible(inv) is False
+
+
+def _mock_renewable_invitation(**overrides: object) -> MagicMock:
+    from app.models import ExaminerInvitation
+
+    inv = MagicMock(spec=ExaminerInvitation)
+    inv.id = uuid4()
+    inv.status = ExaminerInvitationStatus.EXPIRED
+    inv.examination_id = 1
+    inv.subject_id = 10
+    inv.msisdn = "233554210052"
+    inv.examiner_type = ExaminerType.ASSISTANT
+    inv.token = "existing-token"
+    inv.response_deadline = datetime.utcnow() - timedelta(days=2)
+    inv.token_expires_at = inv.response_deadline
+    inv.responded_at = None
+    for key, value in overrides.items():
+        setattr(inv, key, value)
+    return inv
+
+
+@pytest.mark.asyncio
+async def test_renew_examiner_invitation_reactivates_expired() -> None:
+    session = AsyncMock()
+    session.flush = AsyncMock()
+    inv = _mock_renewable_invitation()
+    new_deadline = datetime.utcnow() + timedelta(days=5)
+    user_id = uuid4()
+
+    with patch(
+        "app.services.examiner_invitation.assert_examiner_subject_allowed",
+        new_callable=AsyncMock,
+    ):
+        result = await renew_examiner_invitation(
+            session,
+            inv,
+            response_deadline=new_deadline,
+            invited_by_user_id=user_id,
+        )
+
+    assert result is inv
+    assert inv.status == ExaminerInvitationStatus.PENDING
+    assert inv.response_deadline == _as_naive_utc(new_deadline)
+    assert inv.token_expires_at == inv.response_deadline
+    assert inv.responded_at is None
+    assert inv.invited_by_user_id == user_id
+    assert inv.token == "existing-token"
+    assert inv.status == ExaminerInvitationStatus.PENDING
+    assert inv.response_deadline >= datetime.utcnow()
+
+
+@pytest.mark.asyncio
+async def test_renew_examiner_invitation_reactivates_declined() -> None:
+    session = AsyncMock()
+    session.flush = AsyncMock()
+    inv = _mock_renewable_invitation(
+        status=ExaminerInvitationStatus.DECLINED,
+        responded_at=datetime.utcnow() - timedelta(days=1),
+    )
+    new_deadline = datetime.utcnow() + timedelta(days=5)
+    user_id = uuid4()
+
+    with patch(
+        "app.services.examiner_invitation.assert_examiner_subject_allowed",
+        new_callable=AsyncMock,
+    ):
+        result = await renew_examiner_invitation(
+            session,
+            inv,
+            response_deadline=new_deadline,
+            invited_by_user_id=user_id,
+        )
+
+    assert result is inv
+    assert inv.status == ExaminerInvitationStatus.PENDING
+    assert inv.responded_at is None
+    assert inv.token == "existing-token"
+
+
+@pytest.mark.asyncio
+async def test_renew_examiner_invitation_rejects_non_reopenable() -> None:
+    session = AsyncMock()
+    for status in (
+        ExaminerInvitationStatus.PENDING,
+        ExaminerInvitationStatus.ACCEPTED,
+    ):
+        inv = _mock_renewable_invitation(status=status)
+        with pytest.raises(ValueError, match="quota-waitlisted"):
+            await renew_examiner_invitation(
+                session,
+                inv,
+                response_deadline=datetime.utcnow() + timedelta(days=3),
+                invited_by_user_id=uuid4(),
+            )
+
+
+@pytest.mark.asyncio
+async def test_renew_examiner_invitation_rejects_past_deadline() -> None:
+    session = AsyncMock()
+    inv = _mock_renewable_invitation()
+    with pytest.raises(ValueError, match="in the future"):
+        await renew_examiner_invitation(
+            session,
+            inv,
+            response_deadline=datetime.utcnow() - timedelta(hours=1),
+            invited_by_user_id=uuid4(),
+        )
+
+
+@pytest.mark.asyncio
+async def test_renew_examiner_invitation_rejects_conflicting_pending() -> None:
+    session = AsyncMock()
+    inv = _mock_renewable_invitation()
+
+    with patch(
+        "app.services.examiner_invitation.assert_examiner_subject_allowed",
+        new_callable=AsyncMock,
+        side_effect=ValueError("An invitation is already pending for this phone number in this examination."),
+    ):
+        with pytest.raises(ValueError, match="already pending"):
+            await renew_examiner_invitation(
+                session,
+                inv,
+                response_deadline=datetime.utcnow() + timedelta(days=3),
+                invited_by_user_id=uuid4(),
+            )

@@ -533,8 +533,9 @@ export function MarkedScriptReturnsVerificationShell({
                   <p className="text-xs text-muted-foreground">
                     Cohort: {grid.marking_group_name}
                     <CohortScheduleSummary
-                      coordinationDate={grid.coordination_date}
+                      coordinationStartDate={grid.coordination_start_date}
                       coordinationStartTime={grid.coordination_start_time}
+                      coordinationEndDate={grid.coordination_end_date}
                       coordinationEndTime={grid.coordination_end_time}
                       markingStartDate={grid.marking_start_date}
                       markingEndDate={grid.marking_end_date}

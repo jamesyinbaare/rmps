@@ -8,10 +8,13 @@ import {
   EXAMINERS_PANEL_CLASS,
   ROSTER_DEFAULT_COLUMN_VISIBILITY,
 } from "@/components/examiners/constants";
+import { ExaminerQuotaAssessmentModal } from "@/components/examiners/examiner-quota-assessment-modal";
+import { ExaminerRegionGroupsModal } from "@/components/examiners/examiner-region-groups-modal";
 import { RosterCommandBar } from "@/components/examiners/roster-command-bar";
 import { RosterBulkUploadModal, RosterExaminerFormModal } from "@/components/examiners/roster-modals";
 import { RosterTable } from "@/components/examiners/roster-table";
 import type { RosterTableRow } from "@/components/examiners/types";
+import { useSyncPageSubjectScope } from "@/components/examiners/use-sync-page-subject-scope";
 import { clampPageSize, humanizeRegion, matchesRosterSearch } from "@/components/examiners/utils";
 import { EXAMINER_TYPE_LABELS, EXAMINER_TYPE_OPTIONS } from "@/components/examiner-invitations/constants";
 import { ExaminerAllocationModal } from "@/components/examiner-invitations/examiner-allocation-modal";
@@ -53,7 +56,14 @@ type Props = {
   embedded?: boolean;
   pageScroll?: boolean;
   loadExaminerGroups?: boolean;
+  showReferenceCodesConfig?: boolean;
+  showQuotaAssessment?: boolean;
+  canManageRoster?: boolean;
+  canEditRoster?: boolean;
   onRosterCountChange?: (count: number) => void;
+  usePageSubjectScope?: boolean;
+  pageSubjectTypeFilter?: ScriptControlSubjectTypeFilter;
+  pageSubjectId?: string;
 };
 
 type AllocationTarget = {
@@ -70,7 +80,14 @@ export function ExaminersRosterPanel({
   embedded = false,
   pageScroll = false,
   loadExaminerGroups = true,
+  showReferenceCodesConfig = false,
+  showQuotaAssessment = false,
+  canManageRoster = true,
+  canEditRoster = true,
   onRosterCountChange,
+  usePageSubjectScope = false,
+  pageSubjectTypeFilter = "all",
+  pageSubjectId = "",
 }: Props) {
   const [examiners, setExaminers] = useState<ExaminerRow[]>([]);
   const [groups, setGroups] = useState<ExaminerGroupRow[]>([]);
@@ -95,6 +112,16 @@ export function ExaminersRosterPanel({
   const [customPageSizeInput, setCustomPageSizeInput] = useState(String(DEFAULT_PAGE_SIZE));
   const [customPageSizeEditing, setCustomPageSizeEditing] = useState(false);
 
+  useSyncPageSubjectScope({
+    enabled: usePageSubjectScope,
+    pageSubjectTypeFilter,
+    pageSubjectId,
+    setSubjectTypeFilter,
+    setSubjectFilter,
+  });
+
+  const [regionGroupsOpen, setRegionGroupsOpen] = useState(false);
+  const [quotaAssessmentOpen, setQuotaAssessmentOpen] = useState(false);
   const [formOpen, setFormOpen] = useState(false);
   const [editing, setEditing] = useState<ExaminerRow | null>(null);
   const [formError, setFormError] = useState<string | null>(null);
@@ -103,6 +130,7 @@ export function ExaminersRosterPanel({
   const [examinerType, setExaminerType] = useState<ExaminerTypeApi>("assistant_examiner");
   const [subjectId, setSubjectId] = useState("");
   const [region, setRegion] = useState("");
+  const [gender, setGender] = useState("");
 
   const [uploadOpen, setUploadOpen] = useState(false);
   const [uploadError, setUploadError] = useState<string | null>(null);
@@ -223,7 +251,7 @@ export function ExaminersRosterPanel({
           const sid = e.subject_ids[0];
           if (sid == null || !subjectFilter.includes(String(sid))) return false;
         }
-        if (!matchesRosterSearch(e.name, e.phone_number, debouncedSearch)) return false;
+        if (!matchesRosterSearch(e.name, e.phone_number, debouncedSearch, e.reference_code)) return false;
         return true;
       })
       .map((e) => ({
@@ -237,10 +265,11 @@ export function ExaminersRosterPanel({
 
   const activeFilterCount = useMemo(() => {
     let n = 0;
-    if (subjectTypeFilter !== "all") n += 1;
-    n += roleFilter.length + regionFilter.length + subjectFilter.length;
+    if (!usePageSubjectScope && subjectTypeFilter !== "all") n += 1;
+    n += roleFilter.length + regionFilter.length;
+    if (!usePageSubjectScope) n += subjectFilter.length;
     return n;
-  }, [subjectTypeFilter, roleFilter, regionFilter, subjectFilter]);
+  }, [roleFilter.length, regionFilter.length, subjectFilter.length, subjectTypeFilter, usePageSubjectScope]);
 
   const selectedCount = Object.keys(rowSelection).length;
   const hasActiveFilters =
@@ -262,7 +291,7 @@ export function ExaminersRosterPanel({
         onRemove: () => setSearchQuery(""),
       });
     }
-    if (subjectTypeFilter !== "all") {
+    if (!usePageSubjectScope && subjectTypeFilter !== "all") {
       const label =
         SCRIPT_CONTROL_SUBJECT_TYPE_OPTIONS.find((o) => o.value === subjectTypeFilter)?.label ??
         subjectTypeFilter;
@@ -290,23 +319,27 @@ export function ExaminersRosterPanel({
         onRemove: () => setRegionFilter((prev) => prev.filter((v) => v !== reg)),
       });
     }
-    for (const id of subjectFilter) {
-      const opt = subjectOptions.find((o) => o.value === id);
-      chips.push({
-        id: `subject-${id}`,
-        label: `Subject: ${opt?.label ?? id}`,
-        onRemove: () => setSubjectFilter((prev) => prev.filter((v) => v !== id)),
-      });
+    if (!usePageSubjectScope) {
+      for (const id of subjectFilter) {
+        const opt = subjectOptions.find((o) => o.value === id);
+        chips.push({
+          id: `subject-${id}`,
+          label: `Subject: ${opt?.label ?? id}`,
+          onRemove: () => setSubjectFilter((prev) => prev.filter((v) => v !== id)),
+        });
+      }
     }
     return chips;
-  }, [debouncedSearch, subjectTypeFilter, roleFilter, regionFilter, subjectFilter, regionOptions, subjectOptions]);
+  }, [debouncedSearch, subjectTypeFilter, roleFilter, regionFilter, subjectFilter, regionOptions, subjectOptions, usePageSubjectScope]);
 
   function clearFilters() {
     setSearchQuery("");
-    setSubjectTypeFilter("all");
+    if (!usePageSubjectScope) {
+      setSubjectTypeFilter("all");
+      setSubjectFilter([]);
+    }
     setRoleFilter([]);
     setRegionFilter([]);
-    setSubjectFilter([]);
   }
 
   function handleSubjectTypeFilterChange(next: ScriptControlSubjectTypeFilter) {
@@ -339,6 +372,7 @@ export function ExaminersRosterPanel({
     setExaminerType("assistant_examiner");
     setSubjectId("");
     setRegion("");
+    setGender("");
     setFormError(null);
     setFormOpen(true);
   }
@@ -350,6 +384,7 @@ export function ExaminersRosterPanel({
     setExaminerType(row.examiner_type);
     setSubjectId(row.subject_ids[0] != null ? String(row.subject_ids[0]) : "");
     setRegion(row.region?.trim() ?? "");
+    setGender(row.gender ?? "");
     setFormError(null);
     setFormOpen(true);
   }
@@ -381,6 +416,7 @@ export function ExaminersRosterPanel({
           examiner_type: examinerType,
           subject_ids: [sid],
           region: region.trim(),
+          gender: gender.trim() || null,
         });
         setActionMessage("Examiner updated.");
       } else {
@@ -390,6 +426,7 @@ export function ExaminersRosterPanel({
           examiner_type: examinerType,
           subject_ids: [sid],
           region: region.trim(),
+          gender: gender.trim() || null,
         });
         setActionMessage("Examiner added.");
       }
@@ -539,10 +576,16 @@ export function ExaminersRosterPanel({
             setUploadResult(null);
             setUploadOpen(true);
           }}
-          showBulkUpload={isSuperAdmin}
+          showBulkUpload={canManageRoster && isSuperAdmin}
+          canManageRoster={canManageRoster}
+          showReferenceCodesConfig={showReferenceCodesConfig}
+          onConfigureReferenceCodes={() => setRegionGroupsOpen(true)}
+          showQuotaAssessment={showQuotaAssessment}
+          onTestQuota={() => setQuotaAssessmentOpen(true)}
           busy={busy || loading}
           disabled={examId == null}
           embedded={embedded}
+          hideSubjectScopeFilters={usePageSubjectScope}
         />
 
         <div
@@ -555,12 +598,16 @@ export function ExaminersRosterPanel({
                 <div className="space-y-1">
                   <p className="text-sm font-medium text-foreground">No examiners on roster yet</p>
                   <p className="max-w-sm text-sm text-muted-foreground">
-                    Add examiners directly or invite them from the Invitations tab.
+                    {canManageRoster
+                      ? "Add examiners directly or invite them from the Invitations tab."
+                      : "Examiners will appear here once administrators add them to the roster."}
                   </p>
                 </div>
-                <Button type="button" size="sm" disabled={busy} onClick={openAdd}>
-                  Add first examiner
-                </Button>
+                {canManageRoster ? (
+                  <Button type="button" size="sm" disabled={busy} onClick={openAdd}>
+                    Add first examiner
+                  </Button>
+                ) : null}
               </div>
             ) : !loading && tableRows.length === 0 ? (
               <div className="flex min-h-[12rem] flex-col items-center justify-center gap-3 px-6 py-12 text-center">
@@ -594,6 +641,7 @@ export function ExaminersRosterPanel({
                 }}
                 onEdit={openEdit}
                 onRemove={(row) => void handleRemove(row)}
+                canEditRoster={canEditRoster}
                 pageScroll={pageScroll}
                 onViewAllocation={
                   lockedSubjectIds != null
@@ -623,6 +671,7 @@ export function ExaminersRosterPanel({
         examinerType={examinerType}
         subjectId={subjectId}
         region={region}
+        gender={gender}
         subjectOptions={formSubjectOptions}
         regionOptions={regionOptions}
         onClose={closeForm}
@@ -632,6 +681,7 @@ export function ExaminersRosterPanel({
         onExaminerTypeChange={setExaminerType}
         onSubjectIdChange={setSubjectId}
         onRegionChange={setRegion}
+        onGenderChange={setGender}
       />
 
       <RosterBulkUploadModal
@@ -676,6 +726,22 @@ export function ExaminersRosterPanel({
         subjectId={allocationTarget?.subjectId ?? null}
         examinerId={allocationTarget?.examinerId ?? null}
         examinerName={allocationTarget?.name ?? ""}
+      />
+
+      <ExaminerRegionGroupsModal
+        open={regionGroupsOpen}
+        examId={examId}
+        onOpenChange={setRegionGroupsOpen}
+        onCodesUpdated={() => {
+          if (examId != null) void loadData(examId);
+        }}
+      />
+
+      <ExaminerQuotaAssessmentModal
+        open={quotaAssessmentOpen}
+        examId={examId}
+        subjects={subjects}
+        onOpenChange={setQuotaAssessmentOpen}
       />
     </>
   );

@@ -7,6 +7,7 @@ from typing import TYPE_CHECKING
 from uuid import UUID
 
 from app.config import settings
+from app.services.coordination_schedule import format_coordination_range
 from app.services.examiner_invitation import invitation_public_url
 from app.services.sms.factory import get_sms_provider
 from app.services.sms.phone import normalize_msisdn
@@ -23,6 +24,7 @@ SMS_SINGLE_SEGMENT_MAX_LEN = 160
 
 _EXAMINER_TYPE_ABBREVS = {
     "chief_examiner": "CE",
+    "assistant_chief_examiner": "ACE",
     "assistant_examiner": "AE",
     "team_leader": "TL",
 }
@@ -36,6 +38,8 @@ _CUSTOM_PLACEHOLDERS = (
     "{region}",
     "{response_deadline}",
     "{coordination_date}",
+    "{coordination_start}",
+    "{coordination_end}",
 )
 
 
@@ -92,10 +96,13 @@ def _format_response_deadline(dt) -> str:
     return dt.strftime("%d %b %Y, %H:%M")
 
 
-def _format_coordination_date(dt) -> str:
-    if dt is None:
-        return ""
-    return dt.strftime("%d %b %Y")
+def _coordination_range_for_inv(inv: ExaminerInvitation) -> str:
+    return format_coordination_range(
+        inv.coordination_start_date,
+        inv.coordination_start_time,
+        inv.coordination_end_date,
+        inv.coordination_end_time,
+    ) or ""
 
 
 def render_examiner_invitation_custom_message(inv: ExaminerInvitation, template: str) -> str:
@@ -113,7 +120,21 @@ def render_examiner_invitation_custom_message(inv: ExaminerInvitation, template:
         "{role}": role,
         "{region}": inv.region.value.replace("_", " ").title(),
         "{response_deadline}": _format_response_deadline(inv.response_deadline),
-        "{coordination_date}": _format_coordination_date(inv.coordination_date),
+        "{coordination_date}": _coordination_range_for_inv(inv),
+        "{coordination_start}": format_coordination_range(
+            inv.coordination_start_date,
+            inv.coordination_start_time,
+            inv.coordination_start_date,
+            inv.coordination_start_time,
+        )
+        or "",
+        "{coordination_end}": format_coordination_range(
+            inv.coordination_end_date,
+            None,
+            inv.coordination_end_date,
+            inv.coordination_end_time,
+        )
+        or "",
     }
     message = template
     for key, value in replacements.items():
@@ -125,6 +146,55 @@ def render_examiner_invitation_custom_message(inv: ExaminerInvitation, template:
             SMS_SINGLE_SEGMENT_MAX_LEN,
         )
     return message
+
+
+def build_quota_waitlist_sms(
+    *,
+    name: str,
+    subject_name: str,
+    region_group_name: str,
+) -> str:
+    first = name.split()[0] if name.strip() else "there"
+    message = (
+        f"Hi {first}, thanks for confirming. The {region_group_name} quota for "
+        f"{subject_name} is full right now. A slot may open later — check your invitation link again."
+    )
+    if len(message) > SMS_SINGLE_SEGMENT_MAX_LEN:
+        message = (
+            f"Hi {first}, the {region_group_name} quota for {subject_name} is full. "
+            f"Check your invitation link again if a slot opens."
+        )
+    return message
+
+
+async def send_quota_waitlist_sms(
+    inv: ExaminerInvitation,
+    *,
+    region_group_name: str,
+) -> SmsDeliveryResult:
+    if not settings.sms_enabled or not settings.nalo_sms_key.strip():
+        return SmsDeliveryResult(sent=False, error="SMS is not configured")
+
+    try:
+        msisdn = normalize_msisdn(inv.phone_number)
+    except ValueError as exc:
+        return SmsDeliveryResult(sent=False, error=str(exc))
+
+    subject = inv.subject
+    subject_name = subject.name if subject else "your subject"
+    message = build_quota_waitlist_sms(
+        name=inv.name,
+        subject_name=subject_name,
+        region_group_name=region_group_name,
+    )
+    provider = get_sms_provider()
+    result = await provider.send_sms(msisdn, message)
+    if result.sent:
+        masked = msisdn[:5] + "…" + msisdn[-3:] if len(msisdn) > 8 else "…"
+        logger.info("Quota waitlist SMS sent to %s", masked)
+    else:
+        logger.warning("Quota waitlist SMS failed: %s", result.error)
+    return result
 
 
 def build_examiner_invitation_message(inv: ExaminerInvitation) -> str:

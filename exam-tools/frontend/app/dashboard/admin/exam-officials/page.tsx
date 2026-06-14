@@ -32,12 +32,9 @@ import {
 import {
   OFFICIAL_ACCOUNTS_CENTRE_SUMMARY_HREF,
   officialAccountsBtnSecondary,
-  officialAccountsPageLayoutClass,
-  officialAccountsPanelFillClass,
-  officialAccountsTabPanelClass,
+  officialAccountsPanelClass,
 } from "@/lib/official-accounts-zone";
 import { REGION_OPTIONS } from "@/lib/school-enums";
-import { cn } from "@/lib/utils";
 
 const DEFAULT_PAGE_SIZE = 50;
 const PAGE_SIZE_OPTIONS = [50, 100, 200, 500, 1000] as const;
@@ -675,8 +672,8 @@ function AdminExamOfficialsContent() {
   const activeFilterCount = filterChips.length;
 
   return (
-    <div className={officialAccountsPageLayoutClass}>
-      <div className={officialAccountsPanelFillClass}>
+    <div className="space-y-3">
+      <div className={officialAccountsPanelClass}>
         <OfficialAccountsRoleTabs
           tabs={roleTabs}
           activeKey={activeSection}
@@ -690,7 +687,6 @@ function AdminExamOfficialsContent() {
           role="tabpanel"
           id={`admin-eo-panel-${activeConfig.id}`}
           aria-labelledby={`admin-eo-tab-${activeConfig.id}`}
-          className={officialAccountsTabPanelClass}
         >
           <OfficialAccountsCommandBar
             exams={exams}
@@ -743,30 +739,27 @@ function AdminExamOfficialsContent() {
             </div>
           ) : null}
 
-          <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
-            <OfficialAccountsTable
-              items={displayItems}
-              busy={activeSt.busy}
-              examId={examId}
-              showDesignationColumn={activeConfig.showDesignationColumn}
-              emptyLabel={activeConfig.emptyLabel}
-              hasActiveFilters={hasActiveFilters}
-              page={activeSt.page}
-              total={activeSt.total}
-              pageSize={activeSt.pageSize}
-              pageSizeOptions={[...PAGE_SIZE_OPTIONS]}
-              onPageChange={(p) => setSectionPage(activeConfig.id, p)}
-              onPageSizeChange={handlePageSizeChange}
-              searchQuery={activeSt.searchQuery}
-              sortKey={activeSt.sortKey}
-              sortDir={activeSt.sortDir}
-              onSortChange={handleSortChange}
-              groupByCentre={activeSection === "invigilators" && activeSt.groupByCentre}
-              clientFilteredCount={
-                activeSt.searchQuery.trim() ? displayItems.length : undefined
-              }
-            />
-          </div>
+          <OfficialAccountsTable
+            items={displayItems}
+            busy={activeSt.busy}
+            examId={examId}
+            showDesignationColumn={activeConfig.showDesignationColumn}
+            emptyLabel={activeConfig.emptyLabel}
+            hasActiveFilters={hasActiveFilters}
+            page={activeSt.page}
+            total={activeSt.total}
+            pageSize={activeSt.pageSize}
+            pageSizeOptions={[...PAGE_SIZE_OPTIONS]}
+            onPageChange={(p) => setSectionPage(activeConfig.id, p)}
+            onPageSizeChange={handlePageSizeChange}
+            searchQuery={activeSt.searchQuery}
+            sortKey={activeSt.sortKey}
+            sortDir={activeSt.sortDir}
+            onSortChange={handleSortChange}
+            groupByCentre={activeSection === "invigilators" && activeSt.groupByCentre}
+            clientFilteredCount={activeSt.searchQuery.trim() ? displayItems.length : undefined}
+            pageScroll
+          />
         </section>
       </div>
 

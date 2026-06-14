@@ -5,12 +5,14 @@ import { cn } from "@/lib/utils";
 
 export const EXAMINER_TYPE_OPTIONS: { value: ExaminerTypeApi; label: string }[] = [
   { value: "chief_examiner", label: "Chief examiner" },
+  { value: "assistant_chief_examiner", label: "Assistant chief examiner" },
   { value: "assistant_examiner", label: "Assistant examiner" },
   { value: "team_leader", label: "Team leader" },
 ];
 
 export const EXAMINER_TYPE_LABELS: Record<ExaminerTypeApi, string> = {
   chief_examiner: "Chief examiner",
+  assistant_chief_examiner: "Assistant chief examiner",
   assistant_examiner: "Assistant examiner",
   team_leader: "Team leader",
 };
@@ -20,6 +22,7 @@ export const STATUS_LABELS: Record<ExaminerInvitationStatusApi, string> = {
   accepted: "Accepted",
   declined: "Declined",
   expired: "Expired",
+  quota_waitlisted: "Quota waitlist",
 };
 
 export const STATUS_FILTER_OPTIONS: { value: ExaminerInvitationStatusApi | "all"; label: string }[] = [
@@ -28,6 +31,7 @@ export const STATUS_FILTER_OPTIONS: { value: ExaminerInvitationStatusApi | "all"
   { value: "accepted", label: STATUS_LABELS.accepted },
   { value: "declined", label: STATUS_LABELS.declined },
   { value: "expired", label: STATUS_LABELS.expired },
+  { value: "quota_waitlisted", label: STATUS_LABELS.quota_waitlisted },
 ];
 
 export const SMS_PLACEHOLDER_TOKENS = [

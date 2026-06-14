@@ -1,0 +1,171 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Lunch coupons — {{ subject_label }}</title>
+    <style>
+        @page {
+            size: A4 portrait;
+            margin: 0.75cm;
+        }
+
+        * { box-sizing: border-box; }
+
+        body {
+            font-family: Helvetica, Arial, sans-serif;
+            font-size: 9pt;
+            color: #0f172a;
+            margin: 0;
+            padding: 0;
+        }
+
+        .page {
+            page-break-after: always;
+        }
+
+        .page:last-child {
+            page-break-after: auto;
+        }
+
+        .grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            grid-template-rows: repeat(5, 1fr);
+            gap: 0;
+            width: 100%;
+            height: 28.2cm;
+        }
+
+        .coupon {
+            border: 1px dashed #b8c0cc;
+            height: 100%;
+            padding: 0.22cm 0.4cm 0.2cm;
+            text-align: center;
+            overflow: hidden;
+            background: #ffffff;
+            position: relative;
+        }
+
+        .coupon.empty {
+            border-color: transparent;
+            background: transparent;
+        }
+
+        .coupon-watermark {
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background-image: url('img/logo-crest-only.png');
+            background-size: 58% auto;
+            background-repeat: no-repeat;
+            background-position: center center;
+            opacity: 0.03;
+            z-index: 0;
+            pointer-events: none;
+        }
+
+        .coupon-inner {
+            position: relative;
+            z-index: 1;
+            width: 100%;
+            height: 100%;
+            border-collapse: collapse;
+            table-layout: fixed;
+        }
+
+        .coupon-inner td {
+            padding: 0;
+            vertical-align: middle;
+        }
+
+        .coupon-name-cell {
+            height: 16%;
+            vertical-align: bottom !important;
+            padding-bottom: 0.08cm !important;
+        }
+
+        .coupon-name {
+            font-size: 10pt;
+            font-weight: 700;
+            line-height: 1.15;
+            letter-spacing: -0.01em;
+            color: #0f172a;
+            max-height: 2.3em;
+            overflow: hidden;
+        }
+
+        .coupon-qr-cell {
+            height: 68%;
+            vertical-align: middle !important;
+        }
+
+        .coupon-qr-cell img {
+            width: 3.35cm;
+            height: 3.35cm;
+            max-width: 100%;
+            max-height: 100%;
+            object-fit: contain;
+            display: inline-block;
+        }
+
+        .coupon-code-cell {
+            height: 16%;
+            vertical-align: top !important;
+            padding-top: 0.06cm !important;
+        }
+
+        .coupon-code-wrap {
+            width: 88%;
+            margin: 0 auto;
+        }
+
+        .coupon-code {
+            font-family: "Courier New", Courier, monospace;
+            font-size: 8pt;
+            font-weight: 700;
+            letter-spacing: 0.1em;
+            color: #334155;
+            word-break: break-all;
+            line-height: 1.2;
+        }
+    </style>
+</head>
+<body>
+    {% for page in pages %}
+    <div class="page">
+        <div class="grid">
+            {% for coupon in page %}
+            {% if coupon %}
+            <div class="coupon">
+                <div class="coupon-watermark"></div>
+                <table class="coupon-inner">
+                    <tr>
+                        <td class="coupon-name-cell">
+                            <div class="coupon-name">{{ coupon.name }}</div>
+                        </td>
+                    </tr>
+                    <tr>
+                        <td class="coupon-qr-cell">
+                            <img src="data:image/png;base64,{{ coupon.qr_base64 }}" alt="QR code" />
+                        </td>
+                    </tr>
+                    <tr>
+                        <td class="coupon-code-cell">
+                            <div class="coupon-code-wrap">
+                                <div class="coupon-code">{{ coupon.reference_code }}</div>
+                            </div>
+                        </td>
+                    </tr>
+                </table>
+            </div>
+            {% else %}
+            <div class="coupon empty"></div>
+            {% endif %}
+            {% endfor %}
+        </div>
+    </div>
+    {% endfor %}
+</body>
+</html>

@@ -33,8 +33,9 @@ def test_group_response_shape() -> None:
     group.members = [member]
     group.source_regions = []
     group.source_roles = []
-    group.coordination_date = datetime(2026, 6, 15)
+    group.coordination_start_date = datetime(2026, 6, 15)
     group.coordination_start_time = time(9, 0)
+    group.coordination_end_date = datetime(2026, 6, 15)
     group.coordination_end_time = time(12, 0)
     group.marking_start_date = datetime(2026, 6, 16)
     group.marking_end_date = datetime(2026, 6, 25)
@@ -47,7 +48,7 @@ def test_group_response_shape() -> None:
     assert data["examiner_ids"] == [examiner_id]
     assert data["source_regions"] == []
     assert data["source_roles"] == []
-    assert data["coordination_date"] == datetime(2026, 6, 15)
+    assert data["coordination_start_date"] == datetime(2026, 6, 15)
     assert data["coordination_start_time"] == time(9, 0)
     assert data["marked_script_submission_deadline"] == datetime(2026, 7, 1)
 
@@ -66,8 +67,9 @@ async def test_create_group_persists_dates() -> None:
             examination_id=1,
             subject_id=10,
             name="North cohort",
-            coordination_date=datetime(2026, 6, 10),
+            coordination_start_date=datetime(2026, 6, 10),
             coordination_start_time=time(8, 30),
+            coordination_end_date=datetime(2026, 6, 10),
             coordination_end_time=time(11, 0),
             marking_start_date=datetime(2026, 6, 11),
             marking_end_date=datetime(2026, 6, 20),
@@ -76,7 +78,7 @@ async def test_create_group_persists_dates() -> None:
 
     added = session.add.call_args[0][0]
     assert added.name == "North cohort"
-    assert added.coordination_date == datetime(2026, 6, 10)
+    assert added.coordination_start_date == datetime(2026, 6, 10)
     assert added.coordination_start_time == time(8, 30)
     assert added.marked_script_submission_deadline == datetime(2026, 6, 30)
 
@@ -119,9 +121,11 @@ async def test_replace_group_members_adds_members() -> None:
     examiner_id = uuid4()
     group = MagicMock(spec=SubjectMarkingGroup)
     group.id = group_id
+    group.is_default = False
     group.members = []
 
     refreshed = MagicMock(spec=SubjectMarkingGroup)
+    refreshed.is_default = False
 
     with (
         patch(
@@ -171,11 +175,14 @@ async def test_delete_group_not_found() -> None:
 
 
 @pytest.mark.asyncio
-async def test_update_group_clears_coordination_date() -> None:
+async def test_update_group_clears_coordination_start_date() -> None:
     session = AsyncMock()
     group_id = uuid4()
     group = MagicMock(spec=SubjectMarkingGroup)
-    group.coordination_date = datetime(2026, 6, 1)
+    group.coordination_start_date = datetime(2026, 6, 1)
+    group.coordination_start_time = None
+    group.coordination_end_date = None
+    group.coordination_end_time = None
     group.members = []
 
     with (
@@ -197,20 +204,22 @@ async def test_update_group_clears_coordination_date() -> None:
             subject_id=10,
             group_id=group_id,
             name=None,
-            coordination_date=None,
+            coordination_start_date=None,
             coordination_start_time=None,
+            coordination_end_date=None,
             coordination_end_time=None,
             marking_start_date=None,
             marking_end_date=None,
             marked_script_submission_deadline=None,
-            update_coordination_date=True,
+            update_coordination_start_date=True,
             update_coordination_start_time=False,
+            update_coordination_end_date=False,
             update_coordination_end_time=False,
             update_marking_start_date=False,
             update_marking_end_date=False,
             update_submission_deadline=False,
         )
-    assert group.coordination_date is None
+    assert group.coordination_start_date is None
 
 
 @pytest.mark.asyncio
@@ -243,8 +252,9 @@ async def test_get_examiner_marking_group_prefers_named_over_default() -> None:
                 "id": default_id,
                 "name": "All examiners",
                 "is_default": True,
-                "coordination_date": None,
+                "coordination_start_date": None,
                 "coordination_start_time": None,
+                "coordination_end_date": None,
                 "coordination_end_time": None,
                 "marking_start_date": None,
                 "marking_end_date": None,
@@ -254,8 +264,9 @@ async def test_get_examiner_marking_group_prefers_named_over_default() -> None:
                 "id": named_id,
                 "name": "Northern",
                 "is_default": False,
-                "coordination_date": datetime(2026, 6, 15),
+                "coordination_start_date": datetime(2026, 6, 15),
                 "coordination_start_time": time(9, 0),
+                "coordination_end_date": datetime(2026, 6, 15),
                 "coordination_end_time": time(12, 0),
                 "marking_start_date": None,
                 "marking_end_date": None,

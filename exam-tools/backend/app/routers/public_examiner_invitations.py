@@ -26,6 +26,7 @@ from app.services.examiner_invitation import (
 from app.services.examiner_portal import (
     ResolvedPortalExaminer,
     ResolvedPortalInvitation,
+    resolve_examiner_id_for_letter_and_bank,
     resolve_examiner_id_for_portal_token,
     resolve_portal_token,
 )
@@ -57,6 +58,13 @@ async def _resolve_examiner_id(session: DBSessionDep, token: str):
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(exc)) from exc
 
 
+async def _resolve_examiner_id_letter_bank(session: DBSessionDep, token: str):
+    try:
+        return await resolve_examiner_id_for_letter_and_bank(session, token)
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(exc)) from exc
+
+
 @router.get("/{token}", response_model=ExaminerInvitationPublicResponse)
 async def get_public_examiner_invitation(
     session: DBSessionDep,
@@ -68,8 +76,7 @@ async def get_public_examiner_invitation(
         inv = resolved.invitation
         prev_status = inv.status
         summary = await public_invitation_portal_view(session, resolved)
-        if inv.status != prev_status:
-            await session.commit()
+        await session.commit()
         if not invitation_is_publicly_accessible(resolved):
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
@@ -78,6 +85,7 @@ async def get_public_examiner_invitation(
         return ExaminerInvitationPublicResponse(**summary)
 
     summary = await public_roster_portal_view(session, resolved)
+    await session.commit()
     return ExaminerInvitationPublicResponse(**summary)
 
 
@@ -94,15 +102,28 @@ async def accept_public_examiner_invitation(
         )
     inv = resolved.invitation
     try:
-        examiner = await accept_examiner_invitation(session, inv)
+        result = await accept_examiner_invitation(session, inv)
         await session.commit()
     except ValueError as exc:
         await session.rollback()
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+
+    if result.outcome == "quota_waitlisted":
+        from app.services.sms.examiner_invitation import send_quota_waitlist_sms
+
+        if result.region_group_name:
+            await send_quota_waitlist_sms(inv, region_group_name=result.region_group_name)
+        return ExaminerInvitationActionResponse(
+            status=ExaminerInvitationStatusSchema.quota_waitlisted,
+            message=result.quota_waitlist_message or "The regional quota is currently full.",
+            examiner_id=None,
+        )
+
+    assert result.examiner is not None
     return ExaminerInvitationActionResponse(
         status=ExaminerInvitationStatusSchema.accepted,
         message="Thank you for confirming your availability.",
-        examiner_id=examiner.id,
+        examiner_id=result.examiner.id,
     )
 
 
@@ -136,7 +157,7 @@ async def get_public_examiner_bank_account(
     session: DBSessionDep,
     token: str,
 ) -> ExaminerBankAccountResponse:
-    examiner_id = await _resolve_examiner_id(session, token)
+    examiner_id = await _resolve_examiner_id_letter_bank(session, token)
     row = await get_by_examiner_id(session, examiner_id)
     if row is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="No bank account on file.")
@@ -149,7 +170,7 @@ async def upsert_public_examiner_bank_account(
     token: str,
     body: ExaminerBankAccountUpsert,
 ) -> ExaminerBankAccountResponse:
-    examiner_id = await _resolve_examiner_id(session, token)
+    examiner_id = await _resolve_examiner_id_letter_bank(session, token)
     try:
         row = await upsert_for_examiner(
             session,
@@ -174,7 +195,7 @@ async def list_public_bank_branches(
     skip: int = Query(0, ge=0),
     limit: int = Query(DEFAULT_LIMIT, ge=1, le=MAX_LIST),
 ) -> BankBranchListResponse:
-    await _resolve_examiner_id(session, token)
+    await _resolve_examiner_id_letter_bank(session, token)
     rows, total = await list_bank_branches(
         session,
         bank_name=bank_name,
@@ -194,7 +215,7 @@ async def list_public_bank_names(
     q: str | None = Query(None, description="Substring filter on bank name"),
     limit: int = Query(100, ge=1, le=500),
 ) -> list[str]:
-    await _resolve_examiner_id(session, token)
+    await _resolve_examiner_id_letter_bank(session, token)
     return await distinct_bank_names(session, q=q, limit=limit)
 
 
@@ -231,20 +252,18 @@ async def download_public_examiner_appointment_letter_pdf(
     token: str,
 ) -> Response:
     resolved = await _resolve_portal_or_404(session, token)
+    await _resolve_examiner_id_letter_bank(session, token)
+
     if isinstance(resolved, ResolvedPortalExaminer):
         try:
             from app.services.examiner_appointment_letter_pdf import build_examiner_appointment_letter_for_roster
 
-            pdf, filename = await build_examiner_appointment_letter_for_roster(resolved)
+            pdf, filename = await build_examiner_appointment_letter_for_roster(resolved, session)
         except ValueError as exc:
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
     else:
         try:
-            await resolve_examiner_id_for_portal_token(session, token)
-        except ValueError as exc:
-            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(exc)) from exc
-        try:
-            pdf, filename = await build_examiner_appointment_letter_pdf(resolved.invitation)
+            pdf, filename = await build_examiner_appointment_letter_pdf(resolved.invitation, session)
         except ValueError as exc:
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
 

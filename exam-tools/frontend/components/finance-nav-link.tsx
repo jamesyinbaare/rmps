@@ -1,40 +1,90 @@
 "use client";
 
 import Link from "next/link";
+
+import { useFinanceSidebarCollapsed } from "@/components/finance-sidebar-context";
 import {
-  BarChart3,
-  BookMarked,
-  Building2,
-  CalendarDays,
-  ClipboardList,
-  Coins,
-  Landmark,
-  LayoutDashboard,
-  type LucideIcon,
-} from "lucide-react";
-
-import type { FinanceNavIcon, FinanceNavItem } from "@/lib/finance-nav";
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
+import { financeNavItemIcon } from "@/lib/finance-nav-icons";
+import type { FinanceNavItem } from "@/lib/finance-nav";
 import { cn } from "@/lib/utils";
-
-const ICONS: Record<FinanceNavIcon, LucideIcon> = {
-  overview: LayoutDashboard,
-  rates: Coins,
-  bank: Landmark,
-  centre: Building2,
-  statistics: BarChart3,
-  calendar: CalendarDays,
-  attendance: ClipboardList,
-  directory: BookMarked,
-};
 
 type Props = {
   item: FinanceNavItem;
   active: boolean;
   onNavigate?: () => void;
+  /** Nested item under a collapsible group — single-line, smaller. */
+  compact?: boolean;
+  /** Icon-only rail (collapsed sidebar). */
+  iconOnly?: boolean;
+  resolveHref?: (href: string) => string;
 };
 
-export function FinanceNavLink({ item, active, onNavigate }: Props) {
-  const Icon = ICONS[item.icon];
+function iconOnlyButtonClass(active: boolean): string {
+  return cn(
+    "flex size-9 items-center justify-center rounded-lg transition-colors",
+    "focus:outline-none focus-visible:ring-2 focus-visible:ring-success/40 focus-visible:ring-offset-2 focus-visible:ring-offset-card",
+    active
+      ? "bg-success text-success-foreground shadow-sm"
+      : "text-muted-foreground hover:bg-muted/60 hover:text-foreground",
+  );
+}
+
+export function FinanceNavLink({
+  item,
+  active,
+  onNavigate,
+  compact = false,
+  iconOnly: iconOnlyProp,
+  resolveHref,
+}: Props) {
+  const collapsed = useFinanceSidebarCollapsed();
+  const iconOnly = iconOnlyProp ?? collapsed;
+  const Icon = financeNavItemIcon(item.icon);
+  const href = resolveHref ? resolveHref(item.href) : item.href;
+
+  if (iconOnly) {
+    return (
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <Link
+            href={href}
+            onClick={onNavigate}
+            aria-current={active ? "page" : undefined}
+            aria-label={item.label}
+            className={iconOnlyButtonClass(active)}
+          >
+            <Icon className="size-4 shrink-0" aria-hidden />
+          </Link>
+        </TooltipTrigger>
+        <TooltipContent side="right">{item.label}</TooltipContent>
+      </Tooltip>
+    );
+  }
+
+  if (compact) {
+    return (
+      <Link
+        href={href}
+        onClick={onNavigate}
+        aria-current={active ? "page" : undefined}
+        title={item.description}
+        className={cn(
+          "group flex items-center gap-2 rounded-md px-2 py-1.5 text-sm transition-colors",
+          "focus:outline-none focus-visible:ring-2 focus-visible:ring-success/40 focus-visible:ring-offset-2 focus-visible:ring-offset-card",
+          active
+            ? "bg-success/10 font-medium text-success"
+            : "text-muted-foreground hover:bg-muted/50 hover:text-foreground",
+        )}
+      >
+        <Icon className="size-4 shrink-0 opacity-70" aria-hidden />
+        <span className="min-w-0 truncate">{item.label}</span>
+      </Link>
+    );
+  }
 
   const className = cn(
     "group flex gap-2.5 rounded-lg px-2.5 py-2 transition-colors",
@@ -46,7 +96,7 @@ export function FinanceNavLink({ item, active, onNavigate }: Props) {
 
   return (
     <Link
-      href={item.href}
+      href={href}
       onClick={onNavigate}
       aria-current={active ? "page" : undefined}
       className={className}

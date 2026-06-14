@@ -14,20 +14,29 @@ class ExaminerInvitationStatusSchema(str, Enum):
     accepted = "accepted"
     declined = "declined"
     expired = "expired"
+    quota_waitlisted = "quota_waitlisted"
 
 
-class ExaminerInvitationCreate(BaseModel):
+class ExaminerInvitationCoordinationFields(BaseModel):
+    coordination_start_date: datetime | None = None
+    coordination_start_time: time | None = None
+    coordination_end_date: datetime | None = None
+    coordination_end_time: time | None = None
+    coordination_venue: str | None = Field(default=None, max_length=255)
+
+
+class ExaminerInvitationCreate(ExaminerInvitationCoordinationFields):
     name: str = Field(min_length=1, max_length=255)
     phone_number: str = Field(min_length=1, max_length=50)
     subject_id: int
     examiner_type: ExaminerTypeSchema
     region: str = Field(min_length=1)
+    gender: str | None = None
     send_sms: bool | None = None
     response_deadline: datetime
-    coordination_date: datetime | None = None
 
 
-class ExaminerInvitationResponse(BaseModel):
+class ExaminerInvitationResponse(ExaminerInvitationCoordinationFields):
     id: UUID
     examination_id: int
     subject_id: int
@@ -37,6 +46,7 @@ class ExaminerInvitationResponse(BaseModel):
     subject_type: str
     name: str
     phone_number: str
+    gender: str | None = None
     examiner_type: ExaminerTypeSchema
     region: str
     status: ExaminerInvitationStatusSchema
@@ -44,7 +54,6 @@ class ExaminerInvitationResponse(BaseModel):
     notified_at: datetime | None
     responded_at: datetime | None
     response_deadline: datetime
-    coordination_date: datetime | None
     examiner_id: UUID | None
     created_at: datetime
     updated_at: datetime
@@ -56,7 +65,7 @@ class ExaminerInvitationResponse(BaseModel):
     model_config = {"from_attributes": True}
 
 
-class ExaminerInvitationPublicResponse(BaseModel):
+class ExaminerInvitationPublicResponse(ExaminerInvitationCoordinationFields):
     invitee_name: str
     phone_number: str
     examination_name: str
@@ -69,22 +78,24 @@ class ExaminerInvitationPublicResponse(BaseModel):
     region: str
     status: ExaminerInvitationStatusSchema
     response_deadline: datetime | None = None
-    coordination_date: datetime | None
     responded_at: datetime | None
     can_respond: bool
     examiner_id: UUID | None = None
     portal_mode: str = "invitation"
     roster_source: str | None = None
     marking_cohorts: list["ExaminerMarkingCohortPublic"] = Field(default_factory=list)
+    reference_code: str | None = None
+    quota_waitlist_message: str | None = None
+    appointment_letters_release_enabled: bool = False
+    appointment_letters_available: bool = False
+    coordination_end_at: datetime | None = None
+    appointment_letters_pending_message: str | None = None
 
 
-class ExaminerMarkingCohortPublic(BaseModel):
+class ExaminerMarkingCohortPublic(ExaminerInvitationCoordinationFields):
     id: UUID
     name: str
     is_default: bool
-    coordination_date: datetime | None
-    coordination_start_time: time | None = None
-    coordination_end_time: time | None = None
     marking_start_date: datetime | None = None
     marking_end_date: datetime | None = None
     marked_script_submission_deadline: datetime | None = None
@@ -98,6 +109,18 @@ class ExaminerInvitationActionResponse(BaseModel):
 
 class ExaminerInvitationResendResponse(BaseModel):
     sms_sent: bool
+    sms_error: str | None = None
+    sms_delivery_id: UUID | None = None
+
+
+class ExaminerInvitationRenew(BaseModel):
+    response_deadline: datetime
+    send_sms: bool | None = None
+
+
+class ExaminerInvitationRenewResponse(BaseModel):
+    invitation: ExaminerInvitationResponse
+    sms_sent: bool | None = None
     sms_error: str | None = None
     sms_delivery_id: UUID | None = None
 
@@ -130,13 +153,12 @@ class ExaminerInvitationBulkSmsResponse(BaseModel):
     errors: list[ExaminerInvitationBulkSmsRowError]
 
 
-class ExaminerInvitationCoordinationUpdate(BaseModel):
-    coordination_date: datetime | None = None
+class ExaminerInvitationCoordinationUpdate(ExaminerInvitationCoordinationFields):
+    pass
 
 
-class ExaminerInvitationBulkCoordinationUpdate(BaseModel):
+class ExaminerInvitationBulkCoordinationUpdate(ExaminerInvitationCoordinationFields):
     invitation_ids: list[UUID] = Field(min_length=1, max_length=500)
-    coordination_date: datetime
 
 
 class ExaminerInvitationBulkCoordinationResponse(BaseModel):

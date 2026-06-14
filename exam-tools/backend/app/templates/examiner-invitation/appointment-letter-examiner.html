@@ -1,0 +1,379 @@
+<div class="appointment-letter">
+  <style>
+    .appointment-letter {
+      font-family: "Times New Roman", "Liberation Serif", Times, serif;
+      font-size: 12pt;
+      line-height: 1.5;
+      color: #111;
+    }
+
+    .appointment-letter .letter-title {
+      text-align: center;
+      margin: 0 0 1.25em;
+      font-size: 13pt;
+      font-weight: bold;
+    }
+
+    .appointment-letter .letter-underline {
+      display: inline-block;
+      border-bottom: 2pt solid #111;
+      padding-bottom: 0.2em;
+      text-decoration: none;
+    }
+
+    .appointment-letter .letter-section {
+      margin-top: 1.5em;
+      margin-bottom: 0.75em;
+      font-size: 12pt;
+      font-weight: bold;
+    }
+
+    .appointment-letter p {
+      margin: 0.6em 0;
+      text-align: justify;
+    }
+
+    .appointment-letter .letter-salutation {
+      margin-top: 0.25em;
+    }
+
+    .appointment-letter ol {
+      margin: 0.5em 0 1em 1.25em;
+      padding-left: 1.25em;
+    }
+
+    .appointment-letter li {
+      margin: 0.35em 0;
+      text-align: justify;
+    }
+
+    .appointment-letter .letter-notice {
+      text-align: center;
+      margin: 1em 0 1.25em;
+    }
+
+    .appointment-letter .letter-fee-intro {
+      margin: 0.5em 0 0.85em;
+      text-align: left;
+    }
+
+    .appointment-letter .letter-fee-schedule {
+      width: 100%;
+      border-collapse: collapse;
+      margin: 0 0 0.75em;
+      font-size: 11.5pt;
+      line-height: 1.45;
+    }
+
+    .appointment-letter .letter-fee-schedule thead th {
+      padding: 0 0 0.35em;
+      border: none;
+      border-bottom: 1pt solid #222;
+      font-size: 9.5pt;
+      font-weight: bold;
+      letter-spacing: 0.06em;
+      text-transform: uppercase;
+      color: #333;
+      vertical-align: bottom;
+    }
+
+    .appointment-letter .letter-fee-schedule thead th.fee-amount-heading {
+      text-align: right;
+      width: 30%;
+      padding-left: 1em;
+    }
+
+    .appointment-letter .letter-fee-schedule tbody td {
+      border: none;
+      padding: 0.45em 0;
+      vertical-align: top;
+      text-align: left;
+    }
+
+    .appointment-letter .letter-fee-schedule tbody tr.fee-item td {
+      border-bottom: 0.5pt solid #d4d4d4;
+    }
+
+    .appointment-letter .letter-fee-schedule tbody tr.fee-item:last-child td {
+      border-bottom: 1pt solid #888;
+    }
+
+    .appointment-letter .letter-fee-schedule tbody tr.fee-category td {
+      padding-top: 0.85em;
+      padding-bottom: 0.2em;
+      font-size: 9.5pt;
+      font-weight: bold;
+      letter-spacing: 0.05em;
+      text-transform: uppercase;
+      color: #444;
+    }
+
+    .appointment-letter .letter-fee-schedule tbody tr.fee-category:first-child td {
+      padding-top: 0.15em;
+    }
+
+    .appointment-letter .letter-fee-schedule .fee-description {
+      padding-right: 1.25em;
+    }
+
+    .appointment-letter .letter-fee-schedule .fee-amount {
+      text-align: right;
+      white-space: nowrap;
+      font-weight: bold;
+      font-variant-numeric: tabular-nums;
+      padding-left: 1em;
+      width: 30%;
+    }
+
+    .appointment-letter .letter-fee-footnote {
+      margin: 0.35em 0 0;
+      font-size: 10.5pt;
+      color: #333;
+    }
+
+    .appointment-letter .letter-tax-note {
+      margin-top: 0.25em;
+    }
+
+    .appointment-letter .letter-signoff {
+      margin-top: 1.5em;
+    }
+
+    .appointment-letter .letter-signature-block {
+      min-height: 2.75cm;
+      margin: 0.5em 0 0.35em;
+    }
+
+    .appointment-letter .letter-signature-image {
+      display: block;
+      max-height: 2.5cm;
+      max-width: 8cm;
+      object-fit: contain;
+      object-position: left bottom;
+    }
+  </style>
+
+  <h2 class="letter-title">
+    <span class="letter-underline">CO-ORDINATION MEETING AND MARKING OF {{ examination_label_upper }} EXAMINATIONS SCRIPTS</span>
+  </h2>
+
+  <p class="letter-salutation">Dear {{ invitee_name }},</p>
+
+  <p>
+    The Commission for Technical and Vocational Education and Training (CTVET) is pleased to invite you to the
+    Co-ordination meeting and Marking of scripts of the {{ examination_label }} Examinations.{% if coordination_start_time and coordination_end_time %}
+    The exercise begins at <strong>{{ coordination_start_time }}</strong> and ends at <strong>{{ coordination_end_time }}</strong>.{% elif coordination_start_time %}
+    The exercise begins at <strong>{{ coordination_start_time }}</strong>.{% elif coordination_end_time %}
+    The exercise ends at <strong>{{ coordination_end_time }}</strong>.{% endif %}
+    The venue is the
+    <strong>{{ coordination_venue }}</strong>{% if coordination_date %} on
+    <strong>{{ coordination_date }}</strong>{% else %} on dates to be communicated{% endif %}.
+  </p>
+
+  <p>
+    You are invited as {{ examiner_role_article }} <strong>{{ examiner_role_title }}</strong> for
+    <strong>{{ subject_name }}</strong> with special responsibility for marking/vetting <strong>Paper 2</strong> scripts.
+    {% if marking_start_date and marking_end_date %}
+    The period for marking begins on <strong>{{ marking_start_date }}</strong> and ends on <strong>{{ marking_end_date }}</strong>.
+    {% else %}
+    The period for marking will be communicated at the coordination meeting.
+    {% endif %}
+  </p>
+
+  <h3 class="letter-section"><span class="letter-underline">1. {{ conditions_section_heading }}</span></h3>
+
+  <ol type="A">
+    <li>
+      Your identity as {{ examiner_role_article }} {{ examiner_role_title }} should <strong>NOT</strong> be disclosed to
+      anyone directly or indirectly. You should also not give information to anyone concerning centres and the worked
+      scripts which will be allocated to you for marking.
+    </li>
+    <li>
+      You should <strong>NOT</strong>, under any circumstances whatsoever divulge or communicate any confidential
+      information obtained in the course of your work, e.g. performance of candidates, etc, to anyone.
+    </li>
+    <li>
+      You should bear in mind that the Commission holds the copyright of all question papers, marking schemes and other
+      ancillary documents given to you to facilitate your work as an examiner and that none of these documents must be
+      retained or reproduced or passed on to any unauthorized person by you.
+    </li>
+    <li>
+      It will be your responsibility to obtain any permission necessary from your employer before accepting to undertake
+      the exercise.
+    </li>
+  </ol>
+
+  <p class="letter-notice">
+    <strong>THESE DOCUMENTS ARE TO BE HANDED IN BEFORE CLAIMS ARE PROCESSED FOR PAYMENT.</strong>
+  </p>
+
+  <h3 class="letter-section"><span class="letter-underline">2. MARKING INSTRUCTIONS</span></h3>
+
+  <ol type="A">
+    <li>
+      After Co-ordination Meeting, you will mark under the supervision of your Chief Examiner/Team Leader who will
+      scrutinize the worked scripts marked by you to ensure that you are marking in conformity with the agreed scheme of
+      marking.
+    </li>
+    <li>
+      Examiners are required to mark in accordance with the marking scheme and the instructions given by the Chief
+      Examiner/Team Leader.
+    </li>
+    <li>
+      Examiners must bear in mind the need for accuracy in the addition and subtraction of marks, as well as in the
+      assessment of candidates' work. It is also the personal responsibility of each examiner to ensure that the marks
+      entered on the scripts (and eventually on the Attendance/Mark Sheets) are accurate.
+    </li>
+    <li>
+      The following instructions must be carried out:
+      <ol type="i">
+        {% if show_red_marking_pen_instruction %}
+        <li>
+          Unless otherwise specified, all {{ examiner_role_title }}s must use only a <strong>RED BALL POINT PEN</strong>
+          for marking.
+        </li>
+        {% endif %}
+        {% if show_green_vetting_pen_instruction %}
+        <li>{{ examiner_role_title }}s must use <strong>GREEN BALL POINT PEN</strong> for vetting.</li>
+        {% else %}
+        <li>Chief Examiners/Team Leader must use <strong>GREEN BALL POINT PEN</strong> for vetting.</li>
+        {% endif %}
+        <li>
+          The mark given, (even if it is '0') for each answer must be written clearly and ringed thus (40) in the
+          left-hand margin immediately before the answer to which it refers. The mark for the answer must be
+          <strong>CHECKED</strong> by carrying out the addition of marks for each point or part of the answer in the
+          reverse order. If the mark is proved to be correct, the ringed total must be <strong>TICKED (&radic;)</strong>.
+        </li>
+        <li>
+          Care must be taken to <strong>ENSURE THAT NO WORK IS OVERLOOKED</strong>. Candidates sometimes leave one or more
+          pages blank in the middle of their work, and it is therefore necessary for the examiner to glance at every page
+          of the answer booklet. The number of questions which the candidate has answered should be compared with the
+          number entered on the front cover of the answer booklet. The total mark for the paper should appear at the
+          right-hand edge of the last sheet of the answer book and it is a useful check for which marks are given in the
+          grid. It is advisable to cross out every blank page of the answer booklet.
+        </li>
+      </ol>
+    </li>
+  </ol>
+
+  <p>
+    No fractional marks should appear in the total score for the paper; if the total mark scored by a candidate involves a
+    fraction, this must be rounded to the nearest integer. Marks for answers to sub-questions or whole question must
+    retain their fractions.
+  </p>
+
+  <p>Every examiner will be required to mark a minimum of twenty (20) scripts at the end of every day.</p>
+
+  <h3 class="letter-section"><span class="letter-underline">3. {{ fees_section_heading }}</span></h3>
+
+  {% if marking_fee_amount or responsibility_allowance or inconvenience_allowance or chief_examiners_report_allowance or vetting_of_scripts_allowance or travel_and_transport_amount or internal_commuting %}
+  <p class="letter-fee-intro">
+    The applicable fees and allowances payable for this appointment are summarised below.
+  </p>
+  <table class="letter-fee-schedule">
+    <thead>
+      <tr>
+        <th scope="col">Item</th>
+        <th scope="col" class="fee-amount-heading">Amount (GHS)</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% if marking_fee_amount %}
+      <tr class="fee-category">
+        <td colspan="2">Marking</td>
+      </tr>
+      <tr class="fee-item">
+        <td class="fee-description">Paper 2 marking fee &mdash; {{ subject_name }} (per script)</td>
+        <td class="fee-amount">{{ marking_fee_amount }}</td>
+      </tr>
+      {% endif %}
+      {% if responsibility_allowance or inconvenience_allowance or chief_examiners_report_allowance or vetting_of_scripts_allowance %}
+      <tr class="fee-category">
+        <td colspan="2">Allowances</td>
+      </tr>
+      {% if responsibility_allowance %}
+      <tr class="fee-item">
+        <td class="fee-description">Responsibility allowance</td>
+        <td class="fee-amount">{{ responsibility_allowance }}</td>
+      </tr>
+      {% endif %}
+      {% if inconvenience_allowance %}
+      <tr class="fee-item">
+        <td class="fee-description">Inconvenience allowance</td>
+        <td class="fee-amount">{{ inconvenience_allowance }}</td>
+      </tr>
+      {% endif %}
+      {% if chief_examiners_report_allowance %}
+      <tr class="fee-item">
+        <td class="fee-description">Chief Examiner&rsquo;s Report allowance</td>
+        <td class="fee-amount">{{ chief_examiners_report_allowance }}</td>
+      </tr>
+      {% endif %}
+      {% if vetting_of_scripts_allowance %}
+      <tr class="fee-item">
+        <td class="fee-description">Vetting of scripts allowance</td>
+        <td class="fee-amount">{{ vetting_of_scripts_allowance }}</td>
+      </tr>
+      {% endif %}
+      {% endif %}
+      {% if travel_and_transport_amount or internal_commuting %}
+      <tr class="fee-category">
+        <td colspan="2">Travel and commuting</td>
+      </tr>
+      {% if travel_and_transport_amount %}
+      <tr class="fee-item">
+        <td class="fee-description">
+          Travel and transport ({{ region }}) for the entire period of marking
+          (minimum two visits to the office)
+        </td>
+        <td class="fee-amount">{{ travel_and_transport_amount }}</td>
+      </tr>
+      {% endif %}
+      {% if internal_commuting %}
+      <tr class="fee-item">
+        <td class="fee-description">Internal commuting to the office (minimum two visits)</td>
+        <td class="fee-amount">{{ internal_commuting }}</td>
+      </tr>
+      {% endif %}
+      {% endif %}
+    </tbody>
+  </table>
+  {% if marking_fee_amount %}
+  <p class="letter-fee-footnote"><em>Note: Marking fee per script and vetting of scripts allowance are subject to 10% tax.</em></p>
+  {% endif %}
+  {% endif %}
+
+  <h3 class="letter-section"><span class="letter-underline">4. PAYMENT</span></h3>
+
+  <p>
+    Payment of all fees, <strong>except T&amp;T</strong>, will be made after completion of the marking exercise when all
+    scripts and related documents have been handed over to the Examination Coordinator, CTVET.
+  </p>
+
+  <div class="letter-signoff">
+    <p>{{ valediction.rstrip(' ,') }},</p>
+
+    <div class="letter-signature-block" aria-hidden="true">
+      {% if signatory_signature_src %}
+      <img
+        src="{{ signatory_signature_src }}"
+        alt=""
+        class="letter-signature-image"
+      />
+      {% endif %}
+    </div>
+
+    <p>
+      <strong>{{ signatory_name }}</strong><br />
+      {{ signatory_title }}
+    </p>
+    {% if signed_for_director_general %}
+    <p>FOR: DIRECTOR-GENERAL</p>
+    {% endif %}
+
+    <p>
+      Cc:<br />
+      {% for line in cc_lines %}{{ line }}<br />{% endfor %}
+    </p>
+  </div>
+</div>

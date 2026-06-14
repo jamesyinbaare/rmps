@@ -64,40 +64,46 @@ function Calendar({
   showOutsideDays = true,
   components,
   size = "default",
+  navLayout = "around",
   ...props
 }: CalendarProps) {
   const defaultClassNames = getDefaultClassNames();
   const cellSizeClass = CALENDAR_CELL_SIZE[size];
   const isLarge = size === "large";
+  const navButtonSize = isLarge ? "size-9" : "size-8";
+  const captionHeight = isLarge ? "h-10" : "h-9";
+  const captionPadding = isLarge ? "px-10" : "px-9";
 
   return (
     <DayPicker
       showOutsideDays={showOutsideDays}
+      navLayout={navLayout}
       className={cn(isLarge ? "min-w-0 p-2 sm:p-4" : "p-3", className)}
       classNames={{
         root: cn(isLarge ? "w-full" : "w-fit", defaultClassNames.root),
         months: cn("relative flex flex-col gap-4 sm:flex-row", defaultClassNames.months),
-        month: cn("flex w-full flex-col gap-4", defaultClassNames.month),
+        month: cn("relative flex w-full flex-col gap-4", defaultClassNames.month),
         month_caption: cn(
-          "relative flex w-full items-center justify-center px-1",
-          isLarge ? "h-10" : "h-9",
+          "relative flex w-full items-center justify-center",
+          captionHeight,
+          captionPadding,
           defaultClassNames.month_caption,
         ),
         caption_label: cn(
           isLarge ? "text-base font-semibold" : "text-sm font-medium",
           defaultClassNames.caption_label,
         ),
-        nav: cn("absolute inset-x-0 top-0 flex items-center justify-between", defaultClassNames.nav),
+        nav: cn("hidden", defaultClassNames.nav),
         button_previous: cn(
           buttonVariants({ variant: "outline" }),
-          isLarge ? "size-9" : "size-8",
-          "relative z-10 bg-background p-0 opacity-80 hover:opacity-100",
+          navButtonSize,
+          "absolute top-0 left-0 z-10 inline-flex items-center justify-center bg-background p-0 opacity-80 hover:opacity-100",
           defaultClassNames.button_previous,
         ),
         button_next: cn(
           buttonVariants({ variant: "outline" }),
-          isLarge ? "size-9" : "size-8",
-          "relative z-10 bg-background p-0 opacity-80 hover:opacity-100",
+          navButtonSize,
+          "absolute top-0 right-0 z-10 inline-flex items-center justify-center bg-background p-0 opacity-80 hover:opacity-100",
           defaultClassNames.button_next,
         ),
         month_grid: cn("w-full border-collapse", defaultClassNames.month_grid),
