@@ -38,6 +38,8 @@ import {
   EXAMINER_PAYOUTS_HREF,
   FINANCE_CENTRE_SUMMARY_HREF,
   financePageStickyTitle,
+  INSPECTOR_ANALYSIS_HREF,
+  INSPECTOR_PAY_VARIANCE_HREF,
   OFFICIAL_STATISTICS_HREF,
 } from "@/lib/finance-nav";
 import { cn } from "@/lib/utils";
@@ -108,6 +110,10 @@ function AdminDashboardShellInner({ children }: Props) {
     pathname === OFFICIAL_ACCOUNTS_ADMIN_HREF || pathname.startsWith(`${OFFICIAL_ACCOUNTS_ADMIN_HREF}/`);
   const onOfficialStatisticsPage =
     pathname === OFFICIAL_STATISTICS_HREF || pathname.startsWith(`${OFFICIAL_STATISTICS_HREF}/`);
+  const onInspectorAnalysisPage =
+    pathname === INSPECTOR_ANALYSIS_HREF || pathname.startsWith(`${INSPECTOR_ANALYSIS_HREF}/`);
+  const onInspectorPayVariancePage =
+    pathname === INSPECTOR_PAY_VARIANCE_HREF || pathname.startsWith(`${INSPECTOR_PAY_VARIANCE_HREF}/`);
   const financeTitle = financePageStickyTitle(pathname);
   const showFinanceNavAccent =
     (isFinanceOfficer || isSuperAdmin) && isOfficialAccountsPath(pathname);
@@ -157,6 +163,10 @@ function AdminDashboardShellInner({ children }: Props) {
     || onMonitoringPage
     || onExamOfficialsPage
     || onCentreSummaryPage
+    || onOfficialStatisticsPage
+    || onFinanceCentreSummaryPage
+    || onInspectorAnalysisPage
+    || onInspectorPayVariancePage
     || onBankDirectoryPage
     || onWorkforcePage;
 
@@ -314,6 +324,8 @@ function AdminDashboardShellInner({ children }: Props) {
                 : "overflow-x-auto overflow-y-auto",
             pathname === ATTENDANCE_SHEETS_HREF || pathname.startsWith(`${ATTENDANCE_SHEETS_HREF}/`)
               || onOfficialStatisticsPage
+              || onInspectorAnalysisPage
+              || onInspectorPayVariancePage
               || onCentreSummaryPage
               || onFinanceCentreSummaryPage
               || onExamOfficialsPage

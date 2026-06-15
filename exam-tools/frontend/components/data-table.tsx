@@ -35,6 +35,8 @@ type DataTableProps<TData> = {
   onRowClick?: (row: TData) => void;
   /** Keep column headers visible while scrolling the table body. */
   stickyHeader?: boolean;
+  /** Single horizontal scroll container (for wide tables with sticky left columns). */
+  wide?: boolean;
   /** Wrapper around the table element. */
   className?: string;
   /** Applied to each header row. */
@@ -62,6 +64,20 @@ function sortButtonAriaLabel<TData>(header: Header<TData, unknown>): string {
   return typeof h === "string" ? `Sort by ${h}` : "Sort column";
 }
 
+/** Pixel offset per sticky header row (group + column labels). */
+const STICKY_HEADER_ROW_PX = 36;
+
+function headerHasStickyLeft(className?: string): boolean {
+  return Boolean(className?.includes("sticky left-0"));
+}
+
+/** Minimum width for non-sticky data columns so the table exceeds the viewport. */
+const WIDE_COLUMN_MIN = "min-w-[5.5rem]";
+
+function cellHasStickyLeft(className?: string): boolean {
+  return Boolean(className?.includes("sticky left-0"));
+}
+
 export function DataTable<TData>({
   table,
   emptyMessage = "No results.",
@@ -69,27 +85,36 @@ export function DataTable<TData>({
   striped = false,
   onRowClick,
   stickyHeader = false,
+  wide = false,
   className,
   headerRowClassName,
   headerCellClassName,
 }: DataTableProps<TData>) {
   const colCount = table.getAllColumns().length;
   const hasFooter = showFooter && table.getAllColumns().some((c) => c.columnDef.footer != null);
+  const headerGroups = table.getHeaderGroups();
 
-  return (
-    <div className={cn("rounded-md border border-border", className)}>
-      <Table>
-        <TableHeader className={cn(stickyHeader && "sticky top-0 z-[1] bg-card shadow-[0_1px_0_0_hsl(var(--border))]")}>
-          {table.getHeaderGroups().map((headerGroup) => (
+  const tableContent = (
+    <>
+        <TableHeader>
+          {headerGroups.map((headerGroup, groupIndex) => (
             <TableRow key={headerGroup.id} className={cn("border-b border-border hover:bg-transparent", headerRowClassName)}>
-              {headerGroup.headers.map((header) => (
+              {headerGroup.headers.map((header) => {
+                const metaHeaderClass = metaClasses(header.column.columnDef.meta, "headerClassName");
+                const stickyLeft = headerHasStickyLeft(metaHeaderClass);
+                return (
                 <TableHead
                   key={header.id}
+                  colSpan={header.colSpan}
+                  style={stickyHeader ? { top: groupIndex * STICKY_HEADER_ROW_PX } : undefined}
                   className={cn(
                     "h-auto align-middle whitespace-nowrap",
-                    stickyHeader && "bg-inherit",
+                    wide && !stickyLeft && WIDE_COLUMN_MIN,
+                    stickyHeader &&
+                      "sticky bg-card/95 backdrop-blur-sm shadow-[0_1px_0_0_hsl(var(--border))]",
+                    stickyHeader && (stickyLeft ? "z-50" : groupIndex === 0 ? "z-30" : "z-40"),
                     headerCellClassName,
-                    metaClasses(header.column.columnDef.meta, "headerClassName"),
+                    metaHeaderClass,
                   )}
                 >
                   {header.isPlaceholder ? null : header.column.getCanSort() ? (
@@ -115,7 +140,8 @@ export function DataTable<TData>({
                     <span className="text-inherit">{flexRender(header.column.columnDef.header, header.getContext())}</span>
                   )}
                 </TableHead>
-              ))}
+                );
+              })}
             </TableRow>
           ))}
         </TableHeader>
@@ -137,12 +163,15 @@ export function DataTable<TData>({
                       typeof cell.column.columnDef.meta === "object" &&
                       (cell.column.columnDef.meta as DataTableColumnMeta).stickyOpaque,
                   );
+                  const cellClass = metaClasses(cell.column.columnDef.meta, "cellClassName");
+                  const stickyLeft = cellHasStickyLeft(cellClass);
                   return (
                   <TableCell
                     key={cell.id}
                     className={cn(
                       "align-top text-sm",
-                      metaClasses(cell.column.columnDef.meta, "cellClassName"),
+                      wide && !stickyLeft && WIDE_COLUMN_MIN,
+                      cellClass,
                       striped &&
                         (stickyOpaque
                           ? row.index % 2 === 0
@@ -185,7 +214,12 @@ export function DataTable<TData>({
             ))}
           </TableFooter>
         ) : null}
-      </Table>
+    </>
+  );
+
+  return (
+    <div className={cn("min-w-0 w-full max-w-full rounded-md border border-border", className)}>
+      <Table className={wide ? "w-max min-w-full" : undefined}>{tableContent}</Table>
     </div>
   );
 }

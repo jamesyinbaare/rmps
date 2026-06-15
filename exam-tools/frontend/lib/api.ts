@@ -3100,6 +3100,159 @@ export type FinanceCentreOfficialStatisticsShellResponse = {
   centres: { center_id: string; center_code: string; center_name: string }[];
 };
 
+export type FinanceCentreInspectorAnalysisRow = {
+  center_id: string;
+  center_code: string;
+  center_name: string;
+  subject_filter: TimetableSubjectFilter;
+  total_candidates: number;
+  exam_days: number;
+  external_inspector_count: number;
+  posted_inspector_count: number;
+  unique_inspector_count: number;
+  inspectors_in_both: number;
+  total_inspector_pay_ghs: string;
+  max_inspector_assigned_days: number;
+  assigned_days_variance: number;
+  pay_at_exam_days_ghs: string;
+  pay_at_assigned_days_ghs: string;
+  days_pay_variance_ghs: string;
+  pay_at_posted_count_ghs: string;
+  payroll_vs_posted_variance_ghs: string;
+  inspectors_required: number;
+  paid_inspector_variance: number;
+  candidates_per_paid_inspector: number | null;
+};
+
+export type FinanceCentreInspectorAnalysisResponse = {
+  examination_id: number;
+  subject_filter: TimetableSubjectFilter;
+  candidates_per_inspector: number;
+  centres: FinanceCentreInspectorAnalysisRow[];
+  totals: FinanceCentreInspectorAnalysisRow;
+};
+
+export function normalizeInspectorAnalysisRow(
+  row: Partial<FinanceCentreInspectorAnalysisRow> &
+    Pick<FinanceCentreInspectorAnalysisRow, "center_id" | "center_code" | "center_name" | "subject_filter">,
+): FinanceCentreInspectorAnalysisRow {
+  const examDays = row.exam_days ?? 0;
+  const maxAssigned = row.max_inspector_assigned_days ?? 0;
+  const payAtExam = row.pay_at_exam_days_ghs ?? "0";
+  const payAtAssigned = row.pay_at_assigned_days_ghs ?? row.total_inspector_pay_ghs ?? "0";
+  const payAtPosted = row.pay_at_posted_count_ghs ?? "0";
+  const totalPay = row.total_inspector_pay_ghs ?? "0";
+  return {
+    center_id: row.center_id,
+    center_code: row.center_code,
+    center_name: row.center_name,
+    subject_filter: row.subject_filter,
+    total_candidates: row.total_candidates ?? 0,
+    exam_days: examDays,
+    external_inspector_count: row.external_inspector_count ?? 0,
+    posted_inspector_count: row.posted_inspector_count ?? 0,
+    unique_inspector_count: row.unique_inspector_count ?? 0,
+    inspectors_in_both: row.inspectors_in_both ?? 0,
+    total_inspector_pay_ghs: totalPay,
+    max_inspector_assigned_days: maxAssigned,
+    assigned_days_variance: row.assigned_days_variance ?? maxAssigned - examDays,
+    pay_at_exam_days_ghs: payAtExam,
+    pay_at_assigned_days_ghs: payAtAssigned,
+    days_pay_variance_ghs:
+      row.days_pay_variance_ghs ?? String(Number(payAtAssigned) - Number(payAtExam)),
+    pay_at_posted_count_ghs: payAtPosted,
+    payroll_vs_posted_variance_ghs:
+      row.payroll_vs_posted_variance_ghs ?? String(Number(totalPay) - Number(payAtPosted)),
+    inspectors_required: row.inspectors_required ?? 0,
+    paid_inspector_variance: row.paid_inspector_variance ?? 0,
+    candidates_per_paid_inspector: row.candidates_per_paid_inspector ?? null,
+  };
+}
+
+export function sumInspectorAnalysisRowsFromCentres(
+  centres: FinanceCentreInspectorAnalysisRow[],
+  subjectFilter: TimetableSubjectFilter,
+): FinanceCentreInspectorAnalysisRow {
+  const totals = centres.reduce<FinanceCentreInspectorAnalysisRow>(
+    (acc, row) => ({
+      center_id: "00000000-0000-0000-0000-000000000000",
+      center_code: "TOTAL",
+      center_name: "",
+      subject_filter: row.subject_filter,
+      total_candidates: acc.total_candidates + row.total_candidates,
+      exam_days: acc.exam_days + row.exam_days,
+      external_inspector_count: acc.external_inspector_count + row.external_inspector_count,
+      posted_inspector_count: acc.posted_inspector_count + row.posted_inspector_count,
+      unique_inspector_count: acc.unique_inspector_count + row.unique_inspector_count,
+      inspectors_in_both: acc.inspectors_in_both + row.inspectors_in_both,
+      total_inspector_pay_ghs: String(Number(acc.total_inspector_pay_ghs) + Number(row.total_inspector_pay_ghs)),
+      max_inspector_assigned_days: acc.max_inspector_assigned_days + row.max_inspector_assigned_days,
+      assigned_days_variance: 0,
+      pay_at_exam_days_ghs: String(Number(acc.pay_at_exam_days_ghs) + Number(row.pay_at_exam_days_ghs)),
+      pay_at_assigned_days_ghs: String(
+        Number(acc.pay_at_assigned_days_ghs) + Number(row.pay_at_assigned_days_ghs),
+      ),
+      days_pay_variance_ghs: "0",
+      pay_at_posted_count_ghs: String(
+        Number(acc.pay_at_posted_count_ghs) + Number(row.pay_at_posted_count_ghs),
+      ),
+      payroll_vs_posted_variance_ghs: "0",
+      inspectors_required: acc.inspectors_required + row.inspectors_required,
+      paid_inspector_variance:
+        acc.external_inspector_count + row.external_inspector_count -
+        (acc.inspectors_required + row.inspectors_required),
+      candidates_per_paid_inspector: null,
+    }),
+    normalizeInspectorAnalysisRow({
+      center_id: "00000000-0000-0000-0000-000000000000",
+      center_code: "TOTAL",
+      center_name: "",
+      subject_filter: subjectFilter,
+    }),
+  );
+
+  const ext = totals.external_inspector_count;
+  if (ext > 0) {
+    totals.candidates_per_paid_inspector = Math.round((totals.total_candidates / ext) * 10) / 10;
+  }
+  totals.paid_inspector_variance = ext - totals.inspectors_required;
+  totals.assigned_days_variance = totals.max_inspector_assigned_days - totals.exam_days;
+  totals.days_pay_variance_ghs = String(
+    Number(totals.pay_at_assigned_days_ghs) - Number(totals.pay_at_exam_days_ghs),
+  );
+  totals.payroll_vs_posted_variance_ghs = String(
+    Number(totals.total_inspector_pay_ghs) - Number(totals.pay_at_posted_count_ghs),
+  );
+  return totals;
+}
+
+export function normalizeInspectorAnalysisResponse(
+  data: FinanceCentreInspectorAnalysisResponse,
+): FinanceCentreInspectorAnalysisResponse {
+  const centres = data.centres.map((row) => normalizeInspectorAnalysisRow(row));
+  const totals =
+    data.totals?.max_inspector_assigned_days != null
+      ? normalizeInspectorAnalysisRow({
+          ...data.totals,
+          center_id: data.totals.center_id,
+          center_code: data.totals.center_code,
+          center_name: data.totals.center_name,
+          subject_filter: data.totals.subject_filter,
+        })
+      : sumInspectorAnalysisRowsFromCentres(centres, data.subject_filter);
+  return {
+    ...data,
+    centres,
+    totals,
+  };
+}
+
+export type FinanceCentreInspectorAnalysisShellResponse = {
+  examination_id: number;
+  subject_filter: TimetableSubjectFilter;
+  centres: { center_id: string; center_code: string; center_name: string }[];
+};
+
 function centreSchoolSummaryQuery(params: {
   centerId: string;
   subject_filter?: TimetableSubjectFilter;
@@ -3249,6 +3402,152 @@ export async function downloadFinanceCentreOfficialStatisticsExport(params: {
     {
       exam_label: params.examLabel,
       summary: params.summary,
+    },
+  );
+}
+
+export type InspectorAnalysisExportVariant = "full" | "staffing" | "pay_variance";
+export type InspectorAnalysisExportStyle = "standard" | "rich";
+
+export function inspectorAnalysisExportFilename(
+  examLabel: string,
+  subjectFilter: TimetableSubjectFilter,
+  exportVariant: InspectorAnalysisExportVariant = "full",
+  exportStyle: InspectorAnalysisExportStyle = "standard",
+): string {
+  const suffix =
+    subjectFilter === "CORE_ONLY" ? "CORE" : subjectFilter === "ELECTIVE_ONLY" ? "ELECTIVE" : "ALL";
+  const variantSuffix =
+    exportVariant === "staffing" ? "staffing" : exportVariant === "pay_variance" ? "pay-variance" : "full";
+  const styleSuffix = exportStyle === "rich" ? " formatted" : "";
+  return `${examLabel} inspector-analysis ${suffix} ${variantSuffix}${styleSuffix}.xlsx`;
+}
+
+export const DEFAULT_INSPECTOR_CANDIDATES_RATIO = 300;
+export const MAX_INSPECTOR_CANDIDATES_RATIO = 10_000;
+
+export function parseInspectorCandidatesRatio(raw: string | null | undefined): number {
+  if (raw == null || raw.trim() === "") return DEFAULT_INSPECTOR_CANDIDATES_RATIO;
+  const n = Number.parseInt(raw.trim(), 10);
+  if (!Number.isFinite(n) || n < 1) return DEFAULT_INSPECTOR_CANDIDATES_RATIO;
+  return Math.min(n, MAX_INSPECTOR_CANDIDATES_RATIO);
+}
+
+function inspectorAnalysisQuery(params: {
+  subject_filter: TimetableSubjectFilter;
+  candidates_per_inspector?: number;
+}): string {
+  const q = new URLSearchParams();
+  q.set("subject_filter", params.subject_filter);
+  q.set(
+    "candidates_per_inspector",
+    String(params.candidates_per_inspector ?? DEFAULT_INSPECTOR_CANDIDATES_RATIO),
+  );
+  return `?${q.toString()}`;
+}
+
+export async function getFinanceCentreInspectorAnalysis(params: {
+  examId: number;
+  subject_filter: TimetableSubjectFilter;
+  candidates_per_inspector?: number;
+}): Promise<FinanceCentreInspectorAnalysisResponse> {
+  return apiJson<FinanceCentreInspectorAnalysisResponse>(
+    `/examinations/${params.examId}/finance/inspector-analysis${inspectorAnalysisQuery(params)}`,
+  );
+}
+
+export async function getFinanceCentreInspectorAnalysisShell(params: {
+  examId: number;
+  subject_filter: TimetableSubjectFilter;
+}): Promise<FinanceCentreInspectorAnalysisShellResponse> {
+  return apiJson<FinanceCentreInspectorAnalysisShellResponse>(
+    `/examinations/${params.examId}/finance/inspector-analysis/shell${financeSummaryQuery(params.subject_filter)}`,
+  );
+}
+
+export async function getFinanceCentreInspectorAnalysisForCentre(params: {
+  examId: number;
+  center_host_id: string;
+  subject_filter: TimetableSubjectFilter;
+  candidates_per_inspector?: number;
+}): Promise<FinanceCentreInspectorAnalysisRow> {
+  return apiJson<FinanceCentreInspectorAnalysisRow>(
+    `/examinations/${params.examId}/finance/inspector-analysis/centres/${params.center_host_id}${inspectorAnalysisQuery(params)}`,
+  );
+}
+
+/** Load shell first, then fetch each centre with limited parallelism. */
+export async function loadFinanceCentreInspectorAnalysisProgressive(
+  params: {
+    examId: number;
+    subject_filter: TimetableSubjectFilter;
+    candidates_per_inspector?: number;
+  },
+  callbacks: {
+    onShellLoaded?: (shell: FinanceCentreInspectorAnalysisShellResponse) => void;
+    onCentreLoaded?: (row: FinanceCentreInspectorAnalysisRow) => void;
+  },
+): Promise<FinanceCentreInspectorAnalysisResponse> {
+  const ratio = params.candidates_per_inspector ?? DEFAULT_INSPECTOR_CANDIDATES_RATIO;
+  const shell = await getFinanceCentreInspectorAnalysisShell(params);
+  callbacks.onShellLoaded?.(shell);
+
+  const centres: FinanceCentreInspectorAnalysisRow[] = [];
+  let index = 0;
+
+  async function worker() {
+    while (index < shell.centres.length) {
+      const i = index++;
+      const c = shell.centres[i]!;
+      const row = normalizeInspectorAnalysisRow(
+        await getFinanceCentreInspectorAnalysisForCentre({
+          examId: params.examId,
+          center_host_id: c.center_id,
+          subject_filter: params.subject_filter,
+          candidates_per_inspector: ratio,
+        }),
+      );
+      centres.push(row);
+      callbacks.onCentreLoaded?.(row);
+    }
+  }
+
+  const workers = Array.from(
+    { length: Math.min(FINANCE_CENTRE_FETCH_CONCURRENCY, shell.centres.length) },
+    () => worker(),
+  );
+  await Promise.all(workers);
+
+  centres.sort((a, b) => a.center_code.localeCompare(b.center_code) || a.center_name.localeCompare(b.center_name));
+
+  const totals = sumInspectorAnalysisRowsFromCentres(centres, params.subject_filter);
+
+  return normalizeInspectorAnalysisResponse({
+    examination_id: params.examId,
+    subject_filter: params.subject_filter,
+    candidates_per_inspector: ratio,
+    centres,
+    totals,
+  });
+}
+
+export async function downloadFinanceCentreInspectorAnalysisExport(params: {
+  examId: number;
+  subject_filter: TimetableSubjectFilter;
+  filename: string;
+  examLabel: string;
+  summary: FinanceCentreInspectorAnalysisResponse;
+  export_variant?: InspectorAnalysisExportVariant;
+  export_style?: InspectorAnalysisExportStyle;
+}): Promise<void> {
+  await downloadApiFilePost(
+    `/examinations/${params.examId}/finance/inspector-analysis/export`,
+    params.filename,
+    {
+      exam_label: params.examLabel,
+      summary: params.summary,
+      export_variant: params.export_variant ?? "full",
+      export_style: params.export_style ?? "standard",
     },
   );
 }

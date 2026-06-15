@@ -56,6 +56,7 @@ export const FINANCE_NAV_ITEM_ICONS: Record<FinanceNavIcon, LucideIcon> = {
 
 export const FINANCE_NAV_SECTION_ICONS: Record<FinanceNavSectionIcon, LucideIcon> = {
   examinations: GraduationCap,
+  analysis: BarChart3,
   coordination: PenLine,
   setup: Coins,
   administration: Settings2,
