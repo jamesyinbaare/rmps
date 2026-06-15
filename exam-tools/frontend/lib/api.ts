@@ -3104,6 +3104,7 @@ export type FinanceCentreInspectorAnalysisRow = {
   center_id: string;
   center_code: string;
   center_name: string;
+  center_region: string | null;
   subject_filter: TimetableSubjectFilter;
   total_candidates: number;
   exam_days: number;
@@ -3146,6 +3147,7 @@ export function normalizeInspectorAnalysisRow(
     center_id: row.center_id,
     center_code: row.center_code,
     center_name: row.center_name,
+    center_region: row.center_region ?? null,
     subject_filter: row.subject_filter,
     total_candidates: row.total_candidates ?? 0,
     exam_days: examDays,
@@ -3250,7 +3252,7 @@ export function normalizeInspectorAnalysisResponse(
 export type FinanceCentreInspectorAnalysisShellResponse = {
   examination_id: number;
   subject_filter: TimetableSubjectFilter;
-  centres: { center_id: string; center_code: string; center_name: string }[];
+  centres: { center_id: string; center_code: string; center_name: string; center_region: string | null }[];
 };
 
 function centreSchoolSummaryQuery(params: {

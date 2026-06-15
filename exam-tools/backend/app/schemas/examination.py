@@ -411,6 +411,7 @@ class FinanceCentreShellCentre(BaseModel):
     center_id: UUID
     center_code: str
     center_name: str
+    center_region: str | None = Field(default=None, description="Examination centre region.")
 
 
 class FinanceCentreInvigilatorSummaryShellResponse(BaseModel):
@@ -492,6 +493,7 @@ class FinanceCentreInspectorAnalysisRow(BaseModel):
     center_id: UUID
     center_code: str
     center_name: str
+    center_region: str | None = Field(default=None, description="Examination centre region.")
     subject_filter: str
     total_candidates: int = Field(0, ge=0)
     exam_days: int = Field(0, ge=0)

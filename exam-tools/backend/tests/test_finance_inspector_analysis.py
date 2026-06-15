@@ -79,6 +79,7 @@ def _centre(code: str = "C001", name: str = "Test Centre") -> MagicMock:
     centre.id = uuid4()
     centre.code = code
     centre.name = name
+    centre.region = None
     return centre
 
 

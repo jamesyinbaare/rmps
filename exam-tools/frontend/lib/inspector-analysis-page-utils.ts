@@ -1,4 +1,5 @@
 import type { FinanceCentreInspectorAnalysisResponse } from "@/lib/api";
+import { sumInspectorAnalysisRowsFromCentres } from "@/lib/api";
 import {
   isSubjectScopeSelected,
   type InspectorAnalysisTableRow,
@@ -44,6 +45,30 @@ export type PayrollVsPostedFilter = "all" | "over" | "under" | "match";
 export function postedOnlyCount(row: InspectorAnalysisTableRow): number {
   if (row.loadState !== "loaded") return 0;
   return Math.max(0, row.posted_inspector_count - row.inspectors_in_both);
+}
+
+export function filterInspectorRowsByRegion<T extends { center_region?: string | null }>(
+  rows: T[],
+  regionFilter: string,
+): T[] {
+  if (!regionFilter) return rows;
+  return rows.filter((r) => r.center_region === regionFilter);
+}
+
+export function matchesRegionFilter(row: { center_region?: string | null }, regionFilter: string): boolean {
+  return filterInspectorRowsByRegion([row], regionFilter).length > 0;
+}
+
+export function buildInspectorAnalysisExportSummary(
+  loadedSummary: FinanceCentreInspectorAnalysisResponse,
+  regionFilter: string,
+): FinanceCentreInspectorAnalysisResponse {
+  const centres = filterInspectorRowsByRegion(loadedSummary.centres, regionFilter);
+  return {
+    ...loadedSummary,
+    centres,
+    totals: sumInspectorAnalysisRowsFromCentres(centres, loadedSummary.subject_filter),
+  };
 }
 
 export function isInspectorReportStale(

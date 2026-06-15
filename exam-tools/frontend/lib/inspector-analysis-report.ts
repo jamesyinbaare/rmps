@@ -6,18 +6,22 @@ import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import {
   apiJson,
   DEFAULT_INSPECTOR_CANDIDATES_RATIO,
+  listExaminationCentres,
   normalizeInspectorAnalysisRow,
   parseInspectorCandidatesRatio,
+  sumInspectorAnalysisRowsFromCentres,
   type Examination,
   type FinanceCentreInspectorAnalysisResponse,
   type FinanceCentreInspectorAnalysisRow,
+  type PerExamCentreItem,
   type TimetableSubjectFilter,
 } from "@/lib/api";
 import {
   loadInspectorAnalysisWithProgress,
   peekCachedInspectorAnalysis,
 } from "@/lib/finance-statistics-cache";
-import { searchQueriesEqual } from "@/lib/inspector-analysis-page-utils";
+import { filterInspectorRowsByRegion, searchQueriesEqual } from "@/lib/inspector-analysis-page-utils";
+import { REGION_OPTIONS } from "@/lib/school-enums";
 
 export type SubjectScopeSelection = TimetableSubjectFilter | "";
 
@@ -37,11 +41,13 @@ export function shellCentreToRow(c: {
   center_id: string;
   center_code: string;
   center_name: string;
+  center_region?: string | null;
 }): InspectorAnalysisTableRow {
   return {
     center_id: c.center_id,
     center_code: c.center_code,
     center_name: c.center_name,
+    center_region: c.center_region ?? null,
     subject_filter: "ALL",
     total_candidates: 0,
     exam_days: 0,
@@ -86,6 +92,9 @@ export function useInspectorAnalysisReport() {
   const [examListError, setExamListError] = useState<string | null>(null);
   const [subjectFilter, setSubjectFilter] = useState<SubjectScopeSelection>("");
   const [candidatesPerInspector, setCandidatesPerInspector] = useState(DEFAULT_INSPECTOR_CANDIDATES_RATIO);
+  const [regionFilter, setRegionFilter] = useState("");
+  const [centresForScope, setCentresForScope] = useState<PerExamCentreItem[]>([]);
+  const [centresScopeBusy, setCentresScopeBusy] = useState(false);
   const [rowSearch, setRowSearch] = useState("");
   const [centreRows, setCentreRows] = useState<InspectorAnalysisTableRow[]>([]);
   const [loadedSummary, setLoadedSummary] = useState<FinanceCentreInspectorAnalysisResponse | null>(null);
@@ -135,9 +144,105 @@ export function useInspectorAnalysisReport() {
     if (q != null) setRowSearch(q);
     const st = sp.get("st");
     if (st === "ALL" || st === "CORE_ONLY" || st === "ELECTIVE_ONLY") setSubjectFilter(st);
+    const reg = sp.get("region")?.trim() ?? "";
+    if (reg && REGION_OPTIONS.some((r) => r.value === reg)) setRegionFilter(reg);
     setCandidatesPerInspector(parseInspectorCandidatesRatio(sp.get("ratio")));
     setUrlHydrated(true);
   }, [exams]);
+
+  useEffect(() => {
+    if (examId === null || !isSubjectScopeSelected(subjectFilter)) {
+      setCentresForScope([]);
+      setCentresScopeBusy(false);
+      return;
+    }
+    let cancelled = false;
+    setCentresScopeBusy(true);
+    void (async () => {
+      try {
+        const data = await listExaminationCentres(examId, { subject_filter: subjectFilter });
+        if (!cancelled) setCentresForScope(data.items);
+      } catch {
+        if (!cancelled) setCentresForScope([]);
+      } finally {
+        if (!cancelled) setCentresScopeBusy(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [examId, subjectFilter]);
+
+  const regionOptions = useMemo(() => {
+    const present = new Set(
+      centresForScope.map((c) => c.region).filter((r): r is string => Boolean(r?.trim())),
+    );
+    return REGION_OPTIONS.filter((r) => present.has(r.value));
+  }, [centresForScope]);
+
+  useEffect(() => {
+    if (!centresForScope.length) return;
+    const regionByCentreId = new Map(
+      centresForScope
+        .filter((c) => c.region?.trim())
+        .map((c) => [c.id, c.region as string]),
+    );
+    if (regionByCentreId.size === 0) return;
+
+    setCentreRows((prev) => {
+      let changed = false;
+      const next = prev.map((row) => {
+        if (row.center_region) return row;
+        const region = regionByCentreId.get(row.center_id);
+        if (!region) return row;
+        changed = true;
+        return { ...row, center_region: region };
+      });
+      return changed ? next : prev;
+    });
+
+    setLoadedSummary((prev) => {
+      if (!prev) return prev;
+      let changed = false;
+      const centres = prev.centres.map((row) => {
+        if (row.center_region) return row;
+        const region = regionByCentreId.get(row.center_id);
+        if (!region) return row;
+        changed = true;
+        return { ...row, center_region: region };
+      });
+      return changed ? { ...prev, centres } : prev;
+    });
+  }, [centresForScope]);
+
+  useEffect(() => {
+    if (!regionFilter || regionOptions.length === 0) return;
+    if (!regionOptions.some((r) => r.value === regionFilter)) setRegionFilter("");
+  }, [regionFilter, regionOptions]);
+
+  const regionScopedRows = useMemo(
+    () => filterInspectorRowsByRegion(centreRows, regionFilter),
+    [centreRows, regionFilter],
+  );
+
+  const displayTotals = useMemo(() => {
+    const loaded = regionScopedRows.filter((r) => r.loadState === "loaded");
+    if (!loaded.length || !isSubjectScopeSelected(subjectFilter)) return null;
+    return sumInspectorAnalysisRowsFromCentres(loaded, subjectFilter);
+  }, [regionScopedRows, subjectFilter]);
+
+  const exportSummary = useMemo(() => {
+    if (!loadedSummary || !isSubjectScopeSelected(subjectFilter)) return null;
+    const loaded = filterInspectorRowsByRegion(
+      loadedSummary.centres,
+      regionFilter,
+    );
+    return {
+      ...loadedSummary,
+      centres: loaded,
+      totals: sumInspectorAnalysisRowsFromCentres(loaded, subjectFilter),
+    };
+  }, [loadedSummary, regionFilter, subjectFilter]);
 
   useEffect(() => {
     if (!urlHydrated) return;
@@ -149,12 +254,14 @@ export function useInspectorAnalysisReport() {
     else p.delete("q");
     if (isSubjectScopeSelected(subjectFilter)) p.set("st", subjectFilter);
     else p.delete("st");
+    if (regionFilter) p.set("region", regionFilter);
+    else p.delete("region");
     p.set("ratio", String(candidatesPerInspector));
     const next = p.toString();
     const cur = searchParamsRef.current.toString();
     if (searchQueriesEqual(next, cur)) return;
     router.replace(next ? `${pathname}?${next}` : pathname, { scroll: false });
-  }, [urlHydrated, examId, rowSearch, subjectFilter, candidatesPerInspector, pathname, router]);
+  }, [urlHydrated, examId, rowSearch, subjectFilter, regionFilter, candidatesPerInspector, pathname, router]);
 
   useEffect(() => {
     loadRunRef.current += 1;
@@ -238,10 +345,11 @@ export function useInspectorAnalysisReport() {
     [exams, examId],
   );
 
-  const totals = loadedSummary?.totals ?? null;
+  const totals = displayTotals;
   const activeRatio = loadedSummary?.candidates_per_inspector ?? candidatesPerInspector;
   const scopeSelected = isSubjectScopeSelected(subjectFilter);
-  const loadedCount = centreRows.filter((r) => r.loadState === "loaded").length;
+  const scopedCentreCount = regionScopedRows.length;
+  const loadedCount = regionScopedRows.filter((r) => r.loadState === "loaded").length;
   const canLoad = examId !== null && scopeSelected && !shellBusy && !statsBusy;
 
   return {
@@ -254,10 +362,16 @@ export function useInspectorAnalysisReport() {
     setSubjectFilter,
     candidatesPerInspector,
     setCandidatesPerInspector,
+    regionFilter,
+    setRegionFilter,
+    regionOptions,
+    centresScopeBusy,
     rowSearch,
     setRowSearch,
     centreRows,
+    regionScopedRows,
     loadedSummary,
+    exportSummary,
     summaryActive,
     statsBusy,
     summaryError,
@@ -266,6 +380,7 @@ export function useInspectorAnalysisReport() {
     totals,
     activeRatio,
     scopeSelected,
+    scopedCentreCount,
     loadedCount,
     canLoad,
     loadSummary,

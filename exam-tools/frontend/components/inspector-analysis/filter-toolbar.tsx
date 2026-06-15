@@ -28,6 +28,10 @@ type Props = {
   showRatio?: boolean;
   candidatesPerInspector?: number;
   onCandidatesPerInspectorChange?: (value: number) => void;
+  regionFilter: string;
+  onRegionFilterChange: (region: string) => void;
+  regionOptions: { value: string; label: string }[];
+  regionsDisabled?: boolean;
   rowSearch: string;
   onRowSearchChange: (value: string) => void;
   summaryActive: boolean;
@@ -54,6 +58,10 @@ export function InspectorAnalysisFilterToolbar({
   showRatio = false,
   candidatesPerInspector = 300,
   onCandidatesPerInspectorChange,
+  regionFilter,
+  onRegionFilterChange,
+  regionOptions,
+  regionsDisabled = false,
   rowSearch,
   onRowSearchChange,
   summaryActive,
@@ -83,7 +91,7 @@ export function InspectorAnalysisFilterToolbar({
       <div
         className={cn(
           "grid grid-cols-1 gap-4",
-          showRatio ? "sm:grid-cols-2 lg:grid-cols-3" : "sm:grid-cols-2 lg:grid-cols-2",
+          showRatio ? "sm:grid-cols-2 lg:grid-cols-4" : "sm:grid-cols-2 lg:grid-cols-3",
         )}
       >
         <div className={filterFieldClass}>
@@ -140,6 +148,35 @@ export function InspectorAnalysisFilterToolbar({
             onChange={onCandidatesPerInspectorChange}
           />
         ) : null}
+
+        <div className={filterFieldClass}>
+          <label className={formLabelClass} htmlFor={`${idPrefix}-region`}>
+            Region
+          </label>
+          <select
+            id={`${idPrefix}-region`}
+            className={filterControlClass}
+            value={regionFilter}
+            disabled={!scopeSelected || regionsDisabled || regionOptions.length === 0}
+            onChange={(e) => onRegionFilterChange(e.target.value)}
+          >
+            <option value="">All regions</option>
+            {regionOptions.map((r) => (
+              <option key={r.value} value={r.value}>
+                {r.label}
+              </option>
+            ))}
+          </select>
+          <p className={filterHintClass}>
+            {!scopeSelected
+              ? "Select subject scope first."
+              : regionsDisabled
+                ? "Loading regions…"
+                : regionOptions.length === 0
+                  ? "No regions in this scope."
+                  : "Optional — limits KPIs, table, and export."}
+          </p>
+        </div>
       </div>
 
       {!scopeSelected && !summaryActive ? (

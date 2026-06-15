@@ -69,6 +69,7 @@ import {
   officialAccountsPanelFooterClass,
 } from "@/lib/official-accounts-zone";
 import { cn } from "@/lib/utils";
+import { REGION_OPTIONS } from "@/lib/school-enums";
 
 function centreSummaryHref(examId: number, centerId: string, subjectFilter: TimetableSubjectFilter): string {
   const q = new URLSearchParams();
@@ -94,10 +95,15 @@ function InspectorPayVarianceContentInner() {
     subjectFilter,
     setSubjectFilter,
     candidatesPerInspector,
+    regionFilter,
+    setRegionFilter,
+    regionOptions,
+    centresScopeBusy,
     rowSearch,
     setRowSearch,
-    centreRows,
+    regionScopedRows,
     loadedSummary,
+    exportSummary,
     summaryActive,
     statsBusy,
     summaryError,
@@ -105,10 +111,15 @@ function InspectorPayVarianceContentInner() {
     selectedExam,
     totals,
     scopeSelected,
+    scopedCentreCount,
     loadedCount,
     canLoad,
     loadSummary,
   } = report;
+
+  const regionLabel = regionFilter
+    ? (REGION_OPTIONS.find((r) => r.value === regionFilter)?.label ?? regionFilter)
+    : null;
 
   const [daysPayFilter, setDaysPayFilter] = useState<DaysPayFilter>(() =>
     parseDaysPayFilter(searchParams.get("df")),
@@ -122,8 +133,8 @@ function InspectorPayVarianceContentInner() {
   const [columnVisibility, setColumnVisibility] = useState<VisibilityState>({});
 
   const isStale = isInspectorReportStale(loadedSummary, examId, subjectFilter, candidatesPerInspector);
-  const daysPayCounts = useMemo(() => countDaysPayVariances(centreRows), [centreRows]);
-  const payrollVsPostedCounts = useMemo(() => countPayrollVsPostedVariances(centreRows), [centreRows]);
+  const daysPayCounts = useMemo(() => countDaysPayVariances(regionScopedRows), [regionScopedRows]);
+  const payrollVsPostedCounts = useMemo(() => countPayrollVsPostedVariances(regionScopedRows), [regionScopedRows]);
 
   function onDaysPayFilterChange(filter: DaysPayFilter) {
     setDaysPayFilter(filter);
@@ -141,13 +152,13 @@ function InspectorPayVarianceContentInner() {
 
   const filteredRows = useMemo(() => {
     const q = rowSearch.trim().toLowerCase();
-    return centreRows.filter((r) => {
+    return regionScopedRows.filter((r) => {
       if (!matchesDaysPayFilter(r, daysPayFilter)) return false;
       if (!matchesPayrollVsPostedFilter(r, payrollFilter)) return false;
       if (!q) return true;
       return r.center_code.toLowerCase().includes(q) || r.center_name.toLowerCase().includes(q);
     });
-  }, [centreRows, rowSearch, daysPayFilter, payrollFilter]);
+  }, [regionScopedRows, rowSearch, daysPayFilter, payrollFilter]);
 
   function scrollToTable() {
     tableRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
@@ -318,7 +329,7 @@ function InspectorPayVarianceContentInner() {
   });
 
   async function onExport(key: string) {
-    if (examId === null || !selectedExam || !isSubjectScopeSelected(subjectFilter) || !loadedSummary) return;
+    if (examId === null || !selectedExam || !isSubjectScopeSelected(subjectFilter) || !exportSummary) return;
     const exportStyle: InspectorAnalysisExportStyle = key === "rich" ? "rich" : "standard";
     setExportBusy(key);
     setExportError(null);
@@ -333,7 +344,7 @@ function InspectorPayVarianceContentInner() {
         examId,
         subject_filter: subjectFilter,
         examLabel: formatExamLabel(selectedExam),
-        summary: loadedSummary,
+        summary: exportSummary,
         filename,
         export_variant: "pay_variance",
         export_style: exportStyle,
@@ -346,12 +357,13 @@ function InspectorPayVarianceContentInner() {
   }
 
   const centresStillLoading = statsBusy;
-  const exportDisabled = !!exportBusy || !loadedSummary || centresStillLoading || loadedCount < centreRows.length;
+  const exportDisabled =
+    !!exportBusy || !exportSummary || centresStillLoading || loadedCount < scopedCentreCount;
   const exportDisabledReason =
-    !loadedSummary || centreRows.length === 0
+    !exportSummary || scopedCentreCount === 0
       ? "Load the report first"
-      : loadedCount < centreRows.length
-        ? `Wait for all centres to finish loading (${loadedCount}/${centreRows.length})`
+      : loadedCount < scopedCentreCount
+        ? `Wait for all centres to finish loading (${loadedCount}/${scopedCentreCount})`
         : undefined;
   const displayError = summaryError ?? exportError;
 
@@ -363,7 +375,7 @@ function InspectorPayVarianceContentInner() {
           meta={selectedExam ? <OfficialAccountsExamMeta>{formatExamLabel(selectedExam)}</OfficialAccountsExamMeta> : null}
           actions={
             <InspectorAnalysisExportMenu
-              centreCount={centreRows.length}
+              centreCount={scopedCentreCount}
               disabled={exportDisabled}
               disabledReason={exportDisabledReason}
               exportBusy={exportBusy}
@@ -385,6 +397,10 @@ function InspectorPayVarianceContentInner() {
             onExamIdChange={setExamId}
             subjectFilter={subjectFilter}
             onSubjectFilterChange={setSubjectFilter}
+            regionFilter={regionFilter}
+            onRegionFilterChange={setRegionFilter}
+            regionOptions={regionOptions}
+            regionsDisabled={centresScopeBusy}
             rowSearch={rowSearch}
             onRowSearchChange={setRowSearch}
             summaryActive={summaryActive}
@@ -393,7 +409,7 @@ function InspectorPayVarianceContentInner() {
             shellBusy={shellBusy}
             statsBusy={statsBusy}
             loadedCount={loadedCount}
-            centreCount={centreRows.length}
+            centreCount={scopedCentreCount}
             isStale={isStale}
             onLoad={() => void loadSummary({ revalidate: summaryActive })}
             filterChips={
@@ -438,8 +454,8 @@ function InspectorPayVarianceContentInner() {
           <div className="min-w-0 space-y-4 px-4 py-4 sm:px-5">
             <LoadingProgressBanner
               loadedCount={loadedCount}
-              totalCount={centreRows.length}
-              visible={summaryActive && statsBusy && centreRows.length > 0}
+              totalCount={scopedCentreCount}
+              visible={summaryActive && statsBusy && scopedCentreCount > 0}
             />
 
             {examListError ? (
@@ -455,6 +471,12 @@ function InspectorPayVarianceContentInner() {
             ) : null}
 
             {summaryActive && totals ? (
+              <div className="space-y-3">
+                {regionLabel ? (
+                  <p className="text-sm text-muted-foreground">
+                    Showing analysis for <span className="font-medium text-foreground">{regionLabel}</span> only.
+                  </p>
+                ) : null}
               <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
                 <div className="rounded-xl border border-border bg-card px-4 py-3">
                   <p className="text-xs text-muted-foreground">Days: max assigned vs exam</p>
@@ -498,13 +520,18 @@ function InspectorPayVarianceContentInner() {
                   <p className="text-lg font-semibold tabular-nums">{moneyCell(totals.total_inspector_pay_ghs)}</p>
                 </div>
               </div>
+              </div>
+            ) : null}
+
+            {summaryActive && scopedCentreCount === 0 && !statsBusy ? (
+              <p className="text-sm text-muted-foreground">No examination centres in this region for the selected scope.</p>
             ) : null}
 
             {summaryActive && filteredRows.length > 0 ? (
               <div ref={tableRef} className="min-w-0 space-y-2">
                 <p className="text-xs text-muted-foreground" aria-live="polite">
                   {statsBusy
-                    ? `Showing ${filteredRows.length.toLocaleString()} centres (loading ${loadedCount}/${centreRows.length})…`
+                    ? `Showing ${filteredRows.length.toLocaleString()} centres (loading ${loadedCount}/${scopedCentreCount})…`
                     : `${filteredRows.length.toLocaleString()} centre${filteredRows.length === 1 ? "" : "s"}`}
                 </p>
                 <DataTable
@@ -518,11 +545,7 @@ function InspectorPayVarianceContentInner() {
               </div>
             ) : null}
 
-            {summaryActive && centreRows.length === 0 && !statsBusy ? (
-              <p className="text-sm text-muted-foreground">No examination centres for this selection.</p>
-            ) : null}
-
-            {summaryActive && centreRows.length > 0 && filteredRows.length === 0 ? (
+            {summaryActive && scopedCentreCount > 0 && filteredRows.length === 0 ? (
               <p className="text-sm text-muted-foreground">No centres match the current filters.</p>
             ) : null}
           </div>

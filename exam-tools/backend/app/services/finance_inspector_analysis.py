@@ -47,6 +47,13 @@ MAX_INSPECTOR_CANDIDATES_RATIO = 10_000
 TOTALS_ROW_ID = UUID(int=0)
 
 
+def centre_region_display(centre: ExaminationCentre) -> str | None:
+    region = getattr(centre, "region", None)
+    if region is None:
+        return None
+    return region.value if hasattr(region, "value") else str(region)
+
+
 def inspector_phone_dedup_key(phone: str | None, *, fallback: str) -> str:
     """Normalize phone for dedup; use stable fallback when phone is missing or invalid."""
     if phone and str(phone).strip():
@@ -216,6 +223,7 @@ def build_inspector_analysis_row(
         center_id=centre.id,
         center_code=str(centre.code),
         center_name=str(centre.name),
+        center_region=centre_region_display(centre),
         subject_filter=subject_filter.value if hasattr(subject_filter, "value") else str(subject_filter),
         total_candidates=total_candidates,
         exam_days=exam_days,
@@ -357,6 +365,7 @@ async def build_inspector_analysis_shell(
                 center_id=c.id,
                 center_code=str(c.code),
                 center_name=str(c.name),
+                center_region=centre_region_display(c),
             )
             for c in sorted(centres, key=lambda row: (str(row.code), str(row.name)))
         ],

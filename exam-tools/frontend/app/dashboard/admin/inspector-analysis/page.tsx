@@ -66,6 +66,7 @@ import {
   officialAccountsPanelFooterClass,
 } from "@/lib/official-accounts-zone";
 import { cn } from "@/lib/utils";
+import { REGION_OPTIONS } from "@/lib/school-enums";
 
 const DEFAULT_COLUMN_VISIBILITY: VisibilityState = {};
 
@@ -94,10 +95,15 @@ function InspectorAnalysisContentInner() {
     setSubjectFilter,
     candidatesPerInspector,
     setCandidatesPerInspector,
+    regionFilter,
+    setRegionFilter,
+    regionOptions,
+    centresScopeBusy,
     rowSearch,
     setRowSearch,
-    centreRows,
+    regionScopedRows,
     loadedSummary,
+    exportSummary,
     summaryActive,
     statsBusy,
     summaryError,
@@ -106,10 +112,15 @@ function InspectorAnalysisContentInner() {
     totals,
     activeRatio,
     scopeSelected,
+    scopedCentreCount,
     loadedCount,
     canLoad,
     loadSummary,
   } = report;
+
+  const regionLabel = regionFilter
+    ? (REGION_OPTIONS.find((r) => r.value === regionFilter)?.label ?? regionFilter)
+    : null;
 
   const [staffingFilter, setStaffingFilter] = useState<StaffingFilter>(() =>
     parseStaffingFilter(searchParams.get("sf")),
@@ -120,7 +131,7 @@ function InspectorAnalysisContentInner() {
   const [columnVisibility, setColumnVisibility] = useState<VisibilityState>(DEFAULT_COLUMN_VISIBILITY);
 
   const isStale = isInspectorReportStale(loadedSummary, examId, subjectFilter, candidatesPerInspector);
-  const varianceCounts = useMemo(() => countStaffingVariances(centreRows), [centreRows]);
+  const varianceCounts = useMemo(() => countStaffingVariances(regionScopedRows), [regionScopedRows]);
 
   function onStaffingFilterChange(filter: StaffingFilter) {
     setStaffingFilter(filter);
@@ -131,12 +142,12 @@ function InspectorAnalysisContentInner() {
 
   const filteredRows = useMemo(() => {
     const q = rowSearch.trim().toLowerCase();
-    return centreRows.filter((r) => {
+    return regionScopedRows.filter((r) => {
       if (!matchesStaffingFilter(r, staffingFilter)) return false;
       if (!q) return true;
       return r.center_code.toLowerCase().includes(q) || r.center_name.toLowerCase().includes(q);
     });
-  }, [centreRows, rowSearch, staffingFilter]);
+  }, [regionScopedRows, rowSearch, staffingFilter]);
 
   function scrollToTable() {
     tableRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
@@ -328,7 +339,7 @@ function InspectorAnalysisContentInner() {
   });
 
   async function onExport(key: string) {
-    if (examId === null || !selectedExam || !isSubjectScopeSelected(subjectFilter) || !loadedSummary) return;
+    if (examId === null || !selectedExam || !isSubjectScopeSelected(subjectFilter) || !exportSummary) return;
     const exportStyle: InspectorAnalysisExportStyle = key === "rich" ? "rich" : "standard";
     setExportBusy(key);
     setExportError(null);
@@ -343,7 +354,7 @@ function InspectorAnalysisContentInner() {
         examId,
         subject_filter: subjectFilter,
         examLabel: formatExamLabel(selectedExam),
-        summary: loadedSummary,
+        summary: exportSummary,
         filename,
         export_variant: "staffing",
         export_style: exportStyle,
@@ -356,12 +367,13 @@ function InspectorAnalysisContentInner() {
   }
 
   const centresStillLoading = statsBusy;
-  const exportDisabled = !!exportBusy || !loadedSummary || centresStillLoading || loadedCount < centreRows.length;
+  const exportDisabled =
+    !!exportBusy || !exportSummary || centresStillLoading || loadedCount < scopedCentreCount;
   const exportDisabledReason =
-    !loadedSummary || centreRows.length === 0
+    !exportSummary || scopedCentreCount === 0
       ? "Load the report first"
-      : loadedCount < centreRows.length
-        ? `Wait for all centres to finish loading (${loadedCount}/${centreRows.length})`
+      : loadedCount < scopedCentreCount
+        ? `Wait for all centres to finish loading (${loadedCount}/${scopedCentreCount})`
         : undefined;
   const displayError = summaryError ?? exportError;
 
@@ -373,7 +385,7 @@ function InspectorAnalysisContentInner() {
           meta={selectedExam ? <OfficialAccountsExamMeta>{formatExamLabel(selectedExam)}</OfficialAccountsExamMeta> : null}
           actions={
             <InspectorAnalysisExportMenu
-              centreCount={centreRows.length}
+              centreCount={scopedCentreCount}
               disabled={exportDisabled}
               disabledReason={exportDisabledReason}
               exportBusy={exportBusy}
@@ -398,6 +410,10 @@ function InspectorAnalysisContentInner() {
             showRatio
             candidatesPerInspector={candidatesPerInspector}
             onCandidatesPerInspectorChange={setCandidatesPerInspector}
+            regionFilter={regionFilter}
+            onRegionFilterChange={setRegionFilter}
+            regionOptions={regionOptions}
+            regionsDisabled={centresScopeBusy}
             rowSearch={rowSearch}
             onRowSearchChange={setRowSearch}
             summaryActive={summaryActive}
@@ -406,7 +422,7 @@ function InspectorAnalysisContentInner() {
             shellBusy={shellBusy}
             statsBusy={statsBusy}
             loadedCount={loadedCount}
-            centreCount={centreRows.length}
+            centreCount={scopedCentreCount}
             isStale={isStale}
             onLoad={() => void loadSummary({ revalidate: summaryActive })}
             filterChips={
@@ -439,8 +455,8 @@ function InspectorAnalysisContentInner() {
           <div className="min-w-0 space-y-4 px-4 py-4 sm:px-5">
             <LoadingProgressBanner
               loadedCount={loadedCount}
-              totalCount={centreRows.length}
-              visible={summaryActive && statsBusy && centreRows.length > 0}
+              totalCount={scopedCentreCount}
+              visible={summaryActive && statsBusy && scopedCentreCount > 0}
             />
 
             {examListError ? (
@@ -456,6 +472,12 @@ function InspectorAnalysisContentInner() {
             ) : null}
 
             {summaryActive && totals ? (
+              <div className="space-y-3">
+                {regionLabel ? (
+                  <p className="text-sm text-muted-foreground">
+                    Showing analysis for <span className="font-medium text-foreground">{regionLabel}</span> only.
+                  </p>
+                ) : null}
               <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6">
                 <div className="rounded-xl border border-border bg-card px-4 py-3">
                   <p className="text-xs text-muted-foreground">Rule</p>
@@ -502,13 +524,18 @@ function InspectorAnalysisContentInner() {
                   <p className="text-lg font-semibold tabular-nums">{moneyCell(totals.total_inspector_pay_ghs)}</p>
                 </div>
               </div>
+              </div>
+            ) : null}
+
+            {summaryActive && scopedCentreCount === 0 && !statsBusy ? (
+              <p className="text-sm text-muted-foreground">No examination centres in this region for the selected scope.</p>
             ) : null}
 
             {summaryActive && filteredRows.length > 0 ? (
               <div ref={tableRef} className="min-w-0 space-y-2">
                 <p className="text-xs text-muted-foreground" aria-live="polite">
                   {statsBusy
-                    ? `Showing ${filteredRows.length.toLocaleString()} centres (loading ${loadedCount}/${centreRows.length})…`
+                    ? `Showing ${filteredRows.length.toLocaleString()} centres (loading ${loadedCount}/${scopedCentreCount})…`
                     : `${filteredRows.length.toLocaleString()} centre${filteredRows.length === 1 ? "" : "s"}`}
                 </p>
                 <DataTable
@@ -522,11 +549,11 @@ function InspectorAnalysisContentInner() {
               </div>
             ) : null}
 
-            {summaryActive && centreRows.length === 0 && !statsBusy ? (
+            {summaryActive && regionScopedRows.length === 0 && !statsBusy && scopedCentreCount === 0 ? (
               <p className="text-sm text-muted-foreground">No examination centres for this selection.</p>
             ) : null}
 
-            {summaryActive && centreRows.length > 0 && filteredRows.length === 0 ? (
+            {summaryActive && scopedCentreCount > 0 && filteredRows.length === 0 ? (
               <p className="text-sm text-muted-foreground">No centres match the current filters.</p>
             ) : null}
           </div>
