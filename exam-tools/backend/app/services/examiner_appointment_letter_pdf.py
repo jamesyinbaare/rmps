@@ -24,6 +24,7 @@ from app.services.certificate_confirmation_response_pdf import render_certificat
 from app.services.examiner_appointment_letter_reference import resolve_appointment_letter_reference_number
 from app.services.examiner_appointment_letter_settings import (
     get_settings_row,
+    get_subject_settings_row,
     require_letter_date_for_pdf,
     resolve_signatory_context,
 )
@@ -283,9 +284,16 @@ def _sanitize_filename_part(s: str) -> str:
     return "".join(c for c in s if c.isalnum() or c in ("_", "-"))
 
 
-async def _load_signatory_context(session: AsyncSession, examination_id: int) -> dict[str, object]:
+async def _load_signatory_context(
+    session: AsyncSession,
+    examination_id: int,
+    subject_id: int | None = None,
+) -> dict[str, object]:
     row = await get_settings_row(session, examination_id)
-    return resolve_signatory_context(row)
+    subject_row = None
+    if subject_id is not None:
+        subject_row = await get_subject_settings_row(session, examination_id, subject_id)
+    return resolve_signatory_context(row, subject_row)
 
 
 async def _load_letter_date(session: AsyncSession, examination_id: int) -> datetime:
@@ -361,7 +369,7 @@ async def build_dummy_appointment_letter_preview_pdf(
     )
 
     exam_label_str = examination_label(exam)
-    signatory_context = await _load_signatory_context(session, examination_id)
+    signatory_context = await _load_signatory_context(session, examination_id, int(subject.id))
     context = _base_appointment_context(
         examination_label_str=exam_label_str,
         invitee_name=DUMMY_APPOINTMENT_LETTEE_NAME,
@@ -454,7 +462,9 @@ async def build_examiner_appointment_letter_pdf(
         subject=subject,
         region=inv.region.value,
         coordination_context=coordination_context,
-        signatory_context=await _load_signatory_context(session, int(exam.id)) if session is not None else None,
+        signatory_context=await _load_signatory_context(session, int(exam.id), int(subject.id))
+            if session is not None
+            else None,
     )
     if session is not None:
         context.update(
@@ -539,7 +549,9 @@ async def build_examiner_appointment_letter_for_roster(
         subject=subject,
         region=examiner.region.value if isinstance(examiner.region, Region) else str(examiner.region),
         coordination_context=coordination_context,
-        signatory_context=await _load_signatory_context(session, int(exam.id)) if session is not None else None,
+        signatory_context=await _load_signatory_context(session, int(exam.id), int(subject.id))
+            if session is not None
+            else None,
     )
     if session is not None:
         context.update(

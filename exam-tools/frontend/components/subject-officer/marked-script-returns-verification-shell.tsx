@@ -7,10 +7,9 @@ import { Loader2, MapPin, Phone } from "lucide-react";
 import { SearchableCombobox } from "@/components/searchable-combobox";
 import { CohortScheduleSummary } from "@/components/cohorts/cohort-schedule-fields";
 import { MarkedScriptEnvelopeCards } from "@/components/subject-officer/marked-script-envelope-cards";
-import { MarkedScriptExaminerMobileCombobox } from "@/components/subject-officer/marked-script-examiner-mobile-combobox";
 import { MarkedScriptExaminerPicker } from "@/components/subject-officer/marked-script-examiner-picker";
-import { SubjectOfficerExamSelector } from "@/components/subject-officer/subject-officer-exam-bar";
 import { SubjectOfficerPanelShell } from "@/components/subject-officer/subject-officer-panel-shell";
+import { SubjectOfficerWorkspaceStrip } from "@/components/subject-officer/subject-officer-workspace-strip";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
@@ -22,8 +21,6 @@ import {
   type MarkedScriptReturnGridResponse,
   type MarkedScriptReturnPaperOption,
   type MarkedScriptReturnRow,
-  type SubjectOfficerMeAssignmentSubject,
-  type SubjectOfficerMeExamAssignment,
 } from "@/lib/api";
 import {
   officialAccountsCommandBarControlClass,
@@ -45,16 +42,14 @@ const comboboxCompactProps = {
 const rowActionButtonClass = "w-24 justify-center";
 
 type Session = {
-  subjectId: number | null;
   examinerId: string | null;
   paperNumber: number | null;
 };
 
 type Props = {
-  assignments: SubjectOfficerMeExamAssignment[];
-  examId: number | null;
-  onExamChange: (id: number | null) => void;
-  assignmentsLoading?: boolean;
+  examId: number;
+  subjectId: number;
+  workspaceLabel: string;
   session: Session;
   onSessionChange: (next: Partial<Session>) => void;
 };
@@ -127,14 +122,13 @@ function MasterDetailSkeleton() {
 }
 
 export function MarkedScriptReturnsVerificationShell({
-  assignments,
   examId,
-  onExamChange,
-  assignmentsLoading = false,
+  subjectId,
+  workspaceLabel,
   session,
   onSessionChange,
 }: Props) {
-  const { subjectId, examinerId, paperNumber } = session;
+  const { examinerId, paperNumber } = session;
 
   const [examiners, setExaminers] = useState<MarkedScriptReturnExaminerOption[]>([]);
   const [papers, setPapers] = useState<MarkedScriptReturnPaperOption[]>([]);
@@ -148,20 +142,14 @@ export function MarkedScriptReturnsVerificationShell({
   const [examinerListSearch, setExaminerListSearch] = useState("");
   const [pendingExaminersOnly, setPendingExaminersOnly] = useState(false);
 
-  const selectedExam = assignments.find((e) => e.examination_id === examId) ?? null;
-  const subjectOptions: SubjectOfficerMeAssignmentSubject[] = selectedExam?.subjects ?? [];
-
-  const subjectLabel = useMemo(() => {
-    const s = subjectOptions.find((x) => x.subject_id === subjectId);
-    return s ? subjectDisplayLabel(s) : "";
-  }, [subjectId, subjectOptions]);
+  const subjectLabel = workspaceLabel.split(" · ").slice(-1)[0] ?? workspaceLabel;
 
   const selectedExaminer = useMemo(
     () => examiners.find((e) => e.examiner_id === examinerId) ?? null,
     [examiners, examinerId],
   );
 
-  const subjectSelected = examId != null && subjectId != null;
+  const subjectSelected = true;
   const sessionReady =
     subjectSelected && examinerId != null && paperNumber != null;
 
@@ -349,84 +337,13 @@ export function MarkedScriptReturnsVerificationShell({
   }
 
   function handleExamChange(id: number | null) {
-    onExamChange(id);
-    onSessionChange({ subjectId: null, examinerId: null, paperNumber: null });
+    void id;
   }
 
   const commandBar = (
-    <>
-      <div className={officialAccountsCommandBarRowClass}>
-        <SubjectOfficerExamSelector
-          assignments={assignments}
-          examId={examId}
-          onExamChange={handleExamChange}
-          loading={assignmentsLoading}
-          compact
-        />
-
-        <div className="min-w-0 w-full flex-1 sm:min-w-36 sm:max-w-xs">
-          <label className={compactLabelClass} htmlFor="msr-subject">
-            Subject
-          </label>
-          {subjectOptions.length <= SUBJECT_COMBO_THRESHOLD ? (
-            <select
-              id="msr-subject"
-              className={cn(officialAccountsCommandBarControlClass, "mt-0.5 w-full")}
-              value={subjectId ?? ""}
-              disabled={examId == null}
-              onChange={(e) =>
-                onSessionChange({
-                  subjectId: e.target.value ? Number(e.target.value) : null,
-                  examinerId: null,
-                  paperNumber: null,
-                })
-              }
-            >
-              <option value="">Select…</option>
-              {subjectOptions.map((s) => (
-                <option key={s.subject_id} value={s.subject_id}>
-                  {subjectDisplayLabel(s)}
-                </option>
-              ))}
-            </select>
-          ) : (
-            <SearchableCombobox
-              id="msr-subject"
-              options={subjectOptions.map((s) => ({
-                value: String(s.subject_id),
-                label: subjectDisplayLabel(s),
-              }))}
-              value={subjectId != null ? String(subjectId) : ""}
-              onChange={(v) =>
-                onSessionChange({
-                  subjectId: v ? Number(v) : null,
-                  examinerId: null,
-                  paperNumber: null,
-                })
-              }
-              placeholder="Select…"
-              searchPlaceholder="Search…"
-              showAllOption={false}
-              disabled={examId == null}
-              {...comboboxCompactProps}
-            />
-          )}
-        </div>
-      </div>
-
-      {subjectSelected ? (
-        <div className="lg:hidden">
-          <MarkedScriptExaminerMobileCombobox
-            key={subjectId ?? "no-subject"}
-            examiners={examiners}
-            selectedId={examinerId}
-            onSelect={(id) => onSessionChange({ examinerId: id, paperNumber: null })}
-            loading={loadingExaminers}
-            disabled={!subjectSelected}
-          />
-        </div>
-      ) : null}
-    </>
+    <div className={officialAccountsCommandBarRowClass}>
+      <SubjectOfficerWorkspaceStrip workspaceLabel={workspaceLabel} workspace={null} />
+    </div>
   );
 
   const masterDetail = !subjectSelected ? (
@@ -444,7 +361,7 @@ export function MarkedScriptReturnsVerificationShell({
         panelHeightClass,
       )}
     >
-      <div className="hidden min-h-0 flex-col overflow-hidden border-b border-border lg:flex lg:h-full lg:border-b-0 lg:border-r">
+      <div className="flex min-h-0 flex-col overflow-hidden border-b border-border lg:h-full lg:border-b-0 lg:border-r">
         <MarkedScriptExaminerPicker
           examiners={examiners}
           selectedId={examinerId}
@@ -454,7 +371,7 @@ export function MarkedScriptReturnsVerificationShell({
           pendingOnly={pendingExaminersOnly}
           onPendingOnlyChange={setPendingExaminersOnly}
           loading={loadingExaminers}
-          listClassName="max-h-52 lg:max-h-none"
+          listClassName="max-h-48 min-h-0 flex-1 overflow-y-auto overscroll-contain lg:max-h-none"
         />
       </div>
 

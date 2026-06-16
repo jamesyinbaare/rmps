@@ -56,6 +56,7 @@ type Props = {
   disabled?: boolean;
   readOnly?: boolean;
   hideSubjectScopeFilters?: boolean;
+  mobileContactLayout?: boolean;
 };
 
 export function InvitationsCommandBar({
@@ -90,6 +91,7 @@ export function InvitationsCommandBar({
   disabled,
   readOnly = false,
   hideSubjectScopeFilters = false,
+  mobileContactLayout = false,
 }: Props) {
   const [columnsOpen, setColumnsOpen] = useState(false);
   const actionsDisabled = disabled || busy || examId == null;
@@ -149,7 +151,13 @@ export function InvitationsCommandBar({
   }
 
   return (
-    <div className={cn(INVITATIONS_COMMAND_BAR_CLASS, "overflow-visible")}>
+    <div
+      className={cn(
+        INVITATIONS_COMMAND_BAR_CLASS,
+        "overflow-visible",
+        mobileContactLayout && "bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/80",
+      )}
+    >
       <div
         className={cn(
           officialAccountsCommandBarRowClass,
@@ -193,7 +201,13 @@ export function InvitationsCommandBar({
           />
           <Popover open={columnsOpen} onOpenChange={setColumnsOpen}>
             <PopoverTrigger asChild>
-              <Button type="button" size="sm" variant="outline" className="gap-1.5" disabled={actionsDisabled}>
+              <Button
+                type="button"
+                size="sm"
+                variant="outline"
+                className={cn("gap-1.5", mobileContactLayout && "hidden md:inline-flex")}
+                disabled={actionsDisabled}
+              >
                 <Columns3 className="size-4" aria-hidden />
                 Columns
               </Button>

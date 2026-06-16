@@ -71,3 +71,43 @@ export function withExamQuery(href: string, examId: number | null): string {
   const sep = href.includes("?") ? "&" : "?";
   return `${href}${sep}exam=${examId}`;
 }
+
+export type SubjectOfficerWorkspaceOption = {
+  assignmentId: string;
+  examinationId: number;
+  examinationName: string;
+  subjectId: number;
+  subjectLabel: string;
+};
+
+export function flattenSubjectOfficerWorkspaces(
+  assignments: SubjectOfficerMeExamAssignment[],
+): SubjectOfficerWorkspaceOption[] {
+  const rows: SubjectOfficerWorkspaceOption[] = [];
+  for (const exam of assignments) {
+    for (const subject of exam.subjects) {
+      const code = (subject.subject_original_code?.trim() || subject.subject_code).trim();
+      const subjectLabel = code ? `${code} — ${subject.subject_name}` : subject.subject_name;
+      rows.push({
+        assignmentId: subject.assignment_id,
+        examinationId: exam.examination_id,
+        examinationName: exam.examination_name,
+        subjectId: subject.subject_id,
+        subjectLabel,
+      });
+    }
+  }
+  return rows;
+}
+
+export function findSubjectOfficerWorkspace(
+  assignments: SubjectOfficerMeExamAssignment[],
+  assignmentId: string | null,
+): SubjectOfficerWorkspaceOption | null {
+  if (!assignmentId) return null;
+  return flattenSubjectOfficerWorkspaces(assignments).find((w) => w.assignmentId === assignmentId) ?? null;
+}
+
+export function countSubjectOfficerAssignments(assignments: SubjectOfficerMeExamAssignment[]): number {
+  return flattenSubjectOfficerWorkspaces(assignments).length;
+}

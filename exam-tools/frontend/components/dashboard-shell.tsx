@@ -7,7 +7,6 @@ import { useEffect, useId, useState, type ReactNode } from "react";
 
 import { DashboardSimpleHeader, DashboardStickyHeader } from "@/components/dashboard-sticky-header";
 import { ExaminationNoticeSessionBanner } from "@/components/examination-notice-session-banner";
-import { SubjectOfficerExamBar } from "@/components/subject-officer/subject-officer-exam-bar";
 import { StaffSidebarMainNav } from "@/components/staff-sidebar-nav";
 import {
   FinanceSidebarProvider,
@@ -16,9 +15,14 @@ import {
 import { PortalSidebar, PortalSidebarHeader } from "@/components/portal-sidebar";
 import { useInspectorPostings } from "@/hooks/use-inspector-postings";
 import { useSubjectOfficerAssignments } from "@/hooks/use-subject-officer-assignments";
-import { useSubjectOfficerExamUrl } from "@/hooks/use-subject-officer-exam-url";
-import { subjectNamesSummary } from "@/lib/subject-officer-exams";
-import { clearAuth, AUTH_TOKEN_UPDATED_EVENT, getMe, type UserMe } from "@/lib/auth";
+import {
+  AUTH_TOKEN_UPDATED_EVENT,
+  SUBJECT_OFFICER_SELECT_WORKSPACE_HREF,
+  clearAuth,
+  getMe,
+  type UserMe,
+} from "@/lib/auth";
+import { countSubjectOfficerAssignments } from "@/lib/subject-officer-exams";
 import { buildStaffSidebarNav } from "@/lib/staff-nav";
 import {
   SUBJECT_OFFICER_NAV_SECTIONS,
@@ -76,6 +80,35 @@ function staffHeaderSubtitle(me: UserMe): string {
   return schoolSegment ? `${me.full_name} · ${schoolSegment}` : me.full_name;
 }
 
+function subjectOfficerHeaderSubtitle(
+  me: UserMe,
+  workspaceSwitchHref: string | null,
+): ReactNode {
+  const workspace = me.subject_officer_workspace_label?.trim();
+  const fullName = me.full_name.trim();
+  const phone = me.phone_number?.trim();
+  const identity = phone ? `${fullName} · ${phone}` : fullName;
+  if (!workspace) return identity;
+  if (!workspaceSwitchHref) return `${identity} · ${workspace}`;
+  return (
+    <>
+      {identity} ·{" "}
+      <Link
+        href={workspaceSwitchHref}
+        className={cn(
+          "rounded-sm underline decoration-muted-foreground/60 underline-offset-2 hover:text-foreground lg:no-underline",
+          inputFocusRing,
+        )}
+      >
+        {workspace}
+      </Link>
+    </>
+  );
+}
+
+const inputFocusRing =
+  "focus:border-primary focus:outline-none focus:ring-2 focus:ring-ring/30";
+
 const INSPECTOR_SELECT_WORKSPACE_HREF = "/dashboard/inspector/select-workspace?switch=1";
 
 function inspectorHeaderSubtitle(me: UserMe, workspaceSwitchHref: string | null): ReactNode {
@@ -106,39 +139,6 @@ type Props = {
   staffRole?: "supervisor" | "inspector" | "depot-keeper" | "subject-officer";
 };
 
-const inputFocusRing =
-  "focus:border-primary focus:outline-none focus:ring-2 focus:ring-ring/30";
-
-function SubjectOfficerExamChrome() {
-  const pathname = usePathname();
-  const { assignments, loading } = useSubjectOfficerAssignments();
-  const examIds = assignments.map((a) => a.examination_id);
-  const { examId, setExamId } = useSubjectOfficerExamUrl({ examIds, requireSelection: true });
-  const subjectSummary = subjectNamesSummary(assignments, examId);
-
-  if (
-    pathname === "/dashboard/subject-officer" ||
-    pathname.startsWith("/dashboard/subject-officer/examiners") ||
-    pathname.startsWith("/dashboard/subject-officer/allocations") ||
-    pathname.startsWith("/dashboard/subject-officer/marked-script-returns") ||
-    pathname.startsWith("/dashboard/subject-officer/attendance") ||
-    pathname.startsWith("/dashboard/subject-officer/lunch-verification") ||
-    pathname.startsWith("/dashboard/subject-officer/lunch-coupon-print")
-  ) {
-    return null;
-  }
-
-  return (
-    <SubjectOfficerExamBar
-      assignments={assignments}
-      examId={examId}
-      onExamChange={setExamId}
-      loading={loading}
-      subjectSummary={subjectSummary}
-    />
-  );
-}
-
 export function DashboardShell({ title, children, staffRole }: Props) {
   if (staffRole === "subject-officer") {
     return (
@@ -164,12 +164,27 @@ function DashboardShellInner({ title, children, staffRole }: Props) {
   const [me, setMe] = useState<UserMe | null>(null);
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const isInspector = staffRole === "inspector";
+  const isSubjectOfficerRole = staffRole === "subject-officer";
   const { count: inspectorPostingCount } = useInspectorPostings(isInspector);
+  const { assignments: subjectOfficerAssignments, loading: subjectOfficerAssignmentsLoading } =
+    useSubjectOfficerAssignments();
+  const subjectOfficerAssignmentCount = countSubjectOfficerAssignments(subjectOfficerAssignments);
   const onSelectWorkspacePage = pathname.startsWith("/dashboard/inspector/select-workspace");
+  const onSubjectOfficerSelectWorkspacePage = pathname.startsWith(
+    "/dashboard/subject-officer/select-workspace",
+  );
   const showInspectorChangeCentre =
     isInspector && inspectorPostingCount > 1 && !onSelectWorkspacePage;
   const inspectorWorkspaceSwitchHref = showInspectorChangeCentre
     ? INSPECTOR_SELECT_WORKSPACE_HREF
+    : null;
+  const showSubjectOfficerSwitchWorkspace =
+    isSubjectOfficerRole &&
+    !subjectOfficerAssignmentsLoading &&
+    subjectOfficerAssignmentCount > 1 &&
+    !onSubjectOfficerSelectWorkspacePage;
+  const subjectOfficerWorkspaceSwitchHref = showSubjectOfficerSwitchWorkspace
+    ? SUBJECT_OFFICER_SELECT_WORKSPACE_HREF
     : null;
 
   useEffect(() => {
@@ -348,7 +363,9 @@ function DashboardShellInner({ title, children, staffRole }: Props) {
             me
               ? isInspector
                 ? inspectorHeaderSubtitle(me, inspectorWorkspaceSwitchHref)
-                : staffHeaderSubtitle(me)
+                : isSubjectOfficerRole
+                  ? subjectOfficerHeaderSubtitle(me, subjectOfficerWorkspaceSwitchHref)
+                  : staffHeaderSubtitle(me)
               : null
           }
           onLogout={logout}
@@ -364,8 +381,6 @@ function DashboardShellInner({ title, children, staffRole }: Props) {
           staffRole={staffRole}
           examinationNoticeHref={examinationNoticeHref}
         />
-
-        {isSubjectOfficer ? <SubjectOfficerExamChrome /> : null}
         </div>
 
         <main

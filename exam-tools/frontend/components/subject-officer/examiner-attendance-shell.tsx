@@ -1,13 +1,13 @@
 "use client";
 
-import { useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useId, useRef, useState } from "react";
 
 import { Html5Qrcode } from "html5-qrcode";
 import { Camera, CameraOff, CheckCircle2, Loader2, XCircle } from "lucide-react";
 
 import { humanizeRegion } from "@/components/examiners/utils";
-import { SubjectOfficerExamSelector } from "@/components/subject-officer/subject-officer-exam-bar";
 import { SubjectOfficerPanelShell } from "@/components/subject-officer/subject-officer-panel-shell";
+import { SubjectOfficerWorkspaceStrip } from "@/components/subject-officer/subject-officer-workspace-strip";
 import { Button } from "@/components/ui/button";
 import {
   listExaminerAttendanceAll,
@@ -23,9 +23,10 @@ import { cn } from "@/lib/utils";
 const compactLabelClass = "text-xs font-medium text-muted-foreground";
 
 type Props = {
-  assignments: SubjectOfficerMeExamAssignment[];
-  assignmentsLoading?: boolean;
+  examId?: number;
+  workspaceLabel?: string | null;
   adminMode?: boolean;
+  assignments?: SubjectOfficerMeExamAssignment[];
 };
 
 function attendanceSubtitle(result: ExaminerAttendanceMarkResult): string | null {
@@ -82,21 +83,24 @@ function AttendanceResultCard({ result }: { result: ExaminerAttendanceMarkResult
 }
 
 export function ExaminerAttendanceShell({
-  assignments,
-  assignmentsLoading = false,
+  examId: workspaceExamId,
+  workspaceLabel,
   adminMode = false,
+  assignments = [],
 }: Props) {
   const readerId = useId().replace(/:/g, "");
   const scannerRef = useRef<Html5Qrcode | null>(null);
   const lastScannedRef = useRef<string | null>(null);
   const verifyingRef = useRef(false);
 
-  const defaultManualExamId = useMemo(
-    () => (assignments.length > 0 ? assignments[0].examination_id : null),
-    [assignments],
-  );
+  const [adminExamId, setAdminExamId] = useState<number | null>(null);
+  const manualExamId = adminMode ? adminExamId : workspaceExamId ?? null;
 
-  const [manualExamId, setManualExamId] = useState<number | null>(defaultManualExamId);
+  useEffect(() => {
+    if (!adminMode || assignments.length === 0) return;
+    setAdminExamId((current) => current ?? assignments[0]?.examination_id ?? null);
+  }, [adminMode, assignments]);
+
   const [cameraEnabled, setCameraEnabled] = useState(true);
   const [cameraError, setCameraError] = useState<string | null>(null);
   const [manualCode, setManualCode] = useState("");
@@ -105,10 +109,6 @@ export function ExaminerAttendanceShell({
   const [items, setItems] = useState<ExaminerAttendanceRow[]>([]);
   const [listLoading, setListLoading] = useState(false);
   const [listError, setListError] = useState<string | null>(null);
-
-  useEffect(() => {
-    setManualExamId(defaultManualExamId);
-  }, [defaultManualExamId]);
 
   const loadList = useCallback(async () => {
     setListLoading(true);
@@ -294,7 +294,7 @@ export function ExaminerAttendanceShell({
                       id="admin-attendance-exam"
                       className="mt-0.5 w-full rounded-lg border border-border bg-background px-3 py-2 text-sm"
                       value={manualExamId ?? ""}
-                      onChange={(e) => setManualExamId(Number(e.target.value))}
+                      onChange={(e) => setAdminExamId(Number(e.target.value))}
                     >
                       {assignments.map((a) => (
                         <option key={a.examination_id} value={a.examination_id}>
@@ -304,13 +304,7 @@ export function ExaminerAttendanceShell({
                     </select>
                   </div>
                 ) : (
-                  <SubjectOfficerExamSelector
-                    assignments={assignments}
-                    examId={manualExamId}
-                    onExamChange={setManualExamId}
-                    loading={assignmentsLoading}
-                    compact
-                  />
+                  <SubjectOfficerWorkspaceStrip workspaceLabel={workspaceLabel} workspace={null} />
                 )}
               </div>
               <form

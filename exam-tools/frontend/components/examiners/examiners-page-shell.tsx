@@ -23,7 +23,7 @@ import { ExaminersRosterPanel } from "@/components/examiners/examiners-roster-pa
 import { SubjectMarkingGroupsPanel } from "@/components/subject-officer/subject-marking-groups-panel";
 import type { ExaminersSummaryCounts, ExaminersTab } from "@/components/examiners/types";
 import { useExaminersUrl } from "@/components/examiners/use-examiners-url";
-import { SubjectOfficerExamSelector } from "@/components/subject-officer/subject-officer-exam-bar";
+import { SubjectOfficerWorkspaceStrip } from "@/components/subject-officer/subject-officer-workspace-strip";
 import { Badge } from "@/components/ui/badge";
 import type { InvitationStatusCounts } from "@/components/examiner-invitations/types";
 import { OfficialAccountsRoleTabs } from "@/components/official-accounts-role-tabs";
@@ -65,6 +65,13 @@ type Props = {
   /** Subject officer: inline exam command bar (matches allocations/overview). */
   subjectOfficerAssignments?: SubjectOfficerMeExamAssignment[];
   assignmentsLoading?: boolean;
+  /** Subject officer: fixed workspace from JWT (exam + subject). */
+  subjectOfficerWorkspace?: {
+    examId: number;
+    subjectId: number;
+    label: string | null;
+    subjects: Subject[];
+  };
   /** Show subject badges in the exam command bar (subject-officer layout). */
   showSubjectBadges?: boolean;
   /** Roster: show regional quota self-test (subject-officer layout). */
@@ -93,11 +100,13 @@ export function ExaminersPageShell({
   showSubjectCohortsTab = false,
   subjectOfficerAssignments,
   assignmentsLoading = false,
+  subjectOfficerWorkspace,
   showSubjectBadges: showSubjectBadgesProp,
   showQuotaAssessment: showQuotaAssessmentProp,
 }: Props) {
   const isSubjectOfficerShell = subjectOfficerAssignments != null;
-  const showSubjectBadges = showSubjectBadgesProp ?? isSubjectOfficerShell;
+  const showSubjectBadges =
+    subjectOfficerWorkspace != null ? false : (showSubjectBadgesProp ?? isSubjectOfficerShell);
   const showQuotaAssessment = showQuotaAssessmentProp ?? isSubjectOfficerShell;
   const canManageExaminers = !isSubjectOfficerShell;
   const useScrollShell = true;
@@ -105,15 +114,26 @@ export function ExaminersPageShell({
   const resolvedMarkingGroupsMode: MarkingGroupsMode =
     markingGroupsMode ?? (hideGroups ? "hidden" : "admin-allocation");
 
-  const { examId, activeTab, subjectTypeFilter, subjectId, setExamId, setActiveTab, setSubjectTypeFilter, setSubjectId } =
-    useExaminersUrl({
-      exams,
-      singleExamMode,
-      requireExamSelection,
-      syncSubjectInUrl: showSubjectCohortsTab,
-    });
+  const {
+    examId: urlExamId,
+    activeTab,
+    subjectTypeFilter,
+    subjectId,
+    setExamId,
+    setActiveTab,
+    setSubjectTypeFilter,
+    setSubjectId,
+  } = useExaminersUrl({
+    exams,
+    singleExamMode,
+    requireExamSelection: isSubjectOfficerShell ? false : requireExamSelection,
+    syncSubjectInUrl: showSubjectCohortsTab,
+  });
+
+  const examId = subjectOfficerWorkspace?.examId ?? urlExamId;
 
   const scopedSubjects = useMemo(() => {
+    if (subjectOfficerWorkspace) return subjectOfficerWorkspace.subjects;
     const baseSubjects = isSubjectOfficerShell
       ? subjectsForExam(subjectOfficerAssignments, examId)
       : subjects;
@@ -130,6 +150,7 @@ export function ExaminersPageShell({
     isSubjectOfficerShell,
     lockedSubjectIds,
     subjectOfficerAssignments,
+    subjectOfficerWorkspace,
     subjects,
   ]);
 
@@ -289,15 +310,12 @@ export function ExaminersPageShell({
         showSubjectCohortsTab && examId != null && "grid grid-cols-1 gap-3 lg:grid-cols-[minmax(0,2fr)_minmax(0,3fr)] lg:items-end",
       )}
     >
-      {isSubjectOfficerShell ? (
-        <SubjectOfficerExamSelector
-          assignments={subjectOfficerAssignments}
-          examId={examId}
-          onExamChange={setExamId}
-          loading={assignmentsLoading}
-          compact
+      {subjectOfficerWorkspace ? (
+        <SubjectOfficerWorkspaceStrip
+          workspaceLabel={subjectOfficerWorkspace.label}
+          workspace={null}
         />
-      ) : (
+      ) : !isSubjectOfficerShell ? (
         <ExaminersExamSelector
           exams={exams}
           examId={examId}
@@ -308,7 +326,7 @@ export function ExaminersPageShell({
           examLabelFn={examLabelFn}
           compact
         />
-      )}
+      ) : null}
       {showSubjectCohortsTab && examId != null ? (
         <ExaminersPageSubjectFilter
           sectionId="admin-examiners"
@@ -430,6 +448,7 @@ export function ExaminersPageShell({
                   usePageSubjectScope={usePageSubjectScope}
                   pageSubjectTypeFilter={subjectTypeFilter}
                   pageSubjectId={subjectId}
+                  mobileContactLayout={isSubjectOfficerShell}
                 />
               ) : null}
               {activeTab === "invitations" ? (
@@ -444,6 +463,7 @@ export function ExaminersPageShell({
                   usePageSubjectScope={usePageSubjectScope}
                   pageSubjectTypeFilter={subjectTypeFilter}
                   pageSubjectId={subjectId}
+                  mobileContactLayout={isSubjectOfficerShell}
                 />
               ) : null}
               {activeTab === "groups" && resolvedMarkingGroupsMode === "admin-allocation" ? (
@@ -460,6 +480,8 @@ export function ExaminersPageShell({
                   embedded
                   pageScroll={useScrollShell}
                   canManageCohorts={canManageExaminers}
+                  lockedSubjectId={subjectOfficerWorkspace?.subjectId}
+                  workspaceLabel={subjectOfficerWorkspace?.label}
                 />
               ) : null}
               {activeTab === "quotas" && showSubjectCohortsTab ? (
@@ -484,7 +506,11 @@ export function ExaminersPageShell({
                 />
               ) : null}
               {activeTab === "appointment-letters" && showSubjectCohortsTab ? (
-                <ExaminersAppointmentLettersPanel examId={examId} exams={exams} />
+                <ExaminersAppointmentLettersPanel
+                  examId={examId}
+                  exams={exams}
+                  defaultSubjectId={subjectId ? Number(subjectId) : undefined}
+                />
               ) : null}
             </>
           )}

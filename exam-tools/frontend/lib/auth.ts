@@ -125,6 +125,8 @@ export type UserMe = {
   depot_name?: string | null;
   /** When inspector JWT includes ``inspector_posting_id``; centre label for header subtitle. */
   inspector_workspace_label?: string | null;
+  /** When subject-officer JWT includes ``subject_officer_assignment_id``. */
+  subject_officer_workspace_label?: string | null;
 };
 
 export type TokenResponse = {
@@ -142,7 +144,7 @@ function dashboardPathForLoginRole(role: TokenResponse["role"]): string {
   if (role === "EXECUTIVE_VIEWER" || role === 7) return "/dashboard/admin/monitoring";
   if (role === "SUPERVISOR" || role === 10) return "/dashboard/supervisor";
   if (role === "INSPECTOR" || role === 20) return "/dashboard/inspector";
-  if (role === "SUBJECT_OFFICER" || role === 25) return "/dashboard/subject-officer";
+  if (role === "SUBJECT_OFFICER" || role === 25) return subjectOfficerDashboardPathFromToken();
   if (role === "DEPOT_KEEPER" || role === 30) return "/dashboard/depot-keeper";
   return "/";
 }
@@ -318,6 +320,48 @@ export function pickInspectorPostingId(
   return items[0]?.id ?? null;
 }
 
+export function getSubjectOfficerAssignmentIdFromToken(): string | null {
+  const token = getStoredToken();
+  if (!token) return null;
+  const payload = parseJwtPayload(token);
+  const raw = payload?.subject_officer_assignment_id;
+  if (typeof raw === "string" && raw.trim()) return raw.trim();
+  if (raw != null && String(raw).trim() !== "") return String(raw).trim();
+  return null;
+}
+
+export function subjectOfficerMustPickWorkspace(assignmentCount: number): boolean {
+  return assignmentCount > 1 && getSubjectOfficerAssignmentIdFromToken() == null;
+}
+
+export function subjectOfficerDashboardPathFromToken(): string {
+  if (getSubjectOfficerAssignmentIdFromToken()) return "/dashboard/subject-officer";
+  return "/dashboard/subject-officer/select-workspace";
+}
+
+export const SUBJECT_OFFICER_SELECT_WORKSPACE_HREF = "/dashboard/subject-officer/select-workspace?switch=1";
+
+export async function selectSubjectOfficerWorkspace(assignment_id: string): Promise<TokenResponse> {
+  const token = getStoredToken();
+  if (!token) throw new Error("Not authenticated");
+  const res = await fetch(`${getApiBaseUrl()}/auth/subject-officer/select-workspace`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${token}`,
+    },
+    body: JSON.stringify({ assignment_id }),
+  });
+  throwIfUnauthorized(res);
+  if (!res.ok) throw new Error(await parseErrorMessage(res));
+  const data = (await res.json()) as TokenResponse;
+  setStoredToken(data.access_token);
+  if (typeof window !== "undefined") {
+    window.dispatchEvent(new Event(AUTH_TOKEN_UPDATED_EVENT));
+  }
+  return data;
+}
+
 export async function loginInspector(phone_number: string, password: string): Promise<string> {
   const res = await fetch(`${getApiBaseUrl()}/auth/inspector/login`, {
     method: "POST",
@@ -395,6 +439,9 @@ export async function loginSuperAdmin(
   if (!res.ok) throw new Error(await parseErrorMessage(res));
   const data = (await res.json()) as TokenResponse;
   setStoredToken(data.access_token);
+  if (data.role === "SUBJECT_OFFICER" || data.role === 25) {
+    return subjectOfficerDashboardPathFromToken();
+  }
   return dashboardPathForLoginRole(data.role);
 }
 

@@ -22,6 +22,7 @@ import {
 } from "@/components/examiner-invitations/invitations-modals";
 import { InvitationsSummaryStats } from "@/components/examiner-invitations/invitations-summary-stats";
 import { InvitationsTable } from "@/components/examiner-invitations/invitations-table";
+import { InvitationsMobileList } from "@/components/examiners/invitations-mobile-list";
 import { ExaminerAllocationModal } from "@/components/examiner-invitations/examiner-allocation-modal";
 import type {
   InvitationStatusCounts,
@@ -80,6 +81,7 @@ type Props = {
   usePageSubjectScope?: boolean;
   pageSubjectTypeFilter?: ScriptControlSubjectTypeFilter;
   pageSubjectId?: string;
+  mobileContactLayout?: boolean;
 };
 
 function countByStatus(rows: ExaminerInvitationRow[]): InvitationStatusCounts {
@@ -107,6 +109,7 @@ export function ExaminersInvitationsPanel({
   usePageSubjectScope = false,
   pageSubjectTypeFilter = "all",
   pageSubjectId = "",
+  mobileContactLayout = false,
 }: Props) {
   const [invitations, setInvitations] = useState<ExaminerInvitationRow[]>([]);
   const [loadingInvitations, setLoadingInvitations] = useState(false);
@@ -121,6 +124,7 @@ export function ExaminersInvitationsPanel({
   const [renewSendSms, setRenewSendSms] = useState(true);
   const [uploadModalOpen, setUploadModalOpen] = useState(false);
   const [smsModalOpen, setSmsModalOpen] = useState(false);
+  const [smsSingleTarget, setSmsSingleTarget] = useState<ExaminerInvitationRow | null>(null);
   const [coordinationModalOpen, setCoordinationModalOpen] = useState(false);
   const [coordinationModalError, setCoordinationModalError] = useState<string | null>(null);
   const [batchCoordinationDraft, setBatchCoordinationDraft] = useState<InvitationCoordinationDraft>(
@@ -281,11 +285,12 @@ export function ExaminersInvitationsPanel({
 
   const selectedCount = Object.keys(rowSelection).length;
   const smsTargetRows = useMemo(() => {
+    if (smsSingleTarget) return [smsSingleTarget];
     if (selectedCount > 0) {
       return filteredRows.filter((row) => rowSelection[row.id]);
     }
     return filteredRows;
-  }, [filteredRows, rowSelection, selectedCount]);
+  }, [smsSingleTarget, filteredRows, rowSelection, selectedCount]);
 
   const activeFilterCount = useMemo(() => {
     let n = 0;
@@ -582,9 +587,18 @@ export function ExaminersInvitationsPanel({
 
   function closeSmsModal() {
     setSmsModalOpen(false);
+    setSmsSingleTarget(null);
     setSmsError(null);
     setSmsResult(null);
     setCustomSmsMessage("");
+  }
+
+  function openCustomSmsForInvitation(row: ExaminerInvitationRow) {
+    setSmsSingleTarget(row);
+    setSmsError(null);
+    setSmsResult(null);
+    setCustomSmsMessage("");
+    setSmsModalOpen(true);
   }
 
   async function handleInvite() {
@@ -717,8 +731,13 @@ export function ExaminersInvitationsPanel({
     }
   }
 
-  const smsRecipientLabel =
-    selectedCount > 0 ? "selected rows" : hasActiveFilters ? "filtered rows" : "all invitations";
+  const smsRecipientLabel = smsSingleTarget
+    ? smsSingleTarget.name
+    : selectedCount > 0
+      ? "selected rows"
+      : hasActiveFilters
+        ? "filtered rows"
+        : "all invitations";
 
   const coordinationSmsBlockedReason = useMemo(
     () => coordinationSmsSelectionBlockedReason(smsTargetRows, customSmsMessage),
@@ -759,6 +778,7 @@ export function ExaminersInvitationsPanel({
         setActionMessage(`SMS failed for ${res.failed_count} invitee${res.failed_count === 1 ? "" : "s"}.`);
       }
       setSmsModalOpen(false);
+      setSmsSingleTarget(null);
       setCustomSmsMessage("");
       setSmsError(null);
       setSmsResult(null);
@@ -824,6 +844,7 @@ export function ExaminersInvitationsPanel({
           selectedCount={selectedCount}
           filteredCount={filteredRows.length}
           onSendSms={() => {
+            setSmsSingleTarget(null);
             setSmsError(null);
             setSmsResult(null);
             setCustomSmsMessage("");
@@ -848,6 +869,7 @@ export function ExaminersInvitationsPanel({
           disabled={examId == null}
           readOnly={readOnly}
           hideSubjectScopeFilters={usePageSubjectScope}
+          mobileContactLayout={mobileContactLayout}
         />
 
         <div className={pageScroll ? "flex flex-col" : "flex min-h-0 flex-1 flex-col"}>
@@ -925,36 +947,65 @@ export function ExaminersInvitationsPanel({
                 ) : null}
               </div>
             ) : (
-              <InvitationsTable
-                rows={filteredRows}
-                loading={loadingInvitations}
-                busy={busy}
-                sorting={sorting}
-                onSortingChange={setSorting}
-                rowSelection={rowSelection}
-                onRowSelectionChange={setRowSelection}
-                columnVisibility={columnVisibility}
-                onColumnVisibilityChange={setColumnVisibility}
-                pagination={pagination}
-                onPaginationChange={setPagination}
-                showCustomPageSizeInput={customPageSizeEditing}
-                customPageSizeInput={customPageSizeInput}
-                onPageSizeSelectChange={handlePageSizeSelectChange}
-                onCustomPageSizeChange={handleCustomPageSizeChange}
-                onCustomPageSizeBlur={handleCustomPageSizeBlur}
-                resendUi={resendUi}
-                resendErrors={resendErrors}
-                onResend={(inv) => void handleResend(inv)}
-                onRenew={openRenew}
-                onCopyLink={(inv) => void handleCopyLink(inv)}
-                copyLinkUi={copyLinkUi}
-                onViewAllocation={
-                  lockedSubjectIds != null
-                    ? (inv) => setAllocationTarget(inv)
-                    : undefined
-                }
-                pageScroll={pageScroll}
-              />
+              <>
+                <div className={mobileContactLayout ? "hidden md:block" : undefined}>
+                  <InvitationsTable
+                    rows={filteredRows}
+                    loading={loadingInvitations}
+                    busy={busy}
+                    sorting={sorting}
+                    onSortingChange={setSorting}
+                    rowSelection={rowSelection}
+                    onRowSelectionChange={setRowSelection}
+                    columnVisibility={columnVisibility}
+                    onColumnVisibilityChange={setColumnVisibility}
+                    pagination={pagination}
+                    onPaginationChange={setPagination}
+                    showCustomPageSizeInput={customPageSizeEditing}
+                    customPageSizeInput={customPageSizeInput}
+                    onPageSizeSelectChange={handlePageSizeSelectChange}
+                    onCustomPageSizeChange={handleCustomPageSizeChange}
+                    onCustomPageSizeBlur={handleCustomPageSizeBlur}
+                    resendUi={resendUi}
+                    resendErrors={resendErrors}
+                    onResend={(inv) => void handleResend(inv)}
+                    onRenew={openRenew}
+                    onCopyLink={(inv) => void handleCopyLink(inv)}
+                    copyLinkUi={copyLinkUi}
+                    onViewAllocation={
+                      lockedSubjectIds != null
+                        ? (inv) => setAllocationTarget(inv)
+                        : undefined
+                    }
+                    pageScroll={pageScroll}
+                  />
+                </div>
+                {mobileContactLayout && !loadingInvitations && filteredRows.length > 0 ? (
+                  <InvitationsMobileList
+                    rows={filteredRows}
+                    pagination={pagination}
+                    onPaginationChange={setPagination}
+                    showCustomPageSizeInput={customPageSizeEditing}
+                    customPageSizeInput={customPageSizeInput}
+                    onPageSizeSelectChange={handlePageSizeSelectChange}
+                    onCustomPageSizeChange={handleCustomPageSizeChange}
+                    onCustomPageSizeBlur={handleCustomPageSizeBlur}
+                    busy={busy || loadingInvitations}
+                    resendUi={resendUi}
+                    resendErrors={resendErrors}
+                    onInAppSms={openCustomSmsForInvitation}
+                    onResend={(inv) => void handleResend(inv)}
+                    onRenew={openRenew}
+                    onCopyLink={(inv) => void handleCopyLink(inv)}
+                    copyLinkUi={copyLinkUi}
+                    onViewAllocation={
+                      lockedSubjectIds != null
+                        ? (inv) => setAllocationTarget(inv)
+                        : undefined
+                    }
+                  />
+                ) : null}
+              </>
             )}
             </div>
           </div>

@@ -6,7 +6,13 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from app.models import Examiner, ExaminerInvitationStatus, ExaminerRosterSource, ExaminerSubject
+from app.models import (
+    AppointmentLettersReleaseMode,
+    Examiner,
+    ExaminerInvitationStatus,
+    ExaminerRosterSource,
+    ExaminerSubject,
+)
 from app.services.examiner_invitation import (
     _examiner_type_label,
     _expire_if_confirmation_deadline_passed,
@@ -17,9 +23,9 @@ from app.services.examiner_invitation import (
 from app.services.examiner_portal import ResolvedPortalExaminer, ResolvedPortalInvitation
 from app.services.examiner_portal_release import (
     appointment_letter_pending_message,
+    get_or_create_portal_settings,
     is_appointment_letter_available,
     is_release_enabled,
-    resolve_coordination_end_at,
 )
 from app.services.sms.examiner_appointment_letter_release import maybe_notify_on_portal_visit
 from app.services.subject_marking_group import get_examiner_marking_groups
@@ -50,14 +56,28 @@ async def _load_examiner_with_subjects(session: AsyncSession, examiner_id) -> Ex
 
 
 async def _release_fields_for_examiner(session: AsyncSession, examiner: Examiner) -> dict:
-    release_enabled = await is_release_enabled(session, int(examiner.examination_id))
-    end_at = await resolve_coordination_end_at(session, examiner)
+    row = await get_or_create_portal_settings(session, int(examiner.examination_id))
+    release_enabled = bool(row.appointment_letters_release_enabled)
+    mode_raw = row.appointment_letters_release_mode
+    if isinstance(mode_raw, AppointmentLettersReleaseMode):
+        mode = mode_raw
+    else:
+        try:
+            mode = AppointmentLettersReleaseMode(str(mode_raw))
+        except ValueError:
+            mode = AppointmentLettersReleaseMode.SCHEDULED_DATE
     available = await is_appointment_letter_available(session, examiner)
-    pending = appointment_letter_pending_message(end_at, release_enabled=release_enabled)
+    pending = appointment_letter_pending_message(
+        release_enabled=release_enabled,
+        release_mode=mode,
+        release_at=row.appointment_letters_release_at,
+        examiner_accepted=True,
+    )
     return {
         "appointment_letters_release_enabled": release_enabled,
         "appointment_letters_available": available,
-        "coordination_end_at": end_at,
+        "appointment_letters_release_mode": mode.value,
+        "appointment_letters_release_at": row.appointment_letters_release_at,
         "appointment_letters_pending_message": pending,
     }
 
@@ -76,20 +96,34 @@ async def enrich_portal_with_release(
                 {
                     "appointment_letters_release_enabled": False,
                     "appointment_letters_available": False,
-                    "coordination_end_at": None,
+                    "appointment_letters_release_mode": AppointmentLettersReleaseMode.SCHEDULED_DATE.value,
+                    "appointment_letters_release_at": None,
                     "appointment_letters_pending_message": None,
                 }
             )
             return summary
-        release_enabled = await is_release_enabled(session, int(examination_id))
+        row = await get_or_create_portal_settings(session, int(examination_id))
+        release_enabled = bool(row.appointment_letters_release_enabled)
+        mode_raw = row.appointment_letters_release_mode
+        if isinstance(mode_raw, AppointmentLettersReleaseMode):
+            mode = mode_raw
+        else:
+            try:
+                mode = AppointmentLettersReleaseMode(str(mode_raw))
+            except ValueError:
+                mode = AppointmentLettersReleaseMode.SCHEDULED_DATE
+        accepted = summary.get("status") == ExaminerInvitationStatus.ACCEPTED.value
         summary.update(
             {
                 "appointment_letters_release_enabled": release_enabled,
                 "appointment_letters_available": False,
-                "coordination_end_at": None,
+                "appointment_letters_release_mode": mode.value,
+                "appointment_letters_release_at": row.appointment_letters_release_at,
                 "appointment_letters_pending_message": appointment_letter_pending_message(
-                    None,
                     release_enabled=release_enabled,
+                    release_mode=mode,
+                    release_at=row.appointment_letters_release_at,
+                    examiner_accepted=accepted,
                 ),
             }
         )

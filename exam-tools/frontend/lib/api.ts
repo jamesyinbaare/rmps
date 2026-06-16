@@ -4255,18 +4255,29 @@ export type ExaminerInvitationPublic = {
   quota_waitlist_message?: string | null;
   appointment_letters_release_enabled?: boolean;
   appointment_letters_available?: boolean;
-  coordination_end_at?: string | null;
+  appointment_letters_release_mode?: AppointmentLettersReleaseMode;
+  appointment_letters_release_at?: string | null;
   appointment_letters_pending_message?: string | null;
 };
+
+export type AppointmentLettersReleaseMode = "on_acceptance" | "scheduled_date";
 
 export type ExaminerPortalSettings = {
   examination_id: number;
   appointment_letters_release_enabled: boolean;
+  appointment_letters_release_mode: AppointmentLettersReleaseMode;
+  appointment_letters_release_at: string | null;
   updated_at: string;
   rostered_examiner_count: number;
-  with_coordination_end_count: number;
+  pending_release_count: number;
   eligible_now_count: number;
   notified_count: number;
+};
+
+export type ExaminerPortalSettingsPut = {
+  appointment_letters_release_enabled: boolean;
+  appointment_letters_release_mode: AppointmentLettersReleaseMode;
+  appointment_letters_release_at?: string | null;
 };
 
 export type NotifyEligibleAppointmentLettersResponse = {
@@ -5585,6 +5596,7 @@ export type SubjectOfficerAssignmentListResponse = {
 };
 
 export type SubjectOfficerMeAssignmentSubject = {
+  assignment_id: string;
   subject_id: number;
   subject_code: string;
   subject_name: string;
@@ -5725,12 +5737,12 @@ export async function getExaminerPortalSettings(examinationId: number): Promise<
 
 export async function putExaminerPortalSettings(
   examinationId: number,
-  appointmentLettersReleaseEnabled: boolean,
+  body: ExaminerPortalSettingsPut,
 ): Promise<ExaminerPortalSettings> {
   return apiJson<ExaminerPortalSettings>(`/admin/examinations/${examinationId}/examiner-portal-settings`, {
     method: "PUT",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ appointment_letters_release_enabled: appointmentLettersReleaseEnabled }),
+    body: JSON.stringify(body),
   });
 }
 
@@ -5815,7 +5827,78 @@ export type ExaminerAppointmentLetterSettingsCopyFromResponse = {
   source_examination_id: number;
   cc_lines_copied: number;
   signatures_copied: number;
+  subject_settings_copied: number;
 };
+
+export type ExaminerAppointmentLetterSubjectSettings = {
+  examination_id: number;
+  subject_id: number;
+  director_assessment_name: string;
+  director_assessment_title: string;
+  director_assessment_signature: AppointmentLetterSignatureMeta;
+  uses_exam_default_name: boolean;
+  uses_exam_default_title: boolean;
+  uses_exam_default_signature: boolean;
+  updated_at: string | null;
+};
+
+export async function getExaminerAppointmentLetterSubjectSettings(
+  examinationId: number,
+  subjectId: number,
+): Promise<ExaminerAppointmentLetterSubjectSettings> {
+  return apiJson<ExaminerAppointmentLetterSubjectSettings>(
+    `/admin/examinations/${examinationId}/examiner-appointment-letter-subject-settings/${subjectId}`,
+  );
+}
+
+export async function putExaminerAppointmentLetterSubjectSettings(
+  examinationId: number,
+  subjectId: number,
+  body: Pick<ExaminerAppointmentLetterSubjectSettings, "director_assessment_name" | "director_assessment_title">,
+): Promise<ExaminerAppointmentLetterSubjectSettings> {
+  return apiJson<ExaminerAppointmentLetterSubjectSettings>(
+    `/admin/examinations/${examinationId}/examiner-appointment-letter-subject-settings/${subjectId}`,
+    {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    },
+  );
+}
+
+export async function uploadExaminerAppointmentLetterSubjectSignature(
+  examinationId: number,
+  subjectId: number,
+  file: File,
+): Promise<ExaminerAppointmentLetterSubjectSettings> {
+  const form = new FormData();
+  form.append("file", file);
+  return apiJson<ExaminerAppointmentLetterSubjectSettings>(
+    `/admin/examinations/${examinationId}/examiner-appointment-letter-subject-settings/${subjectId}/signatures/director_assessment_certification`,
+    { method: "POST", body: form },
+  );
+}
+
+export async function deleteExaminerAppointmentLetterSubjectSignature(
+  examinationId: number,
+  subjectId: number,
+): Promise<ExaminerAppointmentLetterSubjectSettings> {
+  return apiJson<ExaminerAppointmentLetterSubjectSettings>(
+    `/admin/examinations/${examinationId}/examiner-appointment-letter-subject-settings/${subjectId}/signatures/director_assessment_certification`,
+    { method: "DELETE" },
+  );
+}
+
+export async function fetchExaminerAppointmentLetterSubjectSignatureBlobUrl(
+  examinationId: number,
+  subjectId: number,
+): Promise<string> {
+  const res = await apiFetch(
+    `/admin/examinations/${examinationId}/examiner-appointment-letter-subject-settings/${subjectId}/signatures/director_assessment_certification`,
+  );
+  const blob = await res.blob();
+  return URL.createObjectURL(blob);
+}
 
 export async function getExaminerAppointmentLetterSettings(
   examinationId: number,

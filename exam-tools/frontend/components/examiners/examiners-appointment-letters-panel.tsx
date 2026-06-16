@@ -10,19 +10,27 @@ import { Button } from "@/components/ui/button";
 import {
   copyExaminerAppointmentLetterSettingsFrom,
   deleteExaminerAppointmentLetterSignature,
+  deleteExaminerAppointmentLetterSubjectSignature,
   downloadExaminerAppointmentLetterPreviewPdf,
   fetchExaminerAppointmentLetterSignatureBlobUrl,
+  fetchExaminerAppointmentLetterSubjectSignatureBlobUrl,
   getExaminerAppointmentLetterReferences,
   getExaminerAppointmentLetterSettings,
+  getExaminerAppointmentLetterSubjectSettings,
   getExaminerPortalSettings,
   notifyEligibleAppointmentLetters,
   putExaminerAppointmentLetterReferences,
   putExaminerAppointmentLetterSettings,
+  putExaminerAppointmentLetterSubjectSettings,
+  putExaminerPortalSettings,
   uploadExaminerAppointmentLetterSignature,
+  uploadExaminerAppointmentLetterSubjectSignature,
   type AppointmentLetterSignatureRole,
   type AppointmentLetterSigningOfficial,
+  type AppointmentLettersReleaseMode,
   type ExaminerAppointmentLetterReferencePutCell,
   type ExaminerAppointmentLetterSettings,
+  type ExaminerAppointmentLetterSubjectSettings,
   type ExaminerPortalSettings,
   type ExaminerTypeApi,
   type Examination,
@@ -36,6 +44,7 @@ import { cn } from "@/lib/utils";
 type Props = {
   examId: number;
   exams: Examination[];
+  defaultSubjectId?: number;
   className?: string;
 };
 
@@ -48,12 +57,36 @@ type LetterSettingsDraft = {
   signedForDirectorGeneral: boolean;
   directorGeneralName: string;
   directorGeneralTitle: string;
-  directorAssessmentName: string;
-  directorAssessmentTitle: string;
   valediction: string;
   letterDate: string;
   ccLines: string[];
 };
+
+type SubjectDacDraft = {
+  directorAssessmentName: string;
+  directorAssessmentTitle: string;
+};
+
+type ReleaseDraft = {
+  enabled: boolean;
+  mode: AppointmentLettersReleaseMode;
+  releaseAt: string;
+};
+
+function isoToDatetimeLocal(iso: string | null | undefined): string {
+  if (!iso) return "";
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return "";
+  const pad = (n: number) => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
+
+function datetimeLocalToIso(value: string): string | null {
+  if (!value.trim()) return null;
+  const d = new Date(value);
+  if (Number.isNaN(d.getTime())) return null;
+  return d.toISOString();
+}
 
 function cellKey(subjectId: number, examinerType: ExaminerTypeApi): string {
   return `${subjectId}:${examinerType}`;
@@ -65,11 +98,16 @@ function settingsToDraft(row: ExaminerAppointmentLetterSettings): LetterSettings
     signedForDirectorGeneral: row.signed_for_director_general,
     directorGeneralName: row.director_general_name,
     directorGeneralTitle: row.director_general_title,
-    directorAssessmentName: row.director_assessment_name,
-    directorAssessmentTitle: row.director_assessment_title,
     valediction: row.valediction,
     letterDate: row.letter_date ?? "",
     ccLines: row.cc_lines.length > 0 ? [...row.cc_lines] : [""],
+  };
+}
+
+function subjectDacToDraft(row: ExaminerAppointmentLetterSubjectSettings): SubjectDacDraft {
+  return {
+    directorAssessmentName: row.uses_exam_default_name ? "" : row.director_assessment_name,
+    directorAssessmentTitle: row.uses_exam_default_title ? "" : row.director_assessment_title,
   };
 }
 
@@ -128,8 +166,64 @@ function SignaturePreview({
   );
 }
 
-export function ExaminersAppointmentLettersPanel({ examId, exams, className }: Props) {
+function SubjectDacSignaturePreview({
+  examId,
+  subjectId,
+  hasSignature,
+  refreshKey,
+}: {
+  examId: number;
+  subjectId: number;
+  hasSignature: boolean;
+  refreshKey: number;
+}) {
+  const [src, setSrc] = useState<string | null>(null);
+  const [loading, setLoading] = useState(false);
+
+  useEffect(() => {
+    let cancelled = false;
+    let objectUrl: string | null = null;
+
+    async function load() {
+      if (!hasSignature) {
+        setSrc(null);
+        return;
+      }
+      setLoading(true);
+      try {
+        objectUrl = await fetchExaminerAppointmentLetterSubjectSignatureBlobUrl(examId, subjectId);
+        if (!cancelled) setSrc(objectUrl);
+      } catch {
+        if (!cancelled) setSrc(null);
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    }
+
+    void load();
+    return () => {
+      cancelled = true;
+      if (objectUrl) URL.revokeObjectURL(objectUrl);
+    };
+  }, [examId, subjectId, hasSignature, refreshKey]);
+
+  if (!hasSignature) return null;
+  if (loading) {
+    return <p className="mt-2 text-xs text-muted-foreground">Loading preview…</p>;
+  }
+  if (!src) return null;
+  return (
+    <img
+      src={src}
+      alt=""
+      className="mt-2 max-h-16 max-w-[200px] rounded border border-border bg-white object-contain p-1"
+    />
+  );
+}
+
+export function ExaminersAppointmentLettersPanel({ examId, exams, defaultSubjectId, className }: Props) {
   const [settings, setSettings] = useState<ExaminerPortalSettings | null>(null);
+  const [releaseDraft, setReleaseDraft] = useState<ReleaseDraft | null>(null);
   const [releaseLoading, setReleaseLoading] = useState(true);
   const [releaseBusy, setReleaseBusy] = useState(false);
   const [releaseError, setReleaseError] = useState<string | null>(null);
@@ -147,11 +241,21 @@ export function ExaminersAppointmentLettersPanel({ examId, exams, className }: P
   const [copyBusy, setCopyBusy] = useState(false);
 
   const dgFileRef = useRef<HTMLInputElement>(null);
-  const dacFileRef = useRef<HTMLInputElement>(null);
+  const subjectDacFileRef = useRef<HTMLInputElement>(null);
+
+  const [subjectDacSettings, setSubjectDacSettings] = useState<ExaminerAppointmentLetterSubjectSettings | null>(null);
+  const [subjectDacDraft, setSubjectDacDraft] = useState<SubjectDacDraft | null>(null);
+  const [subjectDacLoading, setSubjectDacLoading] = useState(false);
+  const [subjectDacSaving, setSubjectDacSaving] = useState(false);
+  const [subjectDacSignatureBusy, setSubjectDacSignatureBusy] = useState(false);
+  const [subjectDacRefreshKey, setSubjectDacRefreshKey] = useState(0);
+  const [subjectDacError, setSubjectDacError] = useState<string | null>(null);
+  const [subjectDacMessage, setSubjectDacMessage] = useState<string | null>(null);
 
   const [data, setData] = useState<ExaminationExaminerAppointmentLetterReferencesResponse | null>(null);
   const [draft, setDraft] = useState<Record<string, DraftCell>>({});
   const [selectedSubjectId, setSelectedSubjectId] = useState<number | null>(null);
+  const defaultSubjectAppliedRef = useRef(false);
   const [refsLoading, setRefsLoading] = useState(true);
   const [refsSaving, setRefsSaving] = useState(false);
   const [previewBusyKey, setPreviewBusyKey] = useState<string | null>(null);
@@ -188,9 +292,15 @@ export function ExaminersAppointmentLettersPanel({ examId, exams, className }: P
     try {
       const row = await getExaminerPortalSettings(examId);
       setSettings(row);
+      setReleaseDraft({
+        enabled: row.appointment_letters_release_enabled,
+        mode: row.appointment_letters_release_mode,
+        releaseAt: isoToDatetimeLocal(row.appointment_letters_release_at),
+      });
     } catch (e) {
       setReleaseError(e instanceof Error ? e.message : "Could not load portal settings");
       setSettings(null);
+      setReleaseDraft(null);
     } finally {
       setReleaseLoading(false);
     }
@@ -209,6 +319,22 @@ export function ExaminersAppointmentLettersPanel({ examId, exams, className }: P
       setLetterDraft(null);
     } finally {
       setLetterLoading(false);
+    }
+  }, [examId]);
+
+  const loadSubjectDac = useCallback(async (subjectId: number) => {
+    setSubjectDacLoading(true);
+    setSubjectDacError(null);
+    try {
+      const row = await getExaminerAppointmentLetterSubjectSettings(examId, subjectId);
+      setSubjectDacSettings(row);
+      setSubjectDacDraft(subjectDacToDraft(row));
+    } catch (e) {
+      setSubjectDacError(e instanceof Error ? e.message : "Could not load subject DAC settings");
+      setSubjectDacSettings(null);
+      setSubjectDacDraft(null);
+    } finally {
+      setSubjectDacLoading(false);
     }
   }, [examId]);
 
@@ -239,21 +365,60 @@ export function ExaminersAppointmentLettersPanel({ examId, exams, className }: P
     void loadLetterSettings();
     void loadReferences();
     setCopySourceExamId("");
+    defaultSubjectAppliedRef.current = false;
   }, [loadRelease, loadLetterSettings, loadReferences]);
 
-  async function handleToggleRelease(enabled: boolean) {
+  useEffect(() => {
+    if (defaultSubjectAppliedRef.current || !defaultSubjectId || refsLoading) return;
+    if (timetableSubjects.some((s) => s.id === defaultSubjectId)) {
+      setSelectedSubjectId(defaultSubjectId);
+      defaultSubjectAppliedRef.current = true;
+    }
+  }, [defaultSubjectId, timetableSubjects, refsLoading]);
+
+  useEffect(() => {
+    if (selectedSubjectId == null) {
+      setSubjectDacSettings(null);
+      setSubjectDacDraft(null);
+      return;
+    }
+    void loadSubjectDac(selectedSubjectId);
+  }, [selectedSubjectId, loadSubjectDac]);
+
+  async function handleSaveRelease(overrides?: Partial<ReleaseDraft>) {
+    if (!releaseDraft) return;
+    const next: ReleaseDraft = { ...releaseDraft, ...overrides };
+    if (next.enabled && next.mode === "scheduled_date" && !next.releaseAt.trim()) {
+      setReleaseError("Set a release date and time when using scheduled release.");
+      return;
+    }
     setReleaseBusy(true);
     setReleaseError(null);
     setReleaseMessage(null);
     try {
-      const row = await putExaminerPortalSettings(examId, enabled);
+      const row = await putExaminerPortalSettings(examId, {
+        appointment_letters_release_enabled: next.enabled,
+        appointment_letters_release_mode: next.mode,
+        appointment_letters_release_at:
+          next.mode === "scheduled_date" ? datetimeLocalToIso(next.releaseAt) : null,
+      });
       setSettings(row);
-      setReleaseMessage(enabled ? "Appointment letter release enabled." : "Appointment letter release disabled.");
+      setReleaseDraft({
+        enabled: row.appointment_letters_release_enabled,
+        mode: row.appointment_letters_release_mode,
+        releaseAt: isoToDatetimeLocal(row.appointment_letters_release_at),
+      });
+      setReleaseMessage("Release settings saved.");
     } catch (e) {
       setReleaseError(e instanceof Error ? e.message : "Could not update settings");
     } finally {
       setReleaseBusy(false);
     }
+  }
+
+  async function handleToggleRelease(enabled: boolean) {
+    setReleaseDraft((prev) => (prev ? { ...prev, enabled } : prev));
+    await handleSaveRelease({ enabled });
   }
 
   async function handleNotify() {
@@ -291,8 +456,8 @@ export function ExaminersAppointmentLettersPanel({ examId, exams, className }: P
         signed_for_director_general: letterDraft.signedForDirectorGeneral,
         director_general_name: letterDraft.directorGeneralName.trim(),
         director_general_title: letterDraft.directorGeneralTitle.trim(),
-        director_assessment_name: letterDraft.directorAssessmentName.trim(),
-        director_assessment_title: letterDraft.directorAssessmentTitle.trim(),
+        director_assessment_name: letterSettings?.director_assessment_name ?? "",
+        director_assessment_title: letterSettings?.director_assessment_title ?? "",
         valediction: letterDraft.valediction.trim() || "Yours faithfully",
         letter_date: letterDraft.letterDate.trim(),
         cc_lines: ccLines,
@@ -321,8 +486,12 @@ export function ExaminersAppointmentLettersPanel({ examId, exams, className }: P
       const sourceLabel = copyExamOptions.find((o) => o.value === String(sourceId))?.label ?? "selected examination";
       await loadLetterSettings();
       setSignatureRefreshKey((k) => k + 1);
+      if (selectedSubjectId != null) {
+        await loadSubjectDac(selectedSubjectId);
+        setSubjectDacRefreshKey((k) => k + 1);
+      }
       setLetterMessage(
-        `Copied signatory setup from ${sourceLabel} (${result.cc_lines_copied} CC line(s), ${result.signatures_copied} signature(s)). Reference numbers and release settings were not changed.`,
+        `Copied signatory setup from ${sourceLabel} (${result.cc_lines_copied} CC line(s), ${result.signatures_copied} signature(s), ${result.subject_settings_copied} subject DAC override(s)). Reference numbers and release settings were not changed.`,
       );
     } catch (e) {
       setLetterError(e instanceof Error ? e.message : "Could not copy setup");
@@ -361,6 +530,60 @@ export function ExaminersAppointmentLettersPanel({ examId, exams, className }: P
       setLetterError(e instanceof Error ? e.message : "Could not remove signature");
     } finally {
       setSignatureBusyRole(null);
+    }
+  }
+
+  async function handleSaveSubjectDac() {
+    if (!subjectDacDraft || selectedSubjectId == null) return;
+    setSubjectDacSaving(true);
+    setSubjectDacError(null);
+    setSubjectDacMessage(null);
+    try {
+      const row = await putExaminerAppointmentLetterSubjectSettings(examId, selectedSubjectId, {
+        director_assessment_name: subjectDacDraft.directorAssessmentName.trim(),
+        director_assessment_title: subjectDacDraft.directorAssessmentTitle.trim(),
+      });
+      setSubjectDacSettings(row);
+      setSubjectDacDraft(subjectDacToDraft(row));
+      setSubjectDacMessage("Subject DAC settings saved.");
+    } catch (e) {
+      setSubjectDacError(e instanceof Error ? e.message : "Could not save subject DAC settings");
+    } finally {
+      setSubjectDacSaving(false);
+    }
+  }
+
+  async function handleSubjectDacSignatureUpload(file: File | null) {
+    if (!file || selectedSubjectId == null) return;
+    setSubjectDacSignatureBusy(true);
+    setSubjectDacError(null);
+    setSubjectDacMessage(null);
+    try {
+      const row = await uploadExaminerAppointmentLetterSubjectSignature(examId, selectedSubjectId, file);
+      setSubjectDacSettings(row);
+      setSubjectDacRefreshKey((k) => k + 1);
+      setSubjectDacMessage("Signature uploaded.");
+    } catch (e) {
+      setSubjectDacError(e instanceof Error ? e.message : "Could not upload signature");
+    } finally {
+      setSubjectDacSignatureBusy(false);
+    }
+  }
+
+  async function handleSubjectDacSignatureDelete() {
+    if (selectedSubjectId == null) return;
+    setSubjectDacSignatureBusy(true);
+    setSubjectDacError(null);
+    setSubjectDacMessage(null);
+    try {
+      const row = await deleteExaminerAppointmentLetterSubjectSignature(examId, selectedSubjectId);
+      setSubjectDacSettings(row);
+      setSubjectDacRefreshKey((k) => k + 1);
+      setSubjectDacMessage("Signature removed.");
+    } catch (e) {
+      setSubjectDacError(e instanceof Error ? e.message : "Could not remove signature");
+    } finally {
+      setSubjectDacSignatureBusy(false);
     }
   }
 
@@ -550,7 +773,7 @@ export function ExaminersAppointmentLettersPanel({ examId, exams, className }: P
               </div>
             ) : null}
 
-            <div className="grid gap-4 lg:grid-cols-2">
+            <div className="max-w-xl">
               <fieldset className="space-y-3 rounded-xl border border-border bg-muted/15 p-3">
                 <legend className="px-1 text-xs font-medium uppercase tracking-wide text-muted-foreground">
                   Director General
@@ -611,73 +834,6 @@ export function ExaminersAppointmentLettersPanel({ examId, exams, className }: P
                       className="mt-1 h-7 px-2 text-xs text-destructive"
                       disabled={signatureBusyRole === "director_general"}
                       onClick={() => void handleSignatureDelete("director_general")}
-                    >
-                      Remove signature
-                    </Button>
-                  ) : null}
-                </div>
-              </fieldset>
-
-              <fieldset className="space-y-3 rounded-xl border border-border bg-muted/15 p-3">
-                <legend className="px-1 text-xs font-medium uppercase tracking-wide text-muted-foreground">
-                  Director of Assessment and Certification
-                </legend>
-                <div>
-                  <label className={formLabelClass} htmlFor="appt-letter-dac-name">
-                    Name
-                  </label>
-                  <input
-                    id="appt-letter-dac-name"
-                    type="text"
-                    className={cn(formInputClass, "mt-1")}
-                    value={letterDraft.directorAssessmentName}
-                    onChange={(e) =>
-                      setLetterDraft((prev) => (prev ? { ...prev, directorAssessmentName: e.target.value } : prev))
-                    }
-                  />
-                </div>
-                <div>
-                  <label className={formLabelClass} htmlFor="appt-letter-dac-title">
-                    Title
-                  </label>
-                  <input
-                    id="appt-letter-dac-title"
-                    type="text"
-                    className={cn(formInputClass, "mt-1")}
-                    value={letterDraft.directorAssessmentTitle}
-                    onChange={(e) =>
-                      setLetterDraft((prev) => (prev ? { ...prev, directorAssessmentTitle: e.target.value } : prev))
-                    }
-                  />
-                </div>
-                <div>
-                  <label className={formLabelClass}>Signature</label>
-                  <input
-                    ref={dacFileRef}
-                    type="file"
-                    accept="image/png,image/jpeg,image/webp,image/gif"
-                    className="mt-1 block w-full text-xs file:mr-2 file:rounded-md file:border-0 file:bg-primary file:px-2 file:py-1 file:text-xs file:text-primary-foreground"
-                    disabled={signatureBusyRole === "director_assessment_certification"}
-                    onChange={(e) => {
-                      const file = e.target.files?.[0] ?? null;
-                      void handleSignatureUpload("director_assessment_certification", file);
-                      e.target.value = "";
-                    }}
-                  />
-                  <SignaturePreview
-                    examId={examId}
-                    role="director_assessment_certification"
-                    hasSignature={letterSettings?.director_assessment_signature.has_signature ?? false}
-                    refreshKey={signatureRefreshKey}
-                  />
-                  {letterSettings?.director_assessment_signature.has_signature ? (
-                    <Button
-                      type="button"
-                      variant="ghost"
-                      size="sm"
-                      className="mt-1 h-7 px-2 text-xs text-destructive"
-                      disabled={signatureBusyRole === "director_assessment_certification"}
-                      onClick={() => void handleSignatureDelete("director_assessment_certification")}
                     >
                       Remove signature
                     </Button>
@@ -752,6 +908,147 @@ export function ExaminersAppointmentLettersPanel({ examId, exams, className }: P
             </div>
           </div>
         ) : null}
+      </section>
+
+      <section className="rounded-2xl border border-border bg-card p-4 shadow-sm sm:p-5">
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div className="min-w-0">
+            <h2 className="text-sm font-semibold text-foreground">Director of Assessment and Certification (per subject)</h2>
+            <p className="mt-1 max-w-3xl text-sm leading-relaxed text-muted-foreground">
+              Override the DAC signatory for a specific subject. Leave name and title blank to use the examination-wide
+              defaults. Signature overrides apply only when DAC signs the letter.
+            </p>
+          </div>
+          <Button
+            type="button"
+            size="sm"
+            disabled={subjectDacLoading || subjectDacSaving || subjectDacDraft == null || selectedSubject == null}
+            onClick={() => void handleSaveSubjectDac()}
+          >
+            {subjectDacSaving ? "Saving…" : "Save DAC"}
+          </Button>
+        </div>
+
+        {subjectDacError ? (
+          <p className="mt-3 rounded-lg border border-destructive/40 bg-destructive/10 px-3 py-2 text-sm text-destructive">
+            {subjectDacError}
+          </p>
+        ) : null}
+        {subjectDacMessage ? (
+          <p className="mt-3 rounded-lg border border-emerald-500/30 bg-emerald-500/10 px-3 py-2 text-sm text-foreground">
+            {subjectDacMessage}
+          </p>
+        ) : null}
+
+        {refsLoading ? (
+          <div className="mt-4 flex items-center gap-2 text-sm text-muted-foreground">
+            <Loader2 className="size-4 animate-spin" aria-hidden />
+            Loading subjects…
+          </div>
+        ) : timetableSubjects.length === 0 ? (
+          <p className="mt-4 text-sm text-muted-foreground">No subjects on the examination timetable yet.</p>
+        ) : (
+          <div className="mt-4 space-y-4">
+            <SubjectScopePicker
+              subjects={timetableSubjects}
+              selectedSubjectId={selectedSubjectId}
+              onSelectedSubjectIdChange={setSelectedSubjectId}
+              subjectComboboxId="appt-letter-dac-subject"
+              resetKey={examId}
+              disabled={subjectDacLoading || subjectDacSaving}
+            />
+            {selectedSubject == null ? (
+              <p className="text-sm text-muted-foreground">Select a subject to configure DAC signatory details.</p>
+            ) : subjectDacLoading ? (
+              <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                <Loader2 className="size-4 animate-spin" aria-hidden />
+                Loading DAC settings…
+              </div>
+            ) : subjectDacDraft && subjectDacSettings ? (
+              <div className="max-w-xl space-y-3 rounded-xl border border-border bg-muted/15 p-3">
+                <p className="text-sm font-medium text-foreground">{subjectDisplayLabel(selectedSubject)}</p>
+                {(subjectDacSettings.uses_exam_default_name ||
+                  subjectDacSettings.uses_exam_default_title ||
+                  subjectDacSettings.uses_exam_default_signature) && (
+                  <p className="text-xs text-muted-foreground">
+                    Blank fields inherit examination defaults
+                    {letterSettings
+                      ? ` (${letterSettings.director_assessment_name}, ${letterSettings.director_assessment_title})`
+                      : ""}
+                    .
+                  </p>
+                )}
+                <div>
+                  <label className={formLabelClass} htmlFor="appt-subject-dac-name">
+                    Name
+                  </label>
+                  <input
+                    id="appt-subject-dac-name"
+                    type="text"
+                    className={cn(formInputClass, "mt-1")}
+                    placeholder={letterSettings?.director_assessment_name ?? "Examination default"}
+                    value={subjectDacDraft.directorAssessmentName}
+                    onChange={(e) =>
+                      setSubjectDacDraft((prev) =>
+                        prev ? { ...prev, directorAssessmentName: e.target.value } : prev,
+                      )
+                    }
+                  />
+                </div>
+                <div>
+                  <label className={formLabelClass} htmlFor="appt-subject-dac-title">
+                    Title
+                  </label>
+                  <input
+                    id="appt-subject-dac-title"
+                    type="text"
+                    className={cn(formInputClass, "mt-1")}
+                    placeholder={letterSettings?.director_assessment_title ?? "Examination default"}
+                    value={subjectDacDraft.directorAssessmentTitle}
+                    onChange={(e) =>
+                      setSubjectDacDraft((prev) =>
+                        prev ? { ...prev, directorAssessmentTitle: e.target.value } : prev,
+                      )
+                    }
+                  />
+                </div>
+                <div>
+                  <label className={formLabelClass}>Signature</label>
+                  <input
+                    ref={subjectDacFileRef}
+                    type="file"
+                    accept="image/png,image/jpeg,image/webp,image/gif"
+                    className="mt-1 block w-full text-xs file:mr-2 file:rounded-md file:border-0 file:bg-primary file:px-2 file:py-1 file:text-xs file:text-primary-foreground"
+                    disabled={subjectDacSignatureBusy}
+                    onChange={(e) => {
+                      const file = e.target.files?.[0] ?? null;
+                      void handleSubjectDacSignatureUpload(file);
+                      e.target.value = "";
+                    }}
+                  />
+                  <SubjectDacSignaturePreview
+                    examId={examId}
+                    subjectId={selectedSubject.id}
+                    hasSignature={subjectDacSettings.director_assessment_signature.has_signature}
+                    refreshKey={subjectDacRefreshKey}
+                  />
+                  {subjectDacSettings.director_assessment_signature.has_signature ? (
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="sm"
+                      className="mt-1 h-7 px-2 text-xs text-destructive"
+                      disabled={subjectDacSignatureBusy}
+                      onClick={() => void handleSubjectDacSignatureDelete()}
+                    >
+                      Remove signature
+                    </Button>
+                  ) : null}
+                </div>
+              </div>
+            ) : null}
+          </div>
+        )}
       </section>
 
       <section className="rounded-2xl border border-border bg-card p-4 shadow-sm sm:p-5">
@@ -902,8 +1199,7 @@ export function ExaminersAppointmentLettersPanel({ examId, exams, className }: P
           <div className="min-w-0">
             <h2 className="text-sm font-semibold text-foreground">Release and notify</h2>
             <p className="mt-1 text-xs leading-relaxed text-muted-foreground">
-              Examiners can upload bank details and download appointment letters after their coordination period
-              ends, once release is enabled.
+              Control when rostered examiners can download appointment letters and submit bank details on their portal.
             </p>
             {settings ? (
               <dl className="mt-3 grid grid-cols-2 gap-x-4 gap-y-1 text-xs text-muted-foreground sm:grid-cols-4">
@@ -912,8 +1208,8 @@ export function ExaminersAppointmentLettersPanel({ examId, exams, className }: P
                   <dd>{settings.rostered_examiner_count}</dd>
                 </div>
                 <div>
-                  <dt className="font-medium text-foreground">With coordination end</dt>
-                  <dd>{settings.with_coordination_end_count}</dd>
+                  <dt className="font-medium text-foreground">Pending release</dt>
+                  <dd>{settings.pending_release_count}</dd>
                 </div>
                 <div>
                   <dt className="font-medium text-foreground">Eligible now</dt>
@@ -927,16 +1223,6 @@ export function ExaminersAppointmentLettersPanel({ examId, exams, className }: P
             ) : null}
           </div>
           <div className="flex shrink-0 flex-wrap items-center gap-2">
-            <label className="flex items-center gap-2 text-sm">
-              <input
-                type="checkbox"
-                className="size-4 rounded border-border"
-                checked={settings?.appointment_letters_release_enabled ?? false}
-                disabled={releaseLoading || releaseBusy || settings == null}
-                onChange={(e) => void handleToggleRelease(e.target.checked)}
-              />
-              Enable release
-            </label>
             <Button
               type="button"
               variant="outline"
@@ -948,6 +1234,82 @@ export function ExaminersAppointmentLettersPanel({ examId, exams, className }: P
             </Button>
           </div>
         </div>
+
+        {releaseDraft ? (
+          <div className="mt-4 space-y-4">
+            <label className="flex items-center gap-2 text-sm">
+              <input
+                type="checkbox"
+                className="size-4 rounded border-border"
+                checked={releaseDraft.enabled}
+                disabled={releaseLoading || releaseBusy}
+                onChange={(e) => {
+                  const enabled = e.target.checked;
+                  setReleaseDraft((prev) => (prev ? { ...prev, enabled } : prev));
+                  void handleToggleRelease(enabled);
+                }}
+              />
+              Enable release
+            </label>
+
+            <div className="space-y-2">
+              <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">When letters become available</p>
+              <div className="flex flex-col gap-2 sm:flex-row sm:gap-6">
+                <label className="flex items-center gap-2 text-sm">
+                  <input
+                    type="radio"
+                    name="release-mode"
+                    checked={releaseDraft.mode === "on_acceptance"}
+                    disabled={releaseLoading || releaseBusy}
+                    onChange={() =>
+                      setReleaseDraft((prev) => (prev ? { ...prev, mode: "on_acceptance" } : prev))
+                    }
+                  />
+                  When examiner confirms availability
+                </label>
+                <label className="flex items-center gap-2 text-sm">
+                  <input
+                    type="radio"
+                    name="release-mode"
+                    checked={releaseDraft.mode === "scheduled_date"}
+                    disabled={releaseLoading || releaseBusy}
+                    onChange={() =>
+                      setReleaseDraft((prev) => (prev ? { ...prev, mode: "scheduled_date" } : prev))
+                    }
+                  />
+                  On a fixed date
+                </label>
+              </div>
+            </div>
+
+            {releaseDraft.mode === "scheduled_date" ? (
+              <div className="max-w-xs">
+                <label className={formLabelClass} htmlFor="appt-release-at">
+                  Release date and time (UTC)
+                </label>
+                <input
+                  id="appt-release-at"
+                  type="datetime-local"
+                  className={cn(formInputClass, "mt-1")}
+                  value={releaseDraft.releaseAt}
+                  disabled={releaseLoading || releaseBusy}
+                  onChange={(e) =>
+                    setReleaseDraft((prev) => (prev ? { ...prev, releaseAt: e.target.value } : prev))
+                  }
+                />
+              </div>
+            ) : null}
+
+            <Button
+              type="button"
+              size="sm"
+              disabled={releaseLoading || releaseBusy || releaseDraft == null}
+              onClick={() => void handleSaveRelease()}
+            >
+              {releaseBusy ? "Saving…" : "Save release settings"}
+            </Button>
+          </div>
+        ) : null}
         {releaseLoading ? <p className="mt-2 text-xs text-muted-foreground">Loading…</p> : null}
         {releaseError ? (
           <p className="mt-2 rounded-lg border border-destructive/40 bg-destructive/10 px-3 py-2 text-xs text-destructive">

@@ -2631,9 +2631,21 @@ class ExaminationExaminerPortalSettings(Base):
 
     examination_id = Column(Integer, ForeignKey("examinations.id", ondelete="CASCADE"), primary_key=True)
     appointment_letters_release_enabled = Column(Boolean, nullable=False, default=False, server_default=text("false"))
+    appointment_letters_release_mode = Column(
+        String(32),
+        nullable=False,
+        default="scheduled_date",
+        server_default="scheduled_date",
+    )
+    appointment_letters_release_at = Column(DateTime, nullable=True)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
 
     examination = relationship("Examination", backref="examiner_portal_settings")
+
+
+class AppointmentLettersReleaseMode(enum.Enum):
+    ON_ACCEPTANCE = "on_acceptance"
+    SCHEDULED_DATE = "scheduled_date"
 
 
 class AppointmentLetterSigningOfficial(enum.Enum):
@@ -2671,6 +2683,30 @@ class ExaminationExaminerAppointmentLetterSettings(Base):
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
 
     examination = relationship("Examination", backref="examiner_appointment_letter_settings")
+
+
+class ExaminationExaminerAppointmentLetterSubjectSettings(Base):
+    """Per examination + subject: DAC signatory overrides for appointment letters."""
+
+    __tablename__ = "examination_examiner_appointment_letter_subject_settings"
+
+    examination_id = Column(Integer, ForeignKey("examinations.id", ondelete="CASCADE"), primary_key=True)
+    subject_id = Column(Integer, ForeignKey("subjects.id", ondelete="RESTRICT"), primary_key=True)
+    director_assessment_name = Column(String(255), nullable=True)
+    director_assessment_title = Column(String(255), nullable=True)
+    director_assessment_signature_path = Column(String(512), nullable=True)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+
+    examination = relationship("Examination", backref="examiner_appointment_letter_subject_settings")
+    subject = relationship("Subject")
+
+    __table_args__ = (
+        UniqueConstraint(
+            "examination_id",
+            "subject_id",
+            name="uq_exam_examiner_appt_letter_subject_settings",
+        ),
+    )
 
 
 class ExaminationInspectorSubmissionSettings(Base):

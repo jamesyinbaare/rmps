@@ -7,17 +7,22 @@ from datetime import date, datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models import (
     AppointmentLetterSigningOfficial,
     ExaminationExaminerAppointmentLetterSettings,
+    ExaminationExaminerAppointmentLetterSubjectSettings,
 )
 from app.schemas.examiner_appointment_letter_settings import (
     AppointmentLetterSignatureMeta,
     AppointmentLetterSignatureRoleApi,
     AppointmentLetterSigningOfficialApi,
     ExaminerAppointmentLetterSettingsResponse,
+)
+from app.schemas.examiner_appointment_letter_subject_settings import (
+    ExaminerAppointmentLetterSubjectSettingsResponse,
 )
 from app.services.exam_documents import (
     ExamDocumentUploadError,
@@ -198,8 +203,172 @@ def _signature_data_uri(stored_path: str) -> str | None:
     return f"data:{content_type};base64,{encoded}"
 
 
+def _resolved_dac_signature_path(
+    exam_row: ExaminationExaminerAppointmentLetterSettings | None,
+    subject_row: ExaminationExaminerAppointmentLetterSubjectSettings | None,
+) -> str | None:
+    if subject_row is not None and _trim(subject_row.director_assessment_signature_path):
+        return _trim(subject_row.director_assessment_signature_path)
+    if exam_row is not None and _trim(exam_row.director_assessment_signature_path):
+        return _trim(exam_row.director_assessment_signature_path)
+    return None
+
+
+def resolve_dac_for_subject(
+    exam_row: ExaminationExaminerAppointmentLetterSettings | None,
+    subject_row: ExaminationExaminerAppointmentLetterSubjectSettings | None,
+) -> tuple[str, str, str | None, bool, bool, bool]:
+    """Return merged DAC name, title, signature path, and whether each field uses exam default."""
+    uses_default_name = subject_row is None or not _trim(subject_row.director_assessment_name)
+    uses_default_title = subject_row is None or not _trim(subject_row.director_assessment_title)
+    uses_default_signature = subject_row is None or not _trim(subject_row.director_assessment_signature_path)
+
+    if uses_default_name:
+        name = _resolved_dac_name(exam_row)
+    else:
+        name = _trim(subject_row.director_assessment_name)
+
+    if uses_default_title:
+        title = _resolved_dac_title(exam_row)
+    else:
+        title = _trim(subject_row.director_assessment_title) or DEFAULT_DIRECTOR_ASSESSMENT_TITLE
+
+    signature_path = _resolved_dac_signature_path(exam_row, subject_row)
+    return name, title, signature_path, uses_default_name, uses_default_title, uses_default_signature
+
+
+async def get_subject_settings_row(
+    session: AsyncSession,
+    examination_id: int,
+    subject_id: int,
+) -> ExaminationExaminerAppointmentLetterSubjectSettings | None:
+    return await session.get(
+        ExaminationExaminerAppointmentLetterSubjectSettings,
+        (examination_id, subject_id),
+    )
+
+
+async def get_or_create_subject_settings(
+    session: AsyncSession,
+    examination_id: int,
+    subject_id: int,
+) -> ExaminationExaminerAppointmentLetterSubjectSettings:
+    row = await get_subject_settings_row(session, examination_id, subject_id)
+    if row is not None:
+        return row
+    row = ExaminationExaminerAppointmentLetterSubjectSettings(
+        examination_id=examination_id,
+        subject_id=subject_id,
+        updated_at=datetime.utcnow(),
+    )
+    session.add(row)
+    await session.flush()
+    return row
+
+
+def subject_settings_to_response(
+    examination_id: int,
+    subject_id: int,
+    exam_row: ExaminationExaminerAppointmentLetterSettings | None,
+    subject_row: ExaminationExaminerAppointmentLetterSubjectSettings | None,
+) -> ExaminerAppointmentLetterSubjectSettingsResponse:
+    name, title, signature_path, uses_name, uses_title, uses_sig = resolve_dac_for_subject(
+        exam_row,
+        subject_row,
+    )
+    return ExaminerAppointmentLetterSubjectSettingsResponse(
+        examination_id=examination_id,
+        subject_id=subject_id,
+        director_assessment_name=name,
+        director_assessment_title=title,
+        director_assessment_signature=_signature_meta(signature_path),
+        uses_exam_default_name=uses_name,
+        uses_exam_default_title=uses_title,
+        uses_exam_default_signature=uses_sig,
+        updated_at=subject_row.updated_at if subject_row is not None else None,
+    )
+
+
+async def list_subject_settings_rows(
+    session: AsyncSession,
+    examination_id: int,
+) -> list[ExaminationExaminerAppointmentLetterSubjectSettings]:
+    stmt = select(ExaminationExaminerAppointmentLetterSubjectSettings).where(
+        ExaminationExaminerAppointmentLetterSubjectSettings.examination_id == examination_id,
+    )
+    return list((await session.execute(stmt)).scalars().all())
+
+
+async def store_subject_signature(
+    row: ExaminationExaminerAppointmentLetterSubjectSettings,
+    *,
+    content: bytes,
+    filename: str,
+) -> None:
+    ext = validate_signature_upload(content, filename)
+    old_path = row.director_assessment_signature_path
+    stored_path = write_stored_file(content, ext)
+    row.director_assessment_signature_path = stored_path
+    if old_path and old_path != stored_path:
+        _delete_signature_path(old_path)
+    row.updated_at = datetime.utcnow()
+
+
+async def delete_subject_signature(
+    row: ExaminationExaminerAppointmentLetterSubjectSettings,
+) -> None:
+    old_path = row.director_assessment_signature_path
+    row.director_assessment_signature_path = None
+    _delete_signature_path(old_path)
+    row.updated_at = datetime.utcnow()
+
+
+def read_subject_signature_bytes(
+    row: ExaminationExaminerAppointmentLetterSubjectSettings | None,
+) -> tuple[bytes, str] | None:
+    if row is None or not row.director_assessment_signature_path:
+        return None
+    try:
+        raw = read_stored_bytes(row.director_assessment_signature_path)
+    except FileNotFoundError:
+        return None
+    ext = Path(row.director_assessment_signature_path).suffix.lower()
+    content_type = _SIGNATURE_CONTENT_TYPES.get(ext, "application/octet-stream")
+    return raw, content_type
+
+
+async def copy_subject_settings_from_examination(
+    session: AsyncSession,
+    *,
+    target_examination_id: int,
+    source_examination_id: int,
+) -> tuple[int, int]:
+    source_rows = await list_subject_settings_rows(session, source_examination_id)
+    subjects_copied = 0
+    signatures_copied = 0
+
+    for source in source_rows:
+        target = await get_or_create_subject_settings(session, target_examination_id, int(source.subject_id))
+        target.director_assessment_name = source.director_assessment_name
+        target.director_assessment_title = source.director_assessment_title
+
+        old_target_path = target.director_assessment_signature_path
+        _delete_signature_path(old_target_path)
+        cloned = _clone_signature_path(source.director_assessment_signature_path)
+        target.director_assessment_signature_path = cloned
+        if cloned:
+            signatures_copied += 1
+
+        target.updated_at = datetime.utcnow()
+        subjects_copied += 1
+
+    await session.flush()
+    return subjects_copied, signatures_copied
+
+
 def resolve_signatory_context(
     row: ExaminationExaminerAppointmentLetterSettings | None,
+    subject_row: ExaminationExaminerAppointmentLetterSubjectSettings | None = None,
 ) -> dict[str, Any]:
     official = _signing_official(row)
     signed_for_dg = _signed_for_dg(row)
@@ -210,9 +379,7 @@ def resolve_signatory_context(
         signature_path = row.director_general_signature_path if row is not None else None
         signed_for_dg = False
     else:
-        signatory_name = _resolved_dac_name(row)
-        signatory_title = _resolved_dac_title(row)
-        signature_path = row.director_assessment_signature_path if row is not None else None
+        signatory_name, signatory_title, signature_path, _, _, _ = resolve_dac_for_subject(row, subject_row)
 
     signatory_signature_src: str | None = None
     if signature_path:
@@ -317,7 +484,7 @@ async def copy_settings_from_examination(
     *,
     target_examination_id: int,
     source_examination_id: int,
-) -> tuple[ExaminationExaminerAppointmentLetterSettings, int, int]:
+) -> tuple[ExaminationExaminerAppointmentLetterSettings, int, int, int]:
     source = await get_settings_row(session, source_examination_id)
     target = await get_or_create_settings(session, target_examination_id)
 
@@ -343,5 +510,10 @@ async def copy_settings_from_examination(
 
     target.updated_at = datetime.utcnow()
     await session.flush()
+    subjects_copied, subject_signatures_copied = await copy_subject_settings_from_examination(
+        session,
+        target_examination_id=target_examination_id,
+        source_examination_id=source_examination_id,
+    )
     cc_count = len(_resolved_cc_lines(target.cc_lines))
-    return target, cc_count, signatures_copied
+    return target, cc_count, signatures_copied + subject_signatures_copied, subjects_copied

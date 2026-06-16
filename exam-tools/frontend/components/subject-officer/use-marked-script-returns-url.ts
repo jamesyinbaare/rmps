@@ -4,64 +4,34 @@ import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { useCallback, useEffect, useRef, useState } from "react";
 
 type SessionState = {
-  examId: number | null;
-  subjectId: number | null;
   examinerId: string | null;
   paperNumber: number | null;
 };
 
-type Options = {
-  examIds: number[];
-};
-
 function buildSessionQuery(session: SessionState): string {
   const p = new URLSearchParams();
-  if (session.examId != null) p.set("exam", String(session.examId));
-  if (session.subjectId != null) p.set("subject", String(session.subjectId));
   if (session.examinerId) p.set("examiner", session.examinerId);
   if (session.paperNumber != null) p.set("paper", String(session.paperNumber));
   return p.toString();
 }
 
-function parseSessionFromUrl(examIds: number[], searchParams: URLSearchParams): SessionState {
-  const rawExam = searchParams.get("exam");
-  const rawSubject = searchParams.get("subject");
-  const rawExaminer = searchParams.get("examiner");
-  const rawPaper = searchParams.get("paper");
-
-  let examId: number | null = null;
-  if (rawExam) {
-    const parsed = Number.parseInt(rawExam, 10);
-    if (!Number.isNaN(parsed) && examIds.includes(parsed)) examId = parsed;
-  }
-  let subjectId: number | null = null;
-  if (rawSubject) {
-    const parsed = Number.parseInt(rawSubject, 10);
-    if (!Number.isNaN(parsed)) subjectId = parsed;
-  }
-
-  const examinerId = rawExaminer?.trim() || null;
-
+function parseSessionFromUrl(searchParams: URLSearchParams): SessionState {
+  const examinerId = searchParams.get("examiner")?.trim() || null;
   let paperNumber: number | null = null;
+  const rawPaper = searchParams.get("paper");
   if (rawPaper) {
     const parsed = Number.parseInt(rawPaper, 10);
     if (!Number.isNaN(parsed) && parsed >= 1) paperNumber = parsed;
   }
-
-  return { examId, subjectId, examinerId, paperNumber };
+  return { examinerId, paperNumber };
 }
 
-export function useMarkedScriptReturnsUrl({ examIds }: Options) {
+export function useMarkedScriptReturnsUrl() {
   const router = useRouter();
   const pathname = usePathname();
   const searchParams = useSearchParams();
   const hydratedRef = useRef(false);
-  const sessionRef = useRef<SessionState>({
-    examId: null,
-    subjectId: null,
-    examinerId: null,
-    paperNumber: null,
-  });
+  const sessionRef = useRef<SessionState>({ examinerId: null, paperNumber: null });
 
   const [session, setSessionState] = useState<SessionState>(sessionRef.current);
 
@@ -75,14 +45,12 @@ export function useMarkedScriptReturnsUrl({ examIds }: Options) {
   );
 
   useEffect(() => {
-    if (examIds.length === 0) return;
-
-    const parsed = parseSessionFromUrl(examIds, searchParams);
+    const parsed = parseSessionFromUrl(searchParams);
     sessionRef.current = parsed;
     setSessionState(parsed);
     hydratedRef.current = true;
     replaceUrlForSession(parsed);
-  }, [examIds, replaceUrlForSession, searchParams]);
+  }, [replaceUrlForSession, searchParams]);
 
   const setSession = useCallback(
     (next: Partial<SessionState>) => {
@@ -94,5 +62,5 @@ export function useMarkedScriptReturnsUrl({ examIds }: Options) {
     [replaceUrlForSession],
   );
 
-  return { session, setSession, ready: hydratedRef.current || examIds.length > 0 };
+  return { session, setSession, ready: hydratedRef.current };
 }

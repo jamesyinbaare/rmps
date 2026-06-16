@@ -26,6 +26,7 @@ import {
   EXAMINERS_TABLE_SCROLL_CONTAINER_CLASS,
 } from "@/components/examiners/constants";
 import { InvitationRowActionsMenu } from "@/components/examiner-invitations/invitation-row-actions-menu";
+import { PhoneLink } from "@/components/examiners/phone-link";
 import { InvitationStatusBadge } from "@/components/examiner-invitations/invitation-status-badge";
 import type { ResendUiState } from "@/components/examiner-invitations/types";
 import { formatCoordinationRange, formatDateTime, humanizeRegion } from "@/components/examiner-invitations/utils";
@@ -129,7 +130,9 @@ export function InvitationsTable({
       {
         accessorKey: "phone_number",
         header: "Phone",
-        cell: ({ getValue }) => <span className="font-mono text-xs">{getValue<string>()}</span>,
+        cell: ({ getValue }) => (
+          <PhoneLink phone={getValue<string>()} className="font-mono text-xs text-primary hover:underline" />
+        ),
       },
       {
         id: "subject",

@@ -56,3 +56,4 @@ class ExaminerAppointmentLetterSettingsCopyFromResponse(BaseModel):
     source_examination_id: int
     cc_lines_copied: int
     signatures_copied: int
+    subject_settings_copied: int = 0

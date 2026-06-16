@@ -1,4 +1,4 @@
-"""Appointment letter and bank upload release after coordination ends."""
+"""Appointment letter and bank upload release policy."""
 
 from __future__ import annotations
 
@@ -9,10 +9,12 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from app.models import Examiner, ExaminerInvitation, ExaminationExaminerPortalSettings
-from app.services.coordination_schedule import coordination_end_at
+from app.models import (
+    AppointmentLettersReleaseMode,
+    Examiner,
+    ExaminationExaminerPortalSettings,
+)
 from app.services.examiner_invitation import invitation_public_url
-from app.services.subject_marking_group import get_examiner_marking_groups
 
 
 async def get_or_create_portal_settings(
@@ -25,6 +27,8 @@ async def get_or_create_portal_settings(
     row = ExaminationExaminerPortalSettings(
         examination_id=examination_id,
         appointment_letters_release_enabled=False,
+        appointment_letters_release_mode=AppointmentLettersReleaseMode.SCHEDULED_DATE.value,
+        appointment_letters_release_at=None,
         updated_at=datetime.utcnow(),
     )
     session.add(row)
@@ -32,94 +36,82 @@ async def get_or_create_portal_settings(
     return row
 
 
+def _release_mode(row: ExaminationExaminerPortalSettings) -> AppointmentLettersReleaseMode:
+    raw = row.appointment_letters_release_mode
+    if isinstance(raw, AppointmentLettersReleaseMode):
+        return raw
+    try:
+        return AppointmentLettersReleaseMode(str(raw))
+    except ValueError:
+        return AppointmentLettersReleaseMode.SCHEDULED_DATE
+
+
 async def is_release_enabled(session: AsyncSession, examination_id: int) -> bool:
     row = await get_or_create_portal_settings(session, examination_id)
     return bool(row.appointment_letters_release_enabled)
-
-
-def _max_end_at(candidates: list[datetime | None]) -> datetime | None:
-    vals = [c for c in candidates if c is not None]
-    return max(vals) if vals else None
-
-
-async def resolve_coordination_end_at(session: AsyncSession, examiner: Examiner) -> datetime | None:
-    subject_id = examiner.subjects[0].subject_id if examiner.subjects else None
-    ends: list[datetime | None] = []
-
-    if subject_id is not None:
-        groups = await get_examiner_marking_groups(
-            session,
-            examination_id=int(examiner.examination_id),
-            subject_id=int(subject_id),
-            examiner_id=examiner.id,
-        )
-        for group in groups:
-            if group.get("is_default"):
-                continue
-            ends.append(
-                coordination_end_at(
-                    group.get("coordination_end_date"),
-                    group.get("coordination_end_time"),
-                )
-            )
-        if not ends:
-            for group in groups:
-                ends.append(
-                    coordination_end_at(
-                        group.get("coordination_end_date"),
-                        group.get("coordination_end_time"),
-                    )
-                )
-
-    stmt = select(ExaminerInvitation).where(ExaminerInvitation.examiner_id == examiner.id)
-    inv = (await session.execute(stmt)).scalar_one_or_none()
-    if inv is not None:
-        ends.append(
-            coordination_end_at(
-                inv.coordination_end_date,
-                inv.coordination_end_time,
-            )
-        )
-
-    return _max_end_at(ends)
 
 
 async def is_appointment_letter_available(
     session: AsyncSession,
     examiner: Examiner,
 ) -> bool:
-    if not await is_release_enabled(session, int(examiner.examination_id)):
+    row = await get_or_create_portal_settings(session, int(examiner.examination_id))
+    if not row.appointment_letters_release_enabled:
         return False
-    end_at = await resolve_coordination_end_at(session, examiner)
-    if end_at is None:
+
+    mode = _release_mode(row)
+    if mode == AppointmentLettersReleaseMode.ON_ACCEPTANCE:
+        return True
+
+    release_at = row.appointment_letters_release_at
+    if release_at is None:
         return False
-    return datetime.utcnow() >= end_at
+    return datetime.utcnow() >= release_at
 
 
-def appointment_letter_pending_message(end_at: datetime | None, *, release_enabled: bool) -> str | None:
+def appointment_letter_pending_message(
+    *,
+    release_enabled: bool,
+    release_mode: AppointmentLettersReleaseMode,
+    release_at: datetime | None,
+    examiner_accepted: bool,
+) -> str | None:
     if not release_enabled:
         return (
-            "Your appointment letter and bank details will be available after your coordination "
-            "period ends, once released by the examination office."
+            "Your appointment letter and bank details will be available once released "
+            "by the examination office."
         )
-    if end_at is None:
+
+    if release_mode == AppointmentLettersReleaseMode.ON_ACCEPTANCE:
+        if not examiner_accepted:
+            return (
+                "Confirm your availability first. Your appointment letter and bank details "
+                "will be available on your profile after you accept."
+            )
+        return None
+
+    if release_at is None:
         return (
-            "Your appointment letter will be available after your coordination period ends, "
-            "once it is scheduled."
+            "Your appointment letter and bank details will be available once the examination "
+            "office sets a release date."
         )
-    if datetime.utcnow() >= end_at:
+    if datetime.utcnow() >= release_at:
         return None
     return (
-        f"Your appointment letter and bank details will be available after your coordination "
-        f"ends ({end_at.strftime('%d %b %Y')}). You will receive an SMS when they are ready."
+        f"Your appointment letter and bank details will be available on "
+        f"{release_at.strftime('%d %b %Y at %H:%M')} UTC. You will receive an SMS when they are ready."
     )
 
 
 async def assert_may_access_letter_and_bank(session: AsyncSession, examiner: Examiner) -> None:
     if not await is_appointment_letter_available(session, examiner):
-        end_at = await resolve_coordination_end_at(session, examiner)
-        enabled = await is_release_enabled(session, int(examiner.examination_id))
-        msg = appointment_letter_pending_message(end_at, release_enabled=enabled)
+        row = await get_or_create_portal_settings(session, int(examiner.examination_id))
+        msg = appointment_letter_pending_message(
+            release_enabled=bool(row.appointment_letters_release_enabled),
+            release_mode=_release_mode(row),
+            release_at=row.appointment_letters_release_at,
+            examiner_accepted=True,
+        )
         raise ValueError(msg or "Appointment letter is not yet available.")
 
 

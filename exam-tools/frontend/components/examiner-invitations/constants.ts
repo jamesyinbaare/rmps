@@ -54,7 +54,7 @@ export const COLUMN_TOGGLE_OPTIONS = [
   { id: "region", label: "Region", defaultVisible: true },
   { id: "status", label: "Status", defaultVisible: true },
   { id: "response_deadline", label: "Respond by", defaultVisible: false },
-  { id: "coordination_date", label: "Coordination", defaultVisible: false },
+  { id: "coordination", label: "Coordination", defaultVisible: false },
   { id: "sms", label: "SMS", defaultVisible: true },
 ] as const;
 

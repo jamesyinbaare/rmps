@@ -7,7 +7,11 @@ from unittest.mock import AsyncMock
 
 import pytest
 
-from app.models import AppointmentLetterSigningOfficial, ExaminationExaminerAppointmentLetterSettings
+from app.models import (
+    AppointmentLetterSigningOfficial,
+    ExaminationExaminerAppointmentLetterSettings,
+    ExaminationExaminerAppointmentLetterSubjectSettings,
+)
 from app.services.examiner_appointment_letter_pdf import (
     DEFAULT_COORDINATION_VENUE,
     DUMMY_APPOINTMENT_LETTEE_NAME,
@@ -20,6 +24,7 @@ from app.services.examiner_appointment_letter_settings import (
     DEFAULT_VALEDICTION,
     copy_settings_from_examination,
     require_letter_date_for_pdf,
+    resolve_dac_for_subject,
     resolve_letter_date,
     resolve_signatory_context,
     settings_to_response,
@@ -99,6 +104,39 @@ def test_resolve_signatory_context_dg_signs_without_for_line() -> None:
     assert ctx["signatory_name"] == "John Doe"
     assert ctx["signatory_title"] == "DIRECTOR-GENERAL"
     assert ctx["signed_for_director_general"] is False
+
+
+def test_resolve_dac_for_subject_uses_subject_override() -> None:
+    exam_row = _sample_row()
+    subject_row = ExaminationExaminerAppointmentLetterSubjectSettings(
+        examination_id=1,
+        subject_id=211,
+        director_assessment_name="Subject DAC",
+        director_assessment_title="SUBJECT TITLE",
+        director_assessment_signature_path=None,
+        updated_at=datetime.utcnow(),
+    )
+    name, title, sig_path, uses_name, uses_title, uses_sig = resolve_dac_for_subject(exam_row, subject_row)
+    assert name == "Subject DAC"
+    assert title == "SUBJECT TITLE"
+    assert uses_name is False
+    assert uses_title is False
+    assert uses_sig is True
+
+
+def test_resolve_signatory_context_uses_subject_dac_override() -> None:
+    exam_row = _sample_row()
+    subject_row = ExaminationExaminerAppointmentLetterSubjectSettings(
+        examination_id=1,
+        subject_id=211,
+        director_assessment_name="Per Subject DAC",
+        director_assessment_title="PER SUBJECT TITLE",
+        director_assessment_signature_path=None,
+        updated_at=datetime.utcnow(),
+    )
+    ctx = resolve_signatory_context(exam_row, subject_row)
+    assert ctx["signatory_name"] == "Per Subject DAC"
+    assert ctx["signatory_title"] == "PER SUBJECT TITLE"
 
 
 def test_validate_signature_upload_rejects_large_file() -> None:
@@ -194,8 +232,12 @@ async def test_copy_settings_from_examination_clones_text_and_signatures(
         "app.services.examiner_appointment_letter_settings.get_or_create_settings",
         fake_get_or_create,
     )
+    monkeypatch.setattr(
+        "app.services.examiner_appointment_letter_settings.copy_subject_settings_from_examination",
+        AsyncMock(return_value=(0, 0)),
+    )
 
-    row, cc_count, sig_count = await copy_settings_from_examination(
+    row, cc_count, sig_count, subjects_copied = await copy_settings_from_examination(
         session,
         target_examination_id=20,
         source_examination_id=10,
@@ -204,6 +246,7 @@ async def test_copy_settings_from_examination_clones_text_and_signatures(
     assert row is target
     assert cc_count == 2
     assert sig_count == 1
+    assert subjects_copied == 0
     assert target.director_assessment_name == "DAC Name"
     assert target.director_general_name == "DG Name"
     assert target.director_assessment_signature_path != source_sig
@@ -233,8 +276,12 @@ async def test_copy_settings_from_examination_without_source_uses_defaults(
         "app.services.examiner_appointment_letter_settings.get_or_create_settings",
         fake_get_or_create,
     )
+    monkeypatch.setattr(
+        "app.services.examiner_appointment_letter_settings.copy_subject_settings_from_examination",
+        AsyncMock(return_value=(0, 0)),
+    )
 
-    row, cc_count, sig_count = await copy_settings_from_examination(
+    row, cc_count, sig_count, subjects_copied = await copy_settings_from_examination(
         session,
         target_examination_id=20,
         source_examination_id=99,
@@ -243,3 +290,4 @@ async def test_copy_settings_from_examination_without_source_uses_defaults(
     assert row is target
     assert cc_count == len(DEFAULT_CC_LINES)
     assert sig_count == 0
+    assert subjects_copied == 0

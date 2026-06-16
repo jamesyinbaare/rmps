@@ -18,15 +18,12 @@ import {
   MarkingCalendarDayButton,
   MarkingCalendarEventsProvider,
 } from "@/components/subject-officer/marking-calendar-day-button";
-import { SubjectOfficerExamSelector } from "@/components/subject-officer/subject-officer-exam-bar";
 import { SubjectOfficerPanelShell } from "@/components/subject-officer/subject-officer-panel-shell";
-import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Calendar } from "@/components/ui/calendar";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { useSubjectOfficerDashboard } from "@/hooks/use-subject-officer-dashboard";
 import type { SubjectOfficerMeExamAssignment } from "@/lib/api";
-import { officialAccountsCommandBarRowClass } from "@/lib/official-accounts-zone";
 import {
   calendarModifiers,
   calendarNavContext,
@@ -44,7 +41,6 @@ import {
   type MarkingCalendarEvent,
   type MarkingEventKind,
 } from "@/lib/subject-officer-marking-events";
-import { subjectDisplayLabel } from "@/lib/subject-display";
 import { cn } from "@/lib/utils";
 
 const panelHeightClass = "lg:h-[min(72vh,720px)]";
@@ -101,7 +97,7 @@ const EVENT_KIND_STYLE: Record<
 type Props = {
   assignments: SubjectOfficerMeExamAssignment[];
   examId: number | null;
-  onExamChange: (id: number | null) => void;
+  subjects: SubjectOfficerMeExamAssignment["subjects"];
   assignmentsLoading?: boolean;
 };
 
@@ -428,19 +424,13 @@ function KpiCard({
 export function SubjectOfficerDashboard({
   assignments,
   examId,
-  onExamChange,
+  subjects,
   assignmentsLoading = false,
 }: Props) {
   const [selectedDay, setSelectedDay] = useState<Date | undefined>(undefined);
   const [showAllUpcoming, setShowAllUpcoming] = useState(true);
   const [calendarMonth, setCalendarMonth] = useState(() => new Date());
   const calendarMonthSeededForExamRef = useRef<number | null>(null);
-
-  const selectedExam = useMemo(
-    () => assignments.find((a) => a.examination_id === examId) ?? null,
-    [assignments, examId],
-  );
-  const subjects = selectedExam?.subjects ?? EMPTY_SUBJECTS;
 
   const { groups, events, stats, loading, error, refetch } = useSubjectOfficerDashboard({
     examId,
@@ -538,44 +528,9 @@ export function SubjectOfficerDashboard({
     setShowAllUpcoming(true);
   }
 
-  const commandBar = (
-    <div className={officialAccountsCommandBarRowClass}>
-      <SubjectOfficerExamSelector
-        assignments={assignments}
-        examId={examId}
-        onExamChange={onExamChange}
-        loading={assignmentsLoading}
-        compact
-      />
-      {subjects.length > 0 ? (
-        <div className="flex min-w-0 flex-1 flex-wrap items-center gap-1.5">
-          <span className="text-xs font-medium text-muted-foreground">Subjects</span>
-          {subjects.map((s) => (
-            <Badge
-              key={s.subject_id}
-              variant="outline"
-              className="border-border/80 bg-background/80 font-normal"
-            >
-              {subjectDisplayLabel(s)}
-            </Badge>
-          ))}
-        </div>
-      ) : null}
-    </div>
-  );
-
-  const examinersHref =
-    examId != null
-      ? `/dashboard/subject-officer/examiners?exam=${examId}&tab=roster`
-      : "/dashboard/subject-officer/examiners";
-  const invitationsHref =
-    examId != null
-      ? `/dashboard/subject-officer/examiners?exam=${examId}&tab=invitations`
-      : "/dashboard/subject-officer/examiners";
-  const cohortsHref =
-    examId != null
-      ? `/dashboard/subject-officer/examiners?exam=${examId}&tab=groups`
-      : "/dashboard/subject-officer/examiners";
+  const examinersHref = "/dashboard/subject-officer/examiners?tab=roster";
+  const invitationsHref = "/dashboard/subject-officer/examiners?tab=invitations";
+  const cohortsHref = "/dashboard/subject-officer/examiners?tab=groups";
 
   const selectedDayLabel =
     selectedDay != null
@@ -584,7 +539,7 @@ export function SubjectOfficerDashboard({
 
   return (
     <div className="min-w-0 space-y-4">
-      <SubjectOfficerPanelShell commandBar={commandBar}>
+      <SubjectOfficerPanelShell>
         {assignments.length === 0 ? (
           <EmptyDashboardPanel
             icon={Users}
@@ -594,8 +549,8 @@ export function SubjectOfficerDashboard({
         ) : examId == null ? (
           <EmptyDashboardPanel
             icon={CalendarDays}
-            title="Select an examination"
-            description="Choose an examination above to view marking schedules, roster stats, and invitation status for your subjects."
+            title="Choose a workspace"
+            description="Select your examination and subject workspace to view marking schedules, roster stats, and invitation status."
           />
         ) : error ? (
           <div className="flex flex-col gap-3 rounded-lg border border-destructive/40 bg-destructive/10 px-4 py-3 text-sm text-destructive sm:flex-row sm:items-center sm:justify-between">
@@ -611,21 +566,19 @@ export function SubjectOfficerDashboard({
           </div>
         ) : (
           <div className="min-w-0 space-y-4">
-            {selectedExam ? (
-              <div className="rounded-lg bg-muted/15 px-4 py-2.5 text-sm">
-                <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
-                  <span className="font-medium text-foreground">{selectedExam.examination_name}</span>
-                  <Badge variant="secondary" className="font-normal">
-                    {subjects.length} subject{subjects.length === 1 ? "" : "s"}
-                  </Badge>
-                  <span className="text-muted-foreground">
-                    {stats.cohortsWithSchedule} of {groups.length} cohort
-                    {groups.length === 1 ? "" : "s"} scheduled
-                  </span>
-                </div>
+            {groups.length > 0 || nextEvent ? (
+              <div className="rounded-lg border border-border/60 bg-muted/15 px-4 py-2.5 text-sm">
+                {groups.length > 0 ? (
+                  <p className="text-muted-foreground">
+                    <span className="font-medium text-foreground">{stats.cohortsWithSchedule}</span>
+                    {" of "}
+                    {groups.length} cohort{groups.length === 1 ? "" : "s"} scheduled
+                  </p>
+                ) : null}
                 {nextEvent ? (
-                  <p className="mt-1 line-clamp-2 break-words text-xs text-muted-foreground">
-                    Next: {MARKING_EVENT_KIND_LABELS[nextEvent.kind]} · {nextEvent.cohortName} ·{" "}
+                  <p className={cn("text-xs text-muted-foreground", groups.length > 0 && "mt-1")}>
+                    <span className="font-medium text-foreground">Next:</span>{" "}
+                    {MARKING_EVENT_KIND_LABELS[nextEvent.kind]} · {nextEvent.cohortName} ·{" "}
                     {formatEventWhen(nextEvent)}
                   </p>
                 ) : null}

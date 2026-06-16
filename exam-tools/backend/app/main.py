@@ -25,6 +25,7 @@ from app.routers import (
     admin_examiner_marking_summary,
     admin_examiner_appointment_letter_references,
     admin_examiner_appointment_letter_settings,
+    admin_examiner_appointment_letter_subject_settings,
     admin_examiner_portal_settings,
     admin_data_entry_clerk_payouts,
     admin_data_entry_clerks,
@@ -255,6 +256,7 @@ app.include_router(admin_lunch_coupon.router)
 app.include_router(admin_lunch_coupon.scan_router)
 app.include_router(admin_examiner_appointment_letter_references.router)
 app.include_router(admin_examiner_appointment_letter_settings.router)
+app.include_router(admin_examiner_appointment_letter_subject_settings.router)
 app.include_router(admin_examiner_portal_settings.router)
 app.include_router(examiner_quota_assessment.router)
 app.include_router(subject_officer_examiner_attendance.router)

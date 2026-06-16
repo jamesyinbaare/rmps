@@ -64,6 +64,7 @@ class SubjectOfficerAssignmentUpsert(BaseModel):
 
 
 class SubjectOfficerMeAssignmentSubject(BaseModel):
+    assignment_id: UUID
     subject_id: int
     subject_code: str
     subject_name: str
