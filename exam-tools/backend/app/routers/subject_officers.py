@@ -66,6 +66,7 @@ async def _subject_officer_assignments_by_exam(
             )
         by_exam[exam_id].subjects.append(
             SubjectOfficerMeAssignmentSubject(
+                assignment_id=assignment.id,
                 subject_id=int(subject.id),
                 subject_code=subject.code,
                 subject_name=subject.name,

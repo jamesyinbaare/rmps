@@ -26,6 +26,7 @@ import {
   EXAMINERS_TABLE_SCROLL_CONTAINER_CLASS,
 } from "@/components/examiners/constants";
 import { InvitationRowActionsMenu } from "@/components/examiner-invitations/invitation-row-actions-menu";
+import { PhoneLink } from "@/components/examiners/phone-link";
 import { InvitationStatusBadge } from "@/components/examiner-invitations/invitation-status-badge";
 import type { ResendUiState } from "@/components/examiner-invitations/types";
 import { formatCoordinationRange, formatDateTime, humanizeRegion } from "@/components/examiner-invitations/utils";
@@ -58,6 +59,7 @@ type Props = {
   resendErrors: Record<string, string>;
   onResend: (inv: ExaminerInvitationRow) => void;
   onRenew?: (inv: ExaminerInvitationRow) => void;
+  onExtendDeadline?: (inv: ExaminerInvitationRow) => void;
   onCopyLink?: (inv: ExaminerInvitationRow) => void;
   copyLinkUi?: Record<string, "copied" | "error">;
   onViewAllocation?: (inv: ExaminerInvitationRow) => void;
@@ -86,6 +88,7 @@ export function InvitationsTable({
   resendErrors,
   onResend,
   onRenew,
+  onExtendDeadline,
   onCopyLink,
   copyLinkUi = {},
   onViewAllocation,
@@ -129,7 +132,9 @@ export function InvitationsTable({
       {
         accessorKey: "phone_number",
         header: "Phone",
-        cell: ({ getValue }) => <span className="font-mono text-xs">{getValue<string>()}</span>,
+        cell: ({ getValue }) => (
+          <PhoneLink phone={getValue<string>()} className="font-mono text-xs text-primary hover:underline" />
+        ),
       },
       {
         id: "subject",
@@ -225,13 +230,14 @@ export function InvitationsTable({
               onCopyLink={onCopyLink}
               onResend={onResend}
               onRenew={onRenew}
+              onExtendDeadline={onExtendDeadline}
               onViewAllocation={onViewAllocation}
             />
           );
         },
       },
     ],
-    [busy, copyLinkUi, onCopyLink, onRenew, onResend, onViewAllocation, openActionsId, resendErrors, resendUi],
+    [busy, copyLinkUi, onCopyLink, onExtendDeadline, onRenew, onResend, onViewAllocation, openActionsId, resendErrors, resendUi],
   );
 
   const table = useReactTable({

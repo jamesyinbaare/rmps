@@ -3,20 +3,20 @@
 import { DashboardShell } from "@/components/dashboard-shell";
 import { RoleGuard } from "@/components/role-guard";
 import { ExaminerAttendanceShell } from "@/components/subject-officer/examiner-attendance-shell";
-import { useSubjectOfficerAssignments } from "@/hooks/use-subject-officer-assignments";
+import { useSubjectOfficerWorkspace } from "@/components/subject-officer/subject-officer-workspace-context";
 
 export default function SubjectOfficerAttendancePage() {
-  const { assignments, loading: assignmentsLoading } = useSubjectOfficerAssignments();
+  const { examId, workspaceLabel, loading, mustPickWorkspace } = useSubjectOfficerWorkspace();
 
   return (
     <RoleGuard expectedRole="SUBJECT_OFFICER" loginHref="/login/admin">
       <DashboardShell title="Attendance" staffRole="subject-officer">
-        {assignmentsLoading ? (
+        {loading || mustPickWorkspace ? (
           <p className="text-sm text-muted-foreground">Loading…</p>
-        ) : assignments.length === 0 ? (
-          <p className="text-sm text-muted-foreground">No subject assignments found for your account.</p>
+        ) : examId == null ? (
+          <p className="text-sm text-muted-foreground">Choose a workspace to mark attendance.</p>
         ) : (
-          <ExaminerAttendanceShell assignments={assignments} assignmentsLoading={assignmentsLoading} />
+          <ExaminerAttendanceShell examId={examId} workspaceLabel={workspaceLabel} />
         )}
       </DashboardShell>
     </RoleGuard>

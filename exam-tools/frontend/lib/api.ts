@@ -3100,6 +3100,161 @@ export type FinanceCentreOfficialStatisticsShellResponse = {
   centres: { center_id: string; center_code: string; center_name: string }[];
 };
 
+export type FinanceCentreInspectorAnalysisRow = {
+  center_id: string;
+  center_code: string;
+  center_name: string;
+  center_region: string | null;
+  subject_filter: TimetableSubjectFilter;
+  total_candidates: number;
+  exam_days: number;
+  external_inspector_count: number;
+  posted_inspector_count: number;
+  unique_inspector_count: number;
+  inspectors_in_both: number;
+  total_inspector_pay_ghs: string;
+  max_inspector_assigned_days: number;
+  assigned_days_variance: number;
+  pay_at_exam_days_ghs: string;
+  pay_at_assigned_days_ghs: string;
+  days_pay_variance_ghs: string;
+  pay_at_posted_count_ghs: string;
+  payroll_vs_posted_variance_ghs: string;
+  inspectors_required: number;
+  paid_inspector_variance: number;
+  candidates_per_paid_inspector: number | null;
+};
+
+export type FinanceCentreInspectorAnalysisResponse = {
+  examination_id: number;
+  subject_filter: TimetableSubjectFilter;
+  candidates_per_inspector: number;
+  centres: FinanceCentreInspectorAnalysisRow[];
+  totals: FinanceCentreInspectorAnalysisRow;
+};
+
+export function normalizeInspectorAnalysisRow(
+  row: Partial<FinanceCentreInspectorAnalysisRow> &
+    Pick<FinanceCentreInspectorAnalysisRow, "center_id" | "center_code" | "center_name" | "subject_filter">,
+): FinanceCentreInspectorAnalysisRow {
+  const examDays = row.exam_days ?? 0;
+  const maxAssigned = row.max_inspector_assigned_days ?? 0;
+  const payAtExam = row.pay_at_exam_days_ghs ?? "0";
+  const payAtAssigned = row.pay_at_assigned_days_ghs ?? row.total_inspector_pay_ghs ?? "0";
+  const payAtPosted = row.pay_at_posted_count_ghs ?? "0";
+  const totalPay = row.total_inspector_pay_ghs ?? "0";
+  return {
+    center_id: row.center_id,
+    center_code: row.center_code,
+    center_name: row.center_name,
+    center_region: row.center_region ?? null,
+    subject_filter: row.subject_filter,
+    total_candidates: row.total_candidates ?? 0,
+    exam_days: examDays,
+    external_inspector_count: row.external_inspector_count ?? 0,
+    posted_inspector_count: row.posted_inspector_count ?? 0,
+    unique_inspector_count: row.unique_inspector_count ?? 0,
+    inspectors_in_both: row.inspectors_in_both ?? 0,
+    total_inspector_pay_ghs: totalPay,
+    max_inspector_assigned_days: maxAssigned,
+    assigned_days_variance: row.assigned_days_variance ?? maxAssigned - examDays,
+    pay_at_exam_days_ghs: payAtExam,
+    pay_at_assigned_days_ghs: payAtAssigned,
+    days_pay_variance_ghs:
+      row.days_pay_variance_ghs ?? String(Number(payAtAssigned) - Number(payAtExam)),
+    pay_at_posted_count_ghs: payAtPosted,
+    payroll_vs_posted_variance_ghs:
+      row.payroll_vs_posted_variance_ghs ?? String(Number(totalPay) - Number(payAtPosted)),
+    inspectors_required: row.inspectors_required ?? 0,
+    paid_inspector_variance: row.paid_inspector_variance ?? 0,
+    candidates_per_paid_inspector: row.candidates_per_paid_inspector ?? null,
+  };
+}
+
+export function sumInspectorAnalysisRowsFromCentres(
+  centres: FinanceCentreInspectorAnalysisRow[],
+  subjectFilter: TimetableSubjectFilter,
+): FinanceCentreInspectorAnalysisRow {
+  const totals = centres.reduce<FinanceCentreInspectorAnalysisRow>(
+    (acc, row) => ({
+      center_id: "00000000-0000-0000-0000-000000000000",
+      center_code: "TOTAL",
+      center_name: "",
+      subject_filter: row.subject_filter,
+      total_candidates: acc.total_candidates + row.total_candidates,
+      exam_days: acc.exam_days + row.exam_days,
+      external_inspector_count: acc.external_inspector_count + row.external_inspector_count,
+      posted_inspector_count: acc.posted_inspector_count + row.posted_inspector_count,
+      unique_inspector_count: acc.unique_inspector_count + row.unique_inspector_count,
+      inspectors_in_both: acc.inspectors_in_both + row.inspectors_in_both,
+      total_inspector_pay_ghs: String(Number(acc.total_inspector_pay_ghs) + Number(row.total_inspector_pay_ghs)),
+      max_inspector_assigned_days: acc.max_inspector_assigned_days + row.max_inspector_assigned_days,
+      assigned_days_variance: 0,
+      pay_at_exam_days_ghs: String(Number(acc.pay_at_exam_days_ghs) + Number(row.pay_at_exam_days_ghs)),
+      pay_at_assigned_days_ghs: String(
+        Number(acc.pay_at_assigned_days_ghs) + Number(row.pay_at_assigned_days_ghs),
+      ),
+      days_pay_variance_ghs: "0",
+      pay_at_posted_count_ghs: String(
+        Number(acc.pay_at_posted_count_ghs) + Number(row.pay_at_posted_count_ghs),
+      ),
+      payroll_vs_posted_variance_ghs: "0",
+      inspectors_required: acc.inspectors_required + row.inspectors_required,
+      paid_inspector_variance:
+        acc.external_inspector_count + row.external_inspector_count -
+        (acc.inspectors_required + row.inspectors_required),
+      candidates_per_paid_inspector: null,
+    }),
+    normalizeInspectorAnalysisRow({
+      center_id: "00000000-0000-0000-0000-000000000000",
+      center_code: "TOTAL",
+      center_name: "",
+      subject_filter: subjectFilter,
+    }),
+  );
+
+  const ext = totals.external_inspector_count;
+  if (ext > 0) {
+    totals.candidates_per_paid_inspector = Math.round((totals.total_candidates / ext) * 10) / 10;
+  }
+  totals.paid_inspector_variance = ext - totals.inspectors_required;
+  totals.assigned_days_variance = totals.max_inspector_assigned_days - totals.exam_days;
+  totals.days_pay_variance_ghs = String(
+    Number(totals.pay_at_assigned_days_ghs) - Number(totals.pay_at_exam_days_ghs),
+  );
+  totals.payroll_vs_posted_variance_ghs = String(
+    Number(totals.total_inspector_pay_ghs) - Number(totals.pay_at_posted_count_ghs),
+  );
+  return totals;
+}
+
+export function normalizeInspectorAnalysisResponse(
+  data: FinanceCentreInspectorAnalysisResponse,
+): FinanceCentreInspectorAnalysisResponse {
+  const centres = data.centres.map((row) => normalizeInspectorAnalysisRow(row));
+  const totals =
+    data.totals?.max_inspector_assigned_days != null
+      ? normalizeInspectorAnalysisRow({
+          ...data.totals,
+          center_id: data.totals.center_id,
+          center_code: data.totals.center_code,
+          center_name: data.totals.center_name,
+          subject_filter: data.totals.subject_filter,
+        })
+      : sumInspectorAnalysisRowsFromCentres(centres, data.subject_filter);
+  return {
+    ...data,
+    centres,
+    totals,
+  };
+}
+
+export type FinanceCentreInspectorAnalysisShellResponse = {
+  examination_id: number;
+  subject_filter: TimetableSubjectFilter;
+  centres: { center_id: string; center_code: string; center_name: string; center_region: string | null }[];
+};
+
 function centreSchoolSummaryQuery(params: {
   centerId: string;
   subject_filter?: TimetableSubjectFilter;
@@ -3249,6 +3404,152 @@ export async function downloadFinanceCentreOfficialStatisticsExport(params: {
     {
       exam_label: params.examLabel,
       summary: params.summary,
+    },
+  );
+}
+
+export type InspectorAnalysisExportVariant = "full" | "staffing" | "pay_variance";
+export type InspectorAnalysisExportStyle = "standard" | "rich";
+
+export function inspectorAnalysisExportFilename(
+  examLabel: string,
+  subjectFilter: TimetableSubjectFilter,
+  exportVariant: InspectorAnalysisExportVariant = "full",
+  exportStyle: InspectorAnalysisExportStyle = "standard",
+): string {
+  const suffix =
+    subjectFilter === "CORE_ONLY" ? "CORE" : subjectFilter === "ELECTIVE_ONLY" ? "ELECTIVE" : "ALL";
+  const variantSuffix =
+    exportVariant === "staffing" ? "staffing" : exportVariant === "pay_variance" ? "pay-variance" : "full";
+  const styleSuffix = exportStyle === "rich" ? " formatted" : "";
+  return `${examLabel} inspector-analysis ${suffix} ${variantSuffix}${styleSuffix}.xlsx`;
+}
+
+export const DEFAULT_INSPECTOR_CANDIDATES_RATIO = 300;
+export const MAX_INSPECTOR_CANDIDATES_RATIO = 10_000;
+
+export function parseInspectorCandidatesRatio(raw: string | null | undefined): number {
+  if (raw == null || raw.trim() === "") return DEFAULT_INSPECTOR_CANDIDATES_RATIO;
+  const n = Number.parseInt(raw.trim(), 10);
+  if (!Number.isFinite(n) || n < 1) return DEFAULT_INSPECTOR_CANDIDATES_RATIO;
+  return Math.min(n, MAX_INSPECTOR_CANDIDATES_RATIO);
+}
+
+function inspectorAnalysisQuery(params: {
+  subject_filter: TimetableSubjectFilter;
+  candidates_per_inspector?: number;
+}): string {
+  const q = new URLSearchParams();
+  q.set("subject_filter", params.subject_filter);
+  q.set(
+    "candidates_per_inspector",
+    String(params.candidates_per_inspector ?? DEFAULT_INSPECTOR_CANDIDATES_RATIO),
+  );
+  return `?${q.toString()}`;
+}
+
+export async function getFinanceCentreInspectorAnalysis(params: {
+  examId: number;
+  subject_filter: TimetableSubjectFilter;
+  candidates_per_inspector?: number;
+}): Promise<FinanceCentreInspectorAnalysisResponse> {
+  return apiJson<FinanceCentreInspectorAnalysisResponse>(
+    `/examinations/${params.examId}/finance/inspector-analysis${inspectorAnalysisQuery(params)}`,
+  );
+}
+
+export async function getFinanceCentreInspectorAnalysisShell(params: {
+  examId: number;
+  subject_filter: TimetableSubjectFilter;
+}): Promise<FinanceCentreInspectorAnalysisShellResponse> {
+  return apiJson<FinanceCentreInspectorAnalysisShellResponse>(
+    `/examinations/${params.examId}/finance/inspector-analysis/shell${financeSummaryQuery(params.subject_filter)}`,
+  );
+}
+
+export async function getFinanceCentreInspectorAnalysisForCentre(params: {
+  examId: number;
+  center_host_id: string;
+  subject_filter: TimetableSubjectFilter;
+  candidates_per_inspector?: number;
+}): Promise<FinanceCentreInspectorAnalysisRow> {
+  return apiJson<FinanceCentreInspectorAnalysisRow>(
+    `/examinations/${params.examId}/finance/inspector-analysis/centres/${params.center_host_id}${inspectorAnalysisQuery(params)}`,
+  );
+}
+
+/** Load shell first, then fetch each centre with limited parallelism. */
+export async function loadFinanceCentreInspectorAnalysisProgressive(
+  params: {
+    examId: number;
+    subject_filter: TimetableSubjectFilter;
+    candidates_per_inspector?: number;
+  },
+  callbacks: {
+    onShellLoaded?: (shell: FinanceCentreInspectorAnalysisShellResponse) => void;
+    onCentreLoaded?: (row: FinanceCentreInspectorAnalysisRow) => void;
+  },
+): Promise<FinanceCentreInspectorAnalysisResponse> {
+  const ratio = params.candidates_per_inspector ?? DEFAULT_INSPECTOR_CANDIDATES_RATIO;
+  const shell = await getFinanceCentreInspectorAnalysisShell(params);
+  callbacks.onShellLoaded?.(shell);
+
+  const centres: FinanceCentreInspectorAnalysisRow[] = [];
+  let index = 0;
+
+  async function worker() {
+    while (index < shell.centres.length) {
+      const i = index++;
+      const c = shell.centres[i]!;
+      const row = normalizeInspectorAnalysisRow(
+        await getFinanceCentreInspectorAnalysisForCentre({
+          examId: params.examId,
+          center_host_id: c.center_id,
+          subject_filter: params.subject_filter,
+          candidates_per_inspector: ratio,
+        }),
+      );
+      centres.push(row);
+      callbacks.onCentreLoaded?.(row);
+    }
+  }
+
+  const workers = Array.from(
+    { length: Math.min(FINANCE_CENTRE_FETCH_CONCURRENCY, shell.centres.length) },
+    () => worker(),
+  );
+  await Promise.all(workers);
+
+  centres.sort((a, b) => a.center_code.localeCompare(b.center_code) || a.center_name.localeCompare(b.center_name));
+
+  const totals = sumInspectorAnalysisRowsFromCentres(centres, params.subject_filter);
+
+  return normalizeInspectorAnalysisResponse({
+    examination_id: params.examId,
+    subject_filter: params.subject_filter,
+    candidates_per_inspector: ratio,
+    centres,
+    totals,
+  });
+}
+
+export async function downloadFinanceCentreInspectorAnalysisExport(params: {
+  examId: number;
+  subject_filter: TimetableSubjectFilter;
+  filename: string;
+  examLabel: string;
+  summary: FinanceCentreInspectorAnalysisResponse;
+  export_variant?: InspectorAnalysisExportVariant;
+  export_style?: InspectorAnalysisExportStyle;
+}): Promise<void> {
+  await downloadApiFilePost(
+    `/examinations/${params.examId}/finance/inspector-analysis/export`,
+    params.filename,
+    {
+      exam_label: params.examLabel,
+      summary: params.summary,
+      export_variant: params.export_variant ?? "full",
+      export_style: params.export_style ?? "standard",
     },
   );
 }
@@ -3954,18 +4255,29 @@ export type ExaminerInvitationPublic = {
   quota_waitlist_message?: string | null;
   appointment_letters_release_enabled?: boolean;
   appointment_letters_available?: boolean;
-  coordination_end_at?: string | null;
+  appointment_letters_release_mode?: AppointmentLettersReleaseMode;
+  appointment_letters_release_at?: string | null;
   appointment_letters_pending_message?: string | null;
 };
+
+export type AppointmentLettersReleaseMode = "on_acceptance" | "scheduled_date";
 
 export type ExaminerPortalSettings = {
   examination_id: number;
   appointment_letters_release_enabled: boolean;
+  appointment_letters_release_mode: AppointmentLettersReleaseMode;
+  appointment_letters_release_at: string | null;
   updated_at: string;
   rostered_examiner_count: number;
-  with_coordination_end_count: number;
+  pending_release_count: number;
   eligible_now_count: number;
   notified_count: number;
+};
+
+export type ExaminerPortalSettingsPut = {
+  appointment_letters_release_enabled: boolean;
+  appointment_letters_release_mode: AppointmentLettersReleaseMode;
+  appointment_letters_release_at?: string | null;
 };
 
 export type NotifyEligibleAppointmentLettersResponse = {
@@ -4635,6 +4947,33 @@ export async function renewExaminerInvitation(
   );
 }
 
+export type ExaminerInvitationResponseDeadlinePayload = {
+  response_deadline: string;
+  send_sms?: boolean | null;
+};
+
+export type ExaminerInvitationResponseDeadlineUpdateResponse = {
+  invitation: ExaminerInvitationRow;
+  sms_sent: boolean | null;
+  sms_error: string | null;
+  sms_delivery_id: string | null;
+};
+
+export async function updateExaminerInvitationResponseDeadline(
+  examinationId: number,
+  invitationId: string,
+  payload: ExaminerInvitationResponseDeadlinePayload,
+): Promise<ExaminerInvitationResponseDeadlineUpdateResponse> {
+  return apiJson<ExaminerInvitationResponseDeadlineUpdateResponse>(
+    `/examinations/${examinationId}/examiner-invitations/${invitationId}/response-deadline`,
+    {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    },
+  );
+}
+
 export async function bulkSendExaminerInvitationCustomSms(
   examinationId: number,
   payload: ExaminerInvitationBulkSmsPayload,
@@ -5284,6 +5623,7 @@ export type SubjectOfficerAssignmentListResponse = {
 };
 
 export type SubjectOfficerMeAssignmentSubject = {
+  assignment_id: string;
   subject_id: number;
   subject_code: string;
   subject_name: string;
@@ -5424,12 +5764,12 @@ export async function getExaminerPortalSettings(examinationId: number): Promise<
 
 export async function putExaminerPortalSettings(
   examinationId: number,
-  appointmentLettersReleaseEnabled: boolean,
+  body: ExaminerPortalSettingsPut,
 ): Promise<ExaminerPortalSettings> {
   return apiJson<ExaminerPortalSettings>(`/admin/examinations/${examinationId}/examiner-portal-settings`, {
     method: "PUT",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ appointment_letters_release_enabled: appointmentLettersReleaseEnabled }),
+    body: JSON.stringify(body),
   });
 }
 
@@ -5514,7 +5854,78 @@ export type ExaminerAppointmentLetterSettingsCopyFromResponse = {
   source_examination_id: number;
   cc_lines_copied: number;
   signatures_copied: number;
+  subject_settings_copied: number;
 };
+
+export type ExaminerAppointmentLetterSubjectSettings = {
+  examination_id: number;
+  subject_id: number;
+  director_assessment_name: string;
+  director_assessment_title: string;
+  director_assessment_signature: AppointmentLetterSignatureMeta;
+  uses_exam_default_name: boolean;
+  uses_exam_default_title: boolean;
+  uses_exam_default_signature: boolean;
+  updated_at: string | null;
+};
+
+export async function getExaminerAppointmentLetterSubjectSettings(
+  examinationId: number,
+  subjectId: number,
+): Promise<ExaminerAppointmentLetterSubjectSettings> {
+  return apiJson<ExaminerAppointmentLetterSubjectSettings>(
+    `/admin/examinations/${examinationId}/examiner-appointment-letter-subject-settings/${subjectId}`,
+  );
+}
+
+export async function putExaminerAppointmentLetterSubjectSettings(
+  examinationId: number,
+  subjectId: number,
+  body: Pick<ExaminerAppointmentLetterSubjectSettings, "director_assessment_name" | "director_assessment_title">,
+): Promise<ExaminerAppointmentLetterSubjectSettings> {
+  return apiJson<ExaminerAppointmentLetterSubjectSettings>(
+    `/admin/examinations/${examinationId}/examiner-appointment-letter-subject-settings/${subjectId}`,
+    {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    },
+  );
+}
+
+export async function uploadExaminerAppointmentLetterSubjectSignature(
+  examinationId: number,
+  subjectId: number,
+  file: File,
+): Promise<ExaminerAppointmentLetterSubjectSettings> {
+  const form = new FormData();
+  form.append("file", file);
+  return apiJson<ExaminerAppointmentLetterSubjectSettings>(
+    `/admin/examinations/${examinationId}/examiner-appointment-letter-subject-settings/${subjectId}/signatures/director_assessment_certification`,
+    { method: "POST", body: form },
+  );
+}
+
+export async function deleteExaminerAppointmentLetterSubjectSignature(
+  examinationId: number,
+  subjectId: number,
+): Promise<ExaminerAppointmentLetterSubjectSettings> {
+  return apiJson<ExaminerAppointmentLetterSubjectSettings>(
+    `/admin/examinations/${examinationId}/examiner-appointment-letter-subject-settings/${subjectId}/signatures/director_assessment_certification`,
+    { method: "DELETE" },
+  );
+}
+
+export async function fetchExaminerAppointmentLetterSubjectSignatureBlobUrl(
+  examinationId: number,
+  subjectId: number,
+): Promise<string> {
+  const res = await apiFetch(
+    `/admin/examinations/${examinationId}/examiner-appointment-letter-subject-settings/${subjectId}/signatures/director_assessment_certification`,
+  );
+  const blob = await res.blob();
+  return URL.createObjectURL(blob);
+}
 
 export async function getExaminerAppointmentLetterSettings(
   examinationId: number,

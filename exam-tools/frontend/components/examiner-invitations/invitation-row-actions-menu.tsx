@@ -19,7 +19,10 @@ type Props = {
   onCopyLink?: (inv: ExaminerInvitationRow) => void;
   onResend: (inv: ExaminerInvitationRow) => void;
   onRenew?: (inv: ExaminerInvitationRow) => void;
+  onExtendDeadline?: (inv: ExaminerInvitationRow) => void;
   onViewAllocation?: (inv: ExaminerInvitationRow) => void;
+  /** Render menu items only (no popover trigger) for mobile contact cards. */
+  embedded?: boolean;
 };
 
 export function InvitationRowActionsMenu({
@@ -33,30 +36,109 @@ export function InvitationRowActionsMenu({
   onCopyLink,
   onResend,
   onRenew,
+  onExtendDeadline,
   onViewAllocation,
+  embedded = false,
 }: Props) {
   const canCopy = Boolean(onCopyLink && inv.public_url);
   const canResend = inv.status === "pending";
+  const canExtend =
+    (inv.status === "pending" ||
+      inv.status === "quota_waitlisted" ||
+      inv.status === "expired") &&
+    Boolean(onExtendDeadline);
   const canReopen =
-    (inv.status === "expired" || inv.status === "declined" || inv.status === "quota_waitlisted") &&
-    Boolean(onRenew);
+    (inv.status === "declined" || inv.status === "quota_waitlisted") && Boolean(onRenew);
   const reopenLabel =
-    inv.status === "declined"
-      ? "Reopen invitation"
-      : inv.status === "quota_waitlisted"
-        ? "Reset invitation"
-        : "Renew link";
+    inv.status === "declined" ? "Reopen invitation" : "Reset invitation";
   const canViewAllocation = Boolean(
     onViewAllocation && inv.status === "accepted" && inv.examiner_id,
   );
-  const hasMenuItems = canCopy || canResend || canReopen || canViewAllocation;
+  const hasMenuItems = canCopy || canResend || canExtend || canReopen || canViewAllocation;
 
   if (!hasMenuItems) {
-    return <span className="text-xs text-muted-foreground">—</span>;
+    return embedded ? null : <span className="text-xs text-muted-foreground">—</span>;
   }
 
   const menuItemClass =
     "block w-full rounded-sm px-3 py-2 text-left text-sm hover:bg-muted disabled:cursor-not-allowed disabled:opacity-50";
+
+  const menuContent = (
+    <div role="menu">
+      {canCopy ? (
+        <button
+          type="button"
+          role="menuitem"
+          className={menuItemClass}
+          onClick={() => {
+            onCopyLink?.(inv);
+            onOpenChange(false);
+          }}
+        >
+          Copy link
+        </button>
+      ) : null}
+      {canExtend ? (
+        <button
+          type="button"
+          role="menuitem"
+          disabled={busy}
+          className={menuItemClass}
+          onClick={() => {
+            onExtendDeadline?.(inv);
+            onOpenChange(false);
+          }}
+        >
+          Extend respond-by
+        </button>
+      ) : null}
+      {canReopen ? (
+        <button
+          type="button"
+          role="menuitem"
+          disabled={busy}
+          className={menuItemClass}
+          onClick={() => {
+            onRenew?.(inv);
+            onOpenChange(false);
+          }}
+        >
+          {reopenLabel}
+        </button>
+      ) : null}
+      {canResend ? (
+        <button
+          type="button"
+          role="menuitem"
+          disabled={busy || resendUi === "sending"}
+          className={menuItemClass}
+          onClick={() => {
+            onResend(inv);
+            onOpenChange(false);
+          }}
+        >
+          Resend SMS
+        </button>
+      ) : null}
+      {canViewAllocation ? (
+        <button
+          type="button"
+          role="menuitem"
+          className={menuItemClass}
+          onClick={() => {
+            onViewAllocation?.(inv);
+            onOpenChange(false);
+          }}
+        >
+          View allocation
+        </button>
+      ) : null}
+    </div>
+  );
+
+  if (embedded) {
+    return menuContent;
+  }
 
   return (
     <div className="flex flex-col items-start gap-1">
@@ -77,62 +159,7 @@ export function InvitationRowActionsMenu({
           </button>
         </PopoverTrigger>
         <PopoverContent align="end" className="z-[250] w-auto min-w-[11rem] p-1" sideOffset={4}>
-          <div role="menu">
-            {canCopy ? (
-              <button
-                type="button"
-                role="menuitem"
-                className={menuItemClass}
-                onClick={() => {
-                  onCopyLink?.(inv);
-                  onOpenChange(false);
-                }}
-              >
-                Copy link
-              </button>
-            ) : null}
-            {canReopen ? (
-              <button
-                type="button"
-                role="menuitem"
-                disabled={busy}
-                className={menuItemClass}
-                onClick={() => {
-                  onRenew?.(inv);
-                  onOpenChange(false);
-                }}
-              >
-                {reopenLabel}
-              </button>
-            ) : null}
-            {canResend ? (
-              <button
-                type="button"
-                role="menuitem"
-                disabled={busy || resendUi === "sending"}
-                className={menuItemClass}
-                onClick={() => {
-                  onResend(inv);
-                  onOpenChange(false);
-                }}
-              >
-                Resend SMS
-              </button>
-            ) : null}
-            {canViewAllocation ? (
-              <button
-                type="button"
-                role="menuitem"
-                className={menuItemClass}
-                onClick={() => {
-                  onViewAllocation?.(inv);
-                  onOpenChange(false);
-                }}
-              >
-                View allocation
-              </button>
-            ) : null}
-          </div>
+          {menuContent}
         </PopoverContent>
       </Popover>
       {copyLinkState === "copied" ? (

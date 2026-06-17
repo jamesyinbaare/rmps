@@ -1,14 +1,16 @@
 """Admin: per-examination examiner portal settings (appointment letter release)."""
 
-from fastapi import APIRouter, HTTPException, status
+from datetime import datetime
 
-from app.dependencies.auth import SuperAdminOrTestAdminOfficerDep
-from app.dependencies.database import DBSessionDep
+from fastapi import APIRouter, HTTPException, status
 from sqlalchemy import select
 from sqlalchemy.orm import selectinload
 
-from app.models import Examiner, Examination, ExaminerSubject
+from app.dependencies.auth import SuperAdminOrTestAdminOfficerDep
+from app.dependencies.database import DBSessionDep
+from app.models import AppointmentLettersReleaseMode, Examiner, Examination, ExaminerSubject
 from app.schemas.examiner_portal_settings import (
+    AppointmentLettersReleaseModeApi,
     ExaminerPortalSettingsPut,
     ExaminerPortalSettingsResponse,
     NotifyEligibleAppointmentLettersResponse,
@@ -16,7 +18,6 @@ from app.schemas.examiner_portal_settings import (
 from app.services.examiner_portal_release import (
     get_or_create_portal_settings,
     is_appointment_letter_available,
-    resolve_coordination_end_at,
 )
 from app.services.sms.examiner_appointment_letter_release import notify_eligible_examiners
 
@@ -26,7 +27,16 @@ router = APIRouter(
 )
 
 
-async def _summary_counts(session, examination_id: int) -> dict:
+def _parse_release_mode(raw: str | AppointmentLettersReleaseMode) -> AppointmentLettersReleaseMode:
+    if isinstance(raw, AppointmentLettersReleaseMode):
+        return raw
+    try:
+        return AppointmentLettersReleaseMode(str(raw))
+    except ValueError:
+        return AppointmentLettersReleaseMode.SCHEDULED_DATE
+
+
+async def _summary_counts(session, examination_id: int, portal_row) -> dict:
     stmt = (
         select(Examiner)
         .where(Examiner.examination_id == examination_id)
@@ -34,19 +44,27 @@ async def _summary_counts(session, examination_id: int) -> dict:
     )
     examiners = list((await session.execute(stmt)).scalars().all())
     rostered = len(examiners)
-    with_end = 0
+    pending = 0
     eligible = 0
     notified = 0
+    mode = _parse_release_mode(portal_row.appointment_letters_release_mode)
+    release_enabled = bool(portal_row.appointment_letters_release_enabled)
+
     for examiner in examiners:
-        if await resolve_coordination_end_at(session, examiner) is not None:
-            with_end += 1
         if await is_appointment_letter_available(session, examiner):
             eligible += 1
+        elif release_enabled:
+            if mode == AppointmentLettersReleaseMode.SCHEDULED_DATE and portal_row.appointment_letters_release_at is None:
+                pending += 1
+            elif mode == AppointmentLettersReleaseMode.SCHEDULED_DATE and portal_row.appointment_letters_release_at is not None:
+                if datetime.utcnow() < portal_row.appointment_letters_release_at:
+                    pending += 1
         if examiner.appointment_letter_notified_at is not None:
             notified += 1
+
     return {
         "rostered_examiner_count": rostered,
-        "with_coordination_end_count": with_end,
+        "pending_release_count": pending,
         "eligible_now_count": eligible,
         "notified_count": notified,
     }
@@ -62,10 +80,13 @@ async def get_examiner_portal_settings(
     if exam is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Examination not found")
     row = await get_or_create_portal_settings(session, examination_id)
-    counts = await _summary_counts(session, examination_id)
+    counts = await _summary_counts(session, examination_id, row)
+    mode = _parse_release_mode(row.appointment_letters_release_mode)
     return ExaminerPortalSettingsResponse(
         examination_id=examination_id,
         appointment_letters_release_enabled=bool(row.appointment_letters_release_enabled),
+        appointment_letters_release_mode=AppointmentLettersReleaseModeApi(mode.value),
+        appointment_letters_release_at=row.appointment_letters_release_at,
         updated_at=row.updated_at,
         **counts,
     )
@@ -81,17 +102,28 @@ async def put_examiner_portal_settings(
     exam = await session.get(Examination, examination_id)
     if exam is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Examination not found")
-    from datetime import datetime
+
+    mode = AppointmentLettersReleaseMode(body.appointment_letters_release_mode.value)
+    if mode == AppointmentLettersReleaseMode.SCHEDULED_DATE and body.appointment_letters_release_enabled:
+        if body.appointment_letters_release_at is None:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Set a release date and time when using scheduled release.",
+            )
 
     row = await get_or_create_portal_settings(session, examination_id)
     row.appointment_letters_release_enabled = body.appointment_letters_release_enabled
+    row.appointment_letters_release_mode = mode.value
+    row.appointment_letters_release_at = body.appointment_letters_release_at
     row.updated_at = datetime.utcnow()
     await session.commit()
     await session.refresh(row)
-    counts = await _summary_counts(session, examination_id)
+    counts = await _summary_counts(session, examination_id, row)
     return ExaminerPortalSettingsResponse(
         examination_id=examination_id,
         appointment_letters_release_enabled=bool(row.appointment_letters_release_enabled),
+        appointment_letters_release_mode=AppointmentLettersReleaseModeApi(mode.value),
+        appointment_letters_release_at=row.appointment_letters_release_at,
         updated_at=row.updated_at,
         **counts,
     )

@@ -19,11 +19,14 @@ from app.services.examiner_invitation import (
     public_invitation_view,
     renew_examiner_invitation,
     subject_display_code,
+    update_examiner_invitation_response_deadline,
     update_invitation_coordination_schedule,
 )
 from app.services.sms.examiner_invitation import (
     build_examiner_invitation_message,
     render_examiner_invitation_custom_message,
+    _build_examiner_invitation_message_candidates,
+    _pick_sms_message,
 )
 
 
@@ -159,6 +162,7 @@ def test_build_examiner_invitation_message() -> None:
     exam = MagicMock()
     exam.exam_type = "BECE"
     exam.year = 2026
+    exam.exam_series = None
     inv.examination = exam
 
     with patch("app.services.examiner_invitation.settings") as mock_settings:
@@ -168,8 +172,9 @@ def test_build_examiner_invitation_message() -> None:
 
     assert "Jane Doe" in msg
     assert "Mathematics" in msg
-    assert "BECE 2026" in msg
+    assert "2026 BECE" in msg
     assert "invited as AE" in msg
+    assert "Please accept or decline" in msg
     assert "https://example.com/ei/tok" in msg
 
 
@@ -184,6 +189,7 @@ def test_build_examiner_invitation_message_assistant_chief_abbrev() -> None:
     exam = MagicMock()
     exam.exam_type = "BECE"
     exam.year = 2026
+    exam.exam_series = None
     inv.examination = exam
 
     with patch("app.services.examiner_invitation.settings") as mock_settings:
@@ -192,6 +198,119 @@ def test_build_examiner_invitation_message_assistant_chief_abbrev() -> None:
         msg = build_examiner_invitation_message(inv)
 
     assert "invited as ACE" in msg
+
+
+def test_build_examiner_invitation_message_long_name_uses_first_name_and_full_url() -> None:
+    inv = MagicMock()
+    inv.name = "Core Mathematics Assistant Examiner Number Thirteen"
+    inv.examiner_type = ExaminerType.ASSISTANT
+    inv.token = "tok"
+    inv.response_deadline = datetime(2026, 6, 13, 12, 0)
+    sub = MagicMock(spec=Subject)
+    sub.name = "Mathematics (Core)"
+    inv.subject = sub
+    exam = MagicMock()
+    exam.exam_type = "Certificate II"
+    exam.year = 2025
+    exam.exam_series = "May/June"
+    inv.examination = exam
+
+    with patch("app.services.examiner_invitation.settings") as mock_settings:
+        mock_settings.examiner_invitation_base_url = "https://monitoring.ctvet.gov.gh"
+        mock_settings.examiner_invitation_link_path = "/ei"
+        msg = build_examiner_invitation_message(inv)
+
+    assert "https://monitoring.ctvet.gov.gh/ei/tok" in msg
+    assert "2025 May/June Certificate II" in msg
+    assert "Core Mathematics Assistant Examiner Number Thirteen" not in msg
+    assert msg.startswith("You are invited")
+
+
+def test_build_examiner_invitation_message_includes_full_examination_name() -> None:
+    inv = MagicMock()
+    inv.name = "Jane Doe"
+    inv.examiner_type = ExaminerType.ASSISTANT
+    inv.token = "tok"
+    sub = MagicMock(spec=Subject)
+    sub.name = "Mathematics (Core)"
+    inv.subject = sub
+    exam = MagicMock()
+    exam.exam_type = "Certificate II"
+    exam.year = 2025
+    exam.exam_series = "May/June"
+    inv.examination = exam
+
+    with patch("app.services.examiner_invitation.settings") as mock_settings:
+        mock_settings.examiner_invitation_base_url = "https://example.com"
+        mock_settings.examiner_invitation_link_path = "/ei"
+        msg = build_examiner_invitation_message(inv)
+
+    assert "2025 May/June Certificate II" in msg
+    assert "Mathematics (Core)" in msg
+
+
+def test_build_examiner_invitation_message_no_dear_tier_when_still_too_long() -> None:
+    link = "https://example.com/ei/tok"
+    candidates = _build_examiner_invitation_message_candidates(
+        name="Core Mathematics Assistant Examiner Number Thirteen",
+        role="AE",
+        subject_name="Mathematics (Core)",
+        exam_full_label="2025 May/June Certificate II",
+        exam_compact_label="2025 MJ Cert 2",
+        link=link,
+        deadline_text="13 Jun 2026",
+    )
+    with patch("app.services.sms.examiner_invitation.SMS_SINGLE_SEGMENT_MAX_LEN", 150):
+        msg = _pick_sms_message(candidates)
+
+    assert msg.startswith("You are invited")
+    assert not msg.startswith("Dear")
+    assert "2025 May/June Certificate II" in msg
+    assert link in msg
+
+
+def test_build_examiner_invitation_message_compact_exam_tier_when_extremely_long() -> None:
+    link = "https://monitoring.ctvet.gov.gh/ei/tok"
+    candidates = _build_examiner_invitation_message_candidates(
+        name="Core Mathematics Assistant Examiner Number Thirteen",
+        role="AE",
+        subject_name="Mathematics (Core)",
+        exam_full_label="2025 May/June Certificate II",
+        exam_compact_label="2025 MJ Cert 2",
+        link=link,
+        deadline_text="13 Jun 2026",
+    )
+    with patch("app.services.sms.examiner_invitation.SMS_SINGLE_SEGMENT_MAX_LEN", 100):
+        msg = _pick_sms_message(candidates)
+
+    assert msg.startswith("You are invited")
+    assert "2025 MJ Cert 2" in msg
+    assert "May/June" not in msg
+    assert link in msg
+
+
+def test_build_examiner_invitation_message_includes_respond_by_deadline() -> None:
+    inv = MagicMock()
+    inv.name = "Jane Doe"
+    inv.examiner_type = ExaminerType.ASSISTANT
+    inv.token = "tok"
+    inv.response_deadline = datetime(2026, 6, 13, 12, 0)
+    sub = MagicMock(spec=Subject)
+    sub.name = "Mathematics"
+    inv.subject = sub
+    exam = MagicMock()
+    exam.exam_type = "BECE"
+    exam.year = 2026
+    exam.exam_series = None
+    inv.examination = exam
+
+    with patch("app.services.examiner_invitation.settings") as mock_settings:
+        mock_settings.examiner_invitation_base_url = "https://example.com"
+        mock_settings.examiner_invitation_link_path = "/ei"
+        msg = build_examiner_invitation_message(inv)
+
+    assert "13 Jun 2026" in msg
+    assert "Please accept or decline by" in msg
 
 
 def test_subject_display_code_prefers_original_code() -> None:
@@ -349,6 +468,7 @@ def test_build_examiner_invitation_message_typical_length_within_sms_limit() -> 
     exam = MagicMock()
     exam.exam_type = "BECE"
     exam.year = 2026
+    exam.exam_series = None
     inv.examination = exam
 
     with patch("app.services.examiner_invitation.settings") as mock_settings:
@@ -767,4 +887,94 @@ async def test_renew_examiner_invitation_rejects_conflicting_pending() -> None:
                 inv,
                 response_deadline=datetime.utcnow() + timedelta(days=3),
                 invited_by_user_id=uuid4(),
+            )
+
+
+@pytest.mark.asyncio
+async def test_update_response_deadline_extends_pending() -> None:
+    session = AsyncMock()
+    session.flush = AsyncMock()
+    inv = _mock_renewable_invitation(status=ExaminerInvitationStatus.PENDING)
+    new_deadline = datetime.utcnow() + timedelta(days=5)
+
+    result = await update_examiner_invitation_response_deadline(
+        session,
+        inv,
+        response_deadline=new_deadline,
+    )
+
+    assert result is inv
+    assert inv.status == ExaminerInvitationStatus.PENDING
+    assert inv.response_deadline == _as_naive_utc(new_deadline)
+    assert inv.token_expires_at == inv.response_deadline
+    assert inv.token == "existing-token"
+
+
+@pytest.mark.asyncio
+async def test_update_response_deadline_reactivates_expired() -> None:
+    session = AsyncMock()
+    session.flush = AsyncMock()
+    inv = _mock_renewable_invitation()
+    new_deadline = datetime.utcnow() + timedelta(days=5)
+
+    result = await update_examiner_invitation_response_deadline(
+        session,
+        inv,
+        response_deadline=new_deadline,
+    )
+
+    assert result is inv
+    assert inv.status == ExaminerInvitationStatus.PENDING
+    assert inv.response_deadline == _as_naive_utc(new_deadline)
+    assert inv.token_expires_at == inv.response_deadline
+
+
+@pytest.mark.asyncio
+async def test_update_response_deadline_keeps_quota_waitlisted() -> None:
+    session = AsyncMock()
+    session.flush = AsyncMock()
+    responded_at = datetime.utcnow() - timedelta(days=1)
+    inv = _mock_renewable_invitation(
+        status=ExaminerInvitationStatus.QUOTA_WAITLISTED,
+        responded_at=responded_at,
+    )
+    new_deadline = datetime.utcnow() + timedelta(days=5)
+
+    result = await update_examiner_invitation_response_deadline(
+        session,
+        inv,
+        response_deadline=new_deadline,
+    )
+
+    assert result is inv
+    assert inv.status == ExaminerInvitationStatus.QUOTA_WAITLISTED
+    assert inv.responded_at == responded_at
+    assert inv.response_deadline == _as_naive_utc(new_deadline)
+
+
+@pytest.mark.asyncio
+async def test_update_response_deadline_rejects_past_deadline() -> None:
+    session = AsyncMock()
+    inv = _mock_renewable_invitation(status=ExaminerInvitationStatus.PENDING)
+    with pytest.raises(ValueError, match="in the future"):
+        await update_examiner_invitation_response_deadline(
+            session,
+            inv,
+            response_deadline=datetime.utcnow() - timedelta(hours=1),
+        )
+
+
+@pytest.mark.asyncio
+async def test_update_response_deadline_rejects_non_extendable() -> None:
+    session = AsyncMock()
+    for status in (
+        ExaminerInvitationStatus.ACCEPTED,
+        ExaminerInvitationStatus.DECLINED,
+    ):
+        inv = _mock_renewable_invitation(status=status)
+        with pytest.raises(ValueError, match="respond-by date"):
+            await update_examiner_invitation_response_deadline(
+                session,
+                inv,
+                response_deadline=datetime.utcnow() + timedelta(days=3),
             )

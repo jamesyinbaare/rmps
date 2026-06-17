@@ -1,4 +1,5 @@
 from datetime import date, datetime, time
+from decimal import Decimal
 from typing import Any
 from uuid import UUID
 
@@ -410,6 +411,7 @@ class FinanceCentreShellCentre(BaseModel):
     center_id: UUID
     center_code: str
     center_name: str
+    center_region: str | None = Field(default=None, description="Examination centre region.")
 
 
 class FinanceCentreInvigilatorSummaryShellResponse(BaseModel):
@@ -485,6 +487,94 @@ class FinanceCentreOfficialStatisticsExportBody(BaseModel):
 
     exam_label: str = Field(..., min_length=1)
     summary: FinanceCentreOfficialStatisticsResponse
+
+
+class FinanceCentreInspectorAnalysisRow(BaseModel):
+    center_id: UUID
+    center_code: str
+    center_name: str
+    center_region: str | None = Field(default=None, description="Examination centre region.")
+    subject_filter: str
+    total_candidates: int = Field(0, ge=0)
+    exam_days: int = Field(0, ge=0)
+    external_inspector_count: int = Field(0, ge=0, description="Paid external inspectors (unique phones).")
+    posted_inspector_count: int = Field(0, ge=0, description="Posted system inspectors (unique phones).")
+    unique_inspector_count: int = Field(0, ge=0, description="Union of paid and posted unique phones.")
+    inspectors_in_both: int = Field(0, ge=0, description="Phones present on both payroll and postings.")
+    total_inspector_pay_ghs: Decimal = Field(default=Decimal("0"), ge=0)
+    max_inspector_assigned_days: int = Field(
+        0,
+        ge=0,
+        description="MAX num_days among paid external inspectors at this centre.",
+    )
+    assigned_days_variance: int = Field(
+        0,
+        description="max_inspector_assigned_days minus exam_days.",
+    )
+    pay_at_exam_days_ghs: Decimal = Field(
+        default=Decimal("0"),
+        ge=0,
+        description="Sum of pay if each paid external inspector worked exam_days.",
+    )
+    pay_at_assigned_days_ghs: Decimal = Field(
+        default=Decimal("0"),
+        ge=0,
+        description="Sum of roster pay at each official's assigned num_days.",
+    )
+    days_pay_variance_ghs: Decimal = Field(
+        default=Decimal("0"),
+        description="pay_at_assigned_days_ghs minus pay_at_exam_days_ghs.",
+    )
+    pay_at_posted_count_ghs: Decimal = Field(
+        default=Decimal("0"),
+        ge=0,
+        description="Hypothetical pay for posted headcount at exam_days rates.",
+    )
+    payroll_vs_posted_variance_ghs: Decimal = Field(
+        default=Decimal("0"),
+        description="total_inspector_pay_ghs minus pay_at_posted_count_ghs.",
+    )
+    inspectors_required: int = Field(0, ge=0)
+    paid_inspector_variance: int = 0
+    candidates_per_paid_inspector: float | None = Field(
+        default=None,
+        description="Actual candidates per paid inspector when count > 0.",
+    )
+
+
+class FinanceCentreInspectorAnalysisResponse(BaseModel):
+    examination_id: int
+    subject_filter: str
+    candidates_per_inspector: int = Field(
+        300,
+        ge=1,
+        description="Candidates per external inspector used for required headcount in this report.",
+    )
+    centres: list[FinanceCentreInspectorAnalysisRow] = Field(default_factory=list)
+    totals: FinanceCentreInspectorAnalysisRow
+
+
+class FinanceCentreInspectorAnalysisShellResponse(BaseModel):
+    """Centre list for progressive inspector analysis loading."""
+
+    examination_id: int
+    subject_filter: str
+    centres: list[FinanceCentreShellCentre] = Field(default_factory=list)
+
+
+class FinanceCentreInspectorAnalysisExportBody(BaseModel):
+    """Pre-computed inspector analysis for Excel export (no server-side recalculation)."""
+
+    exam_label: str = Field(..., min_length=1)
+    summary: FinanceCentreInspectorAnalysisResponse
+    export_variant: str = Field(
+        default="full",
+        description="full | staffing | pay_variance — column subset for export.",
+    )
+    export_style: str = Field(
+        default="standard",
+        description="standard | rich — rich adds KPI strip, group headers, legend sheet, and colour coding.",
+    )
 
 
 class ExaminationScriptSeriesConfigRow(BaseModel):

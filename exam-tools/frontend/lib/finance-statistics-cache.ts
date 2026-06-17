@@ -4,8 +4,11 @@ import {
   getFinanceCentreInvigilatorSummaryForCentre,
   getFinanceCentreOfficialStatistics,
   getFinanceCentreSchoolSummary,
+  loadFinanceCentreInspectorAnalysisProgressive,
   loadFinanceCentreOfficialStatisticsProgressive,
+  normalizeInspectorAnalysisResponse,
   type FinanceCentreDayInvigilatorRow,
+  type FinanceCentreInspectorAnalysisResponse,
   type FinanceCentreOfficialStatisticsResponse,
   type FinanceCentreSchoolSummaryResponse,
   type TimetableSubjectFilter,
@@ -42,6 +45,14 @@ function centreInvigilatorKey(
   return `centre-invigilator:${examId}:${centerId}:${subjectFilter}`;
 }
 
+function inspectorAnalysisKey(
+  examId: number,
+  subjectFilter: TimetableSubjectFilter,
+  candidatesPerInspector: number,
+): string {
+  return `inspector-analysis:v2:${examId}:${subjectFilter}:${candidatesPerInspector}`;
+}
+
 function isFresh<T>(entry: CacheEntry<T>, ttlMs: number): boolean {
   return Date.now() - entry.fetchedAt < ttlMs;
 }
@@ -72,6 +83,8 @@ const centreSummaryMemory = new Map<string, CacheEntry<FinanceCentreSchoolSummar
 const centreSummaryInflight = new Map<string, Promise<FinanceCentreSchoolSummaryResponse>>();
 const centreInvigilatorMemory = new Map<string, CacheEntry<FinanceCentreDayInvigilatorRow[]>>();
 const centreInvigilatorInflight = new Map<string, Promise<FinanceCentreDayInvigilatorRow[]>>();
+const inspectorAnalysisMemory = new Map<string, CacheEntry<FinanceCentreInspectorAnalysisResponse>>();
+const inspectorAnalysisInflight = new Map<string, Promise<FinanceCentreInspectorAnalysisResponse>>();
 
 function getOfficialStatsEntry(key: string): CacheEntry<FinanceCentreOfficialStatisticsResponse> | null {
   const mem = officialStatsMemory.get(key);
@@ -139,6 +152,103 @@ export function peekCachedCentreInvigilatorDays(
 ): FinanceCentreDayInvigilatorRow[] | null {
   const entry = getCentreInvigilatorEntry(centreInvigilatorKey(examId, centerId, subjectFilter));
   return entry?.data ?? null;
+}
+
+function getInspectorAnalysisEntry(key: string): CacheEntry<FinanceCentreInspectorAnalysisResponse> | null {
+  const mem = inspectorAnalysisMemory.get(key);
+  if (mem != null) return mem;
+  return readSession<FinanceCentreInspectorAnalysisResponse>(key);
+}
+
+function setInspectorAnalysisEntry(
+  key: string,
+  entry: CacheEntry<FinanceCentreInspectorAnalysisResponse>,
+): void {
+  inspectorAnalysisMemory.set(key, entry);
+  writeSession(key, entry);
+}
+
+export function peekCachedInspectorAnalysis(
+  examId: number,
+  subjectFilter: TimetableSubjectFilter,
+  candidatesPerInspector: number,
+): FinanceCentreInspectorAnalysisResponse | null {
+  const entry = getInspectorAnalysisEntry(
+    inspectorAnalysisKey(examId, subjectFilter, candidatesPerInspector),
+  );
+  return entry?.data != null ? normalizeInspectorAnalysisResponse(entry.data) : null;
+}
+
+async function fetchInspectorAnalysis(
+  examId: number,
+  subjectFilter: TimetableSubjectFilter,
+  candidatesPerInspector: number,
+  callbacks: {
+    onShellLoaded?: Parameters<typeof loadFinanceCentreInspectorAnalysisProgressive>[1]["onShellLoaded"];
+    onCentreLoaded?: Parameters<typeof loadFinanceCentreInspectorAnalysisProgressive>[1]["onCentreLoaded"];
+  },
+): Promise<FinanceCentreInspectorAnalysisResponse> {
+  const key = inspectorAnalysisKey(examId, subjectFilter, candidatesPerInspector);
+  const existing = inspectorAnalysisInflight.get(key);
+  if (existing != null) return existing;
+
+  const promise = loadFinanceCentreInspectorAnalysisProgressive(
+    { examId, subject_filter: subjectFilter, candidates_per_inspector: candidatesPerInspector },
+    callbacks,
+  ).finally(() => {
+    inspectorAnalysisInflight.delete(key);
+  });
+  inspectorAnalysisInflight.set(key, promise);
+  return promise;
+}
+
+export async function loadInspectorAnalysisWithProgress(
+  params: {
+    examId: number;
+    subject_filter: TimetableSubjectFilter;
+    candidates_per_inspector: number;
+    revalidate?: boolean;
+    onUpdate?: (data: FinanceCentreInspectorAnalysisResponse) => void;
+  },
+  callbacks: {
+    onShellLoaded?: Parameters<typeof loadFinanceCentreInspectorAnalysisProgressive>[1]["onShellLoaded"];
+    onCentreLoaded?: Parameters<typeof loadFinanceCentreInspectorAnalysisProgressive>[1]["onCentreLoaded"];
+  },
+): Promise<CachedFetchResult<FinanceCentreInspectorAnalysisResponse>> {
+  const key = inspectorAnalysisKey(params.examId, params.subject_filter, params.candidates_per_inspector);
+  const entry = getInspectorAnalysisEntry(key);
+  const force = params.revalidate === true;
+
+  const store = (data: FinanceCentreInspectorAnalysisResponse) => {
+    const normalized = normalizeInspectorAnalysisResponse(data);
+    setInspectorAnalysisEntry(key, { data: normalized, fetchedAt: Date.now() });
+    params.onUpdate?.(normalized);
+  };
+
+  if (entry != null && !force) {
+    const cached = normalizeInspectorAnalysisResponse(entry.data);
+    if (isFresh(entry, STATS_TTL_MS)) {
+      return { data: cached, fromCache: true, isRevalidating: false };
+    }
+    void fetchInspectorAnalysis(
+      params.examId,
+      params.subject_filter,
+      params.candidates_per_inspector,
+      callbacks,
+    )
+      .then(store)
+      .catch(() => {});
+    return { data: cached, fromCache: true, isRevalidating: true };
+  }
+
+  const summary = await fetchInspectorAnalysis(
+    params.examId,
+    params.subject_filter,
+    params.candidates_per_inspector,
+    callbacks,
+  );
+  store(summary);
+  return { data: summary, fromCache: false, isRevalidating: false };
 }
 
 export function invalidateOfficialStatisticsCache(

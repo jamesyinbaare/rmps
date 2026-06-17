@@ -190,3 +190,29 @@ def get_inspector_posting_id_from_token(
 
 
 InspectorJwtPostingIdDep = Annotated[UUID | None, Depends(get_inspector_posting_id_from_token)]
+
+
+def get_subject_officer_assignment_id_from_token(
+    credentials: Annotated[HTTPAuthorizationCredentials | None, Depends(optional_bearer)],
+) -> UUID | None:
+    """JWT claim from subject-officer login or select-workspace; ignored for other roles."""
+    if credentials is None:
+        return None
+    payload = verify_token(credentials.credentials)
+    if payload is None:
+        return None
+    if payload.get("role") != UserRole.SUBJECT_OFFICER.name:
+        return None
+    raw = payload.get("subject_officer_assignment_id")
+    if not raw:
+        return None
+    try:
+        return UUID(str(raw))
+    except (ValueError, TypeError):
+        return None
+
+
+SubjectOfficerJwtAssignmentIdDep = Annotated[
+    UUID | None,
+    Depends(get_subject_officer_assignment_id_from_token),
+]

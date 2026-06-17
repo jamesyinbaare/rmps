@@ -3,17 +3,15 @@
 import { ChevronRight, Loader2, MapPin, Phone, Search } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 
-import { SearchableCombobox } from "@/components/searchable-combobox";
-import { SubjectOfficerExamSelector } from "@/components/subject-officer/subject-officer-exam-bar";
+import { EXAMINER_LIST_SEARCH_DEBOUNCE_MS, useDebounced } from "@/hooks/use-debounced";
 import { SubjectOfficerPanelShell } from "@/components/subject-officer/subject-officer-panel-shell";
+import { SubjectOfficerWorkspaceStrip } from "@/components/subject-officer/subject-officer-workspace-strip";
 import { Badge } from "@/components/ui/badge";
 import {
   getMarkedScriptReturnFilters,
   getSubjectOfficerExaminerScriptsAllocation,
   type ExaminerPublicScriptsAllocationBlock,
   type MarkedScriptReturnExaminerOption,
-  type SubjectOfficerMeAssignmentSubject,
-  type SubjectOfficerMeExamAssignment,
 } from "@/lib/api";
 import {
   officialAccountsCommandBarControlClass,
@@ -27,7 +25,6 @@ function regionLabel(value: string): string {
   return REGION_OPTIONS.find((r) => r.value === value)?.label ?? value;
 }
 
-const SUBJECT_COMBO_THRESHOLD = 5;
 const EXAMINER_LIST_LABEL_MAX_LEN = 28;
 const panelHeightClass = "lg:h-[min(72vh,720px)]";
 
@@ -40,19 +37,12 @@ const comboboxCompactProps = {
   truncateTrigger: true as const,
 };
 
-type Session = {
-  examId: number | null;
-  subjectId: number | null;
-  examinerId: string | null;
-};
-
 type Props = {
-  assignments: SubjectOfficerMeExamAssignment[];
-  examId: number | null;
-  onExamChange: (id: number | null) => void;
-  assignmentsLoading?: boolean;
-  session: Session;
-  onSessionChange: (next: Partial<Session>) => void;
+  examId: number;
+  subjectId: number;
+  workspaceLabel: string;
+  examinerId: string | null;
+  onExaminerChange: (id: string | null) => void;
 };
 
 type AllocationDetailRow = {
@@ -128,14 +118,12 @@ function MasterDetailSkeleton() {
 }
 
 export function SubjectOfficerAllocationsShell({
-  assignments,
   examId,
-  onExamChange,
-  assignmentsLoading = false,
-  session,
-  onSessionChange,
+  subjectId,
+  workspaceLabel,
+  examinerId,
+  onExaminerChange,
 }: Props) {
-  const { subjectId, examinerId } = session;
 
   const [examiners, setExaminers] = useState<MarkedScriptReturnExaminerOption[]>([]);
   const [blocks, setBlocks] = useState<ExaminerPublicScriptsAllocationBlock[]>([]);
@@ -143,19 +131,18 @@ export function SubjectOfficerAllocationsShell({
   const [loadingAllocation, setLoadingAllocation] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [examinerListSearch, setExaminerListSearch] = useState("");
+  const debouncedExaminerListSearch = useDebounced(examinerListSearch, EXAMINER_LIST_SEARCH_DEBOUNCE_MS);
+  const isDebouncing =
+    examinerListSearch.trim() !== debouncedExaminerListSearch.trim() &&
+    examinerListSearch.trim().length > 0;
+  const shouldShowExaminerList = debouncedExaminerListSearch.trim().length > 0;
 
-  const selectedExam = assignments.find((e) => e.examination_id === examId) ?? null;
-  const subjectOptions: SubjectOfficerMeAssignmentSubject[] = selectedExam?.subjects ?? [];
+  const subjectLabel = workspaceLabel.split(" · ").slice(-1)[0] ?? workspaceLabel;
 
-  const subjectLabel = useMemo(() => {
-    const s = subjectOptions.find((x) => x.subject_id === subjectId);
-    return s ? subjectDisplayLabel(s) : "";
-  }, [subjectId, subjectOptions]);
-
-  const filteredExaminers = useMemo(
-    () => filterExaminers(examiners, examinerListSearch),
-    [examiners, examinerListSearch],
-  );
+  const filteredExaminers = useMemo(() => {
+    if (!shouldShowExaminerList) return [];
+    return filterExaminers(examiners, debouncedExaminerListSearch);
+  }, [debouncedExaminerListSearch, examiners, shouldShowExaminerList]);
 
   const selectedExaminer = useMemo(
     () => examiners.find((e) => e.examiner_id === examinerId) ?? null,
@@ -166,10 +153,6 @@ export function SubjectOfficerAllocationsShell({
   const bookletTotal = useMemo(() => totalBooklets(blocks), [blocks]);
 
   const subjectSelected = examId != null && subjectId != null;
-
-  useEffect(() => {
-    setExaminerListSearch("");
-  }, [subjectId]);
 
   useEffect(() => {
     if (!subjectSelected || examId == null || subjectId == null) {
@@ -199,9 +182,9 @@ export function SubjectOfficerAllocationsShell({
 
   useEffect(() => {
     if (examinerId && examiners.length > 0 && !examiners.some((e) => e.examiner_id === examinerId)) {
-      onSessionChange({ examinerId: null });
+      onExaminerChange(null);
     }
-  }, [examinerId, examiners, onSessionChange]);
+  }, [examinerId, examiners, onExaminerChange]);
 
   useEffect(() => {
     if (!subjectSelected || examId == null || subjectId == null || !examinerId) {
@@ -229,77 +212,17 @@ export function SubjectOfficerAllocationsShell({
     };
   }, [examId, examinerId, subjectId, subjectSelected]);
 
-  function handleExamChange(id: number | null) {
-    onExamChange(id);
-    onSessionChange({ examId: id, subjectId: null, examinerId: null });
+  function handleExaminerSelect(id: string) {
+    onExaminerChange(id);
   }
 
   const commandBar = (
     <div className={officialAccountsCommandBarRowClass}>
-      <SubjectOfficerExamSelector
-        assignments={assignments}
-        examId={examId}
-        onExamChange={handleExamChange}
-        loading={assignmentsLoading}
-        compact
-      />
-
-      <div className="min-w-36 flex-1 sm:max-w-xs">
-        <label className={compactLabelClass} htmlFor="alloc-subject">
-          Subject
-        </label>
-        {subjectOptions.length <= SUBJECT_COMBO_THRESHOLD ? (
-          <select
-            id="alloc-subject"
-            className={cn(officialAccountsCommandBarControlClass, "mt-0.5 w-full")}
-            value={subjectId ?? ""}
-            disabled={examId == null}
-            onChange={(e) =>
-              onSessionChange({
-                subjectId: e.target.value ? Number(e.target.value) : null,
-                examinerId: null,
-              })
-            }
-          >
-            <option value="">Select…</option>
-            {subjectOptions.map((s) => (
-              <option key={s.subject_id} value={s.subject_id}>
-                {subjectDisplayLabel(s)}
-              </option>
-            ))}
-          </select>
-        ) : (
-          <SearchableCombobox
-            id="alloc-subject"
-            options={subjectOptions.map((s) => ({
-              value: String(s.subject_id),
-              label: subjectDisplayLabel(s),
-            }))}
-            value={subjectId != null ? String(subjectId) : ""}
-            onChange={(v) =>
-              onSessionChange({
-                subjectId: v ? Number(v) : null,
-                examinerId: null,
-              })
-            }
-            placeholder="Select…"
-            searchPlaceholder="Search…"
-            showAllOption={false}
-            disabled={examId == null}
-            {...comboboxCompactProps}
-          />
-        )}
-      </div>
+      <SubjectOfficerWorkspaceStrip workspaceLabel={workspaceLabel} workspace={null} />
     </div>
   );
 
-  const masterDetail = !subjectSelected ? (
-    <p className="text-sm text-muted-foreground">
-      {examId == null
-        ? "Select an examination and subject to view examiner allocations."
-        : "Select a subject to view examiner allocations."}
-    </p>
-  ) : loadingExaminers && examiners.length === 0 ? (
+  const masterDetail = loadingExaminers && examiners.length === 0 ? (
     <MasterDetailSkeleton />
   ) : (
     <div
@@ -338,7 +261,13 @@ export function SubjectOfficerAllocationsShell({
           role="listbox"
           aria-label="Examiners"
         >
-          {filteredExaminers.length === 0 ? (
+          {isDebouncing ? (
+            <li className="px-3 py-4 text-xs text-muted-foreground">Searching…</li>
+          ) : !shouldShowExaminerList ? (
+            <li className="px-3 py-4 text-xs leading-relaxed text-muted-foreground">
+              Type to search examiners.
+            </li>
+          ) : filteredExaminers.length === 0 ? (
             <li className="px-3 py-4 text-xs leading-relaxed text-muted-foreground">
               {examiners.length === 0
                 ? "No examiners found for this subject."
@@ -359,7 +288,7 @@ export function SubjectOfficerAllocationsShell({
                   aria-selected={selected}
                   aria-label={labelFull}
                   title={labelFull}
-                  onClick={() => onSessionChange({ examinerId: examiner.examiner_id })}
+                  onClick={() => onExaminerChange(examiner.examiner_id)}
                   className={cn(
                     "flex w-full items-center gap-2 rounded-lg px-3 py-2.5 text-left text-sm transition-colors",
                     selected ? "bg-primary text-primary-foreground" : "text-foreground hover:bg-muted/80",

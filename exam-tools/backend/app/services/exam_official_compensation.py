@@ -62,6 +62,15 @@ def compensation_for_official(
     return compensation_from_rate_row(rate, int(official.num_days))
 
 
+def compensation_for_official_at_days(
+    official: ExamCentreOfficial,
+    rates_by_designation: dict[ExamOfficialDesignation, ExaminationDesignationRate],
+    num_days: int,
+) -> ComputedCompensation:
+    rate = rates_by_designation.get(official.designation)
+    return compensation_from_rate_row(rate, num_days)
+
+
 async def load_designation_rates_map(
     session: AsyncSession,
     examination_id: int,

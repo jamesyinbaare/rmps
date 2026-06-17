@@ -9,8 +9,8 @@ import { LunchVerifiedCouponsPanel } from "@/components/subject-officer/lunch-ve
 
 import { humanizeRegion } from "@/components/examiners/utils";
 import { LunchVerificationRepeatModal } from "@/components/subject-officer/lunch-verification-repeat-modal";
-import { SubjectOfficerExamSelector } from "@/components/subject-officer/subject-officer-exam-bar";
 import { SubjectOfficerPanelShell } from "@/components/subject-officer/subject-officer-panel-shell";
+import { SubjectOfficerWorkspaceStrip } from "@/components/subject-officer/subject-officer-workspace-strip";
 import { Button } from "@/components/ui/button";
 import {
   listAdminVerifiedLunchCouponsAll,
@@ -29,9 +29,10 @@ import { cn } from "@/lib/utils";
 const compactLabelClass = "text-xs font-medium text-muted-foreground";
 
 type Props = {
-  assignments: SubjectOfficerMeExamAssignment[];
-  assignmentsLoading?: boolean;
+  examId?: number;
+  workspaceLabel?: string | null;
   adminMode?: boolean;
+  assignments?: SubjectOfficerMeExamAssignment[];
 };
 
 function VerificationResultCard({ result }: { result: LunchCouponVerifyResult }) {
@@ -95,21 +96,24 @@ function VerificationResultCard({ result }: { result: LunchCouponVerifyResult })
 }
 
 export function LunchVerificationShell({
-  assignments,
-  assignmentsLoading = false,
+  examId: workspaceExamId,
+  workspaceLabel,
   adminMode = false,
+  assignments = [],
 }: Props) {
   const readerId = useId().replace(/:/g, "");
   const scannerRef = useRef<Html5Qrcode | null>(null);
   const lastScannedRef = useRef<string | null>(null);
   const verifyingRef = useRef(false);
 
-  const defaultManualExamId = useMemo(
-    () => (assignments.length > 0 ? assignments[0].examination_id : null),
-    [assignments],
-  );
+  const [adminExamId, setAdminExamId] = useState<number | null>(null);
+  const manualExamId = adminMode ? adminExamId : workspaceExamId ?? null;
 
-  const [manualExamId, setManualExamId] = useState<number | null>(defaultManualExamId);
+  useEffect(() => {
+    if (!adminMode || assignments.length === 0) return;
+    setAdminExamId((current) => current ?? assignments[0]?.examination_id ?? null);
+  }, [adminMode, assignments]);
+
   const [cameraEnabled, setCameraEnabled] = useState(true);
   const [cameraError, setCameraError] = useState<string | null>(null);
   const [manualCode, setManualCode] = useState("");
@@ -119,10 +123,6 @@ export function LunchVerificationShell({
   const [verifiedItems, setVerifiedItems] = useState<LunchCouponVerifiedRow[]>([]);
   const [verifiedLoading, setVerifiedLoading] = useState(false);
   const [verifiedError, setVerifiedError] = useState<string | null>(null);
-
-  useEffect(() => {
-    setManualExamId(defaultManualExamId);
-  }, [defaultManualExamId]);
 
   const loadVerified = useCallback(async () => {
     setVerifiedLoading(true);
@@ -340,13 +340,27 @@ export function LunchVerificationShell({
                 <p className="mt-0.5 text-xs text-muted-foreground">Select an examination, then enter a reference code.</p>
               </div>
               <div className="border-b border-border/70 px-4 py-3.5 sm:px-5">
-                <SubjectOfficerExamSelector
-                  assignments={assignments}
-                  examId={manualExamId}
-                  onExamChange={setManualExamId}
-                  loading={assignmentsLoading}
-                  compact
-                />
+                {adminMode ? (
+                  <div className="max-w-md">
+                    <label className={compactLabelClass} htmlFor="admin-lunch-exam">
+                      Examination
+                    </label>
+                    <select
+                      id="admin-lunch-exam"
+                      className="mt-0.5 w-full rounded-lg border border-border bg-background px-3 py-2 text-sm"
+                      value={manualExamId ?? ""}
+                      onChange={(e) => setAdminExamId(Number(e.target.value))}
+                    >
+                      {assignments.map((a) => (
+                        <option key={a.examination_id} value={a.examination_id}>
+                          {a.examination_name}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                ) : (
+                  <SubjectOfficerWorkspaceStrip workspaceLabel={workspaceLabel} workspace={null} />
+                )}
               </div>
               <form
                 className="px-4 py-4 sm:px-5"

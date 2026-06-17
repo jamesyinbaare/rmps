@@ -58,7 +58,7 @@ export function isOfficialAccountsPath(pathname: string): boolean {
 
 /** Main content panel — subtle green top edge marks the allowances workspace. */
 export const officialAccountsPanelClass = cn(
-  "official-accounts-panel relative overflow-hidden rounded-2xl border border-border bg-card shadow-sm",
+  "official-accounts-panel relative min-w-0 overflow-hidden rounded-2xl border border-border bg-card shadow-sm",
   "before:pointer-events-none before:absolute before:inset-x-0 before:top-0 before:h-0.5 before:bg-success/70 before:content-['']",
 );
 
@@ -81,7 +81,7 @@ export const officialAccountsTableLayoutClass = "flex min-h-0 flex-1 flex-col ov
 export const officialAccountsTableScrollClass = "min-h-0 flex-1 overflow-auto overscroll-contain";
 
 /** Table on pages that scroll with the main column (no nested vertical scroll). */
-export const officialAccountsTablePageScrollClass = "scrollbar-hide overflow-x-auto";
+export const officialAccountsTablePageScrollClass = "scrollbar-hide min-w-0 max-w-full overflow-x-auto";
 export const officialAccountsTablePageLayoutClass = "flex flex-col";
 
 export const officialAccountsPanelToolbarClass =

@@ -28,6 +28,7 @@ import { computeCoverage } from "@/components/cohorts/utils";
 import { useCohortMembershipDraft } from "@/components/cohorts/use-cohort-membership-draft";
 import { EXAMINERS_PANEL_CLASS } from "@/components/examiners/constants";
 import { SubjectScopePicker } from "@/components/subject-scope-picker";
+import { SubjectOfficerWorkspaceStrip } from "@/components/subject-officer/subject-officer-workspace-strip";
 import { Button } from "@/components/ui/button";
 import {
   createSubjectMarkingGroup,
@@ -75,8 +76,10 @@ type Props = {
   canManageDefaultCohort?: boolean;
   /** When false, cohorts are view-only (subject officers). */
   canManageCohorts?: boolean;
-  /** When set, subject scope is controlled by the page command bar. */
+  /** When set, subject scope is controlled by the page command bar or JWT workspace. */
   lockedSubjectId?: number;
+  /** Read-only context when subject is fixed (subject officer workspace). */
+  workspaceLabel?: string | null;
 };
 
 export function SubjectMarkingGroupsPanel({
@@ -87,6 +90,7 @@ export function SubjectMarkingGroupsPanel({
   canManageDefaultCohort = false,
   canManageCohorts = true,
   lockedSubjectId,
+  workspaceLabel,
 }: Props) {
   const [subjectId, setSubjectId] = useState<number | null>(null);
   const [groups, setGroups] = useState<SubjectMarkingGroupRow[]>([]);
@@ -221,8 +225,12 @@ export function SubjectMarkingGroupsPanel({
   useEffect(() => {
     if (lockedSubjectId != null) {
       setSubjectId(lockedSubjectId);
+      return;
     }
-  }, [lockedSubjectId]);
+    if (subjects.length === 1) {
+      setSubjectId(subjects[0]!.id);
+    }
+  }, [lockedSubjectId, subjects]);
 
   useEffect(() => {
     if (examId == null) {
@@ -447,34 +455,51 @@ export function SubjectMarkingGroupsPanel({
         ? "flex flex-col"
         : EXAMINERS_PANEL_CLASS;
 
+  const subjectLocked = lockedSubjectId != null;
+
   return (
     <div className={panelClass}>
-      {lockedSubjectId == null ? (
-      <div className="shrink-0 border-b border-border/80 px-4 py-4 sm:px-5">
-        <SubjectScopePicker
-          subjects={subjects}
-          selectedSubjectId={subjectId}
-          onSelectedSubjectIdChange={(id) => {
-            setSubjectId(id);
-            closeModal();
-            setUnassignedModalOpen(false);
-          }}
-          subjectComboboxId="smg-subject"
-          resetKey={examId}
-          disabled={loading || busy}
-        />
-      </div>
-      ) : null}
+      {subjectLocked ? (
+        workspaceLabel ? (
+          <div className="shrink-0 border-b border-border/80 px-4 py-3 sm:px-5">
+            <SubjectOfficerWorkspaceStrip workspaceLabel={workspaceLabel} workspace={null} />
+            {!canManageCohorts ? (
+              <p className="mt-2 text-xs leading-relaxed text-muted-foreground">
+                View marking schedules and contact cohort members. Administrators manage cohort setup.
+              </p>
+            ) : null}
+          </div>
+        ) : null
+      ) : (
+        <div className="shrink-0 border-b border-border/80 px-4 py-4 sm:px-5">
+          <SubjectScopePicker
+            subjects={subjects}
+            selectedSubjectId={subjectId}
+            onSelectedSubjectIdChange={(id) => {
+              setSubjectId(id);
+              closeModal();
+              setUnassignedModalOpen(false);
+            }}
+            subjectComboboxId="smg-subject"
+            resetKey={examId}
+            disabled={loading || busy}
+          />
+        </div>
+      )}
 
       {subjectId == null ? (
         <div className="flex flex-1 items-center justify-center p-6 text-center">
           <p className="text-sm text-muted-foreground">
-            {canManageCohorts ? "Select a subject to manage cohorts." : "Select a subject to view cohorts."}
+            {subjectLocked
+              ? "Loading your workspace…"
+              : canManageCohorts
+                ? "Select a subject to manage cohorts."
+                : "Select a subject to view cohorts."}
           </p>
         </div>
       ) : (
         <>
-          {!canManageCohorts ? (
+          {!canManageCohorts && !subjectLocked ? (
             <div className="shrink-0 border-b border-border/80 px-4 py-3 sm:px-5">
               <p className="text-sm text-muted-foreground">
                 View cohort schedules and contact members. Only administrators can create or edit cohorts.

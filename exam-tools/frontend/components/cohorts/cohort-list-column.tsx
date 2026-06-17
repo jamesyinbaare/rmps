@@ -2,7 +2,7 @@
 
 import { useCallback, useMemo, useState, type KeyboardEvent } from "react";
 
-import { Search } from "lucide-react";
+import { Search, ChevronRight, CalendarDays, Users } from "lucide-react";
 
 import { cohortScheduleSummaryParts } from "@/components/cohorts/cohort-schedule-fields";
 import { EXAMINER_TYPE_LABELS } from "@/components/examiner-invitations/constants";
@@ -152,96 +152,151 @@ export function CohortListColumn({
             ) : null}
           </div>
         ) : (
-          <div className="flex h-full min-h-0 flex-col overflow-hidden rounded-lg border border-border">
-            <div className="min-h-0 flex-1 overflow-auto">
-              <Table>
-                <TableHeader className="sticky top-0 z-[1] bg-card shadow-[0_1px_0_0_hsl(var(--border))]">
-                  <TableRow>
-                    <TableHead className="min-w-40">Name</TableHead>
-                    <TableHead className="w-28 whitespace-nowrap">Examiners</TableHead>
-                    {showScheduleColumn ? (
-                      <TableHead className="min-w-48 hidden md:table-cell">Schedule</TableHead>
-                    ) : null}
-                    <TableHead className="min-w-36 hidden sm:table-cell">Rules</TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {filtered.map((c) => {
-                    const scheduleParts = cohortScheduleSummaryParts({
-                      coordinationStartDate: c.coordinationStartDate,
-                      coordinationStartTime: c.coordinationStartTime,
-                      coordinationEndDate: c.coordinationEndDate,
-                      coordinationEndTime: c.coordinationEndTime,
-                      markingStartDate: c.markingStartDate,
-                      markingEndDate: c.markingEndDate,
-                      markedScriptSubmissionDeadline: c.markedScriptSubmissionDeadline,
-                    });
-                    return (
-                      <TableRow
-                        key={c.id}
-                        id={`cohort-row-${c.id}`}
-                        tabIndex={0}
-                        className="cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40 focus-visible:ring-inset"
-                        onClick={() => onSelect(c.id)}
-                        onKeyDown={(e) => {
-                          if (e.key === "Enter" || e.key === " ") {
-                            e.preventDefault();
-                            onSelect(c.id);
-                          }
-                        }}
-                      >
-                        <TableCell className="font-medium text-foreground">
-                          <span className="inline-flex flex-wrap items-center gap-2">
-                            {c.name}
-                            {c.is_default ? (
-                              <Badge variant="secondary" className="text-[10px] font-normal uppercase tracking-wide">
-                                Default
-                              </Badge>
-                            ) : null}
+          <>
+            <ul className="flex flex-col gap-2 md:hidden" role="list">
+              {filtered.map((c) => {
+                const scheduleParts = cohortScheduleSummaryParts({
+                  coordinationStartDate: c.coordinationStartDate,
+                  coordinationStartTime: c.coordinationStartTime,
+                  coordinationEndDate: c.coordinationEndDate,
+                  coordinationEndTime: c.coordinationEndTime,
+                  markingStartDate: c.markingStartDate,
+                  markingEndDate: c.markingEndDate,
+                  markedScriptSubmissionDeadline: c.markedScriptSubmissionDeadline,
+                });
+                return (
+                  <li key={c.id}>
+                    <button
+                      type="button"
+                      id={`cohort-card-${c.id}`}
+                      onClick={() => onSelect(c.id)}
+                      className="flex w-full items-start gap-3 rounded-xl border border-border/80 bg-card px-4 py-3.5 text-left shadow-sm transition-colors hover:bg-muted/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/30"
+                    >
+                      <div className="min-w-0 flex-1">
+                        <div className="flex flex-wrap items-center gap-2">
+                          <span className="font-semibold text-foreground">{c.name}</span>
+                          {c.is_default ? (
+                            <Badge variant="secondary" className="text-[10px] font-normal uppercase tracking-wide">
+                              Default
+                            </Badge>
+                          ) : null}
+                        </div>
+                        <div className="mt-1.5 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted-foreground">
+                          <span className="inline-flex items-center gap-1">
+                            <Users className="size-3.5 shrink-0 opacity-70" aria-hidden />
+                            {c.examiner_ids.length} examiner{c.examiner_ids.length === 1 ? "" : "s"}
                           </span>
-                        </TableCell>
-                        <TableCell className="tabular-nums text-muted-foreground">
-                          {c.examiner_ids.length}
-                        </TableCell>
-                        {showScheduleColumn ? (
-                          <TableCell className="hidden max-w-xs text-xs text-muted-foreground md:table-cell">
-                            {scheduleParts.length > 0 ? (
-                              <span className="line-clamp-2">{scheduleParts.join(" · ")}</span>
-                            ) : (
-                              <span className="italic">No schedule</span>
-                            )}
-                          </TableCell>
+                          {showScheduleColumn && scheduleParts.length > 0 ? (
+                            <span className="inline-flex items-center gap-1">
+                              <CalendarDays className="size-3.5 shrink-0 opacity-70" aria-hidden />
+                              <span className="line-clamp-1">{scheduleParts[0]}</span>
+                            </span>
+                          ) : null}
+                        </div>
+                        {showScheduleColumn && scheduleParts.length > 1 ? (
+                          <p className="mt-1 line-clamp-2 text-xs text-muted-foreground">
+                            {scheduleParts.slice(1).join(" · ")}
+                          </p>
                         ) : null}
-                        <TableCell className="hidden sm:table-cell">
-                          {(c.source_regions.length > 0 || (c.source_roles?.length ?? 0) > 0) ? (
-                            <div className="flex flex-wrap gap-1">
-                              {c.source_regions.slice(0, 2).map((r) => (
-                                <Badge key={r} variant="secondary" className="text-[10px] font-normal">
-                                  {r}
-                                </Badge>
-                              ))}
-                              {c.source_regions.length > 2 ? (
-                                <Badge variant="secondary" className="text-[10px] font-normal">
-                                  +{c.source_regions.length - 2}
+                      </div>
+                      <ChevronRight className="mt-0.5 size-4 shrink-0 text-muted-foreground" aria-hidden />
+                    </button>
+                  </li>
+                );
+              })}
+            </ul>
+
+            <div className="hidden h-full min-h-0 flex-col overflow-hidden rounded-lg border border-border md:flex">
+              <div className="min-h-0 flex-1 overflow-auto">
+                <Table>
+                  <TableHeader className="sticky top-0 z-[1] bg-card shadow-[0_1px_0_0_hsl(var(--border))]">
+                    <TableRow>
+                      <TableHead className="min-w-40">Name</TableHead>
+                      <TableHead className="w-28 whitespace-nowrap">Examiners</TableHead>
+                      {showScheduleColumn ? (
+                        <TableHead className="min-w-48">Schedule</TableHead>
+                      ) : null}
+                      <TableHead className="min-w-36">Rules</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {filtered.map((c) => {
+                      const scheduleParts = cohortScheduleSummaryParts({
+                        coordinationStartDate: c.coordinationStartDate,
+                        coordinationStartTime: c.coordinationStartTime,
+                        coordinationEndDate: c.coordinationEndDate,
+                        coordinationEndTime: c.coordinationEndTime,
+                        markingStartDate: c.markingStartDate,
+                        markingEndDate: c.markingEndDate,
+                        markedScriptSubmissionDeadline: c.markedScriptSubmissionDeadline,
+                      });
+                      return (
+                        <TableRow
+                          key={c.id}
+                          id={`cohort-row-${c.id}`}
+                          tabIndex={0}
+                          className="cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40 focus-visible:ring-inset"
+                          onClick={() => onSelect(c.id)}
+                          onKeyDown={(e) => {
+                            if (e.key === "Enter" || e.key === " ") {
+                              e.preventDefault();
+                              onSelect(c.id);
+                            }
+                          }}
+                        >
+                          <TableCell className="font-medium text-foreground">
+                            <span className="inline-flex flex-wrap items-center gap-2">
+                              {c.name}
+                              {c.is_default ? (
+                                <Badge variant="secondary" className="text-[10px] font-normal uppercase tracking-wide">
+                                  Default
                                 </Badge>
                               ) : null}
-                              {(c.source_roles ?? []).slice(0, 1).map((r) => (
-                                <Badge key={r} variant="outline" className="text-[10px] font-normal">
-                                  {roleChipLabel(r)}
-                                </Badge>
-                              ))}
-                            </div>
-                          ) : (
-                            <span className="text-xs text-muted-foreground">—</span>
-                          )}
-                        </TableCell>
-                      </TableRow>
-                    );
-                  })}
-                </TableBody>
-              </Table>
+                            </span>
+                          </TableCell>
+                          <TableCell className="tabular-nums text-muted-foreground">
+                            {c.examiner_ids.length}
+                          </TableCell>
+                          {showScheduleColumn ? (
+                            <TableCell className="max-w-xs text-xs text-muted-foreground">
+                              {scheduleParts.length > 0 ? (
+                                <span className="line-clamp-2">{scheduleParts.join(" · ")}</span>
+                              ) : (
+                                <span className="italic">No schedule</span>
+                              )}
+                            </TableCell>
+                          ) : null}
+                          <TableCell>
+                            {(c.source_regions.length > 0 || (c.source_roles?.length ?? 0) > 0) ? (
+                              <div className="flex flex-wrap gap-1">
+                                {c.source_regions.slice(0, 2).map((r) => (
+                                  <Badge key={r} variant="secondary" className="text-[10px] font-normal">
+                                    {r}
+                                  </Badge>
+                                ))}
+                                {c.source_regions.length > 2 ? (
+                                  <Badge variant="secondary" className="text-[10px] font-normal">
+                                    +{c.source_regions.length - 2}
+                                  </Badge>
+                                ) : null}
+                                {(c.source_roles ?? []).slice(0, 1).map((r) => (
+                                  <Badge key={r} variant="outline" className="text-[10px] font-normal">
+                                    {roleChipLabel(r)}
+                                  </Badge>
+                                ))}
+                              </div>
+                            ) : (
+                              <span className="text-xs text-muted-foreground">—</span>
+                            )}
+                          </TableCell>
+                        </TableRow>
+                      );
+                    })}
+                  </TableBody>
+                </Table>
+              </div>
             </div>
-          </div>
+          </>
         )}
       </div>
 

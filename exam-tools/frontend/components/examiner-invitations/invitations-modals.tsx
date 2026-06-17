@@ -230,9 +230,18 @@ export type RenewInvitationModalProps = {
 export function RenewInvitationModal(props: RenewInvitationModalProps) {
   if (!props.open) return null;
   const isDeclined = props.status === "declined";
-  const title = isDeclined ? "Reopen invitation" : "Renew invitation link";
-  const submitLabel = isDeclined ? "Reopen invitation" : "Renew link";
-  const busyLabel = isDeclined ? "Reopening…" : "Renewing…";
+  const isQuotaWaitlisted = props.status === "quota_waitlisted";
+  const title = isDeclined
+    ? "Reopen invitation"
+    : isQuotaWaitlisted
+      ? "Reset invitation"
+      : "Renew invitation link";
+  const submitLabel = isDeclined
+    ? "Reopen invitation"
+    : isQuotaWaitlisted
+      ? "Reset invitation"
+      : "Renew link";
+  const busyLabel = isDeclined ? "Reopening…" : isQuotaWaitlisted ? "Resetting…" : "Renewing…";
   return (
     <InvitationModalShell
       title={title}
@@ -253,7 +262,9 @@ export function RenewInvitationModal(props: RenewInvitationModalProps) {
       <p className="text-xs text-muted-foreground">
         {isDeclined
           ? "Sets a new respond-by deadline so the invitee can accept or decline again. The same public link is kept."
-          : "Sets a new respond-by deadline and reactivates this invitation. The same public link is kept."}
+          : isQuotaWaitlisted
+            ? "Resets this invitation to pending with a new respond-by deadline. The same public link is kept."
+            : "Sets a new respond-by deadline and reactivates this invitation. The same public link is kept."}
       </p>
       {props.error ? (
         <p className="mt-3 rounded-lg border border-destructive/40 bg-destructive/10 px-3 py-2 text-sm text-destructive">
@@ -277,6 +288,93 @@ export function RenewInvitationModal(props: RenewInvitationModalProps) {
           </label>
           <input
             id="ei-renew-deadline"
+            type="datetime-local"
+            required
+            className={cn(formInputClass, "mt-1")}
+            value={props.responseDeadlineInput}
+            disabled={props.busy}
+            onChange={(e) => props.onResponseDeadlineChange(e.target.value)}
+          />
+          <p className="mt-1 text-xs text-muted-foreground">
+            Required — last date/time the invitee can accept or decline.
+          </p>
+        </div>
+        <label className="flex items-center gap-2 text-sm">
+          <input
+            type="checkbox"
+            checked={props.sendSms}
+            disabled={props.busy}
+            onChange={(e) => props.onSendSmsChange(e.target.checked)}
+          />
+          Send invitation by SMS
+        </label>
+      </div>
+    </InvitationModalShell>
+  );
+}
+
+export type ExtendRespondByModalProps = {
+  open: boolean;
+  busy: boolean;
+  error: string | null;
+  status?: ExaminerInvitationStatusApi | null;
+  name: string;
+  phone: string;
+  responseDeadlineInput: string;
+  sendSms: boolean;
+  onClose: () => void;
+  onSubmit: () => void;
+  onResponseDeadlineChange: (v: string) => void;
+  onSendSmsChange: (v: boolean) => void;
+};
+
+export function ExtendRespondByModal(props: ExtendRespondByModalProps) {
+  if (!props.open) return null;
+  const isExpired = props.status === "expired";
+  return (
+    <InvitationModalShell
+      title="Extend respond-by"
+      titleId="ei-extend-deadline-title"
+      canClose={!props.busy}
+      onClose={props.onClose}
+      footer={
+        <div className="flex justify-end gap-2">
+          <Button type="button" variant="outline" disabled={props.busy} onClick={props.onClose}>
+            Cancel
+          </Button>
+          <Button type="button" disabled={props.busy} onClick={props.onSubmit}>
+            {props.busy ? "Saving…" : "Save deadline"}
+          </Button>
+        </div>
+      }
+    >
+      <p className="text-xs text-muted-foreground">
+        {isExpired
+          ? "Sets a new respond-by deadline and reactivates this invitation. The same public link is kept."
+          : "Updates when the invitee must accept or decline. The same public link is kept."}
+      </p>
+      {props.error ? (
+        <p className="mt-3 rounded-lg border border-destructive/40 bg-destructive/10 px-3 py-2 text-sm text-destructive">
+          {props.error}
+        </p>
+      ) : null}
+      <div className="mt-4 space-y-4">
+        <div className="grid gap-3 sm:grid-cols-2">
+          <div>
+            <p className={formLabelClass}>Name</p>
+            <p className="mt-1 text-sm font-medium text-foreground">{props.name}</p>
+          </div>
+          <div>
+            <p className={formLabelClass}>Phone</p>
+            <p className="mt-1 font-mono text-sm text-foreground">{props.phone}</p>
+          </div>
+        </div>
+        <div>
+          <label className={formLabelClass} htmlFor="ei-extend-deadline">
+            Respond by
+          </label>
+          <input
+            id="ei-extend-deadline"
             type="datetime-local"
             required
             className={cn(formInputClass, "mt-1")}
@@ -584,7 +682,7 @@ export function CustomSmsModal(props: CustomSmsModalProps) {
           value={props.message}
           disabled={props.busy || Boolean(props.result)}
           onChange={(e) => props.onMessageChange(e.target.value)}
-          placeholder="Hi {name}, please confirm by {response_deadline}. Link: {link}"
+          placeholder="Dear {name}, you are invited as {role} for {subject} ({exam}). Please respond by {response_deadline}: {link}"
         />
         <div className="flex flex-wrap gap-1.5">
           {SMS_PLACEHOLDER_TOKENS.map((token) => (

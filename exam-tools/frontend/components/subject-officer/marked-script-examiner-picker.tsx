@@ -3,6 +3,7 @@
 import { useMemo } from "react";
 import { Search } from "lucide-react";
 
+import { EXAMINER_LIST_SEARCH_DEBOUNCE_MS, useDebounced } from "@/hooks/use-debounced";
 import type { MarkedScriptReturnExaminerOption } from "@/lib/api";
 import { REGION_OPTIONS } from "@/lib/school-enums";
 import { cn } from "@/lib/utils";
@@ -115,17 +116,20 @@ export function MarkedScriptExaminerPicker({
   listClassName,
   className,
 }: Props) {
-  const filteredExaminers = useMemo(
-    () => filterMarkedScriptExaminers(examiners, searchQuery, { pendingOnly, nameOnly: false }),
-    [examiners, pendingOnly, searchQuery],
-  );
+  const debouncedSearchQuery = useDebounced(searchQuery, EXAMINER_LIST_SEARCH_DEBOUNCE_MS);
+  const isDebouncing =
+    searchQuery.trim() !== debouncedSearchQuery.trim() && searchQuery.trim().length > 0;
+  const shouldShowList = debouncedSearchQuery.trim().length > 0 || pendingOnly;
+
+  const filteredExaminers = useMemo(() => {
+    if (!shouldShowList) return [];
+    return filterMarkedScriptExaminers(examiners, debouncedSearchQuery, { pendingOnly, nameOnly: false });
+  }, [debouncedSearchQuery, examiners, pendingOnly, shouldShowList]);
 
   const pendingTotal = useMemo(
     () => examiners.filter((e) => e.pending_count > 0).length,
     [examiners],
   );
-
-  const showSearchHint = examiners.length > 15;
 
   return (
     <div className={cn("flex min-h-0 flex-col", className)}>
@@ -147,20 +151,12 @@ export function MarkedScriptExaminerPicker({
             type="search"
             value={searchQuery}
             onChange={(e) => onSearchChange(e.target.value)}
-            placeholder="Search by name, role, or region…"
+            placeholder="Search examiners…"
             aria-label="Search examiners"
             className={cn(filterControlClass, "py-2 pl-8 text-sm")}
             autoComplete="off"
           />
         </div>
-
-        {showSearchHint ? (
-          <p className="px-0.5 text-[11px] leading-snug text-muted-foreground">
-            {searchQuery.trim()
-              ? `${filteredExaminers.length} of ${examiners.length} match`
-              : `Type to search ${examiners.length} examiners`}
-          </p>
-        ) : null}
 
         {pendingTotal > 0 ? (
           <label className="flex cursor-pointer items-center gap-2 px-0.5 text-xs text-muted-foreground">
@@ -186,13 +182,21 @@ export function MarkedScriptExaminerPicker({
       >
         {loading && examiners.length === 0 ? (
           <li className="px-3 py-4 text-xs text-muted-foreground">Loading examiners…</li>
+        ) : isDebouncing ? (
+          <li className="px-3 py-4 text-xs text-muted-foreground">Searching…</li>
+        ) : !shouldShowList ? (
+          <li className="px-3 py-4 text-xs leading-relaxed text-muted-foreground">
+            Type to search examiners.
+          </li>
         ) : filteredExaminers.length === 0 ? (
           <li className="px-3 py-4 text-xs leading-relaxed text-muted-foreground">
             {examiners.length === 0
               ? "No examiners with allocated scripts for this subject."
-              : pendingOnly && !searchQuery.trim()
-                ? "No examiners with pending scripts."
-                : "No examiners match your search."}
+              : selectedId
+                ? "No examiners match your search. The selected examiner's scripts, if any, appear below."
+                : pendingOnly && !debouncedSearchQuery.trim()
+                  ? "No examiners with pending scripts."
+                  : "No examiners match your search."}
           </li>
         ) : (
           filteredExaminers.map((examiner) => {

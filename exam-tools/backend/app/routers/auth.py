@@ -7,17 +7,28 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.security import create_access_token, verify_password
-from app.dependencies.auth import CurrentUserDep, InspectorDep, InspectorJwtPostingIdDep
+from app.dependencies.auth import (
+    CurrentUserDep,
+    InspectorDep,
+    InspectorJwtPostingIdDep,
+    SubjectOfficerDep,
+    SubjectOfficerJwtAssignmentIdDep,
+)
 from app.dependencies.database import DBSessionDep
 from app.models import (
     Depot,
     InspectorExamPosting,
     School,
+    SubjectOfficerAssignment,
     User,
     UserRole,
 )
 from app.services.active_examination import require_active_inspector_examination_id
 from app.services.inspector_posting import load_postings_for_inspector_exam
+from app.services.subject_officer_scope import (
+    load_subject_officer_assignment_rows,
+    resolve_subject_officer_workspace_label,
+)
 from app.services.school_bulk_upload import inspector_phone_lookup_candidates
 
 
@@ -50,6 +61,10 @@ class InspectorSelectPostingBody(BaseModel):
     posting_id: UUID
 
 
+class SubjectOfficerSelectWorkspaceBody(BaseModel):
+    assignment_id: UUID
+
+
 class DepotKeeperLoginRequest(BaseModel):
     username: str
     password: str
@@ -69,6 +84,8 @@ class UserMe(BaseModel):
     depot_name: str | None = None
     """Resolved posting centre label when JWT includes ``inspector_posting_id``."""
     inspector_workspace_label: str | None = None
+    """Resolved exam + subject label when JWT includes ``subject_officer_assignment_id``."""
+    subject_officer_workspace_label: str | None = None
 
     @classmethod
     def from_user(
@@ -79,6 +96,7 @@ class UserMe(BaseModel):
         depot_code: str | None = None,
         depot_name: str | None = None,
         inspector_workspace_label: str | None = None,
+        subject_officer_workspace_label: str | None = None,
     ) -> "UserMe":
         return cls(
             id=user.id,
@@ -93,6 +111,7 @@ class UserMe(BaseModel):
             depot_code=depot_code,
             depot_name=depot_name,
             inspector_workspace_label=inspector_workspace_label,
+            subject_officer_workspace_label=subject_officer_workspace_label,
         )
 
 
@@ -115,8 +134,10 @@ async def _get_user_by_stmt(session: AsyncSession, stmt: Any) -> User:
     return user
 
 
-def _make_token_response(user: User) -> TokenResponse:
-    payload = {"sub": str(user.id), "role": user.role.name}
+def _make_token_response(user: User, extra_claims: dict[str, str] | None = None) -> TokenResponse:
+    payload: dict[str, str] = {"sub": str(user.id), "role": user.role.name}
+    if extra_claims:
+        payload.update(extra_claims)
     token = create_access_token(payload)
     return TokenResponse(
         access_token=token,
@@ -152,7 +173,18 @@ async def super_admin_login(
             detail="Incorrect credentials",
         )
 
-    return _make_token_response(user)
+    extra_claims: dict[str, str] | None = None
+    if user.role == UserRole.SUBJECT_OFFICER:
+        assignments = await load_subject_officer_assignment_rows(session, user_id=user.id)
+        if not assignments:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="No subject assignment found for your account.",
+            )
+        if len(assignments) == 1:
+            extra_claims = {"subject_officer_assignment_id": str(assignments[0].id)}
+
+    return _make_token_response(user, extra_claims)
 
 
 @router.post("/supervisor/login", response_model=TokenResponse)
@@ -263,6 +295,34 @@ async def inspector_select_posting(
     )
 
 
+@router.post("/subject-officer/select-workspace", response_model=TokenResponse)
+async def subject_officer_select_workspace(
+    body: SubjectOfficerSelectWorkspaceBody,
+    session: DBSessionDep,
+    user: SubjectOfficerDep,
+) -> TokenResponse:
+    """Mint a new token with the chosen subject-officer assignment (exam + subject)."""
+    assignment = await session.get(SubjectOfficerAssignment, body.assignment_id)
+    if assignment is None or assignment.user_id != user.id:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Invalid workspace for this account",
+        )
+
+    payload = {
+        "sub": str(user.id),
+        "role": user.role.name,
+        "subject_officer_assignment_id": str(assignment.id),
+    }
+    token = create_access_token(payload)
+    return TokenResponse(
+        access_token=token,
+        role=user.role,
+        school_code=None,
+        email=user.email,
+    )
+
+
 @router.post("/depot-keeper/login", response_model=TokenResponse)
 async def depot_keeper_login(
     data: DepotKeeperLoginRequest,
@@ -286,6 +346,7 @@ async def get_me(
     session: DBSessionDep,
     current_user: CurrentUserDep,
     jwt_posting_id: InspectorJwtPostingIdDep,
+    jwt_assignment_id: SubjectOfficerJwtAssignmentIdDep,
 ) -> UserMe:
     school_name: str | None = None
     if current_user.school_code:
@@ -310,10 +371,18 @@ async def get_me(
                 inspector_workspace_label = (
                     f"{center.name} ({center.code}) — {posting.subject_scope.value}"
                 )
+    subject_officer_workspace_label: str | None = None
+    if current_user.role == UserRole.SUBJECT_OFFICER and jwt_assignment_id is not None:
+        subject_officer_workspace_label = await resolve_subject_officer_workspace_label(
+            session,
+            assignment_id=jwt_assignment_id,
+            user_id=current_user.id,
+        )
     return UserMe.from_user(
         current_user,
         school_name=school_name,
         depot_code=depot_code,
         depot_name=depot_name,
         inspector_workspace_label=inspector_workspace_label,
+        subject_officer_workspace_label=subject_officer_workspace_label,
     )

@@ -11,6 +11,7 @@ import {
 import { ExaminerQuotaAssessmentModal } from "@/components/examiners/examiner-quota-assessment-modal";
 import { ExaminerRegionGroupsModal } from "@/components/examiners/examiner-region-groups-modal";
 import { RosterCommandBar } from "@/components/examiners/roster-command-bar";
+import { RosterMobileList } from "@/components/examiners/roster-mobile-list";
 import { RosterBulkUploadModal, RosterExaminerFormModal } from "@/components/examiners/roster-modals";
 import { RosterTable } from "@/components/examiners/roster-table";
 import type { RosterTableRow } from "@/components/examiners/types";
@@ -64,6 +65,7 @@ type Props = {
   usePageSubjectScope?: boolean;
   pageSubjectTypeFilter?: ScriptControlSubjectTypeFilter;
   pageSubjectId?: string;
+  mobileContactLayout?: boolean;
 };
 
 type AllocationTarget = {
@@ -88,6 +90,7 @@ export function ExaminersRosterPanel({
   usePageSubjectScope = false,
   pageSubjectTypeFilter = "all",
   pageSubjectId = "",
+  mobileContactLayout = false,
 }: Props) {
   const [examiners, setExaminers] = useState<ExaminerRow[]>([]);
   const [groups, setGroups] = useState<ExaminerGroupRow[]>([]);
@@ -137,6 +140,7 @@ export function ExaminersRosterPanel({
   const [uploadResult, setUploadResult] = useState<ExaminerBulkImportResponse | null>(null);
 
   const [smsModalOpen, setSmsModalOpen] = useState(false);
+  const [smsSingleTarget, setSmsSingleTarget] = useState<RosterTableRow | null>(null);
   const [customSmsMessage, setCustomSmsMessage] = useState("");
   const [smsError, setSmsError] = useState<string | null>(null);
   const [smsResult, setSmsResult] = useState<ExaminerRosterBulkSmsResponse | null>(null);
@@ -276,11 +280,12 @@ export function ExaminersRosterPanel({
     activeFilterCount > 0 || debouncedSearch.trim().length > 0 || subjectTypeFilter !== "all";
 
   const smsTargetRows = useMemo(() => {
+    if (smsSingleTarget) return [smsSingleTarget];
     if (selectedCount > 0) {
       return tableRows.filter((row) => rowSelection[row.id]);
     }
     return tableRows;
-  }, [tableRows, rowSelection, selectedCount]);
+  }, [smsSingleTarget, tableRows, rowSelection, selectedCount]);
 
   const filterChips = useMemo((): OfficialAccountsFilterChip[] => {
     const chips: OfficialAccountsFilterChip[] = [];
@@ -475,9 +480,18 @@ export function ExaminersRosterPanel({
   function closeSmsModal() {
     if (busy) return;
     setSmsModalOpen(false);
+    setSmsSingleTarget(null);
     setSmsError(null);
     setSmsResult(null);
     setCustomSmsMessage("");
+  }
+
+  function openCustomSmsForExaminer(row: RosterTableRow) {
+    setSmsSingleTarget(row);
+    setSmsError(null);
+    setSmsResult(null);
+    setCustomSmsMessage("");
+    setSmsModalOpen(true);
   }
 
   async function handleBulkSms() {
@@ -503,6 +517,7 @@ export function ExaminersRosterPanel({
         setActionMessage(`SMS failed for ${res.failed_count} examiner${res.failed_count === 1 ? "" : "s"}.`);
       }
       setSmsModalOpen(false);
+      setSmsSingleTarget(null);
       setCustomSmsMessage("");
       setSmsError(null);
       setSmsResult(null);
@@ -513,8 +528,13 @@ export function ExaminersRosterPanel({
     }
   }
 
-  const smsRecipientLabel =
-    selectedCount > 0 ? "selected rows" : hasActiveFilters ? "filtered rows" : "all examiners on roster";
+  const smsRecipientLabel = smsSingleTarget
+    ? smsSingleTarget.name
+    : selectedCount > 0
+      ? "selected rows"
+      : hasActiveFilters
+        ? "filtered rows"
+        : "all examiners on roster";
 
   return (
     <>
@@ -565,6 +585,7 @@ export function ExaminersRosterPanel({
           selectedCount={selectedCount}
           filteredCount={tableRows.length}
           onSendSms={() => {
+            setSmsSingleTarget(null);
             setSmsError(null);
             setSmsResult(null);
             setCustomSmsMessage("");
@@ -586,6 +607,7 @@ export function ExaminersRosterPanel({
           disabled={examId == null}
           embedded={embedded}
           hideSubjectScopeFilters={usePageSubjectScope}
+          mobileContactLayout={mobileContactLayout}
         />
 
         <div
@@ -617,46 +639,85 @@ export function ExaminersRosterPanel({
                 </button>
               </div>
             ) : (
-              <RosterTable
-                rows={tableRows}
-                loading={loading}
-                busy={busy}
-                sorting={sorting}
-                onSortingChange={setSorting}
-                rowSelection={rowSelection}
-                onRowSelectionChange={setRowSelection}
-                columnVisibility={columnVisibility}
-                onColumnVisibilityChange={setColumnVisibility}
-                pagination={pagination}
-                onPaginationChange={setPagination}
-                showCustomPageSizeInput={customPageSizeEditing}
-                customPageSizeInput={customPageSizeInput}
-                onPageSizeSelectChange={handlePageSizeSelectChange}
-                onCustomPageSizeChange={setCustomPageSizeInput}
-                onCustomPageSizeBlur={() => {
-                  const n = clampPageSize(Number.parseInt(customPageSizeInput, 10));
-                  setCustomPageSizeInput(String(n));
-                  setCustomPageSizeEditing(false);
-                  setPagination({ pageIndex: 0, pageSize: n });
-                }}
-                onEdit={openEdit}
-                onRemove={(row) => void handleRemove(row)}
-                canEditRoster={canEditRoster}
-                pageScroll={pageScroll}
-                onViewAllocation={
-                  lockedSubjectIds != null
-                    ? (row) => {
-                        const subjectId = row.subject_ids[0];
-                        if (subjectId == null) return;
-                        setAllocationTarget({
-                          examinerId: row.id,
-                          subjectId,
-                          name: row.name,
-                        });
-                      }
-                    : undefined
-                }
-              />
+              <>
+                <div className={mobileContactLayout ? "hidden md:block" : undefined}>
+                  <RosterTable
+                    rows={tableRows}
+                    loading={loading}
+                    busy={busy}
+                    sorting={sorting}
+                    onSortingChange={setSorting}
+                    rowSelection={rowSelection}
+                    onRowSelectionChange={setRowSelection}
+                    columnVisibility={columnVisibility}
+                    onColumnVisibilityChange={setColumnVisibility}
+                    pagination={pagination}
+                    onPaginationChange={setPagination}
+                    showCustomPageSizeInput={customPageSizeEditing}
+                    customPageSizeInput={customPageSizeInput}
+                    onPageSizeSelectChange={handlePageSizeSelectChange}
+                    onCustomPageSizeChange={setCustomPageSizeInput}
+                    onCustomPageSizeBlur={() => {
+                      const n = clampPageSize(Number.parseInt(customPageSizeInput, 10));
+                      setCustomPageSizeInput(String(n));
+                      setCustomPageSizeEditing(false);
+                      setPagination({ pageIndex: 0, pageSize: n });
+                    }}
+                    onEdit={openEdit}
+                    onRemove={(row) => void handleRemove(row)}
+                    canEditRoster={canEditRoster}
+                    pageScroll={pageScroll}
+                    onViewAllocation={
+                      lockedSubjectIds != null
+                        ? (row) => {
+                            const subjectId = row.subject_ids[0];
+                            if (subjectId == null) return;
+                            setAllocationTarget({
+                              examinerId: row.id,
+                              subjectId,
+                              name: row.name,
+                            });
+                          }
+                        : undefined
+                    }
+                  />
+                </div>
+                {mobileContactLayout && !loading && tableRows.length > 0 ? (
+                  <RosterMobileList
+                    rows={tableRows}
+                    pagination={pagination}
+                    onPaginationChange={setPagination}
+                    showCustomPageSizeInput={customPageSizeEditing}
+                    customPageSizeInput={customPageSizeInput}
+                    onPageSizeSelectChange={handlePageSizeSelectChange}
+                    onCustomPageSizeChange={setCustomPageSizeInput}
+                    onCustomPageSizeBlur={() => {
+                      const n = clampPageSize(Number.parseInt(customPageSizeInput, 10));
+                      setCustomPageSizeInput(String(n));
+                      setCustomPageSizeEditing(false);
+                      setPagination({ pageIndex: 0, pageSize: n });
+                    }}
+                    busy={busy}
+                    canEditRoster={canEditRoster}
+                    onInAppSms={openCustomSmsForExaminer}
+                    onEdit={openEdit}
+                    onRemove={(row) => void handleRemove(row)}
+                    onViewAllocation={
+                      lockedSubjectIds != null
+                        ? (row) => {
+                            const subjectId = row.subject_ids[0];
+                            if (subjectId == null) return;
+                            setAllocationTarget({
+                              examinerId: row.id,
+                              subjectId,
+                              name: row.name,
+                            });
+                          }
+                        : undefined
+                    }
+                  />
+                ) : null}
+              </>
             )}
           </div>
       </section>

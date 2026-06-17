@@ -61,6 +61,10 @@ from app.schemas.examination import (
     ExaminationScriptSeriesConfigRow,
     ExaminationUpdate,
     FinanceCentreDayInvigilatorRow,
+    FinanceCentreInspectorAnalysisExportBody,
+    FinanceCentreInspectorAnalysisResponse,
+    FinanceCentreInspectorAnalysisRow,
+    FinanceCentreInspectorAnalysisShellResponse,
     FinanceCentreOfficialStatisticsExportBody,
     FinanceCentreOfficialStatisticsResponse,
     FinanceCentreOfficialStatisticsRow,
@@ -3184,6 +3188,163 @@ async def export_finance_centre_official_statistics(
         subject_filter=subject_filter,
     )
     filename = official_statistics_export_filename(body.exam_label, subject_filter)
+    from app.utils.content_disposition import content_disposition_attachment
+
+    return StreamingResponse(
+        iter([payload]),
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": content_disposition_attachment(filename)},
+    )
+
+
+@router.get(
+    "/{exam_id}/finance/inspector-analysis/shell",
+    response_model=FinanceCentreInspectorAnalysisShellResponse,
+)
+async def get_finance_inspector_analysis_shell(
+    exam_id: int,
+    session: DBSessionDep,
+    _: SuperAdminOrFinanceOfficerDep,
+    subject_filter: TimetableDownloadFilter = Query(
+        ...,
+        description="Subject scope for centre list and inspector counts.",
+    ),
+) -> FinanceCentreInspectorAnalysisShellResponse:
+    """Centre list only; load per-centre inspector analysis separately."""
+    from app.services.finance_inspector_analysis import build_inspector_analysis_shell
+
+    try:
+        await load_examination_or_raise(session, exam_id)
+    except ValueError:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Examination not found") from None
+
+    return await build_inspector_analysis_shell(session, exam_id, subject_filter)
+
+
+@router.get(
+    "/{exam_id}/finance/inspector-analysis/centres/{center_host_id}",
+    response_model=FinanceCentreInspectorAnalysisRow,
+)
+async def get_finance_inspector_analysis_for_centre(
+    exam_id: int,
+    center_host_id: UUID,
+    session: DBSessionDep,
+    _: SuperAdminOrFinanceOfficerDep,
+    subject_filter: TimetableDownloadFilter = Query(
+        ...,
+        description="Subject scope for inspector analysis at this centre.",
+    ),
+    candidates_per_inspector: int = Query(
+        300,
+        ge=1,
+        le=10_000,
+        description="Candidates per external inspector for required headcount.",
+    ),
+) -> FinanceCentreInspectorAnalysisRow:
+    """Inspector analysis for one examination centre."""
+    from app.services.finance_inspector_analysis import build_inspector_analysis_row_for_centre
+
+    try:
+        await load_examination_or_raise(session, exam_id)
+    except ValueError:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Examination not found") from None
+
+    hosts = await _finance_centre_hosts(session, exam_id, center_host_id)
+    return await build_inspector_analysis_row_for_centre(
+        session,
+        exam_id,
+        hosts[0],
+        subject_filter,
+        build_invigilator_item=_build_finance_centre_invigilator_item,
+        candidates_per_inspector=candidates_per_inspector,
+    )
+
+
+@router.get(
+    "/{exam_id}/finance/inspector-analysis",
+    response_model=FinanceCentreInspectorAnalysisResponse,
+)
+async def get_finance_inspector_analysis(
+    exam_id: int,
+    session: DBSessionDep,
+    _: SuperAdminOrFinanceOfficerDep,
+    subject_filter: TimetableDownloadFilter = Query(
+        TimetableDownloadFilter.ALL,
+        description="Subject scope: all, core only, or electives only.",
+    ),
+    candidates_per_inspector: int = Query(
+        300,
+        ge=1,
+        le=10_000,
+        description="Candidates per external inspector for required headcount.",
+    ),
+) -> FinanceCentreInspectorAnalysisResponse:
+    """Per-centre external inspector staffing and pay analysis."""
+    from app.services.finance_inspector_analysis import build_finance_inspector_analysis
+
+    try:
+        await load_examination_or_raise(session, exam_id)
+    except ValueError:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Examination not found") from None
+
+    return await build_finance_inspector_analysis(
+        session,
+        exam_id,
+        subject_filter,
+        build_invigilator_item=_build_finance_centre_invigilator_item,
+        candidates_per_inspector=candidates_per_inspector,
+    )
+
+
+@router.post("/{exam_id}/finance/inspector-analysis/export")
+async def export_finance_inspector_analysis(
+    exam_id: int,
+    body: FinanceCentreInspectorAnalysisExportBody,
+    session: DBSessionDep,
+    _: SuperAdminOrFinanceOfficerDep,
+) -> StreamingResponse:
+    """Export pre-loaded inspector analysis to Excel without recalculating."""
+    from app.services.finance_inspector_analysis_export import (
+        inspector_analysis_export_filename,
+        inspector_analysis_workbook_bytes,
+    )
+
+    try:
+        await load_examination_or_raise(session, exam_id)
+    except ValueError:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Examination not found") from None
+
+    if body.summary.examination_id != exam_id:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Summary examination_id does not match path",
+        )
+
+    try:
+        subject_filter = TimetableDownloadFilter(body.summary.subject_filter)
+    except ValueError:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid subject_filter in summary",
+        ) from None
+
+    export_variant = body.export_variant if body.export_variant in ("staffing", "pay_variance", "full") else "full"
+    export_style = body.export_style if body.export_style in ("standard", "rich") else "standard"
+    payload = inspector_analysis_workbook_bytes(
+        body.summary.centres,
+        totals=body.summary.totals,
+        exam_label=body.exam_label,
+        subject_filter=subject_filter,
+        candidates_per_inspector=body.summary.candidates_per_inspector,
+        export_variant=export_variant,
+        export_style=export_style,
+    )
+    filename = inspector_analysis_export_filename(
+        body.exam_label,
+        subject_filter,
+        export_variant=export_variant,
+        export_style=export_style,
+    )
     from app.utils.content_disposition import content_disposition_attachment
 
     return StreamingResponse(

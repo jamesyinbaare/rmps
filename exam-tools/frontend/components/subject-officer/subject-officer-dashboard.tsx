@@ -18,15 +18,12 @@ import {
   MarkingCalendarDayButton,
   MarkingCalendarEventsProvider,
 } from "@/components/subject-officer/marking-calendar-day-button";
-import { SubjectOfficerExamSelector } from "@/components/subject-officer/subject-officer-exam-bar";
 import { SubjectOfficerPanelShell } from "@/components/subject-officer/subject-officer-panel-shell";
-import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Calendar } from "@/components/ui/calendar";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { useSubjectOfficerDashboard } from "@/hooks/use-subject-officer-dashboard";
 import type { SubjectOfficerMeExamAssignment } from "@/lib/api";
-import { officialAccountsCommandBarRowClass } from "@/lib/official-accounts-zone";
 import {
   calendarModifiers,
   calendarNavContext,
@@ -44,7 +41,6 @@ import {
   type MarkingCalendarEvent,
   type MarkingEventKind,
 } from "@/lib/subject-officer-marking-events";
-import { subjectDisplayLabel } from "@/lib/subject-display";
 import { cn } from "@/lib/utils";
 
 const panelHeightClass = "lg:h-[min(72vh,720px)]";
@@ -101,7 +97,7 @@ const EVENT_KIND_STYLE: Record<
 type Props = {
   assignments: SubjectOfficerMeExamAssignment[];
   examId: number | null;
-  onExamChange: (id: number | null) => void;
+  subjects: SubjectOfficerMeExamAssignment["subjects"];
   assignmentsLoading?: boolean;
 };
 
@@ -115,6 +111,35 @@ function formatEventWhen(event: MarkingCalendarEvent, includeDate = true): strin
     if (time) return includeDate ? `${dateLabel} · ${time}` : time;
   }
   return includeDate ? dateLabel : "";
+}
+
+function MarkingScheduleGlance({
+  cohortsWithSchedule,
+  cohortTotal,
+  nextEvent,
+}: {
+  cohortsWithSchedule: number;
+  cohortTotal: number;
+  nextEvent: MarkingCalendarEvent | null;
+}) {
+  if (cohortTotal === 0 && !nextEvent) return null;
+
+  const segments: string[] = [];
+  if (cohortTotal > 0) {
+    segments.push(`${cohortsWithSchedule}/${cohortTotal} cohorts scheduled`);
+  }
+  if (nextEvent) {
+    const dateLabel = formatDateOnly(`${nextEvent.date}T12:00:00`);
+    segments.push(
+      `Next ${MARKING_EVENT_KIND_LABELS[nextEvent.kind].toLowerCase()} · ${nextEvent.cohortName} · ${dateLabel}`,
+    );
+  }
+
+  return (
+    <p className="line-clamp-2 px-2 text-xs leading-relaxed text-muted-foreground sm:px-0">
+      {segments.join(" · ")}
+    </p>
+  );
 }
 
 function CalendarMonthNavigator({
@@ -229,10 +254,15 @@ function EmptyDashboardPanel({
 
 function KpiSkeleton() {
   return (
-    <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
-      {[1, 2, 3, 4].map((i) => (
-        <div key={i} className="min-h-[7.5rem] animate-pulse rounded-xl border border-border/60 bg-muted/30" />
-      ))}
+    <div className="relative -mx-2 sm:mx-0">
+      <div className="flex gap-2 overflow-x-auto px-2 pb-1 scrollbar-hide sm:grid sm:grid-cols-2 sm:gap-4 sm:overflow-visible sm:px-0 xl:grid-cols-4">
+        {[1, 2, 3, 4].map((i) => (
+          <div
+            key={i}
+            className="h-[5.25rem] min-w-[8.75rem] shrink-0 animate-pulse rounded-xl border border-border/60 bg-muted/30 sm:h-auto sm:min-h-[7.5rem] sm:min-w-0"
+          />
+        ))}
+      </div>
     </div>
   );
 }
@@ -377,28 +407,32 @@ function KpiCard({
   accent: KpiAccent;
 }) {
   const cardClass = cn(
-    "group flex min-h-[7.5rem] flex-col rounded-xl border p-4 shadow-sm transition-all",
+    "group flex shrink-0 snap-start flex-col rounded-xl border shadow-sm transition-all touch-manipulation active:scale-[0.98]",
+    "min-w-[8.75rem] p-3",
+    "sm:min-h-[7.5rem] sm:min-w-0 sm:p-4",
     accent.card,
     accent.hover,
   );
 
   const body = (
     <>
-      <div className="flex items-start justify-between gap-3">
-        <p className="text-[11px] font-semibold uppercase leading-snug tracking-wider text-muted-foreground">
+      <div className="flex items-center justify-between gap-2 sm:items-start sm:gap-3">
+        <p className="text-[10px] font-semibold uppercase leading-tight tracking-wide text-muted-foreground sm:text-[11px] sm:leading-snug sm:tracking-wider">
           {label}
         </p>
         <span
           className={cn(
-            "flex size-8 shrink-0 items-center justify-center rounded-lg",
+            "flex size-7 shrink-0 items-center justify-center rounded-lg sm:size-8",
             accent.iconWrap,
           )}
         >
           {icon}
         </span>
       </div>
-      <p className="mt-3 text-3xl font-semibold tabular-nums tracking-tight text-foreground">{value}</p>
-      <span className={cn("mt-auto pt-3 text-xs font-medium", accent.action)}>
+      <p className="mt-1.5 text-2xl font-semibold tabular-nums leading-none tracking-tight text-foreground sm:mt-3 sm:text-3xl">
+        {value.toLocaleString()}
+      </p>
+      <span className={cn("mt-1.5 truncate text-[10px] font-medium sm:mt-auto sm:pt-3 sm:text-xs", accent.action)}>
         <span className="group-hover:underline">{actionLabel}</span>
         <span
           className="ml-0.5 inline-block transition-transform group-hover:translate-x-0.5"
@@ -428,19 +462,13 @@ function KpiCard({
 export function SubjectOfficerDashboard({
   assignments,
   examId,
-  onExamChange,
+  subjects,
   assignmentsLoading = false,
 }: Props) {
   const [selectedDay, setSelectedDay] = useState<Date | undefined>(undefined);
   const [showAllUpcoming, setShowAllUpcoming] = useState(true);
   const [calendarMonth, setCalendarMonth] = useState(() => new Date());
   const calendarMonthSeededForExamRef = useRef<number | null>(null);
-
-  const selectedExam = useMemo(
-    () => assignments.find((a) => a.examination_id === examId) ?? null,
-    [assignments, examId],
-  );
-  const subjects = selectedExam?.subjects ?? EMPTY_SUBJECTS;
 
   const { groups, events, stats, loading, error, refetch } = useSubjectOfficerDashboard({
     examId,
@@ -538,44 +566,9 @@ export function SubjectOfficerDashboard({
     setShowAllUpcoming(true);
   }
 
-  const commandBar = (
-    <div className={officialAccountsCommandBarRowClass}>
-      <SubjectOfficerExamSelector
-        assignments={assignments}
-        examId={examId}
-        onExamChange={onExamChange}
-        loading={assignmentsLoading}
-        compact
-      />
-      {subjects.length > 0 ? (
-        <div className="flex min-w-0 flex-1 flex-wrap items-center gap-1.5">
-          <span className="text-xs font-medium text-muted-foreground">Subjects</span>
-          {subjects.map((s) => (
-            <Badge
-              key={s.subject_id}
-              variant="outline"
-              className="border-border/80 bg-background/80 font-normal"
-            >
-              {subjectDisplayLabel(s)}
-            </Badge>
-          ))}
-        </div>
-      ) : null}
-    </div>
-  );
-
-  const examinersHref =
-    examId != null
-      ? `/dashboard/subject-officer/examiners?exam=${examId}&tab=roster`
-      : "/dashboard/subject-officer/examiners";
-  const invitationsHref =
-    examId != null
-      ? `/dashboard/subject-officer/examiners?exam=${examId}&tab=invitations`
-      : "/dashboard/subject-officer/examiners";
-  const cohortsHref =
-    examId != null
-      ? `/dashboard/subject-officer/examiners?exam=${examId}&tab=groups`
-      : "/dashboard/subject-officer/examiners";
+  const examinersHref = "/dashboard/subject-officer/examiners?tab=roster";
+  const invitationsHref = "/dashboard/subject-officer/examiners?tab=invitations";
+  const cohortsHref = "/dashboard/subject-officer/examiners?tab=groups";
 
   const selectedDayLabel =
     selectedDay != null
@@ -584,7 +577,7 @@ export function SubjectOfficerDashboard({
 
   return (
     <div className="min-w-0 space-y-4">
-      <SubjectOfficerPanelShell commandBar={commandBar}>
+      <SubjectOfficerPanelShell>
         {assignments.length === 0 ? (
           <EmptyDashboardPanel
             icon={Users}
@@ -594,8 +587,8 @@ export function SubjectOfficerDashboard({
         ) : examId == null ? (
           <EmptyDashboardPanel
             icon={CalendarDays}
-            title="Select an examination"
-            description="Choose an examination above to view marking schedules, roster stats, and invitation status for your subjects."
+            title="Choose a workspace"
+            description="Select your examination and subject workspace to view marking schedules, roster stats, and invitation status."
           />
         ) : error ? (
           <div className="flex flex-col gap-3 rounded-lg border border-destructive/40 bg-destructive/10 px-4 py-3 text-sm text-destructive sm:flex-row sm:items-center sm:justify-between">
@@ -611,64 +604,64 @@ export function SubjectOfficerDashboard({
           </div>
         ) : (
           <div className="min-w-0 space-y-4">
-            {selectedExam ? (
-              <div className="rounded-lg bg-muted/15 px-4 py-2.5 text-sm">
-                <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
-                  <span className="font-medium text-foreground">{selectedExam.examination_name}</span>
-                  <Badge variant="secondary" className="font-normal">
-                    {subjects.length} subject{subjects.length === 1 ? "" : "s"}
-                  </Badge>
-                  <span className="text-muted-foreground">
-                    {stats.cohortsWithSchedule} of {groups.length} cohort
-                    {groups.length === 1 ? "" : "s"} scheduled
-                  </span>
-                </div>
-                {nextEvent ? (
-                  <p className="mt-1 line-clamp-2 break-words text-xs text-muted-foreground">
-                    Next: {MARKING_EVENT_KIND_LABELS[nextEvent.kind]} · {nextEvent.cohortName} ·{" "}
-                    {formatEventWhen(nextEvent)}
-                  </p>
-                ) : null}
-              </div>
-            ) : null}
+            <MarkingScheduleGlance
+              cohortsWithSchedule={stats.cohortsWithSchedule}
+              cohortTotal={groups.length}
+              nextEvent={nextEvent}
+            />
 
-            <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
-              <KpiCard
-                href={examinersHref}
-                icon={<Users className="size-4" aria-hidden />}
-                value={stats.examinerCount}
-                label="Examiners"
-                actionLabel="View roster"
-                accent={KPI_ACCENTS.examiners}
-              />
-              <KpiCard
-                href={invitationsHref}
-                icon={<Mail className="size-4" aria-hidden />}
-                value={stats.invitationsPending}
-                label="Pending invitations"
-                actionLabel="Review invitations"
-                accent={
-                  stats.invitationsPending > 0 ? KPI_ACCENTS.pendingActive : KPI_ACCENTS.pending
-                }
-              />
-              <KpiCard
-                href={invitationsHref}
-                icon={<CheckCircle2 className="size-4" aria-hidden />}
-                value={stats.invitationsAccepted}
-                label="Accepted invitations"
-                actionLabel="View invitations"
-                accent={KPI_ACCENTS.accepted}
-              />
-              <KpiCard
-                icon={<CalendarDays className="size-4" aria-hidden />}
-                value={eventsNext7Days.length}
-                label="Events next 7 days"
-                actionLabel="View calendar"
-                accent={KPI_ACCENTS.events}
-                onClick={() => {
-                  clearDayFilter();
-                  document.getElementById("so-marking-calendar")?.scrollIntoView({ behavior: "smooth" });
-                }}
+            <div className="relative -mx-2 sm:mx-0">
+              <p className="mb-2 px-2 text-xs text-muted-foreground sm:sr-only">
+                Swipe for more stats. Tap a card to open details.
+              </p>
+              <div
+                className={cn(
+                  "flex gap-2 overflow-x-auto overscroll-x-contain px-2 pb-1",
+                  "snap-x snap-mandatory scrollbar-hide",
+                  "sm:grid sm:grid-cols-2 sm:gap-4 sm:overflow-visible sm:px-0 sm:pb-0 xl:grid-cols-4",
+                )}
+              >
+                <KpiCard
+                  href={examinersHref}
+                  icon={<Users className="size-4" aria-hidden />}
+                  value={stats.examinerCount}
+                  label="Examiners"
+                  actionLabel="View roster"
+                  accent={KPI_ACCENTS.examiners}
+                />
+                <KpiCard
+                  href={invitationsHref}
+                  icon={<Mail className="size-4" aria-hidden />}
+                  value={stats.invitationsPending}
+                  label="Pending invites"
+                  actionLabel="Review"
+                  accent={
+                    stats.invitationsPending > 0 ? KPI_ACCENTS.pendingActive : KPI_ACCENTS.pending
+                  }
+                />
+                <KpiCard
+                  href={invitationsHref}
+                  icon={<CheckCircle2 className="size-4" aria-hidden />}
+                  value={stats.invitationsAccepted}
+                  label="Accepted"
+                  actionLabel="View invites"
+                  accent={KPI_ACCENTS.accepted}
+                />
+                <KpiCard
+                  icon={<CalendarDays className="size-4" aria-hidden />}
+                  value={eventsNext7Days.length}
+                  label="Next 7 days"
+                  actionLabel="Calendar"
+                  accent={KPI_ACCENTS.events}
+                  onClick={() => {
+                    clearDayFilter();
+                    document.getElementById("so-marking-calendar")?.scrollIntoView({ behavior: "smooth" });
+                  }}
+                />
+              </div>
+              <div
+                className="pointer-events-none absolute inset-y-0 right-0 w-8 bg-gradient-to-l from-background to-transparent sm:hidden"
+                aria-hidden
               />
             </div>
 

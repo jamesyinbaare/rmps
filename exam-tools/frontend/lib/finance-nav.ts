@@ -31,6 +31,8 @@ export { EXAMINERS_BY_SUBJECT_HREF, EXAMINER_ACCOUNTS_BY_SUBJECT_HREF } from "@/
 export const CENTRE_SUMMARY_HREF = "/dashboard/admin/centre-summary";
 export const OFFICIAL_STATISTICS_HREF = "/dashboard/admin/official-statistics";
 export const FINANCE_CENTRE_SUMMARY_HREF = "/dashboard/admin/finance-centre-summary";
+export const INSPECTOR_ANALYSIS_HREF = "/dashboard/admin/inspector-analysis";
+export const INSPECTOR_PAY_VARIANCE_HREF = "/dashboard/admin/inspector-pay-variance";
 export const ATTENDANCE_SHEETS_HREF = "/dashboard/admin/attendance-sheets";
 export const BANK_DIRECTORY_HREF = "/dashboard/admin/bank-directory";
 
@@ -105,7 +107,8 @@ export type FinanceNavSectionIcon =
   | "markingScripts"
   | "workforce"
   | "scriptChecking"
-  | "dataEntry";
+  | "dataEntry"
+  | "analysis";
 
 export type FinanceNavSection = {
   id: string;
@@ -177,16 +180,31 @@ const EXAMINATIONS_NAV_ITEMS: FinanceNavItem[] = [
     icon: "statistics",
   },
   {
+    href: ATTENDANCE_SHEETS_HREF,
+    label: "Attendance sheets",
+    description: "Centre uploads",
+    icon: "attendance",
+  },
+];
+
+const ANALYSIS_NAV_ITEMS: FinanceNavItem[] = [
+  {
     href: FINANCE_CENTRE_SUMMARY_HREF,
     label: "Invigilator by day",
     description: "Per-day coverage",
     icon: "calendar",
   },
   {
-    href: ATTENDANCE_SHEETS_HREF,
-    label: "Attendance sheets",
-    description: "Centre uploads",
-    icon: "attendance",
+    href: INSPECTOR_ANALYSIS_HREF,
+    label: "Inspector analysis",
+    description: "Staffing & headcount",
+    icon: "statistics",
+  },
+  {
+    href: INSPECTOR_PAY_VARIANCE_HREF,
+    label: "Inspector pay variance",
+    description: "Days & payout comparison",
+    icon: "statistics",
   },
 ];
 
@@ -213,6 +231,12 @@ export const FINANCE_NAV_SECTIONS: FinanceNavSection[] = [
     heading: "Examinations",
     icon: "examinations",
     items: EXAMINATIONS_NAV_ITEMS,
+  },
+  {
+    id: "analysis",
+    heading: "Analysis",
+    icon: "analysis",
+    items: ANALYSIS_NAV_ITEMS,
   },
   {
     id: "coordination-marking",
@@ -252,6 +276,8 @@ const FINANCE_PAGE_TITLES: [href: string, title: string][] = [
   [CENTRE_SUMMARY_HREF, ACCOUNT_DETAILS_BY_CENTRE_LABEL],
   [OFFICIAL_STATISTICS_HREF, "Centre overview"],
   [FINANCE_CENTRE_SUMMARY_HREF, "Invigilator by day"],
+  [INSPECTOR_ANALYSIS_HREF, "Inspector analysis"],
+  [INSPECTOR_PAY_VARIANCE_HREF, "Inspector pay variance"],
   [ATTENDANCE_SHEETS_HREF, "Attendance sheets"],
 ];
 

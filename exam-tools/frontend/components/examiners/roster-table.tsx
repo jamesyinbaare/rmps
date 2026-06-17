@@ -25,6 +25,7 @@ import {
   PAGE_SIZE_PRESETS,
 } from "@/components/examiners/constants";
 import { RosterRowActionsMenu } from "@/components/examiners/roster-row-actions-menu";
+import { PhoneLink } from "@/components/examiners/phone-link";
 import type { RosterTableRow } from "@/components/examiners/types";
 import { humanizeRegion } from "@/components/examiners/utils";
 import { EXAMINER_TYPE_LABELS } from "@/components/examiner-invitations/constants";
@@ -147,7 +148,7 @@ export function RosterTable({
         accessorKey: "phone_number",
         header: "Phone",
         cell: ({ getValue }) => (
-          <span className="font-mono text-xs">{getValue<string | null>() ?? "—"}</span>
+          <PhoneLink phone={getValue<string | null>()} className="font-mono text-xs text-primary hover:underline" />
         ),
       },
       {

@@ -9,7 +9,7 @@ import pytest
 from fastapi import HTTPException
 
 from app.core.security import get_password_hash
-from app.models import User, UserRole
+from app.models import SubjectOfficerAssignment, User, UserRole
 from app.routers.auth import SuperAdminLoginRequest, super_admin_login
 
 
@@ -51,9 +51,17 @@ async def test_staff_login_accepts_subject_officer_email_password() -> None:
     result.scalar_one_or_none.return_value = user
     session.execute = AsyncMock(return_value=result)
 
-    response = await super_admin_login(
-        SuperAdminLoginRequest(email="Officer@Example.com", password="CorrectPass1!"),
-        session,
-    )
+    from unittest.mock import patch
+
+    a1 = MagicMock(spec=SubjectOfficerAssignment)
+    a2 = MagicMock(spec=SubjectOfficerAssignment)
+    with patch(
+        "app.routers.auth.load_subject_officer_assignment_rows",
+        new=AsyncMock(return_value=[a1, a2]),
+    ):
+        response = await super_admin_login(
+            SuperAdminLoginRequest(email="Officer@Example.com", password="CorrectPass1!"),
+            session,
+        )
     assert response.role == UserRole.SUBJECT_OFFICER
     assert response.access_token

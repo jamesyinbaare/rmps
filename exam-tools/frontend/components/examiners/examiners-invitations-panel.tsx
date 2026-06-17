@@ -16,12 +16,14 @@ import {
 import {
   BulkUploadModal,
   CustomSmsModal,
+  ExtendRespondByModal,
   InviteExaminerModal,
   RenewInvitationModal,
   SetCoordinationDateModal,
 } from "@/components/examiner-invitations/invitations-modals";
 import { InvitationsSummaryStats } from "@/components/examiner-invitations/invitations-summary-stats";
 import { InvitationsTable } from "@/components/examiner-invitations/invitations-table";
+import { InvitationsMobileList } from "@/components/examiners/invitations-mobile-list";
 import { ExaminerAllocationModal } from "@/components/examiner-invitations/examiner-allocation-modal";
 import type {
   InvitationStatusCounts,
@@ -37,6 +39,7 @@ import {
   clampPageSize,
   defaultDatetimeLocalInput,
   datetimeLocalToIso,
+  isoToDatetimeLocal,
   canReceiveCoordinationSms,
   coordinationSmsSelectionBlockedReason,
   matchesSearchQuery,
@@ -53,6 +56,7 @@ import {
   listExaminerInvitations,
   renewExaminerInvitation,
   resendExaminerInvitationSms,
+  updateExaminerInvitationResponseDeadline,
   type ExaminerInvitationBulkImportResponse,
   type ExaminerInvitationBulkSmsResponse,
   type ExaminerInvitationRow,
@@ -80,6 +84,7 @@ type Props = {
   usePageSubjectScope?: boolean;
   pageSubjectTypeFilter?: ScriptControlSubjectTypeFilter;
   pageSubjectId?: string;
+  mobileContactLayout?: boolean;
 };
 
 function countByStatus(rows: ExaminerInvitationRow[]): InvitationStatusCounts {
@@ -107,6 +112,7 @@ export function ExaminersInvitationsPanel({
   usePageSubjectScope = false,
   pageSubjectTypeFilter = "all",
   pageSubjectId = "",
+  mobileContactLayout = false,
 }: Props) {
   const [invitations, setInvitations] = useState<ExaminerInvitationRow[]>([]);
   const [loadingInvitations, setLoadingInvitations] = useState(false);
@@ -119,8 +125,14 @@ export function ExaminersInvitationsPanel({
   const [renewError, setRenewError] = useState<string | null>(null);
   const [renewDeadlineInput, setRenewDeadlineInput] = useState("");
   const [renewSendSms, setRenewSendSms] = useState(true);
+  const [extendModalOpen, setExtendModalOpen] = useState(false);
+  const [extendTarget, setExtendTarget] = useState<ExaminerInvitationRow | null>(null);
+  const [extendError, setExtendError] = useState<string | null>(null);
+  const [extendDeadlineInput, setExtendDeadlineInput] = useState("");
+  const [extendSendSms, setExtendSendSms] = useState(false);
   const [uploadModalOpen, setUploadModalOpen] = useState(false);
   const [smsModalOpen, setSmsModalOpen] = useState(false);
+  const [smsSingleTarget, setSmsSingleTarget] = useState<ExaminerInvitationRow | null>(null);
   const [coordinationModalOpen, setCoordinationModalOpen] = useState(false);
   const [coordinationModalError, setCoordinationModalError] = useState<string | null>(null);
   const [batchCoordinationDraft, setBatchCoordinationDraft] = useState<InvitationCoordinationDraft>(
@@ -281,11 +293,12 @@ export function ExaminersInvitationsPanel({
 
   const selectedCount = Object.keys(rowSelection).length;
   const smsTargetRows = useMemo(() => {
+    if (smsSingleTarget) return [smsSingleTarget];
     if (selectedCount > 0) {
       return filteredRows.filter((row) => rowSelection[row.id]);
     }
     return filteredRows;
-  }, [filteredRows, rowSelection, selectedCount]);
+  }, [smsSingleTarget, filteredRows, rowSelection, selectedCount]);
 
   const activeFilterCount = useMemo(() => {
     let n = 0;
@@ -417,7 +430,9 @@ export function ExaminersInvitationsPanel({
   const openRenew = useCallback((inv: ExaminerInvitationRow) => {
     setRenewTarget(inv);
     setRenewError(null);
-    setRenewDeadlineInput(defaultDatetimeLocalInput());
+    setRenewDeadlineInput(
+      isoToDatetimeLocal(inv.response_deadline) || defaultDatetimeLocalInput(),
+    );
     setRenewSendSms(true);
     setRenewModalOpen(true);
   }, []);
@@ -428,6 +443,69 @@ export function ExaminersInvitationsPanel({
     setRenewError(null);
     setRenewDeadlineInput("");
   }, []);
+
+  const openExtend = useCallback((inv: ExaminerInvitationRow) => {
+    setExtendTarget(inv);
+    setExtendError(null);
+    setExtendDeadlineInput(
+      isoToDatetimeLocal(inv.response_deadline) || defaultDatetimeLocalInput(),
+    );
+    setExtendSendSms(false);
+    setExtendModalOpen(true);
+  }, []);
+
+  const closeExtendModal = useCallback(() => {
+    setExtendModalOpen(false);
+    setExtendTarget(null);
+    setExtendError(null);
+    setExtendDeadlineInput("");
+  }, []);
+
+  const handleExtend = useCallback(async () => {
+    if (examId == null || extendTarget == null) return;
+    if (!extendDeadlineInput.trim()) {
+      setExtendError("Respond-by deadline is required.");
+      return;
+    }
+    const responseDeadlineIso = datetimeLocalToIso(extendDeadlineInput);
+    if (!responseDeadlineIso) {
+      setExtendError("Enter a valid respond-by date and time.");
+      return;
+    }
+    setExtendError(null);
+    setBusy(true);
+    setActionMessage(null);
+    try {
+      const res = await updateExaminerInvitationResponseDeadline(examId, extendTarget.id, {
+        response_deadline: responseDeadlineIso,
+        send_sms: extendSendSms,
+      });
+      closeExtendModal();
+      setActionMessageTone("success");
+      if (res.sms_sent === true) {
+        setActionMessage(`Respond-by extended and SMS sent to ${extendTarget.name}.`);
+      } else if (res.sms_sent === false) {
+        setActionMessageTone("error");
+        setActionMessage(
+          `Respond-by extended for ${extendTarget.name}, but SMS failed: ${res.sms_error ?? "Unknown error"}`,
+        );
+      } else {
+        setActionMessage(`Respond-by extended for ${extendTarget.name}.`);
+      }
+      await loadInvitations(examId);
+    } catch (e) {
+      setExtendError(e instanceof Error ? e.message : "Failed to extend respond-by");
+    } finally {
+      setBusy(false);
+    }
+  }, [
+    closeExtendModal,
+    examId,
+    extendDeadlineInput,
+    extendSendSms,
+    extendTarget,
+    loadInvitations,
+  ]);
 
   const handleRenew = useCallback(async () => {
     if (examId == null || renewTarget == null) return;
@@ -582,9 +660,18 @@ export function ExaminersInvitationsPanel({
 
   function closeSmsModal() {
     setSmsModalOpen(false);
+    setSmsSingleTarget(null);
     setSmsError(null);
     setSmsResult(null);
     setCustomSmsMessage("");
+  }
+
+  function openCustomSmsForInvitation(row: ExaminerInvitationRow) {
+    setSmsSingleTarget(row);
+    setSmsError(null);
+    setSmsResult(null);
+    setCustomSmsMessage("");
+    setSmsModalOpen(true);
   }
 
   async function handleInvite() {
@@ -717,8 +804,13 @@ export function ExaminersInvitationsPanel({
     }
   }
 
-  const smsRecipientLabel =
-    selectedCount > 0 ? "selected rows" : hasActiveFilters ? "filtered rows" : "all invitations";
+  const smsRecipientLabel = smsSingleTarget
+    ? smsSingleTarget.name
+    : selectedCount > 0
+      ? "selected rows"
+      : hasActiveFilters
+        ? "filtered rows"
+        : "all invitations";
 
   const coordinationSmsBlockedReason = useMemo(
     () => coordinationSmsSelectionBlockedReason(smsTargetRows, customSmsMessage),
@@ -759,6 +851,7 @@ export function ExaminersInvitationsPanel({
         setActionMessage(`SMS failed for ${res.failed_count} invitee${res.failed_count === 1 ? "" : "s"}.`);
       }
       setSmsModalOpen(false);
+      setSmsSingleTarget(null);
       setCustomSmsMessage("");
       setSmsError(null);
       setSmsResult(null);
@@ -824,6 +917,7 @@ export function ExaminersInvitationsPanel({
           selectedCount={selectedCount}
           filteredCount={filteredRows.length}
           onSendSms={() => {
+            setSmsSingleTarget(null);
             setSmsError(null);
             setSmsResult(null);
             setCustomSmsMessage("");
@@ -841,6 +935,7 @@ export function ExaminersInvitationsPanel({
           }}
           onInvite={() => {
             setInviteError(null);
+            setResponseDeadlineInput(defaultDatetimeLocalInput());
             setInviteModalOpen(true);
           }}
           onDownloadLinks={() => void handleDownloadLinks()}
@@ -848,6 +943,7 @@ export function ExaminersInvitationsPanel({
           disabled={examId == null}
           readOnly={readOnly}
           hideSubjectScopeFilters={usePageSubjectScope}
+          mobileContactLayout={mobileContactLayout}
         />
 
         <div className={pageScroll ? "flex flex-col" : "flex min-h-0 flex-1 flex-col"}>
@@ -887,6 +983,7 @@ export function ExaminersInvitationsPanel({
                       disabled={busy}
                       onClick={() => {
                         setInviteError(null);
+                        setResponseDeadlineInput(defaultDatetimeLocalInput());
                         setInviteModalOpen(true);
                       }}
                     >
@@ -925,36 +1022,67 @@ export function ExaminersInvitationsPanel({
                 ) : null}
               </div>
             ) : (
-              <InvitationsTable
-                rows={filteredRows}
-                loading={loadingInvitations}
-                busy={busy}
-                sorting={sorting}
-                onSortingChange={setSorting}
-                rowSelection={rowSelection}
-                onRowSelectionChange={setRowSelection}
-                columnVisibility={columnVisibility}
-                onColumnVisibilityChange={setColumnVisibility}
-                pagination={pagination}
-                onPaginationChange={setPagination}
-                showCustomPageSizeInput={customPageSizeEditing}
-                customPageSizeInput={customPageSizeInput}
-                onPageSizeSelectChange={handlePageSizeSelectChange}
-                onCustomPageSizeChange={handleCustomPageSizeChange}
-                onCustomPageSizeBlur={handleCustomPageSizeBlur}
-                resendUi={resendUi}
-                resendErrors={resendErrors}
-                onResend={(inv) => void handleResend(inv)}
-                onRenew={openRenew}
-                onCopyLink={(inv) => void handleCopyLink(inv)}
-                copyLinkUi={copyLinkUi}
-                onViewAllocation={
-                  lockedSubjectIds != null
-                    ? (inv) => setAllocationTarget(inv)
-                    : undefined
-                }
-                pageScroll={pageScroll}
-              />
+              <>
+                <div className={mobileContactLayout ? "hidden md:block" : undefined}>
+                  <InvitationsTable
+                    rows={filteredRows}
+                    loading={loadingInvitations}
+                    busy={busy}
+                    sorting={sorting}
+                    onSortingChange={setSorting}
+                    rowSelection={rowSelection}
+                    onRowSelectionChange={setRowSelection}
+                    columnVisibility={columnVisibility}
+                    onColumnVisibilityChange={setColumnVisibility}
+                    pagination={pagination}
+                    onPaginationChange={setPagination}
+                    showCustomPageSizeInput={customPageSizeEditing}
+                    customPageSizeInput={customPageSizeInput}
+                    onPageSizeSelectChange={handlePageSizeSelectChange}
+                    onCustomPageSizeChange={handleCustomPageSizeChange}
+                    onCustomPageSizeBlur={handleCustomPageSizeBlur}
+                    resendUi={resendUi}
+                    resendErrors={resendErrors}
+                    onResend={(inv) => void handleResend(inv)}
+                    onRenew={openRenew}
+                    onExtendDeadline={openExtend}
+                    onCopyLink={(inv) => void handleCopyLink(inv)}
+                    copyLinkUi={copyLinkUi}
+                    onViewAllocation={
+                      lockedSubjectIds != null
+                        ? (inv) => setAllocationTarget(inv)
+                        : undefined
+                    }
+                    pageScroll={pageScroll}
+                  />
+                </div>
+                {mobileContactLayout && !loadingInvitations && filteredRows.length > 0 ? (
+                  <InvitationsMobileList
+                    rows={filteredRows}
+                    pagination={pagination}
+                    onPaginationChange={setPagination}
+                    showCustomPageSizeInput={customPageSizeEditing}
+                    customPageSizeInput={customPageSizeInput}
+                    onPageSizeSelectChange={handlePageSizeSelectChange}
+                    onCustomPageSizeChange={handleCustomPageSizeChange}
+                    onCustomPageSizeBlur={handleCustomPageSizeBlur}
+                    busy={busy || loadingInvitations}
+                    resendUi={resendUi}
+                    resendErrors={resendErrors}
+                    onInAppSms={openCustomSmsForInvitation}
+                    onResend={(inv) => void handleResend(inv)}
+                    onRenew={openRenew}
+                    onExtendDeadline={openExtend}
+                    onCopyLink={(inv) => void handleCopyLink(inv)}
+                    copyLinkUi={copyLinkUi}
+                    onViewAllocation={
+                      lockedSubjectIds != null
+                        ? (inv) => setAllocationTarget(inv)
+                        : undefined
+                    }
+                  />
+                ) : null}
+              </>
             )}
             </div>
           </div>
@@ -975,6 +1103,23 @@ export function ExaminersInvitationsPanel({
         onSubmit={() => void handleRenew()}
         onResponseDeadlineChange={setRenewDeadlineInput}
         onSendSmsChange={setRenewSendSms}
+      />
+
+      <ExtendRespondByModal
+        open={extendModalOpen}
+        busy={busy}
+        error={extendError}
+        status={extendTarget?.status ?? null}
+        name={extendTarget?.name ?? ""}
+        phone={extendTarget?.phone_number ?? ""}
+        responseDeadlineInput={extendDeadlineInput}
+        sendSms={extendSendSms}
+        onClose={() => {
+          if (!busy) closeExtendModal();
+        }}
+        onSubmit={() => void handleExtend()}
+        onResponseDeadlineChange={setExtendDeadlineInput}
+        onSendSmsChange={setExtendSendSms}
       />
 
       <InviteExaminerModal

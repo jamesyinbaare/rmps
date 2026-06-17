@@ -6,6 +6,7 @@ import { Download, Loader2 } from "lucide-react";
 
 import { CommandBarBorderField } from "@/components/command-bar-border-field";
 import { SearchableCombobox } from "@/components/searchable-combobox";
+import { SubjectOfficerWorkspaceStrip } from "@/components/subject-officer/subject-officer-workspace-strip";
 import { Button } from "@/components/ui/button";
 import {
   downloadAdminLunchCouponsPdf,
@@ -32,28 +33,40 @@ type Props = {
   assignmentsLoading?: boolean;
   /** When true, subject list is limited to the officer's assigned subjects per examination. */
   officerMode?: boolean;
+  workspaceExamId?: number;
+  workspaceSubjectId?: number;
+  workspaceLabel?: string | null;
 };
 
 export function LunchCouponsPrintPanel({
   assignments,
   assignmentsLoading = false,
   officerMode = false,
+  workspaceExamId,
+  workspaceSubjectId,
+  workspaceLabel,
 }: Props) {
+  const workspaceLocked = workspaceExamId != null && workspaceSubjectId != null;
   const [allSubjects, setAllSubjects] = useState<Subject[]>([]);
   const [subjectsLoading, setSubjectsLoading] = useState(!officerMode);
   const [examId, setExamId] = useState<number | null>(
-    assignments.length > 0 ? assignments[0]!.examination_id : null,
+    workspaceExamId ?? (assignments.length > 0 ? assignments[0]!.examination_id : null),
   );
-  const [subjectId, setSubjectId] = useState<number | null>(null);
+  const [subjectId, setSubjectId] = useState<number | null>(workspaceSubjectId ?? null);
   const [subjectTypeFilter, setSubjectTypeFilter] = useState<ScriptControlSubjectTypeFilter>("all");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
+    if (workspaceLocked) {
+      setExamId(workspaceExamId!);
+      setSubjectId(workspaceSubjectId!);
+      return;
+    }
     if (assignments.length > 0 && examId == null) {
       setExamId(assignments[0]!.examination_id);
     }
-  }, [assignments, examId]);
+  }, [assignments, examId, workspaceExamId, workspaceLocked, workspaceSubjectId]);
 
   useEffect(() => {
     if (officerMode) {
@@ -200,6 +213,12 @@ export function LunchCouponsPrintPanel({
         </p>
       </div>
       <div className="grid grid-cols-1 items-end gap-3 px-4 py-4 sm:grid-cols-2 lg:grid-cols-3 sm:px-5">
+        {workspaceLocked ? (
+          <div className="sm:col-span-2 lg:col-span-3">
+            <SubjectOfficerWorkspaceStrip workspaceLabel={workspaceLabel} workspace={null} />
+          </div>
+        ) : (
+          <>
         <CommandBarBorderField label="Examination" htmlFor="lunch-print-exam" className="min-w-0">
           <SearchableCombobox
             id="lunch-print-exam"
@@ -256,6 +275,8 @@ export function LunchCouponsPrintPanel({
             disabled={subjectsLoading || examId == null || availableSubjectCount === 0}
           />
         </CommandBarBorderField>
+          </>
+        )}
       </div>
       <div className="flex flex-col gap-3 border-t border-border/70 px-4 py-4 sm:flex-row sm:items-center sm:justify-between sm:px-5">
         <p className="text-xs text-muted-foreground">

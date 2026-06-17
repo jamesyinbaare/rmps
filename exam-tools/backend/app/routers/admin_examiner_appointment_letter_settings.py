@@ -111,7 +111,7 @@ async def post_copy_examiner_appointment_letter_settings(
     if source_exam is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Source examination not found")
 
-    _, cc_count, signatures_copied = await copy_settings_from_examination(
+    _, cc_count, signatures_copied, subjects_copied = await copy_settings_from_examination(
         session,
         target_examination_id=exam_id,
         source_examination_id=body.source_examination_id,
@@ -122,6 +122,7 @@ async def post_copy_examiner_appointment_letter_settings(
         source_examination_id=body.source_examination_id,
         cc_lines_copied=cc_count,
         signatures_copied=signatures_copied,
+        subject_settings_copied=subjects_copied,
     )
 
 
