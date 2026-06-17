@@ -4075,6 +4075,8 @@ export type AllocationAssignmentItem = {
 export type UnassignedEnvelopeItem = Omit<AllocationAssignmentItem, "examiner_id"> & {
   /** School region (added for filtering; may be absent on stale clients). */
   region?: string;
+  /** Campaign examiners eligible under cross-marking rules (may be absent on stale clients). */
+  eligible_examiner_ids?: string[];
 };
 
 export type AllocationRunDetail = {
