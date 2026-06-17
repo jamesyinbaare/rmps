@@ -73,16 +73,22 @@ export function FinanceNavSection({
         )}
       >
         {sections.map((section) => (
-          <FinanceNavCollapsibleGroup
+          <div
             key={section.id}
-            heading={section.heading}
-            sectionIcon={section.icon}
-            items={section.items}
-            pathname={pathname}
-            onNavigate={onNavigate}
-            navActive={navActive}
-            resolveHref={resolveHref}
-          />
+            className={cn(
+              section.deemphasized && !collapsed && "mt-2 border-t border-border/60 pt-2",
+            )}
+          >
+            <FinanceNavCollapsibleGroup
+              heading={section.heading}
+              sectionIcon={section.icon}
+              items={section.items}
+              pathname={pathname}
+              onNavigate={onNavigate}
+              navActive={navActive}
+              resolveHref={resolveHref}
+            />
+          </div>
         ))}
       </div>
     </>

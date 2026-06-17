@@ -115,6 +115,8 @@ export type FinanceNavSection = {
   heading: string;
   icon: FinanceNavSectionIcon;
   items: FinanceNavItem[];
+  /** Secondary footer zone in the sidebar (e.g. infrequent reports). */
+  deemphasized?: boolean;
 };
 
 export const FINANCE_OVERVIEW_ITEM: FinanceNavItem = {
@@ -233,12 +235,6 @@ export const FINANCE_NAV_SECTIONS: FinanceNavSection[] = [
     items: EXAMINATIONS_NAV_ITEMS,
   },
   {
-    id: "analysis",
-    heading: "Analysis",
-    icon: "analysis",
-    items: ANALYSIS_NAV_ITEMS,
-  },
-  {
     id: "coordination-marking",
     heading: "Coordination & marking",
     icon: "coordination",
@@ -251,6 +247,13 @@ export const FINANCE_NAV_SECTIONS: FinanceNavSection[] = [
     heading: "Setup",
     icon: "setup",
     items: SETUP_NAV_ITEMS,
+  },
+  {
+    id: "analysis",
+    heading: "Reports",
+    icon: "analysis",
+    items: ANALYSIS_NAV_ITEMS,
+    deemphasized: true,
   },
 ];
 
