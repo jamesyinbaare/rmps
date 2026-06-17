@@ -23,7 +23,7 @@ const GROUP_ACCENT: Record<
     iconWrap: "bg-success/15 text-success",
     cardBorder: "border-success/20 bg-success/[0.04]",
   },
-  Analysis: {
+  Reports: {
     icon: BarChart3,
     iconWrap: "bg-sky-500/15 text-sky-700 dark:text-sky-300",
     cardBorder: "border-sky-500/20 bg-sky-500/[0.04]",
