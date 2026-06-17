@@ -682,7 +682,7 @@ export function CustomSmsModal(props: CustomSmsModalProps) {
           value={props.message}
           disabled={props.busy || Boolean(props.result)}
           onChange={(e) => props.onMessageChange(e.target.value)}
-          placeholder="Hi {name}, please confirm by {response_deadline}. Link: {link}"
+          placeholder="Dear {name}, you are invited as {role} for {subject} ({exam}). Please respond by {response_deadline}: {link}"
         />
         <div className="flex flex-wrap gap-1.5">
           {SMS_PLACEHOLDER_TOKENS.map((token) => (

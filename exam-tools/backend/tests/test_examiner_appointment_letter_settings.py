@@ -9,12 +9,14 @@ import pytest
 
 from app.models import (
     AppointmentLetterSigningOfficial,
+    ExaminerType,
     ExaminationExaminerAppointmentLetterSettings,
     ExaminationExaminerAppointmentLetterSubjectSettings,
 )
 from app.services.examiner_appointment_letter_pdf import (
     DEFAULT_COORDINATION_VENUE,
     DUMMY_APPOINTMENT_LETTEE_NAME,
+    _appointment_role_context,
     _render_appointment_letter_body_html,
 )
 from app.services.examiner_appointment_letter_settings import (
@@ -189,6 +191,48 @@ def test_render_appointment_letter_body_includes_signatory_name() -> None:
     assert "CUSTOM TITLE" in html
     assert "FOR: DIRECTOR-GENERAL" in html
     assert "The Accountant." in html
+
+
+def test_appointment_letter_intro_uses_formal_wording() -> None:
+    subject_label = "Mathematics (Core)"
+    html = _render_appointment_letter_body_html(
+        context={
+            "examination_label": "2025 May/June Certificate II",
+            "examination_label_upper": "2025 MAY/JUNE CERTIFICATE II",
+            "invitee_name": "Core Math Examiner 013",
+            "phone_number": "",
+            "examiner_type_label": "Assistant examiner",
+            "subject_label": subject_label,
+            "subject_name": "Mathematics (Core)",
+            "region": "Greater Accra",
+            "coordination_date": "Monday, 8 June 2026 to Tuesday, 9 June 2026",
+            "coordination_start_time": "10:00am",
+            "coordination_end_time": "4:00pm",
+            "coordination_venue": DEFAULT_COORDINATION_VENUE,
+            "marking_start_date": None,
+            "marking_end_date": None,
+            **_appointment_role_context(ExaminerType.ASSISTANT),
+            "signatory_name": "Custom Signatory",
+            "signatory_title": "CUSTOM TITLE",
+            "signed_for_director_general": True,
+            "valediction": "Yours faithfully",
+            "cc_lines": ["The Accountant."],
+            "signatory_signature_src": None,
+        },
+    )
+    assert "has the honour" in html
+    assert "Co-ordination Meeting and Script Marking" in html
+    assert "confirms your appointment" in html
+    assert subject_label in html
+    assert "marking and vetting" in html
+    assert "Co-ordination Meeting." in html
+    assert "will begin at" in html
+    assert "and end at" in html
+    assert "commence" not in html
+    assert "conclude" not in html
+    assert "pleased to invite" not in html
+    assert "You are invited as" not in html
+    assert "special responsibility" not in html
 
 
 @pytest.mark.asyncio

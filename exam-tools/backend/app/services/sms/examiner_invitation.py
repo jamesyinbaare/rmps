@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+from datetime import datetime
 from typing import TYPE_CHECKING
 from uuid import UUID
 
@@ -96,6 +97,115 @@ def _format_response_deadline(dt) -> str:
     return dt.strftime("%d %b %Y, %H:%M")
 
 
+def _format_response_deadline_sms(dt) -> str:
+    if dt is None:
+        return ""
+    return dt.strftime("%d %b %Y")
+
+
+def _exam_full_label(exam) -> str:
+    if exam is None:
+        return "the examination"
+    year = getattr(exam, "year", None)
+    exam_type = getattr(exam, "exam_type", None)
+    if year is None or exam_type is None:
+        return "the examination"
+    exam_series = getattr(exam, "exam_series", None)
+    if exam_series is not None and not isinstance(exam_series, str):
+        exam_series = None
+    parts = [str(year)]
+    if exam_series and str(exam_series).strip():
+        parts.append(str(exam_series).strip())
+    parts.append(str(exam_type).strip())
+    return " ".join(parts)
+
+
+def _exam_label_for_sms(exam) -> str:
+    if exam is None:
+        return "the examination"
+    year = getattr(exam, "year", None)
+    exam_type = getattr(exam, "exam_type", None)
+    if year is None or exam_type is None:
+        return "the examination"
+    exam_series = getattr(exam, "exam_series", None)
+    if exam_series is not None and not isinstance(exam_series, str):
+        exam_series = None
+    from app.services.exam_official_export import (
+        _abbreviate_exam_series_for_sms,
+        _abbreviate_exam_type_for_sms,
+    )
+
+    parts = [str(year)]
+    series = _abbreviate_exam_series_for_sms(exam_series)
+    type_abbr = _abbreviate_exam_type_for_sms(str(exam_type).strip())
+    if series:
+        parts.append(series)
+    if type_abbr and type_abbr not in parts:
+        parts.append(type_abbr)
+    return " ".join(parts)
+
+
+def _first_name(name: str) -> str:
+    parts = name.strip().split()
+    return parts[0] if parts else name.strip()
+
+
+def _build_examiner_invitation_message_candidates(
+    *,
+    name: str,
+    role: str,
+    subject_name: str,
+    exam_full_label: str,
+    exam_compact_label: str,
+    link: str,
+    deadline_text: str,
+) -> list[str]:
+    first = _first_name(name)
+
+    def with_dear(addressee: str, exam_label: str) -> str:
+        if deadline_text:
+            return (
+                f"Dear {addressee}, you are invited as {role} for {subject_name}, {exam_label}. "
+                f"Please accept or decline by {deadline_text}: {link}"
+            )
+        return (
+            f"Dear {addressee}, you are invited as {role} for {subject_name}, {exam_label}. "
+            f"Please accept or decline: {link}"
+        )
+
+    def without_dear(exam_label: str) -> str:
+        if deadline_text:
+            return (
+                f"You are invited as {role} for {subject_name}, {exam_label}. "
+                f"Please accept or decline by {deadline_text}: {link}"
+            )
+        return (
+            f"You are invited as {role} for {subject_name}, {exam_label}. "
+            f"Please accept or decline: {link}"
+        )
+
+    return [
+        with_dear(name, exam_full_label),
+        with_dear(first, exam_full_label),
+        without_dear(exam_full_label),
+        without_dear(exam_compact_label),
+    ]
+
+
+def _pick_sms_message(candidates: list[str]) -> str:
+    """Prefer a single-segment message; always keep the full invitation URL."""
+    for message in candidates:
+        if len(message) <= SMS_SINGLE_SEGMENT_MAX_LEN:
+            return message
+    message = candidates[-1]
+    logger.warning(
+        "Examiner invitation SMS is %s chars (>%s); full URL kept — message may use multiple segments",
+        len(message),
+        SMS_SINGLE_SEGMENT_MAX_LEN,
+    )
+    return message
+
+
 def _coordination_range_for_inv(inv: ExaminerInvitation) -> str:
     return format_coordination_range(
         inv.coordination_start_date,
@@ -109,7 +219,7 @@ def render_examiner_invitation_custom_message(inv: ExaminerInvitation, template:
     subject = inv.subject
     exam = inv.examination
     subject_name = subject.name if subject else ""
-    exam_name = f"{exam.exam_type} {exam.year}" if exam else ""
+    exam_name = _exam_full_label(exam) if exam else ""
     role = _EXAMINER_TYPE_ABBREVS.get(inv.examiner_type.value, inv.examiner_type.value)
     link = invitation_public_url(inv.token)
     replacements = {
@@ -201,17 +311,23 @@ def build_examiner_invitation_message(inv: ExaminerInvitation) -> str:
     subject = inv.subject
     exam = inv.examination
     subject_name = subject.name if subject else "your subject"
-    exam_name = f"{exam.exam_type} {exam.year}" if exam else "the examination"
+    exam_full_label = _exam_full_label(exam)
+    exam_compact_label = _exam_label_for_sms(exam)
     role = _EXAMINER_TYPE_ABBREVS.get(inv.examiner_type.value, inv.examiner_type.value)
     link = invitation_public_url(inv.token)
-    message = f"{inv.name}, invited as {role} for {subject_name}, {exam_name}. Confirm: {link}"
-    if len(message) > SMS_SINGLE_SEGMENT_MAX_LEN:
-        logger.warning(
-            "Examiner invitation SMS is %s chars (>%s); may split into multiple segments",
-            len(message),
-            SMS_SINGLE_SEGMENT_MAX_LEN,
+    deadline = getattr(inv, "response_deadline", None)
+    deadline_text = _format_response_deadline_sms(deadline) if isinstance(deadline, datetime) else ""
+    return _pick_sms_message(
+        _build_examiner_invitation_message_candidates(
+            name=inv.name,
+            role=role,
+            subject_name=subject_name,
+            exam_full_label=exam_full_label,
+            exam_compact_label=exam_compact_label,
+            link=link,
+            deadline_text=deadline_text,
         )
-    return message
+    )
 
 
 async def send_examiner_invitation_sms(inv: ExaminerInvitation) -> SmsDeliveryResult:

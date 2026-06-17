@@ -65,6 +65,26 @@ export function ExaminerInvitationLandingPanel({
         : CalendarClock;
   const markingCohorts = invitation.marking_cohorts ?? [];
   const subjectCodeLabel = displaySubjectCode(invitation);
+  const waitlistNote = isWaitlisted ? invitation.quota_waitlist_message?.trim() : null;
+  const showWaitlistNote = Boolean(waitlistNote);
+  const showActionMessage =
+    Boolean(actionMessage) &&
+    !(showWaitlistNote && actionMessage === waitlistNote);
+
+  const introText =
+    invitation.status === "declined"
+      ? "You declined this invitation."
+      : isRosterPortal
+        ? "Welcome to your examiner portal. Review your assignment and marking schedule below, then open Profile for bank details, script allocations, and your appointment letter."
+        : invitation.status === "accepted"
+          ? "Your assignment details are below. Open the Profile tab for bank details, script allocations, and your appointment letter."
+          : isWaitlisted
+            ? showWaitlistNote
+              ? null
+              : "Thank you for responding. The regional quota is full for now — see the note below for what happens next."
+            : canRespond
+              ? "You've been invited to serve as an examiner. Review the details below, then confirm or decline before the deadline."
+              : "This invitation is no longer open for a response.";
 
   function openConfirm(action: ConfirmAction) {
     setConfirmAction(action);
@@ -95,7 +115,9 @@ export function ExaminerInvitationLandingPanel({
     onActionMessage(null);
     try {
       const res = await acceptPublicExaminerInvitation(token);
-      onActionMessage(res.message);
+      if (res.status !== "quota_waitlisted") {
+        onActionMessage(res.message);
+      }
       setConfirmAction(null);
       setConfirmText("");
       onAccepted();
@@ -150,25 +172,13 @@ export function ExaminerInvitationLandingPanel({
             </span>
           </div>
 
-          {invitation.status !== "declined" ? (
-            <p className="mt-4 text-sm leading-relaxed text-muted-foreground">
-              {isRosterPortal
-                ? "Welcome to your examiner portal. Review your assignment and marking schedule below, then open Profile for bank details, script allocations, and your appointment letter."
-                : invitation.status === "accepted"
-                  ? "Your assignment details are below. Open the Profile tab for bank details, script allocations, and your appointment letter."
-                  : isWaitlisted
-                    ? "Thank you for responding. The regional quota is full for now — see the note below for what happens next."
-                    : canRespond
-                      ? "You've been invited to serve as an examiner. Review the details below, then confirm or decline before the deadline."
-                      : "This invitation is no longer open for a response."}
-            </p>
-          ) : (
-            <p className="mt-4 text-sm text-muted-foreground">You declined this invitation.</p>
-          )}
+          {introText ? (
+            <p className="mt-4 text-sm leading-relaxed text-muted-foreground">{introText}</p>
+          ) : null}
 
-          {isWaitlisted && invitation.quota_waitlist_message ? (
+          {showWaitlistNote ? (
             <div className="mt-4 rounded-2xl border border-amber-500/30 bg-amber-500/10 px-4 py-4 text-sm leading-relaxed text-foreground">
-              {invitation.quota_waitlist_message}
+              {waitlistNote}
             </div>
           ) : null}
 
@@ -228,7 +238,7 @@ export function ExaminerInvitationLandingPanel({
             />
           ) : null}
 
-          {actionMessage ? (
+          {showActionMessage ? (
             <div
               className={cn(
                 "mt-5 rounded-2xl border px-4 py-3 text-sm leading-relaxed text-foreground",

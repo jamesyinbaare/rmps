@@ -154,29 +154,29 @@
   </style>
 
   <h2 class="letter-title">
-    <span class="letter-underline">CO-ORDINATION MEETING AND MARKING OF {{ examination_label_upper }} EXAMINATIONS SCRIPTS</span>
+    <span class="letter-underline">CO-ORDINATION MEETING AND SCRIPT MARKING OF {{ examination_label_upper }} EXAMINATIONS</span>
   </h2>
 
   <p class="letter-salutation">Dear {{ invitee_name }},</p>
 
   <p>
-    The Commission for Technical and Vocational Education and Training (CTVET) is pleased to invite you to the
-    Co-ordination meeting and Marking of scripts of the {{ examination_label }} Examinations.{% if coordination_start_time and coordination_end_time %}
-    The exercise begins at <strong>{{ coordination_start_time }}</strong> and ends at <strong>{{ coordination_end_time }}</strong>.{% elif coordination_start_time %}
-    The exercise begins at <strong>{{ coordination_start_time }}</strong>.{% elif coordination_end_time %}
-    The exercise ends at <strong>{{ coordination_end_time }}</strong>.{% endif %}
-    The venue is the
-    <strong>{{ coordination_venue }}</strong>{% if coordination_date %} on
-    <strong>{{ coordination_date }}</strong>{% else %} on dates to be communicated{% endif %}.
+    The Commission for Technical and Vocational Education and Training (CTVET) has the honour to invite you to the
+    Co-ordination Meeting and Script Marking of the {{ examination_label }} Examinations.{% if coordination_start_time and coordination_end_time %}
+    The exercise will begin at <strong>{{ coordination_start_time }}</strong> and end at <strong>{{ coordination_end_time }}</strong>.{% elif coordination_start_time %}
+    The exercise will begin at <strong>{{ coordination_start_time }}</strong>.{% elif coordination_end_time %}
+    The exercise will end at <strong>{{ coordination_end_time }}</strong>.{% endif %}
+    The meeting will be held at <strong>{{ coordination_venue }}</strong>{% if coordination_date %}, on
+    <strong>{{ coordination_date }}</strong>{% endif %}.{% if not coordination_date %}
+    Further details of the schedule will be communicated in due course.{% endif %}
   </p>
 
   <p>
-    You are invited as {{ examiner_role_article }} <strong>{{ examiner_role_title }}</strong> for
-    <strong>{{ subject_name }}</strong> with special responsibility for marking/vetting <strong>Paper 2</strong> scripts.
+    This letter confirms your appointment as {{ examiner_role_article }} <strong>{{ examiner_role_title }}</strong> for
+    <strong>{{ subject_label }}</strong>, with responsibility for the marking and vetting of <strong>Paper 2</strong> scripts.
     {% if marking_start_date and marking_end_date %}
-    The period for marking begins on <strong>{{ marking_start_date }}</strong> and ends on <strong>{{ marking_end_date }}</strong>.
+    The marking period will run from <strong>{{ marking_start_date }}</strong> to <strong>{{ marking_end_date }}</strong>.
     {% else %}
-    The period for marking will be communicated at the coordination meeting.
+    The marking period will be communicated at the Co-ordination Meeting.
     {% endif %}
   </p>
 
