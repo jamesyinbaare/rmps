@@ -19,6 +19,7 @@ from app.services.examiner_invitation import (
     public_invitation_view,
     renew_examiner_invitation,
     subject_display_code,
+    update_examiner_invitation_response_deadline,
     update_invitation_coordination_schedule,
 )
 from app.services.sms.examiner_invitation import (
@@ -767,4 +768,94 @@ async def test_renew_examiner_invitation_rejects_conflicting_pending() -> None:
                 inv,
                 response_deadline=datetime.utcnow() + timedelta(days=3),
                 invited_by_user_id=uuid4(),
+            )
+
+
+@pytest.mark.asyncio
+async def test_update_response_deadline_extends_pending() -> None:
+    session = AsyncMock()
+    session.flush = AsyncMock()
+    inv = _mock_renewable_invitation(status=ExaminerInvitationStatus.PENDING)
+    new_deadline = datetime.utcnow() + timedelta(days=5)
+
+    result = await update_examiner_invitation_response_deadline(
+        session,
+        inv,
+        response_deadline=new_deadline,
+    )
+
+    assert result is inv
+    assert inv.status == ExaminerInvitationStatus.PENDING
+    assert inv.response_deadline == _as_naive_utc(new_deadline)
+    assert inv.token_expires_at == inv.response_deadline
+    assert inv.token == "existing-token"
+
+
+@pytest.mark.asyncio
+async def test_update_response_deadline_reactivates_expired() -> None:
+    session = AsyncMock()
+    session.flush = AsyncMock()
+    inv = _mock_renewable_invitation()
+    new_deadline = datetime.utcnow() + timedelta(days=5)
+
+    result = await update_examiner_invitation_response_deadline(
+        session,
+        inv,
+        response_deadline=new_deadline,
+    )
+
+    assert result is inv
+    assert inv.status == ExaminerInvitationStatus.PENDING
+    assert inv.response_deadline == _as_naive_utc(new_deadline)
+    assert inv.token_expires_at == inv.response_deadline
+
+
+@pytest.mark.asyncio
+async def test_update_response_deadline_keeps_quota_waitlisted() -> None:
+    session = AsyncMock()
+    session.flush = AsyncMock()
+    responded_at = datetime.utcnow() - timedelta(days=1)
+    inv = _mock_renewable_invitation(
+        status=ExaminerInvitationStatus.QUOTA_WAITLISTED,
+        responded_at=responded_at,
+    )
+    new_deadline = datetime.utcnow() + timedelta(days=5)
+
+    result = await update_examiner_invitation_response_deadline(
+        session,
+        inv,
+        response_deadline=new_deadline,
+    )
+
+    assert result is inv
+    assert inv.status == ExaminerInvitationStatus.QUOTA_WAITLISTED
+    assert inv.responded_at == responded_at
+    assert inv.response_deadline == _as_naive_utc(new_deadline)
+
+
+@pytest.mark.asyncio
+async def test_update_response_deadline_rejects_past_deadline() -> None:
+    session = AsyncMock()
+    inv = _mock_renewable_invitation(status=ExaminerInvitationStatus.PENDING)
+    with pytest.raises(ValueError, match="in the future"):
+        await update_examiner_invitation_response_deadline(
+            session,
+            inv,
+            response_deadline=datetime.utcnow() - timedelta(hours=1),
+        )
+
+
+@pytest.mark.asyncio
+async def test_update_response_deadline_rejects_non_extendable() -> None:
+    session = AsyncMock()
+    for status in (
+        ExaminerInvitationStatus.ACCEPTED,
+        ExaminerInvitationStatus.DECLINED,
+    ):
+        inv = _mock_renewable_invitation(status=status)
+        with pytest.raises(ValueError, match="respond-by date"):
+            await update_examiner_invitation_response_deadline(
+                session,
+                inv,
+                response_deadline=datetime.utcnow() + timedelta(days=3),
             )

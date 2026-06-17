@@ -35,6 +35,7 @@ type Props = {
   onInAppSms: (row: ExaminerInvitationRow) => void;
   onResend: (inv: ExaminerInvitationRow) => void;
   onRenew?: (inv: ExaminerInvitationRow) => void;
+  onExtendDeadline?: (inv: ExaminerInvitationRow) => void;
   onCopyLink?: (inv: ExaminerInvitationRow) => void;
   copyLinkUi?: Record<string, "copied" | "error">;
   onViewAllocation?: (inv: ExaminerInvitationRow) => void;
@@ -55,6 +56,7 @@ export function InvitationsMobileList({
   onInAppSms,
   onResend,
   onRenew,
+  onExtendDeadline,
   onCopyLink,
   copyLinkUi = {},
   onViewAllocation,
@@ -87,6 +89,7 @@ export function InvitationsMobileList({
               onCopyLink={onCopyLink}
               onResend={onResend}
               onRenew={onRenew}
+              onExtendDeadline={onExtendDeadline}
               onViewAllocation={onViewAllocation}
               embedded
             />

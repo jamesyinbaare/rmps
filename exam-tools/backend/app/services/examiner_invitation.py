@@ -327,6 +327,37 @@ def invitation_coordination_summary(inv: ExaminerInvitation) -> dict:
     }
 
 
+async def update_examiner_invitation_response_deadline(
+    session: AsyncSession,
+    inv: ExaminerInvitation,
+    *,
+    response_deadline: datetime,
+) -> ExaminerInvitation:
+    if inv.status not in (
+        ExaminerInvitationStatus.PENDING,
+        ExaminerInvitationStatus.QUOTA_WAITLISTED,
+        ExaminerInvitationStatus.EXPIRED,
+    ):
+        raise ValueError(
+            "Only pending, quota-waitlisted, or expired invitations can have their respond-by date updated."
+        )
+
+    deadline = _as_naive_utc(response_deadline)
+    if deadline is None:
+        raise ValueError("Respond-by deadline is required.")
+    if deadline < datetime.utcnow():
+        raise ValueError("Respond-by deadline must be in the future.")
+
+    if inv.status == ExaminerInvitationStatus.EXPIRED:
+        inv.status = ExaminerInvitationStatus.PENDING
+
+    inv.response_deadline = deadline
+    inv.token_expires_at = deadline
+    inv.updated_at = datetime.utcnow()
+    await session.flush()
+    return inv
+
+
 async def renew_examiner_invitation(
     session: AsyncSession,
     inv: ExaminerInvitation,

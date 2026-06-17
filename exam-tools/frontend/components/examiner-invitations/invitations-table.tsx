@@ -59,6 +59,7 @@ type Props = {
   resendErrors: Record<string, string>;
   onResend: (inv: ExaminerInvitationRow) => void;
   onRenew?: (inv: ExaminerInvitationRow) => void;
+  onExtendDeadline?: (inv: ExaminerInvitationRow) => void;
   onCopyLink?: (inv: ExaminerInvitationRow) => void;
   copyLinkUi?: Record<string, "copied" | "error">;
   onViewAllocation?: (inv: ExaminerInvitationRow) => void;
@@ -87,6 +88,7 @@ export function InvitationsTable({
   resendErrors,
   onResend,
   onRenew,
+  onExtendDeadline,
   onCopyLink,
   copyLinkUi = {},
   onViewAllocation,
@@ -228,13 +230,14 @@ export function InvitationsTable({
               onCopyLink={onCopyLink}
               onResend={onResend}
               onRenew={onRenew}
+              onExtendDeadline={onExtendDeadline}
               onViewAllocation={onViewAllocation}
             />
           );
         },
       },
     ],
-    [busy, copyLinkUi, onCopyLink, onRenew, onResend, onViewAllocation, openActionsId, resendErrors, resendUi],
+    [busy, copyLinkUi, onCopyLink, onExtendDeadline, onRenew, onResend, onViewAllocation, openActionsId, resendErrors, resendUi],
   );
 
   const table = useReactTable({

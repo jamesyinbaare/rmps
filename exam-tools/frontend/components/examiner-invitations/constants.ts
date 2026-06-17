@@ -53,7 +53,7 @@ export const COLUMN_TOGGLE_OPTIONS = [
   { id: "examiner_type", label: "Role", defaultVisible: true },
   { id: "region", label: "Region", defaultVisible: true },
   { id: "status", label: "Status", defaultVisible: true },
-  { id: "response_deadline", label: "Respond by", defaultVisible: false },
+  { id: "response_deadline", label: "Respond by", defaultVisible: true },
   { id: "coordination", label: "Coordination", defaultVisible: false },
   { id: "sms", label: "SMS", defaultVisible: true },
 ] as const;

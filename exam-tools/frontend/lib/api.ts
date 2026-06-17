@@ -4947,6 +4947,33 @@ export async function renewExaminerInvitation(
   );
 }
 
+export type ExaminerInvitationResponseDeadlinePayload = {
+  response_deadline: string;
+  send_sms?: boolean | null;
+};
+
+export type ExaminerInvitationResponseDeadlineUpdateResponse = {
+  invitation: ExaminerInvitationRow;
+  sms_sent: boolean | null;
+  sms_error: string | null;
+  sms_delivery_id: string | null;
+};
+
+export async function updateExaminerInvitationResponseDeadline(
+  examinationId: number,
+  invitationId: string,
+  payload: ExaminerInvitationResponseDeadlinePayload,
+): Promise<ExaminerInvitationResponseDeadlineUpdateResponse> {
+  return apiJson<ExaminerInvitationResponseDeadlineUpdateResponse>(
+    `/examinations/${examinationId}/examiner-invitations/${invitationId}/response-deadline`,
+    {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    },
+  );
+}
+
 export async function bulkSendExaminerInvitationCustomSms(
   examinationId: number,
   payload: ExaminerInvitationBulkSmsPayload,

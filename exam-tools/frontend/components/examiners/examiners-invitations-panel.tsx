@@ -16,6 +16,7 @@ import {
 import {
   BulkUploadModal,
   CustomSmsModal,
+  ExtendRespondByModal,
   InviteExaminerModal,
   RenewInvitationModal,
   SetCoordinationDateModal,
@@ -38,6 +39,7 @@ import {
   clampPageSize,
   defaultDatetimeLocalInput,
   datetimeLocalToIso,
+  isoToDatetimeLocal,
   canReceiveCoordinationSms,
   coordinationSmsSelectionBlockedReason,
   matchesSearchQuery,
@@ -54,6 +56,7 @@ import {
   listExaminerInvitations,
   renewExaminerInvitation,
   resendExaminerInvitationSms,
+  updateExaminerInvitationResponseDeadline,
   type ExaminerInvitationBulkImportResponse,
   type ExaminerInvitationBulkSmsResponse,
   type ExaminerInvitationRow,
@@ -122,6 +125,11 @@ export function ExaminersInvitationsPanel({
   const [renewError, setRenewError] = useState<string | null>(null);
   const [renewDeadlineInput, setRenewDeadlineInput] = useState("");
   const [renewSendSms, setRenewSendSms] = useState(true);
+  const [extendModalOpen, setExtendModalOpen] = useState(false);
+  const [extendTarget, setExtendTarget] = useState<ExaminerInvitationRow | null>(null);
+  const [extendError, setExtendError] = useState<string | null>(null);
+  const [extendDeadlineInput, setExtendDeadlineInput] = useState("");
+  const [extendSendSms, setExtendSendSms] = useState(false);
   const [uploadModalOpen, setUploadModalOpen] = useState(false);
   const [smsModalOpen, setSmsModalOpen] = useState(false);
   const [smsSingleTarget, setSmsSingleTarget] = useState<ExaminerInvitationRow | null>(null);
@@ -422,7 +430,9 @@ export function ExaminersInvitationsPanel({
   const openRenew = useCallback((inv: ExaminerInvitationRow) => {
     setRenewTarget(inv);
     setRenewError(null);
-    setRenewDeadlineInput(defaultDatetimeLocalInput());
+    setRenewDeadlineInput(
+      isoToDatetimeLocal(inv.response_deadline) || defaultDatetimeLocalInput(),
+    );
     setRenewSendSms(true);
     setRenewModalOpen(true);
   }, []);
@@ -433,6 +443,69 @@ export function ExaminersInvitationsPanel({
     setRenewError(null);
     setRenewDeadlineInput("");
   }, []);
+
+  const openExtend = useCallback((inv: ExaminerInvitationRow) => {
+    setExtendTarget(inv);
+    setExtendError(null);
+    setExtendDeadlineInput(
+      isoToDatetimeLocal(inv.response_deadline) || defaultDatetimeLocalInput(),
+    );
+    setExtendSendSms(false);
+    setExtendModalOpen(true);
+  }, []);
+
+  const closeExtendModal = useCallback(() => {
+    setExtendModalOpen(false);
+    setExtendTarget(null);
+    setExtendError(null);
+    setExtendDeadlineInput("");
+  }, []);
+
+  const handleExtend = useCallback(async () => {
+    if (examId == null || extendTarget == null) return;
+    if (!extendDeadlineInput.trim()) {
+      setExtendError("Respond-by deadline is required.");
+      return;
+    }
+    const responseDeadlineIso = datetimeLocalToIso(extendDeadlineInput);
+    if (!responseDeadlineIso) {
+      setExtendError("Enter a valid respond-by date and time.");
+      return;
+    }
+    setExtendError(null);
+    setBusy(true);
+    setActionMessage(null);
+    try {
+      const res = await updateExaminerInvitationResponseDeadline(examId, extendTarget.id, {
+        response_deadline: responseDeadlineIso,
+        send_sms: extendSendSms,
+      });
+      closeExtendModal();
+      setActionMessageTone("success");
+      if (res.sms_sent === true) {
+        setActionMessage(`Respond-by extended and SMS sent to ${extendTarget.name}.`);
+      } else if (res.sms_sent === false) {
+        setActionMessageTone("error");
+        setActionMessage(
+          `Respond-by extended for ${extendTarget.name}, but SMS failed: ${res.sms_error ?? "Unknown error"}`,
+        );
+      } else {
+        setActionMessage(`Respond-by extended for ${extendTarget.name}.`);
+      }
+      await loadInvitations(examId);
+    } catch (e) {
+      setExtendError(e instanceof Error ? e.message : "Failed to extend respond-by");
+    } finally {
+      setBusy(false);
+    }
+  }, [
+    closeExtendModal,
+    examId,
+    extendDeadlineInput,
+    extendSendSms,
+    extendTarget,
+    loadInvitations,
+  ]);
 
   const handleRenew = useCallback(async () => {
     if (examId == null || renewTarget == null) return;
@@ -862,6 +935,7 @@ export function ExaminersInvitationsPanel({
           }}
           onInvite={() => {
             setInviteError(null);
+            setResponseDeadlineInput(defaultDatetimeLocalInput());
             setInviteModalOpen(true);
           }}
           onDownloadLinks={() => void handleDownloadLinks()}
@@ -909,6 +983,7 @@ export function ExaminersInvitationsPanel({
                       disabled={busy}
                       onClick={() => {
                         setInviteError(null);
+                        setResponseDeadlineInput(defaultDatetimeLocalInput());
                         setInviteModalOpen(true);
                       }}
                     >
@@ -970,6 +1045,7 @@ export function ExaminersInvitationsPanel({
                     resendErrors={resendErrors}
                     onResend={(inv) => void handleResend(inv)}
                     onRenew={openRenew}
+                    onExtendDeadline={openExtend}
                     onCopyLink={(inv) => void handleCopyLink(inv)}
                     copyLinkUi={copyLinkUi}
                     onViewAllocation={
@@ -996,6 +1072,7 @@ export function ExaminersInvitationsPanel({
                     onInAppSms={openCustomSmsForInvitation}
                     onResend={(inv) => void handleResend(inv)}
                     onRenew={openRenew}
+                    onExtendDeadline={openExtend}
                     onCopyLink={(inv) => void handleCopyLink(inv)}
                     copyLinkUi={copyLinkUi}
                     onViewAllocation={
@@ -1026,6 +1103,23 @@ export function ExaminersInvitationsPanel({
         onSubmit={() => void handleRenew()}
         onResponseDeadlineChange={setRenewDeadlineInput}
         onSendSmsChange={setRenewSendSms}
+      />
+
+      <ExtendRespondByModal
+        open={extendModalOpen}
+        busy={busy}
+        error={extendError}
+        status={extendTarget?.status ?? null}
+        name={extendTarget?.name ?? ""}
+        phone={extendTarget?.phone_number ?? ""}
+        responseDeadlineInput={extendDeadlineInput}
+        sendSms={extendSendSms}
+        onClose={() => {
+          if (!busy) closeExtendModal();
+        }}
+        onSubmit={() => void handleExtend()}
+        onResponseDeadlineChange={setExtendDeadlineInput}
+        onSendSmsChange={setExtendSendSms}
       />
 
       <InviteExaminerModal

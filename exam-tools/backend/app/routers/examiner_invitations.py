@@ -28,6 +28,8 @@ from app.schemas.examiner_invitation import (
     ExaminerInvitationResponse,
     ExaminerInvitationRenew,
     ExaminerInvitationRenewResponse,
+    ExaminerInvitationResponseDeadlineUpdate,
+    ExaminerInvitationResponseDeadlineUpdateResponse,
     ExaminerInvitationResendResponse,
     ExaminerInvitationStatusSchema,
 )
@@ -37,6 +39,7 @@ from app.services.examiner_invitation import (
     invitation_coordination_summary,
     invitation_public_url,
     renew_examiner_invitation,
+    update_examiner_invitation_response_deadline,
     update_invitation_coordination_schedule,
 )
 from app.services.examiner_roster import (
@@ -403,6 +406,73 @@ async def resend_examiner_invitation_sms(
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="SMS is disabled")
     return ExaminerInvitationResendResponse(
         sms_sent=bool(sms_sent),
+        sms_error=sms_error,
+        sms_delivery_id=sms_delivery_id,
+    )
+
+
+@router.patch(
+    "/examinations/{examination_id}/examiner-invitations/{invitation_id}/response-deadline",
+    response_model=ExaminerInvitationResponseDeadlineUpdateResponse,
+    summary="Extend the respond-by deadline on an open examiner invitation",
+)
+async def update_examiner_invitation_response_deadline_endpoint(
+    session: DBSessionDep,
+    user: CurrentUserDep,
+    auth_user: SuperAdminOrTestAdminOfficerOrSubjectOfficerDep,
+    examination_id: int,
+    invitation_id: UUID,
+    body: ExaminerInvitationResponseDeadlineUpdate,
+) -> ExaminerInvitationResponseDeadlineUpdateResponse:
+    stmt = (
+        select(ExaminerInvitation)
+        .where(
+            ExaminerInvitation.id == invitation_id,
+            ExaminerInvitation.examination_id == examination_id,
+        )
+        .options(
+            selectinload(ExaminerInvitation.subject),
+            selectinload(ExaminerInvitation.examination),
+        )
+    )
+    inv = (await session.execute(stmt)).scalar_one_or_none()
+    if inv is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Invitation not found")
+    await _assert_invitation_accessible(session, auth_user, examination_id, inv)
+
+    try:
+        await update_examiner_invitation_response_deadline(
+            session,
+            inv,
+            response_deadline=body.response_deadline,
+        )
+        sms_sent, sms_error, sms_delivery_id = await maybe_send_examiner_invitation_sms(
+            inv,
+            body.send_sms,
+            session=session,
+            triggered_by_user_id=user.id,
+            trigger="extend_deadline",
+        )
+        await session.commit()
+    except ValueError as exc:
+        await session.rollback()
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+
+    stmt_reload = (
+        select(ExaminerInvitation)
+        .where(ExaminerInvitation.id == inv.id)
+        .options(selectinload(ExaminerInvitation.subject))
+    )
+    inv2 = (await session.execute(stmt_reload)).scalar_one()
+    sms = await _latest_sms_delivery(session, inv2.id)
+    resp = _invitation_response(inv2, sms)
+    if sms_sent is not None:
+        resp.sms_sent = sms_sent
+        resp.sms_error = sms_error
+        resp.sms_delivery_id = sms_delivery_id
+    return ExaminerInvitationResponseDeadlineUpdateResponse(
+        invitation=resp,
+        sms_sent=sms_sent,
         sms_error=sms_error,
         sms_delivery_id=sms_delivery_id,
     )

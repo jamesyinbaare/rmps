@@ -118,6 +118,18 @@ class ExaminerInvitationRenew(BaseModel):
     send_sms: bool | None = None
 
 
+class ExaminerInvitationResponseDeadlineUpdate(BaseModel):
+    response_deadline: datetime
+    send_sms: bool | None = None
+
+
+class ExaminerInvitationResponseDeadlineUpdateResponse(BaseModel):
+    invitation: ExaminerInvitationResponse
+    sms_sent: bool | None = None
+    sms_error: str | None = None
+    sms_delivery_id: UUID | None = None
+
+
 class ExaminerInvitationRenewResponse(BaseModel):
     invitation: ExaminerInvitationResponse
     sms_sent: bool | None = None

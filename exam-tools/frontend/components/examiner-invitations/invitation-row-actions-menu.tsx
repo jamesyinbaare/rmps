@@ -19,6 +19,7 @@ type Props = {
   onCopyLink?: (inv: ExaminerInvitationRow) => void;
   onResend: (inv: ExaminerInvitationRow) => void;
   onRenew?: (inv: ExaminerInvitationRow) => void;
+  onExtendDeadline?: (inv: ExaminerInvitationRow) => void;
   onViewAllocation?: (inv: ExaminerInvitationRow) => void;
   /** Render menu items only (no popover trigger) for mobile contact cards. */
   embedded?: boolean;
@@ -35,24 +36,25 @@ export function InvitationRowActionsMenu({
   onCopyLink,
   onResend,
   onRenew,
+  onExtendDeadline,
   onViewAllocation,
   embedded = false,
 }: Props) {
   const canCopy = Boolean(onCopyLink && inv.public_url);
   const canResend = inv.status === "pending";
+  const canExtend =
+    (inv.status === "pending" ||
+      inv.status === "quota_waitlisted" ||
+      inv.status === "expired") &&
+    Boolean(onExtendDeadline);
   const canReopen =
-    (inv.status === "expired" || inv.status === "declined" || inv.status === "quota_waitlisted") &&
-    Boolean(onRenew);
+    (inv.status === "declined" || inv.status === "quota_waitlisted") && Boolean(onRenew);
   const reopenLabel =
-    inv.status === "declined"
-      ? "Reopen invitation"
-      : inv.status === "quota_waitlisted"
-        ? "Reset invitation"
-        : "Renew link";
+    inv.status === "declined" ? "Reopen invitation" : "Reset invitation";
   const canViewAllocation = Boolean(
     onViewAllocation && inv.status === "accepted" && inv.examiner_id,
   );
-  const hasMenuItems = canCopy || canResend || canReopen || canViewAllocation;
+  const hasMenuItems = canCopy || canResend || canExtend || canReopen || canViewAllocation;
 
   if (!hasMenuItems) {
     return embedded ? null : <span className="text-xs text-muted-foreground">—</span>;
@@ -74,6 +76,20 @@ export function InvitationRowActionsMenu({
           }}
         >
           Copy link
+        </button>
+      ) : null}
+      {canExtend ? (
+        <button
+          type="button"
+          role="menuitem"
+          disabled={busy}
+          className={menuItemClass}
+          onClick={() => {
+            onExtendDeadline?.(inv);
+            onOpenChange(false);
+          }}
+        >
+          Extend respond-by
         </button>
       ) : null}
       {canReopen ? (
