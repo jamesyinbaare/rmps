@@ -318,11 +318,14 @@ async def update_invitation_coordination_schedule(
 
 
 def invitation_coordination_summary(inv: ExaminerInvitation) -> dict:
+    from app.services.coordination_schedule import coordination_end_at
+
     return {
         "coordination_start_date": inv.coordination_start_date,
         "coordination_start_time": inv.coordination_start_time,
         "coordination_end_date": inv.coordination_end_date,
         "coordination_end_time": inv.coordination_end_time,
+        "coordination_end_at": coordination_end_at(inv.coordination_end_date, inv.coordination_end_time),
         "coordination_venue": inv.coordination_venue,
     }
 

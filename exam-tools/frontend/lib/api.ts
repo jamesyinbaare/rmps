@@ -4263,6 +4263,7 @@ export type ExaminerInvitationPublic = {
   coordination_start_time: string | null;
   coordination_end_date: string | null;
   coordination_end_time: string | null;
+  coordination_end_at?: string | null;
   coordination_venue?: string | null;
   responded_at: string | null;
   can_respond: boolean;
