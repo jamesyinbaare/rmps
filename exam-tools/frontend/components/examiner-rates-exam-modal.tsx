@@ -1065,22 +1065,22 @@ export function ExaminerRatesExamModal({ exam, allExams, onClose, onSaved }: Pro
 
       {pendingClose ? (
         <DiscardChangesConfirmModal
-          onDiscard={() => {
+          onConfirm={() => {
             setPendingClose(false);
             onClose();
           }}
-          onKeepEditing={() => setPendingClose(false)}
+          onCancel={() => setPendingClose(false)}
         />
       ) : null}
 
       {pendingDisableEdit ? (
         <DiscardChangesConfirmModal
-          onDiscard={() => {
+          onConfirm={() => {
             setPendingDisableEdit(false);
             void loadRates();
             setEditing(false);
           }}
-          onKeepEditing={() => setPendingDisableEdit(false)}
+          onCancel={() => setPendingDisableEdit(false)}
         />
       ) : null}
     </div>

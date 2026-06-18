@@ -20,4 +20,5 @@ export type InvitationStatusCounts = {
   accepted: number;
   declined: number;
   expired: number;
+  quota_waitlisted: number;
 };

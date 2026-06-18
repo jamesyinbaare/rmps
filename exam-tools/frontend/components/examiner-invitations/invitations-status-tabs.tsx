@@ -20,6 +20,8 @@ const STATUS_TONE: Record<InvitationStatusFilter, string> = {
   declined:
     "border-red-300/60 bg-red-50 text-red-950 dark:border-red-900/50 dark:bg-red-950/40 dark:text-red-100",
   expired: "border-border bg-muted/60 text-muted-foreground",
+  quota_waitlisted:
+    "border-orange-300/60 bg-orange-50 text-orange-950 dark:border-orange-900/50 dark:bg-orange-950/40 dark:text-orange-100",
 };
 
 type Props = {

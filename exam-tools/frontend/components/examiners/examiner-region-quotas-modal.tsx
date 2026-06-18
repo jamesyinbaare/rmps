@@ -10,7 +10,7 @@ import type { ExaminerTypeApi, Subject } from "@/lib/api";
 import {
   getSubjectExaminerRegionQuotas,
   putSubjectExaminerRegionQuotas,
-  type ExaminerRegionGroupRow,
+  type ExaminerQuotaRegionGroupRow,
   type SubjectExaminerRegionQuotaItem,
 } from "@/lib/api";
 import { officialAccountsBtnPrimary, officialAccountsBtnSecondary } from "@/lib/official-accounts-zone";
@@ -36,7 +36,7 @@ function emptyRoles(): Record<ExaminerTypeApi, string> {
 
 export function ExaminerRegionQuotasModal({ open, examId, subjects, onOpenChange }: Props) {
   const [subjectId, setSubjectId] = useState<number | null>(null);
-  const [groups, setGroups] = useState<ExaminerRegionGroupRow[]>([]);
+  const [groups, setGroups] = useState<ExaminerQuotaRegionGroupRow[]>([]);
   const [draft, setDraft] = useState<Record<string, DraftCell>>({});
   const [summary, setSummary] = useState<Record<string, { total: number; roles: Record<string, number> }>>({});
   const [loading, setLoading] = useState(false);

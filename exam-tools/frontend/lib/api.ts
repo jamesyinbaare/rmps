@@ -3195,6 +3195,7 @@ export function sumInspectorAnalysisRowsFromCentres(
       center_id: "00000000-0000-0000-0000-000000000000",
       center_code: "TOTAL",
       center_name: "",
+      center_region: null,
       subject_filter: row.subject_filter,
       total_candidates: acc.total_candidates + row.total_candidates,
       exam_days: acc.exam_days + row.exam_days,

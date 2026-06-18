@@ -19,6 +19,7 @@ import {
 } from "@/lib/script-control-subjects";
 
 export { SCRIPT_CONTROL_SUBJECT_TYPE_OPTIONS, type ScriptControlSubjectTypeFilter };
+export type { ExaminerAllowanceTypeApi } from "@/lib/api";
 
 const EXAMINER_ROLE_TYPES: ExaminerTypeApi[] = [
   "chief_examiner",

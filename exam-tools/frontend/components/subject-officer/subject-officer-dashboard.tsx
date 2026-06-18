@@ -697,7 +697,9 @@ export function SubjectOfficerDashboard({
                             date.toLocaleDateString(undefined, { weekday: "narrow" }),
                         }}
                         classNames={markingCalendarClassNames}
-                        components={{ DayButton: MarkingCalendarDayButton }}
+                        components={{
+                          DayButton: (props) => <MarkingCalendarDayButton {...props} />,
+                        }}
                         className="flex h-full min-w-0 flex-1 flex-col bg-background p-0"
                       />
                     </MarkingCalendarEventsProvider>

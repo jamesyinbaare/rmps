@@ -96,6 +96,7 @@ function countByStatus(rows: ExaminerInvitationRow[]): InvitationStatusCounts {
     accepted: 0,
     declined: 0,
     expired: 0,
+    quota_waitlisted: 0,
   };
   for (const row of rows) {
     counts[row.status] += 1;
