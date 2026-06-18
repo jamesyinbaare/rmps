@@ -29,6 +29,7 @@ async def get_or_create_portal_settings(
         appointment_letters_release_enabled=False,
         appointment_letters_release_mode=AppointmentLettersReleaseMode.SCHEDULED_DATE.value,
         appointment_letters_release_at=None,
+        examiner_bank_details_editable_by_examiners=False,
         updated_at=datetime.utcnow(),
     )
     session.add(row)
@@ -69,6 +70,29 @@ async def is_appointment_letter_available(
     return datetime.utcnow() >= release_at
 
 
+async def is_bank_details_editable(
+    session: AsyncSession,
+    examiner: Examiner,
+) -> bool:
+    row = await get_or_create_portal_settings(session, int(examiner.examination_id))
+    return bool(row.examiner_bank_details_editable_by_examiners)
+
+
+def bank_details_pending_message(*, editable: bool) -> str | None:
+    if editable:
+        return None
+    return "Bank details entry has been disabled by the examination office."
+
+
+def bank_fields_from_settings(row: ExaminationExaminerPortalSettings) -> dict:
+    editable = bool(row.examiner_bank_details_editable_by_examiners)
+    return {
+        "bank_details_editable_by_examiners": editable,
+        "bank_details_available": editable,
+        "bank_details_pending_message": bank_details_pending_message(editable=editable),
+    }
+
+
 def appointment_letter_pending_message(
     *,
     release_enabled: bool,
@@ -78,32 +102,32 @@ def appointment_letter_pending_message(
 ) -> str | None:
     if not release_enabled:
         return (
-            "Your appointment letter and bank details will be available once released "
+            "Your appointment letter will be available once released "
             "by the examination office."
         )
 
     if release_mode == AppointmentLettersReleaseMode.ON_ACCEPTANCE:
         if not examiner_accepted:
             return (
-                "Confirm your availability first. Your appointment letter and bank details "
+                "Confirm your availability first. Your appointment letter "
                 "will be available on your profile after you accept."
             )
         return None
 
     if release_at is None:
         return (
-            "Your appointment letter and bank details will be available once the examination "
+            "Your appointment letter will be available once the examination "
             "office sets a release date."
         )
     if datetime.utcnow() >= release_at:
         return None
     return (
-        f"Your appointment letter and bank details will be available on "
-        f"{release_at.strftime('%d %b %Y at %H:%M')} UTC. You will receive an SMS when they are ready."
+        f"Your appointment letter will be available on "
+        f"{release_at.strftime('%d %b %Y at %H:%M')} UTC. You will receive an SMS when it is ready."
     )
 
 
-async def assert_may_access_letter_and_bank(session: AsyncSession, examiner: Examiner) -> None:
+async def assert_may_access_appointment_letter(session: AsyncSession, examiner: Examiner) -> None:
     if not await is_appointment_letter_available(session, examiner):
         row = await get_or_create_portal_settings(session, int(examiner.examination_id))
         msg = appointment_letter_pending_message(
@@ -113,6 +137,15 @@ async def assert_may_access_letter_and_bank(session: AsyncSession, examiner: Exa
             examiner_accepted=True,
         )
         raise ValueError(msg or "Appointment letter is not yet available.")
+
+
+async def assert_may_access_bank_details(session: AsyncSession, examiner: Examiner) -> None:
+    if not await is_bank_details_editable(session, examiner):
+        row = await get_or_create_portal_settings(session, int(examiner.examination_id))
+        msg = bank_details_pending_message(
+            editable=bool(row.examiner_bank_details_editable_by_examiners),
+        )
+        raise ValueError(msg or "Bank details entry is not available.")
 
 
 async def load_examiner_for_portal(session: AsyncSession, examiner_id: UUID) -> Examiner | None:

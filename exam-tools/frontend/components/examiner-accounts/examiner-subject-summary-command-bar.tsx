@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { BookOpen } from "lucide-react";
+import { BookOpen, FileText } from "lucide-react";
 
 import { CommandBarBorderField } from "@/components/command-bar-border-field";
 import type { ExportMenuOption } from "@/components/official-accounts-export-menu";
@@ -13,7 +13,6 @@ import {
   officialAccountsCommandBarClass,
   officialAccountsCommandBarControlClass,
 } from "@/lib/official-accounts-zone";
-import { REGION_OPTIONS } from "@/lib/school-enums";
 import {
   SCRIPT_CONTROL_SUBJECT_TYPE_OPTIONS,
   type ScriptControlSubjectTypeFilter,
@@ -42,11 +41,13 @@ const inputGroupSelectClass = cn(
 const inputGroupSubjectTriggerClass =
   "h-10 max-h-10 min-w-0 flex-1 overflow-hidden rounded-none border-0 border-x border-input-border bg-input shadow-none hover:bg-input focus-visible:ring-0 focus-visible:ring-offset-0 disabled:bg-input";
 
-/** Full-row ratio: exam 2 · subject group 5 · region 2 · actions 1. */
+/** Full-row ratio: exam 2 · subject 4 · cohort 2 · region 1.5 · actions 1.5. */
 const toolbarRowClass =
-  "grid min-w-0 grid-cols-[minmax(0,2fr)_minmax(0,5fr)_minmax(0,2fr)_minmax(0,1fr)] items-end gap-3";
+  "grid min-w-0 grid-cols-1 items-end gap-3 xl:grid-cols-[minmax(0,2fr)_minmax(0,4fr)_minmax(0,2fr)_minmax(0,1.5fr)_minmax(0,1.5fr)]";
 
 type SubjectOption = { value: string; label: string };
+type CohortOption = { value: string; label: string };
+type RegionOption = { value: string; label: string };
 
 type Props = {
   exams: Examination[];
@@ -63,8 +64,15 @@ type Props = {
   paperNumbers: number[];
   paperNumber: number | null;
   onPaperNumberChange: (paper: number | null) => void;
+  cohortFilter: string;
+  onCohortChange: (cohortId: string) => void;
+  cohortOptions: CohortOption[];
+  cohortsDisabled: boolean;
+  cohortEmptyText: string;
   regionFilter: string;
   onRegionChange: (region: string) => void;
+  regionOptions: RegionOption[];
+  regionEmptyText: string;
   allAccountsHref: string;
   canLoad: boolean;
   exportOptions: ExportMenuOption[];
@@ -72,6 +80,7 @@ type Props = {
   exportDisabledReason?: string;
   exportBusy: string | null;
   onExport: (key: string) => void;
+  paperSheetsHref?: string | null;
 };
 
 export function ExaminerSubjectSummaryCommandBar({
@@ -89,8 +98,15 @@ export function ExaminerSubjectSummaryCommandBar({
   paperNumbers,
   paperNumber,
   onPaperNumberChange,
+  cohortFilter,
+  onCohortChange,
+  cohortOptions,
+  cohortsDisabled,
+  cohortEmptyText,
   regionFilter,
   onRegionChange,
+  regionOptions,
+  regionEmptyText,
   allAccountsHref,
   canLoad,
   exportOptions,
@@ -98,19 +114,18 @@ export function ExaminerSubjectSummaryCommandBar({
   exportDisabledReason,
   exportBusy,
   onExport,
+  paperSheetsHref,
 }: Props) {
   const exportBusyKey = exportBusy?.startsWith(`${SECTION_ID}:`)
     ? exportBusy.split(":")[1]
     : null;
 
-  const regionOptions = [
-    { value: "", label: "All regions" },
-    ...REGION_OPTIONS.map((r) => ({ value: r.value, label: r.label })),
-  ];
+  const regionComboboxOptions = regionOptions.map((r) => ({ value: r.value, label: r.label }));
 
   const examSelected = examId != null;
   const filtersDisabled = !examSelected || subjectsDisabled;
   const paperDisabled = !subjectId.trim() || paperNumbers.length === 0;
+  const cohortDisabled = !examSelected || !subjectId.trim() || cohortsDisabled;
 
   return (
     <div className={cn(officialAccountsCommandBarClass, "overflow-visible")}>
@@ -198,20 +213,37 @@ export function ExaminerSubjectSummaryCommandBar({
             </div>
           </CommandBarBorderField>
 
+          <CommandBarBorderField label="Cohort" htmlFor={`${SECTION_ID}-cohort`} className="min-w-0">
+            <SearchableCombobox
+              id={`${SECTION_ID}-cohort`}
+              options={cohortOptions}
+              value={cohortFilter}
+              onChange={onCohortChange}
+              placeholder="All cohorts"
+              searchPlaceholder="Cohort…"
+              emptyText={cohortEmptyText}
+              widthClass="w-full"
+              truncateTrigger
+              triggerClassName={standaloneTriggerClass}
+              allOptionLabel="All cohorts"
+              disabled={cohortDisabled}
+            />
+          </CommandBarBorderField>
+
           <CommandBarBorderField label="Region" htmlFor={`${SECTION_ID}-region`} className="min-w-0">
             <SearchableCombobox
               id={`${SECTION_ID}-region`}
-              options={regionOptions}
+              options={regionComboboxOptions}
               value={regionFilter}
               onChange={onRegionChange}
               placeholder="All regions"
               searchPlaceholder="Region…"
-              emptyText="No region found."
+              emptyText={regionEmptyText}
               widthClass="w-full"
               truncateTrigger
               triggerClassName={standaloneTriggerClass}
               allOptionLabel="All regions"
-              disabled={!examSelected}
+              disabled={!examSelected || (cohortFilter !== "" && regionOptions.length === 0)}
             />
           </CommandBarBorderField>
 
@@ -232,6 +264,19 @@ export function ExaminerSubjectSummaryCommandBar({
           >
             <BookOpen className="size-4 shrink-0" aria-hidden />
           </Link>
+          {paperSheetsHref ? (
+            <Link
+              href={paperSheetsHref}
+              className={cn(
+                allAccountsBtnClass,
+                "motion-safe:hover:shadow-lg ring-1 ring-primary/35",
+              )}
+              aria-label="Paper attendance sheets"
+              title="View signed paper attendance for this cohort"
+            >
+              <FileText className="size-4 shrink-0" aria-hidden />
+            </Link>
+          ) : null}
           <ExportFabSpeedDial
             options={exportOptions}
             disabled={exportDisabled}

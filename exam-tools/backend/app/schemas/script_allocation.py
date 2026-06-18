@@ -319,6 +319,10 @@ class UnassignedEnvelopeItem(BaseModel):
     paper_number: int
     series_number: int
     envelope_number: int
+    eligible_examiner_ids: list[UUID] = Field(
+        default_factory=list,
+        description="Campaign examiners who may receive this envelope under cross-marking rules.",
+    )
 
 
 class AllocationSubgroupItem(BaseModel):

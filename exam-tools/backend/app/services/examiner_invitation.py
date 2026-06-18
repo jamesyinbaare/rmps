@@ -408,6 +408,8 @@ def invitation_summary(inv: ExaminerInvitation) -> dict:
         "invitee_name": inv.name,
         "phone_number": inv.phone_number,
         "examination_name": f"{exam.exam_type} {exam.year}" if exam else "",
+        "examination_type": exam.exam_type if exam else None,
+        "examination_year": exam.year if exam else None,
         "examination_description": exam.description if exam else None,
         "subject_name": subject.name if subject else "",
         "subject_code": subject.code if subject else "",

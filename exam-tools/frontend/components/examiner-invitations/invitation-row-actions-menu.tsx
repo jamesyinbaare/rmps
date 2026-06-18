@@ -20,6 +20,7 @@ type Props = {
   onResend: (inv: ExaminerInvitationRow) => void;
   onRenew?: (inv: ExaminerInvitationRow) => void;
   onExtendDeadline?: (inv: ExaminerInvitationRow) => void;
+  onRegenerateLink?: (inv: ExaminerInvitationRow) => void;
   onViewAllocation?: (inv: ExaminerInvitationRow) => void;
   /** Render menu items only (no popover trigger) for mobile contact cards. */
   embedded?: boolean;
@@ -37,6 +38,7 @@ export function InvitationRowActionsMenu({
   onResend,
   onRenew,
   onExtendDeadline,
+  onRegenerateLink,
   onViewAllocation,
   embedded = false,
 }: Props) {
@@ -54,7 +56,15 @@ export function InvitationRowActionsMenu({
   const canViewAllocation = Boolean(
     onViewAllocation && inv.status === "accepted" && inv.examiner_id,
   );
-  const hasMenuItems = canCopy || canResend || canExtend || canReopen || canViewAllocation;
+  const canRegenerateLink =
+    Boolean(onRegenerateLink && inv.public_url) &&
+    (inv.status === "pending" ||
+      inv.status === "expired" ||
+      inv.status === "declined" ||
+      inv.status === "quota_waitlisted" ||
+      inv.status === "accepted");
+  const hasMenuItems =
+    canCopy || canResend || canExtend || canReopen || canRegenerateLink || canViewAllocation;
 
   if (!hasMenuItems) {
     return embedded ? null : <span className="text-xs text-muted-foreground">—</span>;
@@ -118,6 +128,20 @@ export function InvitationRowActionsMenu({
           }}
         >
           Resend SMS
+        </button>
+      ) : null}
+      {canRegenerateLink ? (
+        <button
+          type="button"
+          role="menuitem"
+          disabled={busy}
+          className={menuItemClass}
+          onClick={() => {
+            onRegenerateLink?.(inv);
+            onOpenChange(false);
+          }}
+        >
+          Generate new link
         </button>
       ) : null}
       {canViewAllocation ? (

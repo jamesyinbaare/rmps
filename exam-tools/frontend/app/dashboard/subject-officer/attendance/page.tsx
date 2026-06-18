@@ -6,7 +6,7 @@ import { ExaminerAttendanceShell } from "@/components/subject-officer/examiner-a
 import { useSubjectOfficerWorkspace } from "@/components/subject-officer/subject-officer-workspace-context";
 
 export default function SubjectOfficerAttendancePage() {
-  const { examId, workspaceLabel, loading, mustPickWorkspace } = useSubjectOfficerWorkspace();
+  const { examId, subjectId, workspaceLabel, loading, mustPickWorkspace } = useSubjectOfficerWorkspace();
 
   return (
     <RoleGuard expectedRole="SUBJECT_OFFICER" loginHref="/login/admin">
@@ -16,7 +16,7 @@ export default function SubjectOfficerAttendancePage() {
         ) : examId == null ? (
           <p className="text-sm text-muted-foreground">Choose a workspace to mark attendance.</p>
         ) : (
-          <ExaminerAttendanceShell examId={examId} workspaceLabel={workspaceLabel} />
+          <ExaminerAttendanceShell examId={examId} subjectId={subjectId ?? undefined} workspaceLabel={workspaceLabel} />
         )}
       </DashboardShell>
     </RoleGuard>

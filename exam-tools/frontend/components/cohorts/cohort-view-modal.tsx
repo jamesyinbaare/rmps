@@ -358,7 +358,7 @@ export function CohortViewModal({ open, onClose, cohort, rosterMembers, examId }
   );
 
   const desktopBody = (
-    <div className="flex h-full min-h-0 flex-col gap-6 overflow-y-auto">
+    <div className="flex h-full min-h-0 flex-col gap-6 overflow-hidden">
       {cohort.is_default ? (
         <Badge
           variant="secondary"
@@ -373,15 +373,15 @@ export function CohortViewModal({ open, onClose, cohort, rosterMembers, examId }
         </p>
       ) : null}
 
-      <section>
+      <section className="shrink-0">
         <SectionHeading icon={CalendarDays} title="Schedule" />
         <div className="mt-3">
           <CohortScheduleDisplay schedule={schedule} colored />
         </div>
       </section>
 
-      <section className="flex min-h-0 flex-col rounded-xl border border-emerald-500/15 bg-gradient-to-br from-emerald-500/[0.05] via-card to-primary/[0.03] p-4 shadow-sm">
-        <div className="flex flex-wrap items-center justify-between gap-3">
+      <section className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-xl border border-emerald-500/15 bg-gradient-to-br from-emerald-500/[0.05] via-card to-primary/[0.03] p-4 shadow-sm">
+        <div className="flex shrink-0 flex-wrap items-center justify-between gap-3">
           <SectionHeading icon={Users} title="Members" tone="emerald" />
           <div className="flex flex-wrap gap-2">
             <Button
@@ -429,8 +429,8 @@ export function CohortViewModal({ open, onClose, cohort, rosterMembers, examId }
             </Button>
           </div>
         </div>
-        <div className="mt-3 min-h-0 flex-1">
-          <CohortRosterTable members={members} tinted />
+        <div className="mt-3 flex min-h-0 flex-1 flex-col overflow-hidden">
+          <CohortRosterTable members={members} tinted className="min-h-0 flex-1" />
         </div>
       </section>
     </div>

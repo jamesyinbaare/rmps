@@ -87,6 +87,9 @@ async def get_examiner_portal_settings(
         appointment_letters_release_enabled=bool(row.appointment_letters_release_enabled),
         appointment_letters_release_mode=AppointmentLettersReleaseModeApi(mode.value),
         appointment_letters_release_at=row.appointment_letters_release_at,
+        examiner_bank_details_editable_by_examiners=bool(
+            row.examiner_bank_details_editable_by_examiners
+        ),
         updated_at=row.updated_at,
         **counts,
     )
@@ -115,6 +118,7 @@ async def put_examiner_portal_settings(
     row.appointment_letters_release_enabled = body.appointment_letters_release_enabled
     row.appointment_letters_release_mode = mode.value
     row.appointment_letters_release_at = body.appointment_letters_release_at
+    row.examiner_bank_details_editable_by_examiners = body.examiner_bank_details_editable_by_examiners
     row.updated_at = datetime.utcnow()
     await session.commit()
     await session.refresh(row)
@@ -124,6 +128,9 @@ async def put_examiner_portal_settings(
         appointment_letters_release_enabled=bool(row.appointment_letters_release_enabled),
         appointment_letters_release_mode=AppointmentLettersReleaseModeApi(mode.value),
         appointment_letters_release_at=row.appointment_letters_release_at,
+        examiner_bank_details_editable_by_examiners=bool(
+            row.examiner_bank_details_editable_by_examiners
+        ),
         updated_at=row.updated_at,
         **counts,
     )

@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useId, useState } from "react";
-import { BookOpen, CalendarClock, CheckCircle2, MapPin, UserCircle, XCircle } from "lucide-react";
+import { BookOpen, CalendarClock, CheckCircle2, Info, MapPin, UserCircle, XCircle } from "lucide-react";
 
 import { ExaminerAcceptanceStatement } from "@/components/examiner-invitation/examiner-acceptance-statement";
 import {
@@ -22,6 +22,9 @@ import { displaySubjectCode } from "@/lib/script-control-completion";
 import { cn } from "@/lib/utils";
 
 type ConfirmAction = "accept" | "decline";
+
+const EXAMINER_TNT_PAYMENT_NOTE =
+  "Your travel and transport (T&T) allowance will be paid after the coordination exercise.";
 
 type Props = {
   token: string;
@@ -227,6 +230,20 @@ export function ExaminerInvitationLandingPanel({
               />
             ) : null}
           </div>
+
+          {invitation.status !== "declined" ? (
+            <div
+              className="mt-5 flex items-start gap-3 rounded-2xl border-2 border-amber-500/40 bg-amber-500/15 px-4 py-4 shadow-sm"
+              role="note"
+            >
+              <span className="flex size-9 shrink-0 items-center justify-center rounded-xl bg-amber-500/20 text-amber-700 dark:text-amber-400">
+                <Info className="size-5" aria-hidden />
+              </span>
+              <p className="text-sm font-medium leading-relaxed text-foreground sm:text-base">
+                {EXAMINER_TNT_PAYMENT_NOTE}
+              </p>
+            </div>
+          ) : null}
 
           <ExaminerMarkingScheduleSection cohorts={markingCohorts} />
 

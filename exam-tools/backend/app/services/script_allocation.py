@@ -1336,6 +1336,25 @@ async def build_run_response(session: AsyncSession, run: AllocationRun) -> dict:
             sub_stmt = select(Subject).where(Subject.id.in_(subj_ids))
             sub_res = await session.execute(sub_stmt)
             subject_lookup = {int(s.id): s for s in sub_res.scalars().all()}
+        eligible_by_env: dict[UUID, set[UUID]] = {}
+        if unassigned_triples and examiners_list and allocation:
+            cross_parsed = parse_group_cross_marking_rules(
+                dict(getattr(allocation, "cross_marking_rules", None) or {}),
+            )
+            region_to_source, examiner_to_marking = await load_examiner_group_marking_maps(
+                session,
+                int(allocation.examination_id),
+            )
+            eligible_pairs, _ = build_eligible_pairs(
+                unassigned_triples,
+                examiners_list,
+                region_to_source_group=region_to_source,
+                examiner_to_marking_group=examiner_to_marking,
+                cross_marking_rules=cross_parsed,
+                exclude_home_zone_or_region=bool(allocation.exclude_home_zone_or_region),
+            )
+            for pair in eligible_pairs:
+                eligible_by_env.setdefault(pair.envelope_id, set()).add(pair.examiner_id)
         for env, series, school in unassigned_triples:
             subj = subject_lookup.get(int(series.subject_id))
             unassigned_items.append(
@@ -1352,6 +1371,10 @@ async def build_run_response(session: AsyncSession, run: AllocationRun) -> dict:
                     paper_number=int(series.paper_number),
                     series_number=int(series.series_number),
                     envelope_number=int(env.envelope_number),
+                    eligible_examiner_ids=sorted(
+                        eligible_by_env.get(env.id, set()),
+                        key=lambda u: str(u),
+                    ),
                 )
             )
 

@@ -7,6 +7,7 @@ import { Camera, CameraOff, CheckCircle2, Loader2, XCircle } from "lucide-react"
 
 import { humanizeRegion } from "@/components/examiners/utils";
 import { SubjectOfficerPanelShell } from "@/components/subject-officer/subject-officer-panel-shell";
+import { ExaminerAttendanceSheetsPanel } from "@/components/subject-officer/examiner-attendance-sheets-panel";
 import { SubjectOfficerWorkspaceStrip } from "@/components/subject-officer/subject-officer-workspace-strip";
 import { Button } from "@/components/ui/button";
 import {
@@ -24,6 +25,7 @@ const compactLabelClass = "text-xs font-medium text-muted-foreground";
 
 type Props = {
   examId?: number;
+  subjectId?: number;
   workspaceLabel?: string | null;
   adminMode?: boolean;
   assignments?: SubjectOfficerMeExamAssignment[];
@@ -84,6 +86,7 @@ function AttendanceResultCard({ result }: { result: ExaminerAttendanceMarkResult
 
 export function ExaminerAttendanceShell({
   examId: workspaceExamId,
+  subjectId: workspaceSubjectId,
   workspaceLabel,
   adminMode = false,
   assignments = [],
@@ -357,6 +360,10 @@ export function ExaminerAttendanceShell({
             )}
           </div>
         </div>
+
+        {!adminMode && workspaceExamId != null && workspaceSubjectId != null ? (
+          <ExaminerAttendanceSheetsPanel examId={workspaceExamId} subjectId={workspaceSubjectId} />
+        ) : null}
       </div>
     </SubjectOfficerPanelShell>
   );

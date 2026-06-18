@@ -69,6 +69,8 @@ class ExaminerInvitationPublicResponse(ExaminerInvitationCoordinationFields):
     invitee_name: str
     phone_number: str
     examination_name: str
+    examination_type: str | None = None
+    examination_year: int | None = None
     examination_description: str | None
     subject_name: str
     subject_code: str
@@ -90,6 +92,9 @@ class ExaminerInvitationPublicResponse(ExaminerInvitationCoordinationFields):
     appointment_letters_available: bool = False
     coordination_end_at: datetime | None = None
     appointment_letters_pending_message: str | None = None
+    bank_details_editable_by_examiners: bool = False
+    bank_details_available: bool = False
+    bank_details_pending_message: str | None = None
 
 
 class ExaminerMarkingCohortPublic(ExaminerInvitationCoordinationFields):
@@ -131,6 +136,19 @@ class ExaminerInvitationResponseDeadlineUpdateResponse(BaseModel):
 
 
 class ExaminerInvitationRenewResponse(BaseModel):
+    invitation: ExaminerInvitationResponse
+    sms_sent: bool | None = None
+    sms_error: str | None = None
+    sms_delivery_id: UUID | None = None
+
+
+class ExaminerInvitationRegenerateLinkRequest(BaseModel):
+    confirm: bool = False
+    send_sms: bool | None = None
+
+
+class ExaminerInvitationRegenerateLinkResponse(BaseModel):
+    public_url: str
     invitation: ExaminerInvitationResponse
     sms_sent: bool | None = None
     sms_error: str | None = None

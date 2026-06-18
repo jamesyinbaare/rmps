@@ -1,3 +1,4 @@
+import type { ScriptControlSubjectTypeFilter } from "@/lib/script-control-subjects";
 import { cn } from "@/lib/utils";
 
 export const OFFICIAL_ACCOUNTS_ADMIN_HREF = "/dashboard/admin/exam-officials";
@@ -20,12 +21,16 @@ export function buildExaminerAccountsBySubjectHref(params: {
   subjectId?: string;
   region?: string;
   role?: string;
+  cohortId?: string;
+  subjectType?: ScriptControlSubjectTypeFilter;
 }): string {
   const p = new URLSearchParams();
   p.set("exam", String(params.examId));
+  if (params.subjectType && params.subjectType !== "all") p.set("stype", params.subjectType);
   if (params.subjectId?.trim()) p.set("subject", params.subjectId.trim());
   if (params.region?.trim()) p.set("region", params.region.trim());
   if (params.role?.trim()) p.set("role", params.role.trim());
+  if (params.cohortId?.trim()) p.set("cohort", params.cohortId.trim());
   return `${EXAMINER_ACCOUNTS_BY_SUBJECT_HREF}?${p.toString()}`;
 }
 

@@ -18,18 +18,36 @@ function resolveAcceptanceRoleDesignation(
   return examinerTypeLabel;
 }
 
+function resolveExaminationLabel(
+  invitation: Pick<
+    ExaminerInvitationPublic,
+    "examination_name" | "examination_type" | "examination_year"
+  >,
+): string {
+  if (invitation.examination_year != null && invitation.examination_type) {
+    return `${invitation.examination_year} ${invitation.examination_type}`;
+  }
+  return invitation.examination_name;
+}
+
 export function buildExaminerAcceptanceStatement(
   invitation: Pick<
     ExaminerInvitationPublic,
-    "invitee_name" | "examiner_type" | "examiner_type_label" | "subject_name" | "examination_name"
+    | "invitee_name"
+    | "examiner_type"
+    | "examiner_type_label"
+    | "subject_name"
+    | "examination_name"
+    | "examination_type"
+    | "examination_year"
   >,
 ): string {
   const role = resolveAcceptanceRoleDesignation(invitation.examiner_type, invitation.examiner_type_label);
+  const examLabel = resolveExaminationLabel(invitation);
 
   return (
     `I, ${invitation.invitee_name}, accept my appointment as the ${role} for ${invitation.subject_name} ` +
-    `with special responsibility for the marking/vetting of scripts for the Core subjects of the ` +
-    `${invitation.examination_name} Examinations. I will follow strictly all the instructions governing ` +
-    `the marking of the examination papers as indicated in my appointment letter.`
+    `with special responsibility for the marking and vetting of scripts for the ${examLabel} Examinations. ` +
+    `I will follow strictly all the instructions governing the marking of the examination papers as indicated in my appointment letter.`
   );
 }

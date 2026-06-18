@@ -1,4 +1,5 @@
 import type { TimetableSubjectFilter } from "@/lib/api";
+import type { ScriptControlSubjectTypeFilter } from "@/lib/script-control-subjects";
 import {
   ACCOUNT_DETAILS_BY_CENTRE_LABEL,
   BANK_ACCOUNTS_LABEL,
@@ -34,6 +35,7 @@ export const FINANCE_CENTRE_SUMMARY_HREF = "/dashboard/admin/finance-centre-summ
 export const INSPECTOR_ANALYSIS_HREF = "/dashboard/admin/inspector-analysis";
 export const INSPECTOR_PAY_VARIANCE_HREF = "/dashboard/admin/inspector-pay-variance";
 export const ATTENDANCE_SHEETS_HREF = "/dashboard/admin/attendance-sheets";
+export const EXAMINER_MARKING_ATTENDANCE_SHEETS_HREF = "/dashboard/admin/examiner-attendance-sheets";
 export const BANK_DIRECTORY_HREF = "/dashboard/admin/bank-directory";
 
 export function timetableFilterToAttendanceScope(
@@ -55,6 +57,24 @@ export function buildAdminAttendanceSheetsHref(params: {
   const scope = timetableFilterToAttendanceScope(params.subjectFilter);
   if (scope) p.set("scope", scope);
   return `${ATTENDANCE_SHEETS_HREF}?${p.toString()}`;
+}
+
+export function buildExaminerMarkingAttendanceSheetsHref(params: {
+  examId: number;
+  subjectId?: number | string | null;
+  cohortId?: string | null;
+  subjectType?: ScriptControlSubjectTypeFilter;
+  attendanceDate?: string | null;
+}): string {
+  const p = new URLSearchParams();
+  p.set("exam", String(params.examId));
+  if (params.subjectId != null && String(params.subjectId).trim()) {
+    p.set("subject", String(params.subjectId).trim());
+  }
+  if (params.cohortId?.trim()) p.set("cohort", params.cohortId.trim());
+  if (params.subjectType && params.subjectType !== "all") p.set("stype", params.subjectType);
+  if (params.attendanceDate?.trim()) p.set("date", params.attendanceDate.trim());
+  return `${EXAMINER_MARKING_ATTENDANCE_SHEETS_HREF}?${p.toString()}`;
 }
 
 export type FinanceNavIcon =
@@ -157,6 +177,12 @@ export const COORDINATION_MARKING_NAV_GROUP: FinanceNavGroup = {
       href: EXAMINER_ATTENDANCE_HREF,
       label: "Examiner attendance",
       description: "Marking centre check-ins",
+      icon: "attendance",
+    },
+    {
+      href: EXAMINER_MARKING_ATTENDANCE_SHEETS_HREF,
+      label: "Paper attendance sheets",
+      description: "Signed cohort uploads",
       icon: "attendance",
     },
   ],
@@ -282,6 +308,7 @@ const FINANCE_PAGE_TITLES: [href: string, title: string][] = [
   [INSPECTOR_ANALYSIS_HREF, "Inspector analysis"],
   [INSPECTOR_PAY_VARIANCE_HREF, "Inspector pay variance"],
   [ATTENDANCE_SHEETS_HREF, "Attendance sheets"],
+  [EXAMINER_MARKING_ATTENDANCE_SHEETS_HREF, "Paper attendance sheets"],
 ];
 
 export function financePageStickyTitle(pathname: string): string | null {

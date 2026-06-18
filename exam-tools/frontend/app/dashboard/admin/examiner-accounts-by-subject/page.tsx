@@ -19,11 +19,14 @@ import {
   getExaminationExaminerMarkingRates,
   listAdminExaminerAllowances,
   listAdminExaminerMarkingSubjectSummary,
+  listAdminSubjectMarkingGroups,
   type AdminExaminerAllowanceRow,
   type AdminExaminerMarkingSubjectSummaryRow,
   type ExaminerAllowanceSubjectRef,
   type Examination,
+  type SubjectMarkingGroupRow,
 } from "@/lib/api";
+import { buildExaminerMarkingAttendanceSheetsHref } from "@/lib/finance-nav";
 import {
   EXAMINER_PAYOUTS_HREF,
   officialAccountsBtnSecondary,
@@ -83,6 +86,9 @@ function ExaminerAccountsBySubjectContent() {
   const [subjectId, setSubjectId] = useState("");
   const [paperNumber, setPaperNumber] = useState<number | null>(null);
   const [regionFilter, setRegionFilter] = useState("");
+  const [cohortFilter, setCohortFilter] = useState("");
+  const [cohorts, setCohorts] = useState<SubjectMarkingGroupRow[]>([]);
+  const [cohortsBusy, setCohortsBusy] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(DEFAULT_PAGE_SIZE);
@@ -104,6 +110,7 @@ function ExaminerAccountsBySubjectContent() {
   const loadedRowsKeyRef = useRef("");
   const pendingSubjectFromUrlRef = useRef<string | null>(null);
   const pendingPaperFromUrlRef = useRef<string | null | undefined>(undefined);
+  const pendingCohortFromUrlRef = useRef<string | null>(null);
 
   const parsedSubjectId = subjectId ? Number.parseInt(subjectId, 10) : null;
   const canLoad = examId != null && !!subjectId.trim();
@@ -135,6 +142,26 @@ function ExaminerAccountsBySubjectContent() {
   const selectedSubjectRef = parsedSubjectId != null ? subjectRefById.get(parsedSubjectId) ?? null : null;
   const paperNumbers = selectedSubjectRef?.paper_numbers ?? [];
 
+  const cohortOptions = useMemo(
+    () =>
+      cohorts.map((cohort) => ({
+        value: cohort.id,
+        label: `${cohort.name} (${cohort.examiner_ids.length} examiner${cohort.examiner_ids.length === 1 ? "" : "s"})`,
+      })),
+    [cohorts],
+  );
+
+  const selectedCohort = useMemo(
+    () => cohorts.find((cohort) => cohort.id === cohortFilter) ?? null,
+    [cohorts, cohortFilter],
+  );
+
+  const regionOptionsForFilter = useMemo(() => {
+    if (!cohortFilter || !selectedCohort) return REGION_OPTIONS;
+    const allowed = new Set(selectedCohort.member_regions ?? []);
+    return REGION_OPTIONS.filter((region) => allowed.has(region.value));
+  }, [cohortFilter, selectedCohort]);
+
   useEffect(() => {
     let cancelled = false;
     void (async () => {
@@ -164,6 +191,9 @@ function ExaminerAccountsBySubjectContent() {
     pendingSubjectFromUrlRef.current = subjectFromUrl || null;
     setSubjectId(subjectFromUrl);
     pendingPaperFromUrlRef.current = searchParams.get("paper");
+    const cohortFromUrl = searchParams.get("cohort")?.trim() ?? "";
+    pendingCohortFromUrlRef.current = cohortFromUrl || null;
+    setCohortFilter(cohortFromUrl);
     const reg = searchParams.get("region")?.trim() ?? "";
     setRegionFilter(reg && REGION_OPTIONS.some((r) => r.value === reg) ? reg : "");
     setSearchQuery(searchParams.get("search")?.trim() ?? "");
@@ -186,6 +216,7 @@ function ExaminerAccountsBySubjectContent() {
       subjectId?: string;
       paper?: number | null;
       region?: string;
+      cohort?: string;
       search?: string;
       page?: number;
       pageSize?: number;
@@ -197,6 +228,7 @@ function ExaminerAccountsBySubjectContent() {
       const nextSubject = patch.subjectId !== undefined ? patch.subjectId : subjectId;
       const nextPaper = patch.paper !== undefined ? patch.paper : paperNumber;
       const nextRegion = patch.region !== undefined ? patch.region : regionFilter;
+      const nextCohort = patch.cohort !== undefined ? patch.cohort : cohortFilter;
       const nextSearch = patch.search !== undefined ? patch.search : searchQuery;
       const nextPage = patch.page ?? page;
       const nextPageSize = patch.pageSize ?? pageSize;
@@ -206,6 +238,7 @@ function ExaminerAccountsBySubjectContent() {
       if (nextSubject.trim()) p.set("subject", nextSubject.trim());
       if (nextPaper != null) p.set("paper", String(nextPaper));
       if (nextRegion) p.set("region", nextRegion);
+      if (nextCohort.trim()) p.set("cohort", nextCohort.trim());
       if (nextSearch.trim()) p.set("search", nextSearch.trim());
       if (nextPage > 1) p.set("page", String(nextPage));
       if (nextPageSize !== DEFAULT_PAGE_SIZE) p.set("pageSize", String(nextPageSize));
@@ -223,6 +256,7 @@ function ExaminerAccountsBySubjectContent() {
       pathname,
       payoutView,
       regionFilter,
+      cohortFilter,
       router,
       searchParams,
       searchQuery,
@@ -292,6 +326,59 @@ function ExaminerAccountsBySubjectContent() {
   }, [subjectId, subjectRefById]);
 
   useEffect(() => {
+    if (!urlHydrated || examId == null || !subjectId.trim() || parsedSubjectId == null) {
+      setCohorts([]);
+      return;
+    }
+    let cancelled = false;
+    setCohortsBusy(true);
+    void (async () => {
+      try {
+        const rows = await listAdminSubjectMarkingGroups(examId, parsedSubjectId);
+        if (cancelled) return;
+        setCohorts(rows);
+        const pendingCohort = pendingCohortFromUrlRef.current;
+        pendingCohortFromUrlRef.current = null;
+        setCohortFilter((prev) => {
+          if (prev && rows.some((row) => row.id === prev)) return prev;
+          if (pendingCohort && rows.some((row) => row.id === pendingCohort)) return pendingCohort;
+          return "";
+        });
+      } catch (e) {
+        if (!cancelled) {
+          setCohorts([]);
+          setLoadError(e instanceof Error ? e.message : "Failed to load cohorts.");
+        }
+      } finally {
+        if (!cancelled) setCohortsBusy(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [urlHydrated, examId, subjectId, parsedSubjectId]);
+
+  useEffect(() => {
+    if (!urlHydrated || cohortsBusy) return;
+    if (!cohortFilter) return;
+    if (!cohorts.some((cohort) => cohort.id === cohortFilter)) {
+      setCohortFilter("");
+      loadedRowsKeyRef.current = "";
+      syncUrl({ cohort: "", page: 1 });
+    }
+  }, [cohorts, cohortFilter, cohortsBusy, urlHydrated, syncUrl]);
+
+  useEffect(() => {
+    if (!urlHydrated || cohortsBusy) return;
+    if (!cohortFilter || !selectedCohort) return;
+    if (regionFilter && !selectedCohort.member_regions.includes(regionFilter)) {
+      setRegionFilter("");
+      loadedRowsKeyRef.current = "";
+      syncUrl({ region: "", page: 1 });
+    }
+  }, [cohortFilter, cohortsBusy, regionFilter, selectedCohort, urlHydrated, syncUrl]);
+
+  useEffect(() => {
     if (!urlHydrated || summaryBusy) return;
     if (filteredSummaries.length === 0) {
       setSubjectId((prev) => (prev ? "" : prev));
@@ -304,8 +391,8 @@ function ExaminerAccountsBySubjectContent() {
   }, [filteredSummaries, summaryBusy, urlHydrated]);
 
   const rowsQueryKey = useMemo(
-    () => `${examId}:${subjectId}:${regionFilter}:${searchQuery.trim()}:${pageSize}`,
-    [examId, subjectId, regionFilter, searchQuery, pageSize],
+    () => `${examId}:${subjectId}:${cohortFilter}:${regionFilter}:${searchQuery.trim()}:${pageSize}`,
+    [examId, subjectId, cohortFilter, regionFilter, searchQuery, pageSize],
   );
 
   const fetchRows = useCallback(
@@ -324,6 +411,7 @@ function ExaminerAccountsBySubjectContent() {
         const res = await listAdminExaminerAllowances({
           examination_id: examId,
           subject_id: Number.parseInt(subjectId, 10),
+          group_id: cohortFilter || null,
           region: regionFilter || null,
           search: searchQuery.trim() || null,
           skip: (targetPage - 1) * pageSize,
@@ -341,7 +429,7 @@ function ExaminerAccountsBySubjectContent() {
         setRowsBusy(false);
       }
     },
-    [examId, pageSize, regionFilter, rowsQueryKey, searchQuery, subjectId],
+    [examId, cohortFilter, pageSize, regionFilter, rowsQueryKey, searchQuery, subjectId],
   );
 
   useEffect(() => {
@@ -359,6 +447,7 @@ function ExaminerAccountsBySubjectContent() {
     subjectId,
     paperNumber,
     regionFilter,
+    cohortFilter,
     searchQuery,
     page,
     pageSize,
@@ -380,6 +469,16 @@ function ExaminerAccountsBySubjectContent() {
     const qs = p.toString();
     return qs ? `${EXAMINER_PAYOUTS_HREF}?${qs}` : EXAMINER_PAYOUTS_HREF;
   }, [examId, regionFilter]);
+
+  const paperSheetsHref = useMemo(() => {
+    if (examId == null || !subjectId.trim() || !cohortFilter) return null;
+    return buildExaminerMarkingAttendanceSheetsHref({
+      examId,
+      subjectId,
+      cohortId: cohortFilter,
+      subjectType: subjectTypeFilter,
+    });
+  }, [cohortFilter, examId, subjectId, subjectTypeFilter]);
 
   const exportOptions = useMemo(
     () => [
@@ -406,6 +505,7 @@ function ExaminerAccountsBySubjectContent() {
       const exportParams = {
         examination_id: examId,
         subject_id: Number.parseInt(subjectId, 10),
+        group_id: cohortFilter || null,
         region: regionFilter || null,
         search: searchQuery.trim() || null,
       };
@@ -458,6 +558,17 @@ function ExaminerAccountsBySubjectContent() {
         ? "No subjects for this type."
         : "No subjects with data.";
 
+  const cohortEmptyText = cohortsBusy
+    ? "Loading cohorts…"
+    : cohorts.length
+      ? "No match."
+      : "No cohorts for this subject.";
+
+  const regionEmptyText =
+    cohortFilter && selectedCohort && regionOptionsForFilter.length === 0
+      ? "No regions in this cohort."
+      : "No region found.";
+
   const initialLoading = summaryBusy && summaries.length === 0;
   const busy = summaryBusy || rowsBusy;
   const pagePayoutTotal = useMemo(() => sumPayoutViewOnPage(items, payoutView), [items, payoutView]);
@@ -476,13 +587,16 @@ function ExaminerAccountsBySubjectContent() {
             setExamId(id);
             setSubjectId("");
             setPaperNumber(null);
+            setCohortFilter("");
+            setCohorts([]);
             setSummaries([]);
             setSubjectRefs([]);
             pendingSubjectFromUrlRef.current = null;
             pendingPaperFromUrlRef.current = undefined;
+            pendingCohortFromUrlRef.current = null;
             setPage(1);
             loadedRowsKeyRef.current = "";
-            syncUrl({ examId: id, subjectId: "", paper: null, page: 1 });
+            syncUrl({ examId: id, subjectId: "", paper: null, cohort: "", page: 1 });
           }}
           formatExamLabel={formatExamLabel}
           subjectTypeFilter={subjectTypeFilter}
@@ -490,16 +604,19 @@ function ExaminerAccountsBySubjectContent() {
             setSubjectTypeFilter(stype);
             setSubjectId("");
             setPaperNumber(null);
+            setCohortFilter("");
+            setCohorts([]);
             setPage(1);
             loadedRowsKeyRef.current = "";
-            syncUrl({ subjectType: stype, subjectId: "", paper: null, page: 1 });
+            syncUrl({ subjectType: stype, subjectId: "", paper: null, cohort: "", page: 1 });
           }}
           subjectId={subjectId}
           onSubjectChange={(id) => {
             setSubjectId(id);
+            setCohortFilter("");
             setPage(1);
             loadedRowsKeyRef.current = "";
-            syncUrl({ subjectId: id, page: 1 });
+            syncUrl({ subjectId: id, cohort: "", page: 1 });
           }}
           subjectOptions={subjectOptions}
           subjectsDisabled={summaryBusy && subjectOptions.length === 0}
@@ -510,6 +627,23 @@ function ExaminerAccountsBySubjectContent() {
             setPaperNumber(paper);
             syncUrl({ paper });
           }}
+          cohortFilter={cohortFilter}
+          onCohortChange={(cohort) => {
+            setCohortFilter(cohort);
+            setPage(1);
+            loadedRowsKeyRef.current = "";
+            const nextCohort = cohort ? cohorts.find((row) => row.id === cohort) ?? null : null;
+            const regionStillValid =
+              !regionFilter ||
+              !cohort ||
+              (nextCohort?.member_regions.includes(regionFilter) ?? false);
+            const nextRegion = regionStillValid ? regionFilter : "";
+            if (!regionStillValid) setRegionFilter("");
+            syncUrl({ cohort, region: nextRegion, page: 1 });
+          }}
+          cohortOptions={cohortOptions}
+          cohortsDisabled={cohortsBusy}
+          cohortEmptyText={cohortEmptyText}
           regionFilter={regionFilter}
           onRegionChange={(region) => {
             setRegionFilter(region);
@@ -517,6 +651,8 @@ function ExaminerAccountsBySubjectContent() {
             loadedRowsKeyRef.current = "";
             syncUrl({ region, page: 1 });
           }}
+          regionOptions={regionOptionsForFilter}
+          regionEmptyText={regionEmptyText}
           allAccountsHref={allAccountsHref}
           canLoad={canLoad}
           exportOptions={exportOptions}
@@ -524,6 +660,7 @@ function ExaminerAccountsBySubjectContent() {
           exportDisabledReason={exportDisabledReason}
           exportBusy={exportBusy}
           onExport={(key) => void onExport(key)}
+          paperSheetsHref={paperSheetsHref}
         />
 
         {loadError ? (
@@ -565,7 +702,7 @@ function ExaminerAccountsBySubjectContent() {
             registered={selectedSummary.registered_candidates}
             allocated={selectedSummary.total_allocated_scripts}
             variance={selectedSummary.variance}
-            examinerCount={selectedSummary.examiner_count}
+            examinerCount={cohortFilter ? total : selectedSummary.examiner_count}
             refreshing={summaryBusy && summaries.length > 0}
           />
         ) : null}
@@ -606,7 +743,7 @@ function ExaminerAccountsBySubjectContent() {
               items={items}
               busy={busy}
               emptyLabel="No examiners on this subject."
-              hasActiveFilters={!!searchQuery.trim() || !!regionFilter}
+              hasActiveFilters={!!searchQuery.trim() || !!regionFilter || !!cohortFilter}
               page={page}
               total={total}
               pageSize={pageSize}

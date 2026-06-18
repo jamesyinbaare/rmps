@@ -1,0 +1,450 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Attendance sheet — {{ cohort_name }}</title>
+    <style>
+        :root {
+            --theme-primary: #ce1126;
+            --theme-ink: #1a1a1a;
+            --theme-muted: #5c5c5c;
+            --theme-border: #8a8a8a;
+            --theme-border-light: #c8c8c8;
+            --theme-surface: #f5f5f5;
+            --row-height: 0.85cm;
+            --page-margin-top: 0.95cm;
+            --page-margin-bottom: 1.05cm;
+            --page-margin-x: 1.15cm;
+            --page-height: 29.7cm;
+            --printable-height: calc(var(--page-height) - var(--page-margin-top) - var(--page-margin-bottom));
+            --footer-band: 2.05cm;
+        }
+
+        @page {
+            size: A4 portrait;
+            margin: var(--page-margin-top) var(--page-margin-x) var(--page-margin-bottom);
+        }
+
+        * { box-sizing: border-box; }
+
+        body {
+            font-family: Helvetica, Arial, sans-serif;
+            font-size: 9.5pt;
+            color: var(--theme-ink);
+            line-height: 1.25;
+            margin: 0;
+            padding: 0;
+        }
+
+        .watermark {
+            position: fixed;
+            inset: 0;
+            background-image: url('img/logo-crest-only.png');
+            background-size: 36% auto;
+            background-repeat: no-repeat;
+            background-position: center 44%;
+            opacity: 0.025;
+            z-index: 0;
+            pointer-events: none;
+        }
+
+        .page {
+            position: relative;
+            z-index: 1;
+            height: var(--printable-height);
+            max-height: var(--printable-height);
+            page-break-after: always;
+            page-break-inside: avoid;
+            break-inside: avoid-page;
+            overflow: hidden;
+        }
+
+        .page:last-child {
+            page-break-after: auto;
+        }
+
+        .page-body {
+            padding-bottom: var(--footer-band);
+        }
+
+        .page-bottom {
+            position: absolute;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            height: var(--footer-band);
+            page-break-inside: avoid;
+            break-inside: avoid-page;
+        }
+
+        /* —— Header (every page) —— */
+        .page-header {
+            display: table;
+            width: 100%;
+            margin-bottom: 5px;
+            padding-bottom: 4px;
+            border-bottom: 2.5px solid var(--theme-primary);
+            page-break-inside: avoid;
+            break-inside: avoid-page;
+        }
+
+        .page-header-row {
+            display: table-row;
+        }
+
+        .page-header-logo {
+            display: table-cell;
+            width: 42px;
+            vertical-align: middle;
+        }
+
+        .page-header-logo img {
+            height: 38px;
+            width: auto;
+            display: block;
+        }
+
+        .page-header-title {
+            display: table-cell;
+            vertical-align: middle;
+            text-align: center;
+            padding: 0 6px;
+        }
+
+        .page-header-title h1 {
+            margin: 0;
+            font-size: 11.5pt;
+            font-weight: 700;
+            letter-spacing: 0.07em;
+            text-transform: uppercase;
+        }
+
+        .page-header-title .exam-context {
+            margin: 1px 0 0;
+            font-size: 7.5pt;
+            font-weight: 600;
+            color: var(--theme-muted);
+        }
+
+        .page-header-spacer {
+            display: table-cell;
+            width: 42px;
+        }
+
+        .meta-panel {
+            display: table;
+            width: 100%;
+            table-layout: fixed;
+            background: var(--theme-surface);
+            border: 1px solid var(--theme-border-light);
+            border-left: 3px solid var(--theme-primary);
+            margin-bottom: 6px;
+            page-break-inside: avoid;
+            break-inside: avoid-page;
+        }
+
+        .meta-row {
+            display: table-row;
+        }
+
+        .meta-cell {
+            display: table-cell;
+            padding: 4px 8px;
+            border-right: 1px solid var(--theme-border-light);
+            vertical-align: middle;
+        }
+
+        .meta-cell:last-child {
+            border-right: none;
+        }
+
+        .meta-cell .label {
+            display: inline;
+            font-size: 6.5pt;
+            font-weight: 700;
+            text-transform: uppercase;
+            letter-spacing: 0.06em;
+            color: var(--theme-muted);
+            margin-right: 4px;
+        }
+
+        .meta-cell .value {
+            display: inline;
+            font-size: 8pt;
+            font-weight: 600;
+            color: var(--theme-ink);
+        }
+
+        table.roster {
+            width: 100%;
+            border-collapse: collapse;
+            border: 1px solid var(--theme-border);
+            margin-bottom: 4px;
+            page-break-inside: avoid;
+            break-inside: avoid-page;
+        }
+
+        table.roster thead th {
+            background: var(--theme-ink);
+            color: #fff;
+            border: 1px solid var(--theme-ink);
+            padding: 1px 5px;
+            text-align: left;
+            font-size: 7pt;
+            font-weight: 700;
+            text-transform: uppercase;
+            letter-spacing: 0.06em;
+            line-height: 1.1;
+        }
+
+        table.roster tbody tr {
+            page-break-inside: avoid;
+            break-inside: avoid-page;
+        }
+
+        table.roster tbody td {
+            border: 1px solid var(--theme-border-light);
+            padding: 0 5px;
+            vertical-align: middle;
+            font-size: 8.5pt;
+            height: var(--row-height);
+            max-height: var(--row-height);
+            line-height: 1.05;
+        }
+
+        table.roster tbody tr:nth-child(even) td {
+            background: #fafafa;
+        }
+
+        .col-num {
+            width: 26px;
+            text-align: center;
+            color: var(--theme-muted);
+            font-size: 8pt;
+            font-weight: 600;
+        }
+
+        .col-name {
+            font-weight: 600;
+        }
+
+        .col-desig {
+            width: 40px;
+            text-align: center;
+            font-weight: 700;
+            font-size: 8pt;
+            letter-spacing: 0.03em;
+            color: var(--theme-ink);
+        }
+
+        .col-region {
+            width: 124px;
+            min-width: 124px;
+            max-width: 124px;
+            font-size: 7.5pt;
+            color: var(--theme-muted);
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+
+        .col-signature {
+            width: auto;
+            background: #fff !important;
+        }
+
+        /* —— Footer (every page, pinned to bottom) —— */
+        .page-footer-notes {
+            padding-top: 5px;
+            border-top: 1px solid var(--theme-border-light);
+            display: table;
+            width: 100%;
+            font-size: 6pt;
+            color: var(--theme-muted);
+            line-height: 1.25;
+        }
+
+        .page-footer-row {
+            display: table-row;
+        }
+
+        .page-footer-left {
+            display: table-cell;
+            vertical-align: bottom;
+            width: 74%;
+            padding-right: 6px;
+        }
+
+        .page-footer-right {
+            display: table-cell;
+            vertical-align: bottom;
+            text-align: right;
+            white-space: nowrap;
+            font-weight: 600;
+            color: var(--theme-ink);
+        }
+
+        .officer-sign-block {
+            margin-top: 4px;
+            padding: 4px 8px 3px;
+            border: 1px solid var(--theme-border);
+            background: #fff;
+        }
+
+        .officer-sign-grid {
+            display: table;
+            width: 100%;
+            table-layout: fixed;
+        }
+
+        .officer-sign-row {
+            display: table-row;
+        }
+
+        .officer-sign-cell {
+            display: table-cell;
+            vertical-align: bottom;
+            padding: 0 6px 0 0;
+        }
+
+        .officer-sign-cell:last-child {
+            padding-right: 0;
+        }
+
+        .officer-sign-cell .field-label {
+            display: block;
+            font-size: 5.5pt;
+            font-weight: 700;
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+            color: var(--theme-muted);
+            margin-bottom: 1px;
+        }
+
+        .officer-sign-line {
+            display: block;
+            border-bottom: 1px solid var(--theme-ink);
+            height: 0.55cm;
+        }
+    </style>
+</head>
+<body>
+<div class="watermark"></div>
+{% for page in pages %}
+<div class="page">
+    <div class="page-body">
+        <header class="page-header">
+            <div class="page-header-row">
+                <div class="page-header-logo">
+                    <img src="img/logo-crest-only.png" alt="" />
+                </div>
+                <div class="page-header-title">
+                    <h1>Attendance sheet</h1>
+                    <p class="exam-context">{{ examination_label }}</p>
+                </div>
+                <div class="page-header-spacer"></div>
+            </div>
+        </header>
+
+        {% if page.is_first %}
+        <section class="meta-panel">
+            <div class="meta-row">
+                <div class="meta-cell">
+                    <span class="label">Subject</span>
+                    <span class="value">{{ subject_label }}</span>
+                </div>
+                <div class="meta-cell">
+                    <span class="label">Cohort</span>
+                    <span class="value">{{ cohort_name }}</span>
+                </div>
+                <div class="meta-cell">
+                    <span class="label">Date</span>
+                    <span class="value">{{ attendance_date }}</span>
+                </div>
+                {% if coordination_venue %}
+                <div class="meta-cell">
+                    <span class="label">Venue</span>
+                    <span class="value">{{ coordination_venue }}</span>
+                </div>
+                {% endif %}
+            </div>
+        </section>
+        {% else %}
+        <section class="meta-panel">
+            <div class="meta-row">
+                <div class="meta-cell">
+                    <span class="label">Cohort</span>
+                    <span class="value">{{ cohort_name }}</span>
+                </div>
+                <div class="meta-cell">
+                    <span class="label">Date</span>
+                    <span class="value">{{ attendance_date }}</span>
+                </div>
+                <div class="meta-cell">
+                    <span class="label">Subject</span>
+                    <span class="value">{{ subject_label }}</span>
+                </div>
+            </div>
+        </section>
+        {% endif %}
+
+        <table class="roster">
+            <thead>
+                <tr>
+                    <th class="col-num">#</th>
+                    <th class="col-name">Name</th>
+                    <th class="col-desig">Desig.</th>
+                    <th class="col-region">Region</th>
+                    <th class="col-signature">Signature</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for row in page.rows %}
+                <tr>
+                    <td class="col-num">{{ row.index }}</td>
+                    <td class="col-name">{{ row.name }}</td>
+                    <td class="col-desig">{{ row.designation }}</td>
+                    <td class="col-region">{{ row.region }}</td>
+                    <td class="col-signature"></td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+
+    <div class="page-bottom">
+        <footer class="page-footer-notes">
+            <div class="page-footer-row">
+                <div class="page-footer-left">
+                    Desig.: CE Chief examiner · ACE Asst. chief · AE Asst. examiner · TL Team leader
+                    — Each examiner signs above to confirm presence on {{ attendance_date }}.
+                </div>
+                <div class="page-footer-right">
+                    Page {{ page.page_number }} of {{ page.total_pages }}
+                </div>
+            </div>
+        </footer>
+
+        <section class="officer-sign-block">
+            <div class="officer-sign-grid">
+                <div class="officer-sign-row">
+                    <div class="officer-sign-cell" style="width: 42%;">
+                        <span class="field-label">Subject officer name</span>
+                        <span class="officer-sign-line"></span>
+                    </div>
+                    <div class="officer-sign-cell" style="width: 38%;">
+                        <span class="field-label">Signature</span>
+                        <span class="officer-sign-line"></span>
+                    </div>
+                    <div class="officer-sign-cell" style="width: 20%;">
+                        <span class="field-label">Date</span>
+                        <span class="officer-sign-line"></span>
+                    </div>
+                </div>
+            </div>
+        </section>
+    </div>
+</div>
+{% endfor %}
+</body>
+</html>

@@ -17,6 +17,7 @@ type Props = {
   onRemove: (row: RosterTableRow) => void;
   canEditRoster?: boolean;
   onCopyPortalLink: (row: RosterTableRow) => void;
+  onRegeneratePortalLink?: (row: RosterTableRow) => void;
   onViewAllocation?: (row: RosterTableRow) => void;
   /** Render menu items only (no popover trigger) for mobile contact cards. */
   embedded?: boolean;
@@ -32,12 +33,14 @@ export function RosterRowActionsMenu({
   onRemove,
   canEditRoster = true,
   onCopyPortalLink,
+  onRegeneratePortalLink,
   onViewAllocation,
   embedded = false,
 }: Props) {
   const canViewAllocation = Boolean(onViewAllocation && row.subject_ids[0] != null);
   const canCopyLink = Boolean(row.portal_url);
-  const hasMenuItems = canViewAllocation || canEditRoster || canCopyLink;
+  const canRegenerateLink = Boolean(onRegeneratePortalLink && row.portal_url && canEditRoster);
+  const hasMenuItems = canViewAllocation || canEditRoster || canCopyLink || canRegenerateLink;
 
   if (!hasMenuItems) {
     return embedded ? null : <span className="text-xs text-muted-foreground">—</span>;
@@ -89,6 +92,20 @@ export function RosterRowActionsMenu({
           }}
         >
           Copy portal link
+        </button>
+      ) : null}
+      {canRegenerateLink ? (
+        <button
+          type="button"
+          role="menuitem"
+          className={menuItemClass}
+          disabled={busy}
+          onClick={() => {
+            onRegeneratePortalLink?.(row);
+            onOpenChange(false);
+          }}
+        >
+          Generate new portal link
         </button>
       ) : null}
       {canEditRoster ? (

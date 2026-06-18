@@ -3,9 +3,13 @@
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { FileDown } from "lucide-react";
+import { FileDown, ChevronRight } from "lucide-react";
 
 import { SearchableCombobox } from "@/components/searchable-combobox";
+import {
+  ExaminerAssignmentModal,
+} from "@/components/scripts-allocation/examiner-assignment-modal";
+import { UnassignedEnvelopesModal } from "@/components/scripts-allocation/unassigned-envelopes-modal";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
@@ -182,13 +186,7 @@ export function ScriptsAllocationView({
   const [poolModalFilter, setPoolModalFilter] = useState("");
   const [importModalFilter, setImportModalFilter] = useState("");
   const [assignmentDetailExaminer, setAssignmentDetailExaminer] = useState<ExaminerSubjectRunSummary | null>(null);
-  const [manualAssignTarget, setManualAssignTarget] = useState<UnassignedEnvelopeItem | null>(null);
-  const [manualAssignExaminerId, setManualAssignExaminerId] = useState("");
-  const [manualAssignError, setManualAssignError] = useState<string | null>(null);
   const [unassignedListModalOpen, setUnassignedListModalOpen] = useState(false);
-  const [unassignedFilterRegion, setUnassignedFilterRegion] = useState("");
-  const [unassignedFilterZone, setUnassignedFilterZone] = useState("");
-  const [unassignedFilterSeries, setUnassignedFilterSeries] = useState("");
   const [examinerLoadsSearch, setExaminerLoadsSearch] = useState("");
   const [examinerLoadsTypeFilter, setExaminerLoadsTypeFilter] = useState<ExaminerTypeApi | "">("");
   const [allocationFormPdfCopies, setAllocationFormPdfCopies] = useState(1);
@@ -317,75 +315,15 @@ export function ScriptsAllocationView({
       });
   }, [lastRun, assignmentDetailExaminer, selectedAllocation]);
 
-  const assignmentDetailBookletTotal = useMemo(
-    () => assignmentRowsForSelectedExaminer.reduce((sum, r) => sum + r.booklet_count, 0),
-    [assignmentRowsForSelectedExaminer],
-  );
-
   const runSummariesAssignedTotal = useMemo(
     () => runSummariesForSubject.reduce((sum, r) => sum + r.assigned_booklets, 0),
     [runSummariesForSubject],
-  );
-
-  const manualAssignExaminerOptions = useMemo(
-    () =>
-      [...poolRows].sort((a, b) =>
-        a.examiner_name.localeCompare(b.examiner_name, undefined, { sensitivity: "base" }),
-      ).map((r) => ({
-        value: r.examiner_id,
-        label: r.reference_code
-          ? `${r.reference_code} · ${r.examiner_name} (${examinerTypeLabel(r.examiner_type)})`
-          : `${r.examiner_name} (${examinerTypeLabel(r.examiner_type)})`,
-      })),
-    [poolRows],
   );
 
   const unassignedEnvelopesList = useMemo(
     () => lastRun?.unassigned_envelopes ?? [],
     [lastRun],
   );
-
-  const unassignedRegionFilterOptions = useMemo(() => {
-    const set = new Set(
-      unassignedEnvelopesList.map((r) => (r.region ?? "").trim()).filter((s) => s.length > 0),
-    );
-    return [...set].sort((a, b) => a.localeCompare(b, undefined, { sensitivity: "base" }));
-  }, [unassignedEnvelopesList]);
-
-  const unassignedZoneFilterOptions = useMemo(() => {
-    let rows = unassignedEnvelopesList;
-    if (unassignedFilterRegion) {
-      rows = rows.filter((r) => (r.region ?? "") === unassignedFilterRegion);
-    }
-    const set = new Set(rows.map((r) => r.zone).filter((z) => z && String(z).trim().length > 0));
-    return [...set].sort((a, b) => String(a).localeCompare(String(b), undefined, { sensitivity: "base" }));
-  }, [unassignedEnvelopesList, unassignedFilterRegion]);
-
-  const unassignedSeriesFilterOptions = useMemo(() => {
-    let rows = unassignedEnvelopesList;
-    if (unassignedFilterRegion) {
-      rows = rows.filter((r) => (r.region ?? "") === unassignedFilterRegion);
-    }
-    if (unassignedFilterZone) {
-      rows = rows.filter((r) => r.zone === unassignedFilterZone);
-    }
-    const set = new Set(rows.map((r) => r.series_number));
-    return [...set].sort((a, b) => a - b);
-  }, [unassignedEnvelopesList, unassignedFilterRegion, unassignedFilterZone]);
-
-  const filteredUnassignedEnvelopes = useMemo(() => {
-    return unassignedEnvelopesList.filter((row) => {
-      if (unassignedFilterRegion && (row.region ?? "") !== unassignedFilterRegion) return false;
-      if (unassignedFilterZone && row.zone !== unassignedFilterZone) return false;
-      if (unassignedFilterSeries && String(row.series_number) !== unassignedFilterSeries) return false;
-      return true;
-    });
-  }, [
-    unassignedEnvelopesList,
-    unassignedFilterRegion,
-    unassignedFilterZone,
-    unassignedFilterSeries,
-  ]);
 
   const filteredRunSummariesForSubject = useMemo((): ExaminerSubjectRunSummary[] => {
     let rows = runSummariesForSubject;
@@ -714,45 +652,53 @@ export function ScriptsAllocationView({
     setAssignmentDetailExaminer(null);
   }, []);
 
-  const closeManualAssignModal = useCallback(() => {
-    setManualAssignTarget(null);
-    setManualAssignExaminerId("");
-    setManualAssignError(null);
-  }, []);
-
   const openUnassignedListModal = useCallback(() => {
-    setUnassignedFilterRegion("");
-    setUnassignedFilterZone("");
-    setUnassignedFilterSeries("");
     setUnassignedListModalOpen(true);
   }, []);
 
   const closeUnassignedListModal = useCallback(() => {
     setUnassignedListModalOpen(false);
-    setUnassignedFilterRegion("");
-    setUnassignedFilterZone("");
-    setUnassignedFilterSeries("");
   }, []);
 
-  function openManualAssign(row: UnassignedEnvelopeItem) {
-    setManualAssignError(null);
-    setManualAssignExaminerId("");
-    setManualAssignTarget(row);
-  }
+  const handleAssignEnvelopesToExaminer = useCallback(
+    async (examinerId: string, envelopeIds: string[]) => {
+      if (!lastRun || envelopeIds.length === 0) return;
+      setBusy(true);
+      setLoadError(null);
+      try {
+        let detail = lastRun;
+        for (const scriptEnvelopeId of envelopeIds) {
+          detail = await upsertAllocationRunAssignment(lastRun.id, {
+            script_envelope_id: scriptEnvelopeId,
+            examiner_id: examinerId,
+          });
+        }
+        setLastRun(detail);
+      } catch (e) {
+        const message = e instanceof Error ? e.message : "Assign failed";
+        setLoadError(message);
+        throw new Error(message);
+      } finally {
+        setBusy(false);
+      }
+    },
+    [lastRun],
+  );
 
-  async function confirmManualAssign() {
-    if (!lastRun || !manualAssignTarget || !manualAssignExaminerId) return;
+  async function handleUnassignedModalAssign(envelope: UnassignedEnvelopeItem, examinerId: string) {
+    if (!lastRun) return;
     setBusy(true);
-    setManualAssignError(null);
+    setLoadError(null);
     try {
       const detail = await upsertAllocationRunAssignment(lastRun.id, {
-        script_envelope_id: manualAssignTarget.script_envelope_id,
-        examiner_id: manualAssignExaminerId,
+        script_envelope_id: envelope.script_envelope_id,
+        examiner_id: examinerId,
       });
       setLastRun(detail);
-      closeManualAssignModal();
     } catch (e) {
-      setManualAssignError(e instanceof Error ? e.message : "Assign failed");
+      const message = e instanceof Error ? e.message : "Assign failed";
+      setLoadError(message);
+      throw new Error(message);
     } finally {
       setBusy(false);
     }
@@ -760,7 +706,6 @@ export function ScriptsAllocationView({
 
   async function handleRemoveEnvelopeAssignment(scriptEnvelopeId: string) {
     if (!lastRun) return;
-    if (!window.confirm("Remove this envelope assignment? It will return to the unassigned list.")) return;
     setBusy(true);
     setLoadError(null);
     try {
@@ -768,6 +713,7 @@ export function ScriptsAllocationView({
       setLastRun(detail);
     } catch (e) {
       setLoadError(e instanceof Error ? e.message : "Remove failed");
+      throw e;
     } finally {
       setBusy(false);
     }
@@ -873,10 +819,6 @@ export function ScriptsAllocationView({
         closePoolModal();
         return;
       }
-      if (manualAssignTarget) {
-        closeManualAssignModal();
-        return;
-      }
       if (unassignedListModalOpen) {
         closeUnassignedListModal();
         return;
@@ -894,14 +836,12 @@ export function ScriptsAllocationView({
   }, [
     importModalOpen,
     poolModalOpen,
-    manualAssignTarget,
     unassignedListModalOpen,
     assignmentDetailExaminer,
     setupModalOpen,
     busy,
     closeImportModal,
     closePoolModal,
-    closeManualAssignModal,
     closeUnassignedListModal,
     closeAssignmentDetailModal,
     closeSetupModal,
@@ -1901,7 +1841,7 @@ export function ScriptsAllocationView({
                           disabled={busy}
                           onClick={openUnassignedListModal}
                         >
-                          View unassigned envelopes…
+                          Assign unassigned envelopes…
                         </Button>
                       </div>
                     ) : lastRun.status === "optimal" || lastRun.assignments.length > 0 ? (
@@ -1948,7 +1888,12 @@ export function ScriptsAllocationView({
 
                   <div>
                     <div className="flex flex-col gap-1 sm:flex-row sm:items-baseline sm:justify-between">
-                      <p className="text-sm font-semibold text-foreground">Examiner booklet loads</p>
+                      <div>
+                        <p className="text-sm font-semibold text-foreground">Examiner booklet loads</p>
+                        <p className="mt-0.5 text-xs text-muted-foreground">
+                          Click a row to manage assigned envelopes or add more from the unassigned pool.
+                        </p>
+                      </div>
                       {runSummariesForSubject.length > 0 ? (
                         <p className="text-xs text-muted-foreground">
                           Total assigned:{" "}
@@ -2072,10 +2017,18 @@ export function ScriptsAllocationView({
                                       setAssignmentDetailExaminer(row);
                                     }
                                   }}
-                                  aria-label={`View assigned envelopes for ${row.examiner_name}`}
-                                  title={`View assigned envelopes for ${row.examiner_name}`}
+                                  aria-label={`Manage assignments for ${row.examiner_name}`}
+                                  title={`Manage assignments for ${row.examiner_name}`}
                                 >
-                                  <td className="px-3 py-2 font-medium text-foreground">{row.examiner_name}</td>
+                                  <td className="px-3 py-2">
+                                    <div className="flex items-center gap-2">
+                                      <span className="font-medium text-foreground">{row.examiner_name}</span>
+                                      <ChevronRight
+                                        className="size-4 shrink-0 text-muted-foreground opacity-60"
+                                        aria-hidden
+                                      />
+                                    </div>
+                                  </td>
                                   <td className="px-3 py-2 text-muted-foreground">
                                     {examinerTypeLabel(row.examiner_type)}
                                   </td>
@@ -2200,383 +2153,33 @@ export function ScriptsAllocationView({
             </div>
           ) : null}
 
-          {assignmentDetailExaminer ? (
-            <div
-              className="fixed inset-0 z-60 flex items-center justify-center bg-black/50 p-4"
-              role="presentation"
-              onMouseDown={(e) => {
-                if (e.target === e.currentTarget && !busy) closeAssignmentDetailModal();
-              }}
-            >
-              <div
-                className="flex max-h-[min(92vh,760px)] w-full max-w-4xl flex-col overflow-hidden rounded-2xl border border-border bg-card shadow-xl"
-                role="dialog"
-                aria-modal="true"
-                aria-labelledby="assignment-detail-modal-title"
-                aria-describedby="assignment-detail-modal-desc"
-                onMouseDown={(e) => e.stopPropagation()}
-              >
-                <div className="border-b border-border bg-muted/20 px-4 py-4 md:px-5">
-                  <h2 id="assignment-detail-modal-title" className="text-base font-semibold text-card-foreground">
-                    {assignmentDetailExaminer.examiner_name}
-                  </h2>
-                  <p id="assignment-detail-modal-desc" className="mt-1 text-xs text-muted-foreground">
-                    {selectedSubjectLabel} · Paper {selectedAllocation.paper_number} · Assigned envelopes
-                  </p>
-                  {assignmentRowsForSelectedExaminer.length > 0 ? (
-                    <p className="mt-2 text-xs text-muted-foreground">
-                      <span className="font-medium text-foreground">{assignmentRowsForSelectedExaminer.length}</span>{" "}
-                      envelope line{assignmentRowsForSelectedExaminer.length === 1 ? "" : "s"} ·{" "}
-                      <span className="font-medium tabular-nums text-foreground">{assignmentDetailBookletTotal}</span>{" "}
-                      booklets total
-                    </p>
-                  ) : null}
-                </div>
-                <div className="min-h-0 flex-1 overflow-auto p-4 md:p-5">
-                  {assignmentRowsForSelectedExaminer.length === 0 ? (
-                    <p className="rounded-lg border border-border/80 bg-muted/20 px-4 py-8 text-center text-sm text-muted-foreground">
-                      No assigned envelopes found for this examiner.
-                    </p>
-                  ) : (
-                    <div className="overflow-hidden rounded-xl border border-border shadow-sm">
-                      <div className="max-h-[min(50vh,420px)] overflow-auto">
-                        <table className="w-full min-w-[560px] border-collapse text-sm leading-normal">
-                          <thead>
-                            <tr className="sticky top-0 z-1 border-b border-border bg-muted/80 backdrop-blur-sm">
-                              <th
-                                scope="col"
-                                className="px-3 py-2 text-left text-xs font-semibold uppercase tracking-wide text-muted-foreground"
-                              >
-                                School
-                              </th>
-                              <th
-                                scope="col"
-                                className="px-3 py-2 text-left text-xs font-semibold uppercase tracking-wide text-muted-foreground"
-                              >
-                                Series
-                              </th>
-                              <th
-                                scope="col"
-                                className="px-3 py-2 text-left text-xs font-semibold uppercase tracking-wide text-muted-foreground"
-                              >
-                                Envelope
-                              </th>
-                              <th
-                                scope="col"
-                                className="px-3 py-2 text-right text-xs font-semibold uppercase tracking-wide text-muted-foreground"
-                              >
-                                Qty
-                              </th>
-                              <th
-                                scope="col"
-                                className="px-3 py-2 text-right text-xs font-semibold uppercase tracking-wide text-muted-foreground"
-                              >
-                                Action
-                              </th>
-                            </tr>
-                          </thead>
-                          <tbody className="[&_tr:nth-child(even)]:bg-muted/20">
-                            {assignmentRowsForSelectedExaminer.map((item) => (
-                              <tr key={item.script_envelope_id} className="border-b border-border/70 align-top">
-                                <td className="px-3 py-2 text-foreground">
-                                  {item.school_name}{" "}
-                                  <span className="text-muted-foreground">({item.school_code})</span>
-                                </td>
-                                <td className="px-3 py-2 tabular-nums text-muted-foreground">{item.series_number}</td>
-                                <td className="px-3 py-2 tabular-nums text-muted-foreground">{item.envelope_number}</td>
-                                <td className="px-3 py-2 text-right tabular-nums font-medium text-foreground">
-                                  {item.booklet_count}
-                                </td>
-                                <td className="px-3 py-2 text-right">
-                                  <Button
-                                    type="button"
-                                    variant="outline"
-                                    size="sm"
-                                    className="h-8 border-destructive/40 px-2.5 text-xs text-destructive hover:bg-destructive/10"
-                                    disabled={busy}
-                                    onClick={() => void handleRemoveEnvelopeAssignment(item.script_envelope_id)}
-                                  >
-                                    Remove
-                                  </Button>
-                                </td>
-                              </tr>
-                            ))}
-                          </tbody>
-                        </table>
-                      </div>
-                    </div>
-                  )}
-                </div>
-                <div className="flex justify-end border-t border-border bg-muted/20 px-4 py-3 md:px-5">
-                  <Button type="button" variant="outline" disabled={busy} onClick={closeAssignmentDetailModal}>
-                    Close
-                  </Button>
-                </div>
-              </div>
-            </div>
-          ) : null}
+          <ExaminerAssignmentModal
+            examiner={assignmentDetailExaminer}
+            run={lastRun}
+            subjectId={selectedAllocation?.subject_id ?? 0}
+            paperNumber={selectedAllocation?.paper_number ?? 0}
+            subjectLabel={selectedSubjectLabel}
+            assignedRows={assignmentRowsForSelectedExaminer}
+            unassignedEnvelopes={unassignedEnvelopesList}
+            enforceSingleSeriesPerExaminer={selectedAllocation?.enforce_single_series_per_examiner ?? true}
+            busy={busy}
+            onClose={closeAssignmentDetailModal}
+            onRemove={handleRemoveEnvelopeAssignment}
+            onAssign={(envelopeIds) =>
+              assignmentDetailExaminer
+                ? handleAssignEnvelopesToExaminer(assignmentDetailExaminer.examiner_id, envelopeIds)
+                : Promise.resolve()
+            }
+          />
 
-          {unassignedListModalOpen ? (
-            <div
-              className="fixed inset-0 z-60 flex items-center justify-center bg-black/50 p-4"
-              role="presentation"
-              onMouseDown={(e) => {
-                if (e.target === e.currentTarget && !busy) closeUnassignedListModal();
-              }}
-            >
-              <div
-                className="flex max-h-[min(92vh,840px)] w-full max-w-5xl flex-col overflow-hidden rounded-2xl border border-border bg-card shadow-xl"
-                role="dialog"
-                aria-modal="true"
-                aria-labelledby="unassigned-list-modal-title"
-                onMouseDown={(e) => e.stopPropagation()}
-              >
-                <div className="border-b border-border bg-muted/20 px-4 py-4 md:px-5">
-                  <h2 id="unassigned-list-modal-title" className="text-base font-semibold text-card-foreground">
-                    Unassigned envelopes
-                  </h2>
-                  <p className="mt-1 text-xs text-muted-foreground">
-                    Latest run only · {unassignedEnvelopesList.length} total
-                    {filteredUnassignedEnvelopes.length !== unassignedEnvelopesList.length
-                      ? ` · showing ${filteredUnassignedEnvelopes.length} after filters`
-                      : ""}
-                  </p>
-                </div>
-                <div className="border-b border-border px-4 py-3 md:px-5">
-                  <div className="grid gap-3 sm:grid-cols-3">
-                    <div>
-                      <label htmlFor="unassigned-filter-region" className={formLabelClass}>
-                        Region
-                      </label>
-                      <select
-                        id="unassigned-filter-region"
-                        className={`${formInputClass} mt-1 w-full`}
-                        value={unassignedFilterRegion}
-                        onChange={(e) => {
-                          setUnassignedFilterRegion(e.target.value);
-                          setUnassignedFilterZone("");
-                          setUnassignedFilterSeries("");
-                        }}
-                      >
-                        <option value="">All regions</option>
-                        {unassignedRegionFilterOptions.map((r) => (
-                          <option key={r} value={r}>
-                            {r}
-                          </option>
-                        ))}
-                      </select>
-                    </div>
-                    <div>
-                      <label htmlFor="unassigned-filter-zone" className={formLabelClass}>
-                        Zone
-                      </label>
-                      <select
-                        id="unassigned-filter-zone"
-                        className={`${formInputClass} mt-1 w-full`}
-                        value={unassignedFilterZone}
-                        onChange={(e) => {
-                          setUnassignedFilterZone(e.target.value);
-                          setUnassignedFilterSeries("");
-                        }}
-                      >
-                        <option value="">All zones</option>
-                        {unassignedZoneFilterOptions.map((z) => (
-                          <option key={z} value={z}>
-                            {z}
-                          </option>
-                        ))}
-                      </select>
-                    </div>
-                    <div>
-                      <label htmlFor="unassigned-filter-series" className={formLabelClass}>
-                        Series
-                      </label>
-                      <select
-                        id="unassigned-filter-series"
-                        className={`${formInputClass} mt-1 w-full`}
-                        value={unassignedFilterSeries}
-                        onChange={(e) => setUnassignedFilterSeries(e.target.value)}
-                      >
-                        <option value="">All series</option>
-                        {unassignedSeriesFilterOptions.map((n) => (
-                          <option key={n} value={String(n)}>
-                            {n}
-                          </option>
-                        ))}
-                      </select>
-                    </div>
-                  </div>
-                </div>
-                <div className="min-h-0 flex-1 overflow-auto p-4 md:p-5">
-                  {filteredUnassignedEnvelopes.length === 0 ? (
-                    <p className="rounded-lg border border-border/80 bg-muted/20 px-4 py-8 text-center text-sm text-muted-foreground">
-                      No envelopes match the current filters.
-                    </p>
-                  ) : (
-                    <div className="overflow-hidden rounded-xl border border-border shadow-sm">
-                      <div className="max-h-[min(52vh,480px)] overflow-auto">
-                        <table className="w-full min-w-[680px] border-collapse text-sm leading-normal">
-                          <thead>
-                            <tr className="sticky top-0 z-1 border-b border-border bg-muted/80 backdrop-blur-sm">
-                              <th
-                                scope="col"
-                                className="px-3 py-2 text-left text-xs font-semibold uppercase tracking-wide text-muted-foreground"
-                              >
-                                Region
-                              </th>
-                              <th
-                                scope="col"
-                                className="px-3 py-2 text-left text-xs font-semibold uppercase tracking-wide text-muted-foreground"
-                              >
-                                Zone
-                              </th>
-                              <th
-                                scope="col"
-                                className="px-3 py-2 text-left text-xs font-semibold uppercase tracking-wide text-muted-foreground"
-                              >
-                                School
-                              </th>
-                              <th
-                                scope="col"
-                                className="px-3 py-2 text-left text-xs font-semibold uppercase tracking-wide text-muted-foreground"
-                              >
-                                Series
-                              </th>
-                              <th
-                                scope="col"
-                                className="px-3 py-2 text-left text-xs font-semibold uppercase tracking-wide text-muted-foreground"
-                              >
-                                Envelope
-                              </th>
-                              <th
-                                scope="col"
-                                className="px-3 py-2 text-right text-xs font-semibold uppercase tracking-wide text-muted-foreground"
-                              >
-                                Booklets
-                              </th>
-                              <th
-                                scope="col"
-                                className="px-3 py-2 text-right text-xs font-semibold uppercase tracking-wide text-muted-foreground"
-                              >
-                                Action
-                              </th>
-                            </tr>
-                          </thead>
-                          <tbody className="[&_tr:nth-child(even)]:bg-muted/20">
-                            {filteredUnassignedEnvelopes.map((row) => (
-                              <tr key={row.script_envelope_id} className="border-b border-border/70 align-top">
-                                <td className="px-3 py-2 text-muted-foreground">
-                                  {(row.region ?? "").trim() || "—"}
-                                </td>
-                                <td className="px-3 py-2 text-muted-foreground">{row.zone}</td>
-                                <td className="px-3 py-2 text-foreground">
-                                  {row.school_name}{" "}
-                                  <span className="text-muted-foreground">({row.school_code})</span>
-                                </td>
-                                <td className="px-3 py-2 tabular-nums text-muted-foreground">{row.series_number}</td>
-                                <td className="px-3 py-2 tabular-nums text-muted-foreground">{row.envelope_number}</td>
-                                <td className="px-3 py-2 text-right tabular-nums text-foreground">
-                                  {row.booklet_count}
-                                </td>
-                                <td className="px-3 py-2 text-right">
-                                  <Button
-                                    type="button"
-                                    variant="secondary"
-                                    size="sm"
-                                    className="h-8 px-2.5 text-xs"
-                                    disabled={busy || poolRows.length === 0}
-                                    onClick={() => openManualAssign(row)}
-                                  >
-                                    Assign…
-                                  </Button>
-                                </td>
-                              </tr>
-                            ))}
-                          </tbody>
-                        </table>
-                      </div>
-                    </div>
-                  )}
-                </div>
-                <div className="flex justify-end border-t border-border bg-muted/20 px-4 py-3 md:px-5">
-                  <Button type="button" variant="outline" disabled={busy} onClick={closeUnassignedListModal}>
-                    Close
-                  </Button>
-                </div>
-              </div>
-            </div>
-          ) : null}
-
-          {manualAssignTarget ? (
-            <div
-              className="fixed inset-0 z-60 flex items-center justify-center bg-black/50 p-4"
-              role="presentation"
-              onMouseDown={(e) => {
-                if (e.target === e.currentTarget && !busy) closeManualAssignModal();
-              }}
-            >
-              <div
-                className="flex w-full max-w-lg flex-col overflow-hidden rounded-2xl border border-border bg-card shadow-xl"
-                role="dialog"
-                aria-modal="true"
-                aria-labelledby="manual-assign-modal-title"
-                aria-describedby="manual-assign-modal-desc"
-                onMouseDown={(e) => e.stopPropagation()}
-              >
-                <div className="border-b border-border bg-muted/20 px-4 py-4 md:px-5">
-                  <h2 id="manual-assign-modal-title" className="text-base font-semibold text-card-foreground">
-                    Assign envelope
-                  </h2>
-                  <p id="manual-assign-modal-desc" className="mt-1 text-xs text-muted-foreground">
-                    {(manualAssignTarget.region ?? "").trim()
-                      ? `${manualAssignTarget.region} · zone ${manualAssignTarget.zone} · `
-                      : `Zone ${manualAssignTarget.zone} · `}
-                    {manualAssignTarget.school_name} ({manualAssignTarget.school_code}) · Series{" "}
-                    {manualAssignTarget.series_number} · Envelope {manualAssignTarget.envelope_number} ·{" "}
-                    {manualAssignTarget.booklet_count} booklets
-                  </p>
-                </div>
-                <div className="space-y-4 p-4 md:p-5">
-                  <div>
-                    <label htmlFor="manual-assign-examiner" className={formLabelClass}>
-                      Examiner
-                    </label>
-                    <div id="manual-assign-examiner" className="mt-1.5">
-                      <SearchableCombobox
-                        options={manualAssignExaminerOptions}
-                        value={manualAssignExaminerId}
-                        onChange={setManualAssignExaminerId}
-                        placeholder="Select examiner…"
-                        searchPlaceholder="Search examiners…"
-                        showAllOption={false}
-                        widthClass="w-full max-w-none"
-                      />
-                    </div>
-                    {poolRows.length === 0 ? (
-                      <p className="mt-2 text-xs text-destructive">Add examiners to this allocation before assigning.</p>
-                    ) : null}
-                  </div>
-                  {manualAssignError ? (
-                    <p className="rounded-lg border border-destructive/30 bg-destructive/10 px-3 py-2 text-xs text-destructive">
-                      {manualAssignError}
-                    </p>
-                  ) : null}
-                </div>
-                <div className="flex flex-wrap justify-end gap-2 border-t border-border bg-muted/20 px-4 py-3 md:px-5">
-                  <Button type="button" variant="outline" disabled={busy} onClick={closeManualAssignModal}>
-                    Cancel
-                  </Button>
-                  <Button
-                    type="button"
-                    disabled={busy || !manualAssignExaminerId || poolRows.length === 0}
-                    onClick={() => void confirmManualAssign()}
-                  >
-                    Assign
-                  </Button>
-                </div>
-              </div>
-            </div>
-          ) : null}
+          <UnassignedEnvelopesModal
+            open={unassignedListModalOpen}
+            onClose={closeUnassignedListModal}
+            busy={busy}
+            envelopes={unassignedEnvelopesList}
+            poolRows={poolRows}
+            onAssign={handleUnassignedModalAssign}
+          />
         </section>
       ) : null}
     </div>

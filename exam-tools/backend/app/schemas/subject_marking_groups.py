@@ -43,6 +43,7 @@ class SubjectMarkingGroupResponse(BaseModel):
     name: str
     is_default: bool = False
     examiner_ids: list[UUID]
+    member_regions: list[str] = Field(default_factory=list)
     source_regions: list[str]
     source_roles: list[str]
     coordination_start_date: datetime | None

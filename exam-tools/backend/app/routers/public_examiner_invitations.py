@@ -26,7 +26,8 @@ from app.services.examiner_invitation import (
 from app.services.examiner_portal import (
     ResolvedPortalExaminer,
     ResolvedPortalInvitation,
-    resolve_examiner_id_for_letter_and_bank,
+    resolve_examiner_id_for_appointment_letter,
+    resolve_examiner_id_for_bank_details,
     resolve_examiner_id_for_portal_token,
     resolve_portal_token,
 )
@@ -58,9 +59,16 @@ async def _resolve_examiner_id(session: DBSessionDep, token: str):
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(exc)) from exc
 
 
-async def _resolve_examiner_id_letter_bank(session: DBSessionDep, token: str):
+async def _resolve_examiner_id_appointment_letter(session: DBSessionDep, token: str):
     try:
-        return await resolve_examiner_id_for_letter_and_bank(session, token)
+        return await resolve_examiner_id_for_appointment_letter(session, token)
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(exc)) from exc
+
+
+async def _resolve_examiner_id_bank_details(session: DBSessionDep, token: str):
+    try:
+        return await resolve_examiner_id_for_bank_details(session, token)
     except ValueError as exc:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(exc)) from exc
 
@@ -157,7 +165,7 @@ async def get_public_examiner_bank_account(
     session: DBSessionDep,
     token: str,
 ) -> ExaminerBankAccountResponse:
-    examiner_id = await _resolve_examiner_id_letter_bank(session, token)
+    examiner_id = await _resolve_examiner_id(session, token)
     row = await get_by_examiner_id(session, examiner_id)
     if row is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="No bank account on file.")
@@ -170,7 +178,7 @@ async def upsert_public_examiner_bank_account(
     token: str,
     body: ExaminerBankAccountUpsert,
 ) -> ExaminerBankAccountResponse:
-    examiner_id = await _resolve_examiner_id_letter_bank(session, token)
+    examiner_id = await _resolve_examiner_id_bank_details(session, token)
     try:
         row = await upsert_for_examiner(
             session,
@@ -195,7 +203,7 @@ async def list_public_bank_branches(
     skip: int = Query(0, ge=0),
     limit: int = Query(DEFAULT_LIMIT, ge=1, le=MAX_LIST),
 ) -> BankBranchListResponse:
-    await _resolve_examiner_id_letter_bank(session, token)
+    await _resolve_examiner_id_bank_details(session, token)
     rows, total = await list_bank_branches(
         session,
         bank_name=bank_name,
@@ -215,7 +223,7 @@ async def list_public_bank_names(
     q: str | None = Query(None, description="Substring filter on bank name"),
     limit: int = Query(100, ge=1, le=500),
 ) -> list[str]:
-    await _resolve_examiner_id_letter_bank(session, token)
+    await _resolve_examiner_id_bank_details(session, token)
     return await distinct_bank_names(session, q=q, limit=limit)
 
 
@@ -252,7 +260,7 @@ async def download_public_examiner_appointment_letter_pdf(
     token: str,
 ) -> Response:
     resolved = await _resolve_portal_or_404(session, token)
-    await _resolve_examiner_id_letter_bank(session, token)
+    await _resolve_examiner_id_appointment_letter(session, token)
 
     if isinstance(resolved, ResolvedPortalExaminer):
         try:

@@ -8,6 +8,8 @@ import {
   EXAMINERS_PANEL_CLASS,
   ROSTER_DEFAULT_COLUMN_VISIBILITY,
 } from "@/components/examiners/constants";
+import { ExaminerDeleteConfirmModal } from "@/components/examiners/examiner-delete-confirm-modal";
+import { ExaminerPortalLinkRegenerateConfirmModal } from "@/components/examiners/examiner-portal-link-regenerate-confirm-modal";
 import { ExaminerQuotaAssessmentModal } from "@/components/examiners/examiner-quota-assessment-modal";
 import { ExaminerRegionGroupsModal } from "@/components/examiners/examiner-region-groups-modal";
 import { RosterCommandBar } from "@/components/examiners/roster-command-bar";
@@ -26,9 +28,12 @@ import {
   bulkSendExaminerRosterCustomSms,
   createExaminationExaminer,
   deleteExaminationExaminer,
+  getExaminerDeletePreview,
   listExaminationExaminers,
   listExaminerGroups,
+  regenerateExaminerPortalLink,
   updateExaminationExaminer,
+  type ExaminerDeleteImpact,
   type ExaminerGroupRow,
   type ExaminerRosterBulkSmsResponse,
   type ExaminerRow,
@@ -71,6 +76,11 @@ type Props = {
 type AllocationTarget = {
   examinerId: string;
   subjectId: number;
+  name: string;
+};
+
+type RegeneratePortalLinkTarget = {
+  examinerId: string;
   name: string;
 };
 
@@ -145,6 +155,8 @@ export function ExaminersRosterPanel({
   const [smsError, setSmsError] = useState<string | null>(null);
   const [smsResult, setSmsResult] = useState<ExaminerRosterBulkSmsResponse | null>(null);
   const [allocationTarget, setAllocationTarget] = useState<AllocationTarget | null>(null);
+  const [deleteImpact, setDeleteImpact] = useState<ExaminerDeleteImpact | null>(null);
+  const [regenerateTarget, setRegenerateTarget] = useState<RegeneratePortalLinkTarget | null>(null);
 
   useEffect(() => {
     const t = window.setTimeout(() => setDebouncedSearch(searchQuery), SEARCH_DEBOUNCE_MS);
@@ -447,15 +459,67 @@ export function ExaminersRosterPanel({
 
   async function handleRemove(row: RosterTableRow) {
     if (examId == null) return;
-    if (!window.confirm(`Remove ${row.name} from this examination?`)) return;
-    setBusy(true);
     setLoadError(null);
     try {
+      const impact = await getExaminerDeletePreview(examId, row.id);
+      if (impact.requires_confirmation) {
+        setDeleteImpact(impact);
+        return;
+      }
+      if (!window.confirm(`Remove ${row.name} from this examination?`)) return;
+      setBusy(true);
       await deleteExaminationExaminer(examId, row.id);
       setActionMessage("Examiner removed.");
       await loadData(examId);
     } catch (e) {
       setLoadError(e instanceof Error ? e.message : "Delete failed");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function confirmDeleteExaminer() {
+    if (examId == null || deleteImpact == null) return;
+    setBusy(true);
+    setLoadError(null);
+    try {
+      await deleteExaminationExaminer(examId, deleteImpact.examiner_id, {
+        confirmRemoveAllocations: true,
+      });
+      setDeleteImpact(null);
+      setActionMessage("Examiner removed.");
+      await loadData(examId);
+    } catch (e) {
+      setLoadError(e instanceof Error ? e.message : "Delete failed");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  function openRegeneratePortalLink(row: RosterTableRow) {
+    setRegenerateTarget({ examinerId: row.id, name: row.name });
+  }
+
+  async function confirmRegeneratePortalLink() {
+    if (examId == null || regenerateTarget == null) return;
+    setBusy(true);
+    setLoadError(null);
+    try {
+      const result = await regenerateExaminerPortalLink(examId, regenerateTarget.examinerId);
+      setExaminers((prev) =>
+        prev.map((row) =>
+          row.id === regenerateTarget.examinerId ? { ...row, portal_url: result.portal_url } : row,
+        ),
+      );
+      setRegenerateTarget(null);
+      try {
+        await navigator.clipboard.writeText(result.portal_url);
+        setActionMessage("New portal link generated and copied to clipboard.");
+      } catch {
+        setActionMessage(`New portal link generated: ${result.portal_url}`);
+      }
+    } catch (e) {
+      setLoadError(e instanceof Error ? e.message : "Could not generate a new portal link");
     } finally {
       setBusy(false);
     }
@@ -665,6 +729,7 @@ export function ExaminersRosterPanel({
                     }}
                     onEdit={openEdit}
                     onRemove={(row) => void handleRemove(row)}
+                    onRegeneratePortalLink={canEditRoster ? openRegeneratePortalLink : undefined}
                     canEditRoster={canEditRoster}
                     pageScroll={pageScroll}
                     onViewAllocation={
@@ -702,6 +767,7 @@ export function ExaminersRosterPanel({
                     onInAppSms={openCustomSmsForExaminer}
                     onEdit={openEdit}
                     onRemove={(row) => void handleRemove(row)}
+                    onRegeneratePortalLink={canEditRoster ? openRegeneratePortalLink : undefined}
                     onViewAllocation={
                       lockedSubjectIds != null
                         ? (row) => {
@@ -788,6 +854,33 @@ export function ExaminersRosterPanel({
         examinerId={allocationTarget?.examinerId ?? null}
         examinerName={allocationTarget?.name ?? ""}
       />
+
+      {deleteImpact ? (
+        <ExaminerDeleteConfirmModal
+          examinerName={deleteImpact.examiner_name}
+          manualAllocations={deleteImpact.manual_allocations}
+          envelopeAssignments={deleteImpact.envelope_assignments}
+          allocationCampaigns={deleteImpact.allocation_campaigns}
+          totalManualScripts={deleteImpact.total_manual_scripts}
+          totalEnvelopes={deleteImpact.total_envelopes}
+          busy={busy}
+          onCancel={() => {
+            if (!busy) setDeleteImpact(null);
+          }}
+          onConfirm={() => void confirmDeleteExaminer()}
+        />
+      ) : null}
+
+      {regenerateTarget ? (
+        <ExaminerPortalLinkRegenerateConfirmModal
+          subjectName={regenerateTarget.name}
+          busy={busy}
+          onCancel={() => {
+            if (!busy) setRegenerateTarget(null);
+          }}
+          onConfirm={() => void confirmRegeneratePortalLink()}
+        />
+      ) : null}
 
       <ExaminerRegionGroupsModal
         open={regionGroupsOpen}

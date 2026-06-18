@@ -133,7 +133,7 @@ export function CohortModalShell({
         </div>
 
         <div className={cn("flex min-h-0 flex-1 flex-col overflow-hidden px-5 py-5 sm:px-6", bodyClassName)}>
-          <div className="min-h-0 flex-1">{children}</div>
+          <div className="flex min-h-0 flex-1 flex-col overflow-hidden">{children}</div>
         </div>
 
         {footer ? (

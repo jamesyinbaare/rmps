@@ -71,6 +71,7 @@ type ReleaseDraft = {
   enabled: boolean;
   mode: AppointmentLettersReleaseMode;
   releaseAt: string;
+  bankDetailsEditable: boolean;
 };
 
 function isoToDatetimeLocal(iso: string | null | undefined): string {
@@ -296,6 +297,7 @@ export function ExaminersAppointmentLettersPanel({ examId, exams, defaultSubject
         enabled: row.appointment_letters_release_enabled,
         mode: row.appointment_letters_release_mode,
         releaseAt: isoToDatetimeLocal(row.appointment_letters_release_at),
+        bankDetailsEditable: row.examiner_bank_details_editable_by_examiners,
       });
     } catch (e) {
       setReleaseError(e instanceof Error ? e.message : "Could not load portal settings");
@@ -401,12 +403,14 @@ export function ExaminersAppointmentLettersPanel({ examId, exams, defaultSubject
         appointment_letters_release_mode: next.mode,
         appointment_letters_release_at:
           next.mode === "scheduled_date" ? datetimeLocalToIso(next.releaseAt) : null,
+        examiner_bank_details_editable_by_examiners: next.bankDetailsEditable,
       });
       setSettings(row);
       setReleaseDraft({
         enabled: row.appointment_letters_release_enabled,
         mode: row.appointment_letters_release_mode,
         releaseAt: isoToDatetimeLocal(row.appointment_letters_release_at),
+        bankDetailsEditable: row.examiner_bank_details_editable_by_examiners,
       });
       setReleaseMessage("Release settings saved.");
     } catch (e) {
@@ -1199,7 +1203,7 @@ export function ExaminersAppointmentLettersPanel({ examId, exams, defaultSubject
           <div className="min-w-0">
             <h2 className="text-sm font-semibold text-foreground">Release and notify</h2>
             <p className="mt-1 text-xs leading-relaxed text-muted-foreground">
-              Control when rostered examiners can download appointment letters and submit bank details on their portal.
+              Control when rostered examiners can download appointment letters on their portal.
             </p>
             {settings ? (
               <dl className="mt-3 grid grid-cols-2 gap-x-4 gap-y-1 text-xs text-muted-foreground sm:grid-cols-4">
@@ -1249,7 +1253,30 @@ export function ExaminersAppointmentLettersPanel({ examId, exams, defaultSubject
                   void handleToggleRelease(enabled);
                 }}
               />
-              Enable release
+              Enable appointment letter release
+            </label>
+
+            <label className="flex items-start gap-2 rounded-lg border border-border/70 bg-muted/15 px-3 py-2.5 text-sm">
+              <input
+                type="checkbox"
+                className="mt-0.5 size-4 rounded border-border"
+                checked={releaseDraft.bankDetailsEditable}
+                disabled={releaseLoading || releaseBusy}
+                onChange={(e) =>
+                  setReleaseDraft((prev) =>
+                    prev ? { ...prev, bankDetailsEditable: e.target.checked } : prev,
+                  )
+                }
+              />
+              <span>
+                <span className="font-medium text-foreground">
+                  Allow examiners to enter and edit bank details
+                </span>
+                <span className="mt-1 block text-xs leading-relaxed text-muted-foreground">
+                  Independent of appointment letter release. When off, examiners cannot add or update
+                  bank details on their portal.
+                </span>
+              </span>
             </label>
 
             <div className="space-y-2">

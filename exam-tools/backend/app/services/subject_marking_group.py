@@ -75,6 +75,19 @@ DEFAULT_COHORT_NAME = "All examiners"
 
 
 def group_response(group: SubjectMarkingGroup) -> dict:
+    member_regions: list[str] = []
+    seen_regions: set[str] = set()
+    for member in group.members:
+        examiner = getattr(member, "examiner", None)
+        if examiner is None or examiner.region is None:
+            continue
+        region_value = examiner.region.value
+        if region_value in seen_regions:
+            continue
+        seen_regions.add(region_value)
+        member_regions.append(region_value)
+    member_regions.sort()
+
     return {
         "id": group.id,
         "examination_id": int(group.examination_id),
@@ -82,6 +95,7 @@ def group_response(group: SubjectMarkingGroup) -> dict:
         "name": group.name,
         "is_default": bool(group.is_default),
         "examiner_ids": [m.examiner_id for m in group.members],
+        "member_regions": member_regions,
         "source_regions": [r.region.value for r in group.source_regions],
         "source_roles": [r.examiner_type.value for r in group.source_roles],
         "coordination_start_date": group.coordination_start_date,
@@ -99,7 +113,7 @@ def group_response(group: SubjectMarkingGroup) -> dict:
 
 def _group_load_options() -> list:
     return [
-        selectinload(SubjectMarkingGroup.members),
+        selectinload(SubjectMarkingGroup.members).selectinload(SubjectMarkingGroupMember.examiner),
         selectinload(SubjectMarkingGroup.source_regions),
         selectinload(SubjectMarkingGroup.source_roles),
     ]

@@ -1,5 +1,7 @@
 "use client";
 
+import Link from "next/link";
+import { FileText } from "lucide-react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
@@ -28,6 +30,7 @@ import {
   officialAccountsPanelFillClass,
   officialAccountsTableLayoutClass,
 } from "@/lib/official-accounts-zone";
+import { buildExaminerMarkingAttendanceSheetsHref } from "@/lib/finance-nav";
 import {
   parseScriptControlSubjectTypeFilter,
   type ScriptControlSubjectTypeFilter,
@@ -292,6 +295,11 @@ export function FinanceExaminerAttendancePanel() {
         ? "No attendance has been recorded for this subject yet."
         : "No examiners on this subject roster.";
 
+  const paperSheetsHref =
+    examId != null && parsedSubjectId != null
+      ? buildExaminerMarkingAttendanceSheetsHref({ examId, subjectId: parsedSubjectId })
+      : null;
+
   return (
     <div className={officialAccountsPageLayoutClass}>
       <div className={officialAccountsPanelFillClass}>
@@ -347,9 +355,20 @@ export function FinanceExaminerAttendancePanel() {
                     disabled={listBusy && roster.length === 0}
                   />
                 </div>
-                <p className="shrink-0 text-sm tabular-nums text-muted-foreground" aria-live="polite">
-                  {tableMeta}
-                </p>
+                <div className="flex shrink-0 flex-wrap items-center gap-3">
+                  {paperSheetsHref ? (
+                    <Link
+                      href={paperSheetsHref}
+                      className="inline-flex min-h-9 items-center justify-center gap-1.5 rounded-lg border border-input-border bg-background px-3 text-sm font-medium text-foreground transition-colors hover:bg-muted focus:outline-none focus:ring-2 focus:ring-ring/30"
+                    >
+                      <FileText className="size-4" aria-hidden />
+                      Paper sheets
+                    </Link>
+                  ) : null}
+                  <p className="text-sm tabular-nums text-muted-foreground" aria-live="polite">
+                    {tableMeta}
+                  </p>
+                </div>
               </div>
             </div>
           ) : (

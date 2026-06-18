@@ -65,7 +65,7 @@ export function CohortRosterTable({ members, className, showReferenceCode = true
   }
 
   return (
-    <div className={cn("flex min-h-0 flex-col gap-3", className)}>
+    <div className={cn("flex h-full min-h-0 flex-col gap-3", className)}>
       <div className="relative shrink-0">
         <Search className="pointer-events-none absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
         <input
@@ -83,11 +83,11 @@ export function CohortRosterTable({ members, className, showReferenceCode = true
       ) : (
         <div
           className={cn(
-            "min-h-0 flex-1 overflow-hidden rounded-lg border",
+            "flex min-h-0 flex-1 flex-col overflow-hidden rounded-lg border",
             tinted ? "border-emerald-500/15 bg-background/70" : "border-border",
           )}
         >
-          <div className="max-h-[40vh] overflow-auto">
+          <div className="min-h-0 flex-1 overflow-auto">
             <Table>
               <TableHeader
                 className={cn(

@@ -16,7 +16,7 @@ type Props = {
 
 export function ExaminerInvitationProfilePanel({ token, invitation }: Props) {
   const lettersAvailable = invitation.appointment_letters_available === true;
-  const pendingMessage = invitation.appointment_letters_pending_message;
+  const letterPendingMessage = invitation.appointment_letters_pending_message;
 
   return (
     <div className="flex flex-1 flex-col space-y-5">
@@ -59,9 +59,9 @@ export function ExaminerInvitationProfilePanel({ token, invitation }: Props) {
         </div>
       ) : null}
 
-      {!lettersAvailable && pendingMessage ? (
+      {!lettersAvailable && letterPendingMessage ? (
         <div className="rounded-2xl border border-amber-500/30 bg-amber-500/10 px-4 py-3 text-sm leading-relaxed text-foreground">
-          {pendingMessage}
+          {letterPendingMessage}
           {invitation.coordination_end_at ? (
             <> Coordination ends {formatDateTime(invitation.coordination_end_at)}.</>
           ) : null}
