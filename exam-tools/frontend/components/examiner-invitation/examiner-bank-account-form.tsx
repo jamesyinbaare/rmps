@@ -60,7 +60,8 @@ function accountDisplayValue(row: ExaminerBankAccountPublic): string {
 }
 
 export function ExaminerBankAccountForm({ token, invitation, className }: Props) {
-  const lettersAvailable = invitation.appointment_letters_available === true;
+  const bankDetailsAvailable = invitation.bank_details_available === true;
+  const bankPendingMessage = invitation.bank_details_pending_message;
   const formId = useId();
   const modalScrollRef = useRef<HTMLDivElement>(null);
   const titleId = `${formId}-modal-title`;
@@ -317,6 +318,15 @@ export function ExaminerBankAccountForm({ token, invitation, className }: Props)
           </div>
         </div>
 
+        {bankPendingMessage && !bankDetailsAvailable ? (
+          <p
+            className="mt-4 rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-sm leading-relaxed text-foreground"
+            role="status"
+          >
+            {bankPendingMessage}
+          </p>
+        ) : null}
+
         {cardError ? (
           <p
             className="mt-4 rounded-lg border border-destructive/30 bg-destructive/10 px-3 py-2 text-sm text-destructive"
@@ -355,7 +365,7 @@ export function ExaminerBankAccountForm({ token, invitation, className }: Props)
           type="button"
           className="mt-4 min-h-11 w-full"
           onClick={openModal}
-          disabled={busy || !lettersAvailable}
+          disabled={busy || !bankDetailsAvailable}
         >
           {saved ? (
             <>

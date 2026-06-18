@@ -14,6 +14,7 @@ class ExaminerPortalSettingsResponse(BaseModel):
     appointment_letters_release_enabled: bool
     appointment_letters_release_mode: AppointmentLettersReleaseModeApi
     appointment_letters_release_at: datetime | None = None
+    examiner_bank_details_editable_by_examiners: bool
     updated_at: datetime
     rostered_examiner_count: int
     pending_release_count: int
@@ -27,6 +28,7 @@ class ExaminerPortalSettingsPut(BaseModel):
         AppointmentLettersReleaseModeApi.SCHEDULED_DATE
     )
     appointment_letters_release_at: datetime | None = None
+    examiner_bank_details_editable_by_examiners: bool = False
 
 
 class NotifyEligibleAppointmentLettersResponse(BaseModel):

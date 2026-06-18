@@ -97,12 +97,13 @@ async def resolve_examiner_id_for_portal_token(session: AsyncSession, token: str
 
 
 async def resolve_examiner_id_for_letter_and_bank(session: AsyncSession, token: str) -> UUID:
-    """Accepted/rostered examiner with appointment letter release gate."""
-    examiner_id = await resolve_examiner_id_for_portal_token(session, token)
-    from sqlalchemy.orm import selectinload
+    """Deprecated: use resolve_examiner_id_for_appointment_letter or resolve_examiner_id_for_bank_details."""
+    return await resolve_examiner_id_for_appointment_letter(session, token)
 
+
+async def _load_examiner_for_gated_portal(session: AsyncSession, examiner_id: UUID) -> Examiner:
     from app.models import ExaminerSubject
-    from app.services.examiner_portal_release import assert_may_access_letter_and_bank, load_examiner_for_portal
+    from app.services.examiner_portal_release import load_examiner_for_portal
 
     examiner = await load_examiner_for_portal(session, examiner_id)
     if examiner is None:
@@ -114,7 +115,26 @@ async def resolve_examiner_id_for_letter_and_bank(session: AsyncSession, token: 
         examiner = (await session.execute(stmt)).scalar_one_or_none()
     if examiner is None:
         raise ValueError("Examiner record not found.")
-    await assert_may_access_letter_and_bank(session, examiner)
+    return examiner
+
+
+async def resolve_examiner_id_for_appointment_letter(session: AsyncSession, token: str) -> UUID:
+    """Accepted/rostered examiner with appointment letter release gate."""
+    examiner_id = await resolve_examiner_id_for_portal_token(session, token)
+    from app.services.examiner_portal_release import assert_may_access_appointment_letter
+
+    examiner = await _load_examiner_for_gated_portal(session, examiner_id)
+    await assert_may_access_appointment_letter(session, examiner)
+    return examiner_id
+
+
+async def resolve_examiner_id_for_bank_details(session: AsyncSession, token: str) -> UUID:
+    """Accepted/rostered examiner with bank details entry gate."""
+    examiner_id = await resolve_examiner_id_for_portal_token(session, token)
+    from app.services.examiner_portal_release import assert_may_access_bank_details
+
+    examiner = await _load_examiner_for_gated_portal(session, examiner_id)
+    await assert_may_access_bank_details(session, examiner)
     return examiner_id
 
 

@@ -4248,6 +4248,8 @@ export type ExaminerInvitationPublic = {
   phone_number: string;
   examination_id: number;
   examination_name: string;
+  examination_type?: string | null;
+  examination_year?: number | null;
   examination_description: string | null;
   subject_name: string;
   subject_code: string;
@@ -4275,6 +4277,9 @@ export type ExaminerInvitationPublic = {
   appointment_letters_release_mode?: AppointmentLettersReleaseMode;
   appointment_letters_release_at?: string | null;
   appointment_letters_pending_message?: string | null;
+  bank_details_editable_by_examiners?: boolean;
+  bank_details_available?: boolean;
+  bank_details_pending_message?: string | null;
 };
 
 export type AppointmentLettersReleaseMode = "on_acceptance" | "scheduled_date";
@@ -4284,6 +4289,7 @@ export type ExaminerPortalSettings = {
   appointment_letters_release_enabled: boolean;
   appointment_letters_release_mode: AppointmentLettersReleaseMode;
   appointment_letters_release_at: string | null;
+  examiner_bank_details_editable_by_examiners: boolean;
   updated_at: string;
   rostered_examiner_count: number;
   pending_release_count: number;
@@ -4295,6 +4301,7 @@ export type ExaminerPortalSettingsPut = {
   appointment_letters_release_enabled: boolean;
   appointment_letters_release_mode: AppointmentLettersReleaseMode;
   appointment_letters_release_at?: string | null;
+  examiner_bank_details_editable_by_examiners: boolean;
 };
 
 export type NotifyEligibleAppointmentLettersResponse = {

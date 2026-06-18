@@ -23,8 +23,10 @@ from app.services.examiner_invitation import (
 from app.services.examiner_portal import ResolvedPortalExaminer, ResolvedPortalInvitation
 from app.services.examiner_portal_release import (
     appointment_letter_pending_message,
+    bank_fields_from_settings,
     get_or_create_portal_settings,
     is_appointment_letter_available,
+    is_bank_details_editable,
     is_release_enabled,
 )
 from app.services.sms.examiner_appointment_letter_release import maybe_notify_on_portal_visit
@@ -79,6 +81,7 @@ async def _release_fields_for_examiner(session: AsyncSession, examiner: Examiner
         "appointment_letters_release_mode": mode.value,
         "appointment_letters_release_at": row.appointment_letters_release_at,
         "appointment_letters_pending_message": pending,
+        **bank_fields_from_settings(row),
     }
 
 
@@ -99,6 +102,9 @@ async def enrich_portal_with_release(
                     "appointment_letters_release_mode": AppointmentLettersReleaseMode.SCHEDULED_DATE.value,
                     "appointment_letters_release_at": None,
                     "appointment_letters_pending_message": None,
+                    "bank_details_editable_by_examiners": False,
+                    "bank_details_available": False,
+                    "bank_details_pending_message": None,
                 }
             )
             return summary
@@ -125,6 +131,7 @@ async def enrich_portal_with_release(
                     release_at=row.appointment_letters_release_at,
                     examiner_accepted=accepted,
                 ),
+                **bank_fields_from_settings(row),
             }
         )
         return summary
@@ -204,6 +211,8 @@ async def public_roster_portal_view(
         "invitee_name": examiner.name,
         "phone_number": examiner.phone_number or "",
         "examination_name": exam_label,
+        "examination_type": exam.exam_type if exam else None,
+        "examination_year": exam.year if exam else None,
         "examination_description": exam.description if exam else None,
         "subject_name": subject.name,
         "subject_code": subject.code,

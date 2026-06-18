@@ -2687,6 +2687,9 @@ class ExaminationExaminerPortalSettings(Base):
         server_default="scheduled_date",
     )
     appointment_letters_release_at = Column(DateTime, nullable=True)
+    examiner_bank_details_editable_by_examiners = Column(
+        Boolean, nullable=False, default=False, server_default=text("false")
+    )
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
 
     examination = relationship("Examination", backref="examiner_portal_settings")
