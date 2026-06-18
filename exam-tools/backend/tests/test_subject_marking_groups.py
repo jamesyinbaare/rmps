@@ -25,6 +25,9 @@ def test_group_response_shape() -> None:
     examiner_id = uuid4()
     member = MagicMock()
     member.examiner_id = examiner_id
+    examiner = MagicMock()
+    examiner.region = MagicMock(value="greater_accra")
+    member.examiner = examiner
     group = MagicMock(spec=SubjectMarkingGroup)
     group.id = group_id
     group.examination_id = 1
@@ -46,6 +49,7 @@ def test_group_response_shape() -> None:
     data = group_response(group)
     assert data["id"] == group_id
     assert data["examiner_ids"] == [examiner_id]
+    assert data["member_regions"] == ["greater_accra"]
     assert data["source_regions"] == []
     assert data["source_roles"] == []
     assert data["coordination_start_date"] == datetime(2026, 6, 15)

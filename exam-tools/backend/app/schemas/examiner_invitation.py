@@ -137,6 +137,19 @@ class ExaminerInvitationRenewResponse(BaseModel):
     sms_delivery_id: UUID | None = None
 
 
+class ExaminerInvitationRegenerateLinkRequest(BaseModel):
+    confirm: bool = False
+    send_sms: bool | None = None
+
+
+class ExaminerInvitationRegenerateLinkResponse(BaseModel):
+    public_url: str
+    invitation: ExaminerInvitationResponse
+    sms_sent: bool | None = None
+    sms_error: str | None = None
+    sms_delivery_id: UUID | None = None
+
+
 class ExaminerInvitationBulkImportRowError(BaseModel):
     row_number: int
     message: str

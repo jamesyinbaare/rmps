@@ -35,6 +35,7 @@ import {
   CENTRE_SUMMARY_HREF,
   EXAMINER_ACCOUNTS_BY_SUBJECT_HREF,
   EXAMINER_ATTENDANCE_HREF,
+  EXAMINER_MARKING_ATTENDANCE_SHEETS_HREF,
   EXAMINER_PAYOUTS_HREF,
   FINANCE_CENTRE_SUMMARY_HREF,
   financePageStickyTitle,
@@ -149,6 +150,8 @@ function AdminDashboardShellInner({ children }: Props) {
   const onMarkingFinancePage =
     pathname === EXAMINER_ATTENDANCE_HREF
     || pathname.startsWith(`${EXAMINER_ATTENDANCE_HREF}/`)
+    || pathname === EXAMINER_MARKING_ATTENDANCE_SHEETS_HREF
+    || pathname.startsWith(`${EXAMINER_MARKING_ATTENDANCE_SHEETS_HREF}/`)
     || pathname === EXAMINER_PAYOUTS_HREF
     || pathname.startsWith(`${EXAMINER_PAYOUTS_HREF}/`)
     || pathname === EXAMINER_ACCOUNTS_BY_SUBJECT_HREF

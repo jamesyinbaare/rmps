@@ -2885,6 +2885,7 @@ export async function listAdminExaminerAllowances(params: {
   role?: string | null;
   region?: string | null;
   subject_id?: number | null;
+  group_id?: string | null;
   search?: string | null;
   skip?: number;
   limit?: number;
@@ -2894,10 +2895,20 @@ export async function listAdminExaminerAllowances(params: {
   if (params.role?.trim()) q.set("role", params.role.trim());
   if (params.region?.trim()) q.set("region", params.region.trim());
   if (params.subject_id != null) q.set("subject_id", String(params.subject_id));
+  if (params.group_id?.trim()) q.set("group_id", params.group_id.trim());
   if (params.search?.trim()) q.set("search", params.search.trim());
   if (params.skip != null) q.set("skip", String(params.skip));
   if (params.limit != null) q.set("limit", String(params.limit));
   return apiJson<AdminExaminerAllowanceListResponse>(`/admin/examiner-allowances?${q.toString()}`);
+}
+
+export async function listAdminSubjectMarkingGroups(
+  examId: number,
+  subjectId: number,
+): Promise<SubjectMarkingGroupRow[]> {
+  return apiJson<SubjectMarkingGroupRow[]>(
+    `/admin/examinations/${examId}/subject-marking-groups?subject_id=${subjectId}`,
+  );
 }
 
 export async function downloadAdminExaminerAllowancesExport(params: {
@@ -2905,6 +2916,7 @@ export async function downloadAdminExaminerAllowancesExport(params: {
   role?: string | null;
   region?: string | null;
   subject_id?: number | null;
+  group_id?: string | null;
   search?: string | null;
   filename: string;
 }): Promise<void> {
@@ -2913,6 +2925,7 @@ export async function downloadAdminExaminerAllowancesExport(params: {
   if (params.role?.trim()) q.set("role", params.role.trim());
   if (params.region?.trim()) q.set("region", params.region.trim());
   if (params.subject_id != null) q.set("subject_id", String(params.subject_id));
+  if (params.group_id?.trim()) q.set("group_id", params.group_id.trim());
   if (params.search?.trim()) q.set("search", params.search.trim());
   await downloadApiFile(`/admin/examiner-allowances/export.xlsx?${q.toString()}`, params.filename);
 }
@@ -2924,6 +2937,7 @@ export async function downloadAdminExaminerAllowancesBogExport(params: {
   role?: string | null;
   region?: string | null;
   subject_id?: number | null;
+  group_id?: string | null;
   search?: string | null;
   payout_mode?: ExaminerBogPayoutMode;
   filename: string;
@@ -2933,6 +2947,7 @@ export async function downloadAdminExaminerAllowancesBogExport(params: {
   if (params.role?.trim()) q.set("role", params.role.trim());
   if (params.region?.trim()) q.set("region", params.region.trim());
   if (params.subject_id != null) q.set("subject_id", String(params.subject_id));
+  if (params.group_id?.trim()) q.set("group_id", params.group_id.trim());
   if (params.search?.trim()) q.set("search", params.search.trim());
   if (params.payout_mode && params.payout_mode !== "all") q.set("payout_mode", params.payout_mode);
   await downloadApiFile(`/admin/examiner-allowances/bog-export.xlsx?${q.toString()}`, params.filename);
@@ -4813,8 +4828,101 @@ export async function updateExaminationExaminer(
   });
 }
 
-export async function deleteExaminationExaminer(examinationId: number, examinerId: string): Promise<void> {
-  await apiJson(`/examinations/${examinationId}/examiners/${examinerId}`, { method: "DELETE" });
+export type ExaminerDeleteImpact = {
+  examiner_id: string;
+  examiner_name: string;
+  manual_allocations: {
+    subject_code: string;
+    subject_name: string;
+    paper_number: number;
+    script_count: number;
+  }[];
+  envelope_assignments: {
+    allocation_id: string;
+    allocation_name: string;
+    subject_code: string;
+    subject_name: string;
+    paper_number: number;
+    school_name: string;
+    envelope_number: number;
+    booklet_count: number;
+    run_id: string;
+  }[];
+  allocation_campaigns: {
+    allocation_id: string;
+    allocation_name: string;
+    subject_code: string;
+    subject_name: string;
+    paper_number: number;
+  }[];
+  total_manual_scripts: number;
+  total_envelopes: number;
+  requires_confirmation: boolean;
+};
+
+export async function getExaminerDeletePreview(
+  examinationId: number,
+  examinerId: string,
+): Promise<ExaminerDeleteImpact> {
+  return apiJson<ExaminerDeleteImpact>(
+    `/examinations/${examinationId}/examiners/${examinerId}/delete-preview`,
+  );
+}
+
+export async function deleteExaminationExaminer(
+  examinationId: number,
+  examinerId: string,
+  options?: { confirmRemoveAllocations?: boolean },
+): Promise<void> {
+  const q = new URLSearchParams();
+  if (options?.confirmRemoveAllocations) q.set("confirm_remove_allocations", "true");
+  const suffix = q.toString() ? `?${q.toString()}` : "";
+  await apiJson(`/examinations/${examinationId}/examiners/${examinerId}${suffix}`, { method: "DELETE" });
+}
+
+export type ExaminerPortalLinkRegenerateResponse = {
+  examiner_id: string;
+  portal_url: string;
+};
+
+export async function regenerateExaminerPortalLink(
+  examinationId: number,
+  examinerId: string,
+): Promise<ExaminerPortalLinkRegenerateResponse> {
+  return apiJson<ExaminerPortalLinkRegenerateResponse>(
+    `/examinations/${examinationId}/examiners/${examinerId}/regenerate-portal-link`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ confirm: true }),
+    },
+  );
+}
+
+export type ExaminerInvitationRegenerateLinkResponse = {
+  public_url: string;
+  invitation: ExaminerInvitationRow;
+  sms_sent: boolean | null;
+  sms_error: string | null;
+  sms_delivery_id: string | null;
+};
+
+export async function regenerateExaminerInvitationLink(
+  examinationId: number,
+  invitationId: string,
+  options?: { sendSms?: boolean },
+): Promise<ExaminerInvitationRegenerateLinkResponse> {
+  return apiJson<ExaminerInvitationRegenerateLinkResponse>(
+    `/examinations/${examinationId}/examiner-invitations/${invitationId}/regenerate-link`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        confirm: true,
+        send_sms: options?.sendSms ?? false,
+      }),
+    },
+  );
 }
 
 export async function listExaminerInvitations(examinationId: number): Promise<ExaminerInvitationRow[]> {
@@ -5929,6 +6037,7 @@ export type SubjectMarkingGroupRow = {
   name: string;
   is_default?: boolean;
   examiner_ids: string[];
+  member_regions: string[];
   source_regions: string[];
   source_roles: string[];
   coordination_start_date: string | null;

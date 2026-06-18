@@ -14,6 +14,11 @@ from app.dependencies.auth import (
 )
 from app.dependencies.database import DBSessionDep
 from app.models import Examination, Examiner, ExaminerRosterSource, ExaminerSubject, ExaminerType, User
+from app.schemas.examiner_delete import ExaminerDeleteImpactResponse
+from app.schemas.examiner_portal import (
+    ExaminerPortalLinkRegenerateRequest,
+    ExaminerPortalLinkRegenerateResponse,
+)
 from app.schemas.script_allocation import (
     ExaminerBulkImportResponse,
     ExaminerBulkImportRowError,
@@ -26,7 +31,16 @@ from app.schemas.script_allocation import (
     ExaminerTypeSchema,
     ExaminerUpdate,
 )
-from app.services.examiner_portal import examiner_portal_url, generate_portal_token
+from app.services.examiner_delete import (
+    build_examiner_delete_impact,
+    delete_examiner_with_cleanup,
+    load_examiner_for_delete,
+)
+from app.services.examiner_portal import (
+    examiner_portal_url,
+    generate_portal_token,
+    regenerate_examiner_portal_link,
+)
 from app.services.examiner_roster import (
     dataframe_row_to_examiner_fields,
     parse_gender_cell,
@@ -504,32 +518,86 @@ async def update_examiner(
     return _examiner_response(ex2)
 
 
-@router.delete("/examinations/{examination_id}/examiners/{examiner_id}", status_code=status.HTTP_204_NO_CONTENT)
-async def delete_examiner(
+@router.post(
+    "/examinations/{examination_id}/examiners/{examiner_id}/regenerate-portal-link",
+    response_model=ExaminerPortalLinkRegenerateResponse,
+)
+async def regenerate_examiner_portal_link_endpoint(
     session: DBSessionDep,
     user: SuperAdminOrTestAdminOfficerOrSubjectOfficerDep,
     examination_id: int,
     examiner_id: UUID,
-) -> None:
+    body: ExaminerPortalLinkRegenerateRequest,
+) -> ExaminerPortalLinkRegenerateResponse:
     assert_unrestricted_examiner_manager(user)
+    if not body.confirm:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Set confirm to true to regenerate the portal link.",
+        )
     stmt = (
         select(Examiner)
         .where(Examiner.id == examiner_id, Examiner.examination_id == examination_id)
-        .options(selectinload(Examiner.subjects))
+        .options(
+            selectinload(Examiner.subjects),
+            selectinload(Examiner.invitation),
+        )
     )
     ex = (await session.execute(stmt)).scalar_one_or_none()
     if ex is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Examiner not found")
     await _assert_examiner_accessible(session, user, examination_id, ex)
-    subject_ids_before = _examiner_subject_ids(ex)
-    await session.delete(ex)
-    await session.flush()
-    for sid in subject_ids_before:
-        await sync_default_cohort_members(
-            session,
-            examination_id=examination_id,
-            subject_id=sid,
+    try:
+        portal_url = await regenerate_examiner_portal_link(session, ex)
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+    await session.commit()
+    return ExaminerPortalLinkRegenerateResponse(examiner_id=ex.id, portal_url=portal_url)
+
+
+@router.get(
+    "/examinations/{examination_id}/examiners/{examiner_id}/delete-preview",
+    response_model=ExaminerDeleteImpactResponse,
+)
+async def get_examiner_delete_preview(
+    session: DBSessionDep,
+    user: SuperAdminOrTestAdminOfficerOrSubjectOfficerDep,
+    examination_id: int,
+    examiner_id: UUID,
+) -> ExaminerDeleteImpactResponse:
+    assert_unrestricted_examiner_manager(user)
+    ex = await load_examiner_for_delete(session, examination_id, examiner_id)
+    if ex is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Examiner not found")
+    await _assert_examiner_accessible(session, user, examination_id, ex)
+    return await build_examiner_delete_impact(session, examination_id, ex)
+
+
+@router.delete(
+    "/examinations/{examination_id}/examiners/{examiner_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+)
+async def delete_examiner(
+    session: DBSessionDep,
+    user: SuperAdminOrTestAdminOfficerOrSubjectOfficerDep,
+    examination_id: int,
+    examiner_id: UUID,
+    confirm_remove_allocations: bool = Query(False),
+) -> None:
+    assert_unrestricted_examiner_manager(user)
+    ex = await load_examiner_for_delete(session, examination_id, examiner_id)
+    if ex is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Examiner not found")
+    await _assert_examiner_accessible(session, user, examination_id, ex)
+
+    impact = await build_examiner_delete_impact(session, examination_id, ex)
+    if impact.requires_confirmation and not confirm_remove_allocations:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=impact.model_dump(mode="json"),
         )
+
+    await delete_examiner_with_cleanup(session, examination_id, ex)
     await session.commit()
 
 

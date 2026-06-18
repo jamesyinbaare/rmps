@@ -26,6 +26,8 @@ from app.schemas.examiner_invitation import (
     ExaminerInvitationCoordinationUpdate,
     ExaminerInvitationCreate,
     ExaminerInvitationResponse,
+    ExaminerInvitationRegenerateLinkRequest,
+    ExaminerInvitationRegenerateLinkResponse,
     ExaminerInvitationRenew,
     ExaminerInvitationRenewResponse,
     ExaminerInvitationResponseDeadlineUpdate,
@@ -42,6 +44,7 @@ from app.services.examiner_invitation import (
     update_examiner_invitation_response_deadline,
     update_invitation_coordination_schedule,
 )
+from app.services.examiner_portal import regenerate_invitation_portal_link
 from app.services.examiner_roster import (
     dataframe_row_to_examiner_fields,
     parse_gender_cell,
@@ -406,6 +409,74 @@ async def resend_examiner_invitation_sms(
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="SMS is disabled")
     return ExaminerInvitationResendResponse(
         sms_sent=bool(sms_sent),
+        sms_error=sms_error,
+        sms_delivery_id=sms_delivery_id,
+    )
+
+
+@router.post(
+    "/examinations/{examination_id}/examiner-invitations/{invitation_id}/regenerate-link",
+    response_model=ExaminerInvitationRegenerateLinkResponse,
+    summary="Rotate an examiner invitation portal link",
+)
+async def regenerate_examiner_invitation_link_endpoint(
+    session: DBSessionDep,
+    user: CurrentUserDep,
+    auth_user: SuperAdminOrTestAdminOfficerOrSubjectOfficerDep,
+    examination_id: int,
+    invitation_id: UUID,
+    body: ExaminerInvitationRegenerateLinkRequest,
+) -> ExaminerInvitationRegenerateLinkResponse:
+    if not body.confirm:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Set confirm to true to regenerate the portal link.",
+        )
+    stmt = (
+        select(ExaminerInvitation)
+        .where(
+            ExaminerInvitation.id == invitation_id,
+            ExaminerInvitation.examination_id == examination_id,
+        )
+        .options(
+            selectinload(ExaminerInvitation.subject),
+            selectinload(ExaminerInvitation.examination),
+        )
+    )
+    inv = (await session.execute(stmt)).scalar_one_or_none()
+    if inv is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Invitation not found")
+    await _assert_invitation_accessible(session, auth_user, examination_id, inv)
+
+    try:
+        public_url = await regenerate_invitation_portal_link(session, inv)
+        sms_sent: bool | None = None
+        sms_error: str | None = None
+        sms_delivery_id: UUID | None = None
+        if body.send_sms:
+            sms_sent, sms_error, sms_delivery_id = await maybe_send_examiner_invitation_sms(
+                inv,
+                True,
+                session=session,
+                triggered_by_user_id=user.id,
+                trigger="regenerate_link",
+            )
+        await session.commit()
+    except ValueError as exc:
+        await session.rollback()
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+
+    stmt_reload = (
+        select(ExaminerInvitation)
+        .where(ExaminerInvitation.id == inv.id)
+        .options(selectinload(ExaminerInvitation.subject))
+    )
+    inv2 = (await session.execute(stmt_reload)).scalar_one()
+    sms = await _latest_sms_delivery(session, inv2.id)
+    return ExaminerInvitationRegenerateLinkResponse(
+        public_url=public_url,
+        invitation=_invitation_response(inv2, sms),
+        sms_sent=sms_sent,
         sms_error=sms_error,
         sms_delivery_id=sms_delivery_id,
     )

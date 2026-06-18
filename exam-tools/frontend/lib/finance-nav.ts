@@ -1,4 +1,5 @@
 import type { TimetableSubjectFilter } from "@/lib/api";
+import type { ScriptControlSubjectTypeFilter } from "@/lib/script-control-subjects";
 import {
   ACCOUNT_DETAILS_BY_CENTRE_LABEL,
   BANK_ACCOUNTS_LABEL,
@@ -56,6 +57,24 @@ export function buildAdminAttendanceSheetsHref(params: {
   const scope = timetableFilterToAttendanceScope(params.subjectFilter);
   if (scope) p.set("scope", scope);
   return `${ATTENDANCE_SHEETS_HREF}?${p.toString()}`;
+}
+
+export function buildExaminerMarkingAttendanceSheetsHref(params: {
+  examId: number;
+  subjectId?: number | string | null;
+  cohortId?: string | null;
+  subjectType?: ScriptControlSubjectTypeFilter;
+  attendanceDate?: string | null;
+}): string {
+  const p = new URLSearchParams();
+  p.set("exam", String(params.examId));
+  if (params.subjectId != null && String(params.subjectId).trim()) {
+    p.set("subject", String(params.subjectId).trim());
+  }
+  if (params.cohortId?.trim()) p.set("cohort", params.cohortId.trim());
+  if (params.subjectType && params.subjectType !== "all") p.set("stype", params.subjectType);
+  if (params.attendanceDate?.trim()) p.set("date", params.attendanceDate.trim());
+  return `${EXAMINER_MARKING_ATTENDANCE_SHEETS_HREF}?${p.toString()}`;
 }
 
 export type FinanceNavIcon =
@@ -160,6 +179,12 @@ export const COORDINATION_MARKING_NAV_GROUP: FinanceNavGroup = {
       description: "Marking centre check-ins",
       icon: "attendance",
     },
+    {
+      href: EXAMINER_MARKING_ATTENDANCE_SHEETS_HREF,
+      label: "Paper attendance sheets",
+      description: "Signed cohort uploads",
+      icon: "attendance",
+    },
   ],
 };
 
@@ -186,12 +211,6 @@ const EXAMINATIONS_NAV_ITEMS: FinanceNavItem[] = [
     href: ATTENDANCE_SHEETS_HREF,
     label: "Attendance sheets",
     description: "Centre uploads",
-    icon: "attendance",
-  },
-  {
-    href: EXAMINER_MARKING_ATTENDANCE_SHEETS_HREF,
-    label: "Marking attendance sheets",
-    description: "Cohort signed uploads",
     icon: "attendance",
   },
 ];
@@ -289,7 +308,7 @@ const FINANCE_PAGE_TITLES: [href: string, title: string][] = [
   [INSPECTOR_ANALYSIS_HREF, "Inspector analysis"],
   [INSPECTOR_PAY_VARIANCE_HREF, "Inspector pay variance"],
   [ATTENDANCE_SHEETS_HREF, "Attendance sheets"],
-  [EXAMINER_MARKING_ATTENDANCE_SHEETS_HREF, "Marking attendance sheets"],
+  [EXAMINER_MARKING_ATTENDANCE_SHEETS_HREF, "Paper attendance sheets"],
 ];
 
 export function financePageStickyTitle(pathname: string): string | null {

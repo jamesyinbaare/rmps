@@ -32,6 +32,7 @@ type Props = {
   onInAppSms: (row: RosterTableRow) => void;
   onEdit: (row: RosterTableRow) => void;
   onRemove: (row: RosterTableRow) => void;
+  onRegeneratePortalLink?: (row: RosterTableRow) => void;
   onViewAllocation?: (row: RosterTableRow) => void;
 };
 
@@ -49,6 +50,7 @@ export function RosterMobileList({
   onInAppSms,
   onEdit,
   onRemove,
+  onRegeneratePortalLink,
   onViewAllocation,
 }: Props) {
   const [openActionsId, setOpenActionsId] = useState<string | null>(null);
@@ -99,6 +101,7 @@ export function RosterMobileList({
               onRemove={onRemove}
               canEditRoster={canEditRoster}
               onCopyPortalLink={handleCopyPortalLink}
+              onRegeneratePortalLink={onRegeneratePortalLink}
               onViewAllocation={onViewAllocation}
               embedded
             />

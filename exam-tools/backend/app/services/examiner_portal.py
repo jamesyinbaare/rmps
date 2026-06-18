@@ -3,13 +3,21 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import datetime
 from uuid import UUID
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from app.models import Examiner, ExaminerInvitation, ExaminerSubject, Examination, Subject
+from app.models import (
+    Examiner,
+    ExaminerInvitation,
+    ExaminerInvitationStatus,
+    ExaminerSubject,
+    Examination,
+    Subject,
+)
 from app.services.examiner_invitation import (
     generate_invitation_token,
     get_invitation_by_token,
@@ -108,3 +116,74 @@ async def resolve_examiner_id_for_letter_and_bank(session: AsyncSession, token: 
         raise ValueError("Examiner record not found.")
     await assert_may_access_letter_and_bank(session, examiner)
     return examiner_id
+
+
+_INVITATION_REGENERATE_STATUSES = frozenset(
+    {
+        ExaminerInvitationStatus.PENDING,
+        ExaminerInvitationStatus.EXPIRED,
+        ExaminerInvitationStatus.DECLINED,
+        ExaminerInvitationStatus.QUOTA_WAITLISTED,
+        ExaminerInvitationStatus.ACCEPTED,
+    }
+)
+
+
+async def _portal_token_in_use(session: AsyncSession, token: str) -> bool:
+    examiner_stmt = select(Examiner.id).where(Examiner.portal_token == token).limit(1)
+    if (await session.execute(examiner_stmt)).first() is not None:
+        return True
+    inv_stmt = select(ExaminerInvitation.id).where(ExaminerInvitation.token == token).limit(1)
+    return (await session.execute(inv_stmt)).first() is not None
+
+
+async def generate_unique_portal_token(session: AsyncSession) -> str:
+    for _ in range(32):
+        token = generate_portal_token()
+        if not await _portal_token_in_use(session, token):
+            return token
+    raise RuntimeError("Could not allocate a unique portal token.")
+
+
+def _apply_portal_token_to_accepted_invitation(
+    inv: ExaminerInvitation,
+    token: str,
+) -> None:
+    inv.token = token
+    inv.updated_at = datetime.utcnow()
+
+
+async def regenerate_examiner_portal_link(session: AsyncSession, examiner: Examiner) -> str:
+    """Rotate roster portal token; sync linked accepted invitation token when present."""
+    token = await generate_unique_portal_token(session)
+    examiner.portal_token = token
+    examiner.updated_at = datetime.utcnow()
+
+    inv = examiner.invitation
+    if inv is None:
+        stmt = select(ExaminerInvitation).where(ExaminerInvitation.examiner_id == examiner.id)
+        inv = (await session.execute(stmt)).scalar_one_or_none()
+    if inv is not None and inv.status == ExaminerInvitationStatus.ACCEPTED:
+        _apply_portal_token_to_accepted_invitation(inv, token)
+
+    await session.flush()
+    return examiner_portal_url(token)
+
+
+async def regenerate_invitation_portal_link(session: AsyncSession, inv: ExaminerInvitation) -> str:
+    """Rotate invitation portal token; sync roster examiner token when accepted."""
+    if inv.status not in _INVITATION_REGENERATE_STATUSES:
+        raise ValueError("This invitation cannot have its portal link regenerated.")
+
+    token = await generate_unique_portal_token(session)
+    inv.token = token
+    inv.updated_at = datetime.utcnow()
+
+    if inv.status == ExaminerInvitationStatus.ACCEPTED and inv.examiner_id is not None:
+        examiner = await session.get(Examiner, inv.examiner_id)
+        if examiner is not None:
+            examiner.portal_token = token
+            examiner.updated_at = datetime.utcnow()
+
+    await session.flush()
+    return invitation_public_url(token)

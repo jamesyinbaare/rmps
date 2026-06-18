@@ -980,7 +980,7 @@ class ExaminationExaminerManualMarkedScript(Base):
 
     examination = relationship("Examination", backref="manual_marked_scripts")
     subject = relationship("Subject", backref="manual_marked_scripts")
-    examiner = relationship("Examiner", backref="manual_marked_scripts")
+    examiner = relationship("Examiner", back_populates="manual_marked_scripts")
 
     __table_args__ = (
         CheckConstraint("paper_number >= 1", name="ck_manual_marked_scripts_paper_number"),
@@ -1549,6 +1549,12 @@ class Examiner(Base):
     allocation_assignments = relationship(
         "AllocationAssignment",
         back_populates="examiner",
+        passive_deletes=True,
+    )
+    manual_marked_scripts = relationship(
+        "ExaminationExaminerManualMarkedScript",
+        back_populates="examiner",
+        cascade="all, delete-orphan",
         passive_deletes=True,
     )
     invitation = relationship(

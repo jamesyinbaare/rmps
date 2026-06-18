@@ -52,6 +52,7 @@ type Props = {
   onEdit: (row: RosterTableRow) => void;
   onRemove: (row: RosterTableRow) => void;
   canEditRoster?: boolean;
+  onRegeneratePortalLink?: (row: RosterTableRow) => void;
   onViewAllocation?: (row: RosterTableRow) => void;
   /** When true, table grows with content and the page/shell scrolls (subject-officer). */
   pageScroll?: boolean;
@@ -77,6 +78,7 @@ export function RosterTable({
   onEdit,
   onRemove,
   canEditRoster = true,
+  onRegeneratePortalLink,
   onViewAllocation,
   pageScroll = false,
 }: Props) {
@@ -210,6 +212,7 @@ export function RosterTable({
             onRemove={onRemove}
             canEditRoster={canEditRoster}
             onCopyPortalLink={handleCopyPortalLink}
+            onRegeneratePortalLink={onRegeneratePortalLink}
             onViewAllocation={onViewAllocation}
           />
         ),
@@ -222,6 +225,7 @@ export function RosterTable({
       canEditRoster,
       onEdit,
       onRemove,
+      onRegeneratePortalLink,
       onViewAllocation,
       openActionsId,
     ],

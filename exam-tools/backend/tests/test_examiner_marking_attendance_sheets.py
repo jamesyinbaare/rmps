@@ -205,6 +205,61 @@ async def test_upload_rejects_future_date() -> None:
 
 
 @pytest.mark.asyncio
+async def test_admin_list_allows_finance_officer() -> None:
+    user = MagicMock(role=UserRole.FINANCE_OFFICER)
+    session = AsyncMock()
+
+    sheet = MagicMock()
+    sheet.id = uuid4()
+    sheet.examination_id = 1
+    sheet.subject_id = 10
+    sheet.subject_marking_group_id = uuid4()
+    sheet.attendance_date = date(2026, 6, 14)
+    sheet.notes = None
+    sheet.original_filename = "Northern MATH301 2026-06-14.pdf"
+    sheet.size_bytes = 100
+    sheet.uploaded_by_id = uuid4()
+    sheet.created_at = datetime.utcnow()
+
+    cohort = MagicMock()
+    cohort.name = "Northern"
+
+    subject = MagicMock()
+    subject.name = "Mathematics"
+    subject.code = "MATH301"
+    subject.original_code = "MATH301"
+
+    uploader = MagicMock()
+    uploader.full_name = "Officer One"
+
+    count_result = MagicMock()
+    count_result.scalar_one.return_value = 1
+    list_result = MagicMock()
+    list_result.all.return_value = [(sheet, cohort, subject, uploader)]
+
+    session.execute = AsyncMock(side_effect=[count_result, list_result])
+
+    with patch(
+        "app.routers.admin_examiner_attendance_sheets.load_examination_or_raise",
+        new_callable=AsyncMock,
+    ):
+        response = await list_admin_examiner_attendance_sheets(
+            examination_id=1,
+            session=session,
+            _user=user,
+            subject_id=10,
+            group_id=None,
+            attendance_date=None,
+            q=None,
+            page=1,
+            page_size=50,
+        )
+
+    assert response.total == 1
+    assert response.items[0].cohort_name == "Northern"
+
+
+@pytest.mark.asyncio
 async def test_admin_list_returns_items() -> None:
     user = MagicMock(role=UserRole.SUPER_ADMIN)
     session = AsyncMock()

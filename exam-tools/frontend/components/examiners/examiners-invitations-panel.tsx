@@ -24,6 +24,7 @@ import {
 import { InvitationsSummaryStats } from "@/components/examiner-invitations/invitations-summary-stats";
 import { InvitationsTable } from "@/components/examiner-invitations/invitations-table";
 import { InvitationsMobileList } from "@/components/examiners/invitations-mobile-list";
+import { ExaminerPortalLinkRegenerateConfirmModal } from "@/components/examiners/examiner-portal-link-regenerate-confirm-modal";
 import { ExaminerAllocationModal } from "@/components/examiner-invitations/examiner-allocation-modal";
 import type {
   InvitationStatusCounts,
@@ -54,6 +55,7 @@ import {
   downloadExaminerInvitationLinksExport,
   downloadExaminerInvitationsBulkTemplate,
   listExaminerInvitations,
+  regenerateExaminerInvitationLink,
   renewExaminerInvitation,
   resendExaminerInvitationSms,
   updateExaminerInvitationResponseDeadline,
@@ -122,6 +124,7 @@ export function ExaminersInvitationsPanel({
   const [inviteModalOpen, setInviteModalOpen] = useState(false);
   const [renewModalOpen, setRenewModalOpen] = useState(false);
   const [renewTarget, setRenewTarget] = useState<ExaminerInvitationRow | null>(null);
+  const [regenerateTarget, setRegenerateTarget] = useState<ExaminerInvitationRow | null>(null);
   const [renewError, setRenewError] = useState<string | null>(null);
   const [renewDeadlineInput, setRenewDeadlineInput] = useState("");
   const [renewSendSms, setRenewSendSms] = useState(true);
@@ -553,6 +556,52 @@ export function ExaminersInvitationsPanel({
     renewSendSms,
     renewTarget,
   ]);
+
+  const openRegenerateLink = useCallback((inv: ExaminerInvitationRow) => {
+    setRegenerateTarget(inv);
+  }, []);
+
+  const handleRegenerateLink = useCallback(
+    async ({ sendSms }: { sendSms: boolean }) => {
+      if (examId == null || regenerateTarget == null) return;
+      const targetName = regenerateTarget.name;
+      setBusy(true);
+      setActionMessage(null);
+      try {
+        const res = await regenerateExaminerInvitationLink(examId, regenerateTarget.id, {
+          sendSms,
+        });
+        setInvitations((prev) =>
+          prev.map((row) => (row.id === regenerateTarget.id ? res.invitation : row)),
+        );
+        setRegenerateTarget(null);
+        setActionMessageTone("success");
+        try {
+          await navigator.clipboard.writeText(res.public_url);
+          if (res.sms_sent === true) {
+            setActionMessage(
+              `New link generated for ${targetName}, copied to clipboard, and sent by SMS.`,
+            );
+          } else if (res.sms_sent === false) {
+            setActionMessageTone("error");
+            setActionMessage(
+              `New link generated for ${targetName}, but SMS failed: ${res.sms_error ?? "Unknown error"}`,
+            );
+          } else {
+            setActionMessage(`New link generated for ${targetName} and copied to clipboard.`);
+          }
+        } catch {
+          setActionMessage(`New link generated for ${targetName}: ${res.public_url}`);
+        }
+      } catch (e) {
+        setActionMessageTone("error");
+        setActionMessage(e instanceof Error ? e.message : "Could not generate a new link");
+      } finally {
+        setBusy(false);
+      }
+    },
+    [examId, regenerateTarget],
+  );
 
   const handleResend = useCallback(
     async (inv: ExaminerInvitationRow) => {
@@ -1046,6 +1095,7 @@ export function ExaminersInvitationsPanel({
                     onResend={(inv) => void handleResend(inv)}
                     onRenew={openRenew}
                     onExtendDeadline={openExtend}
+                    onRegenerateLink={openRegenerateLink}
                     onCopyLink={(inv) => void handleCopyLink(inv)}
                     copyLinkUi={copyLinkUi}
                     onViewAllocation={
@@ -1073,6 +1123,7 @@ export function ExaminersInvitationsPanel({
                     onResend={(inv) => void handleResend(inv)}
                     onRenew={openRenew}
                     onExtendDeadline={openExtend}
+                    onRegenerateLink={openRegenerateLink}
                     onCopyLink={(inv) => void handleCopyLink(inv)}
                     copyLinkUi={copyLinkUi}
                     onViewAllocation={
@@ -1087,6 +1138,18 @@ export function ExaminersInvitationsPanel({
             </div>
           </div>
       </section>
+
+      {regenerateTarget ? (
+        <ExaminerPortalLinkRegenerateConfirmModal
+          subjectName={regenerateTarget.name}
+          showSendSmsOption
+          busy={busy}
+          onCancel={() => {
+            if (!busy) setRegenerateTarget(null);
+          }}
+          onConfirm={(options) => void handleRegenerateLink(options)}
+        />
+      ) : null}
 
       <RenewInvitationModal
         open={renewModalOpen}
