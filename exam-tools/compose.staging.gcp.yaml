@@ -46,6 +46,7 @@ services:
     environment:
       - PYTHONUNBUFFERED=1
       - PYTHONDONTWRITEBYTECODE=1
+      - EXAMINER_INVITATION_BASE_URL=https://monitoring.ctvet.gov.gh
     command: >
       sh -c "
         if [ -f app/scripts/prestart.sh ]; then
