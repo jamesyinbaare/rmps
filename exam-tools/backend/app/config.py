@@ -1,8 +1,8 @@
 import json
-from typing import Annotated, Any
+from typing import Annotated, Any, Self
 from urllib.parse import urlparse
 
-from pydantic import Field, field_validator
+from pydantic import Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, NoDecode
 
 
@@ -110,6 +110,19 @@ class Settings(BaseSettings):
     super_admin_email: str = ""  # Required: Email for the initial SUPER_ADMIN user
     super_admin_password: str = ""  # Required: Password for the initial SUPER_ADMIN user
     super_admin_full_name: str = ""  # Required: Full name for the initial SUPER_ADMIN user
+
+    @model_validator(mode="after")
+    def validate_examiner_invitation_base_url_for_environment(self) -> Self:
+        env = (self.environment or "").strip().lower()
+        if env not in ("staging", "production", "prod"):
+            return self
+        host = (urlparse(self.examiner_invitation_base_url).hostname or "").lower()
+        if host in ("localhost", "127.0.0.1"):
+            raise ValueError(
+                "EXAMINER_INVITATION_BASE_URL must be a public frontend URL in staging/production "
+                "(e.g. https://monitoring.ctvet.gov.gh), not localhost."
+            )
+        return self
 
 
 class LoggingSettings(BaseSettings):
