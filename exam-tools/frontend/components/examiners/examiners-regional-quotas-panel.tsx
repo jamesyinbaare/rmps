@@ -531,7 +531,10 @@ export function ExaminersRegionalQuotasPanel({
                         <Users className="size-3.5" aria-hidden />
                         On roster now
                         {subjectRosterOverQuota ? (
-                          <Badge variant="destructive" className="h-5 px-1.5 text-[10px] font-semibold uppercase">
+                          <Badge
+                            variant="outline"
+                            className="h-5 border-red-300/60 bg-red-50 px-1.5 text-[10px] font-semibold uppercase text-red-950 dark:border-red-900/50 dark:bg-red-950/40 dark:text-red-100"
+                          >
                             Over quota
                           </Badge>
                         ) : null}
@@ -781,8 +784,12 @@ export function ExaminersRegionalQuotasPanel({
                                   </p>
                                 </div>
                                 <Badge
-                                  variant={groupRosterOverQuota ? "destructive" : "outline"}
-                                  className="shrink-0 tabular-nums"
+                                  variant="outline"
+                                  className={cn(
+                                    "shrink-0 tabular-nums",
+                                    groupRosterOverQuota &&
+                                      "border-red-300/60 bg-red-50 text-red-950 dark:border-red-900/50 dark:bg-red-950/40 dark:text-red-100",
+                                  )}
                                 >
                                   {rosterOnGroup} on roster
                                   {groupRosterOverQuota && groupCap != null
