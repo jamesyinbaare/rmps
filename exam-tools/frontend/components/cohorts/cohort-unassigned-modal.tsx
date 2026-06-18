@@ -203,8 +203,8 @@ export function CohortUnassignedModal({
               No examiners match your search.
             </p>
           ) : (
-            <div className="min-h-0 flex-1 overflow-hidden rounded-lg border border-border">
-              <div className="max-h-[50vh] overflow-auto">
+            <div className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-lg border border-border">
+              <div className="min-h-0 flex-1 overflow-auto">
                 <Table>
                   <TableHeader className="sticky top-0 z-[1] bg-card shadow-[0_1px_0_0_hsl(var(--border))]">
                     <TableRow>

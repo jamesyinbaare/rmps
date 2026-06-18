@@ -85,10 +85,11 @@ export function CohortMembershipTabs({
 
       <div className="mt-3 flex min-h-0 flex-1 flex-col overflow-hidden" role="tabpanel">
         {activeTab === "regions" ? (
-          <div className="min-h-0 flex-1 overflow-y-auto">
-            <p className="mb-3 text-xs text-muted-foreground">
+          <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
+            <p className="mb-3 shrink-0 text-xs text-muted-foreground">
               Select regions to add all examiners in that home region.
             </p>
+            <div className="min-h-0 flex-1 overflow-y-auto">
             <RegionRulePicker
               options={regionOptions}
               regionsDraft={regionsDraft}
@@ -96,14 +97,16 @@ export function CohortMembershipTabs({
               disabled={disabled}
               onToggle={onToggleRegion}
             />
+            </div>
           </div>
         ) : null}
 
         {activeTab === "roles" && showRolesTab ? (
-          <div className="min-h-0 flex-1 overflow-y-auto">
-            <p className="mb-3 text-xs text-muted-foreground">
+          <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
+            <p className="mb-3 shrink-0 text-xs text-muted-foreground">
               Select roles to add all examiners with that role on this subject.
             </p>
+            <div className="min-h-0 flex-1 overflow-y-auto">
             <RoleRulePicker
               options={roleOptions}
               rolesDraft={rolesDraft}
@@ -111,6 +114,7 @@ export function CohortMembershipTabs({
               disabled={disabled}
               onToggle={onToggleRole}
             />
+            </div>
           </div>
         ) : null}
 

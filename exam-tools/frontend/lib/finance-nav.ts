@@ -34,6 +34,7 @@ export const FINANCE_CENTRE_SUMMARY_HREF = "/dashboard/admin/finance-centre-summ
 export const INSPECTOR_ANALYSIS_HREF = "/dashboard/admin/inspector-analysis";
 export const INSPECTOR_PAY_VARIANCE_HREF = "/dashboard/admin/inspector-pay-variance";
 export const ATTENDANCE_SHEETS_HREF = "/dashboard/admin/attendance-sheets";
+export const EXAMINER_MARKING_ATTENDANCE_SHEETS_HREF = "/dashboard/admin/examiner-attendance-sheets";
 export const BANK_DIRECTORY_HREF = "/dashboard/admin/bank-directory";
 
 export function timetableFilterToAttendanceScope(
@@ -187,6 +188,12 @@ const EXAMINATIONS_NAV_ITEMS: FinanceNavItem[] = [
     description: "Centre uploads",
     icon: "attendance",
   },
+  {
+    href: EXAMINER_MARKING_ATTENDANCE_SHEETS_HREF,
+    label: "Marking attendance sheets",
+    description: "Cohort signed uploads",
+    icon: "attendance",
+  },
 ];
 
 const ANALYSIS_NAV_ITEMS: FinanceNavItem[] = [
@@ -282,6 +289,7 @@ const FINANCE_PAGE_TITLES: [href: string, title: string][] = [
   [INSPECTOR_ANALYSIS_HREF, "Inspector analysis"],
   [INSPECTOR_PAY_VARIANCE_HREF, "Inspector pay variance"],
   [ATTENDANCE_SHEETS_HREF, "Attendance sheets"],
+  [EXAMINER_MARKING_ATTENDANCE_SHEETS_HREF, "Marking attendance sheets"],
 ];
 
 export function financePageStickyTitle(pathname: string): string | null {

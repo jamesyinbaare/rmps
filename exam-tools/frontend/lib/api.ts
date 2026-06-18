@@ -5447,6 +5447,214 @@ export async function deleteInspectorAttendanceSheet(
   );
 }
 
+export type ExaminerMarkingAttendanceSheet = {
+  id: string;
+  examination_id: number;
+  subject_id: number;
+  cohort_id: string;
+  cohort_name: string;
+  attendance_date: string;
+  notes: string | null;
+  original_filename: string;
+  size_bytes: number;
+  uploaded_by_id: string | null;
+  created_at: string;
+};
+
+export type ExaminerMarkingAttendanceSheetListResponse = {
+  items: ExaminerMarkingAttendanceSheet[];
+  total: number;
+};
+
+export type ExaminerMarkingAttendanceSheetAdmin = ExaminerMarkingAttendanceSheet & {
+  subject_code: string;
+  subject_name: string;
+  uploader_full_name: string | null;
+};
+
+export type ExaminerMarkingAttendanceSheetAdminListResponse = {
+  items: ExaminerMarkingAttendanceSheetAdmin[];
+  total: number;
+  page: number;
+  page_size: number;
+};
+
+export type ExaminerMarkingAttendanceSheetAdminSummary = {
+  total_uploads: number;
+  cohorts_with_uploads: number;
+  cohorts_expected: number | null;
+  cohorts_missing: number | null;
+};
+
+function examinerAttendanceSheetsSubjectQuery(subjectId: number, extra?: Record<string, string>): string {
+  const q = new URLSearchParams();
+  q.set("subject_id", String(subjectId));
+  if (extra) {
+    for (const [key, value] of Object.entries(extra)) {
+      if (value.trim()) q.set(key, value.trim());
+    }
+  }
+  return `?${q.toString()}`;
+}
+
+export async function downloadExaminerAttendanceSheetBlankPdf(params: {
+  examination_id: number;
+  subject_id: number;
+  group_id: string;
+  attendance_date: string;
+  filename?: string;
+}): Promise<void> {
+  const q = new URLSearchParams();
+  q.set("subject_id", String(params.subject_id));
+  q.set("group_id", params.group_id);
+  q.set("attendance_date", params.attendance_date);
+  const fallback = `Attendance_${params.group_id}_${params.attendance_date}.pdf`;
+  await downloadApiFile(
+    `/examinations/${params.examination_id}/subject-officer/examiner-attendance-sheets/blank.pdf?${q.toString()}`,
+    params.filename ?? fallback,
+  );
+}
+
+export async function listExaminerMarkingAttendanceSheets(
+  examId: number,
+  subjectId: number,
+  options?: { attendanceDate?: string | null; groupId?: string | null },
+): Promise<ExaminerMarkingAttendanceSheetListResponse> {
+  const extra: Record<string, string> = {};
+  if (options?.attendanceDate?.trim()) extra.attendance_date = options.attendanceDate.trim();
+  if (options?.groupId?.trim()) extra.group_id = options.groupId.trim();
+  return apiJson<ExaminerMarkingAttendanceSheetListResponse>(
+    `/examinations/${examId}/subject-officer/examiner-attendance-sheets${examinerAttendanceSheetsSubjectQuery(subjectId, extra)}`,
+  );
+}
+
+export async function uploadExaminerMarkingAttendanceSheet(
+  examId: number,
+  subjectId: number,
+  groupId: string,
+  attendanceDate: string,
+  file: File,
+  notes?: string | null,
+): Promise<ExaminerMarkingAttendanceSheet> {
+  const token = getStoredToken();
+  if (!token) throw new Error("Not authenticated");
+
+  const formData = new FormData();
+  formData.append("subject_id", String(subjectId));
+  formData.append("group_id", groupId);
+  formData.append("attendance_date", attendanceDate);
+  if (notes != null && notes.trim() !== "") {
+    formData.append("notes", notes.trim());
+  }
+  formData.append("file", file);
+
+  const res = await fetch(
+    `${getApiBaseUrl()}/examinations/${examId}/subject-officer/examiner-attendance-sheets`,
+    {
+      method: "POST",
+      headers: { Authorization: `Bearer ${token}` },
+      body: formData,
+    },
+  );
+  await assertAuthedResponse(res);
+  return (await res.json()) as ExaminerMarkingAttendanceSheet;
+}
+
+export async function downloadExaminerMarkingAttendanceSheet(
+  examId: number,
+  subjectId: number,
+  sheet: ExaminerMarkingAttendanceSheet,
+): Promise<void> {
+  await downloadApiFile(
+    `/examinations/${examId}/subject-officer/examiner-attendance-sheets/${sheet.id}/file${examinerAttendanceSheetsSubjectQuery(subjectId)}`,
+    sheet.original_filename,
+  );
+}
+
+export async function deleteExaminerMarkingAttendanceSheet(
+  examId: number,
+  subjectId: number,
+  sheetId: string,
+): Promise<void> {
+  await apiFetch(
+    `/examinations/${examId}/subject-officer/examiner-attendance-sheets/${sheetId}${examinerAttendanceSheetsSubjectQuery(subjectId)}`,
+    { method: "DELETE" },
+  );
+}
+
+export async function getAdminExaminerMarkingAttendanceSheetSummary(
+  examId: number,
+  params?: { subjectId?: number | null; attendanceDate?: string | null },
+): Promise<ExaminerMarkingAttendanceSheetAdminSummary> {
+  const q = new URLSearchParams();
+  if (params?.subjectId != null) q.set("subject_id", String(params.subjectId));
+  if (params?.attendanceDate?.trim()) q.set("attendance_date", params.attendanceDate.trim());
+  const s = q.toString();
+  return apiJson<ExaminerMarkingAttendanceSheetAdminSummary>(
+    `/admin/examinations/${examId}/examiner-attendance-sheets/summary${s ? `?${s}` : ""}`,
+  );
+}
+
+export async function listAdminExaminerMarkingAttendanceSheets(
+  examId: number,
+  params?: {
+    subjectId?: number | null;
+    groupId?: string | null;
+    attendanceDate?: string | null;
+    q?: string | null;
+    page?: number;
+    pageSize?: number;
+  },
+): Promise<ExaminerMarkingAttendanceSheetAdminListResponse> {
+  const q = new URLSearchParams();
+  if (params?.subjectId != null) q.set("subject_id", String(params.subjectId));
+  if (params?.groupId?.trim()) q.set("group_id", params.groupId.trim());
+  if (params?.attendanceDate?.trim()) q.set("attendance_date", params.attendanceDate.trim());
+  if (params?.q?.trim()) q.set("q", params.q.trim());
+  if (params?.page != null) q.set("page", String(params.page));
+  if (params?.pageSize != null) q.set("page_size", String(params.pageSize));
+  const s = q.toString();
+  return apiJson<ExaminerMarkingAttendanceSheetAdminListResponse>(
+    `/admin/examinations/${examId}/examiner-attendance-sheets${s ? `?${s}` : ""}`,
+  );
+}
+
+export async function downloadAdminExaminerMarkingAttendanceSheet(
+  examId: number,
+  sheet: ExaminerMarkingAttendanceSheetAdmin | ExaminerMarkingAttendanceSheet,
+): Promise<void> {
+  await downloadApiFile(
+    `/admin/examinations/${examId}/examiner-attendance-sheets/${sheet.id}/file`,
+    sheet.original_filename,
+  );
+}
+
+export async function fetchAdminExaminerMarkingAttendanceSheetBlob(
+  examId: number,
+  sheetId: string,
+): Promise<Blob> {
+  const res = await apiFetch(`/admin/examinations/${examId}/examiner-attendance-sheets/${sheetId}/file`);
+  return res.blob();
+}
+
+export async function downloadAdminExaminerMarkingAttendanceSheetsZip(params: {
+  examId: number;
+  subjectId: number;
+  groupId?: string | null;
+  attendanceDate?: string | null;
+  filename?: string;
+}): Promise<void> {
+  const q = new URLSearchParams();
+  q.set("subject_id", String(params.subjectId));
+  if (params.groupId?.trim()) q.set("group_id", params.groupId.trim());
+  if (params.attendanceDate?.trim()) q.set("attendance_date", params.attendanceDate.trim());
+  const fallback = `marking-attendance_exam_${params.examId}_subject_${params.subjectId}.zip`;
+  await downloadApiFile(
+    `/admin/examinations/${params.examId}/examiner-attendance-sheets/download-zip?${q.toString()}`,
+    params.filename ?? fallback,
+  );
+}
+
 export async function getAdminAttendanceScheduledDates(
   examId: number,
 ): Promise<AttendanceSheetScheduledDatesResponse> {

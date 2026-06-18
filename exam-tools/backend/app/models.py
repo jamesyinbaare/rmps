@@ -2598,6 +2598,49 @@ class InspectorAttendanceSheet(Base):
     )
 
 
+class ExaminerMarkingAttendanceSheet(Base):
+    """Subject-officer uploaded signed marking attendance sheet for a cohort and date."""
+
+    __tablename__ = "examiner_marking_attendance_sheets"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    examination_id = Column(Integer, ForeignKey("examinations.id", ondelete="CASCADE"), nullable=False, index=True)
+    subject_id = Column(Integer, ForeignKey("subjects.id", ondelete="RESTRICT"), nullable=False, index=True)
+    subject_marking_group_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("subject_marking_groups.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    attendance_date = Column(Date, nullable=False)
+    notes = Column(Text, nullable=True)
+    original_filename = Column(String(512), nullable=False)
+    stored_path = Column(String(512), unique=True, nullable=False)
+    content_type = Column(String(255), nullable=True)
+    size_bytes = Column(Integer, nullable=False)
+    uploaded_by_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True, index=True)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+
+    examination = relationship("Examination", backref="examiner_marking_attendance_sheets")
+    subject = relationship("Subject")
+    subject_marking_group = relationship("SubjectMarkingGroup", backref="attendance_sheets")
+    uploaded_by = relationship("User", foreign_keys=[uploaded_by_id])
+
+    __table_args__ = (
+        Index(
+            "ix_examiner_marking_attendance_exam_subject_date",
+            "examination_id",
+            "subject_id",
+            "attendance_date",
+        ),
+        Index(
+            "ix_examiner_marking_attendance_group_date",
+            "subject_marking_group_id",
+            "attendance_date",
+        ),
+    )
+
+
 class ExaminationExaminerAppointmentLetterReference(Base):
     """Per examination, subject, and role: shared appointment letter reference number."""
 

@@ -97,8 +97,8 @@ export function CohortWorkspace({
   }
 
   return (
-    <div className="flex h-full min-h-0 flex-col gap-6 lg:grid lg:grid-cols-[minmax(0,1fr)_minmax(0,2fr)] lg:gap-8">
-      <div className="min-h-0 max-h-[38%] overflow-y-auto pr-1 lg:max-h-none">
+    <div className="flex h-full min-h-0 flex-col gap-6 overflow-hidden lg:grid lg:h-full lg:min-h-0 lg:grid-cols-[minmax(0,1fr)_minmax(0,2fr)] lg:grid-rows-1 lg:gap-8">
+      <div className="min-h-0 overflow-hidden pr-1 max-lg:max-h-[38%] max-lg:overflow-y-auto lg:min-h-0">
         <div className="space-y-4">
           <div className="flex flex-wrap items-center justify-between gap-2">
             <h3 className="text-sm font-semibold text-foreground">
@@ -176,7 +176,7 @@ export function CohortWorkspace({
         </div>
       </div>
 
-      <div className="flex min-h-0 flex-col overflow-hidden rounded-xl border border-border bg-muted/15 p-4 max-lg:min-h-48 sm:p-5">
+      <div className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-xl border border-border bg-muted/15 p-4 max-lg:min-h-48 sm:p-5 lg:min-h-0">
         <h3 className="shrink-0 text-sm font-semibold text-foreground">Membership</h3>
         <p className="mt-1 shrink-0 text-xs text-muted-foreground">
           {membershipLocked

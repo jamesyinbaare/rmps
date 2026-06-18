@@ -21,6 +21,7 @@ from app.routers import (
     admin_examination_marking_script_source,
     admin_examiner_allowances,
     admin_examiner_attendance,
+    admin_examiner_attendance_sheets,
     admin_lunch_coupon,
     admin_examiner_marking_summary,
     admin_examiner_appointment_letter_references,
@@ -66,6 +67,7 @@ from app.routers import (
     script_control,
     subject_marking_groups,
     subject_officer_examiner_attendance,
+    subject_officer_examiner_attendance_sheets,
     subject_officer_lunch_verify,
     workforce_data_entry_clerk_assignments,
     workforce_script_checker_assignments,
@@ -260,6 +262,8 @@ app.include_router(admin_examiner_appointment_letter_subject_settings.router)
 app.include_router(admin_examiner_portal_settings.router)
 app.include_router(examiner_quota_assessment.router)
 app.include_router(subject_officer_examiner_attendance.router)
+app.include_router(subject_officer_examiner_attendance_sheets.router)
+app.include_router(admin_examiner_attendance_sheets.router)
 app.include_router(admin_examination_marking_script_source.router)
 app.include_router(admin_examiner_allowances.router)
 app.include_router(admin_script_checkers.router)
