@@ -13,6 +13,8 @@ import type {
 import {
   computeClaimedRegions,
   computeClaimedRoles,
+  deriveManualMembersDraft,
+  mergeRuleAndManualMembers,
   selectedMemberCount,
 } from "@/components/cohorts/utils";
 import { REGION_OPTIONS } from "@/lib/school-enums";
@@ -23,14 +25,30 @@ type InitFrom = {
   source_roles?: string[];
 };
 
+type Options = {
+  exclusiveRules?: boolean;
+};
+
+function emptyRuleDraft<T extends { value: string }>(options: T[]): Record<string, boolean> {
+  const draft: Record<string, boolean> = {};
+  for (const option of options) {
+    draft[option.value] = false;
+  }
+  return draft;
+}
+
 export function useCohortMembershipDraft(
   examiners: MembershipExaminer[],
   cohorts: CohortListItem[],
   editingCohortId: string | null,
+  options: Options = {},
 ) {
+  const exclusiveRules = options.exclusiveRules ?? false;
+
   const [membersDraft, setMembersDraft] = useState<Record<string, boolean>>({});
   const [regionsDraft, setRegionsDraft] = useState<Record<string, boolean>>({});
   const [rolesDraft, setRolesDraft] = useState<Record<string, boolean>>({});
+  const [manualMembersDraft, setManualMembersDraft] = useState<Record<string, boolean>>({});
   const [activeTab, setActiveTab] = useState<MembershipTab>("regions");
   const [peopleFilterUnassignedOnly, setPeopleFilterUnassignedOnly] = useState(false);
 
@@ -81,56 +99,33 @@ export function useCohortMembershipDraft(
   );
 
   const claimedRegions = useMemo(
-    () => computeClaimedRegions(cohorts, editingCohortId),
-    [cohorts, editingCohortId],
+    () => (exclusiveRules ? computeClaimedRegions(cohorts, editingCohortId) : new Map()),
+    [cohorts, editingCohortId, exclusiveRules],
   );
 
   const claimedRoles = useMemo(
-    () => computeClaimedRoles(cohorts, editingCohortId),
-    [cohorts, editingCohortId],
+    () => (exclusiveRules ? computeClaimedRoles(cohorts, editingCohortId) : new Map()),
+    [cohorts, editingCohortId, exclusiveRules],
   );
 
   const selectedCount = useMemo(() => selectedMemberCount(membersDraft), [membersDraft]);
 
-  const computeRegionsDraft = useCallback(
-    (draft: Record<string, boolean>) => {
-      const next: Record<string, boolean> = {};
-      for (const r of REGION_OPTIONS) {
-        const inRegion = examinersByRegion.get(r.value) ?? [];
-        next[r.value] = inRegion.length > 0 && inRegion.every((ex) => draft[ex.id]);
-      }
-      return next;
+  const applyRuleDrafts = useCallback(
+    (
+      nextRegions: Record<string, boolean>,
+      nextRoles: Record<string, boolean>,
+      manual: Record<string, boolean>,
+    ) => {
+      setRegionsDraft(nextRegions);
+      setRolesDraft(nextRoles);
+      setManualMembersDraft(manual);
+      setMembersDraft(mergeRuleAndManualMembers(nextRegions, nextRoles, manual, examiners));
     },
-    [examinersByRegion],
-  );
-
-  const computeRolesDraft = useCallback(
-    (draft: Record<string, boolean>) => {
-      const next: Record<string, boolean> = {};
-      for (const r of EXAMINER_TYPE_OPTIONS) {
-        const inRole = examinersByRole.get(r.value) ?? [];
-        next[r.value] = inRole.length > 0 && inRole.every((ex) => draft[ex.id]);
-      }
-      return next;
-    },
-    [examinersByRole],
-  );
-
-  const applyMemberSelection = useCallback(
-    (next: Record<string, boolean>) => {
-      setMembersDraft(next);
-      setRegionsDraft(computeRegionsDraft(next));
-      setRolesDraft(computeRolesDraft(next));
-    },
-    [computeRegionsDraft, computeRolesDraft],
+    [examiners],
   );
 
   const initFromCohort = useCallback(
     (from: InitFrom) => {
-      const memberDraft: Record<string, boolean> = {};
-      for (const ex of examiners) {
-        memberDraft[ex.id] = from.examiner_ids.includes(ex.id);
-      }
       const regionDraft: Record<string, boolean> = {};
       for (const r of REGION_OPTIONS) {
         regionDraft[r.value] = from.source_regions.includes(r.value);
@@ -139,70 +134,75 @@ export function useCohortMembershipDraft(
       for (const r of EXAMINER_TYPE_OPTIONS) {
         roleDraft[r.value] = (from.source_roles ?? []).includes(r.value);
       }
-      setMembersDraft(memberDraft);
-      setRegionsDraft(regionDraft);
-      setRolesDraft(roleDraft);
+      const manual = deriveManualMembersDraft(
+        from.examiner_ids,
+        regionDraft,
+        roleDraft,
+        examiners,
+      );
+      applyRuleDrafts(regionDraft, roleDraft, manual);
       setPeopleFilterUnassignedOnly(false);
       setActiveTab("regions");
     },
-    [examiners],
+    [applyRuleDrafts, examiners],
   );
 
   const resetEmpty = useCallback(() => {
-    const empty: Record<string, boolean> = {};
+    const emptyMembers: Record<string, boolean> = {};
     for (const ex of examiners) {
-      empty[ex.id] = false;
+      emptyMembers[ex.id] = false;
     }
-    const regionEmpty: Record<string, boolean> = {};
-    for (const r of REGION_OPTIONS) {
-      regionEmpty[r.value] = false;
-    }
-    const roleEmpty: Record<string, boolean> = {};
-    for (const r of EXAMINER_TYPE_OPTIONS) {
-      roleEmpty[r.value] = false;
-    }
-    setMembersDraft(empty);
-    setRegionsDraft(regionEmpty);
-    setRolesDraft(roleEmpty);
+    setMembersDraft(emptyMembers);
+    setRegionsDraft(emptyRuleDraft(REGION_OPTIONS));
+    setRolesDraft(emptyRuleDraft(EXAMINER_TYPE_OPTIONS));
+    setManualMembersDraft({});
     setPeopleFilterUnassignedOnly(false);
     setActiveTab("regions");
   }, [examiners]);
 
   const toggleRegion = useCallback(
     (region: string, checked: boolean) => {
-      if (claimedRegions.has(region) && checked) return;
-      const inRegion = examinersByRegion.get(region) ?? [];
-      const nextMembers = { ...membersDraft };
-      for (const ex of inRegion) {
-        nextMembers[ex.id] = checked;
-      }
-      setMembersDraft(nextMembers);
-      setRegionsDraft((prev) => ({ ...prev, [region]: checked }));
-      setRolesDraft(computeRolesDraft(nextMembers));
+      if (exclusiveRules && claimedRegions.has(region) && checked) return;
+      const nextRegions = { ...regionsDraft, [region]: checked };
+      applyRuleDrafts(nextRegions, rolesDraft, manualMembersDraft);
     },
-    [claimedRegions, computeRolesDraft, examinersByRegion, membersDraft],
+    [
+      applyRuleDrafts,
+      claimedRegions,
+      exclusiveRules,
+      manualMembersDraft,
+      regionsDraft,
+      rolesDraft,
+    ],
   );
 
   const toggleRole = useCallback(
     (role: string, checked: boolean) => {
-      if (claimedRoles.has(role) && checked) return;
-      const inRole = examinersByRole.get(role) ?? [];
-      const nextMembers = { ...membersDraft };
-      for (const ex of inRole) {
-        nextMembers[ex.id] = checked;
-      }
-      setMembersDraft(nextMembers);
-      setRolesDraft((prev) => ({ ...prev, [role]: checked }));
-      setRegionsDraft(computeRegionsDraft(nextMembers));
+      if (exclusiveRules && claimedRoles.has(role) && checked) return;
+      const nextRoles = { ...rolesDraft, [role]: checked };
+      applyRuleDrafts(regionsDraft, nextRoles, manualMembersDraft);
     },
-    [claimedRoles, computeRegionsDraft, examinersByRole, membersDraft],
+    [
+      applyRuleDrafts,
+      claimedRoles,
+      exclusiveRules,
+      manualMembersDraft,
+      regionsDraft,
+      rolesDraft,
+    ],
   );
 
   const toggleExaminer = useCallback(
     (examinerId: string, checked: boolean) => {
-      applyMemberSelection({ ...membersDraft, [examinerId]: checked });
+      const nextManual = { ...manualMembersDraft };
+      if (checked) {
+        nextManual[examinerId] = true;
+      } else {
+        delete nextManual[examinerId];
+      }
+      applyRuleDrafts(regionsDraft, rolesDraft, nextManual);
     },
-    [applyMemberSelection, membersDraft],
+    [applyRuleDrafts, manualMembersDraft, regionsDraft, rolesDraft],
   );
 
   const buildPayload = useCallback((): MembershipPayload => {
@@ -222,17 +222,24 @@ export function useCohortMembershipDraft(
   const initWithExaminerIds = useCallback(
     (ids: string[]) => {
       const idSet = new Set(ids);
+      const manual: Record<string, boolean> = {};
+      for (const id of ids) {
+        manual[id] = true;
+      }
+      const emptyRegions = emptyRuleDraft(REGION_OPTIONS);
+      const emptyRoles = emptyRuleDraft(EXAMINER_TYPE_OPTIONS);
       const memberDraft: Record<string, boolean> = {};
       for (const ex of examiners) {
         memberDraft[ex.id] = idSet.has(ex.id);
       }
+      setRegionsDraft(emptyRegions);
+      setRolesDraft(emptyRoles);
+      setManualMembersDraft(manual);
       setMembersDraft(memberDraft);
-      setRegionsDraft(computeRegionsDraft(memberDraft));
-      setRolesDraft(computeRolesDraft(memberDraft));
       setPeopleFilterUnassignedOnly(false);
       setActiveTab("people");
     },
-    [computeRegionsDraft, computeRolesDraft, examiners],
+    [examiners],
   );
 
   const showUnassignedInPeople = useCallback(() => {

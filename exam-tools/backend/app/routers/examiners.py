@@ -100,6 +100,8 @@ def _examiner_response(ex: Examiner) -> ExaminerResponse:
         examiner_type=_examiner_type_to_schema(ex.examiner_type),
         region=ex.region.value,
         reference_code=ex.reference_code,
+        town=ex.town,
+        ghanapost_gps_address=ex.ghanapost_gps_address,
         subject_ids=[s.subject_id for s in ex.subjects],
         deviation_weight=float(ex.deviation_weight) if ex.deviation_weight is not None else None,
         examiner_group_id=gid,

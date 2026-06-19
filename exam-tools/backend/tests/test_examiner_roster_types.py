@@ -1,16 +1,19 @@
 """Tests for examiner roster type and spreadsheet parsing."""
 
+import io
 from datetime import datetime, timedelta
 from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import uuid4
 
 import pandas as pd
 import pytest
+from openpyxl import Workbook
 
 from app.models import ExaminerInvitationStatus, ExaminerType, Region, Subject
 from app.services.examiner_roster import (
     parse_examiner_type_cell,
     parse_gender_cell,
+    read_examiners_spreadsheet,
     subject_id_for_code,
 )
 
@@ -200,3 +203,28 @@ async def test_accept_invitation_copies_gender_to_examiner() -> None:
     assert result.outcome == "accepted"
     assert result.examiner is not None
     assert result.examiner.gender == "Female"
+
+
+def test_read_examiners_spreadsheet_csv_preserves_leading_zero_phone() -> None:
+    content = (
+        b"name,subject_code,examiner_type,region,phone_number\n"
+        b"Jane Doe,0301,AE,Greater Accra,0551234567\n"
+    )
+    df = read_examiners_spreadsheet(content, "invites.csv")
+    assert df.iloc[0]["phone_number"] == "0551234567"
+    assert df.iloc[0]["subject_code"] == "0301"
+
+
+def test_read_examiners_spreadsheet_xlsx_preserves_text_columns() -> None:
+    wb = Workbook()
+    ws = wb.active
+    ws.append(["name", "subject_code", "examiner_type", "region", "phone_number"])
+    ws.append(["Jane Doe", "0301", "AE", "Greater Accra", "0551234567"])
+    for cell in ("B2", "E2"):
+        ws[cell].number_format = "@"
+    buf = io.BytesIO()
+    wb.save(buf)
+
+    df = read_examiners_spreadsheet(buf.getvalue(), "invites.xlsx")
+    assert df.iloc[0]["phone_number"] == "0551234567"
+    assert df.iloc[0]["subject_code"] == "0301"

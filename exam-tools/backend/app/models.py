@@ -1439,15 +1439,6 @@ class SubjectMarkingGroupSourceRegion(Base):
 
     group = relationship("SubjectMarkingGroup", back_populates="source_regions")
 
-    __table_args__ = (
-        UniqueConstraint(
-            "examination_id",
-            "subject_id",
-            "region",
-            name="uq_subject_marking_group_source_region_per_subject",
-        ),
-    )
-
 
 class SubjectMarkingGroupSourceRole(Base):
     """Cohort role: subject examiners with this role belong to the cohort."""
@@ -1464,15 +1455,6 @@ class SubjectMarkingGroupSourceRole(Base):
     examiner_type = examiner_type_column(primary_key=True)
 
     group = relationship("SubjectMarkingGroup", back_populates="source_roles")
-
-    __table_args__ = (
-        UniqueConstraint(
-            "examination_id",
-            "subject_id",
-            "examiner_type",
-            name="uq_subject_marking_group_source_role_per_subject",
-        ),
-    )
 
 
 class SubjectMarkingGroupMember(Base):
@@ -1518,6 +1500,8 @@ class Examiner(Base):
     appointment_letter_notified_at = Column(DateTime, nullable=True)
     portal_token = Column(String(128), nullable=False, unique=True, index=True)
     reference_code = Column(String(64), nullable=True)
+    town = Column(String(255), nullable=True)
+    ghanapost_gps_address = Column(String(50), nullable=True)
     roster_source = Column(
         Enum(
             ExaminerRosterSource,

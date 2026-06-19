@@ -41,6 +41,7 @@ type Props = {
   token: string;
   invitation: ExaminerInvitationPublic;
   className?: string;
+  onSaved?: () => void;
 };
 
 function preventClipboardInsert(e: React.ClipboardEvent | React.DragEvent) {
@@ -59,7 +60,7 @@ function accountDisplayValue(row: ExaminerBankAccountPublic): string {
     : row.account_number;
 }
 
-export function ExaminerBankAccountForm({ token, invitation, className }: Props) {
+export function ExaminerBankAccountForm({ token, invitation, className, onSaved }: Props) {
   const bankDetailsAvailable = invitation.bank_details_available === true;
   const bankPendingMessage = invitation.bank_details_pending_message;
   const formId = useId();
@@ -276,6 +277,7 @@ export function ExaminerBankAccountForm({ token, invitation, className }: Props)
       setSuccessMessage(
         editing ? "Your bank details have been updated." : "Your bank details have been saved.",
       );
+      onSaved?.();
     } catch (err) {
       setFormError(err instanceof Error ? err.message : "Save failed");
     } finally {

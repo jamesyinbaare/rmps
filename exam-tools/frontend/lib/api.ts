@@ -930,6 +930,7 @@ export type ExaminationSchedule = {
 export type ExaminationScriptSeriesConfigRow = {
   subject_id: number;
   subject_code: string;
+  subject_original_code?: string | null;
   subject_name: string;
   subject_type: SubjectTypeEnum;
   series_count: number;
@@ -4016,6 +4017,8 @@ export type ExaminerRow = {
   examiner_type: ExaminerTypeApi;
   region: string;
   reference_code: string | null;
+  town?: string | null;
+  ghanapost_gps_address?: string | null;
   subject_ids: number[];
   deviation_weight: number | null;
   examiner_group_id: string | null;
@@ -5189,6 +5192,48 @@ export async function upsertPublicExaminerBankAccount(
 ): Promise<ExaminerBankAccountPublic> {
   return publicApiJson<ExaminerBankAccountPublic>(
     `/public/examiner-invitations/${encodeURIComponent(token)}/bank-account`,
+    {
+      method: "PUT",
+      body: JSON.stringify(payload),
+    },
+  );
+}
+
+export type ExaminerLocationPublic = {
+  town: string;
+  ghanapost_gps_address: string;
+  updated_at: string;
+};
+
+export type ExaminerLocationUpsertPayload = {
+  town: string;
+  ghanapost_gps_address: string;
+};
+
+export async function getPublicExaminerLocation(
+  token: string,
+): Promise<ExaminerLocationPublic | null> {
+  const url = `${getApiBaseUrl()}/public/examiner-invitations/${encodeURIComponent(token)}/location`;
+  let res: Response;
+  try {
+    res = await fetch(url);
+  } catch (e) {
+    if (e instanceof TypeError) {
+      throw new Error(apiNetworkErrorMessage());
+    }
+    throw e;
+  }
+  if (res.status === 404) return null;
+  if (!res.ok) throw new Error(await parseErrorMessage(res));
+  return (await res.json()) as ExaminerLocationPublic;
+}
+
+export async function upsertPublicExaminerLocation(
+  token: string,
+  payload: ExaminerLocationUpsertPayload,
+): Promise<ExaminerLocationPublic> {
+  return publicApiJson<ExaminerLocationPublic>(
+    `/public/examiner-invitations/${encodeURIComponent(token)}/location`,
     {
       method: "PUT",
       body: JSON.stringify(payload),

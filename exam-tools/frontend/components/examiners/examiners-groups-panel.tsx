@@ -110,7 +110,9 @@ export function ExaminersGroupsPanel({ examId, embedded = false, pageScroll = fa
   }, [examiners]);
 
   const editingCohortId = isCreating ? null : selectedId;
-  const membership = useCohortMembershipDraft(rosterExaminers, cohortList, editingCohortId);
+  const membership = useCohortMembershipDraft(rosterExaminers, cohortList, editingCohortId, {
+    exclusiveRules: true,
+  });
 
   const coverage = useMemo(
     () => computeCoverage(rosterExaminers, cohortList),

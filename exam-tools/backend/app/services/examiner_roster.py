@@ -214,12 +214,26 @@ def _rename_dataframe_columns(df: pd.DataFrame) -> pd.DataFrame:
 
 
 def read_examiners_spreadsheet(file_bytes: bytes, filename: str) -> pd.DataFrame:
+    """Load examiner bulk-upload CSV/XLSX with every column as str (preserves leading zeros)."""
     lower = filename.lower()
     bio = io.BytesIO(file_bytes)
     if lower.endswith(".csv"):
-        df = pd.read_csv(bio)
+        try:
+            text = file_bytes.decode("utf-8")
+        except UnicodeDecodeError:
+            text = file_bytes.decode("latin-1")
+        df = pd.read_csv(
+            io.StringIO(text),
+            dtype=str,
+            keep_default_na=False,
+        )
     elif lower.endswith(".xlsx"):
-        df = pd.read_excel(bio, engine="openpyxl")
+        df = pd.read_excel(
+            bio,
+            engine="openpyxl",
+            dtype=str,
+            keep_default_na=False,
+        )
     else:
         raise ValueError("Upload a .csv or .xlsx file")
     if df.empty:

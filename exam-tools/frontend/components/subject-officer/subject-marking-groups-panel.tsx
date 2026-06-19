@@ -508,8 +508,7 @@ export function SubjectMarkingGroupsPanel({
           {canManageCohorts && !subjectLocked ? (
             <div className="shrink-0 border-b border-border/80 px-4 py-3 sm:px-5">
               <p className="text-xs leading-relaxed text-muted-foreground">
-                Configure cohorts by region, role, or manual picks. Region and role rules auto-assign examiners as the
-                roster grows; free-form cohorts stay manual. Examiners may belong to more than one cohort.
+                Configure cohorts by region, role, or both. Rules can overlap across cohorts. When both region and role rules are set, examiners must match both. Free-form cohorts stay manual on the People tab.
               </p>
             </div>
           ) : null}

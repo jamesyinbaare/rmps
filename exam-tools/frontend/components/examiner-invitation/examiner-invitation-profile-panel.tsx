@@ -1,13 +1,22 @@
 "use client";
 
-import { BookOpen, UtensilsCrossed } from "lucide-react";
+import { useCallback, useEffect, useState } from "react";
 
-import { ExaminerReferenceCodeQrCell } from "@/components/examiners/examiner-reference-code-qr-cell";
 import { ExaminerAppointmentLetterSection } from "@/components/examiner-invitation/examiner-appointment-letter-section";
 import { ExaminerBankAccountForm } from "@/components/examiner-invitation/examiner-bank-account-form";
+import { ExaminerLunchIdCard } from "@/components/examiner-invitation/examiner-lunch-id-card";
+import { ExaminerLocationForm } from "@/components/examiner-invitation/examiner-location-form";
+import {
+  ExaminerProfileReadinessStrip,
+  type ProfileReadinessItem,
+} from "@/components/examiner-invitation/examiner-profile-readiness-strip";
 import { ExaminerScriptsAllocationSection } from "@/components/examiner-invitation/examiner-scripts-allocation-section";
-import { formatDateTime } from "@/components/examiner-invitations/utils";
-import type { ExaminerInvitationPublic } from "@/lib/api";
+import {
+  getPublicExaminerBankAccount,
+  getPublicExaminerLocation,
+  getPublicExaminerScriptsAllocation,
+  type ExaminerInvitationPublic,
+} from "@/lib/api";
 
 type Props = {
   token: string;
@@ -15,66 +24,137 @@ type Props = {
 };
 
 export function ExaminerInvitationProfilePanel({ token, invitation }: Props) {
+  const [hasBankAccount, setHasBankAccount] = useState<boolean | null>(null);
+  const [hasLocation, setHasLocation] = useState<boolean | null>(null);
+  const [hasScriptAllocations, setHasScriptAllocations] = useState<boolean | null>(null);
+
   const lettersAvailable = invitation.appointment_letters_available === true;
   const letterPendingMessage = invitation.appointment_letters_pending_message;
+  const bankDetailsAvailable = invitation.bank_details_available === true;
+  const bankPendingMessage = invitation.bank_details_pending_message;
+
+  const loadReadiness = useCallback(async () => {
+    const [locationResult, bankResult, scriptsResult] = await Promise.allSettled([
+      getPublicExaminerLocation(token),
+      getPublicExaminerBankAccount(token),
+      getPublicExaminerScriptsAllocation(token),
+    ]);
+
+    setHasLocation(locationResult.status === "fulfilled" && locationResult.value !== null);
+    setHasBankAccount(bankResult.status === "fulfilled" && bankResult.value !== null);
+    setHasScriptAllocations(
+      scriptsResult.status === "fulfilled" && scriptsResult.value.blocks.length > 0,
+    );
+  }, [token]);
+
+  useEffect(() => {
+    void loadReadiness();
+  }, [loadReadiness]);
+
+  const readinessItems: ProfileReadinessItem[] = [
+    {
+      id: "lunch",
+      label: "Lunch pass",
+      detail: invitation.reference_code
+        ? `ID ${invitation.reference_code} ready to scan`
+        : "Available after confirmation",
+      complete: Boolean(invitation.reference_code),
+      hidden: !invitation.reference_code,
+    },
+    {
+      id: "location",
+      label: "Your location",
+      detail:
+        hasLocation === null
+          ? "Checking your saved location…"
+          : hasLocation
+            ? "Town and GhanaPost GPS address on file"
+            : "Add your town and GhanaPost GPS address",
+      complete: hasLocation === true,
+    },
+    {
+      id: "bank",
+      label: "Bank details",
+      detail:
+        hasBankAccount === null
+          ? "Checking your saved details…"
+          : hasBankAccount
+            ? "Account on file for allowance payment"
+            : bankPendingMessage && !bankDetailsAvailable
+              ? bankPendingMessage
+              : bankDetailsAvailable
+                ? "Add your account for allowance payment"
+                : "Bank details will open when released",
+      complete: hasBankAccount === true,
+      pending: hasBankAccount === false && Boolean(bankPendingMessage) && !bankDetailsAvailable,
+    },
+    {
+      id: "scripts",
+      label: "Script allocations",
+      detail:
+        hasScriptAllocations === null
+          ? "Loading assignments…"
+          : hasScriptAllocations
+            ? "Schools and booklet counts assigned"
+            : "Published when the exam office assigns scripts",
+      complete: hasScriptAllocations === true,
+    },
+    {
+      id: "letter",
+      label: "Appointment letter",
+      detail: lettersAvailable
+        ? "Ready to download"
+        : letterPendingMessage ?? "Available when released by the exam office",
+      complete: lettersAvailable,
+      pending: !lettersAvailable && Boolean(letterPendingMessage),
+    },
+  ];
 
   return (
-    <div className="flex flex-1 flex-col space-y-5">
-      <div className="rounded-2xl border border-border/70 bg-card/90 px-4 py-3.5 sm:px-5">
-        <div className="flex items-start gap-3">
-          <span className="flex size-10 shrink-0 items-center justify-center rounded-xl bg-primary/10 text-primary">
-            <BookOpen className="size-5" aria-hidden />
-          </span>
-          <div className="min-w-0 flex-1">
-            <h2 className="text-base font-semibold text-foreground">Your profile</h2>
-            <p className="mt-1 text-sm leading-relaxed text-muted-foreground">
-              Manage your bank details, view script allocations, and download your appointment letter.
-            </p>
-          </div>
-        </div>
-      </div>
+    <article className="flex flex-1 flex-col space-y-5 pb-2">
+      <header>
+        <h1 className="text-xl font-semibold tracking-tight text-foreground sm:text-2xl">Profile</h1>
+        <p className="mt-1.5 text-sm leading-relaxed text-muted-foreground">
+          Location, bank details, lunch pass, script allocations, and your appointment letter. Assignment
+          details are on the Overview tab.
+        </p>
+      </header>
+
+      <ExaminerProfileReadinessStrip items={readinessItems} />
 
       {invitation.reference_code ? (
-        <div className="rounded-2xl border border-border/70 bg-card/90 px-4 py-4 sm:px-5">
-          <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
-            <div className="flex items-start gap-3">
-              <span className="flex size-10 shrink-0 items-center justify-center rounded-xl bg-primary/10 text-primary">
-                <UtensilsCrossed className="size-5" aria-hidden />
-              </span>
-              <div className="min-w-0 flex-1">
-                <h2 className="text-base font-semibold text-foreground">Lunch ID</h2>
-                <p className="mt-1 text-sm leading-relaxed text-muted-foreground">
-                  Show this QR at lunch for verification.
-                </p>
-              </div>
-            </div>
-            <ExaminerReferenceCodeQrCell
-              examinationId={invitation.examination_id}
-              referenceCode={invitation.reference_code}
-              examinerName={invitation.invitee_name}
-              previewSize={128}
-              modalSize={220}
-            />
-          </div>
-        </div>
+        <ExaminerLunchIdCard
+          examinationId={invitation.examination_id}
+          referenceCode={invitation.reference_code}
+          examinerName={invitation.invitee_name}
+        />
       ) : null}
 
-      {!lettersAvailable && letterPendingMessage ? (
-        <div className="rounded-2xl border border-amber-500/30 bg-amber-500/10 px-4 py-3 text-sm leading-relaxed text-foreground">
-          {letterPendingMessage}
-          {invitation.coordination_end_at ? (
-            <> Coordination ends {formatDateTime(invitation.coordination_end_at)}.</>
-          ) : null}
-        </div>
-      ) : null}
+      <div id="profile-location" className="scroll-mt-4">
+        <ExaminerLocationForm token={token} className="mt-0" onSaved={() => void loadReadiness()} />
+      </div>
 
-      <ExaminerBankAccountForm token={token} invitation={invitation} className="mt-0" />
-      <ExaminerScriptsAllocationSection token={token} />
-      <ExaminerAppointmentLetterSection
-        token={token}
-        inviteeName={invitation.invitee_name}
-        invitation={invitation}
-      />
-    </div>
+      <div id="profile-bank" className="scroll-mt-4">
+        <ExaminerBankAccountForm
+          token={token}
+          invitation={invitation}
+          className="mt-0"
+          onSaved={() => void loadReadiness()}
+        />
+      </div>
+
+      <div id="profile-scripts" className="scroll-mt-4">
+        <ExaminerScriptsAllocationSection token={token} />
+      </div>
+
+      <div id="profile-letter" className="scroll-mt-4">
+        <ExaminerAppointmentLetterSection
+          token={token}
+          inviteeName={invitation.invitee_name}
+          invitation={invitation}
+          pendingMessage={!lettersAvailable ? letterPendingMessage : null}
+        />
+      </div>
+    </article>
   );
 }

@@ -580,6 +580,7 @@ class FinanceCentreInspectorAnalysisExportBody(BaseModel):
 class ExaminationScriptSeriesConfigRow(BaseModel):
     subject_id: int
     subject_code: str
+    subject_original_code: str | None = None
     subject_name: str
     subject_type: str = Field(description="CORE or ELECTIVE")
     series_count: int = Field(ge=1, le=32767, description="Number of packing series for this subject (each paper shows series 1..N).")

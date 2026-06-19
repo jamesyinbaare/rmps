@@ -68,6 +68,7 @@ class ExaminerInvitationResponse(ExaminerInvitationCoordinationFields):
 class ExaminerInvitationPublicResponse(ExaminerInvitationCoordinationFields):
     invitee_name: str
     phone_number: str
+    examination_id: int
     examination_name: str
     examination_type: str | None = None
     examination_year: int | None = None

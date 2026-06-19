@@ -15,6 +15,7 @@ type Props = {
   previewSize?: number;
   modalSize?: number;
   className?: string;
+  showCodeLabel?: boolean;
 };
 
 type QrModalProps = {
@@ -115,6 +116,7 @@ export function ExaminerReferenceCodeQrCell({
   previewSize = 52,
   modalSize = 192,
   className,
+  showCodeLabel = true,
 }: Props) {
   const [open, setOpen] = useState(false);
   const titleId = useId();
@@ -135,6 +137,7 @@ export function ExaminerReferenceCodeQrCell({
           examinationId={examinationId}
           referenceCode={referenceCode}
           size={previewSize}
+          showLabel={showCodeLabel}
         />
       </button>
 
