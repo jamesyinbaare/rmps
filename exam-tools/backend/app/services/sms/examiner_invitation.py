@@ -359,6 +359,7 @@ async def maybe_send_examiner_invitation_sms(
     trigger: str = "create",
     retried_from_id: UUID | None = None,
     bulk: bool = False,
+    commit_session: bool = True,
 ) -> tuple[bool | None, str | None, UUID | None]:
     from app.services.sms.inspector_credentials import resolve_send_sms
 
@@ -374,6 +375,7 @@ async def maybe_send_examiner_invitation_sms(
             trigger=trigger,
             triggered_by_user_id=triggered_by_user_id,
             retried_from_id=retried_from_id,
+            commit_session=commit_session,
         )
         if result.sent:
             return True, None, delivery_id

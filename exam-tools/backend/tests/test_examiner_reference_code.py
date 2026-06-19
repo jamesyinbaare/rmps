@@ -130,6 +130,32 @@ async def test_assign_reference_code_to_examiner_skips_when_set() -> None:
 
 
 @pytest.mark.asyncio
+async def test_assign_reference_code_to_examiner_accepts_explicit_subject_id() -> None:
+    session = AsyncMock()
+    examiner = MagicMock(spec=Examiner)
+    examiner.reference_code = None
+    examiner.examination_id = 1
+    examiner.region = Region.GREATER_ACCRA
+    examiner.examiner_type = ExaminerType.ASSISTANT
+
+    with (
+        patch(
+            "app.services.examiner_reference_code.ensure_default_region_groups",
+            new_callable=AsyncMock,
+        ),
+        patch(
+            "app.services.examiner_reference_code.assign_reference_code",
+            new_callable=AsyncMock,
+            return_value="MATH301-GAE1",
+        ),
+    ):
+        code = await assign_reference_code_to_examiner(session, examiner, subject_id=10)
+
+    assert code == "MATH301-GAE1"
+    session.refresh.assert_not_awaited()
+
+
+@pytest.mark.asyncio
 async def test_accept_invitation_assigns_reference_code() -> None:
     from app.models import ExaminerInvitation, ExaminerInvitationStatus
     from app.services.examiner_invitation import accept_examiner_invitation
@@ -163,7 +189,13 @@ async def test_accept_invitation_assigns_reference_code() -> None:
 
     session.flush = AsyncMock(side_effect=_flush)
 
-    async def _assign_code(_session: AsyncMock, examiner: Examiner) -> str:
+    async def _assign_code(
+        _session: AsyncMock,
+        examiner: Examiner,
+        *,
+        subject_id: int | None = None,
+    ) -> str:
+        assert subject_id == 10
         examiner.reference_code = "SAE1"
         return "SAE1"
 
@@ -174,7 +206,7 @@ async def test_accept_invitation_assigns_reference_code() -> None:
             return_value=MagicMock(exceeded=False),
         ),
         patch("app.services.examiner_invitation.sync_examiner_subjects", new_callable=AsyncMock),
-        patch("app.services.examiner_invitation.sync_default_cohort_members", new_callable=AsyncMock),
+        patch("app.services.examiner_invitation.sync_subject_cohort_memberships", new_callable=AsyncMock),
         patch(
             "app.services.examiner_invitation.assign_reference_code_to_examiner",
             side_effect=_assign_code,

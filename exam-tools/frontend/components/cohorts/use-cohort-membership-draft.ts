@@ -62,7 +62,7 @@ export function useCohortMembershipDraft(
 
   const regionOptions: RuleOption[] = useMemo(
     () =>
-      REGION_OPTIONS.filter((r) => examinersByRegion.has(r.value)).map((r) => ({
+      REGION_OPTIONS.map((r) => ({
         value: r.value,
         label: r.label,
         count: examinersByRegion.get(r.value)?.length ?? 0,
@@ -72,7 +72,7 @@ export function useCohortMembershipDraft(
 
   const roleOptions: RuleOption[] = useMemo(
     () =>
-      EXAMINER_TYPE_OPTIONS.filter((r) => examinersByRole.has(r.value)).map((r) => ({
+      EXAMINER_TYPE_OPTIONS.map((r) => ({
         value: r.value,
         label: r.label,
         count: examinersByRole.get(r.value)?.length ?? 0,
@@ -172,26 +172,30 @@ export function useCohortMembershipDraft(
     (region: string, checked: boolean) => {
       if (claimedRegions.has(region) && checked) return;
       const inRegion = examinersByRegion.get(region) ?? [];
-      const next = { ...membersDraft };
+      const nextMembers = { ...membersDraft };
       for (const ex of inRegion) {
-        next[ex.id] = checked;
+        nextMembers[ex.id] = checked;
       }
-      applyMemberSelection(next);
+      setMembersDraft(nextMembers);
+      setRegionsDraft((prev) => ({ ...prev, [region]: checked }));
+      setRolesDraft(computeRolesDraft(nextMembers));
     },
-    [applyMemberSelection, claimedRegions, examinersByRegion, membersDraft],
+    [claimedRegions, computeRolesDraft, examinersByRegion, membersDraft],
   );
 
   const toggleRole = useCallback(
     (role: string, checked: boolean) => {
       if (claimedRoles.has(role) && checked) return;
       const inRole = examinersByRole.get(role) ?? [];
-      const next = { ...membersDraft };
+      const nextMembers = { ...membersDraft };
       for (const ex of inRole) {
-        next[ex.id] = checked;
+        nextMembers[ex.id] = checked;
       }
-      applyMemberSelection(next);
+      setMembersDraft(nextMembers);
+      setRolesDraft((prev) => ({ ...prev, [role]: checked }));
+      setRegionsDraft(computeRegionsDraft(nextMembers));
     },
-    [applyMemberSelection, claimedRoles, examinersByRole, membersDraft],
+    [claimedRoles, computeRegionsDraft, examinersByRole, membersDraft],
   );
 
   const toggleExaminer = useCallback(

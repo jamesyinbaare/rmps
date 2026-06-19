@@ -93,7 +93,7 @@ async def test_delete_examiner_with_cleanup_executes_deletes() -> None:
     session.flush = AsyncMock()
 
     with patch(
-        "app.services.examiner_delete.sync_default_cohort_members",
+        "app.services.examiner_delete.sync_subject_cohort_memberships",
         new_callable=AsyncMock,
     ) as sync_mock:
         await delete_examiner_with_cleanup(session, 1, examiner)

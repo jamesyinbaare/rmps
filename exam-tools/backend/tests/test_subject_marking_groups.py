@@ -11,11 +11,14 @@ from fastapi import HTTPException
 
 from app.models import SubjectMarkingGroup, SubjectMarkingGroupMember
 from app.services.subject_marking_group import (
+    _compute_cohort_member_ids,
     create_group,
     delete_group,
     get_examiner_marking_group,
     group_response,
     replace_group_members,
+    sync_rule_based_cohort_members,
+    sync_subject_cohort_memberships,
     update_group,
 )
 
@@ -212,6 +215,7 @@ async def test_update_group_clears_coordination_start_date() -> None:
             coordination_start_time=None,
             coordination_end_date=None,
             coordination_end_time=None,
+            coordination_venue=None,
             marking_start_date=None,
             marking_end_date=None,
             marked_script_submission_deadline=None,
@@ -219,6 +223,7 @@ async def test_update_group_clears_coordination_start_date() -> None:
             update_coordination_start_time=False,
             update_coordination_end_date=False,
             update_coordination_end_time=False,
+            update_coordination_venue=False,
             update_marking_start_date=False,
             update_marking_end_date=False,
             update_submission_deadline=False,
@@ -260,6 +265,7 @@ async def test_get_examiner_marking_group_prefers_named_over_default() -> None:
                 "coordination_start_time": None,
                 "coordination_end_date": None,
                 "coordination_end_time": None,
+                "coordination_venue": None,
                 "marking_start_date": None,
                 "marking_end_date": None,
                 "marked_script_submission_deadline": None,
@@ -272,6 +278,7 @@ async def test_get_examiner_marking_group_prefers_named_over_default() -> None:
                 "coordination_start_time": time(9, 0),
                 "coordination_end_date": datetime(2026, 6, 15),
                 "coordination_end_time": time(12, 0),
+                "coordination_venue": None,
                 "marking_start_date": None,
                 "marking_end_date": None,
                 "marked_script_submission_deadline": None,
@@ -287,3 +294,162 @@ async def test_get_examiner_marking_group_prefers_named_over_default() -> None:
     assert result is not None
     assert result["marking_group_id"] == named_id
     assert result["marking_group_name"] == "Northern"
+
+
+def test_compute_cohort_member_ids_rule_based_with_manual_override() -> None:
+    rule_matched = {uuid4()}
+    manual_id = uuid4()
+    subject_ids = rule_matched | {manual_id, uuid4()}
+
+    member_rule = MagicMock()
+    member_rule.examiner_id = next(iter(rule_matched))
+    member_manual = MagicMock()
+    member_manual.examiner_id = manual_id
+
+    group = MagicMock(spec=SubjectMarkingGroup)
+    group.source_regions = [MagicMock()]
+    group.source_roles = []
+    group.members = [member_rule, member_manual]
+
+    result = _compute_cohort_member_ids(
+        group,
+        subject_examiner_ids=subject_ids,
+        rule_matched_ids=rule_matched,
+    )
+    assert set(result) == rule_matched | {manual_id}
+
+
+def test_compute_cohort_member_ids_free_form_preserves_manual_only() -> None:
+    manual_id = uuid4()
+    removed_id = uuid4()
+    subject_ids = {manual_id}
+
+    group = MagicMock(spec=SubjectMarkingGroup)
+    group.source_regions = []
+    group.source_roles = []
+    member = MagicMock()
+    member.examiner_id = manual_id
+    removed = MagicMock()
+    removed.examiner_id = removed_id
+    group.members = [member, removed]
+
+    result = _compute_cohort_member_ids(
+        group,
+        subject_examiner_ids=subject_ids,
+        rule_matched_ids=set(),
+    )
+    assert result == [manual_id]
+
+
+@pytest.mark.asyncio
+async def test_sync_rule_based_cohort_members_assigns_region_match() -> None:
+    session = AsyncMock()
+    group_id = uuid4()
+    examiner_id = uuid4()
+
+    group = MagicMock(spec=SubjectMarkingGroup)
+    group.id = group_id
+    group.source_regions = [MagicMock(region=MagicMock(value="ashanti"))]
+    group.source_roles = []
+    group.members = []
+
+    groups_result = MagicMock()
+    groups_result.scalars.return_value.all.return_value = [group]
+
+    with (
+        patch(
+            "app.services.subject_marking_group._subject_examiner_ids",
+            new_callable=AsyncMock,
+            return_value={examiner_id},
+        ),
+        patch(
+            "app.services.subject_marking_group._rule_matched_member_ids",
+            new_callable=AsyncMock,
+            return_value={examiner_id},
+        ),
+        patch(
+            "app.services.subject_marking_group._rewrite_group_members",
+            new_callable=AsyncMock,
+        ) as rewrite_mock,
+    ):
+        session.execute = AsyncMock(return_value=groups_result)
+        await sync_rule_based_cohort_members(session, examination_id=1, subject_id=10)
+
+    rewrite_mock.assert_awaited_once_with(
+        session,
+        group_id=group_id,
+        examination_id=1,
+        subject_id=10,
+        member_ids=[examiner_id],
+    )
+
+
+@pytest.mark.asyncio
+async def test_sync_subject_cohort_memberships_calls_default_and_rule_sync() -> None:
+    session = AsyncMock()
+    with (
+        patch(
+            "app.services.subject_marking_group.sync_default_cohort_members",
+            new_callable=AsyncMock,
+        ) as default_mock,
+        patch(
+            "app.services.subject_marking_group.sync_rule_based_cohort_members",
+            new_callable=AsyncMock,
+        ) as rule_mock,
+    ):
+        await sync_subject_cohort_memberships(session, examination_id=1, subject_id=10)
+
+    default_mock.assert_awaited_once_with(session, examination_id=1, subject_id=10)
+    rule_mock.assert_awaited_once_with(session, examination_id=1, subject_id=10)
+
+
+@pytest.mark.asyncio
+async def test_replace_group_members_does_not_remove_from_other_cohorts() -> None:
+    session = AsyncMock()
+    group_id = uuid4()
+    examiner_id = uuid4()
+    group = MagicMock(spec=SubjectMarkingGroup)
+    group.id = group_id
+    group.is_default = False
+    group.members = []
+
+    refreshed = MagicMock(spec=SubjectMarkingGroup)
+    refreshed.is_default = False
+
+    with (
+        patch(
+            "app.services.subject_marking_group.load_group",
+            new_callable=AsyncMock,
+            side_effect=[group, refreshed],
+        ),
+        patch(
+            "app.services.subject_marking_group.group_response",
+            return_value={"id": group_id, "examiner_ids": [examiner_id]},
+        ),
+        patch(
+            "app.services.subject_marking_group._rewrite_group_members",
+            new_callable=AsyncMock,
+        ) as rewrite_mock,
+    ):
+        found = MagicMock()
+        found.scalars.return_value.all.return_value = [examiner_id]
+        session.execute = AsyncMock(return_value=found)
+        session.commit = AsyncMock()
+
+        await replace_group_members(
+            session,
+            examination_id=1,
+            subject_id=10,
+            group_id=group_id,
+            source_regions=[],
+            source_roles=[],
+            examiner_ids=[examiner_id],
+        )
+
+    rewrite_mock.assert_awaited_once_with(
+        session,
+        group_id=group_id,
+        examination_id=1,
+        subject_id=10,
+        member_ids=[examiner_id],
+    )

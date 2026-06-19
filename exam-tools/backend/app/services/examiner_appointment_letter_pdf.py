@@ -49,14 +49,13 @@ from app.services.coordination_schedule import (
     format_appointment_letter_date,
     format_appointment_letter_time,
 )
-from app.services.exam_official_export import examination_label
 from app.services.examiner_invitation import _examiner_type_label, subject_display_code
 from app.services.pdf_generator import render_html
 from app.services.subject_marking_group import get_examiner_marking_group
 
 APPOINTMENT_CONTENT_TEMPLATE = "examiner-invitation/appointment-letter-examiner.html"
 DEFAULT_COORDINATION_VENUE = "Conference Room of the Ghana TVET Service Headquarters, East Legon"
-DUMMY_APPOINTMENT_LETTEE_NAME = "___________"
+DUMMY_APPOINTMENT_LETTEE_NAME = "Sir/Madam"
 
 _FORMAL_ROLE_TITLE: dict[ExaminerType, str] = {
     ExaminerType.CHIEF: "Chief Examiner",
@@ -159,6 +158,23 @@ def _role_article(examiner_type: ExaminerType) -> str:
     return "a"
 
 
+def _subject_type_label_for_letter(subject: Subject) -> str:
+    st = subject.subject_type
+    raw = st.value if hasattr(st, "value") else str(st)
+    return raw.strip().title()
+
+
+def appointment_letter_examination_label(exam: Examination, subject: Subject) -> str:
+    """Formal examination title for appointment letters."""
+    parts = [str(exam.year)]
+    if exam.exam_series and str(exam.exam_series).strip():
+        parts.append(str(exam.exam_series).strip())
+    parts.append(str(exam.exam_type).strip())
+    parts.append(f"{_subject_type_label_for_letter(subject)} Subjects")
+    parts.append("Examinations")
+    return " ".join(parts)
+
+
 def _appointment_role_context(examiner_type: ExaminerType) -> dict[str, object]:
     title = _FORMAL_ROLE_TITLE[examiner_type]
     article = _role_article(examiner_type)
@@ -170,11 +186,12 @@ def _appointment_role_context(examiner_type: ExaminerType) -> dict[str, object]:
         "show_red_marking_pen_instruction": examiner_type == ExaminerType.ASSISTANT,
         "show_green_vetting_pen_instruction": examiner_type
         in (ExaminerType.CHIEF, ExaminerType.ASSISTANT_CHIEF, ExaminerType.TEAM_LEADER),
+        "show_confidentiality_example_clause": examiner_type != ExaminerType.ASSISTANT,
     }
 
 
-def _format_ghs_display(value: Decimal | None) -> str | None:
-    if value is None:
+def _format_appointment_fee_amount(value: Decimal | None) -> str | None:
+    if value is None or value <= 0:
         return None
     return format_ghs_amount(value)
 
@@ -191,20 +208,20 @@ def _build_appointment_fee_context_from_rates(
     region: Region,
     subject_id: int,
 ) -> dict[str, object]:
-    marking_fee_amount = _format_ghs_display(marking_rates.get((subject_id, 2)))
-    responsibility_allowance = _format_ghs_display(
+    marking_fee_amount = _format_appointment_fee_amount(marking_rates.get((subject_id, 2)))
+    responsibility_allowance = _format_appointment_fee_amount(
         role_rates.get((examiner_type, ExaminerAllowanceType.RESPONSIBILITY))
     )
-    inconvenience_allowance = _format_ghs_display(
+    inconvenience_allowance = _format_appointment_fee_amount(
         role_rates.get((examiner_type, ExaminerAllowanceType.INCONVENIENCE))
     )
-    chief_examiners_report_allowance = _format_ghs_display(
+    chief_examiners_report_allowance = _format_appointment_fee_amount(
         role_rates.get((examiner_type, ExaminerAllowanceType.CHIEF_EXAMINERS_REPORT))
     )
-    vetting_of_scripts_allowance = _format_ghs_display(
+    vetting_of_scripts_allowance = _format_appointment_fee_amount(
         role_rates.get((examiner_type, ExaminerAllowanceType.VETTING_OF_SCRIPTS))
     )
-    internal_commuting = _format_ghs_display(
+    internal_commuting = _format_appointment_fee_amount(
         role_rates.get((examiner_type, ExaminerAllowanceType.INTERNAL_COMMUTING))
     )
     travel_comp = compute_travel_compensation(
@@ -215,7 +232,7 @@ def _build_appointment_fee_context_from_rates(
         travel_zone_names=travel_zone_names,
         travel_role_factors=travel_role_factors,
     )
-    travel_and_transport_amount = _format_ghs_display(
+    travel_and_transport_amount = _format_appointment_fee_amount(
         travel_comp.payable_ghs if travel_comp.base_ghs > 0 else None
     )
 
@@ -313,8 +330,6 @@ def _base_appointment_context(
     coordination_context: dict[str, str | None],
     signatory_context: dict[str, object] | None = None,
 ) -> dict[str, object]:
-    subj_code = subject_display_code(subject)
-    subject_label = f"{subject.name} ({subj_code})" if subj_code else subject.name
     resolved_signatory = signatory_context or resolve_signatory_context(None)
     return {
         "examination_label": examination_label_str,
@@ -322,7 +337,7 @@ def _base_appointment_context(
         "invitee_name": invitee_name,
         "phone_number": phone_number,
         "examiner_type_label": examiner_type_label,
-        "subject_label": subject_label,
+        "subject_label": subject.name,
         "subject_name": subject.name,
         "region": region,
         **coordination_context,
@@ -368,7 +383,7 @@ async def build_dummy_appointment_letter_preview_pdf(
         subject_id=int(subject.id),
     )
 
-    exam_label_str = examination_label(exam)
+    exam_label_str = appointment_letter_examination_label(exam, subject)
     signatory_context = await _load_signatory_context(session, examination_id, int(subject.id))
     context = _base_appointment_context(
         examination_label_str=exam_label_str,
@@ -415,7 +430,7 @@ async def build_examiner_appointment_letter_pdf(
     if subject is None:
         raise ValueError("Subject not found")
 
-    exam_label_str = examination_label(exam)
+    exam_label_str = appointment_letter_examination_label(exam, subject)
     if session is not None:
         coordination_context = await _load_cohort_coordination_for_letter(
             session,
@@ -506,7 +521,7 @@ async def build_examiner_appointment_letter_for_roster(
     examiner = resolved.examiner
     exam = resolved.examination
     subject = resolved.subject
-    exam_label_str = examination_label(exam)
+    exam_label_str = appointment_letter_examination_label(exam, subject)
     examiner_type = examiner.examiner_type
     if not isinstance(examiner_type, ExaminerType):
         examiner_type = ExaminerType(str(examiner_type))

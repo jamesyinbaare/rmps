@@ -187,7 +187,7 @@ async def test_accept_invitation_copies_gender_to_examiner() -> None:
             new_callable=AsyncMock,
         ),
         patch(
-            "app.services.examiner_invitation.sync_default_cohort_members",
+            "app.services.examiner_invitation.sync_subject_cohort_memberships",
             new_callable=AsyncMock,
         ),
         patch(

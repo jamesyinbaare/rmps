@@ -181,7 +181,7 @@ export function CohortWorkspace({
         <p className="mt-1 shrink-0 text-xs text-muted-foreground">
           {membershipLocked
             ? "All subject examiners are always in the default cohort. Edit the schedule above; membership is managed automatically."
-            : "Use region or role rules for bulk assignment, or pick individuals on the People tab."}
+            : "Use region or role rules to auto-assign examiners as they join this subject. Free-form cohorts use manual picks on the People tab only. Examiners may belong to more than one cohort."}
         </p>
         <div className="mt-3 min-h-0 flex-1">
           <CohortMembershipTabs

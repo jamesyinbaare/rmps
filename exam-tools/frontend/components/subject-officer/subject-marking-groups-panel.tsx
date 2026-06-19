@@ -446,7 +446,13 @@ export function SubjectMarkingGroupsPanel({
   }
 
   const softWarning =
-    membership.selectedCount === 0 ? "This cohort has no examiners yet." : null;
+    membership.selectedCount === 0 &&
+    !Object.values(membership.regionsDraft).some(Boolean) &&
+    !Object.values(membership.rolesDraft).some(Boolean)
+      ? "This cohort has no membership rules or examiners yet."
+      : membership.selectedCount === 0
+        ? "No examiners on the roster match these rules yet."
+        : null;
 
   const panelClass =
     embedded && !pageScroll
@@ -499,6 +505,15 @@ export function SubjectMarkingGroupsPanel({
         </div>
       ) : (
         <>
+          {canManageCohorts && !subjectLocked ? (
+            <div className="shrink-0 border-b border-border/80 px-4 py-3 sm:px-5">
+              <p className="text-xs leading-relaxed text-muted-foreground">
+                Configure cohorts by region, role, or manual picks. Region and role rules auto-assign examiners as the
+                roster grows; free-form cohorts stay manual. Examiners may belong to more than one cohort.
+              </p>
+            </div>
+          ) : null}
+
           {!canManageCohorts && !subjectLocked ? (
             <div className="shrink-0 border-b border-border/80 px-4 py-3 sm:px-5">
               <p className="text-sm text-muted-foreground">

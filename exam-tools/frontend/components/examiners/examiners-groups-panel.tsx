@@ -345,7 +345,13 @@ export function ExaminersGroupsPanel({ examId, embedded = false, pageScroll = fa
   }
 
   const softWarning =
-    membership.selectedCount === 0 ? "This group has no examiners yet." : null;
+    membership.selectedCount === 0 &&
+    !Object.values(membership.regionsDraft).some(Boolean) &&
+    !Object.values(membership.rolesDraft).some(Boolean)
+      ? "This group has no membership rules or examiners yet."
+      : membership.selectedCount === 0
+        ? "No examiners on the roster match these rules yet."
+        : null;
 
   const panelClass =
     embedded && !pageScroll

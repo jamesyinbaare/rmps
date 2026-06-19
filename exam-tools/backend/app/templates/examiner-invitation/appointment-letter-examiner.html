@@ -154,14 +154,14 @@
   </style>
 
   <h2 class="letter-title">
-    <span class="letter-underline">CO-ORDINATION MEETING AND SCRIPT MARKING OF {{ examination_label_upper }} EXAMINATIONS</span>
+    <span class="letter-underline">CO-ORDINATION MEETING AND SCRIPT MARKING OF {{ examination_label_upper }}</span>
   </h2>
 
   <p class="letter-salutation">Dear {{ invitee_name }},</p>
 
   <p>
     The Commission for Technical and Vocational Education and Training (CTVET) has the honour to invite you to the
-    Co-ordination Meeting and Script Marking of the {{ examination_label }} Examinations.{% if coordination_start_time and coordination_end_time %}
+    Co-ordination Meeting and Script Marking of the {{ examination_label }}.{% if coordination_start_time and coordination_end_time %}
     The exercise will begin at <strong>{{ coordination_start_time }}</strong> and end at <strong>{{ coordination_end_time }}</strong>.{% elif coordination_start_time %}
     The exercise will begin at <strong>{{ coordination_start_time }}</strong>.{% elif coordination_end_time %}
     The exercise will end at <strong>{{ coordination_end_time }}</strong>.{% endif %}
@@ -190,7 +190,7 @@
     </li>
     <li>
       You should <strong>NOT</strong>, under any circumstances whatsoever divulge or communicate any confidential
-      information obtained in the course of your work, e.g. performance of candidates, etc, to anyone.
+      information obtained in the course of your work{% if show_confidentiality_example_clause %}, e.g. performance of candidates, etc, to anyone{% endif %}.
     </li>
     <li>
       You should bear in mind that the Commission holds the copyright of all question papers, marking schemes and other
@@ -338,7 +338,7 @@
       {% endif %}
     </tbody>
   </table>
-  {% if marking_fee_amount %}
+  {% if marking_fee_amount or vetting_of_scripts_allowance %}
   <p class="letter-fee-footnote"><em>Note: Marking fee per script and vetting of scripts allowance are subject to 10% tax.</em></p>
   {% endif %}
   {% endif %}

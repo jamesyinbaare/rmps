@@ -10,14 +10,18 @@ import pytest
 from app.models import (
     AppointmentLetterSigningOfficial,
     ExaminerType,
+    Examination,
     ExaminationExaminerAppointmentLetterSettings,
     ExaminationExaminerAppointmentLetterSubjectSettings,
+    Subject,
+    SubjectType,
 )
 from app.services.examiner_appointment_letter_pdf import (
     DEFAULT_COORDINATION_VENUE,
     DUMMY_APPOINTMENT_LETTEE_NAME,
     _appointment_role_context,
     _render_appointment_letter_body_html,
+    appointment_letter_examination_label,
 )
 from app.services.examiner_appointment_letter_settings import (
     DEFAULT_CC_LINES,
@@ -155,15 +159,24 @@ def test_validate_signature_upload_accepts_png() -> None:
     assert validate_signature_upload(b"\x89PNG", "sig.png") == ".png"
 
 
+def test_appointment_letter_examination_label_includes_subject_type() -> None:
+    exam = Examination(year=2026, exam_series="May/June", exam_type="Certificate II")
+    subject = Subject(name="Entrepreneurship", subject_type=SubjectType.CORE)
+    assert (
+        appointment_letter_examination_label(exam, subject)
+        == "2026 May/June Certificate II Core Subjects Examinations"
+    )
+
+
 def test_render_appointment_letter_body_includes_signatory_name() -> None:
     html = _render_appointment_letter_body_html(
         context={
-            "examination_label": "2026 BECE",
-            "examination_label_upper": "2026 BECE",
+            "examination_label": "2026 May/June Certificate II Core Subjects Examinations",
+            "examination_label_upper": "2026 MAY/JUNE CERTIFICATE II CORE SUBJECTS EXAMINATIONS",
             "invitee_name": DUMMY_APPOINTMENT_LETTEE_NAME,
             "phone_number": "",
             "examiner_type_label": "Chief examiner",
-            "subject_label": "Mathematics (MATH301)",
+            "subject_label": "Mathematics",
             "subject_name": "Mathematics",
             "region": "Greater Accra",
             "coordination_date": None,
@@ -178,6 +191,7 @@ def test_render_appointment_letter_body_includes_signatory_name() -> None:
             "fees_section_heading": "FEES",
             "show_red_marking_pen_instruction": False,
             "show_green_vetting_pen_instruction": True,
+            "show_confidentiality_example_clause": True,
             "examiner_type": "chief_examiner",
             "signatory_name": "Custom Signatory",
             "signatory_title": "CUSTOM TITLE",
@@ -197,8 +211,8 @@ def test_appointment_letter_intro_uses_formal_wording() -> None:
     subject_label = "Mathematics (Core)"
     html = _render_appointment_letter_body_html(
         context={
-            "examination_label": "2025 May/June Certificate II",
-            "examination_label_upper": "2025 MAY/JUNE CERTIFICATE II",
+            "examination_label": "2025 May/June Certificate II Core Subjects Examinations",
+            "examination_label_upper": "2025 MAY/JUNE CERTIFICATE II CORE SUBJECTS EXAMINATIONS",
             "invitee_name": "Core Math Examiner 013",
             "phone_number": "",
             "examiner_type_label": "Assistant examiner",
@@ -233,6 +247,36 @@ def test_appointment_letter_intro_uses_formal_wording() -> None:
     assert "pleased to invite" not in html
     assert "You are invited as" not in html
     assert "special responsibility" not in html
+    assert "performance of candidates" not in html
+
+
+def test_appointment_letter_chief_examiner_keeps_confidentiality_example() -> None:
+    html = _render_appointment_letter_body_html(
+        context={
+            "examination_label": "2026 May/June Certificate II Core Subjects Examinations",
+            "examination_label_upper": "2026 MAY/JUNE CERTIFICATE II CORE SUBJECTS EXAMINATIONS",
+            "invitee_name": "Chief Examiner",
+            "phone_number": "",
+            "examiner_type_label": "Chief examiner",
+            "subject_label": "Entrepreneurship",
+            "subject_name": "Entrepreneurship",
+            "region": "Greater Accra",
+            "coordination_date": None,
+            "coordination_start_time": None,
+            "coordination_end_time": None,
+            "coordination_venue": DEFAULT_COORDINATION_VENUE,
+            "marking_start_date": None,
+            "marking_end_date": None,
+            **_appointment_role_context(ExaminerType.CHIEF),
+            "signatory_name": "Signatory",
+            "signatory_title": "TITLE",
+            "signed_for_director_general": True,
+            "valediction": "Yours faithfully",
+            "cc_lines": ["The Accountant."],
+            "signatory_signature_src": None,
+        },
+    )
+    assert "performance of candidates" in html
 
 
 @pytest.mark.asyncio

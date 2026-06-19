@@ -28,7 +28,7 @@ from app.schemas.examiner_delete import (
     ExaminerManualAllocationItem,
 )
 from app.services.examiner_invitation import subject_display_code
-from app.services.subject_marking_group import sync_default_cohort_members
+from app.services.subject_marking_group import sync_subject_cohort_memberships
 
 
 async def _latest_optimal_run(
@@ -185,7 +185,7 @@ async def delete_examiner_with_cleanup(
     await session.flush()
 
     for sid in subject_ids_before:
-        await sync_default_cohort_members(
+        await sync_subject_cohort_memberships(
             session,
             examination_id=examination_id,
             subject_id=sid,

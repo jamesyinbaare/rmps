@@ -87,7 +87,7 @@ export function CohortMembershipTabs({
         {activeTab === "regions" ? (
           <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
             <p className="mb-3 shrink-0 text-xs text-muted-foreground">
-              Select regions to add all examiners in that home region.
+              Select regions to auto-assign examiners in that home region as they join the roster.
             </p>
             <div className="min-h-0 flex-1 overflow-y-auto">
             <RegionRulePicker
@@ -104,7 +104,7 @@ export function CohortMembershipTabs({
         {activeTab === "roles" && showRolesTab ? (
           <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
             <p className="mb-3 shrink-0 text-xs text-muted-foreground">
-              Select roles to add all examiners with that role on this subject.
+              Select roles to auto-assign examiners with that role as they join the roster.
             </p>
             <div className="min-h-0 flex-1 overflow-y-auto">
             <RoleRulePicker
