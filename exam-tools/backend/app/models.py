@@ -1643,7 +1643,7 @@ class ExaminerInvitation(Base):
     subject_id = Column(Integer, ForeignKey("subjects.id", ondelete="RESTRICT"), nullable=False, index=True)
     name = Column(String(255), nullable=False)
     phone_number = Column(String(50), nullable=False)
-    msisdn = Column(String(20), nullable=False, index=True)
+    msisdn = Column(String(20), nullable=True, index=True)
     gender = Column(String(20), nullable=True)
     examiner_type = examiner_type_column(nullable=False)
     region = Column(Enum(Region, create_constraint=False), nullable=False)

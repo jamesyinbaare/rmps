@@ -231,29 +231,7 @@ export function ExaminerInvitationLandingPanel({
             ) : null}
           </div>
 
-          {invitation.status !== "declined" ? (
-            <div
-              className="mt-5 flex items-start gap-3 rounded-2xl border-2 border-amber-500/40 bg-amber-500/15 px-4 py-4 shadow-sm"
-              role="note"
-            >
-              <span className="flex size-9 shrink-0 items-center justify-center rounded-xl bg-amber-500/20 text-amber-700 dark:text-amber-400">
-                <Info className="size-5" aria-hidden />
-              </span>
-              <p className="text-sm font-medium leading-relaxed text-foreground sm:text-base">
-                {EXAMINER_TNT_PAYMENT_NOTE}
-              </p>
-            </div>
-          ) : null}
-
           <ExaminerMarkingScheduleSection cohorts={markingCohorts} />
-
-          {canRespond ? (
-            <ExaminerAcceptanceStatement
-              invitation={invitation}
-              heading="Acceptance statement"
-              className="mt-5 rounded-2xl border border-border/70 bg-muted/20 px-4 py-4"
-            />
-          ) : null}
 
           {showActionMessage ? (
             <div
@@ -329,15 +307,39 @@ export function ExaminerInvitationLandingPanel({
                 : "We're sorry you can't take this role. Once you decline, you won't be able to change your answer on this page—please contact the exam office if your plans change."}
             </p>
             {confirmAction === "accept" ? (
-              <ExaminerAcceptanceStatement
-                invitation={invitation}
-                className="mt-4 rounded-xl border border-border/70 bg-muted/25 px-3.5 py-3.5"
-              />
+              <>
+                <ExaminerAcceptanceStatement
+                  invitation={invitation}
+                  heading="Acceptance statement"
+                  className="mt-4 rounded-xl border border-border/70 bg-muted/25 px-3.5 py-3.5"
+                />
+                <div
+                  className="mt-4 flex items-start gap-3 rounded-xl border-2 border-amber-500/40 bg-amber-500/15 px-3.5 py-3.5"
+                  role="note"
+                >
+                  <span className="flex size-8 shrink-0 items-center justify-center rounded-lg bg-amber-500/20 text-amber-700 dark:text-amber-400">
+                    <Info className="size-4" aria-hidden />
+                  </span>
+                  <p className="text-sm font-medium leading-relaxed text-foreground">
+                    {EXAMINER_TNT_PAYMENT_NOTE}
+                  </p>
+                </div>
+              </>
             ) : null}
             <div className="mt-4">
               <label className={formLabelClass} htmlFor={confirmInputId}>
                 {confirmAction === "accept" ? "To confirm, type " : "To decline, type "}
-                <span className="font-mono font-semibold text-foreground">{confirmAction}</span> below
+                <span
+                  className={cn(
+                    "mx-0.5 rounded-md px-1.5 py-0.5 font-mono text-sm font-semibold",
+                    confirmAction === "accept"
+                      ? "bg-primary/15 text-primary ring-1 ring-primary/25"
+                      : "text-foreground",
+                  )}
+                >
+                  {confirmAction}
+                </span>{" "}
+                below
               </label>
               <input
                 id={confirmInputId}

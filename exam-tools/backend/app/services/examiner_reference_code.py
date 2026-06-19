@@ -7,7 +7,7 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import cast
 
-from sqlalchemy import func, select
+from sqlalchemy import func, inspect as sa_inspect, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
@@ -233,7 +233,7 @@ async def assign_reference_code_to_examiner(
     if examiner.reference_code:
         return cast(str, examiner.reference_code)
     await ensure_default_region_groups(session, int(examiner.examination_id))
-    if subject_id is None and not examiner.subjects:
+    if subject_id is None and "subjects" in sa_inspect(examiner).unloaded:
         await session.refresh(examiner, attribute_names=["subjects"])
     return await _set_reference_code_on_examiner(session, examiner, subject_id=subject_id)
 

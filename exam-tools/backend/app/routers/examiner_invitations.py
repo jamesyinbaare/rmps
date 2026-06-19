@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from datetime import datetime
 from typing import cast
 from uuid import UUID
@@ -7,6 +8,7 @@ from uuid import UUID
 from fastapi import APIRouter, File, HTTPException, Query, UploadFile, status
 from fastapi.responses import Response
 from sqlalchemy import select
+from sqlalchemy.exc import MissingGreenlet
 from sqlalchemy.orm import selectinload
 
 from app.dependencies.auth import (
@@ -66,8 +68,40 @@ from app.services.template_generator import generate_examiner_invitations_export
 
 router = APIRouter(tags=["examiner-invitations"])
 
+logger = logging.getLogger(__name__)
+
 _MAX_BULK_BYTES = 5 * 1024 * 1024
 _MAX_BULK_ROWS = 2000
+
+
+def _invitation_bulk_row_error_message(exc: Exception) -> str:
+    if isinstance(exc, ValueError):
+        return str(exc)
+    msg = str(exc).strip()
+    if isinstance(exc, MissingGreenlet) or "greenlet_spawn" in msg:
+        return (
+            "Could not process this row after a previous upload error. "
+            "Re-upload the remaining rows or fix earlier rows and try again."
+        )
+    if msg:
+        return f"Unexpected error: {msg}"
+    return f"Unexpected error ({exc.__class__.__name__})"
+
+
+def _log_invitation_bulk_row_failure(
+    *,
+    examination_id: int,
+    row_number: int,
+    exc: Exception,
+    phase: str,
+) -> None:
+    logger.exception(
+        "Examiner invitation bulk upload failed exam_id=%s row=%s phase=%s: %s",
+        examination_id,
+        row_number,
+        phase,
+        exc,
+    )
 
 
 def _examiner_type_from_schema(s: ExaminerTypeSchema) -> ExaminerType:
@@ -686,12 +720,19 @@ async def bulk_upload_examiner_invitations(
     created_count = 0
     sms_sent_count = 0
     sms_failed_count = 0
+    acting_user_id = cast(UUID, user.id)
 
     for row_number, (_, srow) in enumerate(df.iterrows(), start=2):
         try:
             fields = await dataframe_row_to_examiner_fields(session, srow)
         except ValueError as e:
             errors.append(ExaminerInvitationBulkImportRowError(row_number=row_number, message=str(e)))
+            logger.info(
+                "Examiner invitation bulk upload row rejected exam_id=%s row=%s parse: %s",
+                examination_id,
+                row_number,
+                e,
+            )
             continue
         try:
             msisdn = normalize_msisdn(fields["phone_number"])
@@ -700,42 +741,50 @@ async def bulk_upload_examiner_invitations(
                 raise ValueError("Subject not assigned to this officer")
         except ValueError as e:
             errors.append(ExaminerInvitationBulkImportRowError(row_number=row_number, message=str(e)))
+            logger.info(
+                "Examiner invitation bulk upload row rejected exam_id=%s row=%s validation: %s",
+                examination_id,
+                row_number,
+                e,
+            )
             continue
         try:
-            inv = await create_examiner_invitation(
-                session,
-                examination_id=examination_id,
-                subject_id=subject_id,
-                name=fields["name"],
-                phone_number=fields["phone_number"],
-                msisdn=msisdn,
-                examiner_type=fields["examiner_type"],
-                region_str=fields["allowed_region"],
-                invited_by_user_id=user.id,
-                response_deadline=response_deadline,
-                coordination_start_date=coordination_start_date,
-                coordination_start_time=bulk_coord_start_time,
-                coordination_end_date=coordination_end_date,
-                coordination_end_time=bulk_coord_end_time,
-                gender=fields.get("gender"),
-            )
-            stmt_load = (
-                select(ExaminerInvitation)
-                .where(ExaminerInvitation.id == inv.id)
-                .options(
-                    selectinload(ExaminerInvitation.subject),
-                    selectinload(ExaminerInvitation.examination),
+            async with session.begin_nested():
+                inv = await create_examiner_invitation(
+                    session,
+                    examination_id=examination_id,
+                    subject_id=subject_id,
+                    name=fields["name"],
+                    phone_number=fields["phone_number"],
+                    msisdn=msisdn,
+                    examiner_type=fields["examiner_type"],
+                    region_str=fields["allowed_region"],
+                    invited_by_user_id=acting_user_id,
+                    response_deadline=response_deadline,
+                    coordination_start_date=coordination_start_date,
+                    coordination_start_time=bulk_coord_start_time,
+                    coordination_end_date=coordination_end_date,
+                    coordination_end_time=bulk_coord_end_time,
+                    gender=fields.get("gender"),
                 )
-            )
-            inv_loaded = (await session.execute(stmt_load)).scalar_one()
-            sms_sent, _sms_error, _sms_delivery_id = await maybe_send_examiner_invitation_sms(
-                inv_loaded,
-                send_sms,
-                session=session,
-                triggered_by_user_id=user.id,
-                trigger="bulk_create",
-                bulk=True,
-            )
+                stmt_load = (
+                    select(ExaminerInvitation)
+                    .where(ExaminerInvitation.id == inv.id)
+                    .options(
+                        selectinload(ExaminerInvitation.subject),
+                        selectinload(ExaminerInvitation.examination),
+                    )
+                )
+                inv_loaded = (await session.execute(stmt_load)).scalar_one()
+                sms_sent, _sms_error, _sms_delivery_id = await maybe_send_examiner_invitation_sms(
+                    inv_loaded,
+                    send_sms,
+                    session=session,
+                    triggered_by_user_id=acting_user_id,
+                    trigger="bulk_create",
+                    bulk=True,
+                    commit_session=False,
+                )
             await session.commit()
             created_count += 1
             if sms_sent is True:
@@ -743,11 +792,37 @@ async def bulk_upload_examiner_invitations(
             elif sms_sent is False:
                 sms_failed_count += 1
         except ValueError as e:
-            await session.rollback()
-            errors.append(ExaminerInvitationBulkImportRowError(row_number=row_number, message=str(e)))
+            message = _invitation_bulk_row_error_message(e)
+            errors.append(ExaminerInvitationBulkImportRowError(row_number=row_number, message=message))
+            logger.info(
+                "Examiner invitation bulk upload row rejected exam_id=%s row=%s create: %s",
+                examination_id,
+                row_number,
+                e,
+            )
         except Exception as e:  # noqa: BLE001 — row-level import; surface message to admin
             await session.rollback()
-            errors.append(ExaminerInvitationBulkImportRowError(row_number=row_number, message=str(e)))
+            _log_invitation_bulk_row_failure(
+                examination_id=examination_id,
+                row_number=row_number,
+                exc=e,
+                phase="create_or_sms",
+            )
+            errors.append(
+                ExaminerInvitationBulkImportRowError(
+                    row_number=row_number,
+                    message=_invitation_bulk_row_error_message(e),
+                )
+            )
+
+    logger.info(
+        "Examiner invitation bulk upload finished exam_id=%s created=%s sms_sent=%s sms_failed=%s error_rows=%s",
+        examination_id,
+        created_count,
+        sms_sent_count,
+        sms_failed_count,
+        len(errors),
+    )
 
     return ExaminerInvitationBulkImportResponse(
         created_count=created_count,

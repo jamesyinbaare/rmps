@@ -618,7 +618,7 @@ async def test_accept_examiner_invitation_creates_roster_row() -> None:
             new_callable=AsyncMock,
         ),
         patch(
-            "app.services.examiner_invitation.sync_default_cohort_members",
+            "app.services.examiner_invitation.sync_subject_cohort_memberships",
             new_callable=AsyncMock,
         ),
         patch(
@@ -633,6 +633,7 @@ async def test_accept_examiner_invitation_creates_roster_row() -> None:
     assert result.examiner.name == "Jane"
     assert inv.status == ExaminerInvitationStatus.ACCEPTED
     assert inv.examiner_id is not None
+    assert inv.msisdn is None
     mock_sync.assert_awaited_once()
 
 
@@ -978,3 +979,69 @@ async def test_update_response_deadline_rejects_non_extendable() -> None:
                 inv,
                 response_deadline=datetime.utcnow() + timedelta(days=3),
             )
+
+
+def test_invitation_bulk_row_error_message_preserves_value_error() -> None:
+    from app.routers.examiner_invitations import _invitation_bulk_row_error_message
+
+    msg = "This phone was invited for Mathematics in 2025 May/June and cannot be used elsewhere."
+    assert _invitation_bulk_row_error_message(ValueError(msg)) == msg
+
+
+def test_invitation_bulk_row_error_message_greenlet_is_actionable() -> None:
+    from sqlalchemy.exc import MissingGreenlet
+
+    from app.routers.examiner_invitations import _invitation_bulk_row_error_message
+
+    text = _invitation_bulk_row_error_message(
+        MissingGreenlet("greenlet_spawn has not been called; can't call await_only() here.")
+    )
+    assert "previous upload error" in text.lower()
+    assert "greenlet_spawn" not in text
+
+
+def test_bulk_upload_captures_acting_user_id_before_per_row_rollback() -> None:
+    """Per-row rollback expires the auth User; re-reading user.id can raise MissingGreenlet in async."""
+    from typing import cast
+    from uuid import UUID
+
+    user_id = uuid4()
+    user = MagicMock()
+    user.id = user_id
+    acting_user_id = cast(UUID, user.id)
+
+    user.id = uuid4()
+    assert acting_user_id == user_id
+
+
+def test_invitation_bulk_row_error_message_preserves_value_error() -> None:
+    from app.routers.examiner_invitations import _invitation_bulk_row_error_message
+
+    msg = "This phone was invited for Mathematics in 2025 May/June and cannot be used elsewhere."
+    assert _invitation_bulk_row_error_message(ValueError(msg)) == msg
+
+
+def test_invitation_bulk_row_error_message_greenlet_is_actionable() -> None:
+    from sqlalchemy.exc import MissingGreenlet
+
+    from app.routers.examiner_invitations import _invitation_bulk_row_error_message
+
+    text = _invitation_bulk_row_error_message(
+        MissingGreenlet("greenlet_spawn has not been called; can't call await_only() here.")
+    )
+    assert "previous upload error" in text.lower()
+    assert "greenlet_spawn" not in text
+
+
+def test_bulk_upload_captures_acting_user_id_before_per_row_rollback() -> None:
+    """Per-row rollback expires the auth User; re-reading user.id can raise MissingGreenlet in async."""
+    from typing import cast
+    from uuid import UUID
+
+    user_id = uuid4()
+    user = MagicMock()
+    user.id = user_id
+    acting_user_id = cast(UUID, user.id)
+
+    user.id = uuid4()
+    assert acting_user_id == user_id

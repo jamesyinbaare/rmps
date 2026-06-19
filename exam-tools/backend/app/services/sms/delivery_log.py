@@ -6,6 +6,7 @@ from datetime import datetime
 from typing import TYPE_CHECKING
 from uuid import UUID
 
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -170,25 +171,28 @@ async def record_examiner_invitation_sms(
     trigger: str,
     triggered_by_user_id: UUID | None = None,
     retried_from_id: UUID | None = None,
+    commit_session: bool = True,
 ) -> tuple[SmsDeliveryResult, UUID | None]:
     from app.models import ExaminerInvitation as ExaminerInvitationModel
     from app.services.sms.examiner_invitation import send_examiner_invitation_sms
 
-    inv = invitation
-    if inv.examination is None or inv.subject is None:
-        from sqlalchemy import select
-
-        stmt = (
-            select(ExaminerInvitationModel)
-            .where(ExaminerInvitationModel.id == invitation.id)
-            .options(
-                selectinload(ExaminerInvitationModel.examination),
-                selectinload(ExaminerInvitationModel.subject),
-            )
+    stmt = (
+        select(ExaminerInvitationModel)
+        .where(ExaminerInvitationModel.id == invitation.id)
+        .options(
+            selectinload(ExaminerInvitationModel.examination),
+            selectinload(ExaminerInvitationModel.subject),
         )
-        inv = (await session.execute(stmt)).scalar_one_or_none()
-        if inv is None:
-            return SmsDeliveryResult(sent=False, error="Invitation not found"), None
+    )
+    inv = (await session.execute(stmt)).scalar_one_or_none()
+    if inv is None:
+        return SmsDeliveryResult(sent=False, error="Invitation not found"), None
+
+    async def _finalize() -> None:
+        if commit_session:
+            await session.commit()
+        else:
+            await session.flush()
 
     try:
         msisdn = normalize_msisdn(inv.phone_number)
@@ -205,7 +209,7 @@ async def record_examiner_invitation_sms(
             retried_from_id=retried_from_id,
             error_message=str(exc),
         )
-        await session.commit()
+        await _finalize()
         return SmsDeliveryResult(sent=False, error=str(exc)), row.id
 
     pending = await create_delivery_log(
@@ -227,7 +231,7 @@ async def record_examiner_invitation_sms(
         inv.notified_at = datetime.utcnow()
     else:
         await mark_delivery_failed(session, pending.id, error=result.error or "SMS failed")
-    await session.commit()
+    await _finalize()
     return result, pending.id
 
 

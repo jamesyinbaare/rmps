@@ -56,7 +56,7 @@ from app.services.script_allocation import parse_region, sync_examiner_subjects
 from app.services.sms.phone import normalize_msisdn
 from app.services.sms.examiner_roster import maybe_send_custom_examiner_roster_sms
 from app.services.examiner_reference_code import assign_reference_code_to_examiner
-from app.services.subject_marking_group import sync_default_cohort_members
+from app.services.subject_marking_group import sync_subject_cohort_memberships
 from app.services.subject_officer_scope import (
     assert_subject_officer_access,
     assert_unrestricted_examiner_manager,
@@ -112,12 +112,14 @@ def _examiner_response(ex: Examiner) -> ExaminerResponse:
     )
 
 
-async def _sync_default_for_examiner(session: AsyncSession, ex: Examiner) -> None:
-    for sub in ex.subjects:
-        await sync_default_cohort_members(
+async def _sync_cohort_memberships_for_examiner(session: AsyncSession, ex: Examiner) -> None:
+    stmt = select(ExaminerSubject.subject_id).where(ExaminerSubject.examiner_id == ex.id)
+    subject_ids = list((await session.execute(stmt)).scalars().all())
+    for sid in subject_ids:
+        await sync_subject_cohort_memberships(
             session,
             examination_id=int(ex.examination_id),
-            subject_id=int(sub.subject_id),
+            subject_id=int(sid),
         )
 
 
@@ -246,7 +248,7 @@ async def create_examiner(
         await assign_reference_code_to_examiner(session, ex)
     except ValueError as e:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e)) from e
-    await _sync_default_for_examiner(session, ex)
+    await _sync_cohort_memberships_for_examiner(session, ex)
     await session.commit()
     stmt = (
         select(Examiner)
@@ -376,7 +378,7 @@ async def bulk_upload_examiners(
             await session.flush()
             await sync_examiner_subjects(session, ex, fields["subject_ids"])
             await assign_reference_code_to_examiner(session, ex)
-            await _sync_default_for_examiner(session, ex)
+            await _sync_cohort_memberships_for_examiner(session, ex)
             await session.commit()
             created_count += 1
         except Exception as e:  # noqa: BLE001 — row-level import; surface message to admin
@@ -499,7 +501,7 @@ async def update_examiner(
                 raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e)) from e
         await sync_examiner_subjects(session, ex, subject_ids)
         for sid in set(previous_subject_ids) | set(subject_ids):
-            await sync_default_cohort_members(
+            await sync_subject_cohort_memberships(
                 session,
                 examination_id=examination_id,
                 subject_id=sid,

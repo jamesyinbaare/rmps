@@ -420,6 +420,159 @@ async def _examiner_ids_for_roles(
     return list(dict.fromkeys((await session.execute(stmt)).scalars().all()))
 
 
+async def _subject_examiner_ids(
+    session: AsyncSession,
+    *,
+    examination_id: int,
+    subject_id: int,
+) -> set[UUID]:
+    stmt = (
+        select(Examiner.id)
+        .join(ExaminerSubject, ExaminerSubject.examiner_id == Examiner.id)
+        .where(
+            Examiner.examination_id == examination_id,
+            ExaminerSubject.subject_id == subject_id,
+        )
+    )
+    return set((await session.execute(stmt)).scalars().all())
+
+
+async def _rule_matched_member_ids(
+    session: AsyncSession,
+    *,
+    examination_id: int,
+    subject_id: int,
+    regions: list[Region],
+    roles: list[ExaminerType],
+) -> set[UUID]:
+    region_examiner_ids = await _examiner_ids_for_regions(
+        session,
+        examination_id=examination_id,
+        subject_id=subject_id,
+        regions=regions,
+    )
+    role_examiner_ids = await _examiner_ids_for_roles(
+        session,
+        examination_id=examination_id,
+        subject_id=subject_id,
+        roles=roles,
+    )
+    return set(region_examiner_ids) | set(role_examiner_ids)
+
+
+def _compute_cohort_member_ids(
+    group: SubjectMarkingGroup,
+    *,
+    subject_examiner_ids: set[UUID],
+    rule_matched_ids: set[UUID],
+) -> list[UUID]:
+    """Resolve member IDs for one non-default cohort during auto-sync."""
+    has_rules = bool(group.source_regions or group.source_roles)
+    if has_rules:
+        rule_matched = rule_matched_ids & subject_examiner_ids
+        current_member_ids = {m.examiner_id for m in group.members}
+        manual_preserved = (current_member_ids & subject_examiner_ids) - rule_matched
+        final_ids = rule_matched | manual_preserved
+    else:
+        current_member_ids = {m.examiner_id for m in group.members}
+        final_ids = current_member_ids & subject_examiner_ids
+    return list(dict.fromkeys(final_ids))
+
+
+async def _rewrite_group_members(
+    session: AsyncSession,
+    *,
+    group_id: UUID,
+    examination_id: int,
+    subject_id: int,
+    member_ids: list[UUID],
+) -> None:
+    await session.execute(
+        delete(SubjectMarkingGroupMember).where(SubjectMarkingGroupMember.group_id == group_id)
+    )
+    for eid in member_ids:
+        session.add(
+            SubjectMarkingGroupMember(
+                group_id=group_id,
+                examiner_id=eid,
+                examination_id=examination_id,
+                subject_id=subject_id,
+            )
+        )
+
+
+async def sync_rule_based_cohort_members(
+    session: AsyncSession,
+    *,
+    examination_id: int,
+    subject_id: int,
+) -> None:
+    stmt = (
+        select(SubjectMarkingGroup)
+        .where(
+            SubjectMarkingGroup.examination_id == examination_id,
+            SubjectMarkingGroup.subject_id == subject_id,
+            SubjectMarkingGroup.is_default.is_(False),
+        )
+        .options(*_group_load_options())
+    )
+    groups = list((await session.execute(stmt)).scalars().all())
+    if not groups:
+        return
+
+    subject_examiner_ids = await _subject_examiner_ids(
+        session,
+        examination_id=examination_id,
+        subject_id=subject_id,
+    )
+
+    for group in groups:
+        regions = [r.region for r in group.source_regions]
+        roles = [r.examiner_type for r in group.source_roles]
+        rule_matched_ids: set[UUID] = set()
+        if regions or roles:
+            rule_matched_ids = await _rule_matched_member_ids(
+                session,
+                examination_id=examination_id,
+                subject_id=subject_id,
+                regions=regions,
+                roles=roles,
+            )
+        member_ids = _compute_cohort_member_ids(
+            group,
+            subject_examiner_ids=subject_examiner_ids,
+            rule_matched_ids=rule_matched_ids,
+        )
+        await _rewrite_group_members(
+            session,
+            group_id=group.id,
+            examination_id=examination_id,
+            subject_id=subject_id,
+            member_ids=member_ids,
+        )
+        group.updated_at = datetime.utcnow()
+
+    await session.flush()
+
+
+async def sync_subject_cohort_memberships(
+    session: AsyncSession,
+    *,
+    examination_id: int,
+    subject_id: int,
+) -> None:
+    await sync_default_cohort_members(
+        session,
+        examination_id=examination_id,
+        subject_id=subject_id,
+    )
+    await sync_rule_based_cohort_members(
+        session,
+        examination_id=examination_id,
+        subject_id=subject_id,
+    )
+
+
 async def replace_group_members(
     session: AsyncSession,
     *,
@@ -495,32 +648,13 @@ async def replace_group_members(
             )
         )
 
-    await session.execute(
-        delete(SubjectMarkingGroupMember).where(SubjectMarkingGroupMember.group_id == group_id)
+    await _rewrite_group_members(
+        session,
+        group_id=group_id,
+        examination_id=examination_id,
+        subject_id=subject_id,
+        member_ids=unique_ids,
     )
-
-    if unique_ids:
-        other_groups = select(SubjectMarkingGroup.id).where(
-            SubjectMarkingGroup.examination_id == examination_id,
-            SubjectMarkingGroup.subject_id == subject_id,
-            SubjectMarkingGroup.id != group_id,
-            SubjectMarkingGroup.is_default.is_(False),
-        )
-        await session.execute(
-            delete(SubjectMarkingGroupMember).where(
-                SubjectMarkingGroupMember.examiner_id.in_(unique_ids),
-                SubjectMarkingGroupMember.group_id.in_(other_groups),
-            )
-        )
-        for eid in unique_ids:
-            session.add(
-                SubjectMarkingGroupMember(
-                    group_id=group_id,
-                    examiner_id=eid,
-                    examination_id=examination_id,
-                    subject_id=subject_id,
-                )
-            )
 
     group.updated_at = datetime.utcnow()
     try:

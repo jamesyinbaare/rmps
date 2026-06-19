@@ -31,7 +31,7 @@ from app.services.examiner_regional_quota import (
 from app.services.examiner_subject_lock import assert_examiner_subject_allowed
 from app.services.script_allocation import parse_region, sync_examiner_subjects
 from app.services.sms.phone import normalize_msisdn
-from app.services.subject_marking_group import sync_default_cohort_members
+from app.services.subject_marking_group import sync_subject_cohort_memberships
 
 
 @dataclass(frozen=True)
@@ -256,9 +256,13 @@ async def accept_examiner_invitation(session: AsyncSession, inv: ExaminerInvitat
     )
     session.add(examiner)
     await session.flush()
-    await assign_reference_code_to_examiner(session, examiner)
     await sync_examiner_subjects(session, examiner, [inv.subject_id])
-    await sync_default_cohort_members(
+    await assign_reference_code_to_examiner(
+        session,
+        examiner,
+        subject_id=int(inv.subject_id),
+    )
+    await sync_subject_cohort_memberships(
         session,
         examination_id=int(inv.examination_id),
         subject_id=int(inv.subject_id),
