@@ -231,8 +231,35 @@ def test_build_appointment_fee_context_from_rates_uses_subject_and_region_only()
 
     assert context["marking_fee_amount"] == "3.50"
     assert context["travel_and_transport_amount"] == "700.00"
+    assert context["chief_examiners_report_allowance"] is None
+    assert context["vetting_of_scripts_allowance"] is None
     assert "travel_zone_lines" not in context
     assert "marking_fee_lines" not in context
+
+
+def test_build_appointment_fee_context_omits_zero_amounts() -> None:
+    from app.services.examiner_appointment_letter_pdf import _build_appointment_fee_context_from_rates
+
+    subject_id = 10
+    context = _build_appointment_fee_context_from_rates(
+        role_rates={
+            (ExaminerType.ASSISTANT, ExaminerAllowanceType.RESPONSIBILITY): Decimal("0"),
+            (ExaminerType.ASSISTANT, ExaminerAllowanceType.INCONVENIENCE): Decimal("70"),
+        },
+        marking_rates={(subject_id, 2): Decimal("0")},
+        travel_rates={},
+        travel_zones={},
+        travel_zone_names={},
+        travel_role_factors={},
+        examiner_type=ExaminerType.ASSISTANT,
+        region=Region.GREATER_ACCRA,
+        subject_id=subject_id,
+    )
+
+    assert context["marking_fee_amount"] is None
+    assert context["responsibility_allowance"] is None
+    assert context["inconvenience_allowance"] == "70.00"
+    assert context["travel_and_transport_amount"] is None
 
 
 def test_compute_travel_compensation_zero_when_region_unconfigured() -> None:

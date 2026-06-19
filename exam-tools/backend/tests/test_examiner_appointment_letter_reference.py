@@ -139,4 +139,4 @@ def test_dummy_appointment_letter_preview_uses_placeholder_name() -> None:
     )
     assert pdf.startswith(b"%PDF")
     assert len(pdf) > 1000
-    assert DUMMY_APPOINTMENT_LETTEE_NAME == "___________"
+    assert DUMMY_APPOINTMENT_LETTEE_NAME == "Sir/Madam"
