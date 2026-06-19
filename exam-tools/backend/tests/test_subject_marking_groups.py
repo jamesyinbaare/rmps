@@ -453,3 +453,135 @@ async def test_replace_group_members_does_not_remove_from_other_cohorts() -> Non
         subject_id=10,
         member_ids=[examiner_id],
     )
+
+@pytest.mark.asyncio
+async def test_rule_matched_member_ids_regions_only() -> None:
+    session = AsyncMock()
+    id_a, id_b = uuid4(), uuid4()
+    with patch(
+        "app.services.subject_marking_group._examiner_ids_for_regions",
+        new_callable=AsyncMock,
+        return_value=[id_a, id_b],
+    ):
+        from app.services.subject_marking_group import _rule_matched_member_ids
+        from app.models import Region
+
+        result = await _rule_matched_member_ids(
+            session,
+            examination_id=1,
+            subject_id=10,
+            regions=[Region.ASHANTI, Region.EASTERN],
+            roles=[],
+        )
+    assert result == {id_a, id_b}
+
+
+@pytest.mark.asyncio
+async def test_rule_matched_member_ids_roles_only() -> None:
+    session = AsyncMock()
+    id_a, id_b = uuid4(), uuid4()
+    with patch(
+        "app.services.subject_marking_group._examiner_ids_for_roles",
+        new_callable=AsyncMock,
+        return_value=[id_a, id_b],
+    ):
+        from app.services.subject_marking_group import _rule_matched_member_ids
+        from app.models import ExaminerType
+
+        result = await _rule_matched_member_ids(
+            session,
+            examination_id=1,
+            subject_id=10,
+            regions=[],
+            roles=[ExaminerType.CHIEF, ExaminerType.ASSISTANT],
+        )
+    assert result == {id_a, id_b}
+
+
+@pytest.mark.asyncio
+async def test_rule_matched_member_ids_intersection_when_both() -> None:
+    session = AsyncMock()
+    shared = uuid4()
+    region_only = uuid4()
+    role_only = uuid4()
+    with (
+        patch(
+            "app.services.subject_marking_group._examiner_ids_for_regions",
+            new_callable=AsyncMock,
+            return_value=[shared, region_only],
+        ),
+        patch(
+            "app.services.subject_marking_group._examiner_ids_for_roles",
+            new_callable=AsyncMock,
+            return_value=[shared, role_only],
+        ),
+    ):
+        from app.services.subject_marking_group import _rule_matched_member_ids
+        from app.models import ExaminerType, Region
+
+        result = await _rule_matched_member_ids(
+            session,
+            examination_id=1,
+            subject_id=10,
+            regions=[Region.ASHANTI],
+            roles=[ExaminerType.CHIEF],
+        )
+    assert result == {shared}
+
+
+@pytest.mark.asyncio
+async def test_replace_group_members_uses_rule_match_plus_manual() -> None:
+    session = AsyncMock()
+    group_id = uuid4()
+    rule_id = uuid4()
+    manual_id = uuid4()
+    group = MagicMock(spec=SubjectMarkingGroup)
+    group.id = group_id
+    group.is_default = False
+    group.members = []
+
+    refreshed = MagicMock(spec=SubjectMarkingGroup)
+    refreshed.is_default = False
+
+    with (
+        patch(
+            "app.services.subject_marking_group.load_group",
+            new_callable=AsyncMock,
+            side_effect=[group, refreshed],
+        ),
+        patch(
+            "app.services.subject_marking_group.group_response",
+            return_value={"id": group_id, "examiner_ids": [rule_id, manual_id]},
+        ),
+        patch(
+            "app.services.subject_marking_group._rule_matched_member_ids",
+            new_callable=AsyncMock,
+            return_value={rule_id},
+        ),
+        patch(
+            "app.services.subject_marking_group._rewrite_group_members",
+            new_callable=AsyncMock,
+        ) as rewrite_mock,
+    ):
+        found = MagicMock()
+        found.scalars.return_value.all.return_value = [rule_id, manual_id]
+        session.execute = AsyncMock(return_value=found)
+        session.commit = AsyncMock()
+
+        await replace_group_members(
+            session,
+            examination_id=1,
+            subject_id=10,
+            group_id=group_id,
+            source_regions=["ashanti"],
+            source_roles=["chief_examiner"],
+            examiner_ids=[rule_id, manual_id],
+        )
+
+    rewrite_mock.assert_awaited_once_with(
+        session,
+        group_id=group_id,
+        examination_id=1,
+        subject_id=10,
+        member_ids=[rule_id, manual_id],
+    )

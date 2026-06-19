@@ -7,7 +7,6 @@ from uuid import UUID
 
 from fastapi import HTTPException, status
 from sqlalchemy import delete, select
-from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -445,19 +444,33 @@ async def _rule_matched_member_ids(
     regions: list[Region],
     roles: list[ExaminerType],
 ) -> set[UUID]:
-    region_examiner_ids = await _examiner_ids_for_regions(
-        session,
-        examination_id=examination_id,
-        subject_id=subject_id,
-        regions=regions,
-    )
-    role_examiner_ids = await _examiner_ids_for_roles(
-        session,
-        examination_id=examination_id,
-        subject_id=subject_id,
-        roles=roles,
-    )
-    return set(region_examiner_ids) | set(role_examiner_ids)
+    region_ids: set[UUID] | None = None
+    role_ids: set[UUID] | None = None
+    if regions:
+        region_ids = set(
+            await _examiner_ids_for_regions(
+                session,
+                examination_id=examination_id,
+                subject_id=subject_id,
+                regions=regions,
+            )
+        )
+    if roles:
+        role_ids = set(
+            await _examiner_ids_for_roles(
+                session,
+                examination_id=examination_id,
+                subject_id=subject_id,
+                roles=roles,
+            )
+        )
+    if region_ids is not None and role_ids is not None:
+        return region_ids & role_ids
+    if region_ids is not None:
+        return region_ids
+    if role_ids is not None:
+        return role_ids
+    return set()
 
 
 def _compute_cohort_member_ids(
@@ -600,19 +613,18 @@ async def replace_group_members(
 
     regions = _parse_source_regions(source_regions)
     roles = _parse_source_roles(source_roles)
-    region_examiner_ids = await _examiner_ids_for_regions(
+    rule_ids = await _rule_matched_member_ids(
         session,
         examination_id=examination_id,
         subject_id=subject_id,
         regions=regions,
-    )
-    role_examiner_ids = await _examiner_ids_for_roles(
-        session,
-        examination_id=examination_id,
-        subject_id=subject_id,
         roles=roles,
     )
-    unique_ids = list(dict.fromkeys([*region_examiner_ids, *role_examiner_ids, *examiner_ids]))
+    if regions or roles:
+        manual_ids = set(examiner_ids) - rule_ids
+        unique_ids = list(dict.fromkeys([*rule_ids, *manual_ids]))
+    else:
+        unique_ids = list(dict.fromkeys(examiner_ids))
     await _validate_examiners_on_subject(
         session,
         examination_id=examination_id,
@@ -657,18 +669,7 @@ async def replace_group_members(
     )
 
     group.updated_at = datetime.utcnow()
-    try:
-        await session.commit()
-    except IntegrityError as e:
-        await session.rollback()
-        err = str(e.orig) if e.orig else ""
-        if "uq_subject_marking_group_source_region_per_subject" in err:
-            detail = "Each region may belong to at most one cohort for this subject."
-        elif "uq_subject_marking_group_source_role_per_subject" in err:
-            detail = "Each role may belong to at most one cohort for this subject."
-        else:
-            detail = "Could not update cohort membership."
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=detail) from e
+    await session.commit()
 
     refreshed = await load_group(
         session,

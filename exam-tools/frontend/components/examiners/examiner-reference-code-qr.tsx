@@ -10,6 +10,7 @@ type Props = {
   referenceCode: string;
   size?: number;
   className?: string;
+  showLabel?: boolean;
 };
 
 export function ExaminerReferenceCodeQr({
@@ -17,6 +18,7 @@ export function ExaminerReferenceCodeQr({
   referenceCode,
   size = 96,
   className,
+  showLabel = true,
 }: Props) {
   if (!referenceCode) {
     return null;
@@ -27,7 +29,9 @@ export function ExaminerReferenceCodeQr({
   return (
     <div className={cn("flex flex-col items-center gap-1", className)}>
       <QRCodeSVG value={qrValue} size={size} level="L" includeMargin />
-      <span className="font-mono text-xs font-medium tracking-wide text-foreground">{referenceCode}</span>
+      {showLabel ? (
+        <span className="font-mono text-xs font-medium tracking-wide text-foreground">{referenceCode}</span>
+      ) : null}
     </div>
   );
 }

@@ -70,9 +70,23 @@ async def test_public_roster_portal_view_payload() -> None:
         subject=subject,
     )
     session = AsyncMock()
-    with patch(
-        "app.services.examiner_portal_public.get_examiner_marking_groups",
-        new=AsyncMock(return_value=[{"id": uuid4(), "name": DEFAULT_COHORT_NAME, "is_default": True}]),
+    with (
+        patch(
+            "app.services.examiner_portal_public.get_examiner_marking_groups",
+            new=AsyncMock(return_value=[{"id": uuid4(), "name": DEFAULT_COHORT_NAME, "is_default": True}]),
+        ),
+        patch(
+            "app.services.examiner_portal_public._load_examiner_with_subjects",
+            new=AsyncMock(return_value=examiner),
+        ),
+        patch(
+            "app.services.examiner_portal_public.maybe_notify_on_portal_visit",
+            new=AsyncMock(),
+        ),
+        patch(
+            "app.services.examiner_portal_public._release_fields_for_examiner",
+            new=AsyncMock(return_value={}),
+        ),
     ):
         payload = await public_roster_portal_view(session, resolved)
 
@@ -82,6 +96,33 @@ async def test_public_roster_portal_view_payload() -> None:
     assert payload["can_respond"] is False
     assert len(payload["marking_cohorts"]) == 1
     assert payload["reference_code"] == "NAE1"
+    assert payload["examination_id"] == 1
+
+
+def test_examiner_invitation_public_response_preserves_examination_id() -> None:
+    from app.schemas.examiner_invitation import (
+        ExaminerInvitationPublicResponse,
+        ExaminerInvitationStatusSchema,
+    )
+
+    response = ExaminerInvitationPublicResponse(
+        invitee_name="Jane Doe",
+        phone_number="0551234567",
+        examination_id=42,
+        examination_name="BECE 2026",
+        examination_description=None,
+        subject_name="Mathematics",
+        subject_code="301",
+        examiner_type="assistant",
+        examiner_type_label="Assistant Examiner",
+        region="ashanti",
+        status=ExaminerInvitationStatusSchema.accepted,
+        responded_at=None,
+        can_respond=False,
+        reference_code="C705-SAE2",
+    )
+    assert response.examination_id == 42
+    assert response.model_dump()["examination_id"] == 42
 
 
 @pytest.mark.asyncio

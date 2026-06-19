@@ -53,3 +53,79 @@ export function computeClaimedRoles(
 export function selectedMemberCount(membersDraft: Record<string, boolean>): number {
   return Object.values(membersDraft).filter(Boolean).length;
 }
+
+export function selectedRuleValues(draft: Record<string, boolean>): string[] {
+  return Object.entries(draft)
+    .filter(([, v]) => v)
+    .map(([k]) => k);
+}
+
+export function computeMembersFromRules(
+  regionsDraft: Record<string, boolean>,
+  rolesDraft: Record<string, boolean>,
+  examiners: { id: string; region: string; examiner_type: string }[],
+): Set<string> {
+  const selectedRegions = selectedRuleValues(regionsDraft);
+  const selectedRoles = selectedRuleValues(rolesDraft);
+  if (selectedRegions.length === 0 && selectedRoles.length === 0) {
+    return new Set();
+  }
+
+  const regionSet = new Set(selectedRegions);
+  const roleSet = new Set(selectedRoles);
+
+  let regionMatched: Set<string> | null = null;
+  if (selectedRegions.length > 0) {
+    regionMatched = new Set(
+      examiners.filter((ex) => regionSet.has(ex.region)).map((ex) => ex.id),
+    );
+  }
+
+  let roleMatched: Set<string> | null = null;
+  if (selectedRoles.length > 0) {
+    roleMatched = new Set(
+      examiners.filter((ex) => roleSet.has(ex.examiner_type)).map((ex) => ex.id),
+    );
+  }
+
+  if (regionMatched !== null && roleMatched !== null) {
+    return new Set([...regionMatched].filter((id) => roleMatched!.has(id)));
+  }
+  if (regionMatched !== null) {
+    return regionMatched;
+  }
+  if (roleMatched !== null) {
+    return roleMatched;
+  }
+  return new Set();
+}
+
+export function mergeRuleAndManualMembers(
+  regionsDraft: Record<string, boolean>,
+  rolesDraft: Record<string, boolean>,
+  manualMembersDraft: Record<string, boolean>,
+  examiners: { id: string; region: string; examiner_type: string }[],
+): Record<string, boolean> {
+  const ruleIds = computeMembersFromRules(regionsDraft, rolesDraft, examiners);
+  const next: Record<string, boolean> = {};
+  for (const ex of examiners) {
+    next[ex.id] = ruleIds.has(ex.id) || Boolean(manualMembersDraft[ex.id]);
+  }
+  return next;
+}
+
+export function deriveManualMembersDraft(
+  memberIds: string[],
+  regionsDraft: Record<string, boolean>,
+  rolesDraft: Record<string, boolean>,
+  examiners: { id: string; region: string; examiner_type: string }[],
+): Record<string, boolean> {
+  const ruleIds = computeMembersFromRules(regionsDraft, rolesDraft, examiners);
+  const manual: Record<string, boolean> = {};
+  for (const id of memberIds) {
+    if (!ruleIds.has(id)) {
+      manual[id] = true;
+    }
+  }
+  return manual;
+}

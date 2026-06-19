@@ -78,9 +78,9 @@ export function ExaminerInvitationLandingPanel({
     invitation.status === "declined"
       ? "You declined this invitation."
       : isRosterPortal
-        ? "Welcome to your examiner portal. Review your assignment and marking schedule below, then open Profile for bank details, script allocations, and your appointment letter."
+        ? "You're all set. Your assignment and marking schedule are below — when you need them, you'll find bank details, script allocations, and your appointment letter under Profile."
         : invitation.status === "accepted"
-          ? "Your assignment details are below. Open the Profile tab for bank details, script allocations, and your appointment letter."
+          ? "Thanks for confirming. Your assignment is below — bank details, script allocations, and your appointment letter are in Profile whenever you need them."
           : isWaitlisted
             ? showWaitlistNote
               ? null
@@ -200,7 +200,7 @@ export function ExaminerInvitationLandingPanel({
             />
             <ExaminerInvitationDetailTile icon={UserCircle} label="Role" value={invitation.examiner_type_label} />
             <ExaminerInvitationDetailTile icon={MapPin} label="Region" value={invitation.region} />
-            {invitation.response_deadline ? (
+            {invitation.response_deadline && invitation.can_respond ? (
               <ExaminerInvitationDetailTile
                 icon={CalendarClock}
                 label="Respond by"

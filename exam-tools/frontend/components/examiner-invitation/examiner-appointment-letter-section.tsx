@@ -10,13 +10,19 @@ type Props = {
   token: string;
   inviteeName: string;
   invitation: ExaminerInvitationPublic;
+  pendingMessage?: string | null;
 };
 
 function sanitizeFilenamePart(s: string): string {
   return s.replace(/[^\w-]+/g, "_").replace(/^_+|_+$/g, "") || "examiner";
 }
 
-export function ExaminerAppointmentLetterSection({ token, inviteeName, invitation }: Props) {
+export function ExaminerAppointmentLetterSection({
+  token,
+  inviteeName,
+  invitation,
+  pendingMessage,
+}: Props) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const available = invitation.appointment_letters_available === true;
@@ -54,6 +60,30 @@ export function ExaminerAppointmentLetterSection({ token, inviteeName, invitatio
         </div>
       </div>
 
+      {pendingMessage ? (
+        <p
+          className="mt-4 rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2.5 text-sm leading-relaxed text-foreground"
+          role="status"
+        >
+          {pendingMessage}
+          {invitation.coordination_end_at ? (
+            <>
+              {" "}
+              Coordination ends{" "}
+              {new Date(invitation.coordination_end_at).toLocaleString(undefined, {
+                weekday: "short",
+                day: "numeric",
+                month: "short",
+                year: "numeric",
+                hour: "numeric",
+                minute: "2-digit",
+              })}
+              .
+            </>
+          ) : null}
+        </p>
+      ) : null}
+
       {error ? (
         <p className="mt-4 rounded-lg border border-destructive/30 bg-destructive/10 px-3 py-2 text-sm text-destructive" role="alert">
           {error}
@@ -66,7 +96,7 @@ export function ExaminerAppointmentLetterSection({ token, inviteeName, invitatio
         disabled={busy || !available}
         onClick={() => void handleDownload()}
       >
-        {busy ? "Preparing PDF…" : "Download appointment letter (PDF)"}
+        {busy ? "Preparing PDF…" : available ? "Download appointment letter (PDF)" : "Letter not yet available"}
       </Button>
     </section>
   );
