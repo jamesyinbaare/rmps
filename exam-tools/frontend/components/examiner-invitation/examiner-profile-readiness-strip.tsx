@@ -6,6 +6,7 @@ import {
   Circle,
   ClipboardList,
   FileDown,
+  MapPin,
   UtensilsCrossed,
 } from "lucide-react";
 
@@ -31,6 +32,7 @@ function scrollToProfileSection(id: string) {
 
 const ITEM_ICONS: Record<string, React.ComponentType<{ className?: string }>> = {
   lunch: UtensilsCrossed,
+  location: MapPin,
   bank: Building2,
   scripts: ClipboardList,
   letter: FileDown,

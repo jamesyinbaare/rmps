@@ -28,7 +28,7 @@ import { RosterRowActionsMenu } from "@/components/examiners/roster-row-actions-
 import { PhoneLink } from "@/components/examiners/phone-link";
 import type { RosterTableRow } from "@/components/examiners/types";
 import { humanizeRegion } from "@/components/examiners/utils";
-import { EXAMINER_TYPE_LABELS } from "@/components/examiner-invitations/constants";
+import { EXAMINER_TYPE_ABBREVIATIONS, EXAMINER_TYPE_LABELS } from "@/components/examiner-invitations/constants";
 import { OfficialAccountsPagination } from "@/components/official-accounts-pagination";
 import type { ExaminerTypeApi } from "@/lib/api";
 
@@ -157,17 +157,40 @@ export function RosterTable({
         id: "subject",
         accessorFn: (row) => row.subjectLabel,
         header: "Subject",
-        cell: ({ row }) => <span>{row.original.subjectLabel}</span>,
+        cell: ({ row }) => (
+          <span className="font-mono text-xs">{row.original.subjectLabel}</span>
+        ),
       },
       {
         accessorKey: "examiner_type",
         header: "Role",
-        cell: ({ getValue }) => EXAMINER_TYPE_LABELS[getValue<ExaminerTypeApi>()] ?? getValue<string>(),
+        cell: ({ getValue }) => {
+          const role = getValue<ExaminerTypeApi>();
+          const abbrev = EXAMINER_TYPE_ABBREVIATIONS[role] ?? role;
+          const fullLabel = EXAMINER_TYPE_LABELS[role] ?? role;
+          return (
+            <span className="font-mono text-xs font-medium" title={fullLabel}>
+              {abbrev}
+            </span>
+          );
+        },
       },
       {
         accessorKey: "region",
         header: "Region",
         cell: ({ getValue }) => humanizeRegion(getValue<string>()),
+      },
+      {
+        accessorKey: "town",
+        header: "Town",
+        cell: ({ getValue }) => getValue<string | null>() ?? "—",
+      },
+      {
+        accessorKey: "ghanapost_gps_address",
+        header: "GhanaPost GPS",
+        cell: ({ getValue }) => (
+          <span className="font-mono text-xs">{getValue<string | null>() ?? "—"}</span>
+        ),
       },
       {
         accessorKey: "gender",

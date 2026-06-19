@@ -70,7 +70,10 @@ export const ROSTER_COLUMN_TOGGLE_OPTIONS = [
   { id: "subject", label: "Subject", defaultVisible: true },
   { id: "examiner_type", label: "Role", defaultVisible: true },
   { id: "region", label: "Region", defaultVisible: true },
+  { id: "town", label: "Town", defaultVisible: false },
+  { id: "ghanapost_gps_address", label: "GhanaPost GPS", defaultVisible: false },
   { id: "gender", label: "Gender", defaultVisible: false },
+  { id: "source", label: "Source", defaultVisible: false },
   { id: "group", label: "Group", defaultVisible: false },
 ] as const;
 

@@ -90,6 +90,8 @@ export function RosterMobileList({
         {pageRows.map((row) => {
           const roleLabel = EXAMINER_TYPE_LABELS[row.examiner_type as ExaminerTypeApi] ?? row.examiner_type;
           const metaParts = [roleLabel, row.subjectLabel, humanizeRegion(row.region)].filter(Boolean);
+          const locationParts = [row.town, row.ghanapost_gps_address].filter(Boolean);
+          const metaLine = [...metaParts, ...locationParts].join(" · ");
           const embeddedMenu = (
             <RosterRowActionsMenu
               row={row}
@@ -113,7 +115,7 @@ export function RosterMobileList({
                 name={row.name}
                 phone={row.phone_number}
                 referenceCode={row.reference_code}
-                metaLine={metaParts.join(" · ")}
+                metaLine={metaLine}
                 onInAppSms={() => onInAppSms(row)}
                 disabled={busy}
                 overflowMenu={

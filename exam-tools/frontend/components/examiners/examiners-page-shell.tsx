@@ -167,7 +167,7 @@ export function ExaminersPageShell({
           res.items.map((row) => ({
             id: row.subject_id,
             code: row.subject_code,
-            original_code: null,
+            original_code: row.subject_original_code ?? null,
             name: row.subject_name,
             subject_type: row.subject_type,
             created_at: "",
@@ -187,10 +187,21 @@ export function ExaminersPageShell({
 
   const examScopedSubjects = useMemo(() => {
     if (isSubjectOfficerShell) return scopedSubjects;
+    let base: Subject[];
     if ((showSubjectBadges || showSubjectCohortsTab) && examTimetableSubjects.length > 0) {
-      return examTimetableSubjects;
+      base = examTimetableSubjects;
+    } else {
+      base = subjects;
     }
-    return subjects;
+    const catalogById = new Map(subjects.map((s) => [s.id, s]));
+    return base.map((s) => {
+      const fromCatalog = catalogById.get(s.id);
+      if (!fromCatalog) return s;
+      return {
+        ...s,
+        original_code: s.original_code ?? fromCatalog.original_code,
+      };
+    });
   }, [examTimetableSubjects, isSubjectOfficerShell, scopedSubjects, showSubjectBadges, showSubjectCohortsTab, subjects]);
 
   const pageSubjectOptions = useMemo(() => {

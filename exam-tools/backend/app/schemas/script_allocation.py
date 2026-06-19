@@ -151,6 +151,8 @@ class ExaminerResponse(BaseModel):
     examiner_type: ExaminerTypeSchema
     region: str
     reference_code: str | None = None
+    town: str | None = None
+    ghanapost_gps_address: str | None = None
     subject_ids: list[int]
     deviation_weight: float | None
     examiner_group_id: UUID | None = None

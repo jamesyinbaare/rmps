@@ -5,6 +5,7 @@ import { useCallback, useEffect, useState } from "react";
 import { ExaminerAppointmentLetterSection } from "@/components/examiner-invitation/examiner-appointment-letter-section";
 import { ExaminerBankAccountForm } from "@/components/examiner-invitation/examiner-bank-account-form";
 import { ExaminerLunchIdCard } from "@/components/examiner-invitation/examiner-lunch-id-card";
+import { ExaminerLocationForm } from "@/components/examiner-invitation/examiner-location-form";
 import {
   ExaminerProfileReadinessStrip,
   type ProfileReadinessItem,
@@ -12,6 +13,7 @@ import {
 import { ExaminerScriptsAllocationSection } from "@/components/examiner-invitation/examiner-scripts-allocation-section";
 import {
   getPublicExaminerBankAccount,
+  getPublicExaminerLocation,
   getPublicExaminerScriptsAllocation,
   type ExaminerInvitationPublic,
 } from "@/lib/api";
@@ -23,6 +25,7 @@ type Props = {
 
 export function ExaminerInvitationProfilePanel({ token, invitation }: Props) {
   const [hasBankAccount, setHasBankAccount] = useState<boolean | null>(null);
+  const [hasLocation, setHasLocation] = useState<boolean | null>(null);
   const [hasScriptAllocations, setHasScriptAllocations] = useState<boolean | null>(null);
 
   const lettersAvailable = invitation.appointment_letters_available === true;
@@ -31,12 +34,14 @@ export function ExaminerInvitationProfilePanel({ token, invitation }: Props) {
   const bankPendingMessage = invitation.bank_details_pending_message;
 
   const loadReadiness = useCallback(async () => {
-    const [bankResult, scriptsResult] = await Promise.allSettled([
+    const [locationResult, bankResult, scriptsResult] = await Promise.allSettled([
+      getPublicExaminerLocation(token),
       getPublicExaminerBankAccount(token),
       getPublicExaminerScriptsAllocation(token),
     ]);
 
-    setHasBankAccount(bankResult.status === "fulfilled");
+    setHasLocation(locationResult.status === "fulfilled" && locationResult.value !== null);
+    setHasBankAccount(bankResult.status === "fulfilled" && bankResult.value !== null);
     setHasScriptAllocations(
       scriptsResult.status === "fulfilled" && scriptsResult.value.blocks.length > 0,
     );
@@ -55,6 +60,17 @@ export function ExaminerInvitationProfilePanel({ token, invitation }: Props) {
         : "Available after confirmation",
       complete: Boolean(invitation.reference_code),
       hidden: !invitation.reference_code,
+    },
+    {
+      id: "location",
+      label: "Your location",
+      detail:
+        hasLocation === null
+          ? "Checking your saved location…"
+          : hasLocation
+            ? "Town and GhanaPost GPS address on file"
+            : "Add your town and GhanaPost GPS address",
+      complete: hasLocation === true,
     },
     {
       id: "bank",
@@ -99,8 +115,8 @@ export function ExaminerInvitationProfilePanel({ token, invitation }: Props) {
       <header>
         <h1 className="text-xl font-semibold tracking-tight text-foreground sm:text-2xl">Profile</h1>
         <p className="mt-1.5 text-sm leading-relaxed text-muted-foreground">
-          Bank details, lunch pass, script allocations, and your appointment letter. Assignment details
-          are on the Overview tab.
+          Location, bank details, lunch pass, script allocations, and your appointment letter. Assignment
+          details are on the Overview tab.
         </p>
       </header>
 
@@ -113,6 +129,10 @@ export function ExaminerInvitationProfilePanel({ token, invitation }: Props) {
           examinerName={invitation.invitee_name}
         />
       ) : null}
+
+      <div id="profile-location" className="scroll-mt-4">
+        <ExaminerLocationForm token={token} className="mt-0" onSaved={() => void loadReadiness()} />
+      </div>
 
       <div id="profile-bank" className="scroll-mt-4">
         <ExaminerBankAccountForm

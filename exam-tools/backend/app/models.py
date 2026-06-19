@@ -1500,6 +1500,8 @@ class Examiner(Base):
     appointment_letter_notified_at = Column(DateTime, nullable=True)
     portal_token = Column(String(128), nullable=False, unique=True, index=True)
     reference_code = Column(String(64), nullable=True)
+    town = Column(String(255), nullable=True)
+    ghanapost_gps_address = Column(String(50), nullable=True)
     roster_source = Column(
         Enum(
             ExaminerRosterSource,

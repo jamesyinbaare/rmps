@@ -6,6 +6,7 @@ from fastapi.responses import Response
 from app.dependencies.database import DBSessionDep
 from app.schemas.bank_branch import BankBranchListResponse, BankBranchRow
 from app.schemas.examiner_bank_account import ExaminerBankAccountResponse, ExaminerBankAccountUpsert
+from app.schemas.examiner_location import ExaminerLocationResponse, ExaminerLocationUpsert
 from app.schemas.examiner_invitation import (
     ExaminerInvitationActionResponse,
     ExaminerInvitationPublicResponse,
@@ -18,6 +19,11 @@ from app.services.examiner_bank_account import (
     bank_account_to_dict,
     get_by_examiner_id,
     upsert_for_examiner,
+)
+from app.services.examiner_location import (
+    get_location_by_examiner_id,
+    location_to_dict,
+    upsert_location_for_examiner,
 )
 from app.services.examiner_invitation import (
     accept_examiner_invitation,
@@ -191,6 +197,39 @@ async def upsert_public_examiner_bank_account(
         await session.rollback()
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
     return ExaminerBankAccountResponse(**bank_account_to_dict(row))
+
+
+@router.get("/{token}/location", response_model=ExaminerLocationResponse)
+async def get_public_examiner_location(
+    session: DBSessionDep,
+    token: str,
+) -> ExaminerLocationResponse:
+    examiner_id = await _resolve_examiner_id(session, token)
+    examiner = await get_location_by_examiner_id(session, examiner_id)
+    if examiner is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="No location on file.")
+    return ExaminerLocationResponse(**location_to_dict(examiner))
+
+
+@router.put("/{token}/location", response_model=ExaminerLocationResponse)
+async def upsert_public_examiner_location(
+    session: DBSessionDep,
+    token: str,
+    body: ExaminerLocationUpsert,
+) -> ExaminerLocationResponse:
+    examiner_id = await _resolve_examiner_id(session, token)
+    try:
+        examiner = await upsert_location_for_examiner(
+            session,
+            examiner_id=examiner_id,
+            town=body.town,
+            ghanapost_gps_address=body.ghanapost_gps_address,
+        )
+        await session.commit()
+    except ValueError as exc:
+        await session.rollback()
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+    return ExaminerLocationResponse(**location_to_dict(examiner))
 
 
 @router.get("/{token}/bank-branches", response_model=BankBranchListResponse)

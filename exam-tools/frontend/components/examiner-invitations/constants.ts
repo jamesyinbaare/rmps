@@ -17,6 +17,13 @@ export const EXAMINER_TYPE_LABELS: Record<ExaminerTypeApi, string> = {
   team_leader: "Team leader",
 };
 
+export const EXAMINER_TYPE_ABBREVIATIONS: Record<ExaminerTypeApi, string> = {
+  chief_examiner: "CE",
+  assistant_chief_examiner: "ACE",
+  assistant_examiner: "AE",
+  team_leader: "TL",
+};
+
 export const STATUS_LABELS: Record<ExaminerInvitationStatusApi, string> = {
   pending: "Pending",
   accepted: "Accepted",

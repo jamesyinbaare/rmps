@@ -20,6 +20,7 @@ import type { RosterTableRow } from "@/components/examiners/types";
 import { useSyncPageSubjectScope } from "@/components/examiners/use-sync-page-subject-scope";
 import { clampPageSize, humanizeRegion, matchesRosterSearch } from "@/components/examiners/utils";
 import { EXAMINER_TYPE_LABELS, EXAMINER_TYPE_OPTIONS } from "@/components/examiner-invitations/constants";
+import { subjectDisplayCode } from "@/lib/subject-display";
 import { ExaminerAllocationModal } from "@/components/examiner-invitations/examiner-allocation-modal";
 import { CustomSmsModal } from "@/components/examiner-invitations/invitations-modals";
 import type { OfficialAccountsFilterChip } from "@/components/official-accounts-filter-chips";
@@ -218,7 +219,8 @@ export function ExaminersRosterPanel({
   const subjectLabel = useCallback(
     (id: number) => {
       const s = subjects.find((x) => x.id === id);
-      return s ? `${s.original_code?.trim() || s.code} — ${s.name}` : String(id);
+      if (!s) return String(id);
+      return subjectDisplayCode(s) || "—";
     },
     [subjects],
   );
