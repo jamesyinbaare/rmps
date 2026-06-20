@@ -188,6 +188,15 @@ class ExaminerInvitationCoordinationUpdate(ExaminerInvitationCoordinationFields)
     pass
 
 
+class ExaminerInvitationUpdate(ExaminerInvitationCoordinationFields):
+    name: str | None = Field(default=None, min_length=1, max_length=255)
+    examiner_type: ExaminerTypeSchema | None = None
+
+
+class ExaminerInvitationDeleteResponse(BaseModel):
+    deleted: bool = True
+
+
 class ExaminerInvitationBulkCoordinationUpdate(ExaminerInvitationCoordinationFields):
     invitation_ids: list[UUID] = Field(min_length=1, max_length=500)
 

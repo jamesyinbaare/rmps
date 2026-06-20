@@ -5177,6 +5177,40 @@ export async function updateExaminerInvitationCoordinationSchedule(
   );
 }
 
+export type ExaminerInvitationDetailsPayload = {
+  name?: string;
+  examiner_type?: ExaminerTypeApi;
+};
+
+export async function updateExaminerInvitationDetails(
+  examinationId: number,
+  invitationId: string,
+  payload: ExaminerInvitationDetailsPayload,
+): Promise<ExaminerInvitationRow> {
+  return apiJson<ExaminerInvitationRow>(
+    `/examinations/${examinationId}/examiner-invitations/${encodeURIComponent(invitationId)}`,
+    {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    },
+  );
+}
+
+export async function deleteExaminerInvitation(
+  examinationId: number,
+  invitationId: string,
+  options?: { confirmRemoveAllocations?: boolean },
+): Promise<void> {
+  const q = new URLSearchParams();
+  if (options?.confirmRemoveAllocations) q.set("confirm_remove_allocations", "true");
+  const suffix = q.toString() ? `?${q.toString()}` : "";
+  await apiJson(
+    `/examinations/${examinationId}/examiner-invitations/${encodeURIComponent(invitationId)}${suffix}`,
+    { method: "DELETE" },
+  );
+}
+
 export async function bulkSetExaminerInvitationCoordinationSchedule(
   examinationId: number,
   payload: ExaminerInvitationBulkCoordinationPayload,

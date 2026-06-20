@@ -15,6 +15,7 @@ export type RosterTableRow = ExaminerRow & {
 
 export type ExaminersSummaryCounts = {
   roster: number;
+  invitationsTotal: number;
   invitationsPending: number;
   invitationsAccepted: number;
 };

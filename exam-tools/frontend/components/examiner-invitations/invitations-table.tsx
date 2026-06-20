@@ -64,6 +64,9 @@ type Props = {
   onCopyLink?: (inv: ExaminerInvitationRow) => void;
   copyLinkUi?: Record<string, "copied" | "error">;
   onViewAllocation?: (inv: ExaminerInvitationRow) => void;
+  canManageInvitations?: boolean;
+  onEdit?: (inv: ExaminerInvitationRow) => void;
+  onDelete?: (inv: ExaminerInvitationRow) => void;
   /** When true, table grows with content and the page/shell scrolls (subject-officer). */
   pageScroll?: boolean;
 };
@@ -94,6 +97,9 @@ export function InvitationsTable({
   onCopyLink,
   copyLinkUi = {},
   onViewAllocation,
+  canManageInvitations = false,
+  onEdit,
+  onDelete,
   pageScroll = false,
 }: Props) {
   const [openActionsId, setOpenActionsId] = useState<string | null>(null);
@@ -235,12 +241,15 @@ export function InvitationsTable({
               onExtendDeadline={onExtendDeadline}
               onRegenerateLink={onRegenerateLink}
               onViewAllocation={onViewAllocation}
+              canManageInvitations={canManageInvitations}
+              onEdit={onEdit}
+              onDelete={onDelete}
             />
           );
         },
       },
     ],
-    [busy, copyLinkUi, onCopyLink, onExtendDeadline, onRegenerateLink, onRenew, onResend, onViewAllocation, openActionsId, resendErrors, resendUi],
+    [busy, canManageInvitations, copyLinkUi, onCopyLink, onDelete, onEdit, onExtendDeadline, onRegenerateLink, onRenew, onResend, onViewAllocation, openActionsId, resendErrors, resendUi],
   );
 
   const table = useReactTable({

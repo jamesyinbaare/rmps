@@ -158,6 +158,7 @@ export function ExaminersRosterPanel({
   const [smsResult, setSmsResult] = useState<ExaminerRosterBulkSmsResponse | null>(null);
   const [allocationTarget, setAllocationTarget] = useState<AllocationTarget | null>(null);
   const [deleteImpact, setDeleteImpact] = useState<ExaminerDeleteImpact | null>(null);
+  const [deleteTarget, setDeleteTarget] = useState<RosterTableRow | null>(null);
   const [regenerateTarget, setRegenerateTarget] = useState<RegeneratePortalLinkTarget | null>(null);
 
   useEffect(() => {
@@ -189,33 +190,49 @@ export function ExaminersRosterPanel({
       }
       setExaminers(list);
       setGroups(groupList);
-      onRosterCountChange?.(list.length);
     } catch (e) {
       setLoadError(e instanceof Error ? e.message : "Failed to load roster");
       setExaminers([]);
       setGroups([]);
-      onRosterCountChange?.(0);
     } finally {
       setLoading(false);
     }
-  }, [loadExaminerGroups, onRosterCountChange]);
+  }, [loadExaminerGroups]);
 
   useEffect(() => {
     if (examId == null) {
       setExaminers([]);
       setGroups([]);
-      onRosterCountChange?.(0);
       return;
     }
     void loadData(examId);
-  }, [examId, loadData, onRosterCountChange]);
+  }, [examId, loadData]);
+
+  const subjectById = useMemo(() => new Map(subjects.map((s) => [s.id, s])), [subjects]);
+
+  const subjectScopedRosterCount = useMemo(() => {
+    return examiners.filter((e) => {
+      if (subjectTypeFilter !== "all") {
+        const sid = e.subject_ids[0];
+        const subject = sid != null ? subjectById.get(sid) : undefined;
+        if (!subject || subject.subject_type !== subjectTypeFilter) return false;
+      }
+      if (subjectFilter.length > 0) {
+        const sid = e.subject_ids[0];
+        if (sid == null || !subjectFilter.includes(String(sid))) return false;
+      }
+      return true;
+    }).length;
+  }, [examiners, subjectById, subjectFilter, subjectTypeFilter]);
+
+  useEffect(() => {
+    onRosterCountChange?.(examId == null ? 0 : subjectScopedRosterCount);
+  }, [examId, onRosterCountChange, subjectScopedRosterCount]);
 
   useEffect(() => {
     setRowSelection({});
     setPagination((p) => ({ ...p, pageIndex: 0 }));
   }, [examId, debouncedSearch, subjectTypeFilter, roleFilter, regionFilter, subjectFilter]);
-
-  const subjectById = useMemo(() => new Map(subjects.map((s) => [s.id, s])), [subjects]);
 
   const subjectLabel = useCallback(
     (id: number) => {
@@ -491,19 +508,10 @@ export function ExaminersRosterPanel({
     setLoadError(null);
     try {
       const impact = await getExaminerDeletePreview(examId, row.id);
-      if (impact.requires_confirmation) {
-        setDeleteImpact(impact);
-        return;
-      }
-      if (!window.confirm(`Remove ${row.name} from this examination?`)) return;
-      setBusy(true);
-      await deleteExaminationExaminer(examId, row.id);
-      setActionMessage("Examiner removed.");
-      await loadData(examId);
+      setDeleteTarget(row);
+      setDeleteImpact(impact);
     } catch (e) {
       setLoadError(e instanceof Error ? e.message : "Delete failed");
-    } finally {
-      setBusy(false);
     }
   }
 
@@ -513,9 +521,10 @@ export function ExaminersRosterPanel({
     setLoadError(null);
     try {
       await deleteExaminationExaminer(examId, deleteImpact.examiner_id, {
-        confirmRemoveAllocations: true,
+        confirmRemoveAllocations: deleteImpact.requires_confirmation,
       });
       setDeleteImpact(null);
+      setDeleteTarget(null);
       setActionMessage("Examiner removed.");
       await loadData(examId);
     } catch (e) {
@@ -900,6 +909,13 @@ export function ExaminersRosterPanel({
       {deleteImpact ? (
         <ExaminerDeleteConfirmModal
           examinerName={deleteImpact.examiner_name}
+          subjectLabel={deleteTarget?.subjectLabel}
+          examinerTypeLabel={
+            deleteTarget
+              ? EXAMINER_TYPE_LABELS[deleteTarget.examiner_type] ?? deleteTarget.examiner_type
+              : undefined
+          }
+          rosterSource={deleteTarget?.roster_source}
           manualAllocations={deleteImpact.manual_allocations}
           envelopeAssignments={deleteImpact.envelope_assignments}
           allocationCampaigns={deleteImpact.allocation_campaigns}
@@ -907,7 +923,10 @@ export function ExaminersRosterPanel({
           totalEnvelopes={deleteImpact.total_envelopes}
           busy={busy}
           onCancel={() => {
-            if (!busy) setDeleteImpact(null);
+            if (!busy) {
+              setDeleteImpact(null);
+              setDeleteTarget(null);
+            }
           }}
           onConfirm={() => void confirmDeleteExaminer()}
         />

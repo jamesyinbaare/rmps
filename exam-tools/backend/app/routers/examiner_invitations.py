@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import logging
 from datetime import datetime
 from typing import cast
@@ -27,6 +28,7 @@ from app.schemas.examiner_invitation import (
     ExaminerInvitationBulkSmsRowError,
     ExaminerInvitationCoordinationUpdate,
     ExaminerInvitationCreate,
+    ExaminerInvitationDeleteResponse,
     ExaminerInvitationResponse,
     ExaminerInvitationRegenerateLinkRequest,
     ExaminerInvitationRegenerateLinkResponse,
@@ -36,13 +38,16 @@ from app.schemas.examiner_invitation import (
     ExaminerInvitationResponseDeadlineUpdateResponse,
     ExaminerInvitationResendResponse,
     ExaminerInvitationStatusSchema,
+    ExaminerInvitationUpdate,
 )
 from app.schemas.script_allocation import ExaminerTypeSchema
 from app.services.examiner_invitation import (
     create_examiner_invitation,
+    delete_examiner_invitation,
     invitation_coordination_summary,
     invitation_public_url,
     renew_examiner_invitation,
+    update_examiner_invitation_details,
     update_examiner_invitation_response_deadline,
     update_invitation_coordination_schedule,
 )
@@ -370,31 +375,91 @@ async def bulk_set_examiner_invitation_coordination_schedule(
 @router.patch(
     "/examinations/{examination_id}/examiner-invitations/{invitation_id}",
     response_model=ExaminerInvitationResponse,
-    summary="Update examiner invitation (coordination schedule)",
+    summary="Update examiner invitation (coordination schedule and/or name/role)",
 )
 async def patch_examiner_invitation(
     session: DBSessionDep,
     user: SuperAdminOrTestAdminOfficerOrSubjectOfficerDep,
     examination_id: int,
     invitation_id: UUID,
-    body: ExaminerInvitationCoordinationUpdate,
+    body: ExaminerInvitationUpdate,
 ) -> ExaminerInvitationResponse:
     inv = await _get_invitation_or_404(session, examination_id, invitation_id)
     await _assert_invitation_accessible(session, user, examination_id, inv)
     fields_set = body.model_fields_set
-    await update_invitation_coordination_schedule(
-        session,
-        inv,
-        coordination_start_date=body.coordination_start_date,
-        coordination_start_time=body.coordination_start_time,
-        coordination_end_date=body.coordination_end_date,
-        coordination_end_time=body.coordination_end_time,
-        coordination_venue=body.coordination_venue,
-        update_coordination_venue="coordination_venue" in fields_set,
-    )
+
+    if "name" in fields_set or "examiner_type" in fields_set:
+        assert_unrestricted_examiner_manager(user)
+        try:
+            new_type = (
+                _examiner_type_from_schema(body.examiner_type)
+                if "examiner_type" in fields_set and body.examiner_type is not None
+                else None
+            )
+            await update_examiner_invitation_details(
+                session,
+                inv,
+                name=body.name if "name" in fields_set else None,
+                examiner_type=new_type,
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+
+    coordination_fields = {
+        "coordination_start_date",
+        "coordination_start_time",
+        "coordination_end_date",
+        "coordination_end_time",
+        "coordination_venue",
+    }
+    if fields_set & coordination_fields:
+        await update_invitation_coordination_schedule(
+            session,
+            inv,
+            coordination_start_date=body.coordination_start_date,
+            coordination_start_time=body.coordination_start_time,
+            coordination_end_date=body.coordination_end_date,
+            coordination_end_time=body.coordination_end_time,
+            coordination_venue=body.coordination_venue,
+            update_coordination_venue="coordination_venue" in fields_set,
+        )
+
     await session.commit()
     sms = await _latest_sms_delivery(session, inv.id)
     return _invitation_response(inv, sms)
+
+
+@router.delete(
+    "/examinations/{examination_id}/examiner-invitations/{invitation_id}",
+    response_model=ExaminerInvitationDeleteResponse,
+    summary="Delete examiner invitation (and linked roster examiner when accepted)",
+)
+async def delete_examiner_invitation_endpoint(
+    session: DBSessionDep,
+    user: SuperAdminOrTestAdminOfficerOrSubjectOfficerDep,
+    examination_id: int,
+    invitation_id: UUID,
+    confirm_remove_allocations: bool = Query(False),
+) -> ExaminerInvitationDeleteResponse:
+    assert_unrestricted_examiner_manager(user)
+    inv = await _get_invitation_or_404(session, examination_id, invitation_id)
+    await _assert_invitation_accessible(session, user, examination_id, inv)
+    try:
+        await delete_examiner_invitation(
+            session,
+            examination_id,
+            inv,
+            confirm_remove_allocations=confirm_remove_allocations,
+        )
+    except ValueError as exc:
+        msg = str(exc)
+        try:
+            impact = json.loads(msg)
+            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=impact) from exc
+        except json.JSONDecodeError:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=msg) from exc
+    await session.commit()
+    return ExaminerInvitationDeleteResponse(deleted=True)
 
 
 @router.post(

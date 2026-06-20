@@ -82,6 +82,7 @@ type Props = {
 
 const EMPTY_SUMMARY: ExaminersSummaryCounts = {
   roster: 0,
+  invitationsTotal: 0,
   invitationsPending: 0,
   invitationsAccepted: 0,
 };
@@ -262,12 +263,12 @@ export function ExaminersPageShell({
       if (tab.key === "roster" && summary.roster > 0) {
         label = `${label} (${summary.roster.toLocaleString()})`;
       }
-      if (tab.key === "invitations" && summary.invitationsPending > 0) {
-        label = `${label} (${summary.invitationsPending.toLocaleString()} pending)`;
+      if (tab.key === "invitations" && summary.invitationsTotal > 0) {
+        label = `${label} (${summary.invitationsTotal.toLocaleString()})`;
       }
       return { ...tab, label };
     });
-  }, [baseTabs, examId, resolvedMarkingGroupsMode, summary.invitationsPending, summary.roster]);
+  }, [baseTabs, examId, resolvedMarkingGroupsMode, summary.invitationsTotal, summary.roster]);
 
   const scriptsAllocationHref =
     examId != null
@@ -292,6 +293,7 @@ export function ExaminersPageShell({
         ...prev,
         [examId]: {
           ...(prev[examId] ?? EMPTY_SUMMARY),
+          invitationsTotal: counts.total,
           invitationsPending: counts.pending,
           invitationsAccepted: counts.accepted,
         },
@@ -303,8 +305,8 @@ export function ExaminersPageShell({
   const tabAnnouncement = useMemo(() => {
     const tabLabel = baseTabs.find((t) => t.key === activeTab)?.label ?? activeTab;
     if (examId == null) return tabLabel;
-    return `${tabLabel} — ${summary.roster} on roster, ${summary.invitationsPending} pending invites`;
-  }, [activeTab, baseTabs, examId, summary.invitationsPending, summary.roster]);
+    return `${tabLabel} — ${summary.roster} on roster, ${summary.invitationsTotal} invitations`;
+  }, [activeTab, baseTabs, examId, summary.invitationsTotal, summary.roster]);
 
   const contextTrailing =
     showScriptsAllocationLink && examId != null ? (
@@ -464,41 +466,83 @@ export function ExaminersPageShell({
             </div>
           ) : (
             <>
-              {activeTab === "roster" ? (
-                <ExaminersRosterPanel
-                  examId={examId}
-                  subjects={showSubjectCohortsTab ? examScopedSubjects : scopedSubjects}
-                  isSuperAdmin={isSuperAdmin}
-                  lockedSubjectIds={lockedSubjectIds}
-                  embedded
-                  pageScroll={useScrollShell}
-                  loadExaminerGroups={resolvedMarkingGroupsMode === "admin-allocation"}
-                  showReferenceCodesConfig={showSubjectCohortsTab}
-                  showQuotaStatusView={showQuotaStatusView}
-                  canManageRoster={canManageExaminers}
-                  canEditRoster={canManageExaminers}
-                  onRosterCountChange={onRosterCountChange}
-                  usePageSubjectScope={usePageSubjectScope}
-                  pageSubjectTypeFilter={subjectTypeFilter}
-                  pageSubjectId={subjectId}
-                  mobileContactLayout={isSubjectOfficerShell}
-                />
-              ) : null}
-              {activeTab === "invitations" ? (
-                <ExaminersInvitationsPanel
-                  examId={examId}
-                  subjects={showSubjectCohortsTab ? examScopedSubjects : scopedSubjects}
-                  lockedSubjectIds={lockedSubjectIds}
-                  embedded
-                  pageScroll={useScrollShell}
-                  readOnly={!canManageExaminers}
-                  onInvitationCountsChange={onInvitationCountsChange}
-                  usePageSubjectScope={usePageSubjectScope}
-                  pageSubjectTypeFilter={subjectTypeFilter}
-                  pageSubjectId={subjectId}
-                  mobileContactLayout={isSubjectOfficerShell}
-                />
-              ) : null}
+              {usePageSubjectScope ? (
+                <>
+                  <div className={cn(activeTab !== "roster" && "hidden")}>
+                    <ExaminersRosterPanel
+                      examId={examId}
+                      subjects={showSubjectCohortsTab ? examScopedSubjects : scopedSubjects}
+                      isSuperAdmin={isSuperAdmin}
+                      lockedSubjectIds={lockedSubjectIds}
+                      embedded
+                      pageScroll={useScrollShell}
+                      loadExaminerGroups={resolvedMarkingGroupsMode === "admin-allocation"}
+                      showReferenceCodesConfig={showSubjectCohortsTab}
+                      showQuotaStatusView={showQuotaStatusView}
+                      canManageRoster={canManageExaminers}
+                      canEditRoster={canManageExaminers}
+                      onRosterCountChange={onRosterCountChange}
+                      usePageSubjectScope={usePageSubjectScope}
+                      pageSubjectTypeFilter={subjectTypeFilter}
+                      pageSubjectId={subjectId}
+                      mobileContactLayout={isSubjectOfficerShell}
+                    />
+                  </div>
+                  <div className={cn(activeTab !== "invitations" && "hidden")}>
+                    <ExaminersInvitationsPanel
+                      examId={examId}
+                      subjects={showSubjectCohortsTab ? examScopedSubjects : scopedSubjects}
+                      lockedSubjectIds={lockedSubjectIds}
+                      embedded
+                      pageScroll={useScrollShell}
+                      readOnly={!canManageExaminers}
+                      onInvitationCountsChange={onInvitationCountsChange}
+                      usePageSubjectScope={usePageSubjectScope}
+                      pageSubjectTypeFilter={subjectTypeFilter}
+                      pageSubjectId={subjectId}
+                      mobileContactLayout={isSubjectOfficerShell}
+                    />
+                  </div>
+                </>
+              ) : (
+                <>
+                  {activeTab === "roster" ? (
+                    <ExaminersRosterPanel
+                      examId={examId}
+                      subjects={showSubjectCohortsTab ? examScopedSubjects : scopedSubjects}
+                      isSuperAdmin={isSuperAdmin}
+                      lockedSubjectIds={lockedSubjectIds}
+                      embedded
+                      pageScroll={useScrollShell}
+                      loadExaminerGroups={resolvedMarkingGroupsMode === "admin-allocation"}
+                      showReferenceCodesConfig={showSubjectCohortsTab}
+                      showQuotaStatusView={showQuotaStatusView}
+                      canManageRoster={canManageExaminers}
+                      canEditRoster={canManageExaminers}
+                      onRosterCountChange={onRosterCountChange}
+                      usePageSubjectScope={usePageSubjectScope}
+                      pageSubjectTypeFilter={subjectTypeFilter}
+                      pageSubjectId={subjectId}
+                      mobileContactLayout={isSubjectOfficerShell}
+                    />
+                  ) : null}
+                  {activeTab === "invitations" ? (
+                    <ExaminersInvitationsPanel
+                      examId={examId}
+                      subjects={showSubjectCohortsTab ? examScopedSubjects : scopedSubjects}
+                      lockedSubjectIds={lockedSubjectIds}
+                      embedded
+                      pageScroll={useScrollShell}
+                      readOnly={!canManageExaminers}
+                      onInvitationCountsChange={onInvitationCountsChange}
+                      usePageSubjectScope={usePageSubjectScope}
+                      pageSubjectTypeFilter={subjectTypeFilter}
+                      pageSubjectId={subjectId}
+                      mobileContactLayout={isSubjectOfficerShell}
+                    />
+                  ) : null}
+                </>
+              )}
               {activeTab === "groups" && resolvedMarkingGroupsMode === "admin-allocation" ? (
                 <ExaminersGroupsPanel
                   examId={examId}

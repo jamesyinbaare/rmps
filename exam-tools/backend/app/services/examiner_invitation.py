@@ -25,6 +25,7 @@ from app.models import (
 from app.services.coordination_schedule import format_coordination_range, validate_coordination_range
 from app.services.examiner_reference_code import assign_reference_code_to_examiner
 from app.services.examiner_regional_quota import (
+    assert_examiner_regional_quota_allowed,
     build_quota_waitlist_portal_message,
     would_exceed_quota,
 )
@@ -290,6 +291,105 @@ async def decline_examiner_invitation(session: AsyncSession, inv: ExaminerInvita
         raise ValueError("This invitation is no longer available.")
     inv.status = ExaminerInvitationStatus.DECLINED
     inv.responded_at = datetime.utcnow()
+    await session.flush()
+
+
+_EDITABLE_INVITATION_STATUSES = (
+    ExaminerInvitationStatus.PENDING,
+    ExaminerInvitationStatus.EXPIRED,
+    ExaminerInvitationStatus.DECLINED,
+    ExaminerInvitationStatus.QUOTA_WAITLISTED,
+    ExaminerInvitationStatus.ACCEPTED,
+)
+
+
+async def update_examiner_invitation_details(
+    session: AsyncSession,
+    inv: ExaminerInvitation,
+    *,
+    name: str | None = None,
+    examiner_type: ExaminerType | None = None,
+) -> ExaminerInvitation:
+    if inv.status not in _EDITABLE_INVITATION_STATUSES:
+        raise ValueError(f"Cannot edit invitation in {inv.status.value} status.")
+
+    if name is None and examiner_type is None:
+        raise ValueError("Provide name and/or examiner type to update.")
+
+    new_name = inv.name
+    if name is not None:
+        stripped = name.strip()
+        if not stripped:
+            raise ValueError("Name is required.")
+        new_name = stripped
+
+    new_type = examiner_type if examiner_type is not None else inv.examiner_type
+    type_changed = examiner_type is not None and new_type != inv.examiner_type
+
+    if type_changed:
+        exclude_examiner_id: UUID | None = None
+        if inv.status == ExaminerInvitationStatus.ACCEPTED and inv.examiner_id is not None:
+            exclude_examiner_id = inv.examiner_id
+        await assert_examiner_regional_quota_allowed(
+            session,
+            examination_id=int(inv.examination_id),
+            subject_id=int(inv.subject_id),
+            region=inv.region,
+            examiner_type=new_type,
+            gender=inv.gender,
+            exclude_examiner_id=exclude_examiner_id,
+        )
+
+    inv.name = new_name
+    if examiner_type is not None:
+        inv.examiner_type = new_type
+    inv.updated_at = datetime.utcnow()
+    await session.flush()
+
+    if inv.status == ExaminerInvitationStatus.ACCEPTED and inv.examiner_id is not None:
+        examiner = await session.get(
+            Examiner,
+            inv.examiner_id,
+            options=(selectinload(Examiner.subjects),),
+        )
+        if examiner is not None:
+            examiner.name = new_name
+            if examiner_type is not None:
+                examiner.examiner_type = new_type
+            examiner.updated_at = datetime.utcnow()
+            await session.flush()
+
+    return inv
+
+
+async def delete_examiner_invitation(
+    session: AsyncSession,
+    examination_id: int,
+    inv: ExaminerInvitation,
+    *,
+    confirm_remove_allocations: bool = False,
+) -> None:
+    from app.services.examiner_delete import (
+        build_examiner_delete_impact,
+        delete_examiner_with_cleanup,
+        load_examiner_for_delete,
+    )
+
+    if inv.status == ExaminerInvitationStatus.ACCEPTED and inv.examiner_id is not None:
+        examiner = await load_examiner_for_delete(session, examination_id, inv.examiner_id)
+        if examiner is None:
+            await session.delete(inv)
+            await session.flush()
+            return
+
+        impact = await build_examiner_delete_impact(session, examination_id, examiner)
+        if impact.requires_confirmation and not confirm_remove_allocations:
+            raise ValueError(impact.model_dump_json())
+
+        await delete_examiner_with_cleanup(session, examination_id, examiner)
+        return
+
+    await session.delete(inv)
     await session.flush()
 
 

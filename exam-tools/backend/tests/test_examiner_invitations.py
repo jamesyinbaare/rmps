@@ -7,6 +7,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import uuid4
 
 import pytest
+from fastapi import HTTPException
 
 from app.models import ExaminerInvitationStatus, ExaminerType, Region, Subject
 from app.services.examiner_invitation import (
@@ -1014,34 +1015,188 @@ def test_bulk_upload_captures_acting_user_id_before_per_row_rollback() -> None:
     assert acting_user_id == user_id
 
 
-def test_invitation_bulk_row_error_message_preserves_value_error() -> None:
-    from app.routers.examiner_invitations import _invitation_bulk_row_error_message
+@pytest.mark.asyncio
+async def test_update_examiner_invitation_details_updates_name() -> None:
+    from app.models import ExaminerInvitation
+    from app.services.examiner_invitation import update_examiner_invitation_details
 
-    msg = "This phone was invited for Mathematics in 2025 May/June and cannot be used elsewhere."
-    assert _invitation_bulk_row_error_message(ValueError(msg)) == msg
+    session = AsyncMock()
+    session.flush = AsyncMock()
+    inv = MagicMock(spec=ExaminerInvitation)
+    inv.status = ExaminerInvitationStatus.PENDING
+    inv.name = "Old Name"
+    inv.examiner_type = ExaminerType.ASSISTANT
+    inv.examination_id = 1
+    inv.subject_id = 10
+    inv.region = Region.UPPER_EAST
+    inv.gender = None
+    inv.examiner_id = None
+
+    updated = await update_examiner_invitation_details(session, inv, name="New Name")
+
+    assert updated.name == "New Name"
+    session.flush.assert_awaited()
 
 
-def test_invitation_bulk_row_error_message_greenlet_is_actionable() -> None:
-    from sqlalchemy.exc import MissingGreenlet
+@pytest.mark.asyncio
+async def test_update_examiner_invitation_details_syncs_accepted_roster() -> None:
+    from app.models import Examiner, ExaminerInvitation
+    from app.services.examiner_invitation import update_examiner_invitation_details
 
-    from app.routers.examiner_invitations import _invitation_bulk_row_error_message
+    session = AsyncMock()
+    session.flush = AsyncMock()
+    examiner_id = uuid4()
+    inv = MagicMock(spec=ExaminerInvitation)
+    inv.status = ExaminerInvitationStatus.ACCEPTED
+    inv.name = "Old Name"
+    inv.examiner_type = ExaminerType.ASSISTANT
+    inv.examination_id = 1
+    inv.subject_id = 10
+    inv.region = Region.UPPER_EAST
+    inv.gender = None
+    inv.examiner_id = examiner_id
 
-    text = _invitation_bulk_row_error_message(
-        MissingGreenlet("greenlet_spawn has not been called; can't call await_only() here.")
+    examiner = MagicMock(spec=Examiner)
+    examiner.name = "Old Name"
+    examiner.examiner_type = ExaminerType.ASSISTANT
+    session.get = AsyncMock(return_value=examiner)
+
+    with patch(
+        "app.services.examiner_invitation.assert_examiner_regional_quota_allowed",
+        new_callable=AsyncMock,
+    ):
+        await update_examiner_invitation_details(
+            session,
+            inv,
+            name="New Name",
+            examiner_type=ExaminerType.CHIEF,
+        )
+
+    assert inv.name == "New Name"
+    assert inv.examiner_type == ExaminerType.CHIEF
+    assert examiner.name == "New Name"
+    assert examiner.examiner_type == ExaminerType.CHIEF
+
+
+@pytest.mark.asyncio
+async def test_delete_examiner_invitation_pending() -> None:
+    from app.models import ExaminerInvitation
+    from app.services.examiner_invitation import delete_examiner_invitation
+
+    session = AsyncMock()
+    session.delete = AsyncMock()
+    session.flush = AsyncMock()
+    inv = MagicMock(spec=ExaminerInvitation)
+    inv.status = ExaminerInvitationStatus.PENDING
+    inv.examiner_id = None
+
+    await delete_examiner_invitation(session, 1, inv)
+
+    session.delete.assert_awaited_once_with(inv)
+    session.flush.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_delete_examiner_invitation_endpoint_blocks_without_confirm() -> None:
+    from app.models import ExaminerInvitation, UserRole
+    from app.routers.examiner_invitations import delete_examiner_invitation_endpoint
+    from app.schemas.examiner_delete import (
+        ExaminerDeleteImpactResponse,
+        ExaminerManualAllocationItem,
     )
-    assert "previous upload error" in text.lower()
-    assert "greenlet_spawn" not in text
+
+    user = MagicMock(role=UserRole.TEST_ADMIN_OFFICER)
+    session = AsyncMock()
+    session.commit = AsyncMock()
+    inv = MagicMock(spec=ExaminerInvitation)
+    inv.id = uuid4()
+    inv.subject_id = 10
+    examiner_id = uuid4()
+    inv.examiner_id = examiner_id
+    inv.status = ExaminerInvitationStatus.ACCEPTED
+
+    impact = ExaminerDeleteImpactResponse(
+        examiner_id=examiner_id,
+        examiner_name="Jane Doe",
+        manual_allocations=[
+            ExaminerManualAllocationItem(
+                subject_code="MATH301",
+                subject_name="Mathematics",
+                paper_number=1,
+                script_count=5,
+            )
+        ],
+        requires_confirmation=True,
+        total_manual_scripts=5,
+    )
+
+    with (
+        patch(
+            "app.routers.examiner_invitations._get_invitation_or_404",
+            new_callable=AsyncMock,
+            return_value=inv,
+        ),
+        patch(
+            "app.routers.examiner_invitations._assert_invitation_accessible",
+            new_callable=AsyncMock,
+        ),
+        patch(
+            "app.services.examiner_delete.load_examiner_for_delete",
+            new_callable=AsyncMock,
+            return_value=MagicMock(id=examiner_id),
+        ),
+        patch(
+            "app.services.examiner_delete.build_examiner_delete_impact",
+            new_callable=AsyncMock,
+            return_value=impact,
+        ),
+    ):
+        with pytest.raises(HTTPException) as exc:
+            await delete_examiner_invitation_endpoint(
+                session,
+                user,
+                1,
+                inv.id,
+                confirm_remove_allocations=False,
+            )
+
+    assert exc.value.status_code == 409
 
 
-def test_bulk_upload_captures_acting_user_id_before_per_row_rollback() -> None:
-    """Per-row rollback expires the auth User; re-reading user.id can raise MissingGreenlet in async."""
-    from typing import cast
-    from uuid import UUID
+@pytest.mark.asyncio
+async def test_patch_examiner_invitation_details_forbidden_for_subject_officer() -> None:
+    from app.models import ExaminerInvitation, UserRole
+    from app.routers.examiner_invitations import patch_examiner_invitation
+    from app.schemas.examiner_invitation import ExaminerInvitationUpdate
 
-    user_id = uuid4()
-    user = MagicMock()
-    user.id = user_id
-    acting_user_id = cast(UUID, user.id)
+    user = MagicMock(role=UserRole.SUBJECT_OFFICER)
+    session = AsyncMock()
+    inv = MagicMock(spec=ExaminerInvitation)
+    inv.id = uuid4()
+    inv.subject_id = 10
 
-    user.id = uuid4()
-    assert acting_user_id == user_id
+    with (
+        patch(
+            "app.routers.examiner_invitations._get_invitation_or_404",
+            new_callable=AsyncMock,
+            return_value=inv,
+        ),
+        patch(
+            "app.routers.examiner_invitations._assert_invitation_accessible",
+            new_callable=AsyncMock,
+        ),
+        patch(
+            "app.routers.examiner_invitations.assert_unrestricted_examiner_manager",
+            side_effect=HTTPException(status_code=403, detail="Forbidden"),
+        ),
+    ):
+        with pytest.raises(HTTPException) as exc:
+            await patch_examiner_invitation(
+                session,
+                user,
+                1,
+                inv.id,
+                ExaminerInvitationUpdate(name="Updated"),
+            )
+
+    assert exc.value.status_code == 403

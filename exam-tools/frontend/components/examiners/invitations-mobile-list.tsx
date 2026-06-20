@@ -40,6 +40,9 @@ type Props = {
   onCopyLink?: (inv: ExaminerInvitationRow) => void;
   copyLinkUi?: Record<string, "copied" | "error">;
   onViewAllocation?: (inv: ExaminerInvitationRow) => void;
+  canManageInvitations?: boolean;
+  onEdit?: (inv: ExaminerInvitationRow) => void;
+  onDelete?: (inv: ExaminerInvitationRow) => void;
 };
 
 export function InvitationsMobileList({
@@ -62,6 +65,9 @@ export function InvitationsMobileList({
   onCopyLink,
   copyLinkUi = {},
   onViewAllocation,
+  canManageInvitations = false,
+  onEdit,
+  onDelete,
 }: Props) {
   const [openActionsId, setOpenActionsId] = useState<string | null>(null);
 
@@ -98,6 +104,9 @@ export function InvitationsMobileList({
               onExtendDeadline={onExtendDeadline}
               onRegenerateLink={onRegenerateLink}
               onViewAllocation={onViewAllocation}
+              canManageInvitations={canManageInvitations}
+              onEdit={onEdit}
+              onDelete={onDelete}
               embedded
             />
           );
