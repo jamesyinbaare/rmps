@@ -10,7 +10,7 @@ import {
 import { RosterRowActionsMenu } from "@/components/examiners/roster-row-actions-menu";
 import type { RosterTableRow } from "@/components/examiners/types";
 import { humanizeRegion } from "@/components/examiners/utils";
-import { EXAMINER_TYPE_LABELS } from "@/components/examiner-invitations/constants";
+import { EXAMINER_TYPE_ABBREVIATIONS, EXAMINER_TYPE_LABELS } from "@/components/examiner-invitations/constants";
 import {
   MAX_CUSTOM_PAGE_SIZE,
   PAGE_SIZE_PRESETS,
@@ -88,10 +88,14 @@ export function RosterMobileList({
     <div className="flex flex-col gap-3 md:hidden">
       <ul className="space-y-3">
         {pageRows.map((row) => {
+          const roleAbbrev =
+            EXAMINER_TYPE_ABBREVIATIONS[row.examiner_type as ExaminerTypeApi] ?? row.examiner_type;
           const roleLabel = EXAMINER_TYPE_LABELS[row.examiner_type as ExaminerTypeApi] ?? row.examiner_type;
-          const metaParts = [roleLabel, row.subjectLabel, humanizeRegion(row.region)].filter(Boolean);
+          const metaParts = [roleAbbrev, row.subjectLabel, humanizeRegion(row.region)].filter(Boolean);
           const locationParts = [row.town, row.ghanapost_gps_address].filter(Boolean);
-          const metaLine = [...metaParts, ...locationParts].join(" · ");
+          const metaLine = metaParts.join(" · ");
+          const metaSecondaryLine = locationParts.length > 0 ? locationParts.join(" · ") : undefined;
+          const metaLineTitle = roleAbbrev !== roleLabel ? roleLabel : undefined;
           const embeddedMenu = (
             <RosterRowActionsMenu
               row={row}
@@ -116,6 +120,8 @@ export function RosterMobileList({
                 phone={row.phone_number}
                 referenceCode={row.reference_code}
                 metaLine={metaLine}
+                metaLineTitle={metaLineTitle}
+                metaSecondaryLine={metaSecondaryLine}
                 onInAppSms={() => onInAppSms(row)}
                 disabled={busy}
                 overflowMenu={

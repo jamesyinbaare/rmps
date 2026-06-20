@@ -13,6 +13,7 @@ import {
   INVITATIONS_PANEL_CLASS,
   STATUS_LABELS,
 } from "@/components/examiner-invitations/constants";
+import { EditInvitationModal } from "@/components/examiner-invitations/edit-invitation-modal";
 import {
   BulkUploadModal,
   CustomSmsModal,
@@ -24,6 +25,8 @@ import {
 import { InvitationsSummaryStats } from "@/components/examiner-invitations/invitations-summary-stats";
 import { InvitationsTable } from "@/components/examiner-invitations/invitations-table";
 import { InvitationsMobileList } from "@/components/examiners/invitations-mobile-list";
+import { SO_MOBILE_CONTENT_PADDING } from "@/components/examiners/constants";
+import { ExaminerDeleteConfirmModal } from "@/components/examiners/examiner-delete-confirm-modal";
 import { ExaminerPortalLinkRegenerateConfirmModal } from "@/components/examiners/examiner-portal-link-regenerate-confirm-modal";
 import { ExaminerAllocationModal } from "@/components/examiner-invitations/examiner-allocation-modal";
 import type {
@@ -52,13 +55,17 @@ import {
   bulkSetExaminerInvitationCoordinationSchedule,
   bulkUploadExaminerInvitations,
   createExaminerInvitation,
+  deleteExaminerInvitation,
   downloadExaminerInvitationLinksExport,
   downloadExaminerInvitationsBulkTemplate,
+  getExaminerDeletePreview,
   listExaminerInvitations,
   regenerateExaminerInvitationLink,
   renewExaminerInvitation,
   resendExaminerInvitationSms,
+  updateExaminerInvitationDetails,
   updateExaminerInvitationResponseDeadline,
+  type ExaminerDeleteImpact,
   type ExaminerInvitationBulkImportResponse,
   type ExaminerInvitationBulkSmsResponse,
   type ExaminerInvitationRow,
@@ -70,6 +77,7 @@ import {
   SCRIPT_CONTROL_SUBJECT_TYPE_OPTIONS,
   type ScriptControlSubjectTypeFilter,
 } from "@/lib/script-control-subjects";
+import { displaySubjectCode } from "@/lib/script-control-completion";
 import { cn } from "@/lib/utils";
 import { useSyncPageSubjectScope } from "@/components/examiners/use-sync-page-subject-scope";
 
@@ -126,6 +134,12 @@ export function ExaminersInvitationsPanel({
   const [renewModalOpen, setRenewModalOpen] = useState(false);
   const [renewTarget, setRenewTarget] = useState<ExaminerInvitationRow | null>(null);
   const [regenerateTarget, setRegenerateTarget] = useState<ExaminerInvitationRow | null>(null);
+  const [editTarget, setEditTarget] = useState<ExaminerInvitationRow | null>(null);
+  const [editName, setEditName] = useState("");
+  const [editExaminerType, setEditExaminerType] = useState<ExaminerTypeApi>("assistant_examiner");
+  const [editError, setEditError] = useState<string | null>(null);
+  const [deleteInvitationTarget, setDeleteInvitationTarget] = useState<ExaminerInvitationRow | null>(null);
+  const [deleteImpact, setDeleteImpact] = useState<ExaminerDeleteImpact | null>(null);
   const [renewError, setRenewError] = useState<string | null>(null);
   const [renewDeadlineInput, setRenewDeadlineInput] = useState("");
   const [renewSendSms, setRenewSendSms] = useState(true);
@@ -230,12 +244,6 @@ export function ExaminersInvitationsPanel({
   }, [examId, loadInvitations]);
 
   useEffect(() => {
-    if (onInvitationCountsChange) {
-      onInvitationCountsChange(countByStatus(invitations));
-    }
-  }, [invitations, onInvitationCountsChange]);
-
-  useEffect(() => {
     setRowSelection({});
     setPagination((p) => ({ ...p, pageIndex: 0 }));
   }, [examId, subjectTypeFilter, subjectFilter, roleFilter, regionFilter, statusFilter, debouncedSearch]);
@@ -280,6 +288,22 @@ export function ExaminersInvitationsPanel({
       return true;
     });
   }, [invitations, subjectTypeFilter, subjectFilter, roleFilter, regionFilter, debouncedSearch]);
+
+  const subjectScopedInvitationCounts = useMemo(() => {
+    return countByStatus(
+      invitations.filter((inv) => {
+        if (subjectTypeFilter !== "all" && inv.subject_type !== subjectTypeFilter) return false;
+        if (subjectFilter.length > 0 && !subjectFilter.includes(String(inv.subject_id))) return false;
+        return true;
+      }),
+    );
+  }, [invitations, subjectFilter, subjectTypeFilter]);
+
+  useEffect(() => {
+    if (onInvitationCountsChange) {
+      onInvitationCountsChange(subjectScopedInvitationCounts);
+    }
+  }, [onInvitationCountsChange, subjectScopedInvitationCounts]);
 
   const statusCounts = useMemo(() => countByStatus(preStatusFilteredRows), [preStatusFilteredRows]);
 
@@ -912,17 +936,102 @@ export function ExaminersInvitationsPanel({
     }
   }
 
+  const canManageInvitations = !readOnly;
+
+  function openEditInvitation(inv: ExaminerInvitationRow) {
+    setEditTarget(inv);
+    setEditName(inv.name);
+    setEditExaminerType(inv.examiner_type);
+    setEditError(null);
+  }
+
+  async function handleSaveEditInvitation() {
+    if (examId == null || editTarget == null || !editName.trim()) return;
+    setBusy(true);
+    setEditError(null);
+    try {
+      await updateExaminerInvitationDetails(examId, editTarget.id, {
+        name: editName.trim(),
+        examiner_type: editExaminerType,
+      });
+      setEditTarget(null);
+      setActionMessageTone("success");
+      setActionMessage("Invitation updated.");
+      await loadInvitations(examId);
+    } catch (e) {
+      setEditError(e instanceof Error ? e.message : "Could not update invitation");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function handleDeleteInvitation(inv: ExaminerInvitationRow) {
+    if (examId == null) return;
+    setLoadError(null);
+    try {
+      if (inv.status === "accepted" && inv.examiner_id) {
+        const impact = await getExaminerDeletePreview(examId, inv.examiner_id);
+        setDeleteImpact(impact);
+        setDeleteInvitationTarget(inv);
+        return;
+      }
+      setDeleteInvitationTarget(inv);
+      setDeleteImpact({
+        examiner_id: inv.examiner_id ?? inv.id,
+        examiner_name: inv.name,
+        manual_allocations: [],
+        envelope_assignments: [],
+        allocation_campaigns: [],
+        total_manual_scripts: 0,
+        total_envelopes: 0,
+        requires_confirmation: false,
+      });
+    } catch (e) {
+      setLoadError(e instanceof Error ? e.message : "Delete failed");
+    }
+  }
+
+  async function confirmDeleteInvitation() {
+    if (examId == null || deleteInvitationTarget == null || deleteImpact == null) return;
+    setBusy(true);
+    setLoadError(null);
+    try {
+      await deleteExaminerInvitation(examId, deleteInvitationTarget.id, {
+        confirmRemoveAllocations: deleteImpact.requires_confirmation,
+      });
+      setDeleteImpact(null);
+      setDeleteInvitationTarget(null);
+      setActionMessageTone("success");
+      setActionMessage(
+        deleteInvitationTarget.status === "accepted" && deleteInvitationTarget.examiner_id
+          ? "Examiner removed and invitation deleted."
+          : "Invitation deleted.",
+      );
+      await loadInvitations(examId);
+    } catch (e) {
+      setLoadError(e instanceof Error ? e.message : "Delete failed");
+    } finally {
+      setBusy(false);
+    }
+  }
+
   return (
     <>
       {loadError ? (
-        <p className="mx-3 mt-2 rounded-lg border border-destructive/40 bg-destructive/10 px-3 py-2 text-sm text-destructive sm:mx-4">
+        <p
+          className={cn(
+            "mx-3 mt-2 rounded-lg border border-destructive/40 bg-destructive/10 px-3 py-2 text-sm text-destructive",
+            !mobileContactLayout && "sm:mx-4",
+          )}
+        >
           {loadError}
         </p>
       ) : null}
       {actionMessage ? (
         <p
           className={cn(
-            "mx-3 mt-2 rounded-lg px-3 py-2 text-sm sm:mx-4",
+            "mx-3 mt-2 rounded-lg px-3 py-2 text-sm",
+            !mobileContactLayout && "sm:mx-4",
             actionMessageTone === "success"
               ? "border border-emerald-500/30 bg-emerald-500/10 text-emerald-800 dark:text-emerald-300"
               : "border border-destructive/40 bg-destructive/10 text-destructive",
@@ -997,7 +1106,12 @@ export function ExaminersInvitationsPanel({
         />
 
         <div className={pageScroll ? "flex flex-col" : "flex min-h-0 flex-1 flex-col"}>
-            <div className="space-y-2 px-2 pt-2 sm:px-3">
+            <div
+              className={cn(
+                "space-y-2 pt-2",
+                mobileContactLayout ? "max-md:px-3 max-md:pt-3 md:px-3" : "px-2 sm:px-3",
+              )}
+            >
               <InvitationsSummaryStats
                 counts={statusCounts}
                 activeStatus={statusFilter}
@@ -1007,7 +1121,11 @@ export function ExaminersInvitationsPanel({
 
             <div
               className={cn(
-                pageScroll ? "flex flex-col gap-2 p-2 sm:p-3" : "flex min-h-0 flex-1 flex-col gap-2 p-2 sm:p-3",
+                pageScroll
+                  ? mobileContactLayout
+                    ? cn("flex flex-col gap-2", SO_MOBILE_CONTENT_PADDING)
+                    : "flex flex-col gap-2 p-2 sm:p-3"
+                  : "flex min-h-0 flex-1 flex-col gap-2 p-2 sm:p-3",
               )}
             >
             {selectedCount > 0 ? (
@@ -1104,6 +1222,9 @@ export function ExaminersInvitationsPanel({
                         ? (inv) => setAllocationTarget(inv)
                         : undefined
                     }
+                    canManageInvitations={canManageInvitations}
+                    onEdit={openEditInvitation}
+                    onDelete={(inv) => void handleDeleteInvitation(inv)}
                     pageScroll={pageScroll}
                   />
                 </div>
@@ -1132,6 +1253,9 @@ export function ExaminersInvitationsPanel({
                         ? (inv) => setAllocationTarget(inv)
                         : undefined
                     }
+                    canManageInvitations={canManageInvitations}
+                    onEdit={openEditInvitation}
+                    onDelete={(inv) => void handleDeleteInvitation(inv)}
                   />
                 ) : null}
               </>
@@ -1149,6 +1273,53 @@ export function ExaminersInvitationsPanel({
             if (!busy) setRegenerateTarget(null);
           }}
           onConfirm={(options) => void handleRegenerateLink(options)}
+        />
+      ) : null}
+
+      <EditInvitationModal
+        open={editTarget != null}
+        busy={busy}
+        error={editError}
+        invitation={editTarget}
+        name={editName}
+        examinerType={editExaminerType}
+        onClose={() => {
+          if (!busy) {
+            setEditTarget(null);
+            setEditError(null);
+          }
+        }}
+        onSubmit={() => void handleSaveEditInvitation()}
+        onNameChange={setEditName}
+        onExaminerTypeChange={setEditExaminerType}
+      />
+
+      {deleteImpact && deleteInvitationTarget ? (
+        <ExaminerDeleteConfirmModal
+          examinerName={deleteImpact.examiner_name}
+          subjectLabel={displaySubjectCode(deleteInvitationTarget)}
+          examinerTypeLabel={
+            EXAMINER_TYPE_LABELS[deleteInvitationTarget.examiner_type] ??
+            deleteInvitationTarget.examiner_type
+          }
+          deleteMode={
+            deleteInvitationTarget.status === "accepted" && deleteInvitationTarget.examiner_id
+              ? "invitation-and-roster"
+              : "invitation"
+          }
+          manualAllocations={deleteImpact.manual_allocations}
+          envelopeAssignments={deleteImpact.envelope_assignments}
+          allocationCampaigns={deleteImpact.allocation_campaigns}
+          totalManualScripts={deleteImpact.total_manual_scripts}
+          totalEnvelopes={deleteImpact.total_envelopes}
+          busy={busy}
+          onCancel={() => {
+            if (!busy) {
+              setDeleteImpact(null);
+              setDeleteInvitationTarget(null);
+            }
+          }}
+          onConfirm={() => void confirmDeleteInvitation()}
         />
       ) : null}
 

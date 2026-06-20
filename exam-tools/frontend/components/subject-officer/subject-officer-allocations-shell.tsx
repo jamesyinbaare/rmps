@@ -4,6 +4,27 @@ import { ChevronRight, Loader2, MapPin, Phone, Search } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 
 import { EXAMINER_LIST_SEARCH_DEBOUNCE_MS, useDebounced } from "@/hooks/use-debounced";
+import { AllocationDetailCards } from "@/components/subject-officer/allocation-detail-cards";
+import { ExaminerRoleBadge } from "@/components/subject-officer/examiner-role-badge";
+import { SubjectOfficerExaminerDetailFilters } from "@/components/subject-officer/subject-officer-examiner-detail-filters";
+import {
+  markedScriptExaminerRegionOptions,
+  markedScriptExaminerRoleOptions,
+} from "@/components/subject-officer/marked-script-examiner-picker";
+import {
+  SO_MASTER_DETAIL_DETAIL_CLASS,
+  SO_MASTER_DETAIL_GRID_CLASS,
+  SO_MASTER_DETAIL_MASTER_CLASS,
+} from "@/components/examiners/constants";
+import { SubjectOfficerExaminerMobilePicker } from "@/components/subject-officer/subject-officer-examiner-mobile-picker";
+import {
+  examinerRoleLabel,
+  filterAllocationExaminers,
+  filterExaminersByRegionAndRole,
+  regionLabel,
+  sortAllocationExaminers,
+} from "@/components/subject-officer/subject-officer-examiner-utils";
+import { SubjectOfficerSelectedExaminerBar } from "@/components/subject-officer/subject-officer-selected-examiner-bar";
 import { SubjectOfficerPanelShell } from "@/components/subject-officer/subject-officer-panel-shell";
 import { SubjectOfficerWorkspaceStrip } from "@/components/subject-officer/subject-officer-workspace-strip";
 import { Badge } from "@/components/ui/badge";
@@ -14,28 +35,14 @@ import {
   type MarkedScriptReturnExaminerOption,
 } from "@/lib/api";
 import {
-  officialAccountsCommandBarControlClass,
   officialAccountsCommandBarRowClass,
 } from "@/lib/official-accounts-zone";
-import { REGION_OPTIONS } from "@/lib/school-enums";
-import { subjectDisplayLabel } from "@/lib/subject-display";
 import { cn } from "@/lib/utils";
 
-function regionLabel(value: string): string {
-  return REGION_OPTIONS.find((r) => r.value === value)?.label ?? value;
-}
-
 const EXAMINER_LIST_LABEL_MAX_LEN = 28;
-const panelHeightClass = "lg:h-[min(72vh,720px)]";
 
-const compactLabelClass = "text-xs font-medium text-muted-foreground";
 const filterControlCompact =
   "block w-full min-h-9 rounded-lg border border-input-border bg-input px-3 text-sm text-foreground shadow-sm focus:border-primary focus:outline-none focus:ring-2 focus:ring-ring/30";
-const comboboxCompactProps = {
-  widthClass: "w-full mt-0.5",
-  triggerClassName: "h-9 min-h-9 py-0",
-  truncateTrigger: true as const,
-};
 
 type Props = {
   examId: number;
@@ -55,23 +62,16 @@ type AllocationDetailRow = {
   bookletCount: number;
 };
 
-function formatExaminerListLabel(name: string, type: string, maxLen = EXAMINER_LIST_LABEL_MAX_LEN): string {
-  const full = `${name} · ${type}`;
-  if (full.length <= maxLen) return full;
-  return `${full.slice(0, maxLen - 1)}…`;
+function formatExaminerListLabel(name: string, maxLen = EXAMINER_LIST_LABEL_MAX_LEN): string {
+  if (name.length <= maxLen) return name;
+  return `${name.slice(0, maxLen - 1)}…`;
 }
 
 function filterExaminers(
   examiners: MarkedScriptReturnExaminerOption[],
   query: string,
 ): MarkedScriptReturnExaminerOption[] {
-  const q = query.trim().toLowerCase();
-  if (!q) return examiners;
-  return examiners.filter(
-    (e) =>
-      e.examiner_name.toLowerCase().includes(q) ||
-      e.examiner_type.toLowerCase().includes(q),
-  );
+  return filterAllocationExaminers(examiners, query);
 }
 
 function flattenAllocationRows(blocks: ExaminerPublicScriptsAllocationBlock[]): AllocationDetailRow[] {
@@ -94,12 +94,7 @@ function totalBooklets(blocks: ExaminerPublicScriptsAllocationBlock[]): number {
 
 function MasterDetailSkeleton() {
   return (
-    <div
-      className={cn(
-        "grid min-h-[420px] grid-cols-1 overflow-hidden rounded-xl border border-border bg-card shadow-sm lg:grid-cols-[minmax(260px,300px)_1fr]",
-        panelHeightClass,
-      )}
-    >
+    <div className={cn(SO_MASTER_DETAIL_GRID_CLASS, "lg:min-h-[420px]")}>
       <div className="animate-pulse border-b border-border p-4 lg:border-b-0 lg:border-r">
         <div className="mb-3 h-4 w-32 rounded bg-muted" />
         <div className="mb-2 h-9 rounded bg-muted" />
@@ -131,18 +126,24 @@ export function SubjectOfficerAllocationsShell({
   const [loadingAllocation, setLoadingAllocation] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [examinerListSearch, setExaminerListSearch] = useState("");
+  const [regionFilter, setRegionFilter] = useState<string[]>([]);
+  const [roleFilter, setRoleFilter] = useState<string[]>([]);
   const debouncedExaminerListSearch = useDebounced(examinerListSearch, EXAMINER_LIST_SEARCH_DEBOUNCE_MS);
   const isDebouncing =
     examinerListSearch.trim() !== debouncedExaminerListSearch.trim() &&
     examinerListSearch.trim().length > 0;
-  const shouldShowExaminerList = debouncedExaminerListSearch.trim().length > 0;
+  const hasExaminerSearch = debouncedExaminerListSearch.trim().length > 0;
+  const hasActiveDetailFilters = regionFilter.length > 0 || roleFilter.length > 0;
 
   const subjectLabel = workspaceLabel.split(" · ").slice(-1)[0] ?? workspaceLabel;
 
+  const regionOptions = useMemo(() => markedScriptExaminerRegionOptions(examiners), [examiners]);
+  const roleOptions = useMemo(() => markedScriptExaminerRoleOptions(examiners), [examiners]);
+
   const filteredExaminers = useMemo(() => {
-    if (!shouldShowExaminerList) return [];
-    return filterExaminers(examiners, debouncedExaminerListSearch);
-  }, [debouncedExaminerListSearch, examiners, shouldShowExaminerList]);
+    const byRegionRole = filterExaminersByRegionAndRole(examiners, regionFilter, roleFilter);
+    return sortAllocationExaminers(filterExaminers(byRegionRole, debouncedExaminerListSearch));
+  }, [debouncedExaminerListSearch, examiners, regionFilter, roleFilter]);
 
   const selectedExaminer = useMemo(
     () => examiners.find((e) => e.examiner_id === examinerId) ?? null,
@@ -212,10 +213,6 @@ export function SubjectOfficerAllocationsShell({
     };
   }, [examId, examinerId, subjectId, subjectSelected]);
 
-  function handleExaminerSelect(id: string) {
-    onExaminerChange(id);
-  }
-
   const commandBar = (
     <div className={officialAccountsCommandBarRowClass}>
       <SubjectOfficerWorkspaceStrip workspaceLabel={workspaceLabel} workspace={null} />
@@ -225,20 +222,43 @@ export function SubjectOfficerAllocationsShell({
   const masterDetail = loadingExaminers && examiners.length === 0 ? (
     <MasterDetailSkeleton />
   ) : (
-    <div
-      className={cn(
-        "grid min-h-[420px] grid-cols-1 overflow-hidden rounded-xl border border-border bg-card shadow-sm lg:grid-cols-[minmax(260px,300px)_1fr]",
-        panelHeightClass,
-      )}
-    >
-      <div className="flex min-h-0 flex-col overflow-hidden border-b border-border lg:h-full lg:border-b-0 lg:border-r">
+    <>
+      {!examinerId ? (
+        <div className="max-md:px-3 max-md:py-4 lg:hidden">
+          <SubjectOfficerExaminerMobilePicker
+            variant="allocation"
+            examiners={examiners}
+            selectedId={null}
+            onSelect={onExaminerChange}
+            loading={loadingExaminers}
+          />
+        </div>
+      ) : null}
+
+      <div
+        className={cn(
+          SO_MASTER_DETAIL_GRID_CLASS,
+          !examinerId && "hidden lg:grid",
+        )}
+      >
+        <div className={SO_MASTER_DETAIL_MASTER_CLASS}>
         <p className="shrink-0 border-b border-border bg-muted/30 px-4 py-2 text-sm font-medium text-foreground">
           Examiners
           {examiners.length > 0 ? (
             <span className="ml-1.5 font-normal text-muted-foreground">({examiners.length})</span>
           ) : null}
         </p>
-        <div className="shrink-0 border-b border-border p-2">
+        <div className="shrink-0 space-y-2 border-b border-border p-2">
+          <SubjectOfficerExaminerDetailFilters
+            idPrefix="alloc-examiner"
+            regionOptions={regionOptions}
+            roleOptions={roleOptions}
+            regionFilter={regionFilter}
+            roleFilter={roleFilter}
+            onRegionFilterChange={setRegionFilter}
+            onRoleFilterChange={setRoleFilter}
+            disabled={loadingExaminers}
+          />
           <div className="relative">
             <Search
               className="pointer-events-none absolute left-2.5 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground"
@@ -257,29 +277,27 @@ export function SubjectOfficerAllocationsShell({
           </div>
         </div>
         <ul
-          className="max-h-48 min-h-0 flex-1 overflow-y-auto overscroll-contain p-2 lg:max-h-none"
+          className="min-h-0 flex-1 overflow-y-auto overscroll-contain p-2"
           role="listbox"
           aria-label="Examiners"
         >
           {isDebouncing ? (
             <li className="px-3 py-4 text-xs text-muted-foreground">Searching…</li>
-          ) : !shouldShowExaminerList ? (
-            <li className="px-3 py-4 text-xs leading-relaxed text-muted-foreground">
-              Type to search examiners.
-            </li>
           ) : filteredExaminers.length === 0 ? (
             <li className="px-3 py-4 text-xs leading-relaxed text-muted-foreground">
               {examiners.length === 0
                 ? "No examiners found for this subject."
-                : examinerId
-                  ? "No examiners match your search. The selected examiner's allocation, if any, appears on the right."
-                  : "No examiners match your search."}
+                : hasExaminerSearch || hasActiveDetailFilters
+                  ? examinerId
+                    ? "No examiners match your search. The selected examiner's allocation, if any, appears on the right."
+                    : "No examiners match your search or filters."
+                  : "No examiners found for this subject."}
             </li>
           ) : null}
           {filteredExaminers.map((examiner) => {
             const selected = examiner.examiner_id === examinerId;
-            const label = formatExaminerListLabel(examiner.examiner_name, examiner.examiner_type);
-            const labelFull = `${examiner.examiner_name} · ${examiner.examiner_type}`;
+            const roleLabel = examinerRoleLabel(examiner.examiner_type);
+            const labelFull = `${examiner.examiner_name} · ${roleLabel}`;
             return (
               <li key={examiner.examiner_id}>
                 <button
@@ -300,18 +318,12 @@ export function SubjectOfficerAllocationsShell({
                       !selected && "text-foreground",
                     )}
                   >
-                    {label}
+                    {formatExaminerListLabel(examiner.examiner_name)}
                   </span>
-                  <span
-                    className={cn(
-                      "shrink-0 rounded-md border px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wide",
-                      selected
-                        ? "border-primary-foreground/40 bg-primary-foreground/15 text-primary-foreground"
-                        : "border-border bg-muted/50 text-muted-foreground",
-                    )}
-                  >
-                    {examiner.examiner_type}
-                  </span>
+                  <ExaminerRoleBadge
+                    examinerType={examiner.examiner_type}
+                    variant={selected ? "selected" : "default"}
+                  />
                   <ChevronRight
                     className={cn("size-4 shrink-0", selected ? "opacity-90" : "text-muted-foreground")}
                     aria-hidden
@@ -323,19 +335,38 @@ export function SubjectOfficerAllocationsShell({
         </ul>
       </div>
 
-      <div className="flex min-h-0 min-w-0 flex-col overflow-hidden lg:h-full">
+      <div
+        className={cn(
+          SO_MASTER_DETAIL_DETAIL_CLASS,
+          !examinerId && "hidden lg:flex",
+        )}
+      >
         {selectedExaminer || examinerId ? (
           <>
-            <div className="flex shrink-0 flex-wrap items-start justify-between gap-4 border-b border-border bg-gradient-to-b from-muted/35 to-muted/15 px-4 py-4 lg:px-5">
+            {selectedExaminer ? (
+              <SubjectOfficerSelectedExaminerBar
+                className="lg:hidden"
+                name={selectedExaminer.examiner_name}
+                examinerType={selectedExaminer.examiner_type}
+                region={selectedExaminer.region}
+                phone={selectedExaminer.phone_number}
+                statValue={bookletTotal > 0 ? bookletTotal : undefined}
+                statLabel={bookletTotal > 0 ? "booklets" : undefined}
+                onChange={() => onExaminerChange(null)}
+              />
+            ) : null}
+
+            <div className="hidden shrink-0 flex-wrap items-start justify-between gap-4 border-b border-border bg-gradient-to-b from-muted/35 to-muted/15 px-4 py-4 lg:flex lg:px-5">
               <div className="min-w-0 flex-1 space-y-2.5">
                 <div className="flex flex-wrap items-center gap-2">
                   <h3 className="text-base font-semibold tracking-tight text-foreground">
                     {selectedExaminer?.examiner_name ?? "Examiner"}
                   </h3>
                   {selectedExaminer ? (
-                    <Badge variant="secondary" className="font-normal">
-                      {selectedExaminer.examiner_type}
-                    </Badge>
+                    <ExaminerRoleBadge
+                      examinerType={selectedExaminer.examiner_type}
+                      variant="secondary"
+                    />
                   ) : null}
                   {subjectLabel ? (
                     <Badge
@@ -379,7 +410,7 @@ export function SubjectOfficerAllocationsShell({
                 </div>
               ) : null}
             </div>
-            <div className="max-h-[min(50vh,480px)] min-h-0 min-w-0 flex-1 overflow-y-auto overflow-x-auto overscroll-contain p-3 lg:max-h-none lg:p-4 [&_th]:bg-card [&_thead]:sticky [&_thead]:top-0 [&_thead]:z-10">
+            <div className="min-w-0 p-3 lg:min-h-0 lg:flex-1 lg:overflow-x-auto lg:overflow-y-auto lg:overscroll-contain lg:p-4 [&_th]:bg-card [&_thead]:sticky [&_thead]:top-0 [&_thead]:z-10">
               {loadingAllocation && detailRows.length === 0 ? (
                 <div className="flex min-h-[200px] items-center justify-center">
                   <Loader2 className="size-8 animate-spin text-muted-foreground" />
@@ -389,7 +420,11 @@ export function SubjectOfficerAllocationsShell({
                   No published allocation yet for {selectedExaminer?.examiner_name ?? "this examiner"}.
                 </div>
               ) : (
-                <table className="w-full min-w-[32rem] border-collapse text-sm">
+                <>
+                  <div className="lg:hidden">
+                    <AllocationDetailCards rows={detailRows} bookletTotal={bookletTotal} />
+                  </div>
+                  <table className="hidden w-full min-w-[32rem] border-collapse text-sm lg:table">
                   <thead>
                     <tr className="border-b border-border/60 text-left text-xs uppercase tracking-wide text-muted-foreground">
                       <th className="px-3 py-2 font-semibold">Paper</th>
@@ -428,24 +463,28 @@ export function SubjectOfficerAllocationsShell({
                     </tr>
                   </tfoot>
                 </table>
+                </>
               )}
             </div>
           </>
         ) : (
-          <p className="p-8 text-sm text-muted-foreground">Select an examiner to view their allocation.</p>
+          <p className="hidden p-8 text-sm text-muted-foreground lg:block">
+            Select an examiner to view their allocation.
+          </p>
         )}
       </div>
     </div>
+    </>
   );
 
   return (
-    <SubjectOfficerPanelShell commandBar={commandBar}>
+    <SubjectOfficerPanelShell commandBar={commandBar} flushMobileContent fillViewport>
       {error ? (
-        <p className="mb-4 rounded-lg border border-destructive/40 bg-destructive/10 px-3 py-2 text-sm text-destructive">
+        <p className="mb-4 max-md:mx-3 shrink-0 rounded-lg border border-destructive/40 bg-destructive/10 px-3 py-2 text-sm text-destructive lg:mx-0">
           {error}
         </p>
       ) : null}
-      {masterDetail}
+      <div className="flex min-h-0 flex-1 flex-col">{masterDetail}</div>
     </SubjectOfficerPanelShell>
   );
 }

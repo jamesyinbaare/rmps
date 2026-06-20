@@ -22,6 +22,9 @@ type Props = {
   onExtendDeadline?: (inv: ExaminerInvitationRow) => void;
   onRegenerateLink?: (inv: ExaminerInvitationRow) => void;
   onViewAllocation?: (inv: ExaminerInvitationRow) => void;
+  canManageInvitations?: boolean;
+  onEdit?: (inv: ExaminerInvitationRow) => void;
+  onDelete?: (inv: ExaminerInvitationRow) => void;
   /** Render menu items only (no popover trigger) for mobile contact cards. */
   embedded?: boolean;
 };
@@ -40,6 +43,9 @@ export function InvitationRowActionsMenu({
   onExtendDeadline,
   onRegenerateLink,
   onViewAllocation,
+  canManageInvitations = false,
+  onEdit,
+  onDelete,
   embedded = false,
 }: Props) {
   const canCopy = Boolean(onCopyLink && inv.public_url);
@@ -63,8 +69,21 @@ export function InvitationRowActionsMenu({
       inv.status === "declined" ||
       inv.status === "quota_waitlisted" ||
       inv.status === "accepted");
+  const canEdit = canManageInvitations && Boolean(onEdit);
+  const canDelete = canManageInvitations && Boolean(onDelete);
+  const deleteLabel =
+    inv.status === "accepted" && inv.examiner_id
+      ? "Remove examiner & invitation"
+      : "Delete invitation";
   const hasMenuItems =
-    canCopy || canResend || canExtend || canReopen || canRegenerateLink || canViewAllocation;
+    canCopy ||
+    canResend ||
+    canExtend ||
+    canReopen ||
+    canRegenerateLink ||
+    canViewAllocation ||
+    canEdit ||
+    canDelete;
 
   if (!hasMenuItems) {
     return embedded ? null : <span className="text-xs text-muted-foreground">—</span>;
@@ -155,6 +174,34 @@ export function InvitationRowActionsMenu({
           }}
         >
           View allocation
+        </button>
+      ) : null}
+      {canEdit ? (
+        <button
+          type="button"
+          role="menuitem"
+          disabled={busy}
+          className={menuItemClass}
+          onClick={() => {
+            onEdit?.(inv);
+            onOpenChange(false);
+          }}
+        >
+          Edit name & role
+        </button>
+      ) : null}
+      {canDelete ? (
+        <button
+          type="button"
+          role="menuitem"
+          disabled={busy}
+          className={cn(menuItemClass, "text-destructive hover:bg-destructive/10")}
+          onClick={() => {
+            onDelete?.(inv);
+            onOpenChange(false);
+          }}
+        >
+          {deleteLabel}
         </button>
       ) : null}
     </div>

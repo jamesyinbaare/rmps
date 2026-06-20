@@ -38,7 +38,7 @@ export default function AdminExaminersHubPage() {
       showScriptsAllocationLink={false}
       showCreateExamsLink={false}
       showSubjectBadges={false}
-      showQuotaAssessment
+      showQuotaStatusView={me?.role === "TEST_ADMIN_OFFICER"}
     />
   );
 }

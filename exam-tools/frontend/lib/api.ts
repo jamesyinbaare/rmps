@@ -4359,6 +4359,20 @@ export type SubjectExaminerGenderQuotaSummaryRow = {
   remaining?: number | null;
 };
 
+export type SubjectExaminerRegionBreakdownRow = {
+  region: string;
+  group_id: string;
+  group_name: string;
+  group_quota?: number | null;
+  group_current_count: number;
+  group_combined_count: number;
+  group_over_cap: boolean;
+  current_count: number;
+  proposed_count: number;
+  combined_count: number;
+  share_of_group_percent?: number | null;
+};
+
 export type SubjectExaminerRegionQuotasResponse = {
   examination_id: number;
   subject_id: number;
@@ -4369,6 +4383,7 @@ export type SubjectExaminerRegionQuotasResponse = {
   groups: ExaminerQuotaRegionGroupRow[];
   summary: SubjectExaminerRegionQuotaSummaryRow[];
   gender_summary?: SubjectExaminerGenderQuotaSummaryRow[];
+  region_breakdown?: SubjectExaminerRegionBreakdownRow[];
   items: SubjectExaminerRegionQuotaItem[];
 };
 
@@ -4401,6 +4416,24 @@ export type QuotaAssessmentResponse = {
     remaining?: number | null;
     over_cap: boolean;
   }>;
+};
+
+export type QuotaProjectionScenario = "pending" | "pending_and_waitlisted";
+
+export type QuotaProjectionResponse = QuotaAssessmentResponse & {
+  examination_id: number;
+  subject_id: number;
+  scenario: QuotaProjectionScenario;
+  invitation_count: number;
+  invitation_breakdown: {
+    pending: number;
+    quota_waitlisted: number;
+  };
+  total_quota?: number | null;
+  roster_total: number;
+  combined_roster_total: number;
+  subject_over_cap: boolean;
+  region_breakdown?: SubjectExaminerRegionBreakdownRow[];
 };
 
 export type ExaminerAttendanceMarkResult = {
@@ -4701,6 +4734,25 @@ export async function getSubjectExaminerRegionQuotas(
 ): Promise<SubjectExaminerRegionQuotasResponse> {
   return apiJson<SubjectExaminerRegionQuotasResponse>(
     `/admin/examinations/${examinationId}/subjects/${subjectId}/examiner-region-quotas`,
+  );
+}
+
+export async function getSubjectExaminerQuotaStatus(
+  examinationId: number,
+  subjectId: number,
+): Promise<SubjectExaminerRegionQuotasResponse> {
+  return apiJson<SubjectExaminerRegionQuotasResponse>(
+    `/examinations/${examinationId}/subjects/${subjectId}/examiner-quota-status?projection=current`,
+  );
+}
+
+export async function getSubjectExaminerQuotaProjection(
+  examinationId: number,
+  subjectId: number,
+  scenario: QuotaProjectionScenario,
+): Promise<QuotaProjectionResponse> {
+  return apiJson<QuotaProjectionResponse>(
+    `/examinations/${examinationId}/subjects/${subjectId}/examiner-quota-status?projection=${scenario}`,
   );
 }
 
@@ -5122,6 +5174,40 @@ export async function updateExaminerInvitationCoordinationSchedule(
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(payload),
     },
+  );
+}
+
+export type ExaminerInvitationDetailsPayload = {
+  name?: string;
+  examiner_type?: ExaminerTypeApi;
+};
+
+export async function updateExaminerInvitationDetails(
+  examinationId: number,
+  invitationId: string,
+  payload: ExaminerInvitationDetailsPayload,
+): Promise<ExaminerInvitationRow> {
+  return apiJson<ExaminerInvitationRow>(
+    `/examinations/${examinationId}/examiner-invitations/${encodeURIComponent(invitationId)}`,
+    {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    },
+  );
+}
+
+export async function deleteExaminerInvitation(
+  examinationId: number,
+  invitationId: string,
+  options?: { confirmRemoveAllocations?: boolean },
+): Promise<void> {
+  const q = new URLSearchParams();
+  if (options?.confirmRemoveAllocations) q.set("confirm_remove_allocations", "true");
+  const suffix = q.toString() ? `?${q.toString()}` : "";
+  await apiJson(
+    `/examinations/${examinationId}/examiner-invitations/${encodeURIComponent(invitationId)}${suffix}`,
+    { method: "DELETE" },
   );
 }
 

@@ -7,10 +7,11 @@ import {
   DEFAULT_PAGE_SIZE,
   EXAMINERS_PANEL_CLASS,
   ROSTER_DEFAULT_COLUMN_VISIBILITY,
+  SO_MOBILE_CONTENT_PADDING,
 } from "@/components/examiners/constants";
 import { ExaminerDeleteConfirmModal } from "@/components/examiners/examiner-delete-confirm-modal";
 import { ExaminerPortalLinkRegenerateConfirmModal } from "@/components/examiners/examiner-portal-link-regenerate-confirm-modal";
-import { ExaminerQuotaAssessmentModal } from "@/components/examiners/examiner-quota-assessment-modal";
+import { ExaminerQuotaDistributionSheet } from "@/components/examiners/examiner-quota-distribution-sheet";
 import { ExaminerRegionGroupsModal } from "@/components/examiners/examiner-region-groups-modal";
 import { RosterCommandBar } from "@/components/examiners/roster-command-bar";
 import { RosterMobileList } from "@/components/examiners/roster-mobile-list";
@@ -64,7 +65,7 @@ type Props = {
   pageScroll?: boolean;
   loadExaminerGroups?: boolean;
   showReferenceCodesConfig?: boolean;
-  showQuotaAssessment?: boolean;
+  showQuotaStatusView?: boolean;
   canManageRoster?: boolean;
   canEditRoster?: boolean;
   onRosterCountChange?: (count: number) => void;
@@ -94,7 +95,7 @@ export function ExaminersRosterPanel({
   pageScroll = false,
   loadExaminerGroups = true,
   showReferenceCodesConfig = false,
-  showQuotaAssessment = false,
+  showQuotaStatusView = false,
   canManageRoster = true,
   canEditRoster = true,
   onRosterCountChange,
@@ -135,7 +136,7 @@ export function ExaminersRosterPanel({
   });
 
   const [regionGroupsOpen, setRegionGroupsOpen] = useState(false);
-  const [quotaAssessmentOpen, setQuotaAssessmentOpen] = useState(false);
+  const [quotaDistributionOpen, setQuotaDistributionOpen] = useState(false);
   const [formOpen, setFormOpen] = useState(false);
   const [editing, setEditing] = useState<ExaminerRow | null>(null);
   const [formError, setFormError] = useState<string | null>(null);
@@ -157,6 +158,7 @@ export function ExaminersRosterPanel({
   const [smsResult, setSmsResult] = useState<ExaminerRosterBulkSmsResponse | null>(null);
   const [allocationTarget, setAllocationTarget] = useState<AllocationTarget | null>(null);
   const [deleteImpact, setDeleteImpact] = useState<ExaminerDeleteImpact | null>(null);
+  const [deleteTarget, setDeleteTarget] = useState<RosterTableRow | null>(null);
   const [regenerateTarget, setRegenerateTarget] = useState<RegeneratePortalLinkTarget | null>(null);
 
   useEffect(() => {
@@ -188,33 +190,49 @@ export function ExaminersRosterPanel({
       }
       setExaminers(list);
       setGroups(groupList);
-      onRosterCountChange?.(list.length);
     } catch (e) {
       setLoadError(e instanceof Error ? e.message : "Failed to load roster");
       setExaminers([]);
       setGroups([]);
-      onRosterCountChange?.(0);
     } finally {
       setLoading(false);
     }
-  }, [loadExaminerGroups, onRosterCountChange]);
+  }, [loadExaminerGroups]);
 
   useEffect(() => {
     if (examId == null) {
       setExaminers([]);
       setGroups([]);
-      onRosterCountChange?.(0);
       return;
     }
     void loadData(examId);
-  }, [examId, loadData, onRosterCountChange]);
+  }, [examId, loadData]);
+
+  const subjectById = useMemo(() => new Map(subjects.map((s) => [s.id, s])), [subjects]);
+
+  const subjectScopedRosterCount = useMemo(() => {
+    return examiners.filter((e) => {
+      if (subjectTypeFilter !== "all") {
+        const sid = e.subject_ids[0];
+        const subject = sid != null ? subjectById.get(sid) : undefined;
+        if (!subject || subject.subject_type !== subjectTypeFilter) return false;
+      }
+      if (subjectFilter.length > 0) {
+        const sid = e.subject_ids[0];
+        if (sid == null || !subjectFilter.includes(String(sid))) return false;
+      }
+      return true;
+    }).length;
+  }, [examiners, subjectById, subjectFilter, subjectTypeFilter]);
+
+  useEffect(() => {
+    onRosterCountChange?.(examId == null ? 0 : subjectScopedRosterCount);
+  }, [examId, onRosterCountChange, subjectScopedRosterCount]);
 
   useEffect(() => {
     setRowSelection({});
     setPagination((p) => ({ ...p, pageIndex: 0 }));
   }, [examId, debouncedSearch, subjectTypeFilter, roleFilter, regionFilter, subjectFilter]);
-
-  const subjectById = useMemo(() => new Map(subjects.map((s) => [s.id, s])), [subjects]);
 
   const subjectLabel = useCallback(
     (id: number) => {
@@ -235,6 +253,32 @@ export function ExaminersRosterPanel({
         })),
     [subjects, subjectTypeFilter],
   );
+
+  const quotaStatusSubjectId = useMemo((): number | null => {
+    if (lockedSubjectIds?.length === 1) return lockedSubjectIds[0];
+    if (usePageSubjectScope && pageSubjectId.trim()) {
+      const parsed = Number.parseInt(pageSubjectId, 10);
+      if (!Number.isNaN(parsed)) return parsed;
+    }
+    if (subjectFilter.length === 1) {
+      const parsed = Number.parseInt(subjectFilter[0], 10);
+      if (!Number.isNaN(parsed)) return parsed;
+    }
+    if (usePageSubjectScope) {
+      const scoped = subjects.filter(
+        (s) => pageSubjectTypeFilter === "all" || s.subject_type === pageSubjectTypeFilter,
+      );
+      if (scoped.length > 0) return scoped[0].id;
+    }
+    return null;
+  }, [
+    lockedSubjectIds,
+    pageSubjectId,
+    pageSubjectTypeFilter,
+    subjectFilter,
+    subjects,
+    usePageSubjectScope,
+  ]);
 
   const formSubjectOptions = useMemo(
     () =>
@@ -464,19 +508,10 @@ export function ExaminersRosterPanel({
     setLoadError(null);
     try {
       const impact = await getExaminerDeletePreview(examId, row.id);
-      if (impact.requires_confirmation) {
-        setDeleteImpact(impact);
-        return;
-      }
-      if (!window.confirm(`Remove ${row.name} from this examination?`)) return;
-      setBusy(true);
-      await deleteExaminationExaminer(examId, row.id);
-      setActionMessage("Examiner removed.");
-      await loadData(examId);
+      setDeleteTarget(row);
+      setDeleteImpact(impact);
     } catch (e) {
       setLoadError(e instanceof Error ? e.message : "Delete failed");
-    } finally {
-      setBusy(false);
     }
   }
 
@@ -486,9 +521,10 @@ export function ExaminersRosterPanel({
     setLoadError(null);
     try {
       await deleteExaminationExaminer(examId, deleteImpact.examiner_id, {
-        confirmRemoveAllocations: true,
+        confirmRemoveAllocations: deleteImpact.requires_confirmation,
       });
       setDeleteImpact(null);
+      setDeleteTarget(null);
       setActionMessage("Examiner removed.");
       await loadData(examId);
     } catch (e) {
@@ -605,13 +641,21 @@ export function ExaminersRosterPanel({
   return (
     <>
       {loadError ? (
-        <p className="mx-3 mt-2 rounded-lg border border-destructive/40 bg-destructive/10 px-3 py-2 text-sm text-destructive sm:mx-4">
+        <p
+          className={cn(
+            "mx-3 mt-2 rounded-lg border border-destructive/40 bg-destructive/10 px-3 py-2 text-sm text-destructive",
+            !mobileContactLayout && "sm:mx-4",
+          )}
+        >
           {loadError}
         </p>
       ) : null}
       {actionMessage ? (
         <p
-          className="mx-3 mt-2 rounded-lg border border-emerald-500/30 bg-emerald-500/10 px-3 py-2 text-sm text-foreground sm:mx-4"
+          className={cn(
+            "mx-3 mt-2 rounded-lg border border-emerald-500/30 bg-emerald-500/10 px-3 py-2 text-sm text-foreground",
+            !mobileContactLayout && "sm:mx-4",
+          )}
           role="status"
         >
           {actionMessage}
@@ -667,8 +711,9 @@ export function ExaminersRosterPanel({
           canManageRoster={canManageRoster}
           showReferenceCodesConfig={showReferenceCodesConfig}
           onConfigureReferenceCodes={() => setRegionGroupsOpen(true)}
-          showQuotaAssessment={showQuotaAssessment}
-          onTestQuota={() => setQuotaAssessmentOpen(true)}
+          showQuotaStatusView={showQuotaStatusView}
+          onViewQuotas={() => setQuotaDistributionOpen(true)}
+          quotaStatusDisabled={quotaStatusSubjectId == null}
           busy={busy || loading}
           disabled={examId == null}
           embedded={embedded}
@@ -678,7 +723,11 @@ export function ExaminersRosterPanel({
 
         <div
           className={cn(
-            pageScroll ? "flex flex-col gap-2 p-2 sm:p-3" : "flex min-h-0 flex-1 flex-col overflow-hidden",
+            pageScroll
+              ? mobileContactLayout
+                ? cn("flex flex-col gap-2", SO_MOBILE_CONTENT_PADDING)
+                : "flex flex-col gap-2 p-2 sm:p-3"
+              : "flex min-h-0 flex-1 flex-col overflow-hidden",
           )}
         >
             {!loading && examiners.length === 0 ? (
@@ -860,6 +909,13 @@ export function ExaminersRosterPanel({
       {deleteImpact ? (
         <ExaminerDeleteConfirmModal
           examinerName={deleteImpact.examiner_name}
+          subjectLabel={deleteTarget?.subjectLabel}
+          examinerTypeLabel={
+            deleteTarget
+              ? EXAMINER_TYPE_LABELS[deleteTarget.examiner_type] ?? deleteTarget.examiner_type
+              : undefined
+          }
+          rosterSource={deleteTarget?.roster_source}
           manualAllocations={deleteImpact.manual_allocations}
           envelopeAssignments={deleteImpact.envelope_assignments}
           allocationCampaigns={deleteImpact.allocation_campaigns}
@@ -867,7 +923,10 @@ export function ExaminersRosterPanel({
           totalEnvelopes={deleteImpact.total_envelopes}
           busy={busy}
           onCancel={() => {
-            if (!busy) setDeleteImpact(null);
+            if (!busy) {
+              setDeleteImpact(null);
+              setDeleteTarget(null);
+            }
           }}
           onConfirm={() => void confirmDeleteExaminer()}
         />
@@ -893,11 +952,12 @@ export function ExaminersRosterPanel({
         }}
       />
 
-      <ExaminerQuotaAssessmentModal
-        open={quotaAssessmentOpen}
+      <ExaminerQuotaDistributionSheet
+        open={quotaDistributionOpen}
         examId={examId}
+        subjectId={quotaStatusSubjectId}
         subjects={subjects}
-        onOpenChange={setQuotaAssessmentOpen}
+        onOpenChange={setQuotaDistributionOpen}
       />
     </>
   );

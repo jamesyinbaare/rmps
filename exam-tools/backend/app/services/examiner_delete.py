@@ -15,6 +15,7 @@ from app.models import (
     AllocationRun,
     AllocationRunStatus,
     Examiner,
+    ExaminerInvitation,
     ExaminationExaminerManualMarkedScript,
     School,
     ScriptEnvelope,
@@ -168,6 +169,12 @@ async def delete_examiner_with_cleanup(
     examiner_id = examiner.id
     subject_ids_before = [int(s.subject_id) for s in examiner.subjects]
 
+    linked_invitation = (
+        await session.execute(
+            select(ExaminerInvitation).where(ExaminerInvitation.examiner_id == examiner_id)
+        )
+    ).scalar_one_or_none()
+
     await session.execute(
         delete(AllocationAssignment).where(AllocationAssignment.examiner_id == examiner_id)
     )
@@ -183,6 +190,10 @@ async def delete_examiner_with_cleanup(
 
     await session.delete(examiner)
     await session.flush()
+
+    if linked_invitation is not None:
+        await session.delete(linked_invitation)
+        await session.flush()
 
     for sid in subject_ids_before:
         await sync_subject_cohort_memberships(

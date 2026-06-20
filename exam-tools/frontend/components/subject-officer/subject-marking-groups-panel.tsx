@@ -26,7 +26,7 @@ import { CohortViewModal } from "@/components/cohorts/cohort-view-modal";
 import type { CohortListItem, CohortRosterMember, MembershipExaminer } from "@/components/cohorts/types";
 import { computeCoverage } from "@/components/cohorts/utils";
 import { useCohortMembershipDraft } from "@/components/cohorts/use-cohort-membership-draft";
-import { EXAMINERS_PANEL_CLASS } from "@/components/examiners/constants";
+import { EXAMINERS_PANEL_CLASS, SO_MOBILE_CONTENT_GUTTER } from "@/components/examiners/constants";
 import { SubjectScopePicker } from "@/components/subject-scope-picker";
 import { SubjectOfficerWorkspaceStrip } from "@/components/subject-officer/subject-officer-workspace-strip";
 import { Button } from "@/components/ui/button";
@@ -41,6 +41,7 @@ import {
   type SubjectMarkingGroupRow,
   type Subject,
 } from "@/lib/api";
+import { cn } from "@/lib/utils";
 function toCohortListItem(g: SubjectMarkingGroupRow): CohortListItem {
   return {
     id: g.id,
@@ -80,6 +81,8 @@ type Props = {
   lockedSubjectId?: number;
   /** Read-only context when subject is fixed (subject officer workspace). */
   workspaceLabel?: string | null;
+  /** Subject-officer mobile: lighter horizontal gutter. */
+  mobileContactLayout?: boolean;
 };
 
 export function SubjectMarkingGroupsPanel({
@@ -91,6 +94,7 @@ export function SubjectMarkingGroupsPanel({
   canManageCohorts = true,
   lockedSubjectId,
   workspaceLabel,
+  mobileContactLayout = false,
 }: Props) {
   const [subjectId, setSubjectId] = useState<number | null>(null);
   const [groups, setGroups] = useState<SubjectMarkingGroupRow[]>([]);
@@ -462,12 +466,16 @@ export function SubjectMarkingGroupsPanel({
         : EXAMINERS_PANEL_CLASS;
 
   const subjectLocked = lockedSubjectId != null;
+  const sectionGutterClass = cn(
+    "shrink-0 border-b border-border/80 px-4 sm:px-5",
+    mobileContactLayout && SO_MOBILE_CONTENT_GUTTER,
+  );
 
   return (
     <div className={panelClass}>
       {subjectLocked ? (
         workspaceLabel ? (
-          <div className="shrink-0 border-b border-border/80 px-4 py-3 sm:px-5">
+          <div className={cn(sectionGutterClass, "py-3")}>
             <SubjectOfficerWorkspaceStrip workspaceLabel={workspaceLabel} workspace={null} />
             {!canManageCohorts ? (
               <p className="mt-2 text-xs leading-relaxed text-muted-foreground">
@@ -477,7 +485,7 @@ export function SubjectMarkingGroupsPanel({
           </div>
         ) : null
       ) : (
-        <div className="shrink-0 border-b border-border/80 px-4 py-4 sm:px-5">
+        <div className={cn(sectionGutterClass, "py-4")}>
           <SubjectScopePicker
             subjects={subjects}
             selectedSubjectId={subjectId}
@@ -506,7 +514,7 @@ export function SubjectMarkingGroupsPanel({
       ) : (
         <>
           {canManageCohorts && !subjectLocked ? (
-            <div className="shrink-0 border-b border-border/80 px-4 py-3 sm:px-5">
+            <div className={cn(sectionGutterClass, "py-3")}>
               <p className="text-xs leading-relaxed text-muted-foreground">
                 Configure cohorts by region, role, or both. Rules can overlap across cohorts. When both region and role rules are set, examiners must match both. Free-form cohorts stay manual on the People tab.
               </p>
@@ -514,7 +522,7 @@ export function SubjectMarkingGroupsPanel({
           ) : null}
 
           {!canManageCohorts && !subjectLocked ? (
-            <div className="shrink-0 border-b border-border/80 px-4 py-3 sm:px-5">
+            <div className={cn(sectionGutterClass, "py-3")}>
               <p className="text-sm text-muted-foreground">
                 View cohort schedules and contact members. Only administrators can create or edit cohorts.
               </p>
@@ -526,6 +534,7 @@ export function SubjectMarkingGroupsPanel({
             entityLabel="cohort"
             onShowUnassigned={openUnassigned}
             unassignedButtonLabel={canManageCohorts ? undefined : "View unassigned"}
+            className={mobileContactLayout ? SO_MOBILE_CONTENT_GUTTER : undefined}
             trailing={
               canManageCohorts ? (
                 <Button type="button" size="sm" disabled={busy} onClick={() => openCreate()}>
@@ -543,6 +552,7 @@ export function SubjectMarkingGroupsPanel({
             unassignedCount={coverage.unassignedCount}
             showUnassignedCount
             showScheduleColumn
+            compactMobileGutter={mobileContactLayout}
             emptyLabel={
               canManageCohorts
                 ? "No cohorts yet. Create one to assign examiners and set dates."

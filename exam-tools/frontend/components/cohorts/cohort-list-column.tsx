@@ -37,6 +37,8 @@ type Props = {
   hideNewButton?: boolean;
   /** Show schedule column (subject cohorts). */
   showScheduleColumn?: boolean;
+  /** Lighter horizontal gutter on small screens (subject-officer mobile). */
+  compactMobileGutter?: boolean;
 };
 
 function roleChipLabel(role: string): string {
@@ -78,8 +80,13 @@ export function CohortListColumn({
   entityLabel = "cohort",
   hideNewButton = false,
   showScheduleColumn = false,
+  compactMobileGutter = false,
 }: Props) {
   const [search, setSearch] = useState("");
+  const sectionGutterClass = cn(
+    "px-4 sm:px-5",
+    compactMobileGutter && "max-md:px-3",
+  );
 
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
@@ -112,7 +119,7 @@ export function CohortListColumn({
 
   return (
     <div className="flex min-h-0 flex-1 flex-col">
-      <div className="shrink-0 border-b border-border/80 px-4 py-3 sm:px-5">
+      <div className={cn("shrink-0 border-b border-border/80 py-3", sectionGutterClass)}>
         <div className="flex flex-wrap items-center gap-3">
           <div className="relative min-w-48 flex-1">
             <Search className="pointer-events-none absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
@@ -133,7 +140,7 @@ export function CohortListColumn({
         </div>
       </div>
 
-      <div className="min-h-0 flex-1 overflow-hidden px-4 py-3 sm:px-5" onKeyDown={handleTableKeyDown}>
+      <div className={cn("min-h-0 flex-1 overflow-hidden py-3", sectionGutterClass)} onKeyDown={handleTableKeyDown}>
         {loading ? (
           <div className="space-y-2">
             {[1, 2, 3, 4, 5, 6].map((i) => (
@@ -301,7 +308,7 @@ export function CohortListColumn({
       </div>
 
       {showUnassignedCount && unassignedCount > 0 ? (
-        <div className="shrink-0 border-t border-border/80 px-4 py-3 sm:px-5">
+        <div className={cn("shrink-0 border-t border-border/80 py-3", sectionGutterClass)}>
           <p className="text-xs text-muted-foreground">
             {unassignedCount} examiner{unassignedCount === 1 ? "" : "s"} not in any {entityLabel}
           </p>

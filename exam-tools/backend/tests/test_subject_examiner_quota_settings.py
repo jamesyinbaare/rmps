@@ -56,7 +56,7 @@ async def test_put_quotas_rejects_mismatched_group_sum() -> None:
 
 @pytest.mark.asyncio
 async def test_quotas_response_returns_subject_total_not_last_group_cap() -> None:
-    from app.routers.admin_examiner_region_quotas import _quotas_response
+    from app.services.examiner_regional_quota import build_subject_quota_status_response
 
     session = AsyncMock()
     group_a_id = uuid4()
@@ -88,22 +88,22 @@ async def test_quotas_response_returns_subject_total_not_last_group_cap() -> Non
 
     with (
         patch(
-            "app.routers.admin_examiner_region_quotas.list_quotas_for_subject",
+            "app.services.examiner_regional_quota.list_quotas_for_subject",
             new_callable=AsyncMock,
             return_value=[quota_a, quota_b],
         ),
         patch(
-            "app.routers.admin_examiner_region_quotas.count_roster_distribution",
+            "app.services.examiner_regional_quota.count_roster_distribution",
             new_callable=AsyncMock,
             return_value={},
         ),
         patch(
-            "app.routers.admin_examiner_region_quotas.get_quota_settings_for_subject",
+            "app.services.examiner_regional_quota.get_quota_settings_for_subject",
             new_callable=AsyncMock,
             return_value=MagicMock(total_quota=145, male_quota=None, female_quota=None),
         ),
         patch(
-            "app.routers.admin_examiner_region_quotas.count_gender_distribution",
+            "app.services.examiner_regional_quota.count_gender_distribution",
             new_callable=AsyncMock,
             return_value=MagicMock(male=0, female=0),
         ),
@@ -112,7 +112,7 @@ async def test_quotas_response_returns_subject_total_not_last_group_cap() -> Non
         groups_result.scalars.return_value.all.return_value = [group_b, group_a]
         session.execute = AsyncMock(return_value=groups_result)
 
-        response = await _quotas_response(session, exam_id=1, subject_id=10)
+        response = await build_subject_quota_status_response(session, examination_id=1, subject_id=10)
 
     assert response.total_quota == 145
     group_caps = {

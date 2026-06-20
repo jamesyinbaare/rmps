@@ -1,10 +1,19 @@
 "use client";
 
-import { useMemo } from "react";
+import { useMemo, useState } from "react";
 import { Search } from "lucide-react";
 
+import { EXAMINER_TYPE_LABELS } from "@/components/examiner-invitations/constants";
+import type { MultiSelectCheckboxOption } from "@/components/multi-select-checkbox-dropdown";
+import { ExaminerRoleBadge } from "@/components/subject-officer/examiner-role-badge";
+import { SubjectOfficerExaminerDetailFilters } from "@/components/subject-officer/subject-officer-examiner-detail-filters";
+import {
+  examinerRoleAbbrev,
+  examinerRoleLabel,
+  regionLabel,
+} from "@/components/subject-officer/subject-officer-examiner-utils";
 import { EXAMINER_LIST_SEARCH_DEBOUNCE_MS, useDebounced } from "@/hooks/use-debounced";
-import type { MarkedScriptReturnExaminerOption } from "@/lib/api";
+import type { ExaminerTypeApi, MarkedScriptReturnExaminerOption } from "@/lib/api";
 import { REGION_OPTIONS } from "@/lib/school-enums";
 import { cn } from "@/lib/utils";
 
@@ -13,17 +22,35 @@ const EXAMINER_LIST_LABEL_MAX_LEN = 40;
 const filterControlClass =
   "block w-full min-h-9 rounded-lg border border-input-border bg-input px-3 text-sm text-foreground shadow-sm focus:border-primary focus:outline-none focus:ring-2 focus:ring-ring/30";
 
-function regionLabel(value: string): string {
-  return REGION_OPTIONS.find((r) => r.value === value)?.label ?? value;
-}
-
 export type MarkedScriptExaminerFilterOptions = {
   pendingOnly?: boolean;
-  region?: string;
-  role?: string;
+  regions?: string[];
+  roles?: string[];
   /** When true (default), the query matches examiner name only. */
   nameOnly?: boolean;
 };
+
+export function markedScriptExaminerRegionOptions(
+  examiners: MarkedScriptReturnExaminerOption[],
+): MultiSelectCheckboxOption[] {
+  const present = new Set(examiners.map((e) => e.region));
+  return REGION_OPTIONS.filter((r) => present.has(r.value)).map((r) => ({
+    value: r.value,
+    label: r.label,
+  }));
+}
+
+export function markedScriptExaminerRoleOptions(
+  examiners: MarkedScriptReturnExaminerOption[],
+): MultiSelectCheckboxOption[] {
+  const types = [...new Set(examiners.map((e) => e.examiner_type))].sort((a, b) =>
+    a.localeCompare(b, undefined, { sensitivity: "base" }),
+  );
+  return types.map((value) => ({
+    value,
+    label: EXAMINER_TYPE_LABELS[value as ExaminerTypeApi] ?? value,
+  }));
+}
 
 function sortMarkedScriptExaminers(
   examiners: MarkedScriptReturnExaminerOption[],
@@ -41,7 +68,7 @@ export function filterMarkedScriptExaminers(
 ): MarkedScriptReturnExaminerOption[] {
   const options: MarkedScriptExaminerFilterOptions =
     typeof pendingOrOptions === "boolean" ? { pendingOnly: pendingOrOptions } : pendingOrOptions;
-  const { pendingOnly = false, region = "", role = "", nameOnly = true } = options;
+  const { pendingOnly = false, regions = [], roles = [], nameOnly = true } = options;
 
   const q = query.trim().toLowerCase();
   let result = examiners;
@@ -50,12 +77,12 @@ export function filterMarkedScriptExaminers(
     result = result.filter((e) => e.pending_count > 0);
   }
 
-  if (region) {
-    result = result.filter((e) => e.region === region);
+  if (regions.length > 0) {
+    result = result.filter((e) => regions.includes(e.region));
   }
 
-  if (role) {
-    result = result.filter((e) => e.examiner_type === role);
+  if (roles.length > 0) {
+    result = result.filter((e) => roles.includes(e.examiner_type));
   }
 
   if (q) {
@@ -64,9 +91,13 @@ export function filterMarkedScriptExaminers(
         return e.examiner_name.toLowerCase().includes(q);
       }
       const regionText = regionLabel(e.region).toLowerCase();
+      const roleAbbrev = examinerRoleAbbrev(e.examiner_type).toLowerCase();
+      const roleText = examinerRoleLabel(e.examiner_type).toLowerCase();
       return (
         e.examiner_name.toLowerCase().includes(q) ||
         e.examiner_type.toLowerCase().includes(q) ||
+        roleAbbrev.includes(q) ||
+        roleText.includes(q) ||
         e.region.toLowerCase().includes(q) ||
         regionText.includes(q)
       );
@@ -79,7 +110,7 @@ export function filterMarkedScriptExaminers(
 export function formatMarkedScriptExaminerOptionLabel(
   examiner: MarkedScriptReturnExaminerOption,
 ): string {
-  const role = examiner.examiner_type;
+  const role = examinerRoleAbbrev(examiner.examiner_type);
   const region = regionLabel(examiner.region);
   const pending =
     examiner.pending_count > 0 ? ` · ${examiner.pending_count} pending` : "";
@@ -116,15 +147,28 @@ export function MarkedScriptExaminerPicker({
   listClassName,
   className,
 }: Props) {
+  const [regionFilter, setRegionFilter] = useState<string[]>([]);
+  const [roleFilter, setRoleFilter] = useState<string[]>([]);
+
   const debouncedSearchQuery = useDebounced(searchQuery, EXAMINER_LIST_SEARCH_DEBOUNCE_MS);
   const isDebouncing =
     searchQuery.trim() !== debouncedSearchQuery.trim() && searchQuery.trim().length > 0;
-  const shouldShowList = debouncedSearchQuery.trim().length > 0 || pendingOnly;
+  const hasActiveFilters =
+    pendingOnly || regionFilter.length > 0 || roleFilter.length > 0;
+  const shouldShowList = debouncedSearchQuery.trim().length > 0 || hasActiveFilters;
+
+  const regionOptions = useMemo(() => markedScriptExaminerRegionOptions(examiners), [examiners]);
+  const roleOptions = useMemo(() => markedScriptExaminerRoleOptions(examiners), [examiners]);
 
   const filteredExaminers = useMemo(() => {
     if (!shouldShowList) return [];
-    return filterMarkedScriptExaminers(examiners, debouncedSearchQuery, { pendingOnly, nameOnly: false });
-  }, [debouncedSearchQuery, examiners, pendingOnly, shouldShowList]);
+    return filterMarkedScriptExaminers(examiners, debouncedSearchQuery, {
+      pendingOnly,
+      regions: regionFilter,
+      roles: roleFilter,
+      nameOnly: false,
+    });
+  }, [debouncedSearchQuery, examiners, pendingOnly, regionFilter, roleFilter, shouldShowList]);
 
   const pendingTotal = useMemo(
     () => examiners.filter((e) => e.pending_count > 0).length,
@@ -141,6 +185,17 @@ export function MarkedScriptExaminerPicker({
       </p>
 
       <div className="shrink-0 space-y-2 border-b border-border p-2">
+        <SubjectOfficerExaminerDetailFilters
+          idPrefix="msr-examiner"
+          regionOptions={regionOptions}
+          roleOptions={roleOptions}
+          regionFilter={regionFilter}
+          roleFilter={roleFilter}
+          onRegionFilterChange={setRegionFilter}
+          onRoleFilterChange={setRoleFilter}
+          disabled={loading}
+        />
+
         <div className="relative">
           <Search
             className="pointer-events-none absolute left-2.5 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground"
@@ -186,7 +241,7 @@ export function MarkedScriptExaminerPicker({
           <li className="px-3 py-4 text-xs text-muted-foreground">Searching…</li>
         ) : !shouldShowList ? (
           <li className="px-3 py-4 text-xs leading-relaxed text-muted-foreground">
-            Type to search examiners.
+            Type to search or choose region/role filters.
           </li>
         ) : filteredExaminers.length === 0 ? (
           <li className="px-3 py-4 text-xs leading-relaxed text-muted-foreground">
@@ -194,15 +249,18 @@ export function MarkedScriptExaminerPicker({
               ? "No examiners with allocated scripts for this subject."
               : selectedId
                 ? "No examiners match your search. The selected examiner's scripts, if any, appear below."
-                : pendingOnly && !debouncedSearchQuery.trim()
+                : pendingOnly && !debouncedSearchQuery.trim() && regionFilter.length === 0 && roleFilter.length === 0
                   ? "No examiners with pending scripts."
-                  : "No examiners match your search."}
+                  : hasActiveFilters && !debouncedSearchQuery.trim()
+                    ? "No examiners match these filters."
+                    : "No examiners match your search."}
           </li>
         ) : (
           filteredExaminers.map((examiner) => {
             const selected = examiner.examiner_id === selectedId;
             const allVerified = examiner.pending_count === 0;
-            const labelFull = `${examiner.examiner_name} · ${examiner.examiner_type} · ${regionLabel(examiner.region)}`;
+            const roleLabel = examinerRoleLabel(examiner.examiner_type);
+            const labelFull = `${examiner.examiner_name} · ${roleLabel} · ${regionLabel(examiner.region)}`;
 
             return (
               <li key={examiner.examiner_id}>
@@ -228,13 +286,19 @@ export function MarkedScriptExaminerPicker({
                     aria-hidden
                   />
                   <span className="min-w-0 flex-1">
-                    <span
-                      className={cn(
-                        "block truncate font-medium leading-snug",
-                        !selected && "text-foreground",
-                      )}
-                    >
-                      {formatExaminerListLabel(examiner.examiner_name)}
+                    <span className="flex min-w-0 items-center gap-1.5">
+                      <span
+                        className={cn(
+                          "min-w-0 flex-1 truncate font-medium leading-snug",
+                          !selected && "text-foreground",
+                        )}
+                      >
+                        {formatExaminerListLabel(examiner.examiner_name)}
+                      </span>
+                      <ExaminerRoleBadge
+                        examinerType={examiner.examiner_type}
+                        variant={selected ? "selected" : "default"}
+                      />
                     </span>
                     <span
                       className={cn(
@@ -242,7 +306,7 @@ export function MarkedScriptExaminerPicker({
                         selected ? "text-primary-foreground/80" : "text-muted-foreground",
                       )}
                     >
-                      {examiner.examiner_type} · {regionLabel(examiner.region)}
+                      {regionLabel(examiner.region)}
                     </span>
                   </span>
                   {examiner.pending_count > 0 ? (

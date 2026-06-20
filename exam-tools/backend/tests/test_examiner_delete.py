@@ -88,7 +88,9 @@ async def test_build_examiner_delete_impact_no_allocations() -> None:
 async def test_delete_examiner_with_cleanup_executes_deletes() -> None:
     examiner = _examiner_stub()
     session = AsyncMock()
-    session.execute = AsyncMock()
+    inv_lookup = MagicMock()
+    inv_lookup.scalar_one_or_none.return_value = None
+    session.execute = AsyncMock(side_effect=[inv_lookup, MagicMock(), MagicMock(), MagicMock()])
     session.delete = AsyncMock()
     session.flush = AsyncMock()
 
@@ -98,10 +100,34 @@ async def test_delete_examiner_with_cleanup_executes_deletes() -> None:
     ) as sync_mock:
         await delete_examiner_with_cleanup(session, 1, examiner)
 
-    assert session.execute.await_count == 3
+    assert session.execute.await_count == 4
     session.delete.assert_awaited_once_with(examiner)
-    session.flush.assert_awaited_once()
+    assert session.flush.await_count == 1
     sync_mock.assert_awaited_once_with(session, examination_id=1, subject_id=10)
+
+
+@pytest.mark.asyncio
+async def test_delete_examiner_with_cleanup_deletes_linked_invitation() -> None:
+    examiner = _examiner_stub()
+    invitation = MagicMock()
+    session = AsyncMock()
+
+    inv_result = MagicMock()
+    inv_result.scalar_one_or_none.return_value = invitation
+    session.execute = AsyncMock(side_effect=[inv_result, MagicMock(), MagicMock(), MagicMock()])
+    session.delete = AsyncMock()
+    session.flush = AsyncMock()
+
+    with patch(
+        "app.services.examiner_delete.sync_subject_cohort_memberships",
+        new_callable=AsyncMock,
+    ):
+        await delete_examiner_with_cleanup(session, 1, examiner)
+
+    assert session.delete.await_count == 2
+    session.delete.assert_any_await(examiner)
+    session.delete.assert_any_await(invitation)
+    assert session.flush.await_count == 2
 
 
 @pytest.mark.asyncio

@@ -60,6 +60,32 @@ export const EXAMINERS_COMMAND_BAR_EMBEDDED_CLASS = cn(
   "flex shrink-0 flex-col gap-2 border-b border-border bg-muted/20 px-3 py-2.5 sm:px-4 sm:py-3",
 );
 
+/** Subject-officer mobile: single horizontal gutter, lighter command bar padding. */
+export const SO_MOBILE_MAIN_CLASS = "max-md:px-0 max-md:py-3 sm:px-6";
+export const SO_MOBILE_CONTENT_GUTTER = "max-md:px-3";
+export const SO_MOBILE_COMMAND_BAR = "max-md:px-3 max-md:py-2.5";
+export const SO_MOBILE_CONTENT_PADDING = "max-md:px-3 max-md:py-3 md:p-3";
+export const SO_MOBILE_PANEL_BLEED = "max-md:rounded-none max-md:border-x-0";
+export const SO_MOBILE_MASTER_DETAIL_CLASS = "max-md:rounded-none max-md:border-x-0";
+
+/** Page wrapper for master-detail SO routes — fills main column below header. */
+export const SO_MASTER_DETAIL_PAGE_CLASS = "flex min-h-0 w-full flex-1 flex-col";
+
+/** Desktop: stretch to viewport; list scrolls inside left pane when long. Mobile: content height. */
+export const SO_MASTER_DETAIL_GRID_CLASS = cn(
+  "grid min-h-0 grid-cols-1 overflow-hidden rounded-xl border border-border bg-card shadow-sm",
+  SO_MOBILE_MASTER_DETAIL_CLASS,
+  "max-md:overflow-visible",
+  "lg:grid lg:min-h-0 lg:flex-1 lg:grid-cols-[minmax(260px,300px)_1fr]",
+);
+
+export const SO_MASTER_DETAIL_MASTER_CLASS =
+  "hidden min-h-0 flex-col overflow-hidden border-b border-border lg:flex lg:h-full lg:min-h-0 lg:border-b-0 lg:border-r";
+
+export const SO_MASTER_DETAIL_DETAIL_CLASS = cn(
+  "flex min-w-0 flex-col max-md:overflow-visible lg:min-h-0 lg:h-full lg:overflow-hidden",
+);
+
 export const EXAMINERS_EXAM_META_CLASS =
   "inline-flex items-center rounded-full border border-primary/25 bg-primary/10 px-3 py-1 text-xs font-medium text-primary";
 

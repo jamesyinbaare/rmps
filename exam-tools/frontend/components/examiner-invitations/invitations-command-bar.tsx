@@ -11,6 +11,7 @@ import {
   INPUT_FOCUS_RING,
   INVITATIONS_COMMAND_BAR_CLASS,
 } from "@/components/examiner-invitations/constants";
+import { SO_MOBILE_COMMAND_BAR } from "@/components/examiners/constants";
 import { InvitationsFiltersPopover } from "@/components/examiner-invitations/invitations-filters-popover";
 import type { MultiSelectCheckboxOption } from "@/components/multi-select-checkbox-dropdown";
 import { FabSpeedDial } from "@/components/fab-speed-dial";
@@ -155,6 +156,7 @@ export function InvitationsCommandBar({
       className={cn(
         INVITATIONS_COMMAND_BAR_CLASS,
         "overflow-visible",
+        mobileContactLayout && SO_MOBILE_COMMAND_BAR,
         mobileContactLayout && "bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/80",
       )}
     >

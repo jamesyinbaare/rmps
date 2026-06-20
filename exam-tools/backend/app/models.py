@@ -248,7 +248,7 @@ class SmsDelivery(Base):
     )
     phone_number = Column(String(50), nullable=False)
     msisdn = Column(String(20), nullable=False)
-    message_type = Column(String(32), nullable=False)
+    message_type = Column(String(64), nullable=False)
     trigger = Column(String(32), nullable=False)
     status = Column(String(16), nullable=False, index=True)
     error_message = Column(Text, nullable=True)

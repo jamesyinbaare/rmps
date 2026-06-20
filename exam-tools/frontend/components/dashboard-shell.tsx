@@ -30,6 +30,7 @@ import {
   subjectOfficerNavActive,
 } from "@/lib/subject-officer-nav";
 import { cn } from "@/lib/utils";
+import { SO_MOBILE_MAIN_CLASS } from "@/components/examiners/constants";
 import {
   AllowancesSubNavLink,
   CentreLocationNavLink,
@@ -137,13 +138,15 @@ type Props = {
   children?: React.ReactNode;
   /** When set, shows Overview + Examination timetable sub-nav for staff dashboards */
   staffRole?: "supervisor" | "inspector" | "depot-keeper" | "subject-officer";
+  /** Optional override for the main content area (e.g. full-bleed mobile layouts). */
+  mainClassName?: string;
 };
 
-export function DashboardShell({ title, children, staffRole }: Props) {
+export function DashboardShell({ title, children, staffRole, mainClassName }: Props) {
   if (staffRole === "subject-officer") {
     return (
       <FinanceSidebarProvider>
-        <DashboardShellInner title={title} staffRole={staffRole}>
+        <DashboardShellInner title={title} staffRole={staffRole} mainClassName={mainClassName}>
           {children}
         </DashboardShellInner>
       </FinanceSidebarProvider>
@@ -151,13 +154,13 @@ export function DashboardShell({ title, children, staffRole }: Props) {
   }
 
   return (
-    <DashboardShellInner title={title} staffRole={staffRole}>
+    <DashboardShellInner title={title} staffRole={staffRole} mainClassName={mainClassName}>
       {children}
     </DashboardShellInner>
   );
 }
 
-function DashboardShellInner({ title, children, staffRole }: Props) {
+function DashboardShellInner({ title, children, staffRole, mainClassName }: Props) {
   const router = useRouter();
   const pathname = usePathname();
   const sidebarNavId = useId();
@@ -387,8 +390,10 @@ function DashboardShellInner({ title, children, staffRole }: Props) {
           className={cn(
             "mx-auto w-full px-4 py-6 sm:px-6",
             isSubjectOfficer
-              ? "scrollbar-hide min-h-0 max-w-[1600px] flex-1 overflow-x-hidden overflow-y-auto overscroll-y-contain"
+              ? "scrollbar-hide flex min-h-0 max-w-[1600px] flex-1 flex-col overflow-x-hidden overflow-y-auto overscroll-y-contain"
               : "max-w-6xl",
+            isSubjectOfficer && SO_MOBILE_MAIN_CLASS,
+            mainClassName,
           )}
         >
           {children}
