@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
+import Script from "next/script";
 
 import { ThemeProvider } from "@/components/theme-provider";
 
@@ -27,16 +28,12 @@ export default function RootLayout({
 }>) {
   return (
     <html lang="en" suppressHydrationWarning>
-      <head>
-        <script
-          dangerouslySetInnerHTML={{
-            __html: `(function(){try{var t=localStorage.getItem("theme")||"ctvet";var r=document.documentElement;r.classList.add("ctvet");if(t==="dark")r.classList.add("dark");r.style.colorScheme=t==="dark"?"dark":"light";}catch(e){}})();`,
-          }}
-        />
-      </head>
       <body
         className={`${geistSans.variable} ${geistMono.variable} font-sans antialiased`}
       >
+        <Script id="theme-init" strategy="beforeInteractive">
+          {`(function(){try{var t=localStorage.getItem("theme")||"ctvet";var r=document.documentElement;r.classList.add("ctvet");if(t==="dark")r.classList.add("dark");r.style.colorScheme=t==="dark"?"dark":"light";}catch(e){}})();`}
+        </Script>
         <ThemeProvider
           attribute="data-theme"
           defaultTheme="ctvet"

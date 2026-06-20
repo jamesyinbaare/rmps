@@ -95,6 +95,8 @@ export function ExaminerInvitationDetailTile({
   );
 }
 
+const GHANA_TIME_ZONE = "Africa/Accra";
+
 export function formatInvitationDeadline(iso: string): string {
   return new Date(iso).toLocaleString(undefined, {
     weekday: "short",
@@ -104,6 +106,25 @@ export function formatInvitationDeadline(iso: string): string {
     hour: "numeric",
     minute: "2-digit",
   });
+}
+
+/** Public examiner-facing deadline with fixed Ghana timezone. */
+export function formatResponseDeadlineForExaminer(iso: string): string {
+  try {
+    const formatted = new Date(iso).toLocaleString("en-GB", {
+      timeZone: GHANA_TIME_ZONE,
+      weekday: "short",
+      day: "numeric",
+      month: "short",
+      year: "numeric",
+      hour: "numeric",
+      minute: "2-digit",
+      hour12: true,
+    });
+    return `${formatted} Ghana time`;
+  } catch {
+    return iso;
+  }
 }
 
 export function formatCoordinationDate(iso: string): string {
