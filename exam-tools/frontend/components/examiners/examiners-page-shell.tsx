@@ -11,6 +11,8 @@ import {
   EXAMINERS_TAB_PANEL_CLASS,
   EXAMINERS_TAB_PANEL_SCROLL_CLASS,
   EXAMINERS_TABS,
+  SO_MOBILE_COMMAND_BAR,
+  SO_MOBILE_PANEL_BLEED,
 } from "@/components/examiners/constants";
 import { ExaminersAppointmentLettersPanel } from "@/components/examiners/examiners-appointment-letters-panel";
 import { ExaminersContextBar } from "@/components/examiners/examiners-context-bar";
@@ -74,8 +76,8 @@ type Props = {
   };
   /** Show subject badges in the exam command bar (subject-officer layout). */
   showSubjectBadges?: boolean;
-  /** Roster: show regional quota self-test (subject-officer layout). */
-  showQuotaAssessment?: boolean;
+  /** Subject officer / Test Admin: read-only quota outlook from roster. */
+  showQuotaStatusView?: boolean;
 };
 
 const EMPTY_SUMMARY: ExaminersSummaryCounts = {
@@ -102,12 +104,12 @@ export function ExaminersPageShell({
   assignmentsLoading = false,
   subjectOfficerWorkspace,
   showSubjectBadges: showSubjectBadgesProp,
-  showQuotaAssessment: showQuotaAssessmentProp,
+  showQuotaStatusView: showQuotaStatusViewProp,
 }: Props) {
   const isSubjectOfficerShell = subjectOfficerAssignments != null;
   const showSubjectBadges =
     subjectOfficerWorkspace != null ? false : (showSubjectBadgesProp ?? isSubjectOfficerShell);
-  const showQuotaAssessment = showQuotaAssessmentProp ?? isSubjectOfficerShell;
+  const showQuotaStatusView = showQuotaStatusViewProp ?? isSubjectOfficerShell;
   const canManageExaminers = !isSubjectOfficerShell;
   const useScrollShell = true;
   const [examTimetableSubjects, setExamTimetableSubjects] = useState<Subject[]>([]);
@@ -382,10 +384,27 @@ export function ExaminersPageShell({
       : summary.roster > 0 || summary.invitationsPending > 0);
 
   return (
-    <div className={cn(useScrollShell ? EXAMINERS_PAGE_SCROLL_LAYOUT_CLASS : EXAMINERS_PAGE_LAYOUT_CLASS, "p-3 md:p-4")}>
-      <section className={useScrollShell ? EXAMINERS_PANEL_SCROLL_CLASS : EXAMINERS_PANEL_FILL_CLASS}>
-        <div className="relative z-20 shrink-0 rounded-t-2xl border-b border-border/80 bg-linear-to-b from-muted/35 to-muted/10">
-          <div className={officialAccountsCommandBarClass}>{examCommandBar}</div>
+    <div
+      className={cn(
+        useScrollShell ? EXAMINERS_PAGE_SCROLL_LAYOUT_CLASS : EXAMINERS_PAGE_LAYOUT_CLASS,
+        isSubjectOfficerShell ? "max-md:p-0 md:p-4" : "p-3 md:p-4",
+      )}
+    >
+      <section
+        className={cn(
+          useScrollShell ? EXAMINERS_PANEL_SCROLL_CLASS : EXAMINERS_PANEL_FILL_CLASS,
+          isSubjectOfficerShell && SO_MOBILE_PANEL_BLEED,
+        )}
+      >
+        <div
+          className={cn(
+            "relative z-20 shrink-0 rounded-t-2xl border-b border-border/80 bg-linear-to-b from-muted/35 to-muted/10",
+            isSubjectOfficerShell && "max-md:rounded-none",
+          )}
+        >
+          <div className={cn(officialAccountsCommandBarClass, isSubjectOfficerShell && SO_MOBILE_COMMAND_BAR)}>
+            {examCommandBar}
+          </div>
           {showContextBar ? (
             <ExaminersContextBar
               exams={exams}
@@ -416,7 +435,10 @@ export function ExaminersPageShell({
           id={`admin-eo-panel-${activeTab}`}
           aria-labelledby={`admin-eo-tab-${activeTab}`}
           aria-live="polite"
-          className={useScrollShell ? EXAMINERS_TAB_PANEL_SCROLL_CLASS : EXAMINERS_TAB_PANEL_CLASS}
+          className={cn(
+            useScrollShell ? EXAMINERS_TAB_PANEL_SCROLL_CLASS : EXAMINERS_TAB_PANEL_CLASS,
+            isSubjectOfficerShell && "max-md:px-0",
+          )}
         >
           <p className="sr-only">{tabAnnouncement}</p>
           {examId == null ? (
@@ -452,7 +474,7 @@ export function ExaminersPageShell({
                   pageScroll={useScrollShell}
                   loadExaminerGroups={resolvedMarkingGroupsMode === "admin-allocation"}
                   showReferenceCodesConfig={showSubjectCohortsTab}
-                  showQuotaAssessment={showQuotaAssessment}
+                  showQuotaStatusView={showQuotaStatusView}
                   canManageRoster={canManageExaminers}
                   canEditRoster={canManageExaminers}
                   onRosterCountChange={onRosterCountChange}
@@ -493,6 +515,7 @@ export function ExaminersPageShell({
                   canManageCohorts={canManageExaminers}
                   lockedSubjectId={subjectOfficerWorkspace?.subjectId}
                   workspaceLabel={subjectOfficerWorkspace?.label}
+                  mobileContactLayout={isSubjectOfficerShell}
                 />
               ) : null}
               {activeTab === "quotas" && showSubjectCohortsTab ? (

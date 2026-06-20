@@ -281,3 +281,48 @@ async def test_mark_attendance_already_marked() -> None:
 
     assert result["already_marked"] is True
     assert result["recorded"] is False
+
+
+def test_build_region_breakdown_rows_groups_and_counts() -> None:
+    from uuid import uuid4
+
+    from app.models import ExaminerType, Region
+    from app.services.examiner_regional_quota import GroupDistribution, build_region_breakdown_rows
+
+    group_id = uuid4()
+    group = MagicMock()
+    group.id = group_id
+    group.name = "South"
+    region_a = MagicMock()
+    region_a.region = Region.GREATER_ACCRA
+    region_b = MagicMock()
+    region_b.region = Region.CENTRAL
+    group.regions = [region_b, region_a]
+
+    quota_total = MagicMock()
+    quota_total.group_id = group_id
+    quota_total.examiner_type = None
+    quota_total.quota_count = 10
+
+    group_dist = {group_id: GroupDistribution(total=7)}
+    roster_by_region = {Region.GREATER_ACCRA: 5, Region.CENTRAL: 2}
+    proposed_by_region = {Region.GREATER_ACCRA: 1}
+
+    rows = build_region_breakdown_rows(
+        [group],
+        [quota_total],
+        group_dist,
+        roster_by_region,
+        proposed_by_region,
+    )
+
+    assert len(rows) == 2
+    accra = next(r for r in rows if r.region == "Greater Accra")
+    central = next(r for r in rows if r.region == "Central")
+    assert accra.current_count == 5
+    assert accra.proposed_count == 1
+    assert accra.combined_count == 6
+    assert accra.group_quota == 10
+    assert accra.group_over_cap is False
+    assert central.current_count == 2
+    assert central.share_of_group_percent == pytest.approx(28.6, abs=0.1)

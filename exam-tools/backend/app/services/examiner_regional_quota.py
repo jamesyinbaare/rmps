@@ -12,6 +12,8 @@ from sqlalchemy.orm import selectinload
 
 from app.models import (
     Examiner,
+    ExaminerInvitation,
+    ExaminerInvitationStatus,
     ExaminerSubject,
     ExaminerType,
     ExaminationExaminerQuotaRegionGroup,
@@ -203,6 +205,103 @@ async def count_roster_distribution(
         dist[group_id].total += 1
         dist[group_id].by_role[ex.examiner_type] = dist[group_id].by_role.get(ex.examiner_type, 0) + 1
     return dict(dist)
+
+
+async def count_roster_by_region(
+    session: AsyncSession,
+    *,
+    examination_id: int,
+    subject_id: int,
+    exclude_examiner_id: UUID | None = None,
+) -> dict[Region, int]:
+    region_to_group = await _load_region_to_group(session, examination_id)
+    stmt = (
+        select(Examiner.region)
+        .join(ExaminerSubject, ExaminerSubject.examiner_id == Examiner.id)
+        .where(
+            Examiner.examination_id == examination_id,
+            ExaminerSubject.subject_id == subject_id,
+        )
+    )
+    if exclude_examiner_id is not None:
+        stmt = stmt.where(Examiner.id != exclude_examiner_id)
+    rows = (await session.execute(stmt)).scalars().all()
+    counts: dict[Region, int] = defaultdict(int)
+    for region in rows:
+        if region is None:
+            continue
+        reg = region if isinstance(region, Region) else Region(str(region))
+        if reg not in region_to_group:
+            continue
+        counts[reg] += 1
+    return dict(counts)
+
+
+def count_proposed_by_region(proposed: list[ProposedExaminerRow]) -> dict[Region, int]:
+    counts: dict[Region, int] = defaultdict(int)
+    for row in proposed:
+        counts[row.region] += 1
+    return dict(counts)
+
+
+def build_region_breakdown_rows(
+    groups: list[ExaminationExaminerQuotaRegionGroup],
+    quotas: list[SubjectExaminerRegionQuota],
+    group_dist: dict[UUID, GroupDistribution],
+    roster_by_region: dict[Region, int],
+    proposed_by_region: dict[Region, int] | None = None,
+) -> list:
+    from app.schemas.subject_examiner_region_quota import SubjectExaminerRegionBreakdownRow
+
+    proposed_by_region = proposed_by_region or {}
+    rows: list[SubjectExaminerRegionBreakdownRow] = []
+
+    for group in sorted(groups, key=lambda g: g.name.lower()):
+        group_total_quota = next(
+            (q.quota_count for q in quotas if q.group_id == group.id and q.examiner_type is None),
+            None,
+        )
+        group_current = group_dist.get(group.id, GroupDistribution()).total
+        group_proposed = sum(
+            proposed_by_region.get(
+                r.region if isinstance(r.region, Region) else Region(str(r.region)),
+                0,
+            )
+            for r in group.regions
+        )
+        group_combined = group_current + group_proposed
+        group_over_cap = group_total_quota is not None and group_combined > group_total_quota
+
+        for region_member in sorted(
+            group.regions,
+            key=lambda r: (r.region.value if isinstance(r.region, Region) else str(r.region)).lower(),
+        ):
+            reg = (
+                region_member.region
+                if isinstance(region_member.region, Region)
+                else Region(str(region_member.region))
+            )
+            reg_str = reg.value if isinstance(reg, Region) else str(reg)
+            current = roster_by_region.get(reg, 0)
+            proposed = proposed_by_region.get(reg, 0)
+            combined = current + proposed
+            share = round((current / group_current) * 100, 1) if group_current > 0 else None
+            rows.append(
+                SubjectExaminerRegionBreakdownRow(
+                    region=reg_str,
+                    group_id=group.id,
+                    group_name=group.name,
+                    group_quota=group_total_quota,
+                    group_current_count=group_current,
+                    group_combined_count=group_combined,
+                    group_over_cap=group_over_cap,
+                    current_count=current,
+                    proposed_count=proposed,
+                    combined_count=combined,
+                    share_of_group_percent=share,
+                )
+            )
+    return rows
 
 
 def _merge_additional(
@@ -694,5 +793,311 @@ async def assess_proposed_examiners(
     }
 
 
+async def load_proposed_from_invitations(
+    session: AsyncSession,
+    *,
+    examination_id: int,
+    subject_id: int,
+    statuses: list[ExaminerInvitationStatus],
+) -> list[ProposedExaminerRow]:
+    if not statuses:
+        return []
+    stmt = select(ExaminerInvitation).where(
+        ExaminerInvitation.examination_id == examination_id,
+        ExaminerInvitation.subject_id == subject_id,
+        ExaminerInvitation.status.in_(statuses),
+    )
+    invitations = list((await session.execute(stmt)).scalars().all())
+    proposed: list[ProposedExaminerRow] = []
+    for inv in invitations:
+        region = inv.region if isinstance(inv.region, Region) else Region(str(inv.region))
+        proposed.append(
+            ProposedExaminerRow(
+                subject_id=int(inv.subject_id),
+                examiner_type=inv.examiner_type,
+                region=region,
+                gender=inv.gender,
+            )
+        )
+    return proposed
+
+
+async def count_invitations_for_subject(
+    session: AsyncSession,
+    *,
+    examination_id: int,
+    subject_id: int,
+) -> dict[str, int]:
+    stmt = (
+        select(ExaminerInvitation.status)
+        .where(
+            ExaminerInvitation.examination_id == examination_id,
+            ExaminerInvitation.subject_id == subject_id,
+            ExaminerInvitation.status.in_(
+                [
+                    ExaminerInvitationStatus.PENDING,
+                    ExaminerInvitationStatus.QUOTA_WAITLISTED,
+                ]
+            ),
+        )
+    )
+    rows = (await session.execute(stmt)).scalars().all()
+    breakdown = {"pending": 0, "quota_waitlisted": 0}
+    for status in rows:
+        if status == ExaminerInvitationStatus.PENDING:
+            breakdown["pending"] += 1
+        elif status == ExaminerInvitationStatus.QUOTA_WAITLISTED:
+            breakdown["quota_waitlisted"] += 1
+    return breakdown
+
+
+async def build_subject_quota_projection_response(
+    session: AsyncSession,
+    *,
+    examination_id: int,
+    subject_id: int,
+    scenario: str,
+):
+    from app.schemas.subject_examiner_region_quota import QuotaProjectionResponse
+
+    if scenario == "pending":
+        statuses = [ExaminerInvitationStatus.PENDING]
+    elif scenario == "pending_and_waitlisted":
+        statuses = [
+            ExaminerInvitationStatus.PENDING,
+            ExaminerInvitationStatus.QUOTA_WAITLISTED,
+        ]
+    else:
+        raise ValueError(f"Unsupported projection scenario: {scenario}")
+
+    breakdown = await count_invitations_for_subject(
+        session, examination_id=examination_id, subject_id=subject_id
+    )
+    proposed = await load_proposed_from_invitations(
+        session,
+        examination_id=examination_id,
+        subject_id=subject_id,
+        statuses=statuses,
+    )
+    assessment = await assess_proposed_examiners(
+        session,
+        examination_id=examination_id,
+        subject_id=subject_id,
+        proposed=proposed,
+    )
+
+    settings = await get_quota_settings_for_subject(
+        session, examination_id=examination_id, subject_id=subject_id
+    )
+    dist = await count_roster_distribution(
+        session, examination_id=examination_id, subject_id=subject_id
+    )
+    roster_total = sum((current.total for current in dist.values()), 0)
+    combined_roster_total = roster_total + assessment["proposed_count"]
+    subject_over_cap = (
+        settings.total_quota is not None and combined_roster_total > settings.total_quota
+    )
+
+    violations = list(assessment["violations"])
+    if subject_over_cap:
+        violations.append(
+            f"Subject total exceeds quota ({combined_roster_total}/{settings.total_quota})."
+        )
+
+    invitation_count = len(proposed)
+    if scenario == "pending":
+        included_breakdown = {"pending": breakdown["pending"], "quota_waitlisted": 0}
+    else:
+        included_breakdown = breakdown
+
+    stmt = (
+        select(ExaminationExaminerQuotaRegionGroup)
+        .where(ExaminationExaminerQuotaRegionGroup.examination_id == examination_id)
+        .options(selectinload(ExaminationExaminerQuotaRegionGroup.regions))
+    )
+    groups = list((await session.execute(stmt)).scalars().all())
+    quotas = await list_quotas_for_subject(
+        session, examination_id=examination_id, subject_id=subject_id
+    )
+    roster_by_region = await count_roster_by_region(
+        session, examination_id=examination_id, subject_id=subject_id
+    )
+    proposed_by_region = count_proposed_by_region(proposed)
+    region_breakdown = build_region_breakdown_rows(
+        groups,
+        quotas,
+        dist,
+        roster_by_region,
+        proposed_by_region,
+    )
+
+    return QuotaProjectionResponse(
+        examination_id=examination_id,
+        subject_id=subject_id,
+        scenario=scenario,
+        invitation_count=invitation_count,
+        invitation_breakdown=included_breakdown,
+        total_quota=settings.total_quota,
+        roster_total=roster_total,
+        combined_roster_total=combined_roster_total,
+        subject_over_cap=subject_over_cap,
+        valid=len(violations) == 0 and len(assessment["row_errors"]) == 0,
+        violations=violations,
+        row_errors=assessment["row_errors"],
+        summary_by_group=assessment["summary_by_group"],
+        summary_by_gender=assessment["summary_by_gender"],
+        proposed_count=assessment["proposed_count"],
+        region_breakdown=region_breakdown,
+    )
+
+
 def role_short_label(examiner_type: ExaminerType) -> str:
     return ROLE_SHORT_CODES.get(examiner_type, examiner_type.value)
+
+
+async def build_subject_quota_status_response(
+    session: AsyncSession,
+    *,
+    examination_id: int,
+    subject_id: int,
+):
+    """Live roster counts vs configured regional/gender/subject caps."""
+    from app.schemas.examination_examiner_quota_region_group import ExaminerQuotaRegionGroupRow
+    from app.schemas.script_allocation import ExaminerTypeSchema
+    from app.schemas.subject_examiner_region_quota import (
+        SubjectExaminerGenderQuotaSummaryRow,
+        SubjectExaminerRegionQuotaItem,
+        SubjectExaminerRegionQuotaSummaryRow,
+        SubjectExaminerRegionQuotasResponse,
+    )
+
+    stmt = (
+        select(ExaminationExaminerQuotaRegionGroup)
+        .where(ExaminationExaminerQuotaRegionGroup.examination_id == examination_id)
+        .options(selectinload(ExaminationExaminerQuotaRegionGroup.regions))
+    )
+    groups = list((await session.execute(stmt)).scalars().all())
+    quotas = await list_quotas_for_subject(
+        session, examination_id=examination_id, subject_id=subject_id
+    )
+    dist = await count_roster_distribution(
+        session, examination_id=examination_id, subject_id=subject_id
+    )
+    settings = await get_quota_settings_for_subject(
+        session, examination_id=examination_id, subject_id=subject_id
+    )
+    gender_dist = await count_gender_distribution(
+        session, examination_id=examination_id, subject_id=subject_id
+    )
+    roster_total = sum((current.total for current in dist.values()), 0)
+
+    group_rows = [
+        ExaminerQuotaRegionGroupRow(
+            id=group.id,
+            name=group.name,
+            regions=sorted(
+                r.region.value if isinstance(r.region, Region) else str(r.region)
+                for r in group.regions
+            ),
+        )
+        for group in sorted(groups, key=lambda g: g.name.lower())
+    ]
+
+    items: list[SubjectExaminerRegionQuotaItem] = []
+    for q in quotas:
+        et = None
+        if q.examiner_type is not None:
+            et = ExaminerTypeSchema(
+                q.examiner_type.value if isinstance(q.examiner_type, ExaminerType) else q.examiner_type
+            )
+        items.append(
+            SubjectExaminerRegionQuotaItem(
+                group_id=q.group_id,
+                examiner_type=et,
+                quota_count=q.quota_count,
+            )
+        )
+
+    summary: list[SubjectExaminerRegionQuotaSummaryRow] = []
+    for group in sorted(groups, key=lambda g: g.name.lower()):
+        current = dist.get(group.id)
+        group_total_quota = next(
+            (q.quota_count for q in quotas if q.group_id == group.id and q.examiner_type is None),
+            None,
+        )
+        summary.append(
+            SubjectExaminerRegionQuotaSummaryRow(
+                group_id=group.id,
+                group_name=group.name,
+                examiner_type=None,
+                examiner_type_label="Total",
+                current_count=current.total if current else 0,
+                quota=group_total_quota,
+                remaining=(
+                    (group_total_quota - current.total)
+                    if group_total_quota is not None and current
+                    else group_total_quota
+                ),
+            )
+        )
+
+        for et in ExaminerType:
+            role_quota = next(
+                (q.quota_count for q in quotas if q.group_id == group.id and q.examiner_type == et),
+                None,
+            )
+            if role_quota is None:
+                continue
+            role_count = current.by_role.get(et, 0) if current else 0
+            summary.append(
+                SubjectExaminerRegionQuotaSummaryRow(
+                    group_id=group.id,
+                    group_name=group.name,
+                    examiner_type=ExaminerTypeSchema(et.value),
+                    examiner_type_label=_examiner_type_label(et),
+                    current_count=role_count,
+                    quota=role_quota,
+                    remaining=role_quota - role_count,
+                )
+            )
+
+    gender_summary: list[SubjectExaminerGenderQuotaSummaryRow] = []
+    for gender_label, cap, current in (
+        ("Male", settings.male_quota, gender_dist.male),
+        ("Female", settings.female_quota, gender_dist.female),
+    ):
+        if cap is None and current == 0:
+            continue
+        gender_summary.append(
+            SubjectExaminerGenderQuotaSummaryRow(
+                gender=gender_label,
+                gender_label=gender_label,
+                current_count=current,
+                quota=cap,
+                remaining=(cap - current) if cap is not None else None,
+            )
+        )
+
+    roster_by_region = await count_roster_by_region(
+        session, examination_id=examination_id, subject_id=subject_id
+    )
+    region_breakdown = build_region_breakdown_rows(
+        groups,
+        quotas,
+        dist,
+        roster_by_region,
+    )
+
+    return SubjectExaminerRegionQuotasResponse(
+        examination_id=examination_id,
+        subject_id=subject_id,
+        total_quota=settings.total_quota,
+        male_quota=settings.male_quota,
+        female_quota=settings.female_quota,
+        roster_total=roster_total,
+        groups=[g.model_dump() for g in group_rows],
+        summary=summary,
+        gender_summary=gender_summary,
+        region_breakdown=region_breakdown,
+        items=items,
+    )

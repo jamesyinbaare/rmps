@@ -7,10 +7,11 @@ import {
   DEFAULT_PAGE_SIZE,
   EXAMINERS_PANEL_CLASS,
   ROSTER_DEFAULT_COLUMN_VISIBILITY,
+  SO_MOBILE_CONTENT_PADDING,
 } from "@/components/examiners/constants";
 import { ExaminerDeleteConfirmModal } from "@/components/examiners/examiner-delete-confirm-modal";
 import { ExaminerPortalLinkRegenerateConfirmModal } from "@/components/examiners/examiner-portal-link-regenerate-confirm-modal";
-import { ExaminerQuotaAssessmentModal } from "@/components/examiners/examiner-quota-assessment-modal";
+import { ExaminerQuotaDistributionSheet } from "@/components/examiners/examiner-quota-distribution-sheet";
 import { ExaminerRegionGroupsModal } from "@/components/examiners/examiner-region-groups-modal";
 import { RosterCommandBar } from "@/components/examiners/roster-command-bar";
 import { RosterMobileList } from "@/components/examiners/roster-mobile-list";
@@ -64,7 +65,7 @@ type Props = {
   pageScroll?: boolean;
   loadExaminerGroups?: boolean;
   showReferenceCodesConfig?: boolean;
-  showQuotaAssessment?: boolean;
+  showQuotaStatusView?: boolean;
   canManageRoster?: boolean;
   canEditRoster?: boolean;
   onRosterCountChange?: (count: number) => void;
@@ -94,7 +95,7 @@ export function ExaminersRosterPanel({
   pageScroll = false,
   loadExaminerGroups = true,
   showReferenceCodesConfig = false,
-  showQuotaAssessment = false,
+  showQuotaStatusView = false,
   canManageRoster = true,
   canEditRoster = true,
   onRosterCountChange,
@@ -135,7 +136,7 @@ export function ExaminersRosterPanel({
   });
 
   const [regionGroupsOpen, setRegionGroupsOpen] = useState(false);
-  const [quotaAssessmentOpen, setQuotaAssessmentOpen] = useState(false);
+  const [quotaDistributionOpen, setQuotaDistributionOpen] = useState(false);
   const [formOpen, setFormOpen] = useState(false);
   const [editing, setEditing] = useState<ExaminerRow | null>(null);
   const [formError, setFormError] = useState<string | null>(null);
@@ -235,6 +236,32 @@ export function ExaminersRosterPanel({
         })),
     [subjects, subjectTypeFilter],
   );
+
+  const quotaStatusSubjectId = useMemo((): number | null => {
+    if (lockedSubjectIds?.length === 1) return lockedSubjectIds[0];
+    if (usePageSubjectScope && pageSubjectId.trim()) {
+      const parsed = Number.parseInt(pageSubjectId, 10);
+      if (!Number.isNaN(parsed)) return parsed;
+    }
+    if (subjectFilter.length === 1) {
+      const parsed = Number.parseInt(subjectFilter[0], 10);
+      if (!Number.isNaN(parsed)) return parsed;
+    }
+    if (usePageSubjectScope) {
+      const scoped = subjects.filter(
+        (s) => pageSubjectTypeFilter === "all" || s.subject_type === pageSubjectTypeFilter,
+      );
+      if (scoped.length > 0) return scoped[0].id;
+    }
+    return null;
+  }, [
+    lockedSubjectIds,
+    pageSubjectId,
+    pageSubjectTypeFilter,
+    subjectFilter,
+    subjects,
+    usePageSubjectScope,
+  ]);
 
   const formSubjectOptions = useMemo(
     () =>
@@ -605,13 +632,21 @@ export function ExaminersRosterPanel({
   return (
     <>
       {loadError ? (
-        <p className="mx-3 mt-2 rounded-lg border border-destructive/40 bg-destructive/10 px-3 py-2 text-sm text-destructive sm:mx-4">
+        <p
+          className={cn(
+            "mx-3 mt-2 rounded-lg border border-destructive/40 bg-destructive/10 px-3 py-2 text-sm text-destructive",
+            !mobileContactLayout && "sm:mx-4",
+          )}
+        >
           {loadError}
         </p>
       ) : null}
       {actionMessage ? (
         <p
-          className="mx-3 mt-2 rounded-lg border border-emerald-500/30 bg-emerald-500/10 px-3 py-2 text-sm text-foreground sm:mx-4"
+          className={cn(
+            "mx-3 mt-2 rounded-lg border border-emerald-500/30 bg-emerald-500/10 px-3 py-2 text-sm text-foreground",
+            !mobileContactLayout && "sm:mx-4",
+          )}
           role="status"
         >
           {actionMessage}
@@ -667,8 +702,9 @@ export function ExaminersRosterPanel({
           canManageRoster={canManageRoster}
           showReferenceCodesConfig={showReferenceCodesConfig}
           onConfigureReferenceCodes={() => setRegionGroupsOpen(true)}
-          showQuotaAssessment={showQuotaAssessment}
-          onTestQuota={() => setQuotaAssessmentOpen(true)}
+          showQuotaStatusView={showQuotaStatusView}
+          onViewQuotas={() => setQuotaDistributionOpen(true)}
+          quotaStatusDisabled={quotaStatusSubjectId == null}
           busy={busy || loading}
           disabled={examId == null}
           embedded={embedded}
@@ -678,7 +714,11 @@ export function ExaminersRosterPanel({
 
         <div
           className={cn(
-            pageScroll ? "flex flex-col gap-2 p-2 sm:p-3" : "flex min-h-0 flex-1 flex-col overflow-hidden",
+            pageScroll
+              ? mobileContactLayout
+                ? cn("flex flex-col gap-2", SO_MOBILE_CONTENT_PADDING)
+                : "flex flex-col gap-2 p-2 sm:p-3"
+              : "flex min-h-0 flex-1 flex-col overflow-hidden",
           )}
         >
             {!loading && examiners.length === 0 ? (
@@ -893,11 +933,12 @@ export function ExaminersRosterPanel({
         }}
       />
 
-      <ExaminerQuotaAssessmentModal
-        open={quotaAssessmentOpen}
+      <ExaminerQuotaDistributionSheet
+        open={quotaDistributionOpen}
         examId={examId}
+        subjectId={quotaStatusSubjectId}
         subjects={subjects}
-        onOpenChange={setQuotaAssessmentOpen}
+        onOpenChange={setQuotaDistributionOpen}
       />
     </>
   );

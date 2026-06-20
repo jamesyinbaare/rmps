@@ -10,7 +10,7 @@ import {
 import { InvitationRowActionsMenu } from "@/components/examiner-invitations/invitation-row-actions-menu";
 import { InvitationStatusBadge } from "@/components/examiner-invitations/invitation-status-badge";
 import { humanizeRegion } from "@/components/examiner-invitations/utils";
-import { EXAMINER_TYPE_LABELS } from "@/components/examiner-invitations/constants";
+import { EXAMINER_TYPE_ABBREVIATIONS, EXAMINER_TYPE_LABELS } from "@/components/examiner-invitations/constants";
 import {
   MAX_CUSTOM_PAGE_SIZE,
   PAGE_SIZE_PRESETS,
@@ -76,9 +76,13 @@ export function InvitationsMobileList({
     <div className="flex flex-col gap-3 md:hidden">
       <ul className="space-y-3">
         {pageRows.map((inv) => {
+          const roleAbbrev =
+            EXAMINER_TYPE_ABBREVIATIONS[inv.examiner_type as ExaminerTypeApi] ?? inv.examiner_type;
           const roleLabel = EXAMINER_TYPE_LABELS[inv.examiner_type as ExaminerTypeApi] ?? inv.examiner_type;
-          const subjectLabel = `${displaySubjectCode(inv)} — ${inv.subject_name}`;
-          const metaParts = [roleLabel, subjectLabel, humanizeRegion(inv.region)].filter(Boolean);
+          const subjectLabel = displaySubjectCode(inv);
+          const metaParts = [roleAbbrev, subjectLabel, humanizeRegion(inv.region)].filter(Boolean);
+          const metaLine = metaParts.join(" · ");
+          const metaLineTitle = roleAbbrev !== roleLabel ? roleLabel : undefined;
           const embeddedMenu = (
             <InvitationRowActionsMenu
               inv={inv}
@@ -103,7 +107,8 @@ export function InvitationsMobileList({
               <ExaminerContactCard
                 name={inv.name}
                 phone={inv.phone_number}
-                metaLine={metaParts.join(" · ")}
+                metaLine={metaLine}
+                metaLineTitle={metaLineTitle}
                 statusBadge={<InvitationStatusBadge status={inv.status} />}
                 onInAppSms={() => onInAppSms(inv)}
                 disabled={busy}

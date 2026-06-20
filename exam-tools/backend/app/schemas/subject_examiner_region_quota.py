@@ -39,6 +39,20 @@ class SubjectExaminerGenderQuotaSummaryRow(BaseModel):
     remaining: int | None = None
 
 
+class SubjectExaminerRegionBreakdownRow(BaseModel):
+    region: str
+    group_id: UUID
+    group_name: str
+    group_quota: int | None = None
+    group_current_count: int = 0
+    group_combined_count: int = 0
+    group_over_cap: bool = False
+    current_count: int = 0
+    proposed_count: int = 0
+    combined_count: int = 0
+    share_of_group_percent: float | None = None
+
+
 class SubjectExaminerRegionQuotasResponse(BaseModel):
     examination_id: int
     subject_id: int
@@ -49,6 +63,7 @@ class SubjectExaminerRegionQuotasResponse(BaseModel):
     groups: list[dict]
     summary: list[SubjectExaminerRegionQuotaSummaryRow]
     gender_summary: list[SubjectExaminerGenderQuotaSummaryRow] = Field(default_factory=list)
+    region_breakdown: list[SubjectExaminerRegionBreakdownRow] = Field(default_factory=list)
     items: list[SubjectExaminerRegionQuotaItem]
 
 
@@ -90,3 +105,21 @@ class QuotaAssessmentResponse(BaseModel):
     summary_by_group: list[QuotaAssessmentSummaryRow]
     summary_by_gender: list[QuotaAssessmentGenderSummaryRow] = Field(default_factory=list)
     proposed_count: int
+
+
+class QuotaInvitationBreakdown(BaseModel):
+    pending: int = 0
+    quota_waitlisted: int = 0
+
+
+class QuotaProjectionResponse(QuotaAssessmentResponse):
+    examination_id: int
+    subject_id: int
+    scenario: str
+    invitation_count: int
+    invitation_breakdown: QuotaInvitationBreakdown
+    total_quota: int | None = None
+    roster_total: int = 0
+    combined_roster_total: int = 0
+    subject_over_cap: bool = False
+    region_breakdown: list[SubjectExaminerRegionBreakdownRow] = Field(default_factory=list)

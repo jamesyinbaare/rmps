@@ -24,6 +24,7 @@ import {
 import { InvitationsSummaryStats } from "@/components/examiner-invitations/invitations-summary-stats";
 import { InvitationsTable } from "@/components/examiner-invitations/invitations-table";
 import { InvitationsMobileList } from "@/components/examiners/invitations-mobile-list";
+import { SO_MOBILE_CONTENT_PADDING } from "@/components/examiners/constants";
 import { ExaminerPortalLinkRegenerateConfirmModal } from "@/components/examiners/examiner-portal-link-regenerate-confirm-modal";
 import { ExaminerAllocationModal } from "@/components/examiner-invitations/examiner-allocation-modal";
 import type {
@@ -915,14 +916,20 @@ export function ExaminersInvitationsPanel({
   return (
     <>
       {loadError ? (
-        <p className="mx-3 mt-2 rounded-lg border border-destructive/40 bg-destructive/10 px-3 py-2 text-sm text-destructive sm:mx-4">
+        <p
+          className={cn(
+            "mx-3 mt-2 rounded-lg border border-destructive/40 bg-destructive/10 px-3 py-2 text-sm text-destructive",
+            !mobileContactLayout && "sm:mx-4",
+          )}
+        >
           {loadError}
         </p>
       ) : null}
       {actionMessage ? (
         <p
           className={cn(
-            "mx-3 mt-2 rounded-lg px-3 py-2 text-sm sm:mx-4",
+            "mx-3 mt-2 rounded-lg px-3 py-2 text-sm",
+            !mobileContactLayout && "sm:mx-4",
             actionMessageTone === "success"
               ? "border border-emerald-500/30 bg-emerald-500/10 text-emerald-800 dark:text-emerald-300"
               : "border border-destructive/40 bg-destructive/10 text-destructive",
@@ -997,7 +1004,12 @@ export function ExaminersInvitationsPanel({
         />
 
         <div className={pageScroll ? "flex flex-col" : "flex min-h-0 flex-1 flex-col"}>
-            <div className="space-y-2 px-2 pt-2 sm:px-3">
+            <div
+              className={cn(
+                "space-y-2 pt-2",
+                mobileContactLayout ? "max-md:px-3 max-md:pt-3 md:px-3" : "px-2 sm:px-3",
+              )}
+            >
               <InvitationsSummaryStats
                 counts={statusCounts}
                 activeStatus={statusFilter}
@@ -1007,7 +1019,11 @@ export function ExaminersInvitationsPanel({
 
             <div
               className={cn(
-                pageScroll ? "flex flex-col gap-2 p-2 sm:p-3" : "flex min-h-0 flex-1 flex-col gap-2 p-2 sm:p-3",
+                pageScroll
+                  ? mobileContactLayout
+                    ? cn("flex flex-col gap-2", SO_MOBILE_CONTENT_PADDING)
+                    : "flex flex-col gap-2 p-2 sm:p-3"
+                  : "flex min-h-0 flex-1 flex-col gap-2 p-2 sm:p-3",
               )}
             >
             {selectedCount > 0 ? (

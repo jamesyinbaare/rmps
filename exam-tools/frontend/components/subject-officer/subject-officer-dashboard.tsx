@@ -136,7 +136,7 @@ function MarkingScheduleGlance({
   }
 
   return (
-    <p className="line-clamp-2 px-2 text-xs leading-relaxed text-muted-foreground sm:px-0">
+    <p className="line-clamp-2 px-3 text-xs leading-relaxed text-muted-foreground sm:px-0">
       {segments.join(" · ")}
     </p>
   );
@@ -254,8 +254,8 @@ function EmptyDashboardPanel({
 
 function KpiSkeleton() {
   return (
-    <div className="relative -mx-2 sm:mx-0">
-      <div className="flex gap-2 overflow-x-auto px-2 pb-1 scrollbar-hide sm:grid sm:grid-cols-2 sm:gap-4 sm:overflow-visible sm:px-0 xl:grid-cols-4">
+    <div className="relative -mx-3 sm:mx-0">
+      <div className="flex gap-2 overflow-x-auto px-3 pb-1 scrollbar-hide sm:grid sm:grid-cols-2 sm:gap-4 sm:overflow-visible sm:px-0 xl:grid-cols-4">
         {[1, 2, 3, 4].map((i) => (
           <div
             key={i}
@@ -610,13 +610,13 @@ export function SubjectOfficerDashboard({
               nextEvent={nextEvent}
             />
 
-            <div className="relative -mx-2 sm:mx-0">
-              <p className="mb-2 px-2 text-xs text-muted-foreground sm:sr-only">
+            <div className="relative -mx-3 sm:mx-0">
+              <p className="mb-2 px-3 text-xs text-muted-foreground sm:sr-only sm:px-0">
                 Swipe for more stats. Tap a card to open details.
               </p>
               <div
                 className={cn(
-                  "flex gap-2 overflow-x-auto overscroll-x-contain px-2 pb-1",
+                  "flex gap-2 overflow-x-auto overscroll-x-contain px-3 pb-1",
                   "snap-x snap-mandatory scrollbar-hide",
                   "sm:grid sm:grid-cols-2 sm:gap-4 sm:overflow-visible sm:px-0 sm:pb-0 xl:grid-cols-4",
                 )}

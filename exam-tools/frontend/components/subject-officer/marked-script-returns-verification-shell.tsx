@@ -6,8 +6,17 @@ import { Loader2, MapPin, Phone } from "lucide-react";
 
 import { SearchableCombobox } from "@/components/searchable-combobox";
 import { CohortScheduleSummary } from "@/components/cohorts/cohort-schedule-fields";
+import {
+  SO_MASTER_DETAIL_DETAIL_CLASS,
+  SO_MASTER_DETAIL_GRID_CLASS,
+  SO_MASTER_DETAIL_MASTER_CLASS,
+} from "@/components/examiners/constants";
 import { MarkedScriptEnvelopeCards } from "@/components/subject-officer/marked-script-envelope-cards";
 import { MarkedScriptExaminerPicker } from "@/components/subject-officer/marked-script-examiner-picker";
+import { ExaminerRoleBadge } from "@/components/subject-officer/examiner-role-badge";
+import { SubjectOfficerExaminerMobilePicker } from "@/components/subject-officer/subject-officer-examiner-mobile-picker";
+import { regionLabel } from "@/components/subject-officer/subject-officer-examiner-utils";
+import { SubjectOfficerSelectedExaminerBar } from "@/components/subject-officer/subject-officer-selected-examiner-bar";
 import { SubjectOfficerPanelShell } from "@/components/subject-officer/subject-officer-panel-shell";
 import { SubjectOfficerWorkspaceStrip } from "@/components/subject-officer/subject-officer-workspace-strip";
 import { Badge } from "@/components/ui/badge";
@@ -26,12 +35,10 @@ import {
   officialAccountsCommandBarControlClass,
   officialAccountsCommandBarRowClass,
 } from "@/lib/official-accounts-zone";
-import { REGION_OPTIONS } from "@/lib/school-enums";
 import { subjectDisplayLabel } from "@/lib/subject-display";
 import { cn } from "@/lib/utils";
 
 const SUBJECT_COMBO_THRESHOLD = 5;
-const panelHeightClass = "lg:h-[min(72vh,720px)]";
 
 const compactLabelClass = "text-xs font-medium text-muted-foreground";
 const comboboxCompactProps = {
@@ -53,10 +60,6 @@ type Props = {
   session: Session;
   onSessionChange: (next: Partial<Session>) => void;
 };
-
-function regionLabel(value: string): string {
-  return REGION_OPTIONS.find((r) => r.value === value)?.label ?? value;
-}
 
 function PaperPills({
   papers,
@@ -98,12 +101,7 @@ function PaperPills({
 
 function MasterDetailSkeleton() {
   return (
-    <div
-      className={cn(
-        "grid min-h-0 grid-cols-1 overflow-hidden rounded-xl border border-border bg-card shadow-sm lg:min-h-[420px] lg:grid-cols-[minmax(260px,300px)_1fr]",
-        panelHeightClass,
-      )}
-    >
+    <div className={cn(SO_MASTER_DETAIL_GRID_CLASS, "lg:min-h-[420px]")}>
       <div className="hidden animate-pulse border-b border-border p-4 lg:block lg:border-b-0 lg:border-r">
         <div className="mb-3 h-4 w-32 rounded bg-muted" />
         <div className="mb-2 h-9 rounded bg-muted" />
@@ -355,30 +353,62 @@ export function MarkedScriptReturnsVerificationShell({
   ) : loadingExaminers && examiners.length === 0 ? (
     <MasterDetailSkeleton />
   ) : (
-    <div
-      className={cn(
-        "grid min-h-0 grid-cols-1 overflow-hidden rounded-xl border border-border bg-card shadow-sm lg:min-h-[420px] lg:grid-cols-[minmax(260px,300px)_1fr]",
-        panelHeightClass,
-      )}
-    >
-      <div className="flex min-h-0 flex-col overflow-hidden border-b border-border lg:h-full lg:border-b-0 lg:border-r">
-        <MarkedScriptExaminerPicker
-          examiners={examiners}
-          selectedId={examinerId}
-          onSelect={(id) => onSessionChange({ examinerId: id, paperNumber: null })}
-          searchQuery={examinerListSearch}
-          onSearchChange={setExaminerListSearch}
-          pendingOnly={pendingExaminersOnly}
-          onPendingOnlyChange={setPendingExaminersOnly}
-          loading={loadingExaminers}
-          listClassName="max-h-48 min-h-0 flex-1 overflow-y-auto overscroll-contain lg:max-h-none"
-        />
-      </div>
+    <>
+      {!examinerId ? (
+        <div className="max-md:px-3 max-md:py-4 lg:hidden">
+          <SubjectOfficerExaminerMobilePicker
+            variant="marked-scripts"
+            examiners={examiners}
+            selectedId={null}
+            onSelect={(id) => onSessionChange({ examinerId: id, paperNumber: null })}
+            loading={loadingExaminers}
+          />
+        </div>
+      ) : null}
 
-      <div className="flex min-h-0 min-w-0 flex-col lg:h-full lg:overflow-hidden">
-        {selectedExaminer || examinerId ? (
-          <>
-            <div className="shrink-0 border-b border-border bg-muted/15 px-3 py-2.5 lg:hidden">
+      <div
+        className={cn(
+          SO_MASTER_DETAIL_GRID_CLASS,
+          !examinerId && "hidden lg:grid",
+        )}
+      >
+        <div className={SO_MASTER_DETAIL_MASTER_CLASS}>
+          <MarkedScriptExaminerPicker
+            examiners={examiners}
+            selectedId={examinerId}
+            onSelect={(id) => onSessionChange({ examinerId: id, paperNumber: null })}
+            searchQuery={examinerListSearch}
+            onSearchChange={setExaminerListSearch}
+            pendingOnly={pendingExaminersOnly}
+            onPendingOnlyChange={setPendingExaminersOnly}
+            loading={loadingExaminers}
+            className="min-h-0 flex-1"
+            listClassName="min-h-0 flex-1 overflow-y-auto overscroll-contain"
+          />
+        </div>
+
+        <div
+          className={cn(
+            SO_MASTER_DETAIL_DETAIL_CLASS,
+            !examinerId && "hidden lg:flex",
+          )}
+        >
+          {selectedExaminer || examinerId ? (
+            <>
+              {selectedExaminer ? (
+                <SubjectOfficerSelectedExaminerBar
+                  className="lg:hidden"
+                  name={selectedExaminer.examiner_name}
+                  examinerType={selectedExaminer.examiner_type}
+                  region={selectedExaminer.region}
+                  phone={selectedExaminer.phone_number}
+                  statValue={pendingCount > 0 ? pendingCount : undefined}
+                  statLabel={pendingCount > 0 ? "pending" : undefined}
+                  onChange={clearSelectedExaminer}
+                />
+              ) : null}
+
+              <div className="shrink-0 border-b border-border bg-muted/15 px-3 py-2.5 lg:hidden">
               {papers.length > 0 ? (
                 <PaperPills
                   papers={papers}
@@ -400,9 +430,10 @@ export function MarkedScriptReturnsVerificationShell({
                     {selectedExaminer?.examiner_name ?? grid?.examiner_name ?? "Examiner"}
                   </h3>
                   {(selectedExaminer?.examiner_type ?? grid?.examiner_type) ? (
-                    <Badge variant="secondary" className="font-normal">
-                      {selectedExaminer?.examiner_type ?? grid?.examiner_type}
-                    </Badge>
+                    <ExaminerRoleBadge
+                      examinerType={selectedExaminer?.examiner_type ?? grid?.examiner_type ?? ""}
+                      variant="secondary"
+                    />
                   ) : null}
                   {subjectLabel ? (
                     <Badge
@@ -527,7 +558,7 @@ export function MarkedScriptReturnsVerificationShell({
               </div>
             ) : null}
 
-            <div className="min-w-0 flex-1 p-3 lg:max-h-none lg:overflow-y-auto lg:overscroll-contain lg:p-4 [&_th]:bg-card [&_thead]:sticky [&_thead]:top-0 [&_thead]:z-10">
+            <div className="min-w-0 p-3 lg:min-h-0 lg:flex-1 lg:overflow-y-auto lg:overscroll-contain lg:p-4 [&_th]:bg-card [&_thead]:sticky [&_thead]:top-0 [&_thead]:z-10">
               {!paperNumber ? (
                 <div className="rounded-lg border border-dashed border-border bg-muted/10 px-4 py-8 text-center text-sm text-muted-foreground lg:py-12">
                   {papers.length > 0
@@ -544,13 +575,14 @@ export function MarkedScriptReturnsVerificationShell({
                 </div>
               ) : grid ? (
                 <>
-                  <div className="lg:hidden">
+                  <div className="max-md:-mx-3 max-md:px-3 lg:hidden">
                     <MarkedScriptEnvelopeCards
                       rows={grid.rows}
                       busyKey={busyKey}
                       verifyAllBusy={verifyAllBusy}
                       onVerify={(row) => void verifyRow(row)}
                       onUnverify={(row) => void unverifyRow(row)}
+                      className="max-md:pb-3"
                     />
                     {examinerFullyVerified ? (
                       <div className="mt-4 rounded-lg border border-emerald-500/30 bg-emerald-500/10 px-4 py-4 text-center">
@@ -651,20 +683,23 @@ export function MarkedScriptReturnsVerificationShell({
             </div>
           </>
         ) : (
-          <p className="p-8 text-sm text-muted-foreground">Select an examiner to verify marked scripts.</p>
+          <p className="hidden p-8 text-sm text-muted-foreground lg:block">
+            Select an examiner to verify marked scripts.
+          </p>
         )}
+        </div>
       </div>
-    </div>
+    </>
   );
 
   return (
-    <SubjectOfficerPanelShell commandBar={commandBar}>
+    <SubjectOfficerPanelShell commandBar={commandBar} flushMobileContent fillViewport>
       {error ? (
-        <p className="mb-4 rounded-lg border border-destructive/40 bg-destructive/10 px-3 py-2 text-sm text-destructive">
+        <p className="mb-4 max-md:mx-3 shrink-0 rounded-lg border border-destructive/40 bg-destructive/10 px-3 py-2 text-sm text-destructive lg:mx-0">
           {error}
         </p>
       ) : null}
-      {masterDetail}
+      <div className="flex min-h-0 flex-1 flex-col">{masterDetail}</div>
     </SubjectOfficerPanelShell>
   );
 }

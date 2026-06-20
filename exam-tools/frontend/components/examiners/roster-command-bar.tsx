@@ -11,6 +11,7 @@ import {
   INPUT_FOCUS_RING,
   ROSTER_COLUMN_TOGGLE_OPTIONS,
   ROSTER_DEFAULT_COLUMN_VISIBILITY,
+  SO_MOBILE_COMMAND_BAR,
 } from "@/components/examiners/constants";
 import { RosterFiltersPopover } from "@/components/examiners/roster-filters-popover";
 import type { MultiSelectCheckboxOption } from "@/components/multi-select-checkbox-dropdown";
@@ -54,8 +55,9 @@ type Props = {
   canManageRoster?: boolean;
   onConfigureReferenceCodes?: () => void;
   showReferenceCodesConfig?: boolean;
-  onTestQuota?: () => void;
-  showQuotaAssessment?: boolean;
+  showQuotaStatusView?: boolean;
+  onViewQuotas?: () => void;
+  quotaStatusDisabled?: boolean;
   busy: boolean;
   disabled?: boolean;
   embedded?: boolean;
@@ -92,8 +94,9 @@ export function RosterCommandBar({
   canManageRoster = true,
   onConfigureReferenceCodes,
   showReferenceCodesConfig = false,
-  onTestQuota,
-  showQuotaAssessment = false,
+  onViewQuotas,
+  showQuotaStatusView = false,
+  quotaStatusDisabled = false,
   busy,
   disabled,
   embedded = false,
@@ -114,6 +117,7 @@ export function RosterCommandBar({
     <div
       className={cn(
         embedded ? EXAMINERS_COMMAND_BAR_EMBEDDED_CLASS : EXAMINERS_COMMAND_BAR_CLASS,
+        mobileContactLayout && SO_MOBILE_COMMAND_BAR,
         mobileContactLayout && "sticky top-0 z-10 bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/80",
       )}
     >
@@ -214,9 +218,15 @@ export function RosterCommandBar({
               Reference codes
             </Button>
           ) : null}
-          {showQuotaAssessment && onTestQuota ? (
-            <Button type="button" size="sm" variant="outline" disabled={actionsDisabled} onClick={onTestQuota}>
-              Test quota
+          {showQuotaStatusView && onViewQuotas ? (
+            <Button
+              type="button"
+              size="sm"
+              variant="outline"
+              disabled={actionsDisabled || quotaStatusDisabled}
+              onClick={onViewQuotas}
+            >
+              View quotas
             </Button>
           ) : null}
           {canManageRoster && showBulkUpload && onBulkUpload ? (

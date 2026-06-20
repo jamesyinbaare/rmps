@@ -22,7 +22,7 @@ export type OfficialModalProps = {
   scrollRef?: RefObject<HTMLDivElement | null>;
   focusNameOnMount?: boolean;
   initialFocusSelector?: string;
-  size?: "default" | "wide";
+  size?: "default" | "wide" | "xlarge";
   /** Keep a stable sheet height on mobile (avoids jump when content shrinks, e.g. filtering). */
   mobileFillHeight?: boolean;
   /** Animate tighter header padding on mobile when custom header compacts. */
@@ -152,7 +152,7 @@ export function OfficialModal({
           "max-sm:max-h-[min(90dvh,90svh)] sm:max-h-[min(90vh,920px)] sm:rounded-2xl",
           mobileFillHeight && "max-sm:h-[min(90dvh,90svh)]",
           "max-sm:transition-transform max-sm:duration-300 max-sm:ease-out motion-reduce:max-sm:transition-none",
-          size === "wide" ? "sm:max-w-3xl" : "sm:max-w-2xl",
+          size === "xlarge" ? "sm:max-w-6xl" : size === "wide" ? "sm:max-w-3xl" : "sm:max-w-2xl",
         )}
       >
         <div className="shrink-0 overflow-hidden border-b border-border">

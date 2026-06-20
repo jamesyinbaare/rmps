@@ -12,6 +12,8 @@ type Props = {
   name: string;
   phone: string | null | undefined;
   metaLine?: string;
+  metaLineTitle?: string;
+  metaSecondaryLine?: string;
   referenceCode?: string | null;
   statusBadge?: React.ReactNode;
   onInAppSms?: () => void;
@@ -24,6 +26,8 @@ export function ExaminerContactCard({
   name,
   phone,
   metaLine,
+  metaLineTitle,
+  metaSecondaryLine,
   referenceCode,
   statusBadge,
   onInAppSms,
@@ -51,15 +55,15 @@ export function ExaminerContactCard({
   return (
     <article
       className={cn(
-        "rounded-xl border border-border bg-card p-3.5 shadow-sm",
+        "rounded-xl border border-border bg-card p-3.5 shadow-sm max-md:p-4",
         disabled && "opacity-60",
         className,
       )}
     >
       <div className="flex items-start justify-between gap-2">
         <div className="min-w-0 flex-1">
-          <div className="flex flex-wrap items-center gap-2">
-            <h3 className="text-base font-semibold leading-snug text-foreground">{name}</h3>
+          <div className="flex min-w-0 flex-wrap items-center gap-2">
+            <h3 className="min-w-0 truncate text-base font-semibold leading-snug text-foreground">{name}</h3>
             {referenceCode?.trim() ? (
               <span className="shrink-0 rounded-md bg-muted px-1.5 py-0.5 font-mono text-[10px] text-muted-foreground">
                 {referenceCode.trim()}
@@ -68,7 +72,12 @@ export function ExaminerContactCard({
             {statusBadge}
           </div>
           {metaLine ? (
-            <p className="mt-1 line-clamp-2 text-xs leading-relaxed text-muted-foreground">{metaLine}</p>
+            <p className="mt-1 text-xs leading-relaxed text-muted-foreground" title={metaLineTitle}>
+              {metaLine}
+            </p>
+          ) : null}
+          {metaSecondaryLine ? (
+            <p className="mt-0.5 text-xs leading-relaxed text-muted-foreground">{metaSecondaryLine}</p>
           ) : null}
           {displayPhone ? (
             <p className="mt-1.5 font-mono text-sm tabular-nums text-foreground">{displayPhone}</p>

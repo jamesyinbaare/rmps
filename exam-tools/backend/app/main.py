@@ -54,6 +54,7 @@ from app.routers import (
     examiner_groups,
     examiner_invitations,
     examiner_quota_assessment,
+    examiner_quota_status,
     examiners,
     finance_officers,
     inspectors,
@@ -262,6 +263,7 @@ app.include_router(admin_examiner_appointment_letter_settings.router)
 app.include_router(admin_examiner_appointment_letter_subject_settings.router)
 app.include_router(admin_examiner_portal_settings.router)
 app.include_router(examiner_quota_assessment.router)
+app.include_router(examiner_quota_status.router)
 app.include_router(subject_officer_examiner_attendance.router)
 app.include_router(subject_officer_examiner_attendance_sheets.router)
 app.include_router(admin_examiner_attendance_sheets.router)

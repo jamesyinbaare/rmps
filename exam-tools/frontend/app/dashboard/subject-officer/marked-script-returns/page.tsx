@@ -1,6 +1,7 @@
 "use client";
 
 import { DashboardShell } from "@/components/dashboard-shell";
+import { SO_MASTER_DETAIL_PAGE_CLASS } from "@/components/examiners/constants";
 import { MarkedScriptReturnsVerificationShell } from "@/components/subject-officer/marked-script-returns-verification-shell";
 import { useMarkedScriptReturnsUrl } from "@/components/subject-officer/use-marked-script-returns-url";
 import { useSubjectOfficerWorkspace } from "@/components/subject-officer/subject-officer-workspace-context";
@@ -18,13 +19,15 @@ export default function SubjectOfficerMarkedScriptReturnsPage() {
         ) : examId == null || subjectId == null ? (
           <p className="text-sm text-muted-foreground">Choose a workspace to verify marked scripts.</p>
         ) : (
-          <MarkedScriptReturnsVerificationShell
-            examId={examId}
-            subjectId={subjectId}
-            workspaceLabel={workspaceLabel ?? ""}
-            session={session}
-            onSessionChange={setSession}
-          />
+          <div className={SO_MASTER_DETAIL_PAGE_CLASS}>
+            <MarkedScriptReturnsVerificationShell
+              examId={examId}
+              subjectId={subjectId}
+              workspaceLabel={workspaceLabel ?? ""}
+              session={session}
+              onSessionChange={setSession}
+            />
+          </div>
         )}
       </DashboardShell>
     </RoleGuard>
