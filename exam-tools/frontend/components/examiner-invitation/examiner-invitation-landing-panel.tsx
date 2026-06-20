@@ -1,12 +1,22 @@
 "use client";
 
 import { useEffect, useId, useState } from "react";
-import { BookOpen, CalendarClock, CheckCircle2, Info, MapPin, UserCircle, XCircle } from "lucide-react";
+import {
+  BookOpen,
+  CalendarClock,
+  CalendarDays,
+  CheckCircle2,
+  Clock,
+  Info,
+  MapPin,
+  UserCircle,
+  XCircle,
+} from "lucide-react";
 
 import { ExaminerAcceptanceStatement } from "@/components/examiner-invitation/examiner-acceptance-statement";
 import {
   ExaminerInvitationDetailTile,
-  formatInvitationDeadline,
+  formatResponseDeadlineForExaminer,
   invitationStatusMeta,
 } from "@/components/examiner-invitation/examiner-invitation-page-shell";
 import { formatCoordinationRange } from "@/components/examiner-invitations/utils";
@@ -73,6 +83,13 @@ export function ExaminerInvitationLandingPanel({
   const showActionMessage =
     Boolean(actionMessage) &&
     !(showWaitlistNote && actionMessage === waitlistNote);
+  const hasCoordinationDetails = Boolean(
+    invitation.coordination_start_date ||
+      invitation.coordination_end_date ||
+      invitation.coordination_venue,
+  );
+  const showConfirmationDeadlineCallout =
+    canRespond && Boolean(invitation.response_deadline);
 
   const introText =
     invitation.status === "declined"
@@ -86,7 +103,7 @@ export function ExaminerInvitationLandingPanel({
               ? null
               : "Thank you for responding. The regional quota is full for now — see the note below for what happens next."
             : canRespond
-              ? "You've been invited to serve as an examiner. Review the details below, then confirm or decline before the deadline."
+              ? "You've been invited to serve as an examiner. Review your assignment below, then confirm or decline before the confirmation deadline."
               : "This invitation is no longer open for a response.";
 
   function openConfirm(action: ConfirmAction) {
@@ -185,7 +202,37 @@ export function ExaminerInvitationLandingPanel({
             </div>
           ) : null}
 
-          <div className="mt-5 grid grid-cols-2 gap-3 sm:gap-3.5">
+          {showConfirmationDeadlineCallout ? (
+            <div
+              className="mt-4 rounded-2xl border border-primary/25 bg-primary/5 px-4 py-4"
+              role="note"
+              aria-label="Confirmation deadline"
+            >
+              <div className="flex items-start gap-3">
+                <span className="flex size-9 shrink-0 items-center justify-center rounded-xl bg-primary/15 text-primary">
+                  <Clock className="size-4" aria-hidden />
+                </span>
+                <div className="min-w-0 flex-1">
+                  <h2 className="text-sm font-semibold text-foreground">Confirmation deadline</h2>
+                  <p className="mt-2 text-sm leading-relaxed text-foreground">
+                    Please tap <strong>Confirm availability</strong> or <strong>Decline invitation</strong>{" "}
+                    before{" "}
+                    <strong>
+                      {formatResponseDeadlineForExaminer(invitation.response_deadline!)}
+                    </strong>
+                    .
+                  </p>
+                  <p className="mt-2 text-sm leading-relaxed text-muted-foreground">
+                    This deadline is only for accepting or declining the invitation — not the
+                    coordination exercise dates.
+                  </p>
+                </div>
+              </div>
+            </div>
+          ) : null}
+
+          <h2 className="mt-5 text-sm font-semibold text-foreground">Your assignment</h2>
+          <div className="mt-3 grid grid-cols-2 gap-3 sm:gap-3.5">
             <ExaminerInvitationDetailTile
               icon={UserCircle}
               label="Name"
@@ -200,36 +247,39 @@ export function ExaminerInvitationLandingPanel({
             />
             <ExaminerInvitationDetailTile icon={UserCircle} label="Role" value={invitation.examiner_type_label} />
             <ExaminerInvitationDetailTile icon={MapPin} label="Region" value={invitation.region} />
-            {invitation.response_deadline && invitation.can_respond ? (
-              <ExaminerInvitationDetailTile
-                icon={CalendarClock}
-                label="Respond by"
-                value={formatInvitationDeadline(invitation.response_deadline)}
-                className="col-span-2"
-              />
-            ) : null}
-            {invitation.coordination_start_date || invitation.coordination_end_date ? (
-              <ExaminerInvitationDetailTile
-                icon={CalendarClock}
-                label="Coordination"
-                value={formatCoordinationRange(
-                  invitation.coordination_start_date,
-                  invitation.coordination_start_time,
-                  invitation.coordination_end_date,
-                  invitation.coordination_end_time,
-                )}
-                className="col-span-2"
-              />
-            ) : null}
-            {invitation.coordination_venue ? (
-              <ExaminerInvitationDetailTile
-                icon={CalendarClock}
-                label="Venue"
-                value={invitation.coordination_venue}
-                className="col-span-2"
-              />
-            ) : null}
           </div>
+
+          {hasCoordinationDetails ? (
+            <section className="mt-5" aria-label="Coordination exercise">
+              <h2 className="text-sm font-semibold text-foreground">Coordination exercise</h2>
+              <p className="mt-1 text-sm leading-relaxed text-muted-foreground">
+                If you accept, you will attend coordination on these dates.
+              </p>
+              <div className="mt-3 grid grid-cols-2 gap-3 sm:gap-3.5">
+                {invitation.coordination_start_date || invitation.coordination_end_date ? (
+                  <ExaminerInvitationDetailTile
+                    icon={CalendarDays}
+                    label="Dates"
+                    value={formatCoordinationRange(
+                      invitation.coordination_start_date,
+                      invitation.coordination_start_time,
+                      invitation.coordination_end_date,
+                      invitation.coordination_end_time,
+                    )}
+                    className="col-span-2"
+                  />
+                ) : null}
+                {invitation.coordination_venue ? (
+                  <ExaminerInvitationDetailTile
+                    icon={MapPin}
+                    label="Venue"
+                    value={invitation.coordination_venue}
+                    className="col-span-2"
+                  />
+                ) : null}
+              </div>
+            </section>
+          ) : null}
 
           <ExaminerMarkingScheduleSection cohorts={markingCohorts} />
 
