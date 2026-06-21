@@ -141,6 +141,8 @@ export function ExaminersInvitationsPanel({
   const [editTarget, setEditTarget] = useState<ExaminerInvitationRow | null>(null);
   const [editName, setEditName] = useState("");
   const [editExaminerType, setEditExaminerType] = useState<ExaminerTypeApi>("assistant_examiner");
+  const [editRegion, setEditRegion] = useState("");
+  const [editGender, setEditGender] = useState("");
   const [editError, setEditError] = useState<string | null>(null);
   const [deleteInvitationTarget, setDeleteInvitationTarget] = useState<ExaminerInvitationRow | null>(null);
   const [deleteImpact, setDeleteImpact] = useState<ExaminerDeleteImpact | null>(null);
@@ -950,17 +952,21 @@ export function ExaminersInvitationsPanel({
     setEditTarget(inv);
     setEditName(inv.name);
     setEditExaminerType(inv.examiner_type);
+    setEditRegion(inv.region);
+    setEditGender(inv.gender ?? "");
     setEditError(null);
   }
 
   async function handleSaveEditInvitation() {
-    if (examId == null || editTarget == null || !editName.trim()) return;
+    if (examId == null || editTarget == null || !editName.trim() || !editRegion.trim()) return;
     setBusy(true);
     setEditError(null);
     try {
       await updateExaminerInvitationDetails(examId, editTarget.id, {
         name: editName.trim(),
         examiner_type: editExaminerType,
+        region: editRegion.trim(),
+        gender: editGender.trim() || null,
       });
       setEditTarget(null);
       setActionMessageTone("success");
@@ -1345,6 +1351,9 @@ export function ExaminersInvitationsPanel({
         invitation={editTarget}
         name={editName}
         examinerType={editExaminerType}
+        region={editRegion}
+        gender={editGender}
+        regionOptions={regionOptions}
         onClose={() => {
           if (!busy) {
             setEditTarget(null);
@@ -1354,6 +1363,8 @@ export function ExaminersInvitationsPanel({
         onSubmit={() => void handleSaveEditInvitation()}
         onNameChange={setEditName}
         onExaminerTypeChange={setEditExaminerType}
+        onRegionChange={setEditRegion}
+        onGenderChange={setEditGender}
       />
 
       {bulkDeletePreview ? (

@@ -20,6 +20,7 @@ from app.models import (
     ExaminerRosterSource,
     ExaminerType,
     Examination,
+    Region,
     Subject,
 )
 from app.services.coordination_schedule import format_coordination_range, validate_coordination_range
@@ -302,31 +303,53 @@ _EDITABLE_INVITATION_STATUSES = (
     ExaminerInvitationStatus.ACCEPTED,
 )
 
+_UPDATE_FIELD_MISSING = object()
+
 
 async def update_examiner_invitation_details(
     session: AsyncSession,
     inv: ExaminerInvitation,
     *,
-    name: str | None = None,
-    examiner_type: ExaminerType | None = None,
+    name: str | object = _UPDATE_FIELD_MISSING,
+    examiner_type: ExaminerType | object = _UPDATE_FIELD_MISSING,
+    region: Region | object = _UPDATE_FIELD_MISSING,
+    gender: str | None | object = _UPDATE_FIELD_MISSING,
 ) -> ExaminerInvitation:
     if inv.status not in _EDITABLE_INVITATION_STATUSES:
         raise ValueError(f"Cannot edit invitation in {inv.status.value} status.")
 
-    if name is None and examiner_type is None:
-        raise ValueError("Provide name and/or examiner type to update.")
+    if (
+        name is _UPDATE_FIELD_MISSING
+        and examiner_type is _UPDATE_FIELD_MISSING
+        and region is _UPDATE_FIELD_MISSING
+        and gender is _UPDATE_FIELD_MISSING
+    ):
+        raise ValueError("Provide name, role, region, and/or gender to update.")
 
     new_name = inv.name
-    if name is not None:
+    if name is not _UPDATE_FIELD_MISSING:
+        if not isinstance(name, str):
+            raise ValueError("Name is required.")
         stripped = name.strip()
         if not stripped:
             raise ValueError("Name is required.")
         new_name = stripped
 
-    new_type = examiner_type if examiner_type is not None else inv.examiner_type
-    type_changed = examiner_type is not None and new_type != inv.examiner_type
+    new_type = inv.examiner_type if examiner_type is _UPDATE_FIELD_MISSING else examiner_type
+    if not isinstance(new_type, ExaminerType):
+        raise ValueError("Role is required.")
 
-    if type_changed:
+    new_region = inv.region if region is _UPDATE_FIELD_MISSING else region
+    if not isinstance(new_region, Region):
+        raise ValueError("Region is required.")
+
+    new_gender = inv.gender if gender is _UPDATE_FIELD_MISSING else gender
+
+    type_changed = examiner_type is not _UPDATE_FIELD_MISSING and new_type != inv.examiner_type
+    region_changed = region is not _UPDATE_FIELD_MISSING and new_region != inv.region
+    gender_changed = gender is not _UPDATE_FIELD_MISSING and new_gender != inv.gender
+
+    if type_changed or region_changed or gender_changed:
         exclude_examiner_id: UUID | None = None
         if inv.status == ExaminerInvitationStatus.ACCEPTED and inv.examiner_id is not None:
             exclude_examiner_id = inv.examiner_id
@@ -334,15 +357,20 @@ async def update_examiner_invitation_details(
             session,
             examination_id=int(inv.examination_id),
             subject_id=int(inv.subject_id),
-            region=inv.region,
+            region=new_region,
             examiner_type=new_type,
-            gender=inv.gender,
+            gender=new_gender,
             exclude_examiner_id=exclude_examiner_id,
         )
 
-    inv.name = new_name
-    if examiner_type is not None:
+    if name is not _UPDATE_FIELD_MISSING:
+        inv.name = new_name
+    if examiner_type is not _UPDATE_FIELD_MISSING:
         inv.examiner_type = new_type
+    if region is not _UPDATE_FIELD_MISSING:
+        inv.region = new_region
+    if gender is not _UPDATE_FIELD_MISSING:
+        inv.gender = new_gender
     inv.updated_at = datetime.utcnow()
     await session.flush()
 
@@ -353,9 +381,14 @@ async def update_examiner_invitation_details(
             options=(selectinload(Examiner.subjects),),
         )
         if examiner is not None:
-            examiner.name = new_name
-            if examiner_type is not None:
+            if name is not _UPDATE_FIELD_MISSING:
+                examiner.name = new_name
+            if examiner_type is not _UPDATE_FIELD_MISSING:
                 examiner.examiner_type = new_type
+            if region is not _UPDATE_FIELD_MISSING:
+                examiner.region = new_region
+            if gender is not _UPDATE_FIELD_MISSING:
+                examiner.gender = new_gender
             examiner.updated_at = datetime.utcnow()
             await session.flush()
 

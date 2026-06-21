@@ -187,7 +187,7 @@ export function InvitationRowActionsMenu({
             onOpenChange(false);
           }}
         >
-          Edit name & role
+          Edit details
         </button>
       ) : null}
       {canDelete ? (

@@ -108,7 +108,7 @@ export function formatInvitationDeadline(iso: string): string {
   });
 }
 
-/** Public examiner-facing deadline with fixed Ghana timezone. */
+/** Public examiner-facing deadline formatted in Ghana timezone (Africa/Accra). */
 export function formatResponseDeadlineForExaminer(iso: string): string {
   try {
     const formatted = new Date(iso).toLocaleString("en-GB", {
@@ -121,7 +121,7 @@ export function formatResponseDeadlineForExaminer(iso: string): string {
       minute: "2-digit",
       hour12: true,
     });
-    return `${formatted} Ghana time`;
+    return formatted;
   } catch {
     return iso;
   }

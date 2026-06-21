@@ -192,6 +192,8 @@ class ExaminerInvitationCoordinationUpdate(ExaminerInvitationCoordinationFields)
 class ExaminerInvitationUpdate(ExaminerInvitationCoordinationFields):
     name: str | None = Field(default=None, min_length=1, max_length=255)
     examiner_type: ExaminerTypeSchema | None = None
+    region: str | None = Field(default=None, min_length=1)
+    gender: str | None = None
 
 
 class ExaminerInvitationDeleteResponse(BaseModel):

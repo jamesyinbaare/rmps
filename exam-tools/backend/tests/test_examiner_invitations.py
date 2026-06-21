@@ -1079,6 +1079,119 @@ async def test_update_examiner_invitation_details_syncs_accepted_roster() -> Non
 
 
 @pytest.mark.asyncio
+async def test_update_examiner_invitation_details_updates_region_and_gender() -> None:
+    from app.models import ExaminerInvitation
+    from app.services.examiner_invitation import update_examiner_invitation_details
+
+    session = AsyncMock()
+    session.flush = AsyncMock()
+    inv = MagicMock(spec=ExaminerInvitation)
+    inv.status = ExaminerInvitationStatus.PENDING
+    inv.name = "Ada Lovelace"
+    inv.examiner_type = ExaminerType.ASSISTANT
+    inv.examination_id = 1
+    inv.subject_id = 10
+    inv.region = Region.UPPER_EAST
+    inv.gender = None
+    inv.examiner_id = None
+
+    with patch(
+        "app.services.examiner_invitation.assert_examiner_regional_quota_allowed",
+        new_callable=AsyncMock,
+    ):
+        await update_examiner_invitation_details(
+            session,
+            inv,
+            region=Region.GREATER_ACCRA,
+            gender="Female",
+        )
+
+    assert inv.region == Region.GREATER_ACCRA
+    assert inv.gender == "Female"
+
+
+@pytest.mark.asyncio
+async def test_update_examiner_invitation_details_syncs_region_gender_to_roster() -> None:
+    from app.models import Examiner, ExaminerInvitation
+    from app.services.examiner_invitation import update_examiner_invitation_details
+
+    session = AsyncMock()
+    session.flush = AsyncMock()
+    examiner_id = uuid4()
+    inv = MagicMock(spec=ExaminerInvitation)
+    inv.status = ExaminerInvitationStatus.ACCEPTED
+    inv.name = "Ada Lovelace"
+    inv.examiner_type = ExaminerType.ASSISTANT
+    inv.examination_id = 1
+    inv.subject_id = 10
+    inv.region = Region.UPPER_EAST
+    inv.gender = None
+    inv.examiner_id = examiner_id
+
+    examiner = MagicMock(spec=Examiner)
+    examiner.name = "Ada Lovelace"
+    examiner.examiner_type = ExaminerType.ASSISTANT
+    examiner.region = Region.UPPER_EAST
+    examiner.gender = None
+    session.get = AsyncMock(return_value=examiner)
+
+    with patch(
+        "app.services.examiner_invitation.assert_examiner_regional_quota_allowed",
+        new_callable=AsyncMock,
+    ):
+        await update_examiner_invitation_details(
+            session,
+            inv,
+            region=Region.GREATER_ACCRA,
+            gender="Male",
+        )
+
+    assert inv.region == Region.GREATER_ACCRA
+    assert inv.gender == "Male"
+    assert examiner.region == Region.GREATER_ACCRA
+    assert examiner.gender == "Male"
+
+
+@pytest.mark.asyncio
+async def test_update_examiner_invitation_details_region_change_checks_quota() -> None:
+    from app.models import ExaminerInvitation
+    from app.services.examiner_invitation import update_examiner_invitation_details
+
+    session = AsyncMock()
+    session.flush = AsyncMock()
+    inv = MagicMock(spec=ExaminerInvitation)
+    inv.status = ExaminerInvitationStatus.PENDING
+    inv.name = "Ada Lovelace"
+    inv.examiner_type = ExaminerType.ASSISTANT
+    inv.examination_id = 1
+    inv.subject_id = 10
+    inv.region = Region.UPPER_EAST
+    inv.gender = "Female"
+    inv.examiner_id = None
+
+    quota_mock = AsyncMock()
+    with patch(
+        "app.services.examiner_invitation.assert_examiner_regional_quota_allowed",
+        quota_mock,
+    ):
+        await update_examiner_invitation_details(
+            session,
+            inv,
+            region=Region.GREATER_ACCRA,
+        )
+
+    quota_mock.assert_awaited_once_with(
+        session,
+        examination_id=1,
+        subject_id=10,
+        region=Region.GREATER_ACCRA,
+        examiner_type=ExaminerType.ASSISTANT,
+        gender="Female",
+        exclude_examiner_id=None,
+    )
+
+
+@pytest.mark.asyncio
 async def test_delete_examiner_invitation_pending() -> None:
     from app.models import ExaminerInvitation
     from app.services.examiner_invitation import delete_examiner_invitation
@@ -1197,6 +1310,45 @@ async def test_patch_examiner_invitation_details_forbidden_for_subject_officer()
                 1,
                 inv.id,
                 ExaminerInvitationUpdate(name="Updated"),
+            )
+
+    assert exc.value.status_code == 403
+
+
+@pytest.mark.asyncio
+async def test_patch_examiner_invitation_region_forbidden_for_subject_officer() -> None:
+    from app.models import ExaminerInvitation, UserRole
+    from app.routers.examiner_invitations import patch_examiner_invitation
+    from app.schemas.examiner_invitation import ExaminerInvitationUpdate
+
+    user = MagicMock(role=UserRole.SUBJECT_OFFICER)
+    session = AsyncMock()
+    inv = MagicMock(spec=ExaminerInvitation)
+    inv.id = uuid4()
+    inv.subject_id = 10
+
+    with (
+        patch(
+            "app.routers.examiner_invitations._get_invitation_or_404",
+            new_callable=AsyncMock,
+            return_value=inv,
+        ),
+        patch(
+            "app.routers.examiner_invitations._assert_invitation_accessible",
+            new_callable=AsyncMock,
+        ),
+        patch(
+            "app.routers.examiner_invitations.assert_unrestricted_examiner_manager",
+            side_effect=HTTPException(status_code=403, detail="Forbidden"),
+        ),
+    ):
+        with pytest.raises(HTTPException) as exc:
+            await patch_examiner_invitation(
+                session,
+                user,
+                1,
+                inv.id,
+                ExaminerInvitationUpdate(region="Greater Accra"),
             )
 
     assert exc.value.status_code == 403
