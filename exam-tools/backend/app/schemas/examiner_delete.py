@@ -43,3 +43,30 @@ class ExaminerDeleteImpactResponse(BaseModel):
     total_manual_scripts: int = 0
     total_envelopes: int = 0
     requires_confirmation: bool = False
+
+
+class ExaminerBulkDeleteRequest(BaseModel):
+    examiner_ids: list[UUID] = Field(min_length=1, max_length=500)
+
+
+class ExaminerBulkDeleteRowError(BaseModel):
+    examiner_id: UUID
+    message: str
+
+
+class ExaminerBulkDeletePreviewResponse(BaseModel):
+    items: list[ExaminerDeleteImpactResponse] = Field(default_factory=list)
+    requires_confirmation: bool = False
+    total_manual_scripts: int = 0
+    total_envelopes: int = 0
+    allocation_campaign_count: int = 0
+    not_found_count: int = 0
+
+
+class ExaminerBulkDeleteBody(ExaminerBulkDeleteRequest):
+    confirm_remove_allocations: bool = False
+
+
+class ExaminerBulkDeleteResponse(BaseModel):
+    deleted_count: int
+    errors: list[ExaminerBulkDeleteRowError] = Field(default_factory=list)

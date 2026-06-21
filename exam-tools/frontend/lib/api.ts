@@ -4944,6 +4944,51 @@ export async function deleteExaminationExaminer(
   await apiJson(`/examinations/${examinationId}/examiners/${examinerId}${suffix}`, { method: "DELETE" });
 }
 
+export type ExaminerBulkDeletePreview = {
+  items: ExaminerDeleteImpact[];
+  requires_confirmation: boolean;
+  total_manual_scripts: number;
+  total_envelopes: number;
+  allocation_campaign_count: number;
+  not_found_count: number;
+};
+
+export type ExaminerBulkDeleteResponse = {
+  deleted_count: number;
+  errors: { examiner_id: string; message: string }[];
+};
+
+export async function previewBulkExaminerDelete(
+  examinationId: number,
+  examinerIds: string[],
+): Promise<ExaminerBulkDeletePreview> {
+  return apiJson<ExaminerBulkDeletePreview>(
+    `/examinations/${examinationId}/examiners/bulk-delete-preview`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ examiner_ids: examinerIds }),
+    },
+  );
+}
+
+export async function bulkDeleteExaminationExaminers(
+  examinationId: number,
+  payload: { examiner_ids: string[]; confirm_remove_allocations?: boolean },
+): Promise<ExaminerBulkDeleteResponse> {
+  return apiJson<ExaminerBulkDeleteResponse>(
+    `/examinations/${examinationId}/examiners/bulk-delete`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        examiner_ids: payload.examiner_ids,
+        confirm_remove_allocations: payload.confirm_remove_allocations === true,
+      }),
+    },
+  );
+}
+
 export type ExaminerPortalLinkRegenerateResponse = {
   examiner_id: string;
   portal_url: string;
@@ -5208,6 +5253,54 @@ export async function deleteExaminerInvitation(
   await apiJson(
     `/examinations/${examinationId}/examiner-invitations/${encodeURIComponent(invitationId)}${suffix}`,
     { method: "DELETE" },
+  );
+}
+
+export type ExaminerInvitationBulkDeletePreview = {
+  invitation_count: number;
+  pending_count: number;
+  accepted_count: number;
+  requires_confirmation: boolean;
+  total_manual_scripts: number;
+  total_envelopes: number;
+  allocation_campaign_count: number;
+  items: ExaminerDeleteImpact[];
+  not_found_count: number;
+};
+
+export type ExaminerInvitationBulkDeleteResponse = {
+  deleted_count: number;
+  errors: { invitation_id: string; message: string }[];
+};
+
+export async function previewBulkExaminerInvitationDelete(
+  examinationId: number,
+  invitationIds: string[],
+): Promise<ExaminerInvitationBulkDeletePreview> {
+  return apiJson<ExaminerInvitationBulkDeletePreview>(
+    `/examinations/${examinationId}/examiner-invitations/bulk-delete-preview`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ invitation_ids: invitationIds }),
+    },
+  );
+}
+
+export async function bulkDeleteExaminerInvitations(
+  examinationId: number,
+  payload: { invitation_ids: string[]; confirm_remove_allocations?: boolean },
+): Promise<ExaminerInvitationBulkDeleteResponse> {
+  return apiJson<ExaminerInvitationBulkDeleteResponse>(
+    `/examinations/${examinationId}/examiner-invitations/bulk-delete`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        invitation_ids: payload.invitation_ids,
+        confirm_remove_allocations: payload.confirm_remove_allocations === true,
+      }),
+    },
   );
 }
 

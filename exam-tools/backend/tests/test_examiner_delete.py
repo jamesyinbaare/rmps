@@ -16,7 +16,11 @@ from app.schemas.examiner_delete import (
     ExaminerEnvelopeAssignmentItem,
     ExaminerManualAllocationItem,
 )
-from app.services.examiner_delete import build_examiner_delete_impact, delete_examiner_with_cleanup
+from app.services.examiner_delete import (
+    aggregate_examiner_delete_impacts,
+    build_examiner_delete_impact,
+    delete_examiner_with_cleanup,
+)
 
 
 def _examiner_stub(*, exam_id: int = 1, name: str = "Jane Doe") -> Examiner:
@@ -299,3 +303,36 @@ async def test_delete_examiner_without_allocations_skips_confirm() -> None:
         await delete_examiner(session, user, 1, examiner.id, confirm_remove_allocations=False)
 
     cleanup_mock.assert_awaited_once()
+
+
+def test_aggregate_examiner_delete_impacts_sums_totals() -> None:
+    items = [
+        ExaminerDeleteImpactResponse(
+            examiner_id=uuid4(),
+            examiner_name="A",
+            total_manual_scripts=2,
+            total_envelopes=1,
+            allocation_campaigns=[ExaminerAllocationCampaignItem(
+                allocation_id=uuid4(),
+                allocation_name="Camp",
+                subject_code="MATH",
+                subject_name="Math",
+                paper_number=1,
+            )],
+            requires_confirmation=True,
+        ),
+        ExaminerDeleteImpactResponse(
+            examiner_id=uuid4(),
+            examiner_name="B",
+            total_manual_scripts=3,
+            total_envelopes=2,
+            requires_confirmation=False,
+        ),
+    ]
+    preview = aggregate_examiner_delete_impacts(items, not_found_count=1)
+    assert preview.requires_confirmation is True
+    assert preview.total_manual_scripts == 5
+    assert preview.total_envelopes == 3
+    assert preview.allocation_campaign_count == 1
+    assert preview.not_found_count == 1
+    assert len(preview.items) == 2

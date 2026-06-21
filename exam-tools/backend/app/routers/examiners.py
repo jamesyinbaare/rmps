@@ -14,7 +14,14 @@ from app.dependencies.auth import (
 )
 from app.dependencies.database import DBSessionDep
 from app.models import Examination, Examiner, ExaminerRosterSource, ExaminerSubject, ExaminerType, User
-from app.schemas.examiner_delete import ExaminerDeleteImpactResponse
+from app.schemas.examiner_delete import (
+    ExaminerBulkDeleteBody,
+    ExaminerBulkDeletePreviewResponse,
+    ExaminerBulkDeleteRequest,
+    ExaminerBulkDeleteResponse,
+    ExaminerBulkDeleteRowError,
+    ExaminerDeleteImpactResponse,
+)
 from app.schemas.examiner_portal import (
     ExaminerPortalLinkRegenerateRequest,
     ExaminerPortalLinkRegenerateResponse,
@@ -32,6 +39,8 @@ from app.schemas.script_allocation import (
     ExaminerUpdate,
 )
 from app.services.examiner_delete import (
+    aggregate_examiner_delete_impacts,
+    build_bulk_examiner_delete_preview,
     build_examiner_delete_impact,
     delete_examiner_with_cleanup,
     load_examiner_for_delete,
@@ -603,6 +612,117 @@ async def delete_examiner(
 
     await delete_examiner_with_cleanup(session, examination_id, ex)
     await session.commit()
+
+
+@router.post(
+    "/examinations/{examination_id}/examiners/bulk-delete-preview",
+    response_model=ExaminerBulkDeletePreviewResponse,
+    summary="Preview impact of deleting selected roster examiners",
+)
+async def bulk_examiner_delete_preview(
+    session: DBSessionDep,
+    user: SuperAdminOrTestAdminOfficerOrSubjectOfficerDep,
+    examination_id: int,
+    body: ExaminerBulkDeleteRequest,
+) -> ExaminerBulkDeletePreviewResponse:
+    assert_unrestricted_examiner_manager(user)
+    await _get_examination_or_404(session, examination_id)
+    unique_ids = list(dict.fromkeys(body.examiner_ids))
+    items, not_found_count = await build_bulk_examiner_delete_preview(
+        session,
+        examination_id,
+        unique_ids,
+    )
+    scoped_items: list[ExaminerDeleteImpactResponse] = []
+    for item in items:
+        ex = await load_examiner_for_delete(session, examination_id, item.examiner_id)
+        if ex is None:
+            continue
+        await _assert_examiner_accessible(session, user, examination_id, ex)
+        scoped_items.append(item)
+    return aggregate_examiner_delete_impacts(scoped_items, not_found_count=not_found_count)
+
+
+@router.post(
+    "/examinations/{examination_id}/examiners/bulk-delete",
+    response_model=ExaminerBulkDeleteResponse,
+    summary="Delete selected roster examiners",
+)
+async def bulk_delete_examiners(
+    session: DBSessionDep,
+    user: SuperAdminOrTestAdminOfficerOrSubjectOfficerDep,
+    examination_id: int,
+    body: ExaminerBulkDeleteBody,
+) -> ExaminerBulkDeleteResponse:
+    assert_unrestricted_examiner_manager(user)
+    await _get_examination_or_404(session, examination_id)
+    unique_ids = list(dict.fromkeys(body.examiner_ids))
+    items, not_found_count = await build_bulk_examiner_delete_preview(
+        session,
+        examination_id,
+        unique_ids,
+    )
+    preview = aggregate_examiner_delete_impacts(items, not_found_count=not_found_count)
+    if preview.requires_confirmation and not body.confirm_remove_allocations:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=preview.model_dump(mode="json"),
+        )
+
+    errors: list[ExaminerBulkDeleteRowError] = []
+    deleted_count = 0
+    rows = {
+        ex.id: ex
+        for ex in (
+            await session.execute(
+                select(Examiner).where(
+                    Examiner.examination_id == examination_id,
+                    Examiner.id.in_(unique_ids),
+                )
+            )
+        ).scalars().all()
+    }
+
+    for examiner_id in unique_ids:
+        ex = rows.get(examiner_id)
+        if ex is None:
+            errors.append(
+                ExaminerBulkDeleteRowError(
+                    examiner_id=examiner_id,
+                    message="Examiner not found for this examination",
+                )
+            )
+            continue
+        try:
+            await _assert_examiner_accessible(session, user, examination_id, ex)
+            impact = await build_examiner_delete_impact(session, examination_id, ex)
+            if impact.requires_confirmation and not body.confirm_remove_allocations:
+                errors.append(
+                    ExaminerBulkDeleteRowError(
+                        examiner_id=examiner_id,
+                        message="Allocation impact requires confirmation",
+                    )
+                )
+                continue
+            await delete_examiner_with_cleanup(session, examination_id, ex)
+            deleted_count += 1
+        except HTTPException as exc:
+            errors.append(
+                ExaminerBulkDeleteRowError(
+                    examiner_id=examiner_id,
+                    message=str(exc.detail),
+                )
+            )
+        except Exception as exc:
+            errors.append(
+                ExaminerBulkDeleteRowError(
+                    examiner_id=examiner_id,
+                    message=str(exc),
+                )
+            )
+
+    await session.commit()
+    return ExaminerBulkDeleteResponse(deleted_count=deleted_count, errors=errors)
 
 
 @router.post(

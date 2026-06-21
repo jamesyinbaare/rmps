@@ -26,6 +26,9 @@ type Props = {
   regionOptions: MultiSelectCheckboxOption[];
   regionFilter: string[];
   onRegionFilterChange: (values: string[]) => void;
+  sourceOptions: MultiSelectCheckboxOption[];
+  sourceFilter: string[];
+  onSourceFilterChange: (values: string[]) => void;
   activeFilterCount: number;
   onClearFilters: () => void;
   disabled?: boolean;
@@ -44,6 +47,9 @@ export function RosterFiltersPopover({
   regionOptions,
   regionFilter,
   onRegionFilterChange,
+  sourceOptions,
+  sourceFilter,
+  onSourceFilterChange,
   activeFilterCount,
   onClearFilters,
   disabled,
@@ -119,6 +125,14 @@ export function RosterFiltersPopover({
             selected={regionFilter}
             onChange={onRegionFilterChange}
             allLabel="All regions"
+          />
+          <MultiSelectCheckboxDropdown
+            id="roster-popover-source"
+            label="Source"
+            options={sourceOptions}
+            selected={sourceFilter}
+            onChange={onSourceFilterChange}
+            allLabel="All sources"
           />
           {activeFilterCount > 0 ? (
             <div className="border-t border-border pt-3">

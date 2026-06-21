@@ -107,6 +107,16 @@ export const ROSTER_DEFAULT_COLUMN_VISIBILITY: VisibilityState = Object.fromEntr
   ROSTER_COLUMN_TOGGLE_OPTIONS.map((c) => [c.id, c.defaultVisible]),
 );
 
+export const ROSTER_SOURCE_OPTIONS = [
+  { value: "manual", label: "Manual" },
+  { value: "invitation", label: "Invitation" },
+] as const;
+
+export const ROSTER_SOURCE_LABELS: Record<(typeof ROSTER_SOURCE_OPTIONS)[number]["value"], string> = {
+  manual: "Manual",
+  invitation: "Invitation",
+};
+
 export const PAGE_SIZE_PRESETS = [50, 100, 200, 500] as const;
 export const DEFAULT_PAGE_SIZE = 50;
 export const MAX_CUSTOM_PAGE_SIZE = 5000;
