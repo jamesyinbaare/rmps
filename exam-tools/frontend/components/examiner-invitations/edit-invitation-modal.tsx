@@ -2,6 +2,7 @@
 
 import { EXAMINER_TYPE_LABELS, EXAMINER_TYPE_OPTIONS, STATUS_LABELS } from "@/components/examiner-invitations/constants";
 import { InvitationModalShell } from "@/components/examiner-invitations/invitation-modal-shell";
+import { SearchableCombobox } from "@/components/searchable-combobox";
 import { Button } from "@/components/ui/button";
 import type { ExaminerInvitationRow, ExaminerTypeApi } from "@/lib/api";
 import { formInputClass, formLabelClass } from "@/lib/form-classes";
@@ -15,10 +16,15 @@ type Props = {
   invitation: ExaminerInvitationRow | null;
   name: string;
   examinerType: ExaminerTypeApi;
+  region: string;
+  gender: string;
+  regionOptions: { value: string; label: string }[];
   onClose: () => void;
   onSubmit: () => void;
   onNameChange: (value: string) => void;
   onExaminerTypeChange: (value: ExaminerTypeApi) => void;
+  onRegionChange: (value: string) => void;
+  onGenderChange: (value: string) => void;
 };
 
 export function EditInvitationModal({
@@ -28,19 +34,25 @@ export function EditInvitationModal({
   invitation,
   name,
   examinerType,
+  region,
+  gender,
+  regionOptions,
   onClose,
   onSubmit,
   onNameChange,
   onExaminerTypeChange,
+  onRegionChange,
+  onGenderChange,
 }: Props) {
   if (!open || !invitation) return null;
 
   const subjectLabel = displaySubjectCode(invitation);
   const statusLabel = STATUS_LABELS[invitation.status] ?? invitation.status;
+  const canSave = name.trim().length > 0 && region.trim().length > 0;
 
   return (
     <InvitationModalShell
-      title="Edit name & role"
+      title="Edit invitation details"
       titleId="ei-edit-title"
       canClose={!busy}
       onClose={onClose}
@@ -49,7 +61,7 @@ export function EditInvitationModal({
           <Button type="button" variant="outline" disabled={busy} onClick={onClose}>
             Cancel
           </Button>
-          <Button type="button" disabled={busy || !name.trim()} onClick={onSubmit}>
+          <Button type="button" disabled={busy || !canSave} onClick={onSubmit}>
             {busy ? "Saving…" : "Save changes"}
           </Button>
         </div>
@@ -60,7 +72,7 @@ export function EditInvitationModal({
         {invitation.status === "accepted" && invitation.examiner_id
           ? " and the linked roster entry"
           : ""}
-        . Phone, subject, and region stay unchanged.
+        . Phone and subject stay unchanged.
       </p>
 
       {error ? (
@@ -114,6 +126,37 @@ export function EditInvitationModal({
               </option>
             ))}
           </select>
+        </div>
+        <div>
+          <label className={formLabelClass} htmlFor="ei-edit-gender">
+            Gender
+          </label>
+          <select
+            id="ei-edit-gender"
+            className={cn(formInputClass, "mt-1")}
+            value={gender}
+            disabled={busy}
+            onChange={(e) => onGenderChange(e.target.value)}
+          >
+            <option value="">Not specified</option>
+            <option value="Male">Male</option>
+            <option value="Female">Female</option>
+          </select>
+        </div>
+        <div>
+          <p className={formLabelClass}>Region</p>
+          <div className="mt-1">
+            <SearchableCombobox
+              options={regionOptions}
+              value={region}
+              onChange={onRegionChange}
+              placeholder="Select region"
+              searchPlaceholder="Search…"
+              widthClass="w-full"
+              showAllOption={false}
+              disabled={busy}
+            />
+          </div>
         </div>
       </div>
     </InvitationModalShell>

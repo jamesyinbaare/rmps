@@ -171,7 +171,7 @@ function CalendarMonthNavigator({
         <ChevronLeft className="size-4" aria-hidden />
       </Button>
 
-      <div className="flex min-w-0 flex-nowrap items-center justify-center gap-1.5 overflow-x-auto overscroll-x-contain [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+      <div className="flex min-w-0 flex-nowrap items-center justify-center gap-1.5 overflow-x-auto overscroll-x-contain touch-pan-x [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
         {months.map((month) => {
           const active = isSameCalendarMonth(month, activeMonth);
           return (
@@ -616,7 +616,7 @@ export function SubjectOfficerDashboard({
               </p>
               <div
                 className={cn(
-                  "flex gap-2 overflow-x-auto overscroll-x-contain px-3 pb-1",
+                  "flex gap-2 overflow-x-auto overscroll-x-contain px-3 pb-1 touch-pan-x",
                   "snap-x snap-mandatory scrollbar-hide",
                   "sm:grid sm:grid-cols-2 sm:gap-4 sm:overflow-visible sm:px-0 sm:pb-0 xl:grid-cols-4",
                 )}
@@ -710,7 +710,7 @@ export function SubjectOfficerDashboard({
                 </div>
               </div>
 
-              <div className="flex min-h-0 min-w-0 flex-col overflow-hidden rounded-xl border border-border bg-card shadow-sm">
+              <div className="flex min-w-0 flex-col max-md:overflow-visible lg:min-h-0 lg:overflow-hidden rounded-xl border border-border bg-card shadow-sm">
                 <div className="flex shrink-0 flex-col gap-2 border-b border-border bg-muted/20 px-4 py-3">
                   <div className="flex items-center justify-between gap-2">
                     <div className="min-w-0">
@@ -752,7 +752,7 @@ export function SubjectOfficerDashboard({
                     </div>
                   ) : null}
                 </div>
-                <div className="min-h-0 min-w-0 flex-1 space-y-5 overflow-x-hidden overflow-y-auto overscroll-contain p-3 sm:p-4">
+                <div className="min-w-0 space-y-5 p-3 max-md:overflow-visible sm:p-4 lg:min-h-0 lg:flex-1 lg:overflow-x-hidden lg:overflow-y-auto lg:overscroll-contain">
                   {upcomingList.length === 0 ? (
                     <div className="flex flex-col items-center justify-center gap-2 rounded-lg border border-dashed border-border bg-muted/10 px-4 py-10 text-center">
                       <Clock className="size-8 text-muted-foreground/50" aria-hidden />

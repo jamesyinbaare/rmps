@@ -356,7 +356,7 @@ function DashboardShellInner({ title, children, staffRole, mainClassName }: Prop
       <div
         className={cn(
           subjectOfficerSidebarCollapsed ? "lg:pl-[3.25rem]" : "lg:pl-64",
-          isSubjectOfficer && "flex h-dvh max-h-dvh flex-col overflow-hidden",
+          isSubjectOfficer && "lg:flex lg:h-dvh lg:max-h-dvh lg:flex-col lg:overflow-hidden",
         )}
       >
         <div className={isSubjectOfficer ? "shrink-0" : undefined}>
@@ -390,7 +390,7 @@ function DashboardShellInner({ title, children, staffRole, mainClassName }: Prop
           className={cn(
             "mx-auto w-full px-4 py-6 sm:px-6",
             isSubjectOfficer
-              ? "scrollbar-hide flex min-h-0 max-w-[1600px] flex-1 flex-col overflow-x-hidden overflow-y-auto overscroll-y-contain"
+              ? "scrollbar-hide flex w-full max-w-[1600px] flex-col overflow-x-hidden max-md:overflow-y-visible lg:min-h-0 lg:flex-1 lg:overflow-y-auto lg:overscroll-y-contain"
               : "max-w-6xl",
             isSubjectOfficer && SO_MOBILE_MAIN_CLASS,
             mainClassName,

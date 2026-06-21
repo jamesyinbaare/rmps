@@ -5225,6 +5225,8 @@ export async function updateExaminerInvitationCoordinationSchedule(
 export type ExaminerInvitationDetailsPayload = {
   name?: string;
   examiner_type?: ExaminerTypeApi;
+  region?: string;
+  gender?: string | null;
 };
 
 export async function updateExaminerInvitationDetails(

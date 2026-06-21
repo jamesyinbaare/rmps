@@ -63,6 +63,7 @@ from app.services.examiner_roster import (
     parse_gender_cell,
     read_examiners_spreadsheet,
 )
+from app.services.script_allocation import parse_region
 from app.services.sms.examiner_invitation import (
     coordination_sms_bulk_selection_error,
     coordination_sms_recipient_error,
@@ -381,7 +382,7 @@ async def bulk_set_examiner_invitation_coordination_schedule(
 @router.patch(
     "/examinations/{examination_id}/examiner-invitations/{invitation_id}",
     response_model=ExaminerInvitationResponse,
-    summary="Update examiner invitation (coordination schedule and/or name/role)",
+    summary="Update examiner invitation (coordination schedule and/or profile details)",
 )
 async def patch_examiner_invitation(
     session: DBSessionDep,
@@ -394,20 +395,26 @@ async def patch_examiner_invitation(
     await _assert_invitation_accessible(session, user, examination_id, inv)
     fields_set = body.model_fields_set
 
-    if "name" in fields_set or "examiner_type" in fields_set:
+    profile_fields = {"name", "examiner_type", "region", "gender"}
+    if fields_set & profile_fields:
         assert_unrestricted_examiner_manager(user)
         try:
-            new_type = (
-                _examiner_type_from_schema(body.examiner_type)
-                if "examiner_type" in fields_set and body.examiner_type is not None
-                else None
-            )
-            await update_examiner_invitation_details(
-                session,
-                inv,
-                name=body.name if "name" in fields_set else None,
-                examiner_type=new_type,
-            )
+            update_kwargs: dict = {}
+            if "name" in fields_set:
+                update_kwargs["name"] = body.name
+            if "examiner_type" in fields_set:
+                update_kwargs["examiner_type"] = (
+                    _examiner_type_from_schema(body.examiner_type)
+                    if body.examiner_type is not None
+                    else None
+                )
+            if "region" in fields_set:
+                if body.region is None or not body.region.strip():
+                    raise ValueError("Region is required.")
+                update_kwargs["region"] = parse_region(body.region)
+            if "gender" in fields_set:
+                update_kwargs["gender"] = parse_gender_cell(body.gender)
+            await update_examiner_invitation_details(session, inv, **update_kwargs)
         except ValueError as exc:
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
 
