@@ -7,8 +7,11 @@ import {
   DEFAULT_PAGE_SIZE,
   EXAMINERS_PANEL_CLASS,
   ROSTER_DEFAULT_COLUMN_VISIBILITY,
+  ROSTER_SOURCE_LABELS,
+  ROSTER_SOURCE_OPTIONS,
   SO_MOBILE_CONTENT_PADDING,
 } from "@/components/examiners/constants";
+import { ExaminerBulkDeleteConfirmModal } from "@/components/examiners/examiner-bulk-delete-confirm-modal";
 import { ExaminerDeleteConfirmModal } from "@/components/examiners/examiner-delete-confirm-modal";
 import { ExaminerPortalLinkRegenerateConfirmModal } from "@/components/examiners/examiner-portal-link-regenerate-confirm-modal";
 import { ExaminerQuotaDistributionSheet } from "@/components/examiners/examiner-quota-distribution-sheet";
@@ -28,13 +31,16 @@ import type { OfficialAccountsFilterChip } from "@/components/official-accounts-
 import { Button } from "@/components/ui/button";
 import {
   bulkSendExaminerRosterCustomSms,
+  bulkDeleteExaminationExaminers,
   createExaminationExaminer,
   deleteExaminationExaminer,
   getExaminerDeletePreview,
   listExaminationExaminers,
   listExaminerGroups,
+  previewBulkExaminerDelete,
   regenerateExaminerPortalLink,
   updateExaminationExaminer,
+  type ExaminerBulkDeletePreview,
   type ExaminerDeleteImpact,
   type ExaminerGroupRow,
   type ExaminerRosterBulkSmsResponse,
@@ -116,6 +122,7 @@ export function ExaminersRosterPanel({
   const [subjectTypeFilter, setSubjectTypeFilter] = useState<ScriptControlSubjectTypeFilter>("all");
   const [roleFilter, setRoleFilter] = useState<string[]>([]);
   const [regionFilter, setRegionFilter] = useState<string[]>([]);
+  const [sourceFilter, setSourceFilter] = useState<string[]>([]);
   const [subjectFilter, setSubjectFilter] = useState<string[]>([]);
   const [sorting, setSorting] = useState<SortingState>([]);
   const [rowSelection, setRowSelection] = useState<RowSelectionState>({});
@@ -159,6 +166,8 @@ export function ExaminersRosterPanel({
   const [allocationTarget, setAllocationTarget] = useState<AllocationTarget | null>(null);
   const [deleteImpact, setDeleteImpact] = useState<ExaminerDeleteImpact | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<RosterTableRow | null>(null);
+  const [bulkDeletePreview, setBulkDeletePreview] = useState<ExaminerBulkDeletePreview | null>(null);
+  const [bulkDeleteNames, setBulkDeleteNames] = useState<string[]>([]);
   const [regenerateTarget, setRegenerateTarget] = useState<RegeneratePortalLinkTarget | null>(null);
 
   useEffect(() => {
@@ -232,7 +241,7 @@ export function ExaminersRosterPanel({
   useEffect(() => {
     setRowSelection({});
     setPagination((p) => ({ ...p, pageIndex: 0 }));
-  }, [examId, debouncedSearch, subjectTypeFilter, roleFilter, regionFilter, subjectFilter]);
+  }, [examId, debouncedSearch, subjectTypeFilter, roleFilter, regionFilter, sourceFilter, subjectFilter]);
 
   const subjectLabel = useCallback(
     (id: number) => {
@@ -299,6 +308,11 @@ export function ExaminersRosterPanel({
     [],
   );
 
+  const sourceOptions = useMemo(
+    () => ROSTER_SOURCE_OPTIONS.map((o) => ({ value: o.value, label: o.label })),
+    [],
+  );
+
   const tableRows = useMemo((): RosterTableRow[] => {
     return examiners
       .filter((e) => {
@@ -309,6 +323,7 @@ export function ExaminersRosterPanel({
         }
         if (roleFilter.length > 0 && !roleFilter.includes(e.examiner_type)) return false;
         if (regionFilter.length > 0 && !regionFilter.includes(e.region)) return false;
+        if (sourceFilter.length > 0 && !sourceFilter.includes(e.roster_source)) return false;
         if (subjectFilter.length > 0) {
           const sid = e.subject_ids[0];
           if (sid == null || !subjectFilter.includes(String(sid))) return false;
@@ -323,15 +338,15 @@ export function ExaminersRosterPanel({
           ? groups.find((g) => g.id === e.examiner_group_id)?.name ?? e.examiner_group_id.slice(0, 8)
           : null,
       }));
-  }, [examiners, groups, subjectTypeFilter, subjectById, roleFilter, regionFilter, subjectFilter, debouncedSearch, subjectLabel]);
+  }, [examiners, groups, subjectTypeFilter, subjectById, roleFilter, regionFilter, sourceFilter, subjectFilter, debouncedSearch, subjectLabel]);
 
   const activeFilterCount = useMemo(() => {
     let n = 0;
     if (!usePageSubjectScope && subjectTypeFilter !== "all") n += 1;
-    n += roleFilter.length + regionFilter.length;
+    n += roleFilter.length + regionFilter.length + sourceFilter.length;
     if (!usePageSubjectScope) n += subjectFilter.length;
     return n;
-  }, [roleFilter.length, regionFilter.length, subjectFilter.length, subjectTypeFilter, usePageSubjectScope]);
+  }, [roleFilter.length, regionFilter.length, sourceFilter.length, subjectFilter.length, subjectTypeFilter, usePageSubjectScope]);
 
   const selectedCount = Object.keys(rowSelection).length;
   const hasActiveFilters =
@@ -382,6 +397,13 @@ export function ExaminersRosterPanel({
         onRemove: () => setRegionFilter((prev) => prev.filter((v) => v !== reg)),
       });
     }
+    for (const source of sourceFilter) {
+      chips.push({
+        id: `source-${source}`,
+        label: `Source: ${ROSTER_SOURCE_LABELS[source as keyof typeof ROSTER_SOURCE_LABELS] ?? source}`,
+        onRemove: () => setSourceFilter((prev) => prev.filter((v) => v !== source)),
+      });
+    }
     if (!usePageSubjectScope) {
       for (const id of subjectFilter) {
         const opt = subjectOptions.find((o) => o.value === id);
@@ -393,7 +415,7 @@ export function ExaminersRosterPanel({
       }
     }
     return chips;
-  }, [debouncedSearch, subjectTypeFilter, roleFilter, regionFilter, subjectFilter, regionOptions, subjectOptions, usePageSubjectScope]);
+  }, [debouncedSearch, subjectTypeFilter, roleFilter, regionFilter, sourceFilter, subjectFilter, regionOptions, subjectOptions, usePageSubjectScope]);
 
   function clearFilters() {
     setSearchQuery("");
@@ -403,6 +425,7 @@ export function ExaminersRosterPanel({
     }
     setRoleFilter([]);
     setRegionFilter([]);
+    setSourceFilter([]);
   }
 
   function handleSubjectTypeFilterChange(next: ScriptControlSubjectTypeFilter) {
@@ -526,6 +549,52 @@ export function ExaminersRosterPanel({
       setDeleteImpact(null);
       setDeleteTarget(null);
       setActionMessage("Examiner removed.");
+      await loadData(examId);
+    } catch (e) {
+      setLoadError(e instanceof Error ? e.message : "Delete failed");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function handleBulkDelete() {
+    if (examId == null || selectedCount === 0) return;
+    const selectedRows = tableRows.filter((row) => rowSelection[row.id]);
+    setLoadError(null);
+    try {
+      const preview = await previewBulkExaminerDelete(
+        examId,
+        selectedRows.map((row) => row.id),
+      );
+      setBulkDeleteNames(selectedRows.map((row) => row.name));
+      setBulkDeletePreview(preview);
+    } catch (e) {
+      setLoadError(e instanceof Error ? e.message : "Delete failed");
+    }
+  }
+
+  async function confirmBulkDeleteExaminers() {
+    if (examId == null || bulkDeletePreview == null) return;
+    const selectedIds = tableRows.filter((row) => rowSelection[row.id]).map((row) => row.id);
+    if (selectedIds.length === 0) return;
+    setBusy(true);
+    setLoadError(null);
+    try {
+      const res = await bulkDeleteExaminationExaminers(examId, {
+        examiner_ids: selectedIds,
+        confirm_remove_allocations: bulkDeletePreview.requires_confirmation,
+      });
+      setBulkDeletePreview(null);
+      setBulkDeleteNames([]);
+      setRowSelection({});
+      if (res.deleted_count > 0) {
+        setActionMessage(
+          `Removed ${res.deleted_count} examiner${res.deleted_count === 1 ? "" : "s"}.`,
+        );
+      }
+      if (res.errors.length > 0) {
+        setLoadError(`${res.errors.length} examiner(s) could not be removed.`);
+      }
       await loadData(examId);
     } catch (e) {
       setLoadError(e instanceof Error ? e.message : "Delete failed");
@@ -684,6 +753,9 @@ export function ExaminersRosterPanel({
           regionOptions={regionOptions}
           regionFilter={regionFilter}
           onRegionFilterChange={setRegionFilter}
+          sourceOptions={sourceOptions}
+          sourceFilter={sourceFilter}
+          onSourceFilterChange={setSourceFilter}
           subjectOptions={subjectOptions}
           subjectFilter={subjectFilter}
           onSubjectFilterChange={setSubjectFilter}
@@ -701,6 +773,8 @@ export function ExaminersRosterPanel({
             setCustomSmsMessage("");
             setSmsModalOpen(true);
           }}
+          onBulkDelete={canEditRoster && selectedCount > 0 ? () => void handleBulkDelete() : undefined}
+          onClearSelection={() => setRowSelection({})}
           onAdd={openAdd}
           onBulkUpload={() => {
             setUploadError(null);
@@ -719,6 +793,7 @@ export function ExaminersRosterPanel({
           embedded={embedded}
           hideSubjectScopeFilters={usePageSubjectScope}
           mobileContactLayout={mobileContactLayout}
+          adminToolbarLayout={canManageRoster}
         />
 
         <div
@@ -905,6 +980,26 @@ export function ExaminersRosterPanel({
         examinerId={allocationTarget?.examinerId ?? null}
         examinerName={allocationTarget?.name ?? ""}
       />
+
+      {bulkDeletePreview ? (
+        <ExaminerBulkDeleteConfirmModal
+          mode="roster"
+          selectedCount={bulkDeleteNames.length}
+          selectedNames={bulkDeleteNames}
+          requiresConfirmation={bulkDeletePreview.requires_confirmation}
+          totalManualScripts={bulkDeletePreview.total_manual_scripts}
+          totalEnvelopes={bulkDeletePreview.total_envelopes}
+          allocationCampaignCount={bulkDeletePreview.allocation_campaign_count}
+          busy={busy}
+          onCancel={() => {
+            if (!busy) {
+              setBulkDeletePreview(null);
+              setBulkDeleteNames([]);
+            }
+          }}
+          onConfirm={() => void confirmBulkDeleteExaminers()}
+        />
+      ) : null}
 
       {deleteImpact ? (
         <ExaminerDeleteConfirmModal

@@ -21,6 +21,10 @@ from app.models import Examination, ExaminerInvitation, ExaminerInvitationStatus
 from app.schemas.examiner_invitation import (
     ExaminerInvitationBulkCoordinationResponse,
     ExaminerInvitationBulkCoordinationUpdate,
+    ExaminerInvitationBulkDeleteBody,
+    ExaminerInvitationBulkDeletePreviewResponse,
+    ExaminerInvitationBulkDeleteRequest,
+    ExaminerInvitationBulkDeleteResponse,
     ExaminerInvitationBulkImportResponse,
     ExaminerInvitationBulkImportRowError,
     ExaminerInvitationBulkSmsRequest,
@@ -42,6 +46,8 @@ from app.schemas.examiner_invitation import (
 )
 from app.schemas.script_allocation import ExaminerTypeSchema
 from app.services.examiner_invitation import (
+    aggregate_invitation_delete_preview,
+    build_bulk_invitation_delete_preview,
     create_examiner_invitation,
     delete_examiner_invitation,
     invitation_coordination_summary,
@@ -460,6 +466,130 @@ async def delete_examiner_invitation_endpoint(
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=msg) from exc
     await session.commit()
     return ExaminerInvitationDeleteResponse(deleted=True)
+
+
+@router.post(
+    "/examinations/{examination_id}/examiner-invitations/bulk-delete-preview",
+    response_model=ExaminerInvitationBulkDeletePreviewResponse,
+    summary="Preview impact of deleting selected examiner invitations",
+)
+async def bulk_examiner_invitation_delete_preview(
+    session: DBSessionDep,
+    user: SuperAdminOrTestAdminOfficerOrSubjectOfficerDep,
+    examination_id: int,
+    body: ExaminerInvitationBulkDeleteRequest,
+) -> ExaminerInvitationBulkDeletePreviewResponse:
+    assert_unrestricted_examiner_manager(user)
+    await _get_examination_or_404(session, examination_id)
+    unique_ids = list(dict.fromkeys(body.invitation_ids))
+    items, not_found_count, pending_count, accepted_count = await build_bulk_invitation_delete_preview(
+        session,
+        examination_id,
+        unique_ids,
+    )
+    invitation_count = len(unique_ids) - not_found_count
+    return aggregate_invitation_delete_preview(
+        items,
+        invitation_count=invitation_count,
+        pending_count=pending_count,
+        accepted_count=accepted_count,
+        not_found_count=not_found_count,
+    )
+
+
+@router.post(
+    "/examinations/{examination_id}/examiner-invitations/bulk-delete",
+    response_model=ExaminerInvitationBulkDeleteResponse,
+    summary="Delete selected examiner invitations",
+)
+async def bulk_delete_examiner_invitations(
+    session: DBSessionDep,
+    user: SuperAdminOrTestAdminOfficerOrSubjectOfficerDep,
+    examination_id: int,
+    body: ExaminerInvitationBulkDeleteBody,
+) -> ExaminerInvitationBulkDeleteResponse:
+    assert_unrestricted_examiner_manager(user)
+    await _get_examination_or_404(session, examination_id)
+    unique_ids = list(dict.fromkeys(body.invitation_ids))
+    items, not_found_count, pending_count, accepted_count = await build_bulk_invitation_delete_preview(
+        session,
+        examination_id,
+        unique_ids,
+    )
+    preview = aggregate_invitation_delete_preview(
+        items,
+        invitation_count=len(unique_ids) - not_found_count,
+        pending_count=pending_count,
+        accepted_count=accepted_count,
+        not_found_count=not_found_count,
+    )
+    if preview.requires_confirmation and not body.confirm_remove_allocations:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=preview.model_dump(mode="json"),
+        )
+
+    errors: list[ExaminerInvitationBulkSmsRowError] = []
+    deleted_count = 0
+    stmt = select(ExaminerInvitation).where(
+        ExaminerInvitation.examination_id == examination_id,
+        ExaminerInvitation.id.in_(unique_ids),
+    )
+    rows = {inv.id: inv for inv in (await session.execute(stmt)).scalars().all()}
+
+    for invitation_id in unique_ids:
+        inv = rows.get(invitation_id)
+        if inv is None:
+            errors.append(
+                ExaminerInvitationBulkSmsRowError(
+                    invitation_id=invitation_id,
+                    message="Invitation not found for this examination",
+                )
+            )
+            continue
+        try:
+            await _assert_invitation_accessible(session, user, examination_id, inv)
+            await delete_examiner_invitation(
+                session,
+                examination_id,
+                inv,
+                confirm_remove_allocations=body.confirm_remove_allocations,
+            )
+            deleted_count += 1
+        except ValueError as exc:
+            msg = str(exc)
+            try:
+                json.loads(msg)
+                errors.append(
+                    ExaminerInvitationBulkSmsRowError(
+                        invitation_id=invitation_id,
+                        message="Allocation impact requires confirmation",
+                    )
+                )
+            except json.JSONDecodeError:
+                errors.append(
+                    ExaminerInvitationBulkSmsRowError(
+                        invitation_id=invitation_id,
+                        message=msg,
+                    )
+                )
+        except HTTPException as exc:
+            errors.append(
+                ExaminerInvitationBulkSmsRowError(
+                    invitation_id=invitation_id,
+                    message=str(exc.detail),
+                )
+            )
+        except Exception as exc:
+            errors.append(
+                ExaminerInvitationBulkSmsRowError(
+                    invitation_id=invitation_id,
+                    message=str(exc),
+                )
+            )
+
+    await session.commit()
+    return ExaminerInvitationBulkDeleteResponse(deleted_count=deleted_count, errors=errors)
 
 
 @router.post(

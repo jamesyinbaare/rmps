@@ -393,6 +393,72 @@ async def delete_examiner_invitation(
     await session.flush()
 
 
+async def build_bulk_invitation_delete_preview(
+    session: AsyncSession,
+    examination_id: int,
+    invitation_ids: list[UUID],
+) -> tuple[list[ExaminerDeleteImpactResponse], int, int, int, int]:
+    from app.schemas.examiner_delete import ExaminerDeleteImpactResponse
+    from app.services.examiner_delete import build_examiner_delete_impact, load_examiner_for_delete
+
+    unique_ids = list(dict.fromkeys(invitation_ids))
+    items: list[ExaminerDeleteImpactResponse] = []
+    not_found_count = 0
+    pending_count = 0
+    accepted_count = 0
+
+    if not unique_ids:
+        return items, not_found_count, pending_count, accepted_count
+
+    stmt = select(ExaminerInvitation).where(
+        ExaminerInvitation.examination_id == examination_id,
+        ExaminerInvitation.id.in_(unique_ids),
+    )
+    rows = {inv.id: inv for inv in (await session.execute(stmt)).scalars().all()}
+
+    for invitation_id in unique_ids:
+        inv = rows.get(invitation_id)
+        if inv is None:
+            not_found_count += 1
+            continue
+        if inv.status == ExaminerInvitationStatus.ACCEPTED and inv.examiner_id is not None:
+            accepted_count += 1
+            examiner = await load_examiner_for_delete(session, examination_id, inv.examiner_id)
+            if examiner is not None:
+                items.append(await build_examiner_delete_impact(session, examination_id, examiner))
+        else:
+            pending_count += 1
+
+    return items, not_found_count, pending_count, accepted_count
+
+
+def aggregate_invitation_delete_preview(
+    items: list,
+    *,
+    invitation_count: int,
+    pending_count: int,
+    accepted_count: int,
+    not_found_count: int,
+):
+    from app.schemas.examiner_invitation import ExaminerInvitationBulkDeletePreviewResponse
+
+    total_manual_scripts = sum(item.total_manual_scripts for item in items)
+    total_envelopes = sum(item.total_envelopes for item in items)
+    allocation_campaign_count = sum(len(item.allocation_campaigns) for item in items)
+    requires_confirmation = any(item.requires_confirmation for item in items)
+    return ExaminerInvitationBulkDeletePreviewResponse(
+        invitation_count=invitation_count,
+        pending_count=pending_count,
+        accepted_count=accepted_count,
+        requires_confirmation=requires_confirmation,
+        total_manual_scripts=total_manual_scripts,
+        total_envelopes=total_envelopes,
+        allocation_campaign_count=allocation_campaign_count,
+        items=items,
+        not_found_count=not_found_count,
+    )
+
+
 async def update_invitation_coordination_schedule(
     session: AsyncSession,
     inv: ExaminerInvitation,

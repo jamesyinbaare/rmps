@@ -24,6 +24,7 @@ from app.models import (
 )
 from app.schemas.examiner_delete import (
     ExaminerAllocationCampaignItem,
+    ExaminerBulkDeletePreviewResponse,
     ExaminerDeleteImpactResponse,
     ExaminerEnvelopeAssignmentItem,
     ExaminerManualAllocationItem,
@@ -214,3 +215,39 @@ async def load_examiner_for_delete(
         .options(selectinload(Examiner.subjects))
     )
     return (await session.execute(stmt)).scalar_one_or_none()
+
+
+async def build_bulk_examiner_delete_preview(
+    session: AsyncSession,
+    examination_id: int,
+    examiner_ids: list[UUID],
+) -> tuple[list[ExaminerDeleteImpactResponse], int]:
+    unique_ids = list(dict.fromkeys(examiner_ids))
+    items: list[ExaminerDeleteImpactResponse] = []
+    not_found_count = 0
+    for examiner_id in unique_ids:
+        examiner = await load_examiner_for_delete(session, examination_id, examiner_id)
+        if examiner is None:
+            not_found_count += 1
+            continue
+        items.append(await build_examiner_delete_impact(session, examination_id, examiner))
+    return items, not_found_count
+
+
+def aggregate_examiner_delete_impacts(
+    items: list[ExaminerDeleteImpactResponse],
+    *,
+    not_found_count: int = 0,
+) -> ExaminerBulkDeletePreviewResponse:
+    total_manual_scripts = sum(item.total_manual_scripts for item in items)
+    total_envelopes = sum(item.total_envelopes for item in items)
+    allocation_campaign_count = sum(len(item.allocation_campaigns) for item in items)
+    requires_confirmation = any(item.requires_confirmation for item in items)
+    return ExaminerBulkDeletePreviewResponse(
+        items=items,
+        requires_confirmation=requires_confirmation,
+        total_manual_scripts=total_manual_scripts,
+        total_envelopes=total_envelopes,
+        allocation_campaign_count=allocation_campaign_count,
+        not_found_count=not_found_count,
+    )

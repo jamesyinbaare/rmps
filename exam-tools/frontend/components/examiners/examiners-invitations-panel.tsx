@@ -26,6 +26,7 @@ import { InvitationsSummaryStats } from "@/components/examiner-invitations/invit
 import { InvitationsTable } from "@/components/examiner-invitations/invitations-table";
 import { InvitationsMobileList } from "@/components/examiners/invitations-mobile-list";
 import { SO_MOBILE_CONTENT_PADDING } from "@/components/examiners/constants";
+import { ExaminerBulkDeleteConfirmModal } from "@/components/examiners/examiner-bulk-delete-confirm-modal";
 import { ExaminerDeleteConfirmModal } from "@/components/examiners/examiner-delete-confirm-modal";
 import { ExaminerPortalLinkRegenerateConfirmModal } from "@/components/examiners/examiner-portal-link-regenerate-confirm-modal";
 import { ExaminerAllocationModal } from "@/components/examiner-invitations/examiner-allocation-modal";
@@ -53,6 +54,7 @@ import { Button } from "@/components/ui/button";
 import {
   bulkSendExaminerInvitationCustomSms,
   bulkSetExaminerInvitationCoordinationSchedule,
+  bulkDeleteExaminerInvitations,
   bulkUploadExaminerInvitations,
   createExaminerInvitation,
   deleteExaminerInvitation,
@@ -60,12 +62,14 @@ import {
   downloadExaminerInvitationsBulkTemplate,
   getExaminerDeletePreview,
   listExaminerInvitations,
+  previewBulkExaminerInvitationDelete,
   regenerateExaminerInvitationLink,
   renewExaminerInvitation,
   resendExaminerInvitationSms,
   updateExaminerInvitationDetails,
   updateExaminerInvitationResponseDeadline,
   type ExaminerDeleteImpact,
+  type ExaminerInvitationBulkDeletePreview,
   type ExaminerInvitationBulkImportResponse,
   type ExaminerInvitationBulkSmsResponse,
   type ExaminerInvitationRow,
@@ -140,6 +144,10 @@ export function ExaminersInvitationsPanel({
   const [editError, setEditError] = useState<string | null>(null);
   const [deleteInvitationTarget, setDeleteInvitationTarget] = useState<ExaminerInvitationRow | null>(null);
   const [deleteImpact, setDeleteImpact] = useState<ExaminerDeleteImpact | null>(null);
+  const [bulkDeletePreview, setBulkDeletePreview] = useState<ExaminerInvitationBulkDeletePreview | null>(
+    null,
+  );
+  const [bulkDeleteNames, setBulkDeleteNames] = useState<string[]>([]);
   const [renewError, setRenewError] = useState<string | null>(null);
   const [renewDeadlineInput, setRenewDeadlineInput] = useState("");
   const [renewSendSms, setRenewSendSms] = useState(true);
@@ -1015,6 +1023,53 @@ export function ExaminersInvitationsPanel({
     }
   }
 
+  async function handleBulkDeleteInvitations() {
+    if (examId == null || selectedCount === 0) return;
+    const selectedRows = filteredRows.filter((row) => rowSelection[row.id]);
+    setLoadError(null);
+    try {
+      const preview = await previewBulkExaminerInvitationDelete(
+        examId,
+        selectedRows.map((row) => row.id),
+      );
+      setBulkDeleteNames(selectedRows.map((row) => row.name));
+      setBulkDeletePreview(preview);
+    } catch (e) {
+      setLoadError(e instanceof Error ? e.message : "Delete failed");
+    }
+  }
+
+  async function confirmBulkDeleteInvitations() {
+    if (examId == null || bulkDeletePreview == null) return;
+    const selectedIds = filteredRows.filter((row) => rowSelection[row.id]).map((row) => row.id);
+    if (selectedIds.length === 0) return;
+    setBusy(true);
+    setLoadError(null);
+    try {
+      const res = await bulkDeleteExaminerInvitations(examId, {
+        invitation_ids: selectedIds,
+        confirm_remove_allocations: bulkDeletePreview.requires_confirmation,
+      });
+      setBulkDeletePreview(null);
+      setBulkDeleteNames([]);
+      setRowSelection({});
+      setActionMessageTone(res.errors.length ? "error" : "success");
+      if (res.deleted_count > 0) {
+        setActionMessage(
+          `Deleted ${res.deleted_count} invitation${res.deleted_count === 1 ? "" : "s"}.`,
+        );
+      }
+      if (res.errors.length > 0) {
+        setLoadError(`${res.errors.length} invitation(s) could not be deleted.`);
+      }
+      await loadInvitations(examId);
+    } catch (e) {
+      setLoadError(e instanceof Error ? e.message : "Delete failed");
+    } finally {
+      setBusy(false);
+    }
+  }
+
   return (
     <>
       {loadError ? (
@@ -1087,6 +1142,12 @@ export function ExaminersInvitationsPanel({
             setBatchCoordinationDraft(emptyInvitationCoordinationDraft());
             setCoordinationModalOpen(true);
           }}
+          onBulkDelete={
+            canManageInvitations && selectedCount > 0
+              ? () => void handleBulkDeleteInvitations()
+              : undefined
+          }
+          onClearSelection={() => setRowSelection({})}
           onBulkUpload={() => {
             setUploadError(null);
             setUploadResult(null);
@@ -1103,6 +1164,7 @@ export function ExaminersInvitationsPanel({
           readOnly={readOnly}
           hideSubjectScopeFilters={usePageSubjectScope}
           mobileContactLayout={mobileContactLayout}
+          adminToolbarLayout={canManageInvitations}
         />
 
         <div className={pageScroll ? "flex flex-col" : "flex min-h-0 flex-1 flex-col"}>
@@ -1128,7 +1190,7 @@ export function ExaminersInvitationsPanel({
                   : "flex min-h-0 flex-1 flex-col gap-2 p-2 sm:p-3",
               )}
             >
-            {selectedCount > 0 ? (
+            {selectedCount > 0 && readOnly ? (
               <p className="text-sm text-muted-foreground">{selectedCount} selected</p>
             ) : null}
 
@@ -1293,6 +1355,28 @@ export function ExaminersInvitationsPanel({
         onNameChange={setEditName}
         onExaminerTypeChange={setEditExaminerType}
       />
+
+      {bulkDeletePreview ? (
+        <ExaminerBulkDeleteConfirmModal
+          mode="invitations"
+          selectedCount={bulkDeleteNames.length}
+          selectedNames={bulkDeleteNames}
+          pendingCount={bulkDeletePreview.pending_count}
+          acceptedCount={bulkDeletePreview.accepted_count}
+          requiresConfirmation={bulkDeletePreview.requires_confirmation}
+          totalManualScripts={bulkDeletePreview.total_manual_scripts}
+          totalEnvelopes={bulkDeletePreview.total_envelopes}
+          allocationCampaignCount={bulkDeletePreview.allocation_campaign_count}
+          busy={busy}
+          onCancel={() => {
+            if (!busy) {
+              setBulkDeletePreview(null);
+              setBulkDeleteNames([]);
+            }
+          }}
+          onConfirm={() => void confirmBulkDeleteInvitations()}
+        />
+      ) : null}
 
       {deleteImpact && deleteInvitationTarget ? (
         <ExaminerDeleteConfirmModal

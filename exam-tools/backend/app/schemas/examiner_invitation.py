@@ -6,6 +6,7 @@ from uuid import UUID
 
 from pydantic import BaseModel, Field
 
+from app.schemas.examiner_delete import ExaminerDeleteImpactResponse
 from app.schemas.script_allocation import ExaminerTypeSchema
 
 
@@ -195,6 +196,31 @@ class ExaminerInvitationUpdate(ExaminerInvitationCoordinationFields):
 
 class ExaminerInvitationDeleteResponse(BaseModel):
     deleted: bool = True
+
+
+class ExaminerInvitationBulkDeleteRequest(BaseModel):
+    invitation_ids: list[UUID] = Field(min_length=1, max_length=500)
+
+
+class ExaminerInvitationBulkDeletePreviewResponse(BaseModel):
+    invitation_count: int = 0
+    pending_count: int = 0
+    accepted_count: int = 0
+    requires_confirmation: bool = False
+    total_manual_scripts: int = 0
+    total_envelopes: int = 0
+    allocation_campaign_count: int = 0
+    items: list[ExaminerDeleteImpactResponse] = Field(default_factory=list)
+    not_found_count: int = 0
+
+
+class ExaminerInvitationBulkDeleteBody(ExaminerInvitationBulkDeleteRequest):
+    confirm_remove_allocations: bool = False
+
+
+class ExaminerInvitationBulkDeleteResponse(BaseModel):
+    deleted_count: int
+    errors: list[ExaminerInvitationBulkSmsRowError] = Field(default_factory=list)
 
 
 class ExaminerInvitationBulkCoordinationUpdate(ExaminerInvitationCoordinationFields):
