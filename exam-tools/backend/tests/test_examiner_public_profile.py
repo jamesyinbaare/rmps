@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta
 from decimal import Decimal
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import uuid4
 
 import pytest
@@ -12,6 +12,7 @@ import pytest
 from app.models import ExaminerAllowanceType, ExaminerInvitationStatus, ExaminerType, Region, Subject
 from app.services.examiner_invitation import public_invitation_view
 from app.services.examiner_public_profile import (
+    get_examiner_scripts_allocation,
     get_scripts_allocation_for_invitation,
     require_accepted_invitation_for_profile,
 )
@@ -127,8 +128,56 @@ async def test_get_scripts_allocation_for_invitation_empty_when_no_runs() -> Non
     alloc_result.scalars.return_value.all.return_value = []
     session.execute = AsyncMock(return_value=alloc_result)
 
-    data = await get_scripts_allocation_for_invitation(session, inv)
+    with patch(
+        "app.services.examiner_public_profile.is_scripts_allocation_visible_for_examiner",
+        new_callable=AsyncMock,
+        return_value=True,
+    ):
+        data = await get_scripts_allocation_for_invitation(session, inv)
     assert data == {"blocks": []}
+
+
+@pytest.mark.asyncio
+async def test_get_examiner_scripts_allocation_gated_returns_empty_blocks() -> None:
+    session = AsyncMock()
+    examiner_id = uuid4()
+
+    with patch(
+        "app.services.examiner_public_profile.is_scripts_allocation_visible_for_examiner",
+        new_callable=AsyncMock,
+        return_value=False,
+    ):
+        data = await get_examiner_scripts_allocation(
+            session,
+            examiner_id=examiner_id,
+            examination_id=1,
+            subject_id=10,
+            apply_release_gate=True,
+        )
+
+    assert data == {"blocks": []}
+    session.execute.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_get_examiner_scripts_allocation_staff_bypasses_gate() -> None:
+    session = AsyncMock()
+    examiner_id = uuid4()
+
+    alloc_result = MagicMock()
+    alloc_result.scalars.return_value.all.return_value = []
+    session.execute = AsyncMock(return_value=alloc_result)
+
+    data = await get_examiner_scripts_allocation(
+        session,
+        examiner_id=examiner_id,
+        examination_id=1,
+        subject_id=10,
+        apply_release_gate=False,
+    )
+
+    assert data == {"blocks": []}
+    session.execute.assert_called()
 
 
 def test_appointment_letter_pdf_returns_pdf_bytes() -> None:

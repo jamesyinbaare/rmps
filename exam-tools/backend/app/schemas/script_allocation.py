@@ -153,6 +153,11 @@ class ExaminerResponse(BaseModel):
     reference_code: str | None = None
     town: str | None = None
     ghanapost_gps_address: str | None = None
+    background_occupation_type: str | None = None
+    background_institution_name: str | None = None
+    background_teaching_subject: str | None = None
+    background_industry: str | None = None
+    background_specialization: str | None = None
     subject_ids: list[int]
     deviation_weight: float | None
     examiner_group_id: UUID | None = None

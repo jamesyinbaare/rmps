@@ -279,7 +279,13 @@ async def accept_examiner_invitation(session: AsyncSession, inv: ExaminerInvitat
     return AcceptInvitationResult(outcome="accepted", examiner=examiner)
 
 
-async def decline_examiner_invitation(session: AsyncSession, inv: ExaminerInvitation) -> None:
+async def decline_examiner_invitation(
+    session: AsyncSession,
+    inv: ExaminerInvitation,
+    *,
+    reason: str | None = None,
+    consider_future_examinations: bool | None = None,
+) -> None:
     if inv.status == ExaminerInvitationStatus.DECLINED:
         return
     if _expire_if_confirmation_deadline_passed(inv):
@@ -292,6 +298,9 @@ async def decline_examiner_invitation(session: AsyncSession, inv: ExaminerInvita
         raise ValueError("This invitation is no longer available.")
     inv.status = ExaminerInvitationStatus.DECLINED
     inv.responded_at = datetime.utcnow()
+    normalized_reason = (reason or "").strip()
+    inv.decline_reason = normalized_reason or None
+    inv.decline_consider_future_examinations = consider_future_examinations
     await session.flush()
 
 
@@ -601,6 +610,8 @@ async def renew_examiner_invitation(
     inv.response_deadline = deadline
     inv.token_expires_at = deadline
     inv.responded_at = None
+    inv.decline_reason = None
+    inv.decline_consider_future_examinations = None
     inv.invited_by_user_id = invited_by_user_id
     inv.updated_at = datetime.utcnow()
     await session.flush()

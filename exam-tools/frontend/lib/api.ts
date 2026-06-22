@@ -4019,6 +4019,11 @@ export type ExaminerRow = {
   reference_code: string | null;
   town?: string | null;
   ghanapost_gps_address?: string | null;
+  background_occupation_type?: "teacher" | "other" | null;
+  background_institution_name?: string | null;
+  background_teaching_subject?: string | null;
+  background_industry?: string | null;
+  background_specialization?: string | null;
   subject_ids: number[];
   deviation_weight: number | null;
   examiner_group_id: string | null;
@@ -4198,6 +4203,8 @@ export type ExaminerInvitationRow = {
   sms_error?: string | null;
   sms_delivery_id?: string | null;
   public_url?: string | null;
+  decline_reason?: string | null;
+  decline_consider_future_examinations?: boolean | null;
 };
 
 export type ExaminerInvitationCreatePayload = {
@@ -4233,6 +4240,19 @@ export type ExaminerInvitationBulkCoordinationResponse = {
   errors: ExaminerInvitationBulkSmsRowError[];
 };
 
+export type ExaminerInvitationBulkResponseDeadlinePayload = {
+  invitation_ids: string[];
+  response_deadline: string;
+  send_sms?: boolean | null;
+};
+
+export type ExaminerInvitationBulkResponseDeadlineResponse = {
+  updated_count: number;
+  sms_sent_count: number;
+  sms_failed_count: number;
+  errors: ExaminerInvitationBulkSmsRowError[];
+};
+
 export type ExaminerMarkingCohortPublic = {
   id: string;
   name: string;
@@ -4245,6 +4265,7 @@ export type ExaminerMarkingCohortPublic = {
   marking_start_date: string | null;
   marking_end_date: string | null;
   marked_script_submission_deadline: string | null;
+  scripts_allocation_released?: boolean;
 };
 
 export type ExaminerInvitationPublic = {
@@ -4285,6 +4306,8 @@ export type ExaminerInvitationPublic = {
   bank_details_editable_by_examiners?: boolean;
   bank_details_available?: boolean;
   bank_details_pending_message?: string | null;
+  scripts_allocation_available?: boolean;
+  scripts_allocation_pending_message?: string | null;
 };
 
 export type AppointmentLettersReleaseMode = "on_acceptance" | "scheduled_date";
@@ -5320,6 +5343,20 @@ export async function bulkSetExaminerInvitationCoordinationSchedule(
   );
 }
 
+export async function bulkExtendExaminerInvitationResponseDeadline(
+  examinationId: number,
+  payload: ExaminerInvitationBulkResponseDeadlinePayload,
+): Promise<ExaminerInvitationBulkResponseDeadlineResponse> {
+  return apiJson<ExaminerInvitationBulkResponseDeadlineResponse>(
+    `/examinations/${examinationId}/examiner-invitations/bulk-response-deadline`,
+    {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    },
+  );
+}
+
 export async function bulkSendExaminerRosterCustomSms(
   examinationId: number,
   payload: ExaminerRosterBulkSmsPayload,
@@ -5342,10 +5379,21 @@ export async function acceptPublicExaminerInvitation(token: string): Promise<Exa
   );
 }
 
-export async function declinePublicExaminerInvitation(token: string): Promise<ExaminerInvitationActionResult> {
+export type ExaminerInvitationDeclinePayload = {
+  reason?: string | null;
+  consider_future_examinations?: boolean | null;
+};
+
+export async function declinePublicExaminerInvitation(
+  token: string,
+  payload?: ExaminerInvitationDeclinePayload,
+): Promise<ExaminerInvitationActionResult> {
   return publicApiJson<ExaminerInvitationActionResult>(
     `/public/examiner-invitations/${encodeURIComponent(token)}/decline`,
-    { method: "POST" },
+    {
+      method: "POST",
+      body: JSON.stringify(payload ?? {}),
+    },
   );
 }
 
@@ -5415,6 +5463,56 @@ export async function upsertPublicExaminerLocation(
 ): Promise<ExaminerLocationPublic> {
   return publicApiJson<ExaminerLocationPublic>(
     `/public/examiner-invitations/${encodeURIComponent(token)}/location`,
+    {
+      method: "PUT",
+      body: JSON.stringify(payload),
+    },
+  );
+}
+
+export type ExaminerBackgroundOccupationType = "teacher" | "other";
+
+export type ExaminerBackgroundSurveyPublic = {
+  occupation_type: ExaminerBackgroundOccupationType;
+  institution_name: string | null;
+  teaching_subject: string | null;
+  industry: string | null;
+  specialization: string | null;
+  updated_at: string;
+};
+
+export type ExaminerBackgroundSurveyUpsertPayload = {
+  occupation_type: ExaminerBackgroundOccupationType;
+  institution_name?: string | null;
+  teaching_subject?: string | null;
+  industry?: string | null;
+  specialization?: string | null;
+};
+
+export async function getPublicExaminerBackgroundSurvey(
+  token: string,
+): Promise<ExaminerBackgroundSurveyPublic | null> {
+  const url = `${getApiBaseUrl()}/public/examiner-invitations/${encodeURIComponent(token)}/background-survey`;
+  let res: Response;
+  try {
+    res = await fetch(url);
+  } catch (e) {
+    if (e instanceof TypeError) {
+      throw new Error(apiNetworkErrorMessage());
+    }
+    throw e;
+  }
+  if (res.status === 404) return null;
+  if (!res.ok) throw new Error(await parseErrorMessage(res));
+  return (await res.json()) as ExaminerBackgroundSurveyPublic;
+}
+
+export async function upsertPublicExaminerBackgroundSurvey(
+  token: string,
+  payload: ExaminerBackgroundSurveyUpsertPayload,
+): Promise<ExaminerBackgroundSurveyPublic> {
+  return publicApiJson<ExaminerBackgroundSurveyPublic>(
+    `/public/examiner-invitations/${encodeURIComponent(token)}/background-survey`,
     {
       method: "PUT",
       body: JSON.stringify(payload),
@@ -6283,6 +6381,8 @@ export type SubjectMarkingGroupRow = {
   marking_start_date: string | null;
   marking_end_date: string | null;
   marked_script_submission_deadline: string | null;
+  scripts_allocation_release_enabled?: boolean;
+  scripts_allocation_release_at?: string | null;
   created_at: string;
   updated_at: string;
 };
@@ -6582,6 +6682,8 @@ export async function updateSubjectMarkingGroup(
   groupId: string,
   payload: {
     name?: string;
+    scripts_allocation_release_enabled?: boolean;
+    scripts_allocation_release_at?: string | null;
   } & SubjectMarkingGroupSchedulePayload,
 ): Promise<SubjectMarkingGroupRow> {
   return apiJson<SubjectMarkingGroupRow>(

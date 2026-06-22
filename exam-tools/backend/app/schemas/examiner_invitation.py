@@ -62,6 +62,8 @@ class ExaminerInvitationResponse(ExaminerInvitationCoordinationFields):
     sms_error: str | None = None
     sms_delivery_id: UUID | None = None
     public_url: str | None = None
+    decline_reason: str | None = None
+    decline_consider_future_examinations: bool | None = None
 
     model_config = {"from_attributes": True}
 
@@ -97,6 +99,8 @@ class ExaminerInvitationPublicResponse(ExaminerInvitationCoordinationFields):
     bank_details_editable_by_examiners: bool = False
     bank_details_available: bool = False
     bank_details_pending_message: str | None = None
+    scripts_allocation_available: bool = False
+    scripts_allocation_pending_message: str | None = None
 
 
 class ExaminerMarkingCohortPublic(ExaminerInvitationCoordinationFields):
@@ -106,12 +110,18 @@ class ExaminerMarkingCohortPublic(ExaminerInvitationCoordinationFields):
     marking_start_date: datetime | None = None
     marking_end_date: datetime | None = None
     marked_script_submission_deadline: datetime | None = None
+    scripts_allocation_released: bool = False
 
 
 class ExaminerInvitationActionResponse(BaseModel):
     status: ExaminerInvitationStatusSchema
     message: str
     examiner_id: UUID | None = None
+
+
+class ExaminerInvitationDeclineRequest(BaseModel):
+    reason: str | None = None
+    consider_future_examinations: bool | None = None
 
 
 class ExaminerInvitationResendResponse(BaseModel):
@@ -232,3 +242,16 @@ class ExaminerInvitationBulkCoordinationUpdate(ExaminerInvitationCoordinationFie
 class ExaminerInvitationBulkCoordinationResponse(BaseModel):
     updated_count: int
     errors: list[ExaminerInvitationBulkSmsRowError]
+
+
+class ExaminerInvitationBulkResponseDeadlineUpdate(BaseModel):
+    invitation_ids: list[UUID] = Field(min_length=1, max_length=500)
+    response_deadline: datetime
+    send_sms: bool | None = None
+
+
+class ExaminerInvitationBulkResponseDeadlineResponse(BaseModel):
+    updated_count: int
+    sms_sent_count: int = 0
+    sms_failed_count: int = 0
+    errors: list[ExaminerInvitationBulkSmsRowError] = Field(default_factory=list)

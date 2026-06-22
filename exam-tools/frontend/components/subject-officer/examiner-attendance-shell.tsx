@@ -3,11 +3,16 @@
 import { useCallback, useEffect, useId, useRef, useState } from "react";
 
 import { Html5Qrcode } from "html5-qrcode";
-import { Camera, CameraOff, CheckCircle2, Loader2, XCircle } from "lucide-react";
+import { Camera, CameraOff, Loader2 } from "lucide-react";
 
 import { humanizeRegion } from "@/components/examiners/utils";
 import { SubjectOfficerPanelShell } from "@/components/subject-officer/subject-officer-panel-shell";
 import { ExaminerAttendanceSheetsPanel } from "@/components/subject-officer/examiner-attendance-sheets-panel";
+import {
+  ScanVerificationResultOverlay,
+  ScanVerifyingOverlay,
+  type ScanVerificationResultTone,
+} from "@/components/subject-officer/scan-verification-result-overlay";
 import { SubjectOfficerWorkspaceStrip } from "@/components/subject-officer/subject-officer-workspace-strip";
 import { Button } from "@/components/ui/button";
 import {
@@ -22,6 +27,7 @@ import { formInputClass, formLabelClass } from "@/lib/form-classes";
 import { cn } from "@/lib/utils";
 
 const compactLabelClass = "text-xs font-medium text-muted-foreground";
+const SUCCESS_AUTO_DISMISS_MS = 2500;
 
 type Props = {
   examId?: number;
@@ -40,48 +46,49 @@ function attendanceSubtitle(result: ExaminerAttendanceMarkResult): string | null
   return parts.length > 0 ? parts.join(" · ") : null;
 }
 
-function AttendanceResultCard({ result }: { result: ExaminerAttendanceMarkResult }) {
-  const ok = result.valid && (result.recorded || result.already_marked);
-  const subtitle = attendanceSubtitle(result);
-
-  let title: string;
+function attendanceResultPresentation(result: ExaminerAttendanceMarkResult): {
+  tone: ScanVerificationResultTone;
+  title: string;
+  autoDismissMs?: number;
+} {
   if (!result.valid) {
-    title = result.message || "Could not mark attendance";
-  } else if (result.already_marked) {
-    title = result.name ? `${result.name} — already present today` : "Already present today";
-  } else if (result.name) {
-    title = result.name;
-  } else {
-    title = "Present";
+    return {
+      tone: "error",
+      title: result.message || "Could not mark attendance",
+    };
   }
+  if (result.already_marked) {
+    return {
+      tone: "warning",
+      title: result.name ? `${result.name} — already present today` : "Already present today",
+    };
+  }
+  return {
+    tone: "success",
+    title: result.name ? `${result.name} — marked present` : "Marked present",
+    autoDismissMs: result.recorded ? SUCCESS_AUTO_DISMISS_MS : undefined,
+  };
+}
 
-  return (
-    <div
-      className={cn(
-        "rounded-2xl border px-4 py-3.5 sm:px-5",
-        ok ? "border-emerald-500/40 bg-emerald-500/10" : "border-destructive/40 bg-destructive/10",
-      )}
-    >
-      <div className="flex items-start gap-3">
-        {ok ? (
-          <CheckCircle2 className="mt-0.5 size-5 shrink-0 text-emerald-600" aria-hidden />
-        ) : (
-          <XCircle className="mt-0.5 size-5 shrink-0 text-destructive" aria-hidden />
-        )}
-        <div className="min-w-0 flex-1">
-          <p className={cn("font-semibold leading-snug", ok ? "text-emerald-900" : "text-destructive")}>
-            {title}
-          </p>
-          {ok && subtitle ? (
-            <p className="mt-1 text-sm text-emerald-800/80">{subtitle}</p>
-          ) : null}
-          {!ok && result.message ? (
-            <p className="mt-1 text-sm text-destructive">{result.message}</p>
-          ) : null}
-        </div>
-      </div>
-    </div>
-  );
+function AttendanceResultBody({ result }: { result: ExaminerAttendanceMarkResult }) {
+  const subtitle = attendanceSubtitle(result);
+  const ok = result.valid && (result.recorded || result.already_marked);
+
+  if (ok && subtitle) {
+    return (
+      <p className="rounded-xl border border-border/70 bg-muted/25 px-3.5 py-3 text-center text-foreground sm:text-left">
+        {subtitle}
+      </p>
+    );
+  }
+  if (!ok && result.message) {
+    return (
+      <p className="rounded-xl border border-destructive/25 bg-destructive/5 px-3.5 py-3 text-center text-destructive sm:text-left">
+        {result.message}
+      </p>
+    );
+  }
+  return null;
 }
 
 export function ExaminerAttendanceShell({
@@ -129,6 +136,11 @@ export function ExaminerAttendanceShell({
     }
   }, [adminMode]);
 
+  const dismissResult = useCallback(() => {
+    setResult(null);
+    lastScannedRef.current = null;
+  }, []);
+
   const stopScanner = useCallback(async () => {
     const scanner = scannerRef.current;
     if (!scanner) return;
@@ -141,6 +153,19 @@ export function ExaminerAttendanceShell({
     scannerRef.current = null;
   }, []);
 
+  const handleMarkResponse = useCallback(
+    async (response: ExaminerAttendanceMarkResult) => {
+      setResult(response);
+      if (response.recorded) await loadList();
+      if (!response.valid) {
+        window.setTimeout(() => {
+          lastScannedRef.current = null;
+        }, 2500);
+      }
+    },
+    [loadList],
+  );
+
   const runScanMark = useCallback(
     async (rawCode: string) => {
       const code = rawCode.trim().toUpperCase();
@@ -151,13 +176,7 @@ export function ExaminerAttendanceShell({
       setResult(null);
       try {
         const response = await markExaminerAttendanceScan(code, { admin: adminMode });
-        setResult(response);
-        if (response.recorded) await loadList();
-        if (!response.valid) {
-          window.setTimeout(() => {
-            lastScannedRef.current = null;
-          }, 2500);
-        }
+        await handleMarkResponse(response);
       } catch (err) {
         setResult({
           valid: false,
@@ -171,7 +190,7 @@ export function ExaminerAttendanceShell({
         setVerifying(false);
       }
     },
-    [adminMode, loadList],
+    [adminMode, handleMarkResponse],
   );
 
   const runManualMark = useCallback(
@@ -184,8 +203,7 @@ export function ExaminerAttendanceShell({
       setResult(null);
       try {
         const response = await markExaminerAttendance(manualExamId, code, { admin: adminMode });
-        setResult(response);
-        if (response.recorded) await loadList();
+        await handleMarkResponse(response);
       } catch (err) {
         setResult({
           valid: false,
@@ -196,7 +214,7 @@ export function ExaminerAttendanceShell({
         setVerifying(false);
       }
     },
-    [adminMode, loadList, manualExamId],
+    [adminMode, handleMarkResponse, manualExamId],
   );
 
   const handleScan = useCallback(
@@ -238,6 +256,8 @@ export function ExaminerAttendanceShell({
     void loadList();
   }, [loadList]);
 
+  const resultPresentation = result ? attendanceResultPresentation(result) : null;
+
   return (
     <SubjectOfficerPanelShell>
       <div className="mx-auto flex w-full max-w-6xl flex-col gap-5">
@@ -250,7 +270,7 @@ export function ExaminerAttendanceShell({
 
         <div className="grid gap-5 lg:grid-cols-[minmax(0,1fr)_minmax(300px,380px)] lg:items-start">
           <div className="flex min-w-0 flex-col gap-5">
-            <div className="overflow-hidden rounded-2xl border border-border/70 bg-card/90 shadow-sm">
+            <div className="relative overflow-hidden rounded-2xl border border-border/70 bg-card/90 shadow-sm">
               <div className="flex flex-wrap items-end gap-3 border-b border-border/70 bg-muted/15 px-4 py-3.5 sm:px-5">
                 <div className="min-w-0 w-full sm:w-auto sm:min-w-38">
                   <span className={compactLabelClass}>Camera</span>
@@ -280,6 +300,8 @@ export function ExaminerAttendanceShell({
                   Camera is off. Use manual verification below or start the camera again.
                 </div>
               )}
+
+              {verifying ? <ScanVerifyingOverlay /> : null}
             </div>
 
             <div className="overflow-hidden rounded-2xl border border-border/70 bg-card/90 shadow-sm">
@@ -335,8 +357,6 @@ export function ExaminerAttendanceShell({
                 </div>
               </form>
             </div>
-
-            {result ? <AttendanceResultCard result={result} /> : null}
           </div>
 
           <div className="rounded-2xl border border-border/70 bg-card/90 p-4 shadow-sm">
@@ -365,6 +385,18 @@ export function ExaminerAttendanceShell({
           <ExaminerAttendanceSheetsPanel examId={workspaceExamId} subjectId={workspaceSubjectId} />
         ) : null}
       </div>
+
+      {result && resultPresentation ? (
+        <ScanVerificationResultOverlay
+          open
+          tone={resultPresentation.tone}
+          title={resultPresentation.title}
+          autoDismissMs={resultPresentation.autoDismissMs}
+          onDismiss={dismissResult}
+        >
+          <AttendanceResultBody result={result} />
+        </ScanVerificationResultOverlay>
+      ) : null}
     </SubjectOfficerPanelShell>
   );
 }

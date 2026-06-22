@@ -5,6 +5,7 @@ import { useCallback, useMemo, useState, type KeyboardEvent } from "react";
 import { Search, ChevronRight, CalendarDays, Users } from "lucide-react";
 
 import { cohortScheduleSummaryParts } from "@/components/cohorts/cohort-schedule-fields";
+import { CohortScriptsAllocationReleaseStatusBadge } from "@/components/cohorts/cohort-scripts-allocation-release-status-badge";
 import { EXAMINER_TYPE_LABELS } from "@/components/examiner-invitations/constants";
 import type { CohortListItem } from "@/components/cohorts/types";
 import { Badge } from "@/components/ui/badge";
@@ -37,6 +38,8 @@ type Props = {
   hideNewButton?: boolean;
   /** Show schedule column (subject cohorts). */
   showScheduleColumn?: boolean;
+  /** Show scripts allocation release status (admin cohorts tab). */
+  showReleaseColumn?: boolean;
   /** Lighter horizontal gutter on small screens (subject-officer mobile). */
   compactMobileGutter?: boolean;
 };
@@ -80,6 +83,7 @@ export function CohortListColumn({
   entityLabel = "cohort",
   hideNewButton = false,
   showScheduleColumn = false,
+  showReleaseColumn = false,
   compactMobileGutter = false,
 }: Props) {
   const [search, setSearch] = useState("");
@@ -187,6 +191,12 @@ export function CohortListColumn({
                               Default
                             </Badge>
                           ) : null}
+                          {showReleaseColumn ? (
+                            <CohortScriptsAllocationReleaseStatusBadge
+                              enabled={c.scriptsAllocationReleaseEnabled === true}
+                              releaseAt={c.scriptsAllocationReleaseAt ?? null}
+                            />
+                          ) : null}
                         </div>
                         <div className="mt-1.5 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted-foreground">
                           <span className="inline-flex items-center gap-1">
@@ -222,6 +232,9 @@ export function CohortListColumn({
                       <TableHead className="w-28 whitespace-nowrap">Examiners</TableHead>
                       {showScheduleColumn ? (
                         <TableHead className="min-w-48">Schedule</TableHead>
+                      ) : null}
+                      {showReleaseColumn ? (
+                        <TableHead className="w-32 whitespace-nowrap">Allocation</TableHead>
                       ) : null}
                       <TableHead className="min-w-36">Rules</TableHead>
                     </TableRow>
@@ -271,6 +284,14 @@ export function CohortListColumn({
                               ) : (
                                 <span className="italic">No schedule</span>
                               )}
+                            </TableCell>
+                          ) : null}
+                          {showReleaseColumn ? (
+                            <TableCell>
+                              <CohortScriptsAllocationReleaseStatusBadge
+                                enabled={c.scriptsAllocationReleaseEnabled === true}
+                                releaseAt={c.scriptsAllocationReleaseAt ?? null}
+                              />
                             </TableCell>
                           ) : null}
                           <TableCell>

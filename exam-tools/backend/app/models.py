@@ -128,6 +128,11 @@ class ExaminerRosterSource(enum.Enum):
     INVITATION = "invitation"
 
 
+class ExaminerBackgroundOccupationType(enum.Enum):
+    TEACHER = "teacher"
+    OTHER = "other"
+
+
 class AllocationRunStatus(enum.Enum):
     DRAFT = "draft"
     OPTIMAL = "optimal"
@@ -1400,6 +1405,10 @@ class SubjectMarkingGroup(Base):
     marking_start_date = Column(DateTime, nullable=True)
     marking_end_date = Column(DateTime, nullable=True)
     marked_script_submission_deadline = Column(DateTime, nullable=True)
+    scripts_allocation_release_enabled = Column(
+        Boolean, nullable=False, default=False, server_default=text("false")
+    )
+    scripts_allocation_release_at = Column(DateTime, nullable=True)
     is_default = Column(Boolean, nullable=False, default=False, server_default=text("false"))
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
@@ -1502,6 +1511,11 @@ class Examiner(Base):
     reference_code = Column(String(64), nullable=True)
     town = Column(String(255), nullable=True)
     ghanapost_gps_address = Column(String(50), nullable=True)
+    background_occupation_type = Column(String(16), nullable=True)
+    background_institution_name = Column(String(255), nullable=True)
+    background_teaching_subject = Column(String(255), nullable=True)
+    background_industry = Column(String(255), nullable=True)
+    background_specialization = Column(String(255), nullable=True)
     roster_source = Column(
         Enum(
             ExaminerRosterSource,
@@ -1665,6 +1679,8 @@ class ExaminerInvitation(Base):
         nullable=True,
         index=True,
     )
+    decline_reason = Column(Text, nullable=True)
+    decline_consider_future_examinations = Column(Boolean, nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
 

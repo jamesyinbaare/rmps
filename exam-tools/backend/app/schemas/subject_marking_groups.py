@@ -28,6 +28,8 @@ class SubjectMarkingGroupUpdate(BaseModel):
     marking_start_date: datetime | None = None
     marking_end_date: datetime | None = None
     marked_script_submission_deadline: datetime | None = None
+    scripts_allocation_release_enabled: bool | None = None
+    scripts_allocation_release_at: datetime | None = None
 
 
 class SubjectMarkingGroupMembersReplace(BaseModel):
@@ -54,6 +56,8 @@ class SubjectMarkingGroupResponse(BaseModel):
     marking_start_date: datetime | None
     marking_end_date: datetime | None
     marked_script_submission_deadline: datetime | None
+    scripts_allocation_release_enabled: bool = False
+    scripts_allocation_release_at: datetime | None = None
     created_at: datetime
     updated_at: datetime
 

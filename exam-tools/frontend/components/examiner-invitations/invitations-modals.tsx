@@ -586,6 +586,88 @@ export function SetCoordinationDateModal(props: SetCoordinationDateModalProps) {
   );
 }
 
+export type BulkExtendRespondByModalProps = {
+  open: boolean;
+  busy: boolean;
+  error: string | null;
+  recipientCount: number;
+  eligibleCount: number;
+  ineligibleCount: number;
+  responseDeadlineInput: string;
+  sendSms: boolean;
+  onClose: () => void;
+  onSubmit: () => void;
+  onResponseDeadlineChange: (v: string) => void;
+  onSendSmsChange: (v: boolean) => void;
+};
+
+export function BulkExtendRespondByModal(props: BulkExtendRespondByModalProps) {
+  if (!props.open) return null;
+  return (
+    <InvitationModalShell
+      title="Extend respond-by"
+      titleId="ei-bulk-extend-deadline-title"
+      canClose={!props.busy}
+      onClose={props.onClose}
+      footer={
+        <div className="flex flex-wrap justify-end gap-2">
+          <Button type="button" variant="outline" disabled={props.busy} onClick={props.onClose}>
+            Cancel
+          </Button>
+          <Button type="button" disabled={props.busy} onClick={props.onSubmit}>
+            {props.busy ? "Saving…" : "Save deadline"}
+          </Button>
+        </div>
+      }
+    >
+      <p className="text-sm text-muted-foreground">
+        Set a new respond-by deadline for {props.recipientCount} selected invitation
+        {props.recipientCount === 1 ? "" : "s"}. The same public links are kept.
+      </p>
+      {props.eligibleCount < props.recipientCount ? (
+        <p className="mt-2 text-sm text-amber-800 dark:text-amber-300">
+          {props.eligibleCount} can be extended (pending, expired, or quota waitlist).{" "}
+          {props.ineligibleCount} accepted or declined invitation
+          {props.ineligibleCount === 1 ? "" : "s"} will be skipped.
+        </p>
+      ) : null}
+      {props.error ? (
+        <p className="mt-3 rounded-lg border border-destructive/40 bg-destructive/10 px-3 py-2 text-sm text-destructive">
+          {props.error}
+        </p>
+      ) : null}
+      <div className="mt-4 space-y-4">
+        <div>
+          <label className={formLabelClass} htmlFor="ei-bulk-extend-deadline">
+            Respond by
+          </label>
+          <input
+            id="ei-bulk-extend-deadline"
+            type="datetime-local"
+            required
+            className={cn(formInputClass, "mt-1")}
+            value={props.responseDeadlineInput}
+            disabled={props.busy}
+            onChange={(e) => props.onResponseDeadlineChange(e.target.value)}
+          />
+          <p className="mt-1 text-xs text-muted-foreground">
+            Required — last date/time the invitee can accept or decline.
+          </p>
+        </div>
+        <label className="flex items-center gap-2 text-sm">
+          <input
+            type="checkbox"
+            checked={props.sendSms}
+            disabled={props.busy}
+            onChange={(e) => props.onSendSmsChange(e.target.checked)}
+          />
+          Send invitation by SMS
+        </label>
+      </div>
+    </InvitationModalShell>
+  );
+}
+
 export type CustomSmsModalProps = {
   open: boolean;
   busy: boolean;

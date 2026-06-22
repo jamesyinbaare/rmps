@@ -1,10 +1,13 @@
 import type { CohortScheduleDraft } from "@/components/cohorts/cohort-schedule-utils";
+import type { ScriptsAllocationReleaseDraft } from "@/components/cohorts/cohort-scripts-allocation-release-utils";
+import { scriptsAllocationReleaseDraftEqual } from "@/components/cohorts/cohort-scripts-allocation-release-utils";
 import type { MembershipPayload } from "@/components/cohorts/types";
 
 export type CohortFormSnapshot = {
   name: string;
   schedule: CohortScheduleDraft;
   membership: MembershipPayload;
+  release?: ScriptsAllocationReleaseDraft;
 };
 
 function sortedStrings(values: string[]): string[] {
@@ -21,12 +24,17 @@ function membershipEqual(a: MembershipPayload, b: MembershipPayload): boolean {
 }
 
 export function cohortDetailsEqual(
-  a: Pick<CohortFormSnapshot, "name" | "schedule">,
-  b: Pick<CohortFormSnapshot, "name" | "schedule">,
+  a: Pick<CohortFormSnapshot, "name" | "schedule" | "release">,
+  b: Pick<CohortFormSnapshot, "name" | "schedule" | "release">,
 ): boolean {
+  const releaseEqual =
+    a.release == null && b.release == null
+      ? true
+      : a.release != null && b.release != null && scriptsAllocationReleaseDraftEqual(a.release, b.release);
   return (
     a.name.trim() === b.name.trim() &&
-    JSON.stringify(a.schedule) === JSON.stringify(b.schedule)
+    JSON.stringify(a.schedule) === JSON.stringify(b.schedule) &&
+    releaseEqual
   );
 }
 
@@ -44,6 +52,12 @@ export function buildCohortFormSnapshot(
   name: string,
   schedule: CohortScheduleDraft,
   membership: MembershipPayload,
+  release?: ScriptsAllocationReleaseDraft,
 ): CohortFormSnapshot {
-  return { name: name.trim(), schedule: { ...schedule }, membership };
+  return {
+    name: name.trim(),
+    schedule: { ...schedule },
+    membership,
+    ...(release ? { release: { ...release } } : {}),
+  };
 }

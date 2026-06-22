@@ -5,13 +5,14 @@ import { useCallback, useEffect, useState } from "react";
 import { ExaminerAppointmentLetterSection } from "@/components/examiner-invitation/examiner-appointment-letter-section";
 import { ExaminerBankAccountForm } from "@/components/examiner-invitation/examiner-bank-account-form";
 import { ExaminerLunchIdCard } from "@/components/examiner-invitation/examiner-lunch-id-card";
-import { ExaminerLocationForm } from "@/components/examiner-invitation/examiner-location-form";
+import { ExaminerProfileDetailsForm } from "@/components/examiner-invitation/examiner-profile-details-form";
 import {
   ExaminerProfileReadinessStrip,
   type ProfileReadinessItem,
 } from "@/components/examiner-invitation/examiner-profile-readiness-strip";
 import { ExaminerScriptsAllocationSection } from "@/components/examiner-invitation/examiner-scripts-allocation-section";
 import {
+  getPublicExaminerBackgroundSurvey,
   getPublicExaminerBankAccount,
   getPublicExaminerLocation,
   getPublicExaminerScriptsAllocation,
@@ -24,28 +25,34 @@ type Props = {
 };
 
 export function ExaminerInvitationProfilePanel({ token, invitation }: Props) {
+  const [hasProfileDetails, setHasProfileDetails] = useState<boolean | null>(null);
   const [hasBankAccount, setHasBankAccount] = useState<boolean | null>(null);
-  const [hasLocation, setHasLocation] = useState<boolean | null>(null);
   const [hasScriptAllocations, setHasScriptAllocations] = useState<boolean | null>(null);
 
   const lettersAvailable = invitation.appointment_letters_available === true;
   const letterPendingMessage = invitation.appointment_letters_pending_message;
   const bankDetailsAvailable = invitation.bank_details_available === true;
   const bankPendingMessage = invitation.bank_details_pending_message;
+  const scriptsAllocationAvailable = invitation.scripts_allocation_available === true;
+  const scriptsPendingMessage = invitation.scripts_allocation_pending_message;
 
   const loadReadiness = useCallback(async () => {
-    const [locationResult, bankResult, scriptsResult] = await Promise.allSettled([
+    const [locationResult, backgroundResult, bankResult, scriptsResult] = await Promise.allSettled([
       getPublicExaminerLocation(token),
+      getPublicExaminerBackgroundSurvey(token),
       getPublicExaminerBankAccount(token),
       getPublicExaminerScriptsAllocation(token),
     ]);
 
-    setHasLocation(locationResult.status === "fulfilled" && locationResult.value !== null);
+    const hasLocation = locationResult.status === "fulfilled" && locationResult.value !== null;
+    const hasBackground =
+      backgroundResult.status === "fulfilled" && backgroundResult.value !== null;
+    setHasProfileDetails(hasLocation && hasBackground);
     setHasBankAccount(bankResult.status === "fulfilled" && bankResult.value !== null);
     setHasScriptAllocations(
       scriptsResult.status === "fulfilled" && scriptsResult.value.blocks.length > 0,
     );
-  }, [token]);
+  }, [token, scriptsAllocationAvailable]);
 
   useEffect(() => {
     void loadReadiness();
@@ -56,35 +63,35 @@ export function ExaminerInvitationProfilePanel({ token, invitation }: Props) {
       id: "lunch",
       label: "Lunch pass",
       detail: invitation.reference_code
-        ? `ID ${invitation.reference_code} ready to scan`
-        : "Available after confirmation",
+        ? `Your lunch ID ${invitation.reference_code} is ready to scan`
+        : "Available once you have confirmed",
       complete: Boolean(invitation.reference_code),
       hidden: !invitation.reference_code,
     },
     {
-      id: "location",
-      label: "Your location",
+      id: "about-you",
+      label: "About you",
       detail:
-        hasLocation === null
-          ? "Checking your saved location…"
-          : hasLocation
-            ? "Town and GhanaPost GPS address on file"
-            : "Add your town and GhanaPost GPS address",
-      complete: hasLocation === true,
+        hasProfileDetails === null
+          ? "Checking what we have on file…"
+          : hasProfileDetails
+            ? "Your location and work background are complete"
+            : "Add where you are based and what you do",
+      complete: hasProfileDetails === true,
     },
     {
       id: "bank",
       label: "Bank details",
       detail:
         hasBankAccount === null
-          ? "Checking your saved details…"
+          ? "Checking your bank details…"
           : hasBankAccount
-            ? "Account on file for allowance payment"
+            ? "Your allowance payment account is on file"
             : bankPendingMessage && !bankDetailsAvailable
               ? bankPendingMessage
               : bankDetailsAvailable
-                ? "Add your account for allowance payment"
-                : "Bank details will open when released",
+                ? "Add the account where you would like to be paid"
+                : "Bank details will appear here when the exam office opens them",
       complete: hasBankAccount === true,
       pending: hasBankAccount === false && Boolean(bankPendingMessage) && !bankDetailsAvailable,
     },
@@ -93,18 +100,20 @@ export function ExaminerInvitationProfilePanel({ token, invitation }: Props) {
       label: "Script allocations",
       detail:
         hasScriptAllocations === null
-          ? "Loading assignments…"
+          ? "Loading your assignments…"
           : hasScriptAllocations
-            ? "Schools and booklet counts assigned"
-            : "Published when the exam office assigns scripts",
+            ? "Your schools and booklet counts are ready to view"
+            : scriptsPendingMessage ??
+              "Your assignments will appear here once the exam office publishes them",
       complete: hasScriptAllocations === true,
+      pending: !scriptsAllocationAvailable && Boolean(scriptsPendingMessage),
     },
     {
       id: "letter",
       label: "Appointment letter",
       detail: lettersAvailable
-        ? "Ready to download"
-        : letterPendingMessage ?? "Available when released by the exam office",
+        ? "Ready for you to download"
+        : letterPendingMessage ?? "Available when the exam office releases it",
       complete: lettersAvailable,
       pending: !lettersAvailable && Boolean(letterPendingMessage),
     },
@@ -115,8 +124,8 @@ export function ExaminerInvitationProfilePanel({ token, invitation }: Props) {
       <header>
         <h1 className="text-xl font-semibold tracking-tight text-foreground sm:text-2xl">Profile</h1>
         <p className="mt-1.5 text-sm leading-relaxed text-muted-foreground">
-          Location, bank details, lunch pass, script allocations, and your appointment letter. Assignment
-          details are on the Overview tab.
+          Complete your personal details, bank information, script allocations, and appointment letter.
+          Your assignment overview is on the Overview tab.
         </p>
       </header>
 
@@ -130,8 +139,8 @@ export function ExaminerInvitationProfilePanel({ token, invitation }: Props) {
         />
       ) : null}
 
-      <div id="profile-location" className="scroll-mt-4">
-        <ExaminerLocationForm token={token} className="mt-0" onSaved={() => void loadReadiness()} />
+      <div id="profile-about-you" className="scroll-mt-4">
+        <ExaminerProfileDetailsForm token={token} className="mt-0" onSaved={() => void loadReadiness()} />
       </div>
 
       <div id="profile-bank" className="scroll-mt-4">
@@ -144,7 +153,10 @@ export function ExaminerInvitationProfilePanel({ token, invitation }: Props) {
       </div>
 
       <div id="profile-scripts" className="scroll-mt-4">
-        <ExaminerScriptsAllocationSection token={token} />
+        <ExaminerScriptsAllocationSection
+          token={token}
+          pendingMessage={!scriptsAllocationAvailable ? scriptsPendingMessage : null}
+        />
       </div>
 
       <div id="profile-letter" className="scroll-mt-4">

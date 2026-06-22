@@ -18,6 +18,13 @@ import {
   emptyCohortScheduleDraft,
   type CohortScheduleDraft,
 } from "@/components/cohorts/cohort-schedule-utils";
+import { CohortScriptsAllocationReleaseFields } from "@/components/cohorts/cohort-scripts-allocation-release-fields";
+import {
+  emptyScriptsAllocationReleaseDraft,
+  scriptsAllocationReleaseFromRow,
+  scriptsAllocationReleaseToPayload,
+  type ScriptsAllocationReleaseDraft,
+} from "@/components/cohorts/cohort-scripts-allocation-release-utils";
 import { CohortCoverageBar } from "@/components/cohorts/cohort-coverage-bar";
 import { CohortListColumn } from "@/components/cohorts/cohort-list-column";
 import { CohortManageModal } from "@/components/cohorts/cohort-manage-modal";
@@ -57,15 +64,25 @@ function toCohortListItem(g: SubjectMarkingGroupRow): CohortListItem {
     markingStartDate: g.marking_start_date,
     markingEndDate: g.marking_end_date,
     markedScriptSubmissionDeadline: g.marked_script_submission_deadline,
+    scriptsAllocationReleaseEnabled: g.scripts_allocation_release_enabled,
+    scriptsAllocationReleaseAt: g.scripts_allocation_release_at,
   };
 }
 
-function snapshotFromGroup(group: SubjectMarkingGroupRow): CohortFormSnapshot {
-  return buildCohortFormSnapshot(group.name, cohortScheduleFromRow(group), {
-    source_regions: group.source_regions,
-    source_roles: group.source_roles,
-    examiner_ids: group.examiner_ids,
-  });
+function snapshotFromGroup(
+  group: SubjectMarkingGroupRow,
+  includeRelease: boolean,
+): CohortFormSnapshot {
+  return buildCohortFormSnapshot(
+    group.name,
+    cohortScheduleFromRow(group),
+    {
+      source_regions: group.source_regions,
+      source_roles: group.source_roles,
+      examiner_ids: group.examiner_ids,
+    },
+    includeRelease ? scriptsAllocationReleaseFromRow(group) : undefined,
+  );
 }
 
 type Props = {
@@ -75,6 +92,8 @@ type Props = {
   pageScroll?: boolean;
   /** Super Admin / Test Admin Officer can edit default cohort schedules. */
   canManageDefaultCohort?: boolean;
+  /** Super Admin / Test Admin Officer can control scripts allocation release per cohort. */
+  canManageScriptsAllocationRelease?: boolean;
   /** When false, cohorts are view-only (subject officers). */
   canManageCohorts?: boolean;
   /** When set, subject scope is controlled by the page command bar or JWT workspace. */
@@ -91,6 +110,7 @@ export function SubjectMarkingGroupsPanel({
   embedded = false,
   pageScroll = false,
   canManageDefaultCohort = false,
+  canManageScriptsAllocationRelease = false,
   canManageCohorts = true,
   lockedSubjectId,
   workspaceLabel,
@@ -113,6 +133,9 @@ export function SubjectMarkingGroupsPanel({
 
   const [nameInput, setNameInput] = useState("");
   const [scheduleDraft, setScheduleDraft] = useState<CohortScheduleDraft>(emptyCohortScheduleDraft);
+  const [releaseDraft, setReleaseDraft] = useState<ScriptsAllocationReleaseDraft>(
+    emptyScriptsAllocationReleaseDraft(),
+  );
   const [savedSnapshot, setSavedSnapshot] = useState<CohortFormSnapshot | null>(null);
   const pendingPreselectedRef = useRef<string[]>([]);
   const [captureCreateBaseline, setCaptureCreateBaseline] = useState(false);
@@ -184,8 +207,16 @@ export function SubjectMarkingGroupsPanel({
   const detailsDirty =
     savedSnapshot != null &&
     !cohortDetailsEqual(
-      { name: nameInput, schedule: scheduleDraft },
-      { name: savedSnapshot.name, schedule: savedSnapshot.schedule },
+      {
+        name: nameInput,
+        schedule: scheduleDraft,
+        release: canManageScriptsAllocationRelease ? releaseDraft : undefined,
+      },
+      {
+        name: savedSnapshot.name,
+        schedule: savedSnapshot.schedule,
+        release: savedSnapshot.release,
+      },
     );
 
   const membershipDirty =
@@ -260,6 +291,7 @@ export function SubjectMarkingGroupsPanel({
     if (isCreating) {
       setNameInput("");
       setScheduleDraft(emptyCohortScheduleDraft());
+      setReleaseDraft(emptyScriptsAllocationReleaseDraft());
       const pending = pendingPreselectedRef.current;
       pendingPreselectedRef.current = [];
       if (pending.length > 0) {
@@ -274,6 +306,7 @@ export function SubjectMarkingGroupsPanel({
     if (!selectedGroup) return;
     setNameInput(selectedGroup.name);
     setScheduleDraft(cohortScheduleFromRow(selectedGroup));
+    setReleaseDraft(scriptsAllocationReleaseFromRow(selectedGroup));
     membership.initFromCohort({
       examiner_ids: selectedGroup.examiner_ids,
       source_regions: selectedGroup.source_regions,
@@ -303,7 +336,7 @@ export function SubjectMarkingGroupsPanel({
   function openSelect(id: string) {
     const group = groups.find((g) => g.id === id);
     if (group) {
-      setSavedSnapshot(snapshotFromGroup(group));
+      setSavedSnapshot(snapshotFromGroup(group, canManageScriptsAllocationRelease));
     }
     setSelectedId(id);
     setIsCreating(false);
@@ -348,6 +381,9 @@ export function SubjectMarkingGroupsPanel({
     if (savedSnapshot) {
       setNameInput(savedSnapshot.name);
       setScheduleDraft({ ...savedSnapshot.schedule });
+      if (savedSnapshot.release) {
+        setReleaseDraft({ ...savedSnapshot.release });
+      }
     }
     setDetailsError(null);
   }
@@ -370,6 +406,9 @@ export function SubjectMarkingGroupsPanel({
       const detailsPayload = {
         name,
         ...cohortScheduleToPayload(scheduleDraft),
+        ...(canManageScriptsAllocationRelease && !isCreating
+          ? scriptsAllocationReleaseToPayload(releaseDraft)
+          : {}),
       };
       const membershipPayload = membershipPayloadFromDrafts();
 
@@ -387,6 +426,7 @@ export function SubjectMarkingGroupsPanel({
             name,
             scheduleDraft,
             prev?.membership ?? membershipPayload,
+            canManageScriptsAllocationRelease ? releaseDraft : undefined,
           ),
         );
       }
@@ -548,6 +588,7 @@ export function SubjectMarkingGroupsPanel({
             cohorts={cohortList}
             onSelect={openSelect}
             onNew={() => openCreate()}
+            showReleaseColumn={canManageScriptsAllocationRelease}
             loading={loading}
             unassignedCount={coverage.unassignedCount}
             showUnassignedCount
@@ -592,11 +633,21 @@ export function SubjectMarkingGroupsPanel({
             detailsDirty={detailsDirty}
             membershipDirty={membershipDirty}
             detailsSection={({ locked, busy: detailsBusy }) => (
-              <CohortScheduleFields
-                draft={scheduleDraft}
-                onChange={setScheduleDraft}
-                disabled={busy || detailsBusy || locked}
-              />
+              <>
+                <CohortScheduleFields
+                  draft={scheduleDraft}
+                  onChange={setScheduleDraft}
+                  disabled={busy || detailsBusy || locked}
+                />
+                {canManageScriptsAllocationRelease && !isCreating ? (
+                  <CohortScriptsAllocationReleaseFields
+                    draft={releaseDraft}
+                    onChange={setReleaseDraft}
+                    disabled={busy || detailsBusy || locked}
+                    className="mt-4"
+                  />
+                ) : null}
+              </>
             )}
             showRolesTab
             activeTab={membership.activeTab}

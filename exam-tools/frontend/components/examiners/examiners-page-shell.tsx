@@ -496,6 +496,7 @@ export function ExaminersPageShell({
                       embedded
                       pageScroll={useScrollShell}
                       readOnly={!canManageExaminers}
+                      canExtendResponseDeadline
                       onInvitationCountsChange={onInvitationCountsChange}
                       usePageSubjectScope={usePageSubjectScope}
                       pageSubjectTypeFilter={subjectTypeFilter}
@@ -534,6 +535,7 @@ export function ExaminersPageShell({
                       embedded
                       pageScroll={useScrollShell}
                       readOnly={!canManageExaminers}
+                      canExtendResponseDeadline
                       onInvitationCountsChange={onInvitationCountsChange}
                       usePageSubjectScope={usePageSubjectScope}
                       pageSubjectTypeFilter={subjectTypeFilter}
@@ -578,6 +580,7 @@ export function ExaminersPageShell({
                   examId={examId}
                   subjects={examScopedSubjects}
                   canManageDefaultCohort
+                  canManageScriptsAllocationRelease
                   embedded
                   pageScroll={useScrollShell}
                   lockedSubjectId={usePageSubjectScope && subjectId ? Number(subjectId) : undefined}
