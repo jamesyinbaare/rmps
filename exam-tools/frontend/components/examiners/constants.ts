@@ -134,3 +134,6 @@ export const EXAMINERS_TABS = [
   { key: "invitations" as const, label: "Invitations" },
   { key: "groups" as const, label: "Marking groups" },
 ];
+
+export const EXAMINER_GROUP_REGION_CONFLICT_MESSAGE =
+  "One or more regions are already assigned to another group. Choose different regions or update the other group first.";

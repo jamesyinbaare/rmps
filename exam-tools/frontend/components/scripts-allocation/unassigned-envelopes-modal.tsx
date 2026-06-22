@@ -9,6 +9,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
   envelopeEligibleExaminerOptions,
+  isEnvelopeEligibleForExaminer,
 } from "@/components/scripts-allocation/examiner-assignment-modal";
 import {
   type AllocationExaminerRow,
@@ -23,6 +24,7 @@ type Props = {
   busy: boolean;
   envelopes: UnassignedEnvelopeItem[];
   poolRows: AllocationExaminerRow[];
+  allowCrossMarkingOverride?: boolean;
   onAssign: (envelope: UnassignedEnvelopeItem, examinerId: string) => void | Promise<void>;
 };
 
@@ -32,6 +34,7 @@ export function UnassignedEnvelopesModal({
   busy,
   envelopes,
   poolRows,
+  allowCrossMarkingOverride = false,
   onAssign,
 }: Props) {
   const [filterRegion, setFilterRegion] = useState("");
@@ -86,8 +89,10 @@ export function UnassignedEnvelopesModal({
   }, [envelopes, filterRegion, filterZone, filterSeries, search]);
 
   const assignableCount = useMemo(
-    () => filtered.filter((row) => envelopeEligibleExaminerOptions(row, poolRows).length > 0).length,
-    [filtered, poolRows],
+    () =>
+      filtered.filter((row) => envelopeEligibleExaminerOptions(row, poolRows, allowCrossMarkingOverride).length > 0)
+        .length,
+    [filtered, poolRows, allowCrossMarkingOverride],
   );
 
   const filtersActive = Boolean(filterRegion || filterZone || filterSeries || search.trim());
@@ -128,7 +133,11 @@ export function UnassignedEnvelopesModal({
       onClose={handleClose}
       closeDisabled={busy}
       title="Unassigned envelopes"
-      description="Pick an examiner for each envelope. Only eligible examiners appear in the list."
+      description={
+        allowCrossMarkingOverride
+          ? "Pick an examiner for each envelope. Eligible examiners are listed first; you may also assign outside cross-marking rules (marked as manual override)."
+          : "Pick an examiner for each envelope. Only eligible examiners appear in the list."
+      }
       className="max-w-6xl"
       bodyClassName="!px-0 !py-0"
       footer={
@@ -294,10 +303,17 @@ export function UnassignedEnvelopesModal({
                   </thead>
                   <tbody className="[&_tr:nth-child(even)]:bg-muted/15">
                     {filtered.map((row) => {
-                      const examinerOptions = envelopeEligibleExaminerOptions(row, poolRows);
+                      const examinerOptions = envelopeEligibleExaminerOptions(
+                        row,
+                        poolRows,
+                        allowCrossMarkingOverride,
+                      );
                       const rowExaminerId = rowExaminerIds[row.script_envelope_id] ?? "";
                       const rowBusy = busy || assigningEnvelopeId === row.script_envelope_id;
                       const noEligible = examinerOptions.length === 0;
+                      const selectedOutsideRules =
+                        Boolean(rowExaminerId) &&
+                        !isEnvelopeEligibleForExaminer(row, rowExaminerId);
                       return (
                         <tr
                           key={row.script_envelope_id}
@@ -322,21 +338,28 @@ export function UnassignedEnvelopesModal({
                           </td>
                           <td className="px-3 py-2.5">
                             <div className="flex items-center justify-end gap-2">
-                              <SearchableCombobox
-                                options={examinerOptions}
-                                value={rowExaminerId}
-                                onChange={(value) =>
-                                  setRowExaminerIds((prev) => ({
-                                    ...prev,
-                                    [row.script_envelope_id]: value,
-                                  }))
-                                }
-                                placeholder={noEligible ? "No eligible examiners" : "Choose examiner…"}
-                                searchPlaceholder="Search examiners…"
-                                showAllOption={false}
-                                widthClass="w-full min-w-[200px] max-w-[280px]"
-                                disabled={rowBusy || noEligible}
-                              />
+                              <div className="min-w-[200px] max-w-[280px]">
+                                <SearchableCombobox
+                                  options={examinerOptions}
+                                  value={rowExaminerId}
+                                  onChange={(value) =>
+                                    setRowExaminerIds((prev) => ({
+                                      ...prev,
+                                      [row.script_envelope_id]: value,
+                                    }))
+                                  }
+                                  placeholder={noEligible ? "No examiners" : "Choose examiner…"}
+                                  searchPlaceholder="Search examiners…"
+                                  showAllOption={false}
+                                  widthClass="w-full min-w-[200px] max-w-[280px]"
+                                  disabled={rowBusy || noEligible}
+                                />
+                                {selectedOutsideRules ? (
+                                  <p className="mt-1 text-right text-[10px] text-amber-800 dark:text-amber-200">
+                                    Manual override
+                                  </p>
+                                ) : null}
+                              </div>
                               <Button
                                 type="button"
                                 variant="secondary"

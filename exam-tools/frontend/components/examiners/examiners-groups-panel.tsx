@@ -16,7 +16,7 @@ import { CohortUnassignedModal } from "@/components/cohorts/cohort-unassigned-mo
 import type { CohortListItem, MembershipExaminer } from "@/components/cohorts/types";
 import { computeCoverage } from "@/components/cohorts/utils";
 import { useCohortMembershipDraft } from "@/components/cohorts/use-cohort-membership-draft";
-import { EXAMINERS_PANEL_CLASS } from "@/components/examiners/constants";
+import { EXAMINER_GROUP_REGION_CONFLICT_MESSAGE, EXAMINERS_PANEL_CLASS } from "@/components/examiners/constants";
 import { Button } from "@/components/ui/button";
 import {
   createExaminerGroup,
@@ -309,10 +309,23 @@ export function ExaminersGroupsPanel({ examId, embedded = false, pageScroll = fa
     if (!selectedId) return false;
 
     const payload = membership.buildPayload();
+    const claimedRegionSelected = payload.source_regions.some((region) =>
+      membership.claimedRegions.has(region),
+    );
+    if (claimedRegionSelected) {
+      setMembershipError(EXAMINER_GROUP_REGION_CONFLICT_MESSAGE);
+      return false;
+    }
+
     setBusy(true);
     setMembershipError(null);
     try {
       await replaceExaminerGroupSourceRegions(examId, selectedId, payload.source_regions);
+    } catch {
+      setMembershipError(EXAMINER_GROUP_REGION_CONFLICT_MESSAGE);
+      return false;
+    }
+    try {
       await replaceExaminerGroupMembers(examId, selectedId, payload.examiner_ids);
       await loadData(examId);
       setSavedSnapshot((prev) =>
@@ -323,8 +336,8 @@ export function ExaminersGroupsPanel({ examId, embedded = false, pageScroll = fa
         ),
       );
       return true;
-    } catch (e) {
-      setMembershipError(e instanceof Error ? e.message : "Failed to save membership");
+    } catch {
+      setMembershipError("Could not save group membership. Please try again.");
       return false;
     } finally {
       setBusy(false);

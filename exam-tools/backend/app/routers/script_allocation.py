@@ -235,6 +235,10 @@ async def update_allocation(
         row.allocation_scope = s.value if isinstance(s, AllocationScopeSchema) else str(s)
     if "cross_marking_rules" in patch and patch["cross_marking_rules"] is not None:
         row.cross_marking_rules = dict(patch["cross_marking_rules"])
+    if "cross_marking_region_rules" in patch and patch["cross_marking_region_rules"] is not None:
+        row.cross_marking_region_rules = dict(patch["cross_marking_region_rules"])
+    if "marking_region_solve_order" in patch and patch["marking_region_solve_order"] is not None:
+        row.marking_region_solve_order = list(patch["marking_region_solve_order"])
     if "fairness_weight" in patch and patch["fairness_weight"] is not None:
         row.fairness_weight = float(patch["fairness_weight"])
     if "enforce_single_series_per_examiner" in patch and patch["enforce_single_series_per_examiner"] is not None:
@@ -390,9 +394,11 @@ async def solve_allocation(
         rebalance_tolerance_booklets=opts.rebalance_tolerance_booklets,
         enforce_single_series_per_examiner=opts.enforce_single_series_per_examiner,
         cross_marking_rules=opts.cross_marking_rules,
+        cross_marking_region_rules=opts.cross_marking_region_rules,
         exclude_home_zone_or_region=opts.exclude_home_zone_or_region,
         solve_mode=solve_mode_val,
         marking_group_solve_order=opts.marking_group_solve_order,
+        marking_region_solve_order=opts.marking_region_solve_order,
     )
     await session.commit()
     run2 = await load_run_with_assignments(session, run.id)

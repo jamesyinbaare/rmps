@@ -876,6 +876,8 @@ class Allocation(Base):
     notes = Column(Text, nullable=True)
     allocation_scope = Column(String(16), nullable=False, default="zone")
     cross_marking_rules = Column(JSON, nullable=False, default=lambda: {})
+    cross_marking_region_rules = Column(JSON, nullable=False, default=lambda: {})
+    marking_region_solve_order = Column(JSON, nullable=False, default=lambda: [])
     fairness_weight = Column(Float, nullable=False, default=0.25)
     enforce_single_series_per_examiner = Column(Boolean, nullable=False, default=True)
     exclude_home_zone_or_region = Column(Boolean, nullable=False, default=True)
@@ -1997,6 +1999,7 @@ class AllocationAssignment(Base):
     )
     examiner_id = Column(UUID(as_uuid=True), ForeignKey("examiners.id", ondelete="CASCADE"), nullable=False, index=True)
     booklet_count = Column(Integer, nullable=False)
+    cross_marking_override = Column(Boolean, nullable=False, default=False, server_default="false")
 
     allocation_run = relationship("AllocationRun", back_populates="assignments")
     script_envelope = relationship("ScriptEnvelope", back_populates="allocation_assignments")

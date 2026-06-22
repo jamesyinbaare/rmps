@@ -37,6 +37,7 @@ class AllocationSolveModeSchema(str, Enum):
 
     monolithic = "monolithic"
     decomposed = "decomposed"
+    regional_greedy = "regional_greedy"
 
 
 class AllocationSubgroupStatusSchema(str, Enum):
@@ -63,6 +64,8 @@ class AllocationUpdate(BaseModel):
     notes: str | None = None
     allocation_scope: AllocationScopeSchema | None = None
     cross_marking_rules: dict[str, list[str]] | None = None
+    cross_marking_region_rules: dict[str, list[str]] | None = None
+    marking_region_solve_order: list[str] | None = None
     fairness_weight: float | None = Field(default=None, ge=0)
     enforce_single_series_per_examiner: bool | None = None
     exclude_home_zone_or_region: bool | None = None
@@ -80,6 +83,8 @@ class AllocationResponse(BaseModel):
     notes: str | None
     allocation_scope: AllocationScopeSchema
     cross_marking_rules: dict[str, list[str]]
+    cross_marking_region_rules: dict[str, list[str]]
+    marking_region_solve_order: list[str]
     fairness_weight: float
     enforce_single_series_per_examiner: bool
     exclude_home_zone_or_region: bool
@@ -120,6 +125,31 @@ class AllocationResponse(BaseModel):
             else:
                 out[sk] = []
         return out
+
+    @field_validator("cross_marking_region_rules", mode="before")
+    @classmethod
+    def _coerce_cross_marking_region_rules(cls, v: object) -> dict[str, list[str]]:
+        if v is None:
+            return {}
+        if not isinstance(v, dict):
+            return {}
+        out: dict[str, list[str]] = {}
+        for key, raw in v.items():
+            sk = str(key)
+            if isinstance(raw, list):
+                out[sk] = [str(x) for x in raw]
+            else:
+                out[sk] = []
+        return out
+
+    @field_validator("marking_region_solve_order", mode="before")
+    @classmethod
+    def _coerce_marking_region_solve_order(cls, v: object) -> list[str]:
+        if v is None:
+            return []
+        if not isinstance(v, list):
+            return []
+        return [str(x) for x in v]
 
 
 class ExaminerCreate(BaseModel):
@@ -284,17 +314,25 @@ class AllocationSolveOptions(BaseModel):
         default=None,
         description="Marking group UUID -> allowed script cohort group UUIDs. Omit to use rules saved on the allocation.",
     )
+    cross_marking_region_rules: dict[str, list[str]] | None = Field(
+        default=None,
+        description="Examiner home region -> allowed script school regions. Takes precedence over cross_marking_rules when non-empty.",
+    )
     exclude_home_zone_or_region: bool = Field(
         default=True,
-        description="Exclude scripts from an examiner home zone (and mapped home region when resolvable).",
+        description="Exclude scripts from an examiner home zone (and mapped home region when resolvable). Ignored when cross_marking_region_rules is active.",
     )
     solve_mode: AllocationSolveModeSchema = Field(
         default=AllocationSolveModeSchema.monolithic,
-        description="monolithic: single MILP. decomposed: sequential marking groups, series-bucketed examiners, one MILP per subgroup.",
+        description="monolithic: single MILP. decomposed: sequential marking groups. regional_greedy: deterministic region-sequential greedy assign.",
     )
     marking_group_solve_order: list[str] | None = Field(
         default=None,
         description="Marking group UUIDs first—later groups see only envelopes still unassigned. Omitted IDs append in sorted order.",
+    )
+    marking_region_solve_order: list[str] | None = Field(
+        default=None,
+        description="Examiner home region values first—for regional_greedy and decomposed runs with region rules.",
     )
 
 
@@ -311,6 +349,10 @@ class AllocationAssignmentItem(BaseModel):
     paper_number: int
     series_number: int
     envelope_number: int
+    cross_marking_override: bool = Field(
+        default=False,
+        description="True when a manual assignment bypassed cross-marking eligibility rules.",
+    )
 
 
 class UnassignedEnvelopeItem(BaseModel):
@@ -354,6 +396,10 @@ class ExaminerSubjectRunSummary(BaseModel):
     subject_id: int
     subject_code: str
     subject_name: str
+    region: str | None = Field(
+        default=None,
+        description="Examiner home (recruitment) region.",
+    )
     quota_booklets: int | None = Field(
         default=None,
         description="Target from campaign type–subject quota row; null if not configured.",

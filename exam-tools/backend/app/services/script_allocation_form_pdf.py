@@ -48,6 +48,26 @@ def _format_school_display(code: str, name: str, max_len: int = MAX_SCHOOL_DISPL
     return f"{display[: max_len - 3]}..."
 
 
+def _subject_label(subject: Subject | None, *, subject_id: int) -> str:
+    if subject is None:
+        return f"Subject {subject_id}"
+    code = (subject.original_code or subject.code or "").strip()
+    name = (subject.name or "").strip()
+    if code and name:
+        return f"{code} - {name}"
+    return code or name or f"Subject {subject_id}"
+
+
+def _annotate_series_tones(rows: list[dict[str, int | str]]) -> list[dict[str, int | str | None]]:
+    series_numbers = sorted({int(row["series_number"]) for row in rows})
+    if len(series_numbers) <= 1:
+        return [{**row, "series_tone": None} for row in rows]
+    tone_by_series = {series_number: index % 6 for index, series_number in enumerate(series_numbers)}
+    return [
+        {**row, "series_tone": tone_by_series[int(row["series_number"])]} for row in rows
+    ]
+
+
 def _render_one_examiner_pdf_sync(
     *,
     examination_id: int,
@@ -68,6 +88,7 @@ def _render_one_examiner_pdf_sync(
         build_examiner_qr_payload(examination_id, reference_code) if reference_code else None
     )
     qr_code_base64 = generate_qr_code_base64(qr_payload) if qr_payload else None
+    rows_with_tones = _annotate_series_tones(rows)
     main_html = render_html(
         {
             "examination_label": examination_label_str,
@@ -78,7 +99,7 @@ def _render_one_examiner_pdf_sync(
             "examiner_region": examiner_region,
             "reference_code": reference_code,
             "qr_code_base64": qr_code_base64,
-            "rows": rows,
+            "rows": rows_with_tones,
             "total_count": total_count,
             "generated_at": generated_at,
         },
@@ -142,7 +163,7 @@ async def build_scripts_allocation_form_pdf(
         raise ValueError("Examination not found")
 
     subject = await session.get(Subject, allocation.subject_id)
-    subject_label = f"{subject.name} ({subject.code})" if subject else f"Subject {allocation.subject_id}"
+    subject_label = _subject_label(subject, subject_id=int(allocation.subject_id))
     paper_number = int(allocation.paper_number)
     exam_label_str = examination_label(examination)
 
@@ -241,6 +262,7 @@ def _sorted_assignment_rows(
     for aa, env, series, school in triples:
         rows.append(
             {
+                "school_code": school.code,
                 "school_name": school.name,
                 "school_display": _format_school_display(school.code, school.name),
                 "envelope_number": int(env.envelope_number),
@@ -248,5 +270,12 @@ def _sorted_assignment_rows(
                 "booklet_count": int(aa.booklet_count),
             }
         )
-    rows.sort(key=lambda r: (str(r["school_name"]).lower(), int(r["envelope_number"]), int(r["series_number"])))
+    rows.sort(
+        key=lambda r: (
+            str(r["school_code"]).lower(),
+            int(r["series_number"]),
+            -int(r["booklet_count"]),
+            int(r["envelope_number"]),
+        )
+    )
     return rows

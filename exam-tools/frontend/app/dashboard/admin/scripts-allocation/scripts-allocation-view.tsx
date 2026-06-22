@@ -6,9 +6,11 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { FileDown, ChevronRight } from "lucide-react";
 
 import { SearchableCombobox } from "@/components/searchable-combobox";
+import { MultiSelectCheckboxDropdown } from "@/components/multi-select-checkbox-dropdown";
 import {
   ExaminerAssignmentModal,
 } from "@/components/scripts-allocation/examiner-assignment-modal";
+import { ScriptsAllocationCollapsibleCard } from "@/components/scripts-allocation/scripts-allocation-collapsible-card";
 import { UnassignedEnvelopesModal } from "@/components/scripts-allocation/unassigned-envelopes-modal";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -39,6 +41,7 @@ import {
   type AllocationRunDetail,
   type AllocationRunListItem,
   type AllocationRunStatusApi,
+  type AllocationSolveModeApi,
   type AllocationSolvePayload,
   type ExaminerGroupRow,
   type ExaminerTypeApi,
@@ -49,6 +52,8 @@ import {
   type UnassignedEnvelopeItem,
 } from "@/lib/api";
 import { formInputClass, formLabelClass } from "@/lib/form-classes";
+import { getMe } from "@/lib/auth";
+import { REGION_OPTIONS } from "@/lib/school-enums";
 
 import { AllocationSetupDialog } from "./allocation-setup-dialog";
 import { manualAllocationHref, scriptsAllocationHref } from "./scripts-allocation-href";
@@ -60,13 +65,58 @@ function isUuidString(s: string): boolean {
   return UUID_RE.test(s.trim());
 }
 
-function summarizeSolveMode(m: "monolithic" | "decomposed"): string {
-  if (m === "monolithic") return "single MILP";
-  return "decomposed (groups + series)";
+function hasActiveRegionRules(rules: Record<string, string[]>): boolean {
+  return Object.values(rules).some((cols) => cols.length > 0);
 }
 
-function coerceSolveModeFromAllocation(v: string | null | undefined): "monolithic" | "decomposed" {
-  return v === "decomposed" ? "decomposed" : "monolithic";
+function computeConfiguredRegionOrder(
+  rules: Record<string, string[]>,
+  order: string[],
+): string[] {
+  const configured = Object.keys(rules).filter((row) => REGION_OPTIONS.some((r) => r.value === row));
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const r of order) {
+    if (configured.includes(r) && !seen.has(r)) {
+      out.push(r);
+      seen.add(r);
+    }
+  }
+  for (const r of [...configured].sort((a, b) => a.localeCompare(b))) {
+    if (!seen.has(r)) out.push(r);
+  }
+  return out;
+}
+
+function computeRegionSolveOrderForSave(
+  rules: Record<string, string[]>,
+  order: string[],
+): string[] {
+  const activeRows = REGION_OPTIONS.map((r) => r.value).filter((row) => (rules[row] ?? []).length > 0);
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const r of order) {
+    if (activeRows.includes(r) && !seen.has(r)) {
+      out.push(r);
+      seen.add(r);
+    }
+  }
+  for (const r of [...activeRows].sort((a, b) => a.localeCompare(b))) {
+    if (!seen.has(r)) out.push(r);
+  }
+  return out;
+}
+
+function summarizeSolveMode(m: AllocationSolveModeApi): string {
+  if (m === "monolithic") return "single MILP";
+  if (m === "regional_greedy") return "regional greedy (sequential by home region)";
+  return "decomposed (groups or regions + series)";
+}
+
+function coerceSolveModeFromAllocation(v: string | null | undefined): AllocationSolveModeApi {
+  if (v === "decomposed") return "decomposed";
+  if (v === "regional_greedy") return "regional_greedy";
+  return "monolithic";
 }
 
 /** Per-examiner allocation form PDF copies (row actions); backend allows up to 20 for bulk only. */
@@ -189,11 +239,15 @@ export function ScriptsAllocationView({
   const [unassignedListModalOpen, setUnassignedListModalOpen] = useState(false);
   const [examinerLoadsSearch, setExaminerLoadsSearch] = useState("");
   const [examinerLoadsTypeFilter, setExaminerLoadsTypeFilter] = useState<ExaminerTypeApi | "">("");
+  const [examinerLoadsRegionFilter, setExaminerLoadsRegionFilter] = useState<string[]>([]);
   const [allocationFormPdfCopies, setAllocationFormPdfCopies] = useState(1);
   const [allocationFormRowPdfCopies, setAllocationFormRowPdfCopies] = useState<Record<string, number>>({});
   const [allocationFormPdfBusy, setAllocationFormPdfBusy] = useState(false);
   const [solverSettingsSavedMessage, setSolverSettingsSavedMessage] = useState<string | null>(null);
-  const [solveMode, setSolveMode] = useState<"monolithic" | "decomposed">("monolithic");
+  const [solveMode, setSolveMode] = useState<AllocationSolveModeApi>("monolithic");
+  const [regionMatrixRules, setRegionMatrixRules] = useState<Record<string, string[]>>({});
+  const [regionSolveOrder, setRegionSolveOrder] = useState<string[]>([]);
+  const [allowCrossMarkingOverride, setAllowCrossMarkingOverride] = useState(false);
   const [subjectMarkingSourceMode, setSubjectMarkingSourceMode] = useState<MarkingScriptSourceMode | null>(null);
 
   const draftSid = Number(draftSubjectId);
@@ -219,6 +273,12 @@ export function ScriptsAllocationView({
     () => exams.map((x) => ({ value: String(x.id), label: formatExaminationLabel(x) })),
     [exams],
   );
+
+  const selectedExamLabel = useMemo(() => {
+    if (examId == null) return "";
+    const exam = exams.find((x) => x.id === examId);
+    return exam ? formatExaminationLabel(exam) : `Exam #${examId}`;
+  }, [examId, exams]);
 
   const selectedSubjectLabel = useMemo(() => {
     if (!selectedAllocation) return "";
@@ -271,6 +331,15 @@ export function ScriptsAllocationView({
   );
 
   const crossMarkingSummaryText = useMemo(() => {
+    if (hasActiveRegionRules(regionMatrixRules)) {
+      const parts = REGION_OPTIONS.filter((row) => (regionMatrixRules[row.value] ?? []).length > 0).map((row) => {
+        const cols = (regionMatrixRules[row.value] ?? [])
+          .map((v) => REGION_OPTIONS.find((r) => r.value === v)?.label ?? v)
+          .join(", ");
+        return `${row.label} → ${cols}`;
+      });
+      return parts.length === 0 ? "no region rules configured yet" : parts.join("; ");
+    }
     const nameById = new Map(examinerGroups.map((g) => [g.id, g.name]));
     const parts = solveRuleRows
       .filter((r) => r.markingGroupId.trim() !== "" && r.targetGroupIds.length > 0)
@@ -286,7 +355,9 @@ export function ScriptsAllocationView({
       });
     if (parts.length === 0) return "no group rules configured yet";
     return parts.join("; ");
-  }, [examinerGroups, solveRuleRows]);
+  }, [examinerGroups, regionMatrixRules, solveRuleRows]);
+
+  const regionRulesActive = useMemo(() => hasActiveRegionRules(regionMatrixRules), [regionMatrixRules]);
 
   const runSummariesForSubject = useMemo((): ExaminerSubjectRunSummary[] => {
     if (!lastRun || !selectedAllocation) return [];
@@ -320,6 +391,29 @@ export function ScriptsAllocationView({
     [runSummariesForSubject],
   );
 
+  const examinerLoadsRegionOptions = useMemo(
+    () => {
+      const present = new Set<string>();
+      for (const row of runSummariesForSubject) {
+        const region = row.region?.trim();
+        if (region) present.add(region);
+      }
+      return REGION_OPTIONS.filter((region) => present.has(region.value)).map((region) => ({
+        value: region.value,
+        label: region.label,
+      }));
+    },
+    [runSummariesForSubject],
+  );
+
+  useEffect(() => {
+    setExaminerLoadsRegionFilter((prev) => {
+      const allowed = new Set(examinerLoadsRegionOptions.map((option) => option.value));
+      const next = prev.filter((value) => allowed.has(value));
+      return next.length === prev.length ? prev : next;
+    });
+  }, [examinerLoadsRegionOptions]);
+
   const unassignedEnvelopesList = useMemo(
     () => lastRun?.unassigned_envelopes ?? [],
     [lastRun],
@@ -334,11 +428,39 @@ export function ScriptsAllocationView({
     if (examinerLoadsTypeFilter) {
       rows = rows.filter((r) => r.examiner_type === examinerLoadsTypeFilter);
     }
+    if (examinerLoadsRegionFilter.length > 0) {
+      const allowed = new Set(examinerLoadsRegionFilter);
+      rows = rows.filter((r) => {
+        const region = r.region?.trim() ?? "";
+        return region.length > 0 && allowed.has(region);
+      });
+    }
     return rows;
-  }, [runSummariesForSubject, examinerLoadsSearch, examinerLoadsTypeFilter]);
+  }, [runSummariesForSubject, examinerLoadsSearch, examinerLoadsTypeFilter, examinerLoadsRegionFilter]);
+
+  const examinerAssignedSeriesCount = useMemo(() => {
+    if (!lastRun || !selectedAllocation) return new Map<string, number>();
+    const byExaminer = new Map<string, Set<number>>();
+    for (const assignment of lastRun.assignments) {
+      if (
+        assignment.subject_id !== selectedAllocation.subject_id ||
+        assignment.paper_number !== selectedAllocation.paper_number
+      ) {
+        continue;
+      }
+      const series = byExaminer.get(assignment.examiner_id) ?? new Set<number>();
+      series.add(assignment.series_number);
+      byExaminer.set(assignment.examiner_id, series);
+    }
+    return new Map(
+      [...byExaminer.entries()].map(([examinerId, seriesSet]) => [examinerId, seriesSet.size]),
+    );
+  }, [lastRun, selectedAllocation]);
 
   const examinerLoadsFiltersActive =
-    examinerLoadsSearch.trim().length > 0 || examinerLoadsTypeFilter !== "";
+    examinerLoadsSearch.trim().length > 0 ||
+    examinerLoadsTypeFilter !== "" ||
+    examinerLoadsRegionFilter.length > 0;
 
   useEffect(() => {
     void (async () => {
@@ -349,6 +471,14 @@ export function ScriptsAllocationView({
         setExams([]);
       }
     })();
+  }, []);
+
+  useEffect(() => {
+    void getMe()
+      .then((me) =>
+        setAllowCrossMarkingOverride(me.role === "SUPER_ADMIN" || me.role === "TEST_ADMIN_OFFICER"),
+      )
+      .catch(() => setAllowCrossMarkingOverride(false));
   }, []);
 
   useEffect(() => {
@@ -392,6 +522,16 @@ export function ScriptsAllocationView({
           targetGroupIds: tgt,
         };
       });
+    const regionRules = row.cross_marking_region_rules ?? {};
+    setRegionMatrixRules(
+      Object.fromEntries(
+        Object.entries(regionRules).map(([k, v]) => [
+          k,
+          Array.isArray(v) ? v.map((x) => String(x).trim()).filter(Boolean) : [],
+        ]),
+      ),
+    );
+    setRegionSolveOrder(Array.isArray(row.marking_region_solve_order) ? [...row.marking_region_solve_order] : []);
     setFairnessWeight(String(row.fairness_weight ?? 0.25));
     setEnablePostRebalance(Boolean(row.enable_post_rebalance ?? false));
     setRebalanceToleranceBooklets(String(row.rebalance_tolerance_booklets ?? 20));
@@ -560,6 +700,7 @@ export function ScriptsAllocationView({
       setUnassignedListModalOpen(false);
       setExaminerLoadsSearch("");
       setExaminerLoadsTypeFilter("");
+      setExaminerLoadsRegionFilter([]);
       setExaminerGroups([]);
       hadSessionReadyRef.current = false;
     }
@@ -938,6 +1079,75 @@ export function ScriptsAllocationView({
     );
   }
 
+  function changeRegionRule(examinerRegion: string, scriptRegions: string[], removeIfEmpty = false) {
+    const nextTargets = scriptRegions.map((s) => s.trim()).filter(Boolean);
+    setRegionMatrixRules((prevRules) => {
+      const next = { ...prevRules };
+      if (nextTargets.length === 0) {
+        if (removeIfEmpty) delete next[examinerRegion];
+        else next[examinerRegion] = [];
+      } else {
+        next[examinerRegion] = nextTargets;
+      }
+      return next;
+    });
+    if (nextTargets.length > 0 || !removeIfEmpty) {
+      setRegionSolveOrder((prev) => (prev.includes(examinerRegion) ? prev : [...prev, examinerRegion]));
+    } else {
+      setRegionSolveOrder((prev) => prev.filter((r) => r !== examinerRegion));
+    }
+  }
+
+  function removeRegionRule(examinerRegion: string) {
+    setRegionMatrixRules((prev) => {
+      const next = { ...prev };
+      delete next[examinerRegion];
+      return next;
+    });
+    setRegionSolveOrder((prev) => prev.filter((r) => r !== examinerRegion));
+  }
+
+  function toggleRegionMatrixCell(examinerRegion: string, scriptRegion: string, checked: boolean) {
+    const prev = regionMatrixRules[examinerRegion] ?? [];
+    const next = checked
+      ? prev.includes(scriptRegion)
+        ? prev
+        : [...prev, scriptRegion]
+      : prev.filter((c) => c !== scriptRegion);
+    changeRegionRule(examinerRegion, next, !checked && next.length === 0);
+  }
+
+  function moveRegionSolveOrderUp(region: string) {
+    setRegionSolveOrder((prev) => {
+      const active = computeConfiguredRegionOrder(regionMatrixRules, prev);
+      const idx = active.indexOf(region);
+      if (idx <= 0) return prev;
+      const next = [...active];
+      [next[idx - 1], next[idx]] = [next[idx], next[idx - 1]];
+      return next;
+    });
+  }
+
+  function moveRegionSolveOrderDown(region: string) {
+    setRegionSolveOrder((prev) => {
+      const active = computeConfiguredRegionOrder(regionMatrixRules, prev);
+      const idx = active.indexOf(region);
+      if (idx < 0 || idx >= active.length - 1) return prev;
+      const next = [...active];
+      [next[idx], next[idx + 1]] = [next[idx + 1], next[idx]];
+      return next;
+    });
+  }
+
+  function buildRegionCrossMarkingRules(): Record<string, string[]> | null {
+    const out: Record<string, string[]> = {};
+    for (const row of REGION_OPTIONS) {
+      const cols = (regionMatrixRules[row.value] ?? []).map((c) => c.trim()).filter(Boolean);
+      if (cols.length > 0) out[row.value] = cols;
+    }
+    return out;
+  }
+
   async function persistAllocationSettingsToServer(): Promise<boolean> {
     if (!allocationId || !sessionReady) return false;
     const fair = Number(fairnessWeight);
@@ -945,13 +1155,24 @@ export function ScriptsAllocationView({
       setSolveOptionsError("Fairness weight must be a non-negative number.");
       return false;
     }
-    const crossRules = buildCrossMarkingRules();
+    const regionRules = buildRegionCrossMarkingRules() ?? {};
+    const regionActive = hasActiveRegionRules(regionRules);
+    if (solveMode === "regional_greedy" && !regionActive) {
+      setSolveOptionsError(
+        "Regional greedy requires at least one region cross-marking row. Configure the region matrix, then save.",
+      );
+      return false;
+    }
+    const crossRules = regionActive ? {} : buildCrossMarkingRules();
     if (crossRules == null) return false;
+    const regionOrder = regionActive ? computeRegionSolveOrderForSave(regionRules, regionSolveOrder) : [];
     setSolveOptionsError(null);
     try {
       const updated = await updateAllocation(allocationId, {
         allocation_scope: "region",
         cross_marking_rules: crossRules,
+        cross_marking_region_rules: regionRules,
+        marking_region_solve_order: regionOrder,
         fairness_weight: fair,
         enable_post_rebalance: enablePostRebalance,
         rebalance_tolerance_booklets:
@@ -1041,6 +1262,9 @@ export function ScriptsAllocationView({
     setLoadError(null);
     try {
       const rowOrder = solveRuleRows.map((r) => r.markingGroupId.trim()).filter((s) => s.length > 0);
+      const regionRules = buildRegionCrossMarkingRules() ?? {};
+      const regionActive = hasActiveRegionRules(regionRules);
+      const regionOrder = regionActive ? computeRegionSolveOrderForSave(regionRules, regionSolveOrder) : [];
       const rebalanceTolerance = Number(rebalanceToleranceBooklets);
       const payload: AllocationSolvePayload = {
         unassigned_penalty: 1.0,
@@ -1052,8 +1276,14 @@ export function ScriptsAllocationView({
         enforce_single_series_per_examiner: enforceSingleSeries,
         exclude_home_zone_or_region: excludeHomeScope,
         cross_marking_rules: null,
+        cross_marking_region_rules: regionActive ? regionRules : null,
         solve_mode: solveMode,
-        ...(solveMode === "decomposed" && rowOrder.length > 0 ? { marking_group_solve_order: rowOrder } : {}),
+        ...(solveMode === "decomposed" && !regionActive && rowOrder.length > 0
+          ? { marking_group_solve_order: rowOrder }
+          : {}),
+        ...(regionActive && (solveMode === "decomposed" || solveMode === "regional_greedy") && regionOrder.length > 0
+          ? { marking_region_solve_order: regionOrder }
+          : {}),
       };
       const detail = await solveAllocation(allocationId, payload);
       setLastRun(detail);
@@ -1079,6 +1309,7 @@ export function ScriptsAllocationView({
     setAssignmentDetailExaminer(null);
     setExaminerLoadsSearch("");
     setExaminerLoadsTypeFilter("");
+    setExaminerLoadsRegionFilter([]);
     setUnassignedListModalOpen(false);
     setStartError(null);
     setFairnessWeight("0.25");
@@ -1089,6 +1320,8 @@ export function ScriptsAllocationView({
     setSolveRuleRows([]);
     setSolveOptionsError(null);
     setSolveMode("monolithic");
+    setRegionMatrixRules({});
+    setRegionSolveOrder([]);
     setExaminerGroups([]);
     if (!next) {
       setExamId(null);
@@ -1164,22 +1397,37 @@ export function ScriptsAllocationView({
         <p className="rounded-lg border border-destructive/40 bg-destructive/10 px-3 py-2 text-sm text-destructive">{startError}</p>
       ) : null}
 
-      <section
-        className={`rounded-2xl border bg-card p-5 shadow-sm md:p-6 ${
-          sessionReady ? "border-primary/30 ring-1 ring-primary/10" : "border-border"
-        }`}
-        aria-labelledby="open-allocation-heading"
-      >
-        <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
-          <div>
-            <h2 id="open-allocation-heading" className="text-base font-semibold tracking-tight text-card-foreground">
-              Open an allocation
-            </h2>
-            <p className="mt-1 max-w-xl text-sm text-muted-foreground">
-              Two steps: pick the examination, then subject and paper. Starting locks in that campaign for this page.
-            </p>
-          </div>
-          <div className="flex flex-wrap items-center gap-2">
+      <ScriptsAllocationCollapsibleCard
+        id="open-allocation-heading"
+        title="Open an allocation"
+        description="Two steps: pick the examination, then subject and paper. Starting locks in that campaign for this page."
+        defaultExpanded={!sessionReady}
+        active={sessionReady}
+        collapsedSummary={
+          sessionReady && selectedAllocation ? (
+            <span className="flex flex-wrap items-center gap-x-1.5 gap-y-1">
+              <span className="font-medium text-foreground">{selectedExamLabel}</span>
+              <span aria-hidden>·</span>
+              <span>
+                {selectedSubjectLabel} · Paper {selectedAllocation.paper_number}
+              </span>
+              <Badge variant="secondary" className="ml-1 font-normal">
+                Session active
+              </Badge>
+            </span>
+          ) : examId != null ? (
+            <span>
+              <span className="font-medium text-foreground">{selectedExamLabel}</span>
+              {draftSubjectLabel && draftPaper
+                ? ` · ${draftSubjectLabel} · Paper ${draftPaper}`
+                : " · Choose subject and paper"}
+            </span>
+          ) : (
+            "Choose an examination to begin"
+          )
+        }
+        headerActions={
+          <>
             {sessionReady ? (
               <Badge variant="secondary" className="w-fit shrink-0">
                 Session active
@@ -1198,10 +1446,10 @@ export function ScriptsAllocationView({
                 </Badge>
               </Link>
             ) : null}
-          </div>
-        </div>
-
-        <ol className="relative mt-6 grid gap-4 md:gap-5">
+          </>
+        }
+      >
+        <ol className="relative grid gap-4 md:gap-5">
           <li className="relative rounded-xl border border-border/90 bg-muted/15 p-4 md:p-5">
             <div className="flex gap-4">
               <span
@@ -1379,43 +1627,63 @@ export function ScriptsAllocationView({
             </div>
           </li>
         </ol>
-      </section>
+      </ScriptsAllocationCollapsibleCard>
 
       {sessionReady && selectedAllocation ? (
-        <section className="space-y-5 rounded-2xl border border-border bg-card p-5 shadow-sm md:p-6">
-          <div className="flex flex-wrap items-start justify-between gap-3 border-b border-border/80 pb-4">
-            <div className="min-w-0">
-              <h2 className="text-base font-semibold tracking-tight text-card-foreground">Run allocation</h2>
-              <p className="mt-1 max-w-xl text-xs text-muted-foreground">
-                Review the snapshot, use Configure allocation to change pool and solver rules, then run the solver. Results
-                follow in the next block.
-              </p>
-            </div>
-            <div className="flex shrink-0 flex-wrap gap-2">
-              <Button type="button" variant="outline" size="sm" asChild>
-                <Link href={examinersManageHref}>Exam roster</Link>
-              </Button>
-              {useSetupPath && mainAllocationHrefFromSetup ? (
+        <>
+          <ScriptsAllocationCollapsibleCard
+            title="Run allocation"
+            description="Review the snapshot, use Configure allocation to change pool and solver rules, then run the solver."
+            defaultExpanded={runs.length === 0}
+            collapsedSummary={
+              <span className="flex flex-wrap items-center gap-x-1.5 gap-y-1">
+                <span>
+                  Pool:{" "}
+                  <span className="font-medium text-foreground">
+                    {poolRows.length === 0
+                      ? "none"
+                      : `${poolRows.length} examiner${poolRows.length === 1 ? "" : "s"}`}
+                  </span>
+                </span>
+                <span aria-hidden>·</span>
+                <span>{summarizeSolveMode(solveMode)}</span>
+                {lastRun ? (
+                  <>
+                    <span aria-hidden>·</span>
+                    <RunStatusBadge status={lastRun.status} />
+                  </>
+                ) : null}
+              </span>
+            }
+            headerActions={
+              <>
                 <Button type="button" variant="outline" size="sm" asChild>
-                  <Link href={mainAllocationHrefFromSetup}>Main allocation page</Link>
+                  <Link href={examinersManageHref}>Exam roster</Link>
                 </Button>
-              ) : null}
-            </div>
-          </div>
+                {useSetupPath && mainAllocationHrefFromSetup ? (
+                  <Button type="button" variant="outline" size="sm" asChild>
+                    <Link href={mainAllocationHrefFromSetup}>Main allocation page</Link>
+                  </Button>
+                ) : null}
+              </>
+            }
+          >
+            {detailLoading ? (
+              <p className="rounded-lg border border-border/80 bg-muted/30 px-3 py-3 text-sm text-muted-foreground">
+                Loading allocation details…
+              </p>
+            ) : null}
 
-          {detailLoading ? (
-            <p className="rounded-lg border border-border/80 bg-muted/30 px-3 py-3 text-sm text-muted-foreground">
-              Loading allocation details…
-            </p>
-          ) : null}
-
-          <div className="space-y-3 rounded-xl border border-border/90 bg-muted/15 p-4 md:p-5">
+            <div className="space-y-3 rounded-xl border border-border/90 bg-muted/15 p-4 md:p-5">
             <p className="text-sm text-muted-foreground">
               <span className="font-medium text-foreground">Pool:</span>{" "}
               {poolRows.length === 0 ? "none yet" : `${poolRows.length} examiner${poolRows.length === 1 ? "" : "s"}`}
               {" · "}
               <span className="font-medium text-foreground">Cross-marking:</span>{" "}
-              <span className="wrap-break-word">{crossMarkingSummaryText}</span>
+              <span className="wrap-break-word">
+                {regionRulesActive ? "region matrix — " : ""}
+                {crossMarkingSummaryText}
+              </span>
               {" · "}
               <span className="font-medium text-foreground">Fairness:</span> {fairnessWeight}
               {" · "}
@@ -1430,7 +1698,8 @@ export function ScriptsAllocationView({
               {" · "}
               <span className="font-medium text-foreground">Single series:</span> {enforceSingleSeries ? "on" : "off"}
               {" · "}
-              <span className="font-medium text-foreground">Exclude home:</span> {excludeHomeScope ? "on" : "off"}
+              <span className="font-medium text-foreground">Exclude home:</span>{" "}
+              {regionRulesActive ? "controlled by matrix" : excludeHomeScope ? "on" : "off"}
               {" · "}
               <span className="font-medium text-foreground">Solve:</span> {summarizeSolveMode(solveMode)}
             </p>
@@ -1457,7 +1726,8 @@ export function ScriptsAllocationView({
                 Run MILP solve
               </Button>
             </div>
-          </div>
+            </div>
+          </ScriptsAllocationCollapsibleCard>
 
           {importModalOpen ? (
             <div
@@ -1724,6 +1994,14 @@ export function ScriptsAllocationView({
             setExcludeHomeScope={setExcludeHomeScope}
             solveMode={solveMode}
             setSolveMode={setSolveMode}
+            regionMatrixRules={regionMatrixRules}
+            regionSolveOrder={regionSolveOrder}
+            regionRulesActive={regionRulesActive}
+            onToggleRegionMatrixCell={toggleRegionMatrixCell}
+            onRegionRuleChange={changeRegionRule}
+            onRemoveRegionRule={removeRegionRule}
+            onMoveRegionSolveOrderUp={moveRegionSolveOrderUp}
+            onMoveRegionSolveOrderDown={moveRegionSolveOrderDown}
             solveOptionsError={solveOptionsError}
             solveRuleRows={solveRuleRows}
             setSolveRuleRows={setSolveRuleRows}
@@ -1740,7 +2018,7 @@ export function ScriptsAllocationView({
           />
 
           {!detailLoading ? (
-            <div className="mt-6 space-y-5 border-t border-border pt-6">
+            <section className="space-y-5 rounded-2xl border border-border bg-card p-5 shadow-sm md:p-6">
               <div>
                 <h3 className="text-base font-semibold tracking-tight text-card-foreground">Solver results</h3>
                 <p className="mt-1 text-xs text-muted-foreground">
@@ -1928,6 +2206,17 @@ export function ScriptsAllocationView({
                             onChange={(e) => setExaminerLoadsSearch(e.target.value)}
                           />
                         </div>
+                        <div className="w-full sm:w-auto sm:min-w-[11rem]">
+                          <MultiSelectCheckboxDropdown
+                            id="examiner-loads-region"
+                            label="Region"
+                            options={examinerLoadsRegionOptions}
+                            selected={examinerLoadsRegionFilter}
+                            onChange={setExaminerLoadsRegionFilter}
+                            allLabel="All regions"
+                            disabled={examinerLoadsRegionOptions.length === 0}
+                          />
+                        </div>
                         <div className="w-full sm:w-auto">
                           <label htmlFor="examiner-loads-type" className={formLabelClass}>
                             Examiner type
@@ -1955,11 +2244,11 @@ export function ScriptsAllocationView({
                       </p>
                     ) : filteredRunSummariesForSubject.length === 0 ? (
                       <p className="mt-3 rounded-lg border border-border/80 bg-muted/20 px-3 py-6 text-center text-sm text-muted-foreground">
-                        No examiners match the current search or type filter.
+                        No examiners match the current search, region, or type filter.
                       </p>
                     ) : (
                       <div className="mt-3 overflow-hidden rounded-xl border border-border bg-card shadow-sm">
-                        <div className="max-h-[min(22rem,50vh)] overflow-auto">
+                        <div className="max-h-[min(42rem,75vh)] overflow-auto">
                           <table className="w-full min-w-[660px] border-collapse text-sm leading-normal">
                             <thead>
                               <tr className="sticky top-0 z-1 border-b border-border bg-muted/80 backdrop-blur-sm">
@@ -1968,6 +2257,12 @@ export function ScriptsAllocationView({
                                   className="px-3 py-2 text-left text-xs font-semibold uppercase tracking-wide text-muted-foreground"
                                 >
                                   Examiner
+                                </th>
+                                <th
+                                  scope="col"
+                                  className="px-3 py-2 text-left text-xs font-semibold uppercase tracking-wide text-muted-foreground"
+                                >
+                                  Region
                                 </th>
                                 <th
                                   scope="col"
@@ -2021,13 +2316,24 @@ export function ScriptsAllocationView({
                                   title={`Manage assignments for ${row.examiner_name}`}
                                 >
                                   <td className="px-3 py-2">
-                                    <div className="flex items-center gap-2">
+                                    <div className="flex flex-wrap items-center gap-2">
                                       <span className="font-medium text-foreground">{row.examiner_name}</span>
+                                      {(examinerAssignedSeriesCount.get(row.examiner_id) ?? 0) > 1 ? (
+                                        <Badge
+                                          variant="outline"
+                                          className="border-amber-500/40 bg-amber-500/10 text-[10px] font-normal text-amber-950 dark:text-amber-100"
+                                        >
+                                          Multiple series
+                                        </Badge>
+                                      ) : null}
                                       <ChevronRight
                                         className="size-4 shrink-0 text-muted-foreground opacity-60"
                                         aria-hidden
                                       />
                                     </div>
+                                  </td>
+                                  <td className="px-3 py-2 text-muted-foreground">
+                                    {examinerHomeCell(row.region)}
                                   </td>
                                   <td className="px-3 py-2 text-muted-foreground">
                                     {examinerTypeLabel(row.examiner_type)}
@@ -2150,7 +2456,7 @@ export function ScriptsAllocationView({
                   </ul>
                 </div>
               )}
-            </div>
+            </section>
           ) : null}
 
           <ExaminerAssignmentModal
@@ -2162,6 +2468,9 @@ export function ScriptsAllocationView({
             assignedRows={assignmentRowsForSelectedExaminer}
             unassignedEnvelopes={unassignedEnvelopesList}
             enforceSingleSeriesPerExaminer={selectedAllocation?.enforce_single_series_per_examiner ?? true}
+            allowCrossMarkingOverride={allowCrossMarkingOverride}
+            examinerList={filteredRunSummariesForSubject}
+            onSelectExaminer={setAssignmentDetailExaminer}
             busy={busy}
             onClose={closeAssignmentDetailModal}
             onRemove={handleRemoveEnvelopeAssignment}
@@ -2178,9 +2487,10 @@ export function ScriptsAllocationView({
             busy={busy}
             envelopes={unassignedEnvelopesList}
             poolRows={poolRows}
+            allowCrossMarkingOverride={allowCrossMarkingOverride}
             onAssign={handleUnassignedModalAssign}
           />
-        </section>
+        </>
       ) : null}
     </div>
   );

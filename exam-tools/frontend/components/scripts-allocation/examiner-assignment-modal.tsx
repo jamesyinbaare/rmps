@@ -1,8 +1,10 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   CheckCircle2,
+  ChevronLeft,
+  ChevronRight,
   ClipboardList,
   PackagePlus,
   Search,
@@ -62,7 +64,22 @@ function examinerTypeLabel(t: ExaminerTypeApi): string {
   return "Assistant";
 }
 
-function isEnvelopeEligibleForExaminer(
+type EnvelopeSortRow = {
+  school_code: string;
+  series_number: number;
+  booklet_count: number;
+  envelope_number: number;
+};
+
+function compareEnvelopesForDisplay(a: EnvelopeSortRow, b: EnvelopeSortRow): number {
+  const bySchool = a.school_code.localeCompare(b.school_code, undefined, { sensitivity: "base" });
+  if (bySchool !== 0) return bySchool;
+  if (a.series_number !== b.series_number) return a.series_number - b.series_number;
+  if (a.booklet_count !== b.booklet_count) return b.booklet_count - a.booklet_count;
+  return a.envelope_number - b.envelope_number;
+}
+
+export function isEnvelopeEligibleForExaminer(
   envelope: UnassignedEnvelopeItem,
   examinerId: string,
 ): boolean {
@@ -80,6 +97,11 @@ type Props = {
   assignedRows: AllocationAssignmentItem[];
   unassignedEnvelopes: UnassignedEnvelopeItem[];
   enforceSingleSeriesPerExaminer?: boolean;
+  /** Super admin / test admin may assign outside cross-marking rules (marked as manual override). */
+  allowCrossMarkingOverride?: boolean;
+  /** Ordered list for prev/next navigation (typically the filtered examiner loads table). */
+  examinerList?: ExaminerSubjectRunSummary[];
+  onSelectExaminer?: (examiner: ExaminerSubjectRunSummary) => void;
   busy: boolean;
   onClose: () => void;
   onRemove: (scriptEnvelopeId: string) => void | Promise<void>;
@@ -95,6 +117,9 @@ export function ExaminerAssignmentModal({
   assignedRows,
   unassignedEnvelopes,
   enforceSingleSeriesPerExaminer = true,
+  allowCrossMarkingOverride = false,
+  examinerList = [],
+  onSelectExaminer,
   busy,
   onClose,
   onRemove,
@@ -127,12 +152,55 @@ export function ExaminerAssignmentModal({
     // eslint-disable-next-line react-hooks/exhaustive-deps -- assignedRows.length intentionally excluded
   }, [examiner?.examiner_id, run?.id]);
 
+  const examinerNavIndex = useMemo(() => {
+    if (!examiner || examinerList.length === 0) return -1;
+    return examinerList.findIndex(
+      (row) => row.examiner_id === examiner.examiner_id && row.subject_id === examiner.subject_id,
+    );
+  }, [examiner, examinerList]);
+
+  const canGoPrevExaminer = examinerNavIndex > 0;
+  const canGoNextExaminer = examinerNavIndex >= 0 && examinerNavIndex < examinerList.length - 1;
+  const showExaminerNav = examinerList.length > 1 && examinerNavIndex >= 0 && onSelectExaminer != null;
+
+  const goPrevExaminer = useCallback(() => {
+    if (!canGoPrevExaminer || !onSelectExaminer) return;
+    onSelectExaminer(examinerList[examinerNavIndex - 1]);
+  }, [canGoPrevExaminer, examinerList, examinerNavIndex, onSelectExaminer]);
+
+  const goNextExaminer = useCallback(() => {
+    if (!canGoNextExaminer || !onSelectExaminer) return;
+    onSelectExaminer(examinerList[examinerNavIndex + 1]);
+  }, [canGoNextExaminer, examinerList, examinerNavIndex, onSelectExaminer]);
+
+  useEffect(() => {
+    if (!open || busy || !showExaminerNav) return;
+    const onKeyDown = (e: KeyboardEvent) => {
+      const target = e.target as HTMLElement | null;
+      if (target?.closest("input, textarea, select, [contenteditable='true']")) return;
+      if (e.key === "ArrowLeft" && !e.altKey && !e.ctrlKey && !e.metaKey) {
+        e.preventDefault();
+        goPrevExaminer();
+      } else if (e.key === "ArrowRight" && !e.altKey && !e.ctrlKey && !e.metaKey) {
+        e.preventDefault();
+        goNextExaminer();
+      }
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [open, busy, showExaminerNav, goPrevExaminer, goNextExaminer]);
+
   const assignedBookletTotal = useMemo(
     () => assignedRows.reduce((sum, r) => sum + r.booklet_count, 0),
     [assignedRows],
   );
 
   const assignedSeriesLoads = useMemo(() => summarizeSeriesLoads(assignedRows), [assignedRows]);
+
+  const sortedAssignedRows = useMemo(
+    () => [...assignedRows].sort(compareEnvelopesForDisplay),
+    [assignedRows],
+  );
 
   const eligibleUnassigned = useMemo(() => {
     if (!examiner) return [];
@@ -144,31 +212,57 @@ export function ExaminerAssignmentModal({
     );
   }, [unassignedEnvelopes, examiner, subjectId, paperNumber]);
 
+  const ineligibleUnassigned = useMemo(() => {
+    if (!examiner || !allowCrossMarkingOverride) return [];
+    return unassignedEnvelopes.filter(
+      (row) =>
+        row.subject_id === subjectId &&
+        row.paper_number === paperNumber &&
+        !isEnvelopeEligibleForExaminer(row, examiner.examiner_id),
+    );
+  }, [unassignedEnvelopes, examiner, subjectId, paperNumber, allowCrossMarkingOverride]);
+
+  const addPanelEnvelopes = useMemo(
+    () => [...eligibleUnassigned, ...ineligibleUnassigned].sort(compareEnvelopesForDisplay),
+    [eligibleUnassigned, ineligibleUnassigned],
+  );
+
+  const isEnvelopeOutsideRules = useCallback(
+    (envelopeId: string) =>
+      ineligibleUnassigned.some((row) => row.script_envelope_id === envelopeId),
+    [ineligibleUnassigned],
+  );
+
+  const assignedOverrideCount = useMemo(
+    () => assignedRows.filter((row) => row.cross_marking_override).length,
+    [assignedRows],
+  );
+
   const regionFilterOptions = useMemo(() => {
     const set = new Set(
-      eligibleUnassigned.map((r) => (r.region ?? "").trim()).filter((s) => s.length > 0),
+      addPanelEnvelopes.map((r) => (r.region ?? "").trim()).filter((s) => s.length > 0),
     );
     return [...set].sort((a, b) => a.localeCompare(b, undefined, { sensitivity: "base" }));
-  }, [eligibleUnassigned]);
+  }, [addPanelEnvelopes]);
 
   const zoneFilterOptions = useMemo(() => {
-    let rows = eligibleUnassigned;
+    let rows = addPanelEnvelopes;
     if (filterRegion) rows = rows.filter((r) => (r.region ?? "") === filterRegion);
     const set = new Set(rows.map((r) => r.zone).filter((z) => z && String(z).trim().length > 0));
     return [...set].sort((a, b) => String(a).localeCompare(String(b), undefined, { sensitivity: "base" }));
-  }, [eligibleUnassigned, filterRegion]);
+  }, [addPanelEnvelopes, filterRegion]);
 
   const seriesFilterOptions = useMemo(() => {
-    let rows = eligibleUnassigned;
+    let rows = addPanelEnvelopes;
     if (filterRegion) rows = rows.filter((r) => (r.region ?? "") === filterRegion);
     if (filterZone) rows = rows.filter((r) => r.zone === filterZone);
     const set = new Set(rows.map((r) => r.series_number));
     return [...set].sort((a, b) => a - b);
-  }, [eligibleUnassigned, filterRegion, filterZone]);
+  }, [addPanelEnvelopes, filterRegion, filterZone]);
 
   const filteredEligible = useMemo(() => {
     const q = search.trim().toLowerCase();
-    return eligibleUnassigned.filter((row) => {
+    return addPanelEnvelopes.filter((row) => {
       if (filterRegion && (row.region ?? "") !== filterRegion) return false;
       if (filterZone && row.zone !== filterZone) return false;
       if (filterSeries && String(row.series_number) !== filterSeries) return false;
@@ -184,8 +278,8 @@ export function ExaminerAssignmentModal({
         .join(" ")
         .toLowerCase();
       return haystack.includes(q);
-    });
-  }, [eligibleUnassigned, filterRegion, filterZone, filterSeries, search]);
+    }).sort(compareEnvelopesForDisplay);
+  }, [addPanelEnvelopes, filterRegion, filterZone, filterSeries, search]);
 
   const selectedEnvelopeIds = useMemo(
     () => Object.entries(selectedIds).filter(([, v]) => v).map(([id]) => id),
@@ -193,32 +287,22 @@ export function ExaminerAssignmentModal({
   );
 
   const selectedBookletTotal = useMemo(() => {
-    const byId = new Map(eligibleUnassigned.map((r) => [r.script_envelope_id, r.booklet_count]));
+    const byId = new Map(addPanelEnvelopes.map((r) => [r.script_envelope_id, r.booklet_count]));
     return selectedEnvelopeIds.reduce((sum, id) => sum + (byId.get(id) ?? 0), 0);
-  }, [eligibleUnassigned, selectedEnvelopeIds]);
+  }, [addPanelEnvelopes, selectedEnvelopeIds]);
 
   const selectedSeriesLoads = useMemo(() => {
-    const rows = eligibleUnassigned.filter((row) => selectedIds[row.script_envelope_id]);
+    const rows = addPanelEnvelopes.filter((row) => selectedIds[row.script_envelope_id]);
     return summarizeSeriesLoads(rows);
-  }, [eligibleUnassigned, selectedIds]);
+  }, [addPanelEnvelopes, selectedIds]);
 
   const resultingSeriesLoads = useMemo(() => {
     const rows = [
       ...assignedRows,
-      ...eligibleUnassigned.filter((row) => selectedIds[row.script_envelope_id]),
+      ...addPanelEnvelopes.filter((row) => selectedIds[row.script_envelope_id]),
     ];
     return summarizeSeriesLoads(rows);
-  }, [assignedRows, eligibleUnassigned, selectedIds]);
-
-  const seriesConflict =
-    enforceSingleSeriesPerExaminer &&
-    assignedSeriesLoads.length > 0 &&
-    selectedSeriesLoads.some(
-      (selected) => !assignedSeriesLoads.some((assigned) => assigned.seriesNumber === selected.seriesNumber),
-    );
-
-  const selectedSeriesConflict =
-    enforceSingleSeriesPerExaminer && selectedSeriesLoads.length > 1;
+  }, [assignedRows, addPanelEnvelopes, selectedIds]);
 
   const resultingEnvelopeCount = assignedRows.length + selectedEnvelopeIds.length;
   const resultingBookletTotal = assignedBookletTotal + selectedBookletTotal;
@@ -251,6 +335,26 @@ export function ExaminerAssignmentModal({
 
   const filtersActive = Boolean(filterRegion || filterZone || filterSeries || search.trim());
 
+  /** Manual assign: test/super admin may assign multiple series even when the campaign defaults to one. */
+  const blockSingleSeriesManual = enforceSingleSeriesPerExaminer && !allowCrossMarkingOverride;
+
+  const hasMultipleAssignedSeries = assignedSeriesLoads.length > 1;
+  const willHaveMultipleSeries =
+    resultingSeriesLoads.length > 1 ||
+    (assignedSeriesLoads.length > 0 &&
+      selectedSeriesLoads.some(
+        (s) => !assignedSeriesLoads.some((a) => a.seriesNumber === s.seriesNumber),
+      ));
+
+  const seriesConflictBlocked =
+    blockSingleSeriesManual &&
+    assignedSeriesLoads.length > 0 &&
+    selectedSeriesLoads.some(
+      (selected) => !assignedSeriesLoads.some((assigned) => assigned.seriesNumber === selected.seriesNumber),
+    );
+
+  const selectedSeriesConflictBlocked = blockSingleSeriesManual && selectedSeriesLoads.length > 1;
+
   if (!examiner || !run) return null;
 
   function toggleAll(checked: boolean) {
@@ -275,11 +379,9 @@ export function ExaminerAssignmentModal({
       setAssignError("Select at least one envelope.");
       return;
     }
-    if (seriesConflict || selectedSeriesConflict) {
+    if (seriesConflictBlocked || selectedSeriesConflictBlocked) {
       setAssignError(
-        enforceSingleSeriesPerExaminer
-          ? `This campaign allows one series per examiner. Assigned series: ${formatSeriesLabel(assignedSeriesLoads)}.`
-          : "Selected envelopes span multiple series.",
+        `This campaign allows one series per examiner. Assigned series: ${formatSeriesLabel(assignedSeriesLoads)}.`,
       );
       return;
     }
@@ -287,9 +389,12 @@ export function ExaminerAssignmentModal({
     setAssignSuccess(null);
     try {
       await onAssign(selectedEnvelopeIds);
+      const overrideCount = selectedEnvelopeIds.filter((id) => isEnvelopeOutsideRules(id)).length;
       setSelectedIds({});
       setAssignSuccess(
-        `Assigned ${selectedEnvelopeIds.length} envelope${selectedEnvelopeIds.length === 1 ? "" : "s"} (${selectedBookletTotal} booklets).`,
+        overrideCount > 0
+          ? `Assigned ${selectedEnvelopeIds.length} envelope${selectedEnvelopeIds.length === 1 ? "" : "s"} (${selectedBookletTotal} booklets). ${overrideCount} marked as manual override.`
+          : `Assigned ${selectedEnvelopeIds.length} envelope${selectedEnvelopeIds.length === 1 ? "" : "s"} (${selectedBookletTotal} booklets).`,
       );
       setPanel("assigned");
     } catch (e) {
@@ -311,7 +416,7 @@ export function ExaminerAssignmentModal({
   }
 
   const footer =
-    panel === "add" && eligibleUnassigned.length > 0 ? (
+    panel === "add" && addPanelEnvelopes.length > 0 ? (
       <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
         <div className="min-w-0 space-y-2">
           {selectedEnvelopeIds.length > 0 ? (
@@ -365,11 +470,16 @@ export function ExaminerAssignmentModal({
                 Series after assigning:{" "}
                 <span className="font-medium text-foreground">{formatSeriesLabel(resultingSeriesLoads)}</span>
               </p>
-              {seriesConflict || selectedSeriesConflict ? (
+              {seriesConflictBlocked || selectedSeriesConflictBlocked ? (
                 <p className="mt-2 text-amber-800 dark:text-amber-200">
-                  {seriesConflict
+                  {seriesConflictBlocked
                     ? `Selection includes a different series than the examiner’s current ${formatSeriesLabel(assignedSeriesLoads)}.`
                     : "Selection spans multiple series, but this campaign allows one series per examiner."}
+                </p>
+              ) : willHaveMultipleSeries && allowCrossMarkingOverride ? (
+                <p className="mt-2 text-amber-800 dark:text-amber-200">
+                  This assignment will span multiple series ({formatSeriesLabel(resultingSeriesLoads)}). It will be
+                  labelled clearly on this examiner&apos;s allocation form.
                 </p>
               ) : null}
             </div>
@@ -393,7 +503,7 @@ export function ExaminerAssignmentModal({
           ) : null}
           <Button
             type="button"
-            disabled={busy || selectedEnvelopeIds.length === 0 || seriesConflict || selectedSeriesConflict}
+            disabled={busy || selectedEnvelopeIds.length === 0 || seriesConflictBlocked || selectedSeriesConflictBlocked}
             onClick={() => void handleAssignSelected()}
           >
             {busy
@@ -416,12 +526,53 @@ export function ExaminerAssignmentModal({
       onClose={onClose}
       closeDisabled={busy}
       title={examiner.examiner_name}
-      description={`${subjectLabel} · Paper ${paperNumber} · ${examinerTypeLabel(examiner.examiner_type)}`}
+      description={[
+        examiner.region?.trim() ? examiner.region.trim() : null,
+        subjectLabel,
+        `Paper ${paperNumber}`,
+        examinerTypeLabel(examiner.examiner_type),
+      ]
+        .filter(Boolean)
+        .join(" · ")}
       className="max-w-5xl"
       bodyClassName="!px-0 !py-0"
       footer={footer}
     >
       <div className="flex h-full min-h-0 flex-col">
+        {showExaminerNav ? (
+          <div className="flex shrink-0 items-center justify-between gap-3 border-b border-border bg-muted/25 px-5 py-2.5 sm:px-6">
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              className="h-8 gap-1 px-2.5"
+              disabled={busy || !canGoPrevExaminer}
+              onClick={goPrevExaminer}
+              aria-label="Previous examiner"
+            >
+              <ChevronLeft className="size-4" aria-hidden />
+              <span className="hidden sm:inline">Previous</span>
+            </Button>
+            <p className="text-center text-xs text-muted-foreground">
+              <span className="font-medium text-foreground">
+                {examinerNavIndex + 1} of {examinerList.length}
+              </span>
+              <span className="hidden sm:inline"> · use ← → keys</span>
+            </p>
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              className="h-8 gap-1 px-2.5"
+              disabled={busy || !canGoNextExaminer}
+              onClick={goNextExaminer}
+              aria-label="Next examiner"
+            >
+              <span className="hidden sm:inline">Next</span>
+              <ChevronRight className="size-4" aria-hidden />
+            </Button>
+          </div>
+        ) : null}
         <div className="shrink-0 space-y-4 border-b border-border bg-muted/15 px-5 py-4 sm:px-6">
           <div className="flex flex-wrap gap-2">
             <Badge variant="secondary" className="tabular-nums">
@@ -444,6 +595,22 @@ export function ExaminerAssignmentModal({
                 {examiner.deviation != null ? ` · Δ ${examiner.deviation > 0 ? "+" : ""}${examiner.deviation}` : ""}
               </Badge>
             ) : null}
+            {assignedOverrideCount > 0 ? (
+              <Badge
+                variant="outline"
+                className="border-amber-500/40 bg-amber-500/10 text-amber-950 dark:text-amber-100"
+              >
+                {assignedOverrideCount} manual override{assignedOverrideCount === 1 ? "" : "s"}
+              </Badge>
+            ) : null}
+            {hasMultipleAssignedSeries ? (
+              <Badge
+                variant="outline"
+                className="border-amber-500/50 bg-amber-500/15 text-amber-950 dark:text-amber-100"
+              >
+                Multiple series assigned
+              </Badge>
+            ) : null}
             {eligibleUnassigned.length > 0 ? (
               <Badge variant="outline" className="border-primary/30 bg-primary/5 text-foreground">
                 {eligibleUnassigned.length} available to add
@@ -456,6 +623,11 @@ export function ExaminerAssignmentModal({
               <div className="min-w-0">
                 <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
                   Assigned series
+                  {hasMultipleAssignedSeries ? (
+                    <span className="ml-2 font-normal normal-case text-amber-800 dark:text-amber-200">
+                      (multiple — shown on allocation PDF)
+                    </span>
+                  ) : null}
                 </p>
                 {assignedSeriesLoads.length === 0 ? (
                   <p className="mt-1.5 text-sm text-muted-foreground">No series yet — assign envelopes below.</p>
@@ -464,9 +636,19 @@ export function ExaminerAssignmentModal({
                     {assignedSeriesLoads.map((series) => (
                       <span
                         key={series.seriesNumber}
-                        className="inline-flex flex-col rounded-lg border border-primary/25 bg-primary/10 px-3 py-1.5"
+                        className={cn(
+                          "inline-flex flex-col rounded-lg border px-3 py-1.5",
+                          hasMultipleAssignedSeries
+                            ? "border-amber-500/40 bg-amber-500/10"
+                            : "border-primary/25 bg-primary/10",
+                        )}
                       >
-                        <span className="text-sm font-semibold tabular-nums text-primary">
+                        <span
+                          className={cn(
+                            "text-sm font-semibold tabular-nums",
+                            hasMultipleAssignedSeries ? "text-amber-900 dark:text-amber-100" : "text-primary",
+                          )}
+                        >
                           Series {series.seriesNumber}
                         </span>
                         <span className="text-xs tabular-nums text-muted-foreground">
@@ -498,9 +680,13 @@ export function ExaminerAssignmentModal({
                 </Button>
               ) : null}
             </div>
-            {enforceSingleSeriesPerExaminer ? (
+            {blockSingleSeriesManual ? (
               <p className="mt-2 text-xs text-muted-foreground">
                 This campaign allows one series per examiner.
+              </p>
+            ) : allowCrossMarkingOverride ? (
+              <p className="mt-2 text-xs text-muted-foreground">
+                Manual assignment may include multiple series for this examiner (marked on the allocation PDF).
               </p>
             ) : null}
           </div>
@@ -607,9 +793,9 @@ export function ExaminerAssignmentModal({
             >
               <PackagePlus className="size-4 shrink-0 opacity-70" aria-hidden />
               Add envelopes
-              {eligibleUnassigned.length > 0 ? (
+              {addPanelEnvelopes.length > 0 ? (
                 <span className="rounded-md bg-primary/10 px-1.5 py-0.5 text-xs tabular-nums text-primary">
-                  {eligibleUnassigned.length}
+                  {addPanelEnvelopes.length}
                 </span>
               ) : null}
             </button>
@@ -668,16 +854,36 @@ export function ExaminerAssignmentModal({
                       </tr>
                     </thead>
                     <tbody className="[&_tr:nth-child(even)]:bg-muted/15">
-                      {assignedRows.map((item) => {
+                      {sortedAssignedRows.map((item) => {
                         const isPending = pendingRemoveId === item.script_envelope_id;
                         return (
                           <tr key={item.script_envelope_id} className="border-b border-border/70 align-middle">
                             <td className="px-3 py-2.5">
                               <p className="font-medium text-foreground">{item.school_name}</p>
                               <p className="text-xs text-muted-foreground">{item.school_code}</p>
+                              {item.cross_marking_override ? (
+                                <Badge
+                                  variant="outline"
+                                  className="mt-1 border-amber-500/40 bg-amber-500/10 text-[10px] font-normal text-amber-950 dark:text-amber-100"
+                                >
+                                  Manual override
+                                </Badge>
+                              ) : null}
                             </td>
                             <td className="px-3 py-2.5 tabular-nums text-muted-foreground">
-                              S{item.series_number} · E{item.envelope_number}
+                              {hasMultipleAssignedSeries ? (
+                                <span className="inline-flex flex-wrap items-center gap-1.5">
+                                  <Badge
+                                    variant="outline"
+                                    className="border-amber-500/40 bg-amber-500/10 font-mono text-[11px] font-semibold tabular-nums text-amber-950 dark:text-amber-100"
+                                  >
+                                    Series {item.series_number}
+                                  </Badge>
+                                  <span>Env {item.envelope_number}</span>
+                                </span>
+                              ) : (
+                                <>S{item.series_number} · E{item.envelope_number}</>
+                              )}
                             </td>
                             <td className="px-3 py-2.5 text-right tabular-nums font-medium text-foreground">
                               {item.booklet_count}
@@ -732,12 +938,19 @@ export function ExaminerAssignmentModal({
             <div className="flex flex-1 items-center justify-center rounded-xl border border-dashed border-border bg-muted/20 px-4 py-12 text-center text-sm text-muted-foreground">
               All envelopes are assigned for this paper.
             </div>
-          ) : eligibleUnassigned.length === 0 ? (
+          ) : addPanelEnvelopes.length === 0 ? (
             <div className="flex flex-1 items-center justify-center rounded-xl border border-amber-500/30 bg-amber-500/10 px-4 py-8 text-center text-sm text-amber-950 dark:text-amber-100">
               Unassigned envelopes exist, but none are eligible for this examiner under cross-marking rules.
             </div>
           ) : (
             <div className="flex min-h-0 flex-1 flex-col gap-4 overflow-hidden">
+              {ineligibleUnassigned.length > 0 && allowCrossMarkingOverride ? (
+                <p className="shrink-0 rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs leading-relaxed text-amber-950 dark:text-amber-100">
+                  {ineligibleUnassigned.length} envelope{ineligibleUnassigned.length === 1 ? "" : "s"} fall outside
+                  cross-marking rules for this examiner. You may assign them manually — they will be labelled{" "}
+                  <strong className="font-medium">Manual override</strong> on the assigned list.
+                </p>
+              ) : null}
               <div className="shrink-0">
               <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
                 <div className="sm:col-span-2 lg:col-span-1">
@@ -880,11 +1093,12 @@ export function ExaminerAssignmentModal({
                       ) : (
                         filteredEligible.map((row) => {
                           const selected = Boolean(selectedIds[row.script_envelope_id]);
+                          const outsideRules = isEnvelopeOutsideRules(row.script_envelope_id);
                           const matchesAssignedSeries =
                             assignedSeriesLoads.length > 0 &&
                             assignedSeriesLoads.some((s) => s.seriesNumber === row.series_number);
                           const conflictsAssignedSeries =
-                            enforceSingleSeriesPerExaminer &&
+                            blockSingleSeriesManual &&
                             assignedSeriesLoads.length > 0 &&
                             !matchesAssignedSeries;
                           return (
@@ -915,6 +1129,14 @@ export function ExaminerAssignmentModal({
                               <td className="px-3 py-2.5">
                                 <p className="font-medium text-foreground">{row.school_name}</p>
                                 <p className="text-xs text-muted-foreground">{row.school_code}</p>
+                                {outsideRules ? (
+                                  <Badge
+                                    variant="outline"
+                                    className="mt-1 border-amber-500/40 bg-amber-500/10 text-[10px] font-normal text-amber-950 dark:text-amber-100"
+                                  >
+                                    Outside cross-marking rules
+                                  </Badge>
+                                ) : null}
                               </td>
                               <td className="px-3 py-2.5 text-muted-foreground">
                                 <p>{(row.region ?? "").trim() || "—"}</p>
@@ -950,18 +1172,22 @@ export function envelopeEligibleExaminerOptions(
     reference_code: string | null;
     examiner_type: ExaminerTypeApi;
   }>,
+  allowCrossMarkingOverride = false,
 ): Array<{ value: string; label: string }> {
   const eligibleIds = envelope.eligible_examiner_ids;
-  const filtered =
-    eligibleIds && eligibleIds.length > 0
-      ? poolRows.filter((r) => eligibleIds.includes(r.examiner_id))
-      : poolRows;
-  return [...filtered]
+  return [...poolRows]
     .sort((a, b) => a.examiner_name.localeCompare(b.examiner_name, undefined, { sensitivity: "base" }))
-    .map((r) => ({
-      value: r.examiner_id,
-      label: r.reference_code
+    .map((r) => {
+      const eligible =
+        !eligibleIds || eligibleIds.length === 0 || eligibleIds.includes(r.examiner_id);
+      if (!eligible && !allowCrossMarkingOverride) return null;
+      const base = r.reference_code
         ? `${r.reference_code} · ${r.examiner_name} (${examinerTypeLabel(r.examiner_type)})`
-        : `${r.examiner_name} (${examinerTypeLabel(r.examiner_type)})`,
-    }));
+        : `${r.examiner_name} (${examinerTypeLabel(r.examiner_type)})`;
+      return {
+        value: r.examiner_id,
+        label: eligible ? base : `${base} — outside cross-marking rules`,
+      };
+    })
+    .filter((row): row is { value: string; label: string } => row != null);
 }

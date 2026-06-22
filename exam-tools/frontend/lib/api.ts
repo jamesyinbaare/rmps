@@ -3965,7 +3965,7 @@ export type ExaminerTypeApi =
 
 export type AllocationRunStatusApi = "draft" | "optimal" | "infeasible" | "timeout" | "error";
 
-export type AllocationSolveModeApi = "monolithic" | "decomposed";
+export type AllocationSolveModeApi = "monolithic" | "decomposed" | "regional_greedy";
 
 export type AllocationSubgroupStatusApi =
   | "optimal"
@@ -3997,6 +3997,8 @@ export type Allocation = {
   notes: string | null;
   allocation_scope: "zone" | "region";
   cross_marking_rules: Record<string, string[]>;
+  cross_marking_region_rules?: Record<string, string[]>;
+  marking_region_solve_order?: string[];
   fairness_weight: number;
   enforce_single_series_per_examiner: boolean;
   exclude_home_zone_or_region: boolean;
@@ -4076,6 +4078,8 @@ export type ExaminerSubjectRunSummary = {
   subject_id: number;
   subject_code: string;
   subject_name: string;
+  /** Examiner home (recruitment) region. */
+  region?: string | null;
   quota_booklets: number | null;
   assigned_booklets: number;
   deviation: number | null;
@@ -4094,6 +4098,8 @@ export type AllocationAssignmentItem = {
   paper_number: number;
   series_number: number;
   envelope_number: number;
+  /** Manual assignment that bypassed cross-marking eligibility rules. */
+  cross_marking_override?: boolean;
 };
 
 export type UnassignedEnvelopeItem = Omit<AllocationAssignmentItem, "examiner_id"> & {
@@ -4138,6 +4144,8 @@ export type AllocationUpdatePayload = {
   notes?: string | null;
   allocation_scope?: "zone" | "region";
   cross_marking_rules?: Record<string, string[]>;
+  cross_marking_region_rules?: Record<string, string[]>;
+  marking_region_solve_order?: string[];
   fairness_weight?: number;
   enforce_single_series_per_examiner?: boolean;
   exclude_home_zone_or_region?: boolean;
@@ -4596,14 +4604,17 @@ export type AllocationSolvePayload = {
   enforce_single_series_per_examiner?: boolean;
   /** Omit to use rules already saved on the allocation (recommended after Save solver settings). */
   cross_marking_rules?: Record<string, string[]> | null;
+  cross_marking_region_rules?: Record<string, string[]> | null;
   exclude_home_zone_or_region?: boolean;
-  /** Default monolithic (single MILP). Decomposed: sequential marking groups + series buckets (see marking_group_solve_order). */
+  /** Default monolithic (single MILP). Decomposed: sequential marking groups. regional_greedy: deterministic region algorithm. */
   solve_mode?: AllocationSolveModeApi;
   /**
    * Marking group UUID order for decomposed solves (early groups claim envelopes first).
    * Omitted groups append in sorted UUID order. Use mapping table top-to-bottom order from the UI.
    */
   marking_group_solve_order?: string[] | null;
+  /** Examiner home region order for regional_greedy and region-based decomposed solves. */
+  marking_region_solve_order?: string[] | null;
 };
 
 export type ExaminerRegionGroupRow = {
