@@ -22,6 +22,7 @@ from app.models import (
 )
 from app.services.coordination_schedule import validate_coordination_range
 from app.services.examiner_roster import parse_region
+from app.services.scripts_allocation_release import is_cohort_scripts_allocation_released
 
 
 def _as_naive_utc(dt: datetime | None) -> datetime | None:
@@ -105,6 +106,8 @@ def group_response(group: SubjectMarkingGroup) -> dict:
         "marking_start_date": group.marking_start_date,
         "marking_end_date": group.marking_end_date,
         "marked_script_submission_deadline": group.marked_script_submission_deadline,
+        "scripts_allocation_release_enabled": bool(group.scripts_allocation_release_enabled),
+        "scripts_allocation_release_at": group.scripts_allocation_release_at,
         "created_at": group.created_at,
         "updated_at": group.updated_at,
     }
@@ -219,6 +222,10 @@ async def update_group(
     update_marking_start_date: bool,
     update_marking_end_date: bool,
     update_submission_deadline: bool,
+    scripts_allocation_release_enabled: bool | None = None,
+    scripts_allocation_release_at: datetime | None = None,
+    update_scripts_allocation_release_enabled: bool = False,
+    update_scripts_allocation_release_at: bool = False,
 ) -> dict:
     group = await load_group(
         session,
@@ -253,6 +260,10 @@ async def update_group(
         group.marking_end_date = _as_naive_utc(marking_end_date)
     if update_submission_deadline:
         group.marked_script_submission_deadline = _as_naive_utc(marked_script_submission_deadline)
+    if update_scripts_allocation_release_enabled:
+        group.scripts_allocation_release_enabled = bool(scripts_allocation_release_enabled)
+    if update_scripts_allocation_release_at:
+        group.scripts_allocation_release_at = _as_naive_utc(scripts_allocation_release_at)
     group.updated_at = datetime.utcnow()
     await session.commit()
     await session.refresh(group, attribute_names=["members", "source_regions", "source_roles"])
@@ -713,6 +724,7 @@ async def get_examiner_marking_groups(
             "marking_start_date": group.marking_start_date,
             "marking_end_date": group.marking_end_date,
             "marked_script_submission_deadline": group.marked_script_submission_deadline,
+            "scripts_allocation_released": is_cohort_scripts_allocation_released(group),
         }
         for group in groups
     ]

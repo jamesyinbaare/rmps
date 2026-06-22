@@ -32,6 +32,8 @@ def _group_row(*, group_id: UUID, is_default: bool) -> dict:
         "marking_start_date": None,
         "marking_end_date": None,
         "marked_script_submission_deadline": None,
+        "scripts_allocation_release_enabled": False,
+        "scripts_allocation_release_at": None,
         "created_at": now,
         "updated_at": now,
     }
@@ -67,7 +69,7 @@ async def test_patch_default_cohort_forbidden_for_subject_officer() -> None:
             )
 
     assert exc.value.status_code == 403
-    assert "super admin" in exc.value.detail.lower()
+    assert "default cohort" in exc.value.detail.lower()
 
 
 @pytest.mark.asyncio
@@ -107,7 +109,7 @@ async def test_patch_default_cohort_allowed_for_super_admin() -> None:
 
 
 @pytest.mark.asyncio
-async def test_patch_named_cohort_forbidden_for_subject_officer() -> None:
+async def test_patch_release_fields_forbidden_for_subject_officer() -> None:
     group_id = uuid4()
     user = MagicMock(role=UserRole.SUBJECT_OFFICER)
     session = AsyncMock()
@@ -129,10 +131,86 @@ async def test_patch_named_cohort_forbidden_for_subject_officer() -> None:
             await patch_subject_marking_group(
                 examination_id=1,
                 group_id=group_id,
-                body=SubjectMarkingGroupUpdate(name="North"),
+                body=SubjectMarkingGroupUpdate(scripts_allocation_release_enabled=True),
                 session=session,
                 user=user,
                 subject_id=10,
             )
 
     assert exc.value.status_code == 403
+    assert "scripts allocation release" in exc.value.detail.lower()
+
+
+@pytest.mark.asyncio
+async def test_patch_named_cohort_allowed_for_subject_officer() -> None:
+    group_id = uuid4()
+    user = MagicMock(role=UserRole.SUBJECT_OFFICER)
+    session = AsyncMock()
+    group = MagicMock()
+    group.is_default = False
+
+    with (
+        patch(
+            "app.routers.subject_marking_groups.assert_subject_officer_access",
+            new_callable=AsyncMock,
+        ),
+        patch(
+            "app.routers.subject_marking_groups.load_group",
+            new_callable=AsyncMock,
+            return_value=group,
+        ),
+        patch(
+            "app.routers.subject_marking_groups.update_group",
+            new_callable=AsyncMock,
+            return_value=_group_row(group_id=group_id, is_default=False),
+        ),
+    ):
+        result = await patch_subject_marking_group(
+            examination_id=1,
+            group_id=group_id,
+            body=SubjectMarkingGroupUpdate(name="North"),
+            session=session,
+            user=user,
+            subject_id=10,
+        )
+
+    assert result.id == group_id
+
+
+@pytest.mark.asyncio
+async def test_patch_release_fields_allowed_for_super_admin() -> None:
+    group_id = uuid4()
+    user = MagicMock(role=UserRole.SUPER_ADMIN)
+    session = AsyncMock()
+    group = MagicMock()
+    group.is_default = False
+
+    with (
+        patch(
+            "app.routers.subject_marking_groups.assert_subject_officer_access",
+            new_callable=AsyncMock,
+        ),
+        patch(
+            "app.routers.subject_marking_groups.load_group",
+            new_callable=AsyncMock,
+            return_value=group,
+        ),
+        patch(
+            "app.routers.subject_marking_groups.update_group",
+            new_callable=AsyncMock,
+            return_value=_group_row(group_id=group_id, is_default=False),
+        ),
+    ):
+        result = await patch_subject_marking_group(
+            examination_id=1,
+            group_id=group_id,
+            body=SubjectMarkingGroupUpdate(
+                scripts_allocation_release_enabled=True,
+                scripts_allocation_release_at=None,
+            ),
+            session=session,
+            user=user,
+            subject_id=10,
+        )
+
+    assert result.id == group_id

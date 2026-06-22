@@ -2,6 +2,7 @@
 
 import {
   CalendarClock,
+  Clock,
   Columns3,
   Download,
   MailPlus,
@@ -67,6 +68,7 @@ type Props = {
   filteredCount: number;
   onSendSms: () => void;
   onSetCoordinationDate: () => void;
+  onBulkExtendDeadline?: () => void;
   onBulkDelete?: () => void;
   onClearSelection?: () => void;
   onBulkUpload: () => void;
@@ -155,6 +157,7 @@ export function InvitationsCommandBar({
   filteredCount,
   onSendSms,
   onSetCoordinationDate,
+  onBulkExtendDeadline,
   onBulkDelete,
   onClearSelection,
   onBulkUpload,
@@ -178,6 +181,9 @@ export function InvitationsCommandBar({
 
   const coordinationLabel =
     selectedCount > 0 ? `Set coordination date (${selectedCount})` : "Set coordination date";
+
+  const extendDeadlineLabel =
+    selectedCount > 0 ? `Extend respond-by (${selectedCount})` : "Extend respond-by";
 
   const deleteLabel = selectedCount > 0 ? `Delete (${selectedCount})` : "Delete";
 
@@ -237,6 +243,14 @@ export function InvitationsCommandBar({
           disabled: selectedCount === 0,
         },
       ];
+      if (onBulkExtendDeadline) {
+        options.push({
+          key: "extend-deadline",
+          label: extendDeadlineLabel,
+          icon: Clock,
+          disabled: selectedCount === 0,
+        });
+      }
       if (onBulkDelete && !readOnly) {
         options.push({
           key: "delete",
@@ -247,7 +261,7 @@ export function InvitationsCommandBar({
       }
       return options;
     },
-    [coordinationLabel, deleteLabel, filteredCount, onBulkDelete, readOnly, selectedCount, smsLabel],
+    [coordinationLabel, deleteLabel, extendDeadlineLabel, filteredCount, onBulkDelete, onBulkExtendDeadline, readOnly, selectedCount, smsLabel],
   );
 
   const inviteFabOptions = useMemo(
@@ -269,6 +283,7 @@ export function InvitationsCommandBar({
   function handleBulkFabSelect(key: string) {
     if (key === "sms") onSendSms();
     else if (key === "coordination") onSetCoordinationDate();
+    else if (key === "extend-deadline") onBulkExtendDeadline?.();
     else if (key === "delete") onBulkDelete?.();
   }
 
@@ -370,6 +385,17 @@ export function InvitationsCommandBar({
             >
               {coordinationLabel}
             </Button>
+            {onBulkExtendDeadline ? (
+              <Button
+                type="button"
+                size="sm"
+                variant="outline"
+                disabled={actionsDisabled || selectedCount === 0}
+                onClick={onBulkExtendDeadline}
+              >
+                {extendDeadlineLabel}
+              </Button>
+            ) : null}
             {onBulkDelete && !readOnly ? (
               <Button
                 type="button"

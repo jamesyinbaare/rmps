@@ -655,6 +655,60 @@ async def test_decline_examiner_invitation() -> None:
     assert inv.responded_at is not None
 
 
+@pytest.mark.asyncio
+async def test_decline_examiner_invitation_with_reason_and_future_flag() -> None:
+    from app.models import ExaminerInvitation
+    from app.services.examiner_invitation import decline_examiner_invitation
+
+    inv = MagicMock(spec=ExaminerInvitation)
+    inv.status = ExaminerInvitationStatus.PENDING
+    inv.response_deadline = datetime.utcnow() + timedelta(days=3)
+    inv.token_expires_at = datetime.utcnow() - timedelta(days=1)
+
+    session = AsyncMock()
+    await decline_examiner_invitation(
+        session,
+        inv,
+        reason="  Schedule conflict  ",
+        consider_future_examinations=True,
+    )
+
+    assert inv.decline_reason == "Schedule conflict"
+    assert inv.decline_consider_future_examinations is True
+
+
+@pytest.mark.asyncio
+async def test_renew_examiner_invitation_clears_decline_fields() -> None:
+    from app.models import ExaminerInvitation
+    from app.services.examiner_invitation import renew_examiner_invitation
+
+    inv = MagicMock(spec=ExaminerInvitation)
+    inv.status = ExaminerInvitationStatus.DECLINED
+    inv.msisdn = "233551234567"
+    inv.phone_number = "0551234567"
+    inv.examination_id = 1
+    inv.subject_id = 10
+    inv.id = uuid4()
+    inv.decline_reason = "Busy"
+    inv.decline_consider_future_examinations = False
+
+    session = AsyncMock()
+
+    with patch(
+        "app.services.examiner_invitation.assert_examiner_subject_allowed",
+        new_callable=AsyncMock,
+    ):
+        await renew_examiner_invitation(
+            session,
+            inv,
+            response_deadline=datetime.utcnow() + timedelta(days=5),
+            invited_by_user_id=uuid4(),
+        )
+
+    assert inv.decline_reason is None
+    assert inv.decline_consider_future_examinations is None
+
+
 def _mock_public_invitation(**overrides: object) -> MagicMock:
     inv = MagicMock()
     inv.name = "Jane Doe"
@@ -1352,3 +1406,234 @@ async def test_patch_examiner_invitation_region_forbidden_for_subject_officer() 
             )
 
     assert exc.value.status_code == 403
+
+
+def _mock_bulk_extend_invitation(**overrides: object) -> MagicMock:
+    defaults = {"status": ExaminerInvitationStatus.PENDING}
+    defaults.update(overrides)
+    return _mock_renewable_invitation(**defaults)
+
+
+@pytest.mark.asyncio
+async def test_bulk_extend_response_deadline_updates_multiple_pending() -> None:
+    from app.routers.examiner_invitations import bulk_extend_examiner_invitation_response_deadline
+    from app.schemas.examiner_invitation import ExaminerInvitationBulkResponseDeadlineUpdate
+
+    session = AsyncMock()
+    session.commit = AsyncMock()
+    user = MagicMock()
+    user.id = uuid4()
+    auth_user = MagicMock()
+    inv_a = _mock_bulk_extend_invitation()
+    inv_b = _mock_bulk_extend_invitation()
+    new_deadline = datetime.utcnow() + timedelta(days=5)
+
+    async def execute_side_effect(_stmt):
+        result = MagicMock()
+        result.scalars.return_value.all.return_value = [inv_a, inv_b]
+        return result
+
+    session.execute = AsyncMock(side_effect=execute_side_effect)
+
+    with (
+        patch(
+            "app.routers.examiner_invitations._get_examination_or_404",
+            new_callable=AsyncMock,
+        ),
+        patch(
+            "app.routers.examiner_invitations._assert_invitation_accessible",
+            new_callable=AsyncMock,
+        ),
+        patch(
+            "app.routers.examiner_invitations.update_examiner_invitation_response_deadline",
+            new_callable=AsyncMock,
+            side_effect=lambda _session, inv, **_: inv,
+        ),
+    ):
+        response = await bulk_extend_examiner_invitation_response_deadline(
+            session,
+            user,
+            auth_user,
+            1,
+            ExaminerInvitationBulkResponseDeadlineUpdate(
+                invitation_ids=[inv_a.id, inv_b.id],
+                response_deadline=new_deadline,
+            ),
+        )
+
+    assert response.updated_count == 2
+    assert response.errors == []
+    assert response.sms_sent_count == 0
+    session.commit.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_bulk_extend_response_deadline_skips_ineligible_statuses() -> None:
+    from app.routers.examiner_invitations import bulk_extend_examiner_invitation_response_deadline
+    from app.schemas.examiner_invitation import ExaminerInvitationBulkResponseDeadlineUpdate
+
+    session = AsyncMock()
+    session.commit = AsyncMock()
+    user = MagicMock()
+    user.id = uuid4()
+    auth_user = MagicMock()
+    pending = _mock_bulk_extend_invitation()
+    accepted = _mock_bulk_extend_invitation(status=ExaminerInvitationStatus.ACCEPTED)
+    new_deadline = datetime.utcnow() + timedelta(days=5)
+
+    async def execute_side_effect(_stmt):
+        result = MagicMock()
+        result.scalars.return_value.all.return_value = [pending, accepted]
+        return result
+
+    session.execute = AsyncMock(side_effect=execute_side_effect)
+
+    async def update_side_effect(_session, inv, **kwargs):
+        if inv.status == ExaminerInvitationStatus.ACCEPTED:
+            raise ValueError(
+                "Only pending, quota-waitlisted, or expired invitations can have their respond-by date updated."
+            )
+        return inv
+
+    with (
+        patch(
+            "app.routers.examiner_invitations._get_examination_or_404",
+            new_callable=AsyncMock,
+        ),
+        patch(
+            "app.routers.examiner_invitations._assert_invitation_accessible",
+            new_callable=AsyncMock,
+        ),
+        patch(
+            "app.routers.examiner_invitations.update_examiner_invitation_response_deadline",
+            new_callable=AsyncMock,
+            side_effect=update_side_effect,
+        ),
+    ):
+        response = await bulk_extend_examiner_invitation_response_deadline(
+            session,
+            user,
+            auth_user,
+            1,
+            ExaminerInvitationBulkResponseDeadlineUpdate(
+                invitation_ids=[pending.id, accepted.id],
+                response_deadline=new_deadline,
+            ),
+        )
+
+    assert response.updated_count == 1
+    assert len(response.errors) == 1
+    assert response.errors[0].invitation_id == accepted.id
+    assert "respond-by date" in response.errors[0].message
+
+
+@pytest.mark.asyncio
+async def test_bulk_extend_response_deadline_rejects_past_deadline() -> None:
+    from app.routers.examiner_invitations import bulk_extend_examiner_invitation_response_deadline
+    from app.schemas.examiner_invitation import ExaminerInvitationBulkResponseDeadlineUpdate
+
+    session = AsyncMock()
+    session.commit = AsyncMock()
+    user = MagicMock()
+    user.id = uuid4()
+    auth_user = MagicMock()
+    inv = _mock_bulk_extend_invitation()
+    past_deadline = datetime.utcnow() - timedelta(hours=1)
+
+    async def execute_side_effect(_stmt):
+        result = MagicMock()
+        result.scalars.return_value.all.return_value = [inv]
+        return result
+
+    session.execute = AsyncMock(side_effect=execute_side_effect)
+
+    with (
+        patch(
+            "app.routers.examiner_invitations._get_examination_or_404",
+            new_callable=AsyncMock,
+        ),
+        patch(
+            "app.routers.examiner_invitations._assert_invitation_accessible",
+            new_callable=AsyncMock,
+        ),
+        patch(
+            "app.routers.examiner_invitations.update_examiner_invitation_response_deadline",
+            new_callable=AsyncMock,
+            side_effect=ValueError("Respond-by deadline must be in the future."),
+        ),
+    ):
+        response = await bulk_extend_examiner_invitation_response_deadline(
+            session,
+            user,
+            auth_user,
+            1,
+            ExaminerInvitationBulkResponseDeadlineUpdate(
+                invitation_ids=[inv.id],
+                response_deadline=past_deadline,
+            ),
+        )
+
+    assert response.updated_count == 0
+    assert len(response.errors) == 1
+    assert "in the future" in response.errors[0].message
+
+
+@pytest.mark.asyncio
+async def test_bulk_extend_response_deadline_counts_sms_results() -> None:
+    from app.routers.examiner_invitations import bulk_extend_examiner_invitation_response_deadline
+    from app.schemas.examiner_invitation import ExaminerInvitationBulkResponseDeadlineUpdate
+
+    session = AsyncMock()
+    session.commit = AsyncMock()
+    user = MagicMock()
+    user.id = uuid4()
+    auth_user = MagicMock()
+    inv_a = _mock_bulk_extend_invitation()
+    inv_b = _mock_bulk_extend_invitation()
+    new_deadline = datetime.utcnow() + timedelta(days=5)
+
+    async def execute_side_effect(_stmt):
+        result = MagicMock()
+        result.scalars.return_value.all.return_value = [inv_a, inv_b]
+        return result
+
+    session.execute = AsyncMock(side_effect=execute_side_effect)
+
+    async def sms_side_effect(_inv, _send, **_kwargs):
+        return (_inv is inv_a, None, uuid4())
+
+    with (
+        patch(
+            "app.routers.examiner_invitations._get_examination_or_404",
+            new_callable=AsyncMock,
+        ),
+        patch(
+            "app.routers.examiner_invitations._assert_invitation_accessible",
+            new_callable=AsyncMock,
+        ),
+        patch(
+            "app.routers.examiner_invitations.update_examiner_invitation_response_deadline",
+            new_callable=AsyncMock,
+            side_effect=lambda _session, inv, **_: inv,
+        ),
+        patch(
+            "app.routers.examiner_invitations.maybe_send_examiner_invitation_sms",
+            new_callable=AsyncMock,
+            side_effect=sms_side_effect,
+        ),
+    ):
+        response = await bulk_extend_examiner_invitation_response_deadline(
+            session,
+            user,
+            auth_user,
+            1,
+            ExaminerInvitationBulkResponseDeadlineUpdate(
+                invitation_ids=[inv_a.id, inv_b.id],
+                response_deadline=new_deadline,
+                send_sms=True,
+            ),
+        )
+
+    assert response.updated_count == 2
+    assert response.sms_sent_count == 1
+    assert response.sms_failed_count == 1

@@ -34,7 +34,7 @@ import { cn } from "@/lib/utils";
 type ConfirmAction = "accept" | "decline";
 
 const EXAMINER_TNT_PAYMENT_NOTE =
-  "Your travel and transport (T&T) allowance will be paid after the coordination exercise.";
+  "Your travel and transport (T&T) allowance will not be paid on the last day of coordination. It will be processed and paid after the coordination exercise.";
 
 type Props = {
   token: string;
@@ -58,6 +58,8 @@ export function ExaminerInvitationLandingPanel({
   const [busy, setBusy] = useState(false);
   const [confirmAction, setConfirmAction] = useState<ConfirmAction | null>(null);
   const [confirmText, setConfirmText] = useState("");
+  const [declineReason, setDeclineReason] = useState("");
+  const [considerFutureExaminations, setConsiderFutureExaminations] = useState<boolean | null>(null);
   const confirmInputId = useId();
   const confirmTitleId = useId();
 
@@ -109,6 +111,8 @@ export function ExaminerInvitationLandingPanel({
   function openConfirm(action: ConfirmAction) {
     setConfirmAction(action);
     setConfirmText("");
+    setDeclineReason("");
+    setConsiderFutureExaminations(null);
     onActionMessage(null);
   }
 
@@ -116,6 +120,8 @@ export function ExaminerInvitationLandingPanel({
     if (busy) return;
     setConfirmAction(null);
     setConfirmText("");
+    setDeclineReason("");
+    setConsiderFutureExaminations(null);
   }
 
   useEffect(() => {
@@ -152,10 +158,15 @@ export function ExaminerInvitationLandingPanel({
     setBusy(true);
     onActionMessage(null);
     try {
-      const res = await declinePublicExaminerInvitation(token);
+      const res = await declinePublicExaminerInvitation(token, {
+        reason: declineReason.trim() || null,
+        consider_future_examinations: considerFutureExaminations,
+      });
       onActionMessage(res.message);
       setConfirmAction(null);
       setConfirmText("");
+      setDeclineReason("");
+      setConsiderFutureExaminations(null);
     } catch (e) {
       onActionMessage(e instanceof Error ? e.message : "Could not record decline");
     } finally {
@@ -375,6 +386,50 @@ export function ExaminerInvitationLandingPanel({
                   </p>
                 </div>
               </>
+            ) : null}
+            {confirmAction === "decline" ? (
+              <div className="mt-4 space-y-4">
+                <div>
+                  <label className={formLabelClass} htmlFor={`${confirmInputId}-reason`}>
+                    Reason for declining (optional)
+                  </label>
+                  <textarea
+                    id={`${confirmInputId}-reason`}
+                    className={cn(formInputClass, "min-h-24 resize-y")}
+                    value={declineReason}
+                    onChange={(e) => setDeclineReason(e.target.value)}
+                    disabled={busy}
+                    placeholder="Let us know why you cannot take this role, if you wish."
+                  />
+                </div>
+                <fieldset>
+                  <legend className={formLabelClass}>
+                    Would you like to be considered for future examinations? (optional)
+                  </legend>
+                  <div className="mt-2 flex flex-wrap gap-4">
+                    <label className="flex cursor-pointer items-center gap-2 text-sm text-foreground">
+                      <input
+                        type="radio"
+                        name={`${confirmInputId}-future`}
+                        checked={considerFutureExaminations === true}
+                        disabled={busy}
+                        onChange={() => setConsiderFutureExaminations(true)}
+                      />
+                      Yes
+                    </label>
+                    <label className="flex cursor-pointer items-center gap-2 text-sm text-foreground">
+                      <input
+                        type="radio"
+                        name={`${confirmInputId}-future`}
+                        checked={considerFutureExaminations === false}
+                        disabled={busy}
+                        onChange={() => setConsiderFutureExaminations(false)}
+                      />
+                      No
+                    </label>
+                  </div>
+                </fieldset>
+              </div>
             ) : null}
             <div className="mt-4">
               <label className={formLabelClass} htmlFor={confirmInputId}>

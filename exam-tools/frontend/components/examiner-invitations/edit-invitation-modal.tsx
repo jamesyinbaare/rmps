@@ -94,6 +94,26 @@ export function EditInvitationModal({
           <dt className="text-muted-foreground">Status</dt>
           <dd className="font-medium text-foreground">{statusLabel}</dd>
         </div>
+        {invitation.status === "declined" ? (
+          <>
+            <div className="border-t border-border/60 pt-2">
+              <dt className="text-muted-foreground">Decline reason</dt>
+              <dd className="mt-1 font-medium text-foreground">
+                {invitation.decline_reason?.trim() || "—"}
+              </dd>
+            </div>
+            <div>
+              <dt className="text-muted-foreground">Consider for future exams</dt>
+              <dd className="font-medium text-foreground">
+                {invitation.decline_consider_future_examinations === true
+                  ? "Yes"
+                  : invitation.decline_consider_future_examinations === false
+                    ? "No"
+                    : "Not answered"}
+              </dd>
+            </div>
+          </>
+        ) : null}
       </dl>
 
       <div className="mt-4 space-y-4">

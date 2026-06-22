@@ -15,6 +15,7 @@ import {
 } from "@/components/examiner-invitations/constants";
 import { EditInvitationModal } from "@/components/examiner-invitations/edit-invitation-modal";
 import {
+  BulkExtendRespondByModal,
   BulkUploadModal,
   CustomSmsModal,
   ExtendRespondByModal,
@@ -54,6 +55,7 @@ import { Button } from "@/components/ui/button";
 import {
   bulkSendExaminerInvitationCustomSms,
   bulkSetExaminerInvitationCoordinationSchedule,
+  bulkExtendExaminerInvitationResponseDeadline,
   bulkDeleteExaminerInvitations,
   bulkUploadExaminerInvitations,
   createExaminerInvitation,
@@ -94,12 +96,18 @@ type Props = {
   embedded?: boolean;
   pageScroll?: boolean;
   readOnly?: boolean;
+  /** Subject officers can extend respond-by without full invitation management. */
+  canExtendResponseDeadline?: boolean;
   onInvitationCountsChange?: (counts: InvitationStatusCounts) => void;
   usePageSubjectScope?: boolean;
   pageSubjectTypeFilter?: ScriptControlSubjectTypeFilter;
   pageSubjectId?: string;
   mobileContactLayout?: boolean;
 };
+
+function isInvitationEligibleForBulkExtend(status: ExaminerInvitationRow["status"]): boolean {
+  return status === "pending" || status === "expired" || status === "quota_waitlisted";
+}
 
 function countByStatus(rows: ExaminerInvitationRow[]): InvitationStatusCounts {
   const counts: InvitationStatusCounts = {
@@ -123,6 +131,7 @@ export function ExaminersInvitationsPanel({
   embedded = false,
   pageScroll = false,
   readOnly = false,
+  canExtendResponseDeadline = true,
   onInvitationCountsChange,
   usePageSubjectScope = false,
   pageSubjectTypeFilter = "all",
@@ -166,6 +175,10 @@ export function ExaminersInvitationsPanel({
   const [batchCoordinationDraft, setBatchCoordinationDraft] = useState<InvitationCoordinationDraft>(
     emptyInvitationCoordinationDraft(),
   );
+  const [bulkExtendModalOpen, setBulkExtendModalOpen] = useState(false);
+  const [bulkExtendError, setBulkExtendError] = useState<string | null>(null);
+  const [bulkExtendDeadlineInput, setBulkExtendDeadlineInput] = useState("");
+  const [bulkExtendSendSms, setBulkExtendSendSms] = useState(false);
   const [uploadError, setUploadError] = useState<string | null>(null);
   const [uploadResult, setUploadResult] = useState<ExaminerInvitationBulkImportResponse | null>(null);
   const [sendSmsOnBulk, setSendSmsOnBulk] = useState(false);
@@ -330,6 +343,15 @@ export function ExaminersInvitationsPanel({
   }, [filteredRows.length, pagination.pageIndex, pagination.pageSize]);
 
   const selectedCount = Object.keys(rowSelection).length;
+  const selectedRows = useMemo(
+    () => filteredRows.filter((row) => rowSelection[row.id]),
+    [filteredRows, rowSelection],
+  );
+  const bulkExtendEligibleCount = useMemo(
+    () => selectedRows.filter((row) => isInvitationEligibleForBulkExtend(row.status)).length,
+    [selectedRows],
+  );
+  const bulkExtendIneligibleCount = selectedRows.length - bulkExtendEligibleCount;
   const smsTargetRows = useMemo(() => {
     if (smsSingleTarget) return [smsSingleTarget];
     if (selectedCount > 0) {
@@ -842,6 +864,51 @@ export function ExaminersInvitationsPanel({
     setBatchCoordinationDraft(emptyInvitationCoordinationDraft());
   }
 
+  function closeBulkExtendModal() {
+    setBulkExtendModalOpen(false);
+    setBulkExtendError(null);
+    setBulkExtendDeadlineInput("");
+    setBulkExtendSendSms(false);
+  }
+
+  async function handleBulkExtendDeadline() {
+    if (examId == null || selectedCount === 0) return;
+    if (!bulkExtendDeadlineInput.trim()) {
+      setBulkExtendError("Respond-by deadline is required.");
+      return;
+    }
+    const responseDeadlineIso = datetimeLocalToIso(bulkExtendDeadlineInput);
+    if (!responseDeadlineIso) {
+      setBulkExtendError("Enter a valid respond-by date and time.");
+      return;
+    }
+    const invitationIds = selectedRows.map((row) => row.id);
+    setBusy(true);
+    setBulkExtendError(null);
+    try {
+      const res = await bulkExtendExaminerInvitationResponseDeadline(examId, {
+        invitation_ids: invitationIds,
+        response_deadline: responseDeadlineIso,
+        send_sms: bulkExtendSendSms,
+      });
+      await loadInvitations(examId);
+      closeBulkExtendModal();
+      setActionMessageTone(res.errors.length || res.sms_failed_count > 0 ? "error" : "success");
+      const parts = [`Extended respond-by for ${res.updated_count} invitation(s).`];
+      if (bulkExtendSendSms) {
+        parts.push(`SMS sent: ${res.sms_sent_count}, failed: ${res.sms_failed_count}.`);
+      }
+      if (res.errors.length) {
+        parts.push(`${res.errors.length} could not be updated.`);
+      }
+      setActionMessage(parts.join(" "));
+    } catch (e) {
+      setBulkExtendError(e instanceof Error ? e.message : "Could not extend respond-by");
+    } finally {
+      setBusy(false);
+    }
+  }
+
   async function handleSetCoordinationDate() {
     if (examId == null || selectedCount === 0) return;
     if (!batchCoordinationDraft.startDate.trim() && !batchCoordinationDraft.endDate.trim()) {
@@ -947,6 +1014,7 @@ export function ExaminersInvitationsPanel({
   }
 
   const canManageInvitations = !readOnly;
+  const canBulkExtendResponseDeadline = canExtendResponseDeadline;
 
   function openEditInvitation(inv: ExaminerInvitationRow) {
     setEditTarget(inv);
@@ -1148,6 +1216,16 @@ export function ExaminersInvitationsPanel({
             setBatchCoordinationDraft(emptyInvitationCoordinationDraft());
             setCoordinationModalOpen(true);
           }}
+          onBulkExtendDeadline={
+            canBulkExtendResponseDeadline && selectedCount > 0
+              ? () => {
+                  setBulkExtendError(null);
+                  setBulkExtendDeadlineInput(defaultDatetimeLocalInput());
+                  setBulkExtendSendSms(false);
+                  setBulkExtendModalOpen(true);
+                }
+              : undefined
+          }
           onBulkDelete={
             canManageInvitations && selectedCount > 0
               ? () => void handleBulkDeleteInvitations()
@@ -1170,7 +1248,7 @@ export function ExaminersInvitationsPanel({
           readOnly={readOnly}
           hideSubjectScopeFilters={usePageSubjectScope}
           mobileContactLayout={mobileContactLayout}
-          adminToolbarLayout={canManageInvitations}
+          adminToolbarLayout={canManageInvitations || canBulkExtendResponseDeadline}
         />
 
         <div className={pageScroll ? "flex flex-col" : "flex min-h-0 flex-1 flex-col"}>
@@ -1196,7 +1274,7 @@ export function ExaminersInvitationsPanel({
                   : "flex min-h-0 flex-1 flex-col gap-2 p-2 sm:p-3",
               )}
             >
-            {selectedCount > 0 && readOnly ? (
+            {selectedCount > 0 && readOnly && !canBulkExtendResponseDeadline ? (
               <p className="text-sm text-muted-foreground">{selectedCount} selected</p>
             ) : null}
 
@@ -1526,6 +1604,23 @@ export function ExaminersInvitationsPanel({
         }}
         onSubmit={() => void handleSetCoordinationDate()}
         onCoordinationDraftChange={setBatchCoordinationDraft}
+      />
+
+      <BulkExtendRespondByModal
+        open={bulkExtendModalOpen}
+        busy={busy}
+        error={bulkExtendError}
+        recipientCount={selectedCount}
+        eligibleCount={bulkExtendEligibleCount}
+        ineligibleCount={bulkExtendIneligibleCount}
+        responseDeadlineInput={bulkExtendDeadlineInput}
+        sendSms={bulkExtendSendSms}
+        onClose={() => {
+          if (!busy) closeBulkExtendModal();
+        }}
+        onSubmit={() => void handleBulkExtendDeadline()}
+        onResponseDeadlineChange={setBulkExtendDeadlineInput}
+        onSendSmsChange={setBulkExtendSendSms}
       />
 
       <CustomSmsModal

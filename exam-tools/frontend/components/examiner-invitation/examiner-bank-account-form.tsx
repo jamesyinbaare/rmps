@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
-import { Building2, Pencil } from "lucide-react";
+import { Building2, Info, Pencil, UserCircle } from "lucide-react";
 
 import { SearchableCombobox } from "@/components/searchable-combobox";
 import {
@@ -58,6 +58,69 @@ function accountDisplayValue(row: ExaminerBankAccountPublic): string {
   return resolveBankKind(row.bank_name) === "absa"
     ? splitAbsaAccountForDisplay(row.account_number, row.bank_code)
     : row.account_number;
+}
+
+function identityFieldClassName() {
+  return "text-xs font-medium uppercase tracking-wide text-muted-foreground";
+}
+
+function ExaminerBankIdentitySummary({
+  invitation,
+}: {
+  invitation: Pick<ExaminerInvitationPublic, "invitee_name" | "phone_number" | "examiner_type_label">;
+}) {
+  return (
+    <section
+      className="rounded-xl border border-border/70 bg-muted/20 px-3.5 py-3.5"
+      aria-label="Registered details for payment"
+    >
+      <div className="flex items-start gap-3">
+        <span className="flex size-9 shrink-0 items-center justify-center rounded-xl bg-primary/10 text-primary">
+          <UserCircle className="size-4" aria-hidden />
+        </span>
+        <div className="min-w-0 flex-1">
+          <p className={identityFieldClassName()}>Registered for payment</p>
+          <p className="mt-1 text-base font-semibold leading-snug text-foreground">
+            {invitation.invitee_name}
+          </p>
+          <dl className="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-2 sm:gap-4">
+            <div>
+              <dt className={identityFieldClassName()}>Phone</dt>
+              <dd className="mt-0.5 text-sm font-medium text-foreground">{invitation.phone_number}</dd>
+            </div>
+            <div>
+              <dt className={identityFieldClassName()}>Role</dt>
+              <dd className="mt-0.5 text-sm font-medium text-foreground">
+                {invitation.examiner_type_label}
+              </dd>
+            </div>
+          </dl>
+        </div>
+      </div>
+    </section>
+  );
+}
+
+function BankNameMatchCallout({ inviteeName }: { inviteeName: string }) {
+  const displayName = inviteeName.trim() || "your registered name";
+
+  return (
+    <div
+      className="flex items-start gap-3 rounded-xl border-2 border-amber-500/40 bg-amber-500/15 px-3.5 py-3.5"
+      role="note"
+    >
+      <span className="flex size-8 shrink-0 items-center justify-center rounded-lg bg-amber-500/20 text-amber-700 dark:text-amber-400">
+        <Info className="size-4" aria-hidden />
+      </span>
+      <div className="text-sm leading-relaxed text-foreground">
+        <p className="font-semibold">Use a bank account registered in your name</p>
+        <p className="mt-1 font-medium">
+          The name on the account must match <strong>{displayName}</strong> exactly. Wrong bank
+          details will delay allowance processing and payment.
+        </p>
+      </div>
+    </div>
+  );
 }
 
 export function ExaminerBankAccountForm({ token, invitation, className, onSaved }: Props) {
@@ -411,49 +474,9 @@ export function ExaminerBankAccountForm({ token, invitation, className, onSaved 
             </div>
           }
         >
-          <form
-            id={FORM_ID}
-            className="space-y-6 md:grid md:grid-cols-2 md:gap-x-4 md:gap-y-6 md:space-y-0"
-            onSubmit={(e) => void onSubmit(e)}
-          >
-            <FormSection title="Official">
-              <div className="md:col-span-2">
-                <label className={formLabelClass} htmlFor={`${formId}-name`}>
-                  Full name
-                </label>
-                <input
-                  id={`${formId}-name`}
-                  className={`${formInputClass} bg-muted/40`}
-                  value={invitation.invitee_name}
-                  readOnly
-                  tabIndex={-1}
-                />
-              </div>
-              <div>
-                <label className={formLabelClass} htmlFor={`${formId}-phone`}>
-                  Phone number
-                </label>
-                <input
-                  id={`${formId}-phone`}
-                  className={`${formInputClass} bg-muted/40`}
-                  value={invitation.phone_number}
-                  readOnly
-                  tabIndex={-1}
-                />
-              </div>
-              <div>
-                <label className={formLabelClass} htmlFor={`${formId}-designation`}>
-                  Designation
-                </label>
-                <input
-                  id={`${formId}-designation`}
-                  className={`${formInputClass} bg-muted/40`}
-                  value={invitation.examiner_type_label}
-                  readOnly
-                  tabIndex={-1}
-                />
-              </div>
-            </FormSection>
+          <form id={FORM_ID} className="space-y-5" onSubmit={(e) => void onSubmit(e)}>
+            <ExaminerBankIdentitySummary invitation={invitation} />
+            <BankNameMatchCallout inviteeName={invitation.invitee_name} />
 
             <FormSection title="Bank account details" description={accountFieldCopy.description}>
               {editing && !editBankOpen ? (
@@ -487,6 +510,11 @@ export function ExaminerBankAccountForm({ token, invitation, className, onSaved 
                       Bank name
                     </label>
                     <p className="mb-1.5 text-xs text-muted-foreground">Search and select your bank.</p>
+                    <p className="mb-1.5 text-xs leading-relaxed text-muted-foreground">
+                      Rural banks are listed as branches under{" "}
+                      <span className="font-medium text-foreground">APEX bank</span> — select APEX
+                      bank, then choose your rural bank as the branch below.
+                    </p>
                     <SearchableCombobox
                       options={bankComboboxOptions}
                       value={selectedBankName}

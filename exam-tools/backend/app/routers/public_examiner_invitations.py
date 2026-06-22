@@ -7,8 +7,13 @@ from app.dependencies.database import DBSessionDep
 from app.schemas.bank_branch import BankBranchListResponse, BankBranchRow
 from app.schemas.examiner_bank_account import ExaminerBankAccountResponse, ExaminerBankAccountUpsert
 from app.schemas.examiner_location import ExaminerLocationResponse, ExaminerLocationUpsert
+from app.schemas.examiner_background_survey import (
+    ExaminerBackgroundSurveyResponse,
+    ExaminerBackgroundSurveyUpsert,
+)
 from app.schemas.examiner_invitation import (
     ExaminerInvitationActionResponse,
+    ExaminerInvitationDeclineRequest,
     ExaminerInvitationPublicResponse,
     ExaminerInvitationStatusSchema,
 )
@@ -24,6 +29,11 @@ from app.services.examiner_location import (
     get_location_by_examiner_id,
     location_to_dict,
     upsert_location_for_examiner,
+)
+from app.services.examiner_background_survey import (
+    get_survey_by_examiner_id,
+    survey_to_dict,
+    upsert_background_survey_for_examiner,
 )
 from app.services.examiner_invitation import (
     accept_examiner_invitation,
@@ -145,6 +155,7 @@ async def accept_public_examiner_invitation(
 async def decline_public_examiner_invitation(
     session: DBSessionDep,
     token: str,
+    body: ExaminerInvitationDeclineRequest | None = None,
 ) -> ExaminerInvitationActionResponse:
     resolved = await _resolve_portal_or_404(session, token)
     if isinstance(resolved, ResolvedPortalExaminer):
@@ -154,7 +165,14 @@ async def decline_public_examiner_invitation(
         )
     inv = resolved.invitation
     try:
-        await decline_examiner_invitation(session, inv)
+        await decline_examiner_invitation(
+            session,
+            inv,
+            reason=body.reason if body is not None else None,
+            consider_future_examinations=(
+                body.consider_future_examinations if body is not None else None
+            ),
+        )
         await session.commit()
     except ValueError as exc:
         await session.rollback()
@@ -232,6 +250,45 @@ async def upsert_public_examiner_location(
     return ExaminerLocationResponse(**location_to_dict(examiner))
 
 
+@router.get("/{token}/background-survey", response_model=ExaminerBackgroundSurveyResponse)
+async def get_public_examiner_background_survey(
+    session: DBSessionDep,
+    token: str,
+) -> ExaminerBackgroundSurveyResponse:
+    examiner_id = await _resolve_examiner_id(session, token)
+    examiner = await get_survey_by_examiner_id(session, examiner_id)
+    if examiner is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="No background survey on file.",
+        )
+    return ExaminerBackgroundSurveyResponse(**survey_to_dict(examiner))
+
+
+@router.put("/{token}/background-survey", response_model=ExaminerBackgroundSurveyResponse)
+async def upsert_public_examiner_background_survey(
+    session: DBSessionDep,
+    token: str,
+    body: ExaminerBackgroundSurveyUpsert,
+) -> ExaminerBackgroundSurveyResponse:
+    examiner_id = await _resolve_examiner_id(session, token)
+    try:
+        examiner = await upsert_background_survey_for_examiner(
+            session,
+            examiner_id=examiner_id,
+            occupation_type=body.occupation_type.value,
+            institution_name=body.institution_name,
+            teaching_subject=body.teaching_subject,
+            industry=body.industry,
+            specialization=body.specialization,
+        )
+        await session.commit()
+    except ValueError as exc:
+        await session.rollback()
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+    return ExaminerBackgroundSurveyResponse(**survey_to_dict(examiner))
+
+
 @router.get("/{token}/bank-branches", response_model=BankBranchListResponse)
 async def list_public_bank_branches(
     session: DBSessionDep,
@@ -289,6 +346,7 @@ async def get_public_examiner_scripts_allocation(
         examiner_id=examiner_id,
         examination_id=examination_id,
         subject_id=subject_id,
+        apply_release_gate=True,
     )
     return ExaminerPublicScriptsAllocationResponse(**data)
 

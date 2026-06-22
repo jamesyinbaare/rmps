@@ -20,6 +20,9 @@ from app.models import (
     ScriptPackingSeries,
 )
 from app.services.examiner_bank_account import require_accepted_invitation_for_bank
+from app.services.scripts_allocation_release import (
+    is_scripts_allocation_visible_for_examiner,
+)
 
 
 def require_accepted_invitation_for_profile(inv: ExaminerInvitation) -> UUID:
@@ -33,12 +36,24 @@ async def get_examiner_scripts_allocation(
     examiner_id: UUID,
     examination_id: int,
     subject_id: int,
+    apply_release_gate: bool = True,
 ) -> dict:
     """
     Read-only scripts allocation summary from latest OPTIMAL runs per paper campaign.
 
     Returns {"blocks": [...]}; empty list when no published allocations yet.
+    When apply_release_gate is True (public portal), returns empty blocks until
+    at least one of the examiner's cohort memberships has passed release.
     """
+    if apply_release_gate:
+        visible = await is_scripts_allocation_visible_for_examiner(
+            session,
+            examination_id=examination_id,
+            subject_id=subject_id,
+            examiner_id=examiner_id,
+        )
+        if not visible:
+            return {"blocks": []}
     alloc_stmt = (
         select(Allocation)
         .join(AllocationExaminer, AllocationExaminer.allocation_id == Allocation.id)
@@ -139,4 +154,5 @@ async def get_scripts_allocation_for_invitation(
         examiner_id=examiner_id,
         examination_id=int(inv.examination_id),
         subject_id=int(inv.subject_id),
+        apply_release_gate=True,
     )

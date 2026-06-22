@@ -29,6 +29,10 @@ from app.services.examiner_portal_release import (
     is_bank_details_editable,
     is_release_enabled,
 )
+from app.services.scripts_allocation_release import (
+    is_scripts_allocation_visible_for_examiner,
+    scripts_allocation_pending_message,
+)
 from app.services.sms.examiner_appointment_letter_release import maybe_notify_on_portal_visit
 from app.services.subject_marking_group import get_examiner_marking_groups
 
@@ -57,7 +61,12 @@ async def _load_examiner_with_subjects(session: AsyncSession, examiner_id) -> Ex
     return (await session.execute(stmt)).scalar_one_or_none()
 
 
-async def _release_fields_for_examiner(session: AsyncSession, examiner: Examiner) -> dict:
+async def _release_fields_for_examiner(
+    session: AsyncSession,
+    examiner: Examiner,
+    *,
+    subject_id: int | None = None,
+) -> dict:
     row = await get_or_create_portal_settings(session, int(examiner.examination_id))
     release_enabled = bool(row.appointment_letters_release_enabled)
     mode_raw = row.appointment_letters_release_mode
@@ -75,12 +84,29 @@ async def _release_fields_for_examiner(session: AsyncSession, examiner: Examiner
         release_at=row.appointment_letters_release_at,
         examiner_accepted=True,
     )
+    scripts_available = False
+    scripts_pending: str | None = None
+    if subject_id is not None:
+        scripts_available = await is_scripts_allocation_visible_for_examiner(
+            session,
+            examination_id=int(examiner.examination_id),
+            subject_id=subject_id,
+            examiner_id=examiner.id,
+        )
+        scripts_pending = await scripts_allocation_pending_message(
+            session,
+            examination_id=int(examiner.examination_id),
+            subject_id=subject_id,
+            examiner_id=examiner.id,
+        )
     return {
         "appointment_letters_release_enabled": release_enabled,
         "appointment_letters_available": available,
         "appointment_letters_release_mode": mode.value,
         "appointment_letters_release_at": row.appointment_letters_release_at,
         "appointment_letters_pending_message": pending,
+        "scripts_allocation_available": scripts_available,
+        "scripts_allocation_pending_message": scripts_pending,
         **bank_fields_from_settings(row),
     }
 
@@ -91,6 +117,7 @@ async def enrich_portal_with_release(
     examiner: Examiner | None,
     *,
     examination_id: int,
+    subject_id: int | None = None,
 ) -> dict:
     summary["examination_id"] = int(examination_id)
     if examiner is None:
@@ -105,6 +132,8 @@ async def enrich_portal_with_release(
                     "bank_details_editable_by_examiners": False,
                     "bank_details_available": False,
                     "bank_details_pending_message": None,
+                    "scripts_allocation_available": False,
+                    "scripts_allocation_pending_message": None,
                 }
             )
             return summary
@@ -131,13 +160,17 @@ async def enrich_portal_with_release(
                     release_at=row.appointment_letters_release_at,
                     examiner_accepted=accepted,
                 ),
+                "scripts_allocation_available": False,
+                "scripts_allocation_pending_message": None,
                 **bank_fields_from_settings(row),
             }
         )
         return summary
 
     await maybe_notify_on_portal_visit(session, examiner)
-    summary.update(await _release_fields_for_examiner(session, examiner))
+    summary.update(
+        await _release_fields_for_examiner(session, examiner, subject_id=subject_id)
+    )
     return summary
 
 
@@ -190,6 +223,7 @@ async def public_invitation_portal_view(
         summary,
         examiner,
         examination_id=int(inv.examination_id),
+        subject_id=int(inv.subject_id),
     )
 
 
@@ -240,6 +274,7 @@ async def public_roster_portal_view(
         summary,
         loaded or examiner,
         examination_id=int(examiner.examination_id),
+        subject_id=int(subject.id),
     )
 
 

@@ -185,5 +185,6 @@ async def get_subject_officer_examiner_scripts_allocation(
         examiner_id=examiner_id,
         examination_id=examination_id,
         subject_id=subject_id,
+        apply_release_gate=False,
     )
     return ExaminerPublicScriptsAllocationResponse(**data)

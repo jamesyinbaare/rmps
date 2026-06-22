@@ -14,6 +14,8 @@ export type CohortListItem = {
   markingStartDate?: string | null;
   markingEndDate?: string | null;
   markedScriptSubmissionDeadline?: string | null;
+  scriptsAllocationReleaseEnabled?: boolean;
+  scriptsAllocationReleaseAt?: string | null;
 };
 
 export type MembershipExaminer = {

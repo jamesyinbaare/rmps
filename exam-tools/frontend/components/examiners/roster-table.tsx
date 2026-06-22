@@ -193,6 +193,36 @@ export function RosterTable({
         ),
       },
       {
+        accessorKey: "background_occupation_type",
+        header: "Background type",
+        cell: ({ getValue }) => {
+          const value = getValue<string | null>();
+          if (value === "teacher") return "Teacher";
+          if (value === "other") return "Other";
+          return "—";
+        },
+      },
+      {
+        accessorKey: "background_institution_name",
+        header: "Institution",
+        cell: ({ getValue }) => getValue<string | null>() ?? "—",
+      },
+      {
+        accessorKey: "background_teaching_subject",
+        header: "Teaching subject",
+        cell: ({ getValue }) => getValue<string | null>() ?? "—",
+      },
+      {
+        accessorKey: "background_industry",
+        header: "Industry",
+        cell: ({ getValue }) => getValue<string | null>() ?? "—",
+      },
+      {
+        accessorKey: "background_specialization",
+        header: "Specialization",
+        cell: ({ getValue }) => getValue<string | null>() ?? "—",
+      },
+      {
         accessorKey: "gender",
         header: "Gender",
         cell: ({ getValue }) => getValue<string | null>() ?? "—",

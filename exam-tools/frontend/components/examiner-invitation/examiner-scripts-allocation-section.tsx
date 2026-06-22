@@ -8,9 +8,10 @@ import { getPublicExaminerScriptsAllocation, type ExaminerPublicScriptsAllocatio
 
 type Props = {
   token: string;
+  pendingMessage?: string | null;
 };
 
-export function ExaminerScriptsAllocationSection({ token }: Props) {
+export function ExaminerScriptsAllocationSection({ token, pendingMessage }: Props) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [blocks, setBlocks] = useState<ExaminerPublicScriptsAllocationBlock[]>([]);
@@ -64,7 +65,8 @@ export function ExaminerScriptsAllocationSection({ token }: Props) {
       ) : blocks.length === 0 ? (
         <div className="mt-4 rounded-xl border border-dashed border-border/80 bg-muted/10 px-3.5 py-6 text-center">
           <p className="text-sm leading-relaxed text-muted-foreground">
-            Allocations will appear here once the exam office publishes your script assignments.
+            {pendingMessage ??
+              "Allocations will appear here once the exam office publishes your script assignments."}
           </p>
         </div>
       ) : (

@@ -27,6 +27,8 @@ from app.schemas.examiner_invitation import (
     ExaminerInvitationBulkDeleteResponse,
     ExaminerInvitationBulkImportResponse,
     ExaminerInvitationBulkImportRowError,
+    ExaminerInvitationBulkResponseDeadlineResponse,
+    ExaminerInvitationBulkResponseDeadlineUpdate,
     ExaminerInvitationBulkSmsRequest,
     ExaminerInvitationBulkSmsResponse,
     ExaminerInvitationBulkSmsRowError,
@@ -190,6 +192,8 @@ def _invitation_response(inv: ExaminerInvitation, sms: SmsDelivery | None = None
         sms_error=sms_error,
         sms_delivery_id=sms_delivery_id,
         public_url=public_url,
+        decline_reason=cast(str | None, inv.decline_reason),
+        decline_consider_future_examinations=cast(bool | None, inv.decline_consider_future_examinations),
     )
 
 
@@ -377,6 +381,79 @@ async def bulk_set_examiner_invitation_coordination_schedule(
 
     await session.commit()
     return ExaminerInvitationBulkCoordinationResponse(updated_count=updated_count, errors=errors)
+
+
+@router.patch(
+    "/examinations/{examination_id}/examiner-invitations/bulk-response-deadline",
+    response_model=ExaminerInvitationBulkResponseDeadlineResponse,
+    summary="Extend respond-by deadline on multiple examiner invitations",
+)
+async def bulk_extend_examiner_invitation_response_deadline(
+    session: DBSessionDep,
+    user: CurrentUserDep,
+    auth_user: SuperAdminOrTestAdminOfficerOrSubjectOfficerDep,
+    examination_id: int,
+    body: ExaminerInvitationBulkResponseDeadlineUpdate,
+) -> ExaminerInvitationBulkResponseDeadlineResponse:
+    await _get_examination_or_404(session, examination_id)
+    unique_ids = list(dict.fromkeys(body.invitation_ids))
+    stmt = select(ExaminerInvitation).where(
+        ExaminerInvitation.examination_id == examination_id,
+        ExaminerInvitation.id.in_(unique_ids),
+    )
+    rows = {inv.id: inv for inv in (await session.execute(stmt)).scalars().all()}
+
+    errors: list[ExaminerInvitationBulkSmsRowError] = []
+    updated_count = 0
+    sms_sent_count = 0
+    sms_failed_count = 0
+    send_sms = body.send_sms is True
+
+    for inv_id in unique_ids:
+        inv = rows.get(inv_id)
+        if inv is None:
+            errors.append(
+                ExaminerInvitationBulkSmsRowError(
+                    invitation_id=inv_id,
+                    message="Invitation not found for this examination",
+                )
+            )
+            continue
+        await _assert_invitation_accessible(session, auth_user, examination_id, inv)
+        try:
+            await update_examiner_invitation_response_deadline(
+                session,
+                inv,
+                response_deadline=body.response_deadline,
+            )
+            updated_count += 1
+            if send_sms:
+                sms_sent, _sms_error, _sms_delivery_id = await maybe_send_examiner_invitation_sms(
+                    inv,
+                    True,
+                    session=session,
+                    triggered_by_user_id=user.id,
+                    trigger="extend_deadline",
+                )
+                if sms_sent:
+                    sms_sent_count += 1
+                else:
+                    sms_failed_count += 1
+        except ValueError as exc:
+            errors.append(
+                ExaminerInvitationBulkSmsRowError(
+                    invitation_id=inv_id,
+                    message=str(exc),
+                )
+            )
+
+    await session.commit()
+    return ExaminerInvitationBulkResponseDeadlineResponse(
+        updated_count=updated_count,
+        sms_sent_count=sms_sent_count,
+        sms_failed_count=sms_failed_count,
+        errors=errors,
+    )
 
 
 @router.patch(
